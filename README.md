@@ -52,7 +52,7 @@ The platform consists of three main components:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/cyxwiz
+git clone https://github.com/CYXWIZ-Lab/CYXWIZ.git
 cd cyxwiz
 
 # 2. Install vcpkg (if not already installed)
