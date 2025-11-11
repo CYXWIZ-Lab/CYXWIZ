@@ -7,7 +7,7 @@ CyxWiz is a revolutionary platform that combines the visual design capabilities 
 The platform consists of three main components:
 
 1. **CyxWiz Engine** - Desktop client with rich GUI for building and designing ML models
-2. **CyxWiz Server Node** - Distributed compute nodes that train models
+2. **CyxWiz Server Node** - Also known as miners. Distributed compute nodes that train models
 3. **CyxWiz Central Server** - Orchestrator managing the decentralized network
 
 ## ✨ Features
@@ -98,7 +98,7 @@ sudo apt-get install build-essential cmake git ninja-build
 brew install cmake ninja
 
 # 2. Clone the repository
-git clone https://github.com/yourusername/cyxwiz
+git clone https://github.com/CYXWIZ-Lab/CYXWIZ.git
 cd cyxwiz
 
 # 3. Install vcpkg
