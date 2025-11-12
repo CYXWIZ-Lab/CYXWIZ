@@ -14,6 +14,7 @@
 #include "deployment_handler.h"
 #include "deployment_manager.h"
 #include "terminal_handler.h"
+#include "node_client.h"
 
 // Global flag for shutdown
 std::atomic<bool> g_shutdown{false};
@@ -43,6 +44,7 @@ int main(int argc, char** argv) {
     std::string node_id = "node_" + std::to_string(std::time(nullptr));
     std::string deployment_address = "0.0.0.0:50052";  // Different from Central Server's 50051
     std::string terminal_address = "0.0.0.0:50053";
+    std::string central_server = "localhost:50051";    // Central Server address
 
     spdlog::info("Node ID: {}", node_id);
     spdlog::info("Deployment service: {}", deployment_address);
@@ -74,9 +76,21 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        // TODO: Register with Central Server via gRPC
-        // - Send NodeInfo with capabilities
-        // - Start heartbeat loop
+        // Register with Central Server
+        spdlog::info("Connecting to Central Server at {}...", central_server);
+        auto node_client = std::make_unique<cyxwiz::servernode::NodeClient>(central_server, node_id);
+
+        if (!node_client->Register()) {
+            spdlog::error("Failed to register with Central Server");
+            spdlog::warn("Server Node will run in standalone mode");
+        } else {
+            spdlog::info("Successfully registered with Central Server");
+
+            // Start heartbeat loop
+            if (!node_client->StartHeartbeat(10)) {  // 10 second interval
+                spdlog::error("Failed to start heartbeat");
+            }
+        }
 
         spdlog::info("========================================");
         spdlog::info("Server Node is ready!");
@@ -87,11 +101,9 @@ int main(int argc, char** argv) {
         spdlog::info("Press Ctrl+C to shutdown");
 
         // Main loop - wait for shutdown signal
+        // Heartbeat is running in background thread
         while (!g_shutdown) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
-
-            // TODO: Send periodic heartbeat to Central Server
-            // TODO: Update metrics
         }
 
         spdlog::info("Shutting down gracefully...");

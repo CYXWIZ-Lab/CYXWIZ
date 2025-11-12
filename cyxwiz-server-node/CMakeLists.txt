@@ -27,6 +27,7 @@ set(SERVER_NODE_SOURCES
     src/model_loader.cpp
     src/terminal_handler.cpp
     src/metrics_collector.cpp
+    src/node_client.cpp
     # Legacy files (to be refactored)
     src/node_server.cpp
     src/job_executor.cpp
