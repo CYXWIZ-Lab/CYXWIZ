@@ -27,6 +27,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
+    src/gui/panels/plot_test_panel.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
     src/network/grpc_client.cpp
@@ -50,6 +51,7 @@ set(ENGINE_HEADERS
     src/gui/panels/toolbar.h
     src/gui/panels/asset_browser.h
     src/gui/panels/training_dashboard.h
+    src/gui/panels/plot_test_panel.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
     src/network/grpc_client.h

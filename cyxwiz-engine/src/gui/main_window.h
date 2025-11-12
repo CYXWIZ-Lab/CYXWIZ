@@ -15,6 +15,7 @@ namespace cyxwiz {
 class ToolbarPanel;
 class AssetBrowserPanel;
 class TrainingDashboardPanel;
+class PlotTestPanel;
 } // namespace cyxwiz
 
 namespace gui {
@@ -43,6 +44,7 @@ private:
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
     std::unique_ptr<cyxwiz::TrainingDashboardPanel> training_dashboard_;
+    std::unique_ptr<cyxwiz::PlotTestPanel> plot_test_panel_;
 
     bool show_about_dialog_;
     bool show_demo_window_;

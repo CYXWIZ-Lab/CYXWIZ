@@ -6,6 +6,7 @@
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
+#include "panels/plot_test_panel.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -27,6 +28,7 @@ MainWindow::MainWindow()
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();
+    plot_test_panel_ = std::make_unique<cyxwiz::PlotTestPanel>();
 
     // Set up the reset layout callback in the toolbar
     toolbar_->SetResetLayoutCallback([this]() {
@@ -53,6 +55,7 @@ void MainWindow::Render() {
     // Render new panels
     if (asset_browser_) asset_browser_->Render();
     if (training_dashboard_) training_dashboard_->Render();
+    if (plot_test_panel_) plot_test_panel_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
