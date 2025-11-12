@@ -4,6 +4,7 @@ project(cyxwiz-engine)
 
 # Find packages
 find_package(imgui CONFIG REQUIRED)
+find_package(implot CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glad CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
@@ -30,6 +31,12 @@ set(ENGINE_SOURCES
     src/scripting/script_manager.cpp
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
+    # Plotting system
+    src/plotting/plot_dataset.cpp
+    src/plotting/plot_manager.cpp
+    src/plotting/test_data_generator.cpp
+    src/plotting/backends/implot_backend.cpp
+    src/plotting/backends/matplotlib_backend.cpp
 )
 
 set(ENGINE_HEADERS
@@ -47,6 +54,13 @@ set(ENGINE_HEADERS
     src/scripting/script_manager.h
     src/network/grpc_client.h
     src/network/job_manager.h
+    # Plotting system
+    src/plotting/plot_dataset.h
+    src/plotting/plot_manager.h
+    src/plotting/test_data_generator.h
+    src/plotting/backends/plot_backend.h
+    src/plotting/backends/implot_backend.h
+    src/plotting/backends/matplotlib_backend.h
 )
 
 # Create executable
@@ -66,6 +80,7 @@ find_package(OpenGL REQUIRED)
 # Link libraries
 target_link_libraries(cyxwiz-engine PRIVATE
     imgui::imgui
+    implot::implot
     glfw
     glad::glad
     OpenGL::GL
