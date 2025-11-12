@@ -74,6 +74,14 @@ endif()
 # Compiler options
 target_compile_features(cyxwiz-server-node PRIVATE cxx_std_20)
 
+# Windows: Prevent min/max macro conflicts with C++ standard library
+if(WIN32)
+    target_compile_definitions(cyxwiz-server-node PRIVATE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+endif()
+
 if(MSVC)
     target_compile_options(cyxwiz-server-node PRIVATE /W4)
 else()

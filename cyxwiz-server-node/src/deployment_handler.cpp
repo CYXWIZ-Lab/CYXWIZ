@@ -15,40 +15,38 @@ DeploymentServiceImpl::DeploymentServiceImpl(std::shared_ptr<DeploymentManager> 
     spdlog::debug("DeploymentServiceImpl created");
 }
 
-grpc::Status DeploymentServiceImpl::AssignDeployment(
+grpc::Status DeploymentServiceImpl::CreateDeployment(
     grpc::ServerContext* context,
     const protocol::CreateDeploymentRequest* request,
     protocol::CreateDeploymentResponse* response) {
 
+    const auto& config = request->config();
     spdlog::info("Received deployment assignment: model={}, type={}",
-                 request->model_id(),
-                 protocol::DeploymentType_Name(request->type()));
+                 config.model().name(),
+                 protocol::DeploymentType_Name(config.type()));
 
     try {
         // Accept the deployment
         std::string deployment_id = manager_->AcceptDeployment(
-            request->model_id(),
-            request->type(),
-            request->config()
+            config.model().model_id(),
+            config.type(),
+            config
         );
 
         // Build response
         auto* deployment = response->mutable_deployment();
-        deployment->set_id(deployment_id);
-        deployment->set_model_id(request->model_id());
-        deployment->set_type(request->type());
+        deployment->set_deployment_id(deployment_id);
+        *deployment->mutable_config() = config;
         deployment->set_status(protocol::DEPLOYMENT_STATUS_LOADING);
-        deployment->set_assigned_node_id(manager_->GetNodeId());
-        *deployment->mutable_config() = request->config();
 
-        response->mutable_status()->set_code(protocol::STATUS_SUCCESS);
+        response->set_status(protocol::STATUS_SUCCESS);
         spdlog::info("Deployment {} accepted successfully", deployment_id);
         return grpc::Status::OK;
 
     } catch (const std::exception& e) {
         spdlog::error("Failed to accept deployment: {}", e.what());
-        response->mutable_status()->set_code(protocol::STATUS_INTERNAL_ERROR);
-        response->mutable_status()->mutable_error()->set_message(e.what());
+        response->set_status(protocol::STATUS_ERROR);
+        response->mutable_error()->set_message(e.what());
         return grpc::Status(grpc::StatusCode::INTERNAL, e.what());
     }
 }
@@ -63,14 +61,14 @@ grpc::Status DeploymentServiceImpl::StopDeployment(
     try {
         manager_->StopDeployment(request->deployment_id());
 
-        response->mutable_status()->set_code(protocol::STATUS_SUCCESS);
+        response->set_status(protocol::STATUS_SUCCESS);
         spdlog::info("Deployment {} stopped successfully", request->deployment_id());
         return grpc::Status::OK;
 
     } catch (const std::exception& e) {
         spdlog::error("Failed to stop deployment {}: {}", request->deployment_id(), e.what());
-        response->mutable_status()->set_code(protocol::STATUS_NOT_FOUND);
-        response->mutable_status()->mutable_error()->set_message(e.what());
+        response->set_status(protocol::STATUS_ERROR);
+        response->mutable_error()->set_message(e.what());
         return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
     }
 }
@@ -86,17 +84,14 @@ grpc::Status DeploymentServiceImpl::GetDeployment(
         auto status = manager_->GetDeploymentStatus(request->deployment_id());
 
         auto* deployment = response->mutable_deployment();
-        deployment->set_id(request->deployment_id());
+        deployment->set_deployment_id(request->deployment_id());
         deployment->set_status(status);
-        deployment->set_assigned_node_id(manager_->GetNodeId());
 
-        response->mutable_status()->set_code(protocol::STATUS_SUCCESS);
         return grpc::Status::OK;
 
     } catch (const std::exception& e) {
         spdlog::error("Failed to get deployment {}: {}", request->deployment_id(), e.what());
-        response->mutable_status()->set_code(protocol::STATUS_NOT_FOUND);
-        response->mutable_status()->mutable_error()->set_message(e.what());
+        response->mutable_error()->set_message(e.what());
         return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
     }
 }
@@ -114,23 +109,20 @@ grpc::Status DeploymentServiceImpl::GetDeploymentMetrics(
         // Copy metrics to response
         for (const auto& metric : metrics) {
             auto* m = response->add_metrics();
-            m->set_deployment_id(request->deployment_id());
-            m->set_cpu_usage_percent(metric.cpu_usage);
-            m->set_gpu_usage_percent(metric.gpu_usage);
-            m->set_memory_usage_bytes(metric.memory_usage);
+            m->set_timestamp(metric.timestamp_ms);
+            m->set_cpu_usage(metric.cpu_usage);
+            m->set_gpu_usage(metric.gpu_usage);
+            m->set_memory_usage(metric.memory_usage);
             m->set_request_count(metric.request_count);
             m->set_avg_latency_ms(metric.avg_latency_ms);
-            m->set_timestamp(metric.timestamp);
         }
 
-        response->mutable_status()->set_code(protocol::STATUS_SUCCESS);
         return grpc::Status::OK;
 
     } catch (const std::exception& e) {
         spdlog::error("Failed to get metrics for deployment {}: {}",
                      request->deployment_id(), e.what());
-        response->mutable_status()->set_code(protocol::STATUS_NOT_FOUND);
-        response->mutable_status()->mutable_error()->set_message(e.what());
+        response->mutable_error()->set_message(e.what());
         return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
     }
 }

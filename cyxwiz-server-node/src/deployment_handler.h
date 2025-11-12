@@ -16,8 +16,8 @@ public:
     explicit DeploymentServiceImpl(std::shared_ptr<DeploymentManager> manager);
     ~DeploymentServiceImpl() override = default;
 
-    // Called by Central Server to assign a deployment to this node
-    grpc::Status AssignDeployment(
+    // Called by Central Server to create a deployment on this node
+    grpc::Status CreateDeployment(
         grpc::ServerContext* context,
         const protocol::CreateDeploymentRequest* request,
         protocol::CreateDeploymentResponse* response) override;

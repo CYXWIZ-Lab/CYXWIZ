@@ -118,21 +118,22 @@ std::vector<DeploymentMetrics> DeploymentManager::GetDeploymentMetrics(
     // TODO: Collect actual metrics from system
     // For now, return a single snapshot
     DeploymentMetrics metrics;
+
+    // Get timestamp in milliseconds since epoch
+    auto now = std::chrono::system_clock::now();
+    auto ms_since_epoch = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()
+    ).count();
+    metrics.timestamp_ms = ms_since_epoch;
+
     metrics.cpu_usage = 0.0;  // TODO: Get from metrics collector
     metrics.gpu_usage = 0.0;  // TODO: Get from metrics collector
-    metrics.memory_usage = 0; // TODO: Get from metrics collector
+    metrics.memory_usage = 0.0; // TODO: Get from metrics collector
     metrics.request_count = instance->request_count.load();
 
     double total_latency = instance->total_latency_ms.load();
     uint64_t count = instance->request_count.load();
     metrics.avg_latency_ms = (count > 0) ? (total_latency / count) : 0.0;
-
-    // ISO 8601 timestamp
-    auto now = std::chrono::system_clock::now();
-    auto tt = std::chrono::system_clock::to_time_t(now);
-    std::stringstream ss;
-    ss << std::put_time(std::gmtime(&tt), "%Y-%m-%dT%H:%M:%SZ");
-    metrics.timestamp = ss.str();
 
     return {metrics};
 }
@@ -189,17 +190,17 @@ void DeploymentManager::ExecuteDeployment(DeploymentInstance* instance) {
 bool DeploymentManager::LoadModel(DeploymentInstance* instance) {
     spdlog::info("Loading model {} with format {}",
                  instance->model_id,
-                 instance->config.model_format());
+                 protocol::ModelFormat_Name(instance->config.model().format()));
 
     try {
         // Create model loader based on format
         instance->model_loader = ModelLoaderFactory::Create(
-            instance->config.model_format()
+            protocol::ModelFormat_Name(instance->config.model().format())
         );
 
         if (!instance->model_loader) {
             spdlog::error("Failed to create model loader for format: {}",
-                         instance->config.model_format());
+                         protocol::ModelFormat_Name(instance->config.model().format()));
             return false;
         }
 

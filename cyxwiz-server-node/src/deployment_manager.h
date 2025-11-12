@@ -33,12 +33,12 @@ struct DeploymentInstance {
 
 // Metrics snapshot for a deployment
 struct DeploymentMetrics {
+    int64_t timestamp_ms;        // Unix timestamp in milliseconds
     double cpu_usage;
     double gpu_usage;
-    uint64_t memory_usage;
+    double memory_usage;
     uint64_t request_count;
     double avg_latency_ms;
-    std::string timestamp;
 };
 
 // Manages all deployments on this Server Node
