@@ -4,6 +4,7 @@ out/
 bin/
 lib/
 cmake-build-*/
+target/
 .vs/
 .vscode/
 *.user
