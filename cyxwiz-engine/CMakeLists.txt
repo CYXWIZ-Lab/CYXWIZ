@@ -36,6 +36,7 @@ set(ENGINE_SOURCES
     src/plotting/plot_dataset.cpp
     src/plotting/plot_manager.cpp
     src/plotting/test_data_generator.cpp
+    src/plotting/plot_3d_generator.cpp
     src/plotting/backends/implot_backend.cpp
     src/plotting/backends/matplotlib_backend.cpp
 )
@@ -60,6 +61,8 @@ set(ENGINE_HEADERS
     src/plotting/plot_dataset.h
     src/plotting/plot_manager.h
     src/plotting/test_data_generator.h
+    src/plotting/plot_3d.h
+    src/plotting/plot_3d_generator.h
     src/plotting/backends/plot_backend.h
     src/plotting/backends/implot_backend.h
     src/plotting/backends/matplotlib_backend.h
