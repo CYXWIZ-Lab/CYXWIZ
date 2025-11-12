@@ -9,6 +9,7 @@ target/
 .vscode/
 *.user
 .claude
+CLAUDE.md
 
 # CMake
 CMakeCache.txt
