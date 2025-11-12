@@ -106,10 +106,10 @@ void ImPlotBackend::BeginPlot(const char* title) {
 
         // Set axis labels
         if (!state_->x_label.empty()) {
-            ImPlot::SetupAxisLabel(ImAxis_X1, state_->x_label.c_str());
+            ImPlot::SetupAxis(ImAxis_X1, state_->x_label.c_str());
         }
         if (!state_->y_label.empty()) {
-            ImPlot::SetupAxisLabel(ImAxis_Y1, state_->y_label.c_str());
+            ImPlot::SetupAxis(ImAxis_Y1, state_->y_label.c_str());
         }
 
         // Set axis limits if not auto-fit
@@ -161,7 +161,9 @@ void ImPlotBackend::PlotBars(const char* label, const double* x_data,
         return;
     }
 
-    ImPlot::PlotBars(label, x_data, y_data, count);
+    // ImPlot::PlotBars expects different signature - use bar width
+    double bar_width = 0.67;  // Default bar width
+    ImPlot::PlotBars(label, x_data, y_data, count, bar_width);
 }
 
 void ImPlotBackend::PlotHistogram(const char* label, const double* values,

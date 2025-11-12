@@ -1,7 +1,12 @@
+#define _USE_MATH_DEFINES
 #include "test_data_generator.h"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 namespace cyxwiz::plotting {
 
