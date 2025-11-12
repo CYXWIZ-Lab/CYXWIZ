@@ -1,0 +1,46 @@
+# CyxWiz Central Server Configuration
+
+[server]
+grpc_address = "0.0.0.0:50051"
+rest_address = "0.0.0.0:8080"
+max_connections = 1000
+
+[database]
+# SQLite database (file-based, no server needed)
+# Note: SQLite will create the file in the current working directory
+url = "sqlite://./cyxwiz.db?mode=rwc"
+max_connections = 5
+min_connections = 1
+
+[redis]
+# Redis is optional for quick testing with SQLite
+# Install Redis later for full functionality
+url = "redis://127.0.0.1:6379"
+pool_size = 10
+
+[blockchain]
+# Solana RPC endpoint
+# - devnet: https://api.devnet.solana.com
+# - testnet: https://api.testnet.solana.com
+# - mainnet-beta: https://api.mainnet-beta.solana.com
+solana_rpc_url = "https://api.devnet.solana.com"
+
+# Smart contract program ID (deployed on Solana)
+program_id = "CyxWiz11111111111111111111111111111111111"
+
+# Path to payer keypair file (JSON format)
+# Generate with: solana-keygen new --outfile ~/.config/solana/id.json
+payer_keypair_path = "~/.config/solana/id.json"
+
+# Network: devnet, testnet, mainnet-beta
+network = "devnet"
+
+[scheduler]
+# How often to poll for pending jobs (milliseconds)
+job_poll_interval_ms = 1000
+
+# Node heartbeat timeout (milliseconds)
+node_heartbeat_timeout_ms = 30000
+
+# Maximum job retries before giving up
+max_retries = 3

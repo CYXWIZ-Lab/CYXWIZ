@@ -1,0 +1,50 @@
+[package]
+name = "cyxwiz-central-server"
+version = "0.1.0"
+edition = "2021"
+authors = ["CyxWiz Team"]
+description = "CyxWiz Central Server - Decentralized compute orchestrator"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+tonic = "0.10"
+prost = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "uuid", "chrono", "json"] }
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+thiserror = "1.0"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+config = "0.13"
+toml = "0.8"
+
+# REST API
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Blockchain integration (temporarily commented out for quick test)
+# solana-sdk = "2.0"
+# solana-client = "2.0"
+bs58 = "0.5"
+
+# Async utilities
+async-trait = "0.1"
+futures = "0.3"
+tokio-stream = "0.1"
+sha2 = "0.10"
+
+# TUI (Terminal User Interface)
+ratatui = "0.25"
+crossterm = "0.27"
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[[bin]]
+name = "cyxwiz-central-server"
+path = "src/main.rs"

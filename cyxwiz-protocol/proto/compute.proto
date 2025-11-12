@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+import "common.proto";
+
+// Compute operation types
+enum OperationType {
+  OP_UNKNOWN = 0;
+  OP_MATMUL = 1;
+  OP_CONV2D = 2;
+  OP_POOL = 3;
+  OP_ACTIVATION = 4;
+  OP_LOSS = 5;
+  OP_OPTIMIZER_STEP = 6;
+  OP_CUSTOM = 100;
+}
+
+// Optimizer types
+enum OptimizerType {
+  OPTIMIZER_SGD = 0;
+  OPTIMIZER_ADAM = 1;
+  OPTIMIZER_ADAMW = 2;
+  OPTIMIZER_RMSPROP = 3;
+  OPTIMIZER_ADAGRAD = 4;
+}
+
+// Tensor data (for small tensors, large ones use IPFS)
+message Tensor {
+  TensorInfo info = 1;
+  bytes data = 2;               // Raw tensor data
+  string ipfs_hash = 3;         // For large tensors
+  bool compressed = 4;
+}
+
+// Layer configuration
+message LayerConfig {
+  string layer_name = 1;
+  string layer_type = 2;        // Dense, Conv2D, LSTM, etc.
+  map<string, string> parameters = 3;
+  repeated string input_names = 4;
+  repeated string output_names = 5;
+}
+
+// Model architecture
+message ModelArchitecture {
+  string model_name = 1;
+  string model_type = 2;        // Sequential, Functional, Custom
+  repeated LayerConfig layers = 3;
+  string loss_function = 4;
+  OptimizerType optimizer = 5;
+  map<string, double> optimizer_params = 6;
+  repeated string metrics = 7;
+}
+
+// Training configuration
+message TrainingConfig {
+  int32 batch_size = 1;
+  int32 epochs = 2;
+  double learning_rate = 3;
+  bool shuffle_data = 4;
+  int32 validation_split = 5;   // Percentage
+  int32 random_seed = 6;
+  bool use_mixed_precision = 7;
+  int32 checkpoint_frequency = 8; // Save every N epochs
+}
+
+// Compute request (for direct computation)
+message ComputeRequest {
+  string operation_id = 1;
+  OperationType operation = 2;
+  repeated Tensor inputs = 3;
+  map<string, string> parameters = 4;
+  DeviceType target_device = 5;
+}
+
+message ComputeResponse {
+  string operation_id = 1;
+  StatusCode status = 2;
+  repeated Tensor outputs = 3;
+  int64 compute_time_ms = 4;
+  Error error = 5;
+}
+
+// Compute Service - For direct backend computation
+service ComputeService {
+  // Execute a single operation
+  rpc Execute(ComputeRequest) returns (ComputeResponse);
+
+  // Execute multiple operations (graph)
+  rpc ExecuteGraph(ExecuteGraphRequest) returns (ExecuteGraphResponse);
+
+  // Stream operations for large workloads
+  rpc StreamExecute(stream ComputeRequest) returns (stream ComputeResponse);
+}
+
+message ExecuteGraphRequest {
+  string graph_id = 1;
+  repeated ComputeRequest operations = 2;
+  repeated string execution_order = 3;
+}
+
+message ExecuteGraphResponse {
+  string graph_id = 1;
+  StatusCode status = 2;
+  map<string, Tensor> outputs = 3;
+  int64 total_compute_time_ms = 4;
+  Error error = 5;
+}

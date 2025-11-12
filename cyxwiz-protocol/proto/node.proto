@@ -1,0 +1,206 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+import "common.proto";
+import "job.proto";
+
+// Node information
+message NodeInfo {
+  string node_id = 1;
+  string name = 2;
+  Version version = 3;
+
+  // Hardware
+  repeated DeviceCapabilities devices = 4;
+  int32 cpu_cores = 5;
+  int64 ram_total = 6;
+  int64 ram_available = 7;
+
+  // Network
+  string ip_address = 8;
+  int32 port = 9;
+  string region = 10;            // Geographic location
+
+  // Performance
+  double compute_score = 11;     // Benchmark score
+  double reputation_score = 12;  // 0.0 to 1.0
+  int64 total_jobs_completed = 13;
+  int64 total_compute_hours = 14;
+  double average_rating = 15;
+
+  // Staking
+  double staked_amount = 16;     // CYXWIZ tokens
+  string wallet_address = 17;
+
+  // Status
+  bool is_online = 18;
+  int64 last_heartbeat = 19;
+  double uptime_percentage = 20;
+
+  // Model deployment capabilities
+  repeated string supported_formats = 21;  // e.g., ["ONNX", "GGUF", "PyTorch", "TensorFlow"]
+  int64 max_model_size = 22;               // Maximum model size in bytes
+  bool supports_terminal_access = 23;      // Can provide terminal/CLI access
+  repeated string available_runtimes = 24; // e.g., ["onnxruntime", "pytorch", "llama.cpp"]
+}
+
+// Node registration
+message RegisterNodeRequest {
+  NodeInfo info = 1;
+  string authentication_token = 2;
+  bytes public_key = 3;           // For verification
+}
+
+message RegisterNodeResponse {
+  StatusCode status = 1;
+  string node_id = 2;
+  string session_token = 3;
+  Error error = 4;
+}
+
+// Node heartbeat
+message HeartbeatRequest {
+  string node_id = 1;
+  NodeInfo current_status = 2;
+  repeated string active_jobs = 3;
+}
+
+message HeartbeatResponse {
+  StatusCode status = 1;
+  bool keep_alive = 2;
+  repeated string jobs_to_cancel = 3;
+  Error error = 4;
+}
+
+// Job assignment (Central Server -> Server Node)
+message AssignJobRequest {
+  string node_id = 1;
+  JobConfig job = 2;
+  string authorization_token = 3;
+}
+
+message AssignJobResponse {
+  StatusCode status = 1;
+  string job_id = 2;
+  bool accepted = 3;
+  Error error = 4;
+  string estimated_start_time = 5;
+}
+
+// Job progress report (Server Node -> Central Server)
+message ReportProgressRequest {
+  string node_id = 1;
+  string job_id = 2;
+  JobStatus status = 3;
+  map<string, double> current_metrics = 4;
+}
+
+message ReportProgressResponse {
+  StatusCode status = 1;
+  bool continue_job = 2;         // Server can request cancellation
+  Error error = 3;
+}
+
+// Job completion report
+message ReportCompletionRequest {
+  string node_id = 1;
+  string job_id = 2;
+  JobResult result = 3;
+  bytes signature = 4;           // Node signature for verification
+}
+
+message ReportCompletionResponse {
+  StatusCode status = 1;
+  bool payment_released = 2;
+  string payment_tx_hash = 3;
+  Error error = 4;
+}
+
+// Node metrics query
+message GetNodeMetricsRequest {
+  string node_id = 1;
+  int64 start_time = 2;
+  int64 end_time = 3;
+}
+
+message GetNodeMetricsResponse {
+  repeated MetricPoint metrics = 1;
+  Error error = 2;
+}
+
+message MetricPoint {
+  int64 timestamp = 1;
+  double cpu_usage = 2;
+  double gpu_usage = 3;
+  double memory_usage = 4;
+  double network_throughput = 5;
+  double power_consumption = 6;
+}
+
+// Node Service - Central Server to Server Node
+service NodeService {
+  // Node registration
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+
+  // Keep-alive heartbeat
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Assign job to node
+  rpc AssignJob(AssignJobRequest) returns (AssignJobResponse);
+
+  // Report job progress
+  rpc ReportProgress(ReportProgressRequest) returns (ReportProgressResponse);
+
+  // Report job completion
+  rpc ReportCompletion(ReportCompletionRequest) returns (ReportCompletionResponse);
+
+  // Get node metrics
+  rpc GetNodeMetrics(GetNodeMetricsRequest) returns (GetNodeMetricsResponse);
+}
+
+// Node Discovery Service - For finding available nodes
+service NodeDiscoveryService {
+  // Find available nodes matching requirements
+  rpc FindNodes(FindNodesRequest) returns (FindNodesResponse);
+
+  // List all nodes
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+
+  // Get specific node info
+  rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
+}
+
+message FindNodesRequest {
+  DeviceType required_device = 1;
+  int64 min_memory = 2;
+  double min_reputation = 3;
+  string preferred_region = 4;
+  int32 max_results = 5;
+}
+
+message FindNodesResponse {
+  repeated NodeInfo nodes = 1;
+  Error error = 2;
+}
+
+message ListNodesRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+  bool online_only = 3;
+}
+
+message ListNodesResponse {
+  repeated NodeInfo nodes = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message GetNodeInfoRequest {
+  string node_id = 1;
+}
+
+message GetNodeInfoResponse {
+  NodeInfo info = 1;
+  Error error = 2;
+}

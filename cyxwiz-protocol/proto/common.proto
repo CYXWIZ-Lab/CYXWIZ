@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+// Common status codes
+enum StatusCode {
+  STATUS_UNKNOWN = 0;
+  STATUS_SUCCESS = 1;
+  STATUS_ERROR = 2;
+  STATUS_PENDING = 3;
+  STATUS_IN_PROGRESS = 4;
+  STATUS_COMPLETED = 5;
+  STATUS_FAILED = 6;
+  STATUS_CANCELLED = 7;
+}
+
+// Compute device types
+enum DeviceType {
+  DEVICE_UNKNOWN = 0;
+  DEVICE_CPU = 1;
+  DEVICE_CUDA = 2;
+  DEVICE_OPENCL = 3;
+  DEVICE_METAL = 4;
+  DEVICE_VULKAN = 5;
+}
+
+// Data types for tensors
+enum DataType {
+  DATA_TYPE_UNKNOWN = 0;
+  DATA_TYPE_FLOAT32 = 1;
+  DATA_TYPE_FLOAT64 = 2;
+  DATA_TYPE_INT32 = 3;
+  DATA_TYPE_INT64 = 4;
+  DATA_TYPE_UINT8 = 5;
+}
+
+// Error information
+message Error {
+  int32 code = 1;
+  string message = 2;
+  string details = 3;
+}
+
+// Tensor shape and metadata
+message TensorInfo {
+  repeated int64 shape = 1;
+  DataType dtype = 2;
+  string name = 3;
+}
+
+// Device capabilities
+message DeviceCapabilities {
+  DeviceType device_type = 1;
+  string device_name = 2;
+  int64 memory_total = 3;      // bytes
+  int64 memory_available = 4;  // bytes
+  int32 compute_units = 5;
+  bool supports_fp64 = 6;
+  bool supports_fp16 = 7;
+
+  // Extended hardware details for deployment matching
+  string gpu_model = 8;        // Specific GPU model (e.g., "RTX 4090", "A100", "V100")
+  int64 vram_total = 9;        // Total VRAM in bytes (for GPU devices)
+  int64 vram_available = 10;   // Available VRAM in bytes
+  string driver_version = 11;  // GPU driver version
+  string cuda_version = 12;    // CUDA version (if NVIDIA GPU)
+  int32 pcie_generation = 13;  // PCIe generation (3, 4, 5)
+  int32 pcie_lanes = 14;       // Number of PCIe lanes
+  double compute_capability = 15; // CUDA compute capability (e.g., 8.9 for RTX 4090)
+}
+
+// Version information
+message Version {
+  int32 major = 1;
+  int32 minor = 2;
+  int32 patch = 3;
+  string build = 4;
+}

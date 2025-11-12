@@ -1,0 +1,117 @@
+cmake_minimum_required(VERSION 3.20)
+
+project(cyxwiz-engine)
+
+# Find packages
+find_package(imgui CONFIG REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
+find_package(glad CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(pybind11 CONFIG REQUIRED)
+
+# ImNodes for node editor (may need manual integration if not in vcpkg)
+# Download from: https://github.com/Nelarius/imnodes
+
+# Source files
+set(ENGINE_SOURCES
+    src/main.cpp
+    src/application.cpp
+    src/gui/main_window.cpp
+    src/gui/node_editor.cpp
+    src/gui/console.cpp
+    src/gui/viewport.cpp
+    src/gui/properties.cpp
+    src/gui/panels/toolbar.cpp
+    src/gui/panels/asset_browser.cpp
+    src/gui/panels/training_dashboard.cpp
+    src/scripting/python_engine.cpp
+    src/scripting/script_manager.cpp
+    src/network/grpc_client.cpp
+    src/network/job_manager.cpp
+)
+
+set(ENGINE_HEADERS
+    src/application.h
+    src/gui/main_window.h
+    src/gui/node_editor.h
+    src/gui/console.h
+    src/gui/viewport.h
+    src/gui/properties.h
+    src/gui/panel.h
+    src/gui/panels/toolbar.h
+    src/gui/panels/asset_browser.h
+    src/gui/panels/training_dashboard.h
+    src/scripting/python_engine.h
+    src/scripting/script_manager.h
+    src/network/grpc_client.h
+    src/network/job_manager.h
+)
+
+# Create executable
+add_executable(cyxwiz-engine
+    ${ENGINE_SOURCES}
+    ${ENGINE_HEADERS}
+)
+
+# Include directories
+target_include_directories(cyxwiz-engine PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+# Find OpenGL
+find_package(OpenGL REQUIRED)
+
+# Link libraries
+target_link_libraries(cyxwiz-engine PRIVATE
+    imgui::imgui
+    glfw
+    glad::glad
+    OpenGL::GL
+    fmt::fmt
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    pybind11::embed
+    cyxwiz-backend
+    cyxwiz-protocol
+)
+
+# Platform-specific settings
+if(WIN32)
+    # Windows-specific
+    target_compile_definitions(cyxwiz-engine PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+    # Add icon resource if available
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.rc")
+        target_sources(cyxwiz-engine PRIVATE resources/icon.rc)
+    endif()
+endif()
+
+if(APPLE)
+    # macOS-specific
+    target_link_libraries(cyxwiz-engine PRIVATE
+        "-framework Cocoa"
+        "-framework IOKit"
+        "-framework CoreVideo"
+    )
+endif()
+
+# Copy resources to build directory
+add_custom_command(TARGET cyxwiz-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources
+    $<TARGET_FILE_DIR:cyxwiz-engine>/resources
+    COMMENT "Copying resources..."
+)
+
+# Install
+install(TARGETS cyxwiz-engine
+    RUNTIME DESTINATION bin
+)
+
+install(DIRECTORY resources/
+    DESTINATION share/cyxwiz/resources
+)

@@ -1,0 +1,441 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+import "common.proto";
+import "node.proto";
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+// Supported model formats
+enum ModelFormat {
+  MODEL_FORMAT_UNKNOWN = 0;
+  MODEL_FORMAT_ONNX = 1;
+  MODEL_FORMAT_GGUF = 2;           // GGML format for LLMs
+  MODEL_FORMAT_PYTORCH = 3;
+  MODEL_FORMAT_TENSORFLOW = 4;
+  MODEL_FORMAT_SAFETENSORS = 5;
+  MODEL_FORMAT_TFLITE = 6;
+  MODEL_FORMAT_TORCHSCRIPT = 7;
+}
+
+// Deployment types
+enum DeploymentType {
+  DEPLOYMENT_TYPE_UNKNOWN = 0;
+  DEPLOYMENT_TYPE_LOCAL = 1;       // Deploy on user's machine
+  DEPLOYMENT_TYPE_NETWORK = 2;     // Deploy on decentralized network
+}
+
+// Deployment status
+enum DeploymentStatus {
+  DEPLOYMENT_STATUS_UNKNOWN = 0;
+  DEPLOYMENT_STATUS_PENDING = 1;
+  DEPLOYMENT_STATUS_PROVISIONING = 2;
+  DEPLOYMENT_STATUS_LOADING = 3;
+  DEPLOYMENT_STATUS_READY = 4;
+  DEPLOYMENT_STATUS_RUNNING = 5;
+  DEPLOYMENT_STATUS_STOPPED = 6;
+  DEPLOYMENT_STATUS_FAILED = 7;
+  DEPLOYMENT_STATUS_TERMINATED = 8;
+}
+
+// Terminal session status
+enum TerminalSessionStatus {
+  TERMINAL_SESSION_UNKNOWN = 0;
+  TERMINAL_SESSION_ACTIVE = 1;
+  TERMINAL_SESSION_CLOSED = 2;
+  TERMINAL_SESSION_ERROR = 3;
+}
+
+// Model source
+enum ModelSource {
+  MODEL_SOURCE_UNKNOWN = 0;
+  MODEL_SOURCE_LOCAL = 1;          // Local file
+  MODEL_SOURCE_HUGGINGFACE = 2;    // HuggingFace hub
+  MODEL_SOURCE_CYXWIZ_HUB = 3;     // CyxWiz marketplace
+  MODEL_SOURCE_URL = 4;            // Direct URL download
+}
+
+// ============================================================================
+// DEPLOYMENT MESSAGES
+// ============================================================================
+
+// Hardware requirements for deployment
+message HardwareRequirements {
+  int64 min_vram = 1;              // Minimum VRAM in bytes
+  int64 min_ram = 2;               // Minimum RAM in bytes
+  int32 min_cpu_cores = 3;         // Minimum CPU cores
+  DeviceType required_device = 4;  // Required device type (CPU/CUDA/etc)
+  string gpu_name_preference = 5;  // Preferred GPU (e.g., "RTX 4090", "A100")
+  repeated string supported_formats = 6; // e.g., ["ONNX", "PyTorch"]
+}
+
+// Model information
+message ModelInfo {
+  string model_id = 1;
+  string name = 2;
+  string description = 3;
+  ModelFormat format = 4;
+  ModelSource source = 5;
+  string source_url = 6;           // URL if from HuggingFace/URL
+  string local_path = 7;           // Path if local
+  int64 size_bytes = 8;
+  HardwareRequirements requirements = 9;
+  map<string, string> metadata = 10; // Additional model metadata
+}
+
+// Deployment configuration
+message DeploymentConfig {
+  string deployment_id = 1;
+  string user_id = 2;
+  DeploymentType type = 3;
+  ModelInfo model = 4;
+
+  // Network deployment specific
+  string node_id = 5;              // Assigned node (if network deployment)
+  HardwareRequirements requirements = 6;
+  double max_price_per_hour = 7;   // Max price willing to pay (CYXWIZ tokens)
+  string preferred_region = 8;
+
+  // Runtime configuration
+  map<string, string> environment_vars = 9;
+  map<string, string> runtime_params = 10; // e.g., {"max_batch_size": "8"}
+  int32 port = 11;                 // Port for model serving
+  bool enable_terminal = 12;       // Enable terminal access
+}
+
+// Deployment instance
+message Deployment {
+  string deployment_id = 1;
+  DeploymentConfig config = 2;
+  DeploymentStatus status = 3;
+
+  // Node assignment (network only)
+  NodeInfo assigned_node = 4;
+
+  // Status details
+  string status_message = 5;
+  int64 created_at = 6;
+  int64 started_at = 7;
+  int64 stopped_at = 8;
+
+  // Networking
+  string endpoint_url = 9;         // HTTP/gRPC endpoint for inference
+  string terminal_endpoint = 10;   // Terminal access endpoint
+
+  // Payment (network only)
+  string payment_escrow_address = 11;
+  double hourly_rate = 12;         // Actual rate (CYXWIZ tokens/hour)
+  double total_cost = 13;          // Running total cost
+  string payment_tx_hash = 14;     // Initial escrow transaction
+
+  // Metrics
+  int64 uptime_seconds = 15;
+  int64 total_requests = 16;
+  double avg_latency_ms = 17;
+
+  Error error = 18;
+}
+
+// ============================================================================
+// TERMINAL MESSAGES
+// ============================================================================
+
+// Terminal data (bidirectional streaming)
+message TerminalData {
+  string session_id = 1;
+  string deployment_id = 2;
+  bytes data = 3;                  // Raw terminal data (UTF-8 or binary)
+  bool is_eof = 4;                 // End of stream marker
+  int32 sequence_number = 5;       // For ordering
+}
+
+// Terminal resize event
+message TerminalResize {
+  string session_id = 1;
+  int32 rows = 2;
+  int32 cols = 3;
+}
+
+// Terminal session info
+message TerminalSession {
+  string session_id = 1;
+  string deployment_id = 2;
+  string user_id = 3;
+  TerminalSessionStatus status = 4;
+  int64 created_at = 5;
+  int64 last_activity = 6;
+  int32 rows = 7;
+  int32 cols = 8;
+}
+
+// ============================================================================
+// MODEL UPLOAD/DOWNLOAD MESSAGES
+// ============================================================================
+
+// Model chunk for streaming upload/download
+message ModelChunk {
+  string model_id = 1;
+  bytes data = 2;                  // Chunk data
+  int64 offset = 3;                // Byte offset in file
+  int64 total_size = 4;            // Total file size
+  bool is_final = 5;               // Last chunk marker
+  string checksum = 6;             // Chunk checksum (SHA256)
+}
+
+// Model registry entry
+message ModelRegistryEntry {
+  string model_id = 1;
+  ModelInfo info = 2;
+  string owner_id = 3;
+  bool is_public = 4;
+  int64 download_count = 5;
+  double rating = 6;
+  repeated string tags = 7;
+  int64 uploaded_at = 8;
+  string storage_path = 9;         // Internal storage path
+}
+
+// ============================================================================
+// DEPLOYMENT SERVICE
+// ============================================================================
+
+// Create deployment request
+message CreateDeploymentRequest {
+  DeploymentConfig config = 1;
+  string authentication_token = 2;
+}
+
+message CreateDeploymentResponse {
+  StatusCode status = 1;
+  Deployment deployment = 2;
+  Error error = 3;
+}
+
+// Get deployment request
+message GetDeploymentRequest {
+  string deployment_id = 1;
+  string user_id = 2;
+}
+
+message GetDeploymentResponse {
+  Deployment deployment = 1;
+  Error error = 2;
+}
+
+// List deployments request
+message ListDeploymentsRequest {
+  string user_id = 1;
+  DeploymentType type_filter = 2;
+  DeploymentStatus status_filter = 3;
+  int32 page_size = 4;
+  string page_token = 5;
+}
+
+message ListDeploymentsResponse {
+  repeated Deployment deployments = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+  Error error = 4;
+}
+
+// Stop deployment request
+message StopDeploymentRequest {
+  string deployment_id = 1;
+  string user_id = 2;
+}
+
+message StopDeploymentResponse {
+  StatusCode status = 1;
+  Deployment deployment = 2;
+  Error error = 3;
+}
+
+// Delete deployment request
+message DeleteDeploymentRequest {
+  string deployment_id = 1;
+  string user_id = 2;
+}
+
+message DeleteDeploymentResponse {
+  StatusCode status = 1;
+  Error error = 2;
+}
+
+// Get deployment metrics
+message GetDeploymentMetricsRequest {
+  string deployment_id = 1;
+  int64 start_time = 2;
+  int64 end_time = 3;
+}
+
+message GetDeploymentMetricsResponse {
+  repeated DeploymentMetricPoint metrics = 1;
+  Error error = 2;
+}
+
+message DeploymentMetricPoint {
+  int64 timestamp = 1;
+  double cpu_usage = 2;
+  double gpu_usage = 3;
+  double memory_usage = 4;
+  int64 request_count = 5;
+  double avg_latency_ms = 6;
+  double throughput_rps = 7;       // Requests per second
+}
+
+// ============================================================================
+// TERMINAL SERVICE
+// ============================================================================
+
+// Create terminal session
+message CreateTerminalSessionRequest {
+  string deployment_id = 1;
+  string user_id = 2;
+  int32 rows = 3;
+  int32 cols = 4;
+}
+
+message CreateTerminalSessionResponse {
+  StatusCode status = 1;
+  TerminalSession session = 2;
+  Error error = 3;
+}
+
+// Close terminal session
+message CloseTerminalSessionRequest {
+  string session_id = 1;
+}
+
+message CloseTerminalSessionResponse {
+  StatusCode status = 1;
+  Error error = 2;
+}
+
+// ============================================================================
+// MODEL SERVICE
+// ============================================================================
+
+// Upload model metadata
+message UploadModelMetadataRequest {
+  ModelInfo info = 1;
+  string user_id = 2;
+  bool is_public = 3;
+  repeated string tags = 4;
+}
+
+message UploadModelMetadataResponse {
+  StatusCode status = 1;
+  string model_id = 2;
+  string upload_url = 3;           // URL for uploading chunks
+  Error error = 4;
+}
+
+// Download model metadata
+message DownloadModelMetadataRequest {
+  string model_id = 1;
+}
+
+message DownloadModelMetadataResponse {
+  StatusCode status = 1;
+  ModelRegistryEntry entry = 2;
+  string download_url = 3;         // URL for downloading chunks
+  Error error = 4;
+}
+
+// List models in marketplace
+message ListModelsRequest {
+  string search_query = 1;
+  repeated string tags = 2;
+  ModelFormat format_filter = 3;
+  int32 page_size = 4;
+  string page_token = 5;
+  bool public_only = 6;
+}
+
+message ListModelsResponse {
+  repeated ModelRegistryEntry models = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+  Error error = 4;
+}
+
+// Delete model
+message DeleteModelRequest {
+  string model_id = 1;
+  string user_id = 2;
+}
+
+message DeleteModelResponse {
+  StatusCode status = 1;
+  Error error = 2;
+}
+
+// Generic response for simple operations
+message SimpleResponse {
+  StatusCode status = 1;
+  Error error = 2;
+}
+
+// ============================================================================
+// SERVICES
+// ============================================================================
+
+// Deployment Service - Manage model deployments
+service DeploymentService {
+  // Create a new deployment (local or network)
+  rpc CreateDeployment(CreateDeploymentRequest) returns (CreateDeploymentResponse);
+
+  // Get deployment status and details
+  rpc GetDeployment(GetDeploymentRequest) returns (GetDeploymentResponse);
+
+  // List user's deployments
+  rpc ListDeployments(ListDeploymentsRequest) returns (ListDeploymentsResponse);
+
+  // Stop a running deployment
+  rpc StopDeployment(StopDeploymentRequest) returns (StopDeploymentResponse);
+
+  // Delete a deployment
+  rpc DeleteDeployment(DeleteDeploymentRequest) returns (DeleteDeploymentResponse);
+
+  // Get deployment metrics
+  rpc GetDeploymentMetrics(GetDeploymentMetricsRequest) returns (GetDeploymentMetricsResponse);
+}
+
+// Terminal Service - Interactive terminal access to deployments
+service TerminalService {
+  // Create new terminal session
+  rpc CreateSession(CreateTerminalSessionRequest) returns (CreateTerminalSessionResponse);
+
+  // Bidirectional streaming for terminal data
+  rpc StreamTerminal(stream TerminalData) returns (stream TerminalData);
+
+  // Resize terminal window
+  rpc ResizeTerminal(TerminalResize) returns (SimpleResponse);
+
+  // Close terminal session
+  rpc CloseSession(CloseTerminalSessionRequest) returns (CloseTerminalSessionResponse);
+}
+
+// Model Service - Upload/download models to/from CyxWiz Hub
+service ModelService {
+  // Upload model metadata
+  rpc UploadMetadata(UploadModelMetadataRequest) returns (UploadModelMetadataResponse);
+
+  // Stream upload model file
+  rpc UploadModel(stream ModelChunk) returns (SimpleResponse);
+
+  // Download model metadata
+  rpc DownloadMetadata(DownloadModelMetadataRequest) returns (DownloadModelMetadataResponse);
+
+  // Stream download model file
+  rpc DownloadModel(DownloadModelMetadataRequest) returns (stream ModelChunk);
+
+  // List models in marketplace
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+
+  // Delete model
+  rpc DeleteModel(DeleteModelRequest) returns (DeleteModelResponse);
+}

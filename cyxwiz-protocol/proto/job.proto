@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+import "common.proto";
+
+// Job types
+enum JobType {
+  JOB_TYPE_UNKNOWN = 0;
+  JOB_TYPE_TRAINING = 1;
+  JOB_TYPE_INFERENCE = 2;
+  JOB_TYPE_EVALUATION = 3;
+  JOB_TYPE_PREPROCESSING = 4;
+}
+
+// Job priority
+enum JobPriority {
+  PRIORITY_LOW = 0;
+  PRIORITY_NORMAL = 1;
+  PRIORITY_HIGH = 2;
+  PRIORITY_CRITICAL = 3;
+}
+
+// Job configuration
+message JobConfig {
+  string job_id = 1;
+  JobType job_type = 2;
+  JobPriority priority = 3;
+
+  // Model configuration
+  string model_definition = 4;    // JSON or script
+  map<string, string> hyperparameters = 5;
+
+  // Data configuration
+  string dataset_uri = 6;         // IPFS hash or URL
+  int32 batch_size = 7;
+  int32 epochs = 8;
+
+  // Compute requirements
+  DeviceType required_device = 9;
+  int64 estimated_memory = 10;    // bytes
+  int64 estimated_duration = 11;  // seconds
+
+  // Payment
+  double payment_amount = 12;     // CYXWIZ tokens
+  string payment_address = 13;
+  string escrow_tx_hash = 14;
+}
+
+// Job status
+message JobStatus {
+  string job_id = 1;
+  StatusCode status = 2;
+  double progress = 3;            // 0.0 to 1.0
+  string current_node_id = 4;
+  int64 start_time = 5;           // Unix timestamp
+  int64 end_time = 6;
+  Error error = 7;
+
+  // Training metrics
+  map<string, double> metrics = 8; // loss, accuracy, etc.
+  int32 current_epoch = 9;
+}
+
+// Job result
+message JobResult {
+  string job_id = 1;
+  StatusCode status = 2;
+
+  // Model output
+  string model_weights_uri = 3;   // IPFS hash
+  string model_weights_hash = 4;  // SHA256 for verification
+  int64 model_size = 5;           // bytes
+
+  // Final metrics
+  map<string, double> final_metrics = 6;
+
+  // Compute stats
+  int64 total_compute_time = 7;   // seconds
+  double energy_consumed = 8;      // kWh
+
+  // Verification
+  string proof_of_compute = 9;    // Cryptographic proof
+  repeated string signatures = 10; // Node signatures
+}
+
+// Job submission request
+message SubmitJobRequest {
+  JobConfig config = 1;
+  bytes initial_data = 2;         // Optional inline data
+}
+
+// Job submission response
+message SubmitJobResponse {
+  string job_id = 1;
+  StatusCode status = 2;
+  string assigned_node_id = 3;
+  Error error = 4;
+  int64 estimated_start_time = 5;
+}
+
+// Job status query
+message GetJobStatusRequest {
+  string job_id = 1;
+}
+
+message GetJobStatusResponse {
+  JobStatus status = 1;
+  Error error = 2;
+}
+
+// Job cancellation
+message CancelJobRequest {
+  string job_id = 1;
+  string reason = 2;
+}
+
+message CancelJobResponse {
+  StatusCode status = 1;
+  bool refund_issued = 2;
+  Error error = 3;
+}
+
+// Job streaming updates
+message JobUpdateStream {
+  string job_id = 1;
+  JobStatus status = 2;
+
+  // Real-time metrics
+  map<string, double> live_metrics = 3;
+  string log_message = 4;
+  bytes visualization_data = 5;   // Optional plots/charts
+}
+
+// Job Service - Client to Central Server
+service JobService {
+  // Submit a new job
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+
+  // Query job status
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+
+  // Cancel a job
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+
+  // Stream real-time job updates
+  rpc StreamJobUpdates(GetJobStatusRequest) returns (stream JobUpdateStream);
+
+  // List user's jobs
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+}
+
+message ListJobsRequest {
+  string user_id = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+  JobType filter_type = 4;
+  StatusCode filter_status = 5;
+}
+
+message ListJobsResponse {
+  repeated JobStatus jobs = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
