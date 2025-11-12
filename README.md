@@ -8,7 +8,7 @@ The platform consists of three main components:
 
 1. **CyxWiz Engine** - Desktop client with rich GUI for building and designing ML models
 2. **CyxWiz Server Node** - Also known as miners. Distributed compute nodes that train models
-3. **CyxWiz Central Server** - Orchestrator managing the decentralized network
+3. **[CyxWiz Central Server](cyxwiz-central-server/README.md)** - Orchestrator managing the decentralized network
 
 ## ✨ Features
 
@@ -147,7 +147,7 @@ CyxWiz/
 ├── cyxwiz-backend/         # Shared compute library (ArrayFire-based)
 ├── cyxwiz-engine/          # Desktop client (ImGui + OpenGL)
 ├── cyxwiz-server-node/     # Compute worker node
-├── cyxwiz-central-server/  # Orchestrator (Rust)
+├── cyxwiz-central-server/  # Orchestrator (Rust) - See README
 ├── cyxwiz-protocol/        # gRPC protocol definitions
 ├── scripts/                # Build and deployment scripts
 ├── docs/                   # Documentation
@@ -171,6 +171,8 @@ cmake --build build/android-release
 ```
 
 ### Central Server (Rust)
+
+See the [Central Server README](cyxwiz-central-server/README.md) for detailed documentation, TUI guide, and setup instructions.
 
 ```bash
 cd cyxwiz-central-server
