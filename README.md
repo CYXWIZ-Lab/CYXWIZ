@@ -39,14 +39,35 @@ The platform consists of three main components:
 
 ## 🚀 Quick Start
 
+### 🖥️ Shell Requirements
+
+**⚠️ Windows Users - READ THIS FIRST:**
+
+All build commands **MUST** be run from **Developer Command Prompt for VS 2022**
+
+**How to open:**
+1. Press **Windows key**
+2. Type "**Developer Command Prompt**"
+3. Select "**Developer Command Prompt for VS 2022**"
+
+**Or** initialize VS tools in cmd:
+```cmd
+"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
+```
+
+**Linux/macOS:**
+Regular terminal works fine - no special requirements.
+
+---
+
 ### Automated Build Scripts (Recommended for Beginners)
 
 We provide automated setup and build scripts for easy first-time setup.
 These scripts are available in both the project root and the `scripts/` folder:
 
-**Windows:**
-```bash
-# 1. First-time setup (installs prerequisites, bootstraps vcpkg)
+**Windows** (from Developer Command Prompt):
+```cmd
+REM 1. First-time setup (installs prerequisites, bootstraps vcpkg)
 setup.bat
 
 # 2. Build all components
@@ -203,6 +224,31 @@ cd ..
 - **Total: ~10-15 minutes**
 
 Subsequent builds are much faster (1-2 minutes) as dependencies are cached.
+
+**Expected Build Output:**
+```
+[1/4] Configuring CMake...
+      - Installing vcpkg dependencies (34 packages)... ✓ (3-5 min)
+      - Generating protobuf files... ✓
+      - Configuring project... ✓
+[2/4] Building C++ components...
+      - cyxwiz-protocol library... ✓
+      - cyxwiz-backend library... ✓
+      - cyxwiz-engine executable... ✓
+      - cyxwiz-server-node executable... ✓
+[3/4] Building Central Server (Rust)...
+      - Compiling dependencies... ✓
+      - Building cyxwiz-central-server... ✓
+[4/4] Build Summary:
+      ✓ Executables created in build/bin/Release/
+      ✓ Central Server in cyxwiz-central-server/target/release/
+      ✓ Build successful!
+```
+
+**Expected Warnings (Safe to Ignore):**
+- `CL/cl.h: No such file or directory` - OpenCL is optional
+- `ArrayFire not found` - GPU acceleration is optional
+- These warnings do NOT prevent the project from building successfully
 
 #### Method 2: Build Individual Components
 
@@ -432,7 +478,94 @@ cargo run --release -- --tui
 ./build/linux-release/bin/cyxwiz-engine  # or macos-release
 ```
 
+### ✅ Verify Installation
+
+After building, verify everything works correctly:
+
+#### 1. Check Executables Exist
+
+```bash
+# Windows
+dir build\bin\Release\cyxwiz-engine.exe
+dir build\bin\Release\cyxwiz-server-node.exe
+dir cyxwiz-central-server\target\release\cyxwiz-central-server.exe
+
+# Linux/macOS
+ls -lh build/linux-release/bin/cyxwiz-engine
+ls -lh build/linux-release/bin/cyxwiz-server-node
+ls -lh cyxwiz-central-server/target/release/cyxwiz-central-server
+```
+
+**Expected file sizes:**
+- Engine: ~5-10 MB
+- Server Node: ~4-8 MB
+- Central Server: ~8-12 MB
+
+#### 2. Run the Engine
+
+```bash
+# Windows
+.\build\bin\Release\cyxwiz-engine.exe
+
+# Linux/macOS
+./build/linux-release/bin/cyxwiz-engine
+```
+
+**Expected behavior:**
+- GUI window opens within 2-3 seconds
+- Window has menu bar: File, Edit, View, Nodes, Train, Dataset, Script, Plots, Deploy, Help
+- Dark theme interface with dockable panels
+- Console panel shows initialization logs
+
+#### 3. Test the Plotting System
+
+In the Engine GUI:
+
+1. Click **Plots** menu in the top menu bar
+2. Select **2D Plots → Line Plot**
+3. A dockable window appears showing a sine wave visualization
+4. The plot window has its own menu bar: File, Edit, View, Insert, Tools, Window, Help
+5. Try dragging the plot window to different dock positions
+6. Click **Plot Test Panel** under Plots menu to see real-time plotting
+
+**If these steps work**, your installation is successful! ✅
+
+#### 4. Test Server Node Registration (Optional)
+
+```bash
+# Terminal 1: Start Central Server
+cd cyxwiz-central-server
+cargo run --release
+
+# Terminal 2: Start Server Node
+.\build\bin\Release\cyxwiz-server-node.exe  # Windows
+# ./build/linux-release/bin/cyxwiz-server-node  # Linux
+
+# Look for "✓ Successfully registered with Central Server" in Server Node output
+# Check Central Server TUI for registered node in the "Active Nodes" panel
+```
+
 ### Troubleshooting
+
+#### Common Setup Issues
+
+**"cl.exe not found" or "CMAKE_CXX_COMPILER not set" (Windows):**
+- **Cause**: Not running from Developer Command Prompt for VS 2022
+- **Fix**: See [Shell Requirements](#shell-requirements) section above
+- Open "Developer Command Prompt for VS 2022" from Windows Start Menu
+- Or run `"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"` first
+
+**"cmake: command not found":**
+- **Fix**: Download CMake from https://cmake.org/download/
+- During installation, select "Add CMake to system PATH for all users"
+- Restart your terminal after installation
+- Verify with: `cmake --version`
+
+**"vcpkg not found" or vcpkg directory missing:**
+- **Status**: Normal on first setup
+- **Fix**: Run `setup.bat` or `setup.sh` - it will clone vcpkg automatically
+- Or manually clone: `git clone https://github.com/microsoft/vcpkg`
+- Then bootstrap: `cd vcpkg && ./bootstrap-vcpkg.sh` (or `.bat` on Windows)
 
 #### General Issues
 
@@ -441,6 +574,13 @@ cargo run --release -- --tui
 - GPU acceleration is optional
 - Project builds successfully with CPU-only mode
 - To enable GPU: Install ArrayFire from https://arrayfire.com/download and set `ArrayFire_DIR`
+
+**"CL/cl.h: No such file or directory" (OpenCL header not found):**
+- **Status**: Expected and normal on first build
+- **Impact**: None - project builds without GPU support
+- **Explanation**: OpenCL is optional for GPU acceleration
+- Project works perfectly with CPU-only mode
+- To enable OpenCL: Install GPU drivers (NVIDIA CUDA Toolkit or AMD OpenCL SDK)
 
 **"vcpkg dependencies failed to install":**
 ```bash
