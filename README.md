@@ -39,22 +39,113 @@ The platform consists of three main components:
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Automated Build Scripts (Recommended for Beginners)
 
-#### Required for All Platforms
+We provide automated setup and build scripts for easy first-time setup.
+These scripts are available in both the project root and the `scripts/` folder:
+
+**Windows:**
+```bash
+# 1. First-time setup (installs prerequisites, bootstraps vcpkg)
+setup.bat
+
+# 2. Build all components
+build.bat
+
+# Or build specific components:
+build.bat --server-node      # Build only Server Node
+build.bat --engine           # Build only Engine
+build.bat --central-server   # Build only Central Server
+build.bat --debug            # Build in Debug mode
+build.bat --clean            # Clean build directory first
+build.bat -j 16              # Use 16 parallel jobs
+```
+
+**Linux/macOS:**
+```bash
+# 1. First-time setup
+./setup.sh
+
+# 2. Build all components
+./build.sh
+
+# Or build specific components:
+./build.sh --server-node     # Build only Server Node
+./build.sh --engine          # Build only Engine
+./build.sh --central-server  # Build only Central Server
+./build.sh --debug           # Build in Debug mode
+./build.sh --clean           # Clean build directory first
+./build.sh -j 16             # Use 16 parallel jobs
+```
+
+**What these scripts do:**
+- `setup.bat`/`setup.sh`: Check for required tools (Visual Studio, CMake, Rust), clone and bootstrap vcpkg, explain dependencies
+- `build.bat`/`build.sh`: Configure CMake, build C++ components, build Rust Central Server, show build summary
+
+**Skip to [Running the Applications](#running-the-applications)** after building.
+
+---
+
+### Manual Build (For Advanced Users)
+
+If you prefer manual control or want to understand the build process in detail:
+
+#### Prerequisites
+
+##### Required for All Platforms
 - **C++ Compiler**:
   - Windows: Visual Studio 2022 (Community Edition or higher) with C++ Desktop Development workload
   - Linux: GCC 9+ or Clang 12+
   - macOS: Xcode Command Line Tools (Clang 12+)
 - **CMake**: 3.20 or higher
-- **vcpkg**: For C++ dependency management (included in repo)
+- **vcpkg**: For C++ dependency management (automatically bootstrapped by scripts, or see [vcpkg setup](#understanding-vcpkg-dependency-management) below)
 - **Python**: 3.8+ (for Engine scripting support)
 - **Rust**: 1.70+ with Cargo (for Central Server)
 
-#### Optional
+##### Optional
 - **ArrayFire**: GPU acceleration library (download from https://arrayfire.com/download)
   - If not installed, builds will use CPU-only mode
   - OpenCL backend supported by default
+
+#### Understanding vcpkg Dependency Management
+
+CyxWiz uses **vcpkg manifest mode** for automatic C++ dependency management. This means:
+
+1. **Dependencies are declared** in `vcpkg.json` at the repository root
+2. **CMake automatically downloads and builds** these dependencies during configuration
+3. **Dependencies are cached** in `vcpkg/` directory for subsequent builds
+
+**Current dependencies** (see `vcpkg.json`):
+```json
+{
+  "dependencies": [
+    {"name": "imgui", "features": ["docking-experimental", "glfw-binding", "opengl3-binding"]},
+    "implot",     // Real-time plotting library
+    "glfw3",      // Window/input handling
+    "glad",       // OpenGL loader
+    "grpc",       // Network communication
+    "protobuf",   // Message serialization
+    "spdlog",     // Logging library
+    "nlohmann-json", // JSON parsing
+    "fmt",        // String formatting
+    "sqlite3",    // Database
+    "openssl",    // Encryption
+    "pybind11",   // Python bindings
+    "catch2"      // Testing framework
+  ]
+}
+```
+
+**First build timing:**
+- vcpkg will download and compile **34 packages** (including transitive dependencies)
+- This takes **3-5 minutes** on first run
+- Subsequent builds are **instant** as packages are cached
+
+**How it works:**
+1. When you run CMake with `-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake`
+2. vcpkg reads `vcpkg.json` and installs all listed dependencies
+3. CMake's `find_package()` automatically finds these installed packages
+4. No manual installation of libraries needed!
 
 ### Building on Windows
 
@@ -63,7 +154,12 @@ The platform consists of three main components:
 ```bash
 # 1. Clone the repository
 git clone https://github.com/CYXWIZ-Lab/CYXWIZ.git
-cd CyxWiz_Claude
+cd CyxWiz
+# 1.1. Install vcpkg (if not already installed)
+git clone https://github.com/microsoft/vcpkg
+cd vcpkg
+.\bootstrap-vcpkg.bat
+cd ..
 
 # 2. Configure CMake with Visual Studio generator
 # This step installs 34 vcpkg dependencies (takes ~3-5 minutes)
@@ -171,7 +267,7 @@ source $HOME/.cargo/env
 
 # 2. Clone the repository
 git clone https://github.com/CYXWIZ-Lab/CYXWIZ.git
-cd CyxWiz_Claude
+cd CyxWiz
 
 # 3. Configure CMake with Ninja generator
 cmake -B build/linux-release -S . -G Ninja \
@@ -214,7 +310,7 @@ source $HOME/.cargo/env
 
 # 2. Clone repository
 git clone https://github.com/CYXWIZ-Lab/CYXWIZ.git
-cd CyxWiz_Claude
+cd CyxWiz
 
 # 3. Configure CMake
 cmake -B build/macos-release -S . -G Ninja \
@@ -364,12 +460,19 @@ kill -9 <PID>
 CyxWiz/
 ├── cyxwiz-backend/         # Shared compute library (ArrayFire-based)
 ├── cyxwiz-engine/          # Desktop client (ImGui + OpenGL)
+│   ├── src/
+│   │   ├── plotting/       # Plotting system (ImPlot + matplotlib)
+│   │   └── gui/            # GUI panels and windows
+│   └── python/             # Python bindings for plotting
 ├── cyxwiz-server-node/     # Compute worker node
 ├── cyxwiz-central-server/  # Orchestrator (Rust) - See README
 ├── cyxwiz-protocol/        # gRPC protocol definitions
-├── scripts/                # Build and deployment scripts
+├── scripts/                # Build and setup scripts (setup.bat/sh, build.bat/sh)
 ├── docs/                   # Documentation
-└── tests/                  # Unit and integration tests
+├── tests/                  # Unit and integration tests
+├── vcpkg/                  # Dependency management (auto-installed)
+├── setup.bat / setup.sh    # Setup scripts (also in scripts/)
+└── build.bat / build.sh    # Build scripts (also in scripts/)
 ```
 
 ## 🔧 Development
@@ -546,6 +649,258 @@ grpcurl -plaintext -d '{"node_id": "test"}' \
   localhost:50051 cyxwiz.protocol.NodeService/Heartbeat
 ```
 
+### Adding C++ Dependencies with vcpkg
+
+This guide shows how to add new C++ libraries to the project using vcpkg manifest mode.
+
+#### Example: How ImGui Was Added
+
+Let's walk through how ImGui (with docking support) was integrated into CyxWiz. You can follow the same process for any vcpkg package.
+
+##### Step 1: Search for the Package
+
+```bash
+# Search vcpkg for available packages
+cd vcpkg
+./vcpkg search imgui
+
+# Output:
+# imgui                 1.90.1           Bloat-free Immediate Mode Graphical User interface for C++ with minimal dependencies
+# imgui[docking-experimental]            Experimental docking branch
+# imgui[freetype]                        FreeType Font Renderer for Dear ImGui
+# imgui[glfw-binding]                    Make available GLFW binding
+# imgui[opengl3-binding]                 Make available OpenGL3/ES/ES2 (modern) binding
+# ...
+
+# Check package details
+./vcpkg info imgui
+```
+
+##### Step 2: Add to vcpkg.json
+
+Edit `vcpkg.json` in the repository root:
+
+```json
+{
+  "name": "cyxwiz",
+  "version": "0.1.0",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental",  // Enable docking windows
+        "glfw-binding",          // GLFW integration
+        "opengl3-binding"        // OpenGL3 rendering backend
+      ]
+    },
+    // ... other dependencies
+  ]
+}
+```
+
+**Key points:**
+- Use `{"name": "...", "features": [...]}` syntax to specify optional features
+- Use simple string `"package-name"` for packages without features
+- Features are optional components provided by the package
+- Check available features with: `./vcpkg search imgui`
+
+##### Step 3: Add find_package() in CMakeLists.txt
+
+Edit the CMakeLists.txt of the component that needs ImGui (e.g., `cyxwiz-engine/CMakeLists.txt`):
+
+```cmake
+# Find the package (vcpkg makes it available)
+find_package(imgui CONFIG REQUIRED)
+
+# Add your executable or library
+add_executable(cyxwiz-engine
+    src/main.cpp
+    src/gui/main_window.cpp
+    # ... other sources
+)
+
+# Link against the package
+target_link_libraries(cyxwiz-engine PRIVATE
+    imgui::imgui  # Main ImGui library
+)
+
+# If you need specific bindings:
+# target_link_libraries(cyxwiz-engine PRIVATE
+#     imgui::imgui
+#     glfw
+#     glad
+# )
+```
+
+**Package naming conventions:**
+- Most packages use `PackageName::PackageName` (e.g., `imgui::imgui`, `spdlog::spdlog`)
+- Some have multiple targets (e.g., `protobuf::libprotobuf`, `protobuf::libprotoc`)
+- Check CMake integration docs: `./vcpkg info imgui` or look in `vcpkg/ports/imgui/`
+
+##### Step 4: Include Headers in Your Code
+
+```cpp
+// In your C++ source file (e.g., cyxwiz-engine/src/main.cpp)
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_opengl3.h>
+
+int main() {
+    // ImGui context setup
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;  // Enable docking
+
+    // ... rest of your code
+}
+```
+
+##### Step 5: Rebuild the Project
+
+```bash
+# Clean build to download new dependency
+rm -rf build/windows-release  # Windows: rmdir /s /q build\windows-release
+
+# Reconfigure (vcpkg installs imgui automatically)
+cmake -B build/windows-release -S . -G "Visual Studio 17 2022" -A x64 \
+  -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+
+# Build
+cmake --build build/windows-release --config Release -j 8
+```
+
+**What happens:**
+1. CMake reads `vcpkg.json` and tells vcpkg to install `imgui` with specified features
+2. vcpkg downloads, compiles, and caches ImGui (takes ~30 seconds)
+3. `find_package(imgui CONFIG REQUIRED)` locates the installed package
+4. `target_link_libraries()` adds include paths and links the library
+5. Your code can now `#include <imgui.h>` and use ImGui functions
+
+#### Adding Other Packages - Quick Reference
+
+**Example 1: Adding Boost (header-only)**
+```json
+// vcpkg.json
+{
+  "dependencies": ["boost-asio", "boost-filesystem"]
+}
+```
+```cmake
+# CMakeLists.txt
+find_package(Boost REQUIRED COMPONENTS system filesystem)
+target_link_libraries(my-app PRIVATE Boost::system Boost::filesystem)
+```
+
+**Example 2: Adding OpenCV**
+```json
+// vcpkg.json
+{
+  "dependencies": [
+    {"name": "opencv4", "features": ["jpeg", "png", "tiff"]}
+  ]
+}
+```
+```cmake
+# CMakeLists.txt
+find_package(OpenCV CONFIG REQUIRED)
+target_link_libraries(my-app PRIVATE opencv_core opencv_imgproc opencv_highgui)
+```
+
+**Example 3: Adding cURL**
+```json
+// vcpkg.json
+{
+  "dependencies": ["curl"]
+}
+```
+```cmake
+# CMakeLists.txt
+find_package(CURL REQUIRED)
+target_link_libraries(my-app PRIVATE CURL::libcurl)
+```
+
+#### Troubleshooting Package Addition
+
+**Error: "Could not find a package configuration file provided by X"**
+```bash
+# Check if package is in vcpkg.json
+cat vcpkg.json
+
+# Clean and reconfigure
+rm -rf build/windows-release
+cmake -B build/windows-release -S . -G "Visual Studio 17 2022" -A x64 \
+  -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+```
+
+**Error: "No such file or directory" when including headers**
+```cmake
+# Make sure you linked the library
+target_link_libraries(your-target PRIVATE package::package)
+
+# Some packages need explicit include directories
+target_include_directories(your-target PRIVATE ${PACKAGE_INCLUDE_DIRS})
+```
+
+**Package not found in vcpkg**
+```bash
+# Update vcpkg to latest version
+cd vcpkg
+git pull
+./bootstrap-vcpkg.sh  # or .bat on Windows
+
+# Search again
+./vcpkg search <package-name>
+
+# If still not found, check community ports:
+# https://github.com/microsoft/vcpkg/tree/master/ports
+```
+
+#### Best Practices for Dependency Management
+
+1. **Always specify features explicitly** - Makes build reproducible
+2. **Pin vcpkg baseline** - Use `builtin-baseline` in vcpkg.json to lock versions
+3. **Test on clean machine** - Run `setup.bat`/`setup.sh` scripts to verify
+4. **Document why dependencies are needed** - Add comments in vcpkg.json
+5. **Minimize dependencies** - Only add what you actually use
+6. **Check license compatibility** - Use `./vcpkg info <package>` to see license
+
+#### Updating Dependencies
+
+```bash
+# Update vcpkg itself
+cd vcpkg
+git pull
+./bootstrap-vcpkg.sh  # or .bat
+
+# Update all packages to latest baseline
+cd ..
+rm -rf build/
+cmake -B build/windows-release -S . -G "Visual Studio 17 2022" -A x64 \
+  -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+```
+
+#### Useful vcpkg Commands
+
+```bash
+cd vcpkg
+
+# List installed packages
+./vcpkg list
+
+# Search for packages
+./vcpkg search <keyword>
+
+# Get package details
+./vcpkg info <package-name>
+
+# Remove package cache (force rebuild)
+./vcpkg remove --outdated
+
+# Export installed packages (for CI/CD)
+./vcpkg export --zip
+```
+
 ## 📚 Documentation
 
 - [Architecture Overview](docs/architecture.md)
@@ -589,7 +944,23 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 
 ## 📋 Quick Reference
 
-### Common Build Commands
+### Automated Build Scripts (Easiest)
+
+```bash
+# Windows - First time setup and build
+setup.bat      # Install prerequisites, bootstrap vcpkg
+build.bat      # Build all components
+build.bat --server-node   # Build only Server Node
+build.bat --clean         # Clean build
+
+# Linux/macOS - First time setup and build
+./setup.sh     # Install prerequisites, bootstrap vcpkg
+./build.sh     # Build all components
+./build.sh --server-node  # Build only Server Node
+./build.sh --clean        # Clean build
+```
+
+### Manual Build Commands
 
 ```bash
 # Full build (first time)
