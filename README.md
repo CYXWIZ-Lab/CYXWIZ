@@ -177,6 +177,15 @@ cmake --build build/windows-release --config Release -j 8
 
 # 4. Build Central Server (Rust component)
 cd cyxwiz-central-server
+
+# Set PROTOC environment variable (required for protobuf compilation)
+# Windows (Git Bash/MSYS):
+export PROTOC="../vcpkg/packages/protobuf_x64-windows/tools/protobuf/protoc.exe"
+# Windows (CMD):
+# set PROTOC=%CD%\..\vcpkg\packages\protobuf_x64-windows\tools\protobuf\protoc.exe
+# Windows (PowerShell):
+# $env:PROTOC = "../vcpkg/packages/protobuf_x64-windows/tools/protobuf/protoc.exe"
+
 cargo build --release
 cd ..
 
@@ -215,6 +224,10 @@ cmake --build build/windows-release --config Release --target cyxwiz-engine -j 8
 **Central Server only:**
 ```bash
 cd cyxwiz-central-server
+
+# Set PROTOC environment variable (required)
+export PROTOC="../vcpkg/packages/protobuf_x64-windows/tools/protobuf/protoc.exe"  # Git Bash/MSYS
+
 cargo build --release
 ```
 
@@ -283,6 +296,11 @@ cmake --build build/linux-release -j $(nproc)
 
 # 5. Build Central Server (Rust)
 cd cyxwiz-central-server
+
+# Set PROTOC environment variable
+export PROTOC="../vcpkg/packages/protobuf_x64-linux/tools/protobuf/protoc"  # Linux
+# export PROTOC="../vcpkg/packages/protobuf_x64-osx/tools/protobuf/protoc"  # macOS
+
 cargo build --release
 cd ..
 
@@ -325,6 +343,10 @@ cmake --build build/macos-release -j $(sysctl -n hw.ncpu)
 
 # 5. Build Central Server
 cd cyxwiz-central-server
+
+# Set PROTOC environment variable
+export PROTOC="../vcpkg/packages/protobuf_x64-osx/tools/protobuf/protoc"  # macOS
+
 cargo build --release
 cd ..
 
@@ -335,18 +357,40 @@ cd ..
 ### Running the Applications
 
 #### Central Server (Network Orchestrator)
+
+**Prerequisites**:
+- **PROTOC** environment variable must be set (see build instructions above)
+- **Database**: SQLite (auto-created) OR PostgreSQL
+- **Redis** (optional): Server runs in mock mode if unavailable
+- **Solana** (optional): Payment processing disabled if keypair not found
+
 ```bash
 cd cyxwiz-central-server
+
+# Set PROTOC if not already set
+export PROTOC="../vcpkg/packages/protobuf_x64-windows/tools/protobuf/protoc.exe"  # Windows
+# export PROTOC="../vcpkg/packages/protobuf_x64-linux/tools/protobuf/protoc"    # Linux
+# export PROTOC="../vcpkg/packages/protobuf_x64-osx/tools/protobuf/protoc"      # macOS
+
+# Run in gRPC/REST server mode (default - for production use)
 cargo run --release
 
-# The TUI dashboard will show:
-# - Network statistics (nodes, jobs)
-# - System health (database, Redis, Solana)
-# - Job throughput graphs
-# - Top nodes by reputation
+# Or run in TUI-only mode (for monitoring)
+cargo run --release -- --tui
 ```
 
-**Note:** Central Server currently runs in TUI-only mode. gRPC services require additional setup (scheduler, blockchain integration).
+**Default Mode (gRPC/REST Server)**:
+- gRPC server on `0.0.0.0:50051` - Accepts job submissions, node registrations
+- REST API on `0.0.0.0:8080` - Web dashboard and health checks
+- Server Nodes can connect and register automatically
+
+**TUI Mode** (`--tui` flag):
+- Terminal dashboard shows:
+  - Network statistics (nodes, jobs)
+  - System health (database, Redis, Solana)
+  - Job throughput graphs
+  - Top nodes by reputation
+- No gRPC/REST services (monitoring only)
 
 #### Server Node (Compute Worker)
 ```bash
@@ -357,15 +401,27 @@ cargo run --release
 ./build/linux-release/bin/cyxwiz-server-node  # or macos-release
 
 # The Server Node will:
-# 1. Attempt to register with Central Server (localhost:50051)
-# 2. Fall back to standalone mode if connection fails
-# 3. Start Deployment service on port 50052
-# 4. Start Terminal service on port 50053
+# 1. Detect hardware (CPU/GPU) and report capabilities
+# 2. Attempt to register with Central Server (localhost:50051)
+# 3. Send heartbeat every 10 seconds if connected
+# 4. Start local Deployment service on port 50052
+# 5. Start local Terminal service on port 50053
 ```
 
 **Server Node Modes:**
-- **Network Mode**: Connected to Central Server, receives job assignments
-- **Standalone Mode**: Runs independently, local services only (current default)
+- **Network Mode**: Automatically activated when Central Server is reachable at `localhost:50051`
+  - Node registers with unique ID and session token
+  - Sends periodic heartbeat (10-second interval)
+  - Receives job assignments from Central Server
+  - Reports hardware capabilities (devices, memory, compute units)
+- **Standalone Mode**: Falls back to this mode if Central Server is unreachable
+  - Runs local deployment and terminal services only (ports 50052-50053)
+  - No job assignments from network
+  - Useful for local development and testing
+
+**Success Indicators**:
+- Network Mode: Look for `✓ Successfully registered with Central Server` and `Heartbeat sent successfully`
+- Standalone Mode: Look for `Connection refused` warnings and `Running in standalone mode`
 
 #### Engine (Desktop Client)
 ```bash
