@@ -9,6 +9,9 @@
 
 namespace cyxwiz {
 
+// Forward declaration
+class PlotTestPanel;
+
 /**
  * Top Toolbar Panel
  * Renders main menu bar with File, Edit, View, Nodes, Train, Dataset, Script, Deploy, Plots, Help
@@ -22,6 +25,9 @@ public:
 
     // Callback for resetting layout
     void SetResetLayoutCallback(std::function<void()> callback) { reset_layout_callback_ = callback; }
+
+    // Set reference to PlotTestPanel for toggling visibility
+    void SetPlotTestPanel(PlotTestPanel* panel) { plot_test_panel_ = panel; }
 
     // Access to created plot windows
     const std::vector<std::shared_ptr<PlotWindow>>& GetPlotWindows() const { return plot_windows_; }
@@ -53,6 +59,9 @@ private:
 
     // Plot windows management
     std::vector<std::shared_ptr<PlotWindow>> plot_windows_;
+
+    // Reference to PlotTestPanel (non-owning pointer)
+    PlotTestPanel* plot_test_panel_ = nullptr;
 };
 
 } // namespace cyxwiz

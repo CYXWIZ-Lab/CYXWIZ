@@ -67,6 +67,7 @@ private:
     // Helper methods
     void InitializePlot();
     void GenerateDefaultData();
+    void RenderMenuBar();  // NEW: Menu bar with File, Edit, View, etc.
     void RenderControls();
     void RenderPlot();
 

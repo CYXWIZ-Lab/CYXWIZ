@@ -1,3 +1,14 @@
+/**
+ * PlotWindow - Static/Offline Plotting using Matplotlib Backend
+ *
+ * ARCHITECTURE NOTES:
+ * - ImPlot Backend: Real-time plotting ONLY (Training Dashboard, Plot Test Panel)
+ * - Matplotlib Backend: Static/offline plots (all Plots menu items)
+ *
+ * This window is used for static plots that are NOT updated in real-time.
+ * For real-time streaming data, use the Plot Test Panel or Training Dashboard.
+ */
+
 #include "plot_window.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -30,13 +41,104 @@ PlotWindow::~PlotWindow() {
 void PlotWindow::Render() {
     if (!visible_) return;
 
-    ImGui::Begin(name_.c_str(), &visible_);
+    ImGui::Begin(name_.c_str(), &visible_, ImGuiWindowFlags_MenuBar);
 
+    RenderMenuBar();
     RenderControls();
     ImGui::Separator();
     RenderPlot();
 
     ImGui::End();
+}
+
+void PlotWindow::RenderMenuBar() {
+    if (ImGui::BeginMenuBar()) {
+        if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("Save As...", "Ctrl+S")) {
+                SaveToFile("plot_export.png");
+            }
+            if (ImGui::MenuItem("Export to PNG")) {
+                SaveToFile("plot_export.png");
+            }
+            if (ImGui::MenuItem("Export to SVG")) {
+                SaveToFile("plot_export.svg");
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Close", "Ctrl+W")) {
+                visible_ = false;
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Edit")) {
+            if (ImGui::MenuItem("Plot Settings")) {
+                show_controls_ = !show_controls_;
+            }
+            if (ImGui::MenuItem("Copy Data")) {
+                spdlog::info("Copy data to clipboard (not implemented yet)");
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::MenuItem("Reset Zoom")) {
+                spdlog::info("Reset zoom (not implemented yet)");
+            }
+            if (ImGui::MenuItem("Auto-fit")) {
+                spdlog::info("Auto-fit axes (not implemented yet)");
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Show Controls", nullptr, show_controls_)) {
+                show_controls_ = !show_controls_;
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Insert")) {
+            if (ImGui::MenuItem("Add Series")) {
+                spdlog::info("Add series (not implemented yet)");
+            }
+            if (ImGui::MenuItem("Add Annotation")) {
+                spdlog::info("Add annotation (not implemented yet)");
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Tools")) {
+            if (ImGui::MenuItem("Data Statistics")) {
+                // Show statistics
+                auto& plot_mgr = plotting::PlotManager::GetInstance();
+                // auto stats = plot_mgr.CalculateStatistics(plot_id_, "default");
+                spdlog::info("Show statistics (not implemented yet)");
+            }
+            if (ImGui::MenuItem("Fit Curve")) {
+                spdlog::info("Curve fitting (not implemented yet)");
+            }
+            if (ImGui::MenuItem("Regenerate Data")) {
+                RegenerateData();
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Window")) {
+            if (ImGui::MenuItem("Plot Test Panel")) {
+                spdlog::info("Toggle Plot Test Panel (needs main window integration)");
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Help")) {
+            if (ImGui::MenuItem("Plotting Guide")) {
+                spdlog::info("Open plotting guide");
+            }
+            if (ImGui::MenuItem("About")) {
+                spdlog::info("About CyxWiz Plotting System");
+            }
+            ImGui::EndMenu();
+        }
+
+        ImGui::EndMenuBar();
+    }
 }
 
 void PlotWindow::InitializePlot() {
@@ -46,7 +148,8 @@ void PlotWindow::InitializePlot() {
     config.title = name_;
     config.x_label = "X";
     config.y_label = "Y";
-    config.backend = plotting::PlotManager::BackendType::ImPlot;
+    // Use Matplotlib for static/offline plots (NOT real-time)
+    config.backend = plotting::PlotManager::BackendType::Matplotlib;
     config.auto_fit = true;
     config.show_legend = true;
     config.show_grid = true;

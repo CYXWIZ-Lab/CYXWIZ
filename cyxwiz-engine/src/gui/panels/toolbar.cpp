@@ -468,10 +468,14 @@ void ToolbarPanel::RenderPlotsMenu() {
 
         ImGui::Separator();
 
-        // Plot Test Panel (existing)
+        // Plot Test Panel (toggle visibility)
         if (ImGui::MenuItem("Plot Test Panel")) {
-            // This is handled in MainWindow already
-            spdlog::info("Plot Test Panel should be toggled from View menu or MainWindow");
+            if (plot_test_panel_) {
+                plot_test_panel_->SetVisible(!plot_test_panel_->IsVisible());
+                spdlog::info("Plot Test Panel visibility toggled to: {}", plot_test_panel_->IsVisible());
+            } else {
+                spdlog::warn("Plot Test Panel not available - needs to be set via SetPlotTestPanel()");
+            }
         }
 
         ImGui::EndMenu();
