@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../plotting/plot_manager.h"
 #include <vector>
 #include <string>
 
@@ -8,7 +9,7 @@ namespace cyxwiz {
 
 /**
  * Training Dashboard Panel
- * Displays real-time training metrics with plots and statistics
+ * Displays real-time training metrics with plots and statistics using PlotManager
  */
 class TrainingDashboardPanel : public Panel {
 public:
@@ -35,13 +36,21 @@ private:
     void RenderHyperparameters();
     void RenderTrainingControls();
 
+    // Plot initialization
+    void InitializePlots();
+
     // Training state
     bool is_training_;
     float current_epoch_;
     float total_epochs_;
     float progress_;
 
-    // Metrics history (circular buffers)
+    // Plot IDs (using PlotManager)
+    std::string loss_plot_id_;
+    std::string accuracy_plot_id_;
+    std::string throughput_plot_id_;
+
+    // Metrics history (circular buffers) - kept for statistics
     static constexpr int MAX_HISTORY = 1000;
     std::vector<float> loss_history_;
     std::vector<float> accuracy_history_;

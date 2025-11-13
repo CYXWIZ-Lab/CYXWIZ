@@ -1,5 +1,6 @@
 #include "training_dashboard.h"
 #include <imgui.h>
+#include <spdlog/spdlog.h>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
@@ -29,13 +30,74 @@ TrainingDashboardPanel::TrainingDashboardPanel()
     accuracy_history_.reserve(MAX_HISTORY);
     throughput_history_.reserve(MAX_HISTORY);
 
+    // Initialize plots using PlotManager
+    InitializePlots();
+
     // Add some sample data for visualization
     for (int i = 0; i < 50; i++) {
         float t = i / 50.0f;
-        loss_history_.push_back(2.0f * std::exp(-t * 2.0f) + 0.1f);
-        accuracy_history_.push_back(1.0f - std::exp(-t * 3.0f));
-        throughput_history_.push_back(1000.0f + 200.0f * std::sin(t * 6.28f));
+        float loss = 2.0f * std::exp(-t * 2.0f) + 0.1f;
+        float accuracy = 1.0f - std::exp(-t * 3.0f);
+        float throughput = 1000.0f + 200.0f * std::sin(t * 6.28f);
+
+        loss_history_.push_back(loss);
+        accuracy_history_.push_back(accuracy);
+        throughput_history_.push_back(throughput);
+
+        // Update plots
+        auto& plot_mgr = plotting::PlotManager::GetInstance();
+        plot_mgr.UpdateRealtimePlot(loss_plot_id_, static_cast<double>(i), static_cast<double>(loss), "loss");
+        plot_mgr.UpdateRealtimePlot(accuracy_plot_id_, static_cast<double>(i), static_cast<double>(accuracy), "accuracy");
+        plot_mgr.UpdateRealtimePlot(throughput_plot_id_, static_cast<double>(i), static_cast<double>(throughput), "throughput");
     }
+}
+
+void TrainingDashboardPanel::InitializePlots() {
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+
+    // Create loss plot
+    plotting::PlotManager::PlotConfig loss_config;
+    loss_config.title = "Training Loss";
+    loss_config.x_label = "Epoch";
+    loss_config.y_label = "Loss";
+    loss_config.type = plotting::PlotManager::PlotType::Line;
+    loss_config.backend = plotting::PlotManager::BackendType::ImPlot;
+    loss_config.auto_fit = true;
+    loss_config.show_legend = true;
+    loss_config.show_grid = true;
+    loss_config.width = 600;
+    loss_config.height = 200;
+    loss_plot_id_ = plot_mgr.CreatePlot(loss_config);
+
+    // Create accuracy plot
+    plotting::PlotManager::PlotConfig acc_config;
+    acc_config.title = "Training Accuracy";
+    acc_config.x_label = "Epoch";
+    acc_config.y_label = "Accuracy";
+    acc_config.type = plotting::PlotManager::PlotType::Line;
+    acc_config.backend = plotting::PlotManager::BackendType::ImPlot;
+    acc_config.auto_fit = true;
+    acc_config.show_legend = true;
+    acc_config.show_grid = true;
+    acc_config.width = 600;
+    acc_config.height = 200;
+    accuracy_plot_id_ = plot_mgr.CreatePlot(acc_config);
+
+    // Create throughput plot
+    plotting::PlotManager::PlotConfig throughput_config;
+    throughput_config.title = "Training Throughput";
+    throughput_config.x_label = "Epoch";
+    throughput_config.y_label = "Samples/sec";
+    throughput_config.type = plotting::PlotManager::PlotType::Line;
+    throughput_config.backend = plotting::PlotManager::BackendType::ImPlot;
+    throughput_config.auto_fit = true;
+    throughput_config.show_legend = true;
+    throughput_config.show_grid = true;
+    throughput_config.width = 600;
+    throughput_config.height = 200;
+    throughput_plot_id_ = plot_mgr.CreatePlot(throughput_config);
+
+    spdlog::info("Training Dashboard plots initialized");
 }
 
 void TrainingDashboardPanel::Render() {
@@ -122,20 +184,9 @@ void TrainingDashboardPanel::RenderLossChart() {
 
     ImGui::Text("Min: %.6f  Max: %.6f  Avg: %.6f", min_loss_, max_loss_, avg_loss_);
 
-    // Plot
-    int display_count = std::min(chart_history_length_, static_cast<int>(loss_history_.size()));
-    int offset = loss_history_.size() > chart_history_length_ ? loss_history_.size() - chart_history_length_ : 0;
-
-    ImGui::PlotLines(
-        "##loss",
-        loss_history_.data() + offset,
-        display_count,
-        0,
-        nullptr,
-        0.0f,
-        max_loss_ * 1.1f,
-        ImVec2(ImGui::GetContentRegionAvail().x, 150)
-    );
+    // Render using PlotManager
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+    plot_mgr.RenderImPlot(loss_plot_id_);
 
     ImGui::Separator();
 }
@@ -152,20 +203,9 @@ void TrainingDashboardPanel::RenderAccuracyChart() {
 
     ImGui::Text("Current: %.2f%%  Best: %.2f%%", current_accuracy_ * 100.0f, best_accuracy_ * 100.0f);
 
-    // Plot
-    int display_count = std::min(chart_history_length_, static_cast<int>(accuracy_history_.size()));
-    int offset = accuracy_history_.size() > chart_history_length_ ? accuracy_history_.size() - chart_history_length_ : 0;
-
-    ImGui::PlotLines(
-        "##accuracy",
-        accuracy_history_.data() + offset,
-        display_count,
-        0,
-        nullptr,
-        0.0f,
-        1.0f,
-        ImVec2(ImGui::GetContentRegionAvail().x, 150)
-    );
+    // Render using PlotManager
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+    plot_mgr.RenderImPlot(accuracy_plot_id_);
 
     ImGui::Separator();
 }
@@ -183,22 +223,9 @@ void TrainingDashboardPanel::RenderThroughputChart() {
 
     ImGui::Text("Current: %.0f samples/s  Average: %.0f samples/s", current_throughput_, avg_throughput);
 
-    // Plot
-    int display_count = std::min(chart_history_length_, static_cast<int>(throughput_history_.size()));
-    int offset = throughput_history_.size() > chart_history_length_ ? throughput_history_.size() - chart_history_length_ : 0;
-
-    float max_throughput = *std::max_element(throughput_history_.begin(), throughput_history_.end());
-
-    ImGui::PlotLines(
-        "##throughput",
-        throughput_history_.data() + offset,
-        display_count,
-        0,
-        nullptr,
-        0.0f,
-        max_throughput * 1.1f,
-        ImVec2(ImGui::GetContentRegionAvail().x, 150)
-    );
+    // Render using PlotManager
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+    plot_mgr.RenderImPlot(throughput_plot_id_);
 
     ImGui::Separator();
 }
@@ -273,6 +300,11 @@ void TrainingDashboardPanel::UpdateLoss(float loss) {
     if (loss_history_.size() > MAX_HISTORY) {
         loss_history_.erase(loss_history_.begin());
     }
+
+    // Update PlotManager
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+    plot_mgr.UpdateRealtimePlot(loss_plot_id_, static_cast<double>(current_epoch_),
+                               static_cast<double>(loss), "loss");
 }
 
 void TrainingDashboardPanel::UpdateAccuracy(float accuracy) {
@@ -286,6 +318,11 @@ void TrainingDashboardPanel::UpdateAccuracy(float accuracy) {
     if (accuracy > best_accuracy_) {
         best_accuracy_ = accuracy;
     }
+
+    // Update PlotManager
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+    plot_mgr.UpdateRealtimePlot(accuracy_plot_id_, static_cast<double>(current_epoch_),
+                               static_cast<double>(accuracy), "accuracy");
 }
 
 void TrainingDashboardPanel::UpdateThroughput(float samples_per_sec) {
@@ -295,6 +332,11 @@ void TrainingDashboardPanel::UpdateThroughput(float samples_per_sec) {
     if (throughput_history_.size() > MAX_HISTORY) {
         throughput_history_.erase(throughput_history_.begin());
     }
+
+    // Update PlotManager
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+    plot_mgr.UpdateRealtimePlot(throughput_plot_id_, static_cast<double>(current_epoch_),
+                               static_cast<double>(samples_per_sec), "throughput");
 }
 
 void TrainingDashboardPanel::UpdateLearningRate(float lr) {
