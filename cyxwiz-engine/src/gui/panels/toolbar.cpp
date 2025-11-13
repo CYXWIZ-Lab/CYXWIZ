@@ -1,4 +1,5 @@
 #include "toolbar.h"
+#include "plot_window.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -32,10 +33,18 @@ void ToolbarPanel::Render() {
         RenderTrainMenu();
         RenderDatasetMenu();
         RenderScriptMenu();
+        RenderPlotsMenu();
         RenderDeployMenu();
         RenderHelpMenu();
 
         ImGui::EndMainMenuBar();
+    }
+
+    // Render all plot windows
+    for (auto& plot_window : plot_windows_) {
+        if (plot_window) {
+            plot_window->Render();
+        }
     }
 
     // Render dialogs if open
@@ -398,6 +407,77 @@ void ToolbarPanel::RenderScriptMenu() {
     }
 }
 
+void ToolbarPanel::RenderPlotsMenu() {
+    if (ImGui::BeginMenu("Plots")) {
+        // 2D Plots submenu
+        if (ImGui::BeginMenu("2D Plots")) {
+            if (ImGui::MenuItem("Line Plot")) {
+                CreatePlotWindow("Line Plot", PlotWindow::PlotWindowType::Line2D);
+            }
+            if (ImGui::MenuItem("Scatter Plot")) {
+                CreatePlotWindow("Scatter Plot", PlotWindow::PlotWindowType::Scatter2D);
+            }
+            if (ImGui::MenuItem("Bar Chart")) {
+                CreatePlotWindow("Bar Chart", PlotWindow::PlotWindowType::Bar);
+            }
+            if (ImGui::MenuItem("Stem Plot")) {
+                CreatePlotWindow("Stem Plot", PlotWindow::PlotWindowType::Stem);
+            }
+            if (ImGui::MenuItem("Stair Plot")) {
+                CreatePlotWindow("Stair Plot", PlotWindow::PlotWindowType::Stair);
+            }
+            if (ImGui::MenuItem("Histogram")) {
+                CreatePlotWindow("Histogram", PlotWindow::PlotWindowType::Histogram);
+            }
+            if (ImGui::MenuItem("Pie Chart")) {
+                CreatePlotWindow("Pie Chart", PlotWindow::PlotWindowType::PieChart);
+            }
+            if (ImGui::MenuItem("Box Plot")) {
+                CreatePlotWindow("Box Plot", PlotWindow::PlotWindowType::BoxPlot);
+            }
+            ImGui::EndMenu();
+        }
+
+        // 3D Plots submenu
+        if (ImGui::BeginMenu("3D Plots")) {
+            if (ImGui::MenuItem("Surface Plot")) {
+                CreatePlotWindow("Surface Plot", PlotWindow::PlotWindowType::Surface3D);
+            }
+            if (ImGui::MenuItem("3D Scatter")) {
+                CreatePlotWindow("3D Scatter", PlotWindow::PlotWindowType::Scatter3D);
+            }
+            if (ImGui::MenuItem("3D Line")) {
+                CreatePlotWindow("3D Line", PlotWindow::PlotWindowType::Line3D);
+            }
+            ImGui::EndMenu();
+        }
+
+        // Specialized submenu
+        if (ImGui::BeginMenu("Specialized")) {
+            if (ImGui::MenuItem("Polar Plot")) {
+                CreatePlotWindow("Polar Plot", PlotWindow::PlotWindowType::Polar);
+            }
+            if (ImGui::MenuItem("Heatmap")) {
+                CreatePlotWindow("Heatmap", PlotWindow::PlotWindowType::Heatmap);
+            }
+            if (ImGui::MenuItem("Parametric Plot")) {
+                CreatePlotWindow("Parametric Plot", PlotWindow::PlotWindowType::Parametric);
+            }
+            ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
+
+        // Plot Test Panel (existing)
+        if (ImGui::MenuItem("Plot Test Panel")) {
+            // This is handled in MainWindow already
+            spdlog::info("Plot Test Panel should be toggled from View menu or MainWindow");
+        }
+
+        ImGui::EndMenu();
+    }
+}
+
 void ToolbarPanel::RenderDeployMenu() {
     if (ImGui::BeginMenu("Deploy")) {
         if (ImGui::BeginMenu("Export Model")) {
@@ -567,6 +647,13 @@ bool ToolbarPanel::CreateProjectOnDisk(const std::string& project_name, const st
         spdlog::error("Failed to create project: {}", e.what());
         return false;
     }
+}
+
+void ToolbarPanel::CreatePlotWindow(const std::string& title, PlotWindow::PlotWindowType type) {
+    // Create new plot window with auto-generated data
+    auto plot_window = std::make_shared<PlotWindow>(title, type, true);
+    plot_windows_.push_back(plot_window);
+    spdlog::info("Created new plot window: {}", title);
 }
 
 } // namespace cyxwiz

@@ -28,6 +28,7 @@ set(ENGINE_SOURCES
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/plot_test_panel.cpp
+    src/gui/panels/plot_window.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
     src/network/grpc_client.cpp
@@ -53,6 +54,7 @@ set(ENGINE_HEADERS
     src/gui/panels/asset_browser.h
     src/gui/panels/training_dashboard.h
     src/gui/panels/plot_test_panel.h
+    src/gui/panels/plot_window.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
     src/network/grpc_client.h
@@ -125,6 +127,59 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     ${CMAKE_CURRENT_SOURCE_DIR}/resources
     $<TARGET_FILE_DIR:cyxwiz-engine>/resources
     COMMENT "Copying resources..."
+)
+
+# ===== Python Bindings Module =====
+
+# Create Python module for plotting bindings
+pybind11_add_module(cyxwiz_plotting
+    python/plot_bindings.cpp
+)
+
+# Link the plotting module against necessary libraries
+target_link_libraries(cyxwiz_plotting PRIVATE
+    imgui::imgui
+    implot::implot
+    fmt::fmt
+    spdlog::spdlog
+)
+
+# Include directories for the Python module
+target_include_directories(cyxwiz_plotting PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+# Set output directory for Python module
+set_target_properties(cyxwiz_plotting PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
+)
+
+# Platform-specific module settings
+if(WIN32)
+    # Windows: .pyd extension
+    set_target_properties(cyxwiz_plotting PROPERTIES
+        SUFFIX ".pyd"
+    )
+elseif(APPLE)
+    # macOS: .so extension
+    set_target_properties(cyxwiz_plotting PROPERTIES
+        SUFFIX ".so"
+    )
+else()
+    # Linux: .so extension (default)
+endif()
+
+# Install Python module
+install(TARGETS cyxwiz_plotting
+    LIBRARY DESTINATION lib/python/cyxwiz
+    RUNTIME DESTINATION lib/python/cyxwiz
+)
+
+# Install Python examples
+install(DIRECTORY python/examples/
+    DESTINATION share/cyxwiz/python/examples
+    FILES_MATCHING PATTERN "*.py"
 )
 
 # Install
