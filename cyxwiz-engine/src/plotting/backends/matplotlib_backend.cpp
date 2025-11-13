@@ -342,6 +342,111 @@ void MatplotlibBackend::PlotMosaic(const char* label, const double* categories,
 }
 
 // ============================================================================
+// New Plot Types (Stubs for now)
+// ============================================================================
+
+void MatplotlibBackend::PlotStems(const char* label, const double* x_data,
+                                  const double* y_data, int count) {
+    if (!in_plot_ || count <= 0) {
+        return;
+    }
+
+    std::ostringstream cmd;
+    cmd << "x = np.array([";
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) cmd << ", ";
+        cmd << x_data[i];
+    }
+    cmd << "])\n";
+
+    cmd << "y = np.array([";
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) cmd << ", ";
+        cmd << y_data[i];
+    }
+    cmd << "])\n";
+
+    cmd << "ax.stem(x, y, label='" << label << "')\n";
+    python_commands_ += cmd.str();
+}
+
+void MatplotlibBackend::PlotStairs(const char* label, const double* x_data,
+                                   const double* y_data, int count) {
+    if (!in_plot_ || count <= 0) {
+        return;
+    }
+
+    std::ostringstream cmd;
+    cmd << "x = np.array([";
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) cmd << ", ";
+        cmd << x_data[i];
+    }
+    cmd << "])\n";
+
+    cmd << "y = np.array([";
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) cmd << ", ";
+        cmd << y_data[i];
+    }
+    cmd << "])\n";
+
+    cmd << "ax.stairs(y, x, label='" << label << "')\n";
+    python_commands_ += cmd.str();
+}
+
+void MatplotlibBackend::PlotPieChart(const char* label, const double* values,
+                                     const char* const* labels, int count) {
+    if (!in_plot_ || count <= 0) {
+        return;
+    }
+
+    std::ostringstream cmd;
+    cmd << "values = np.array([";
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) cmd << ", ";
+        cmd << values[i];
+    }
+    cmd << "])\n";
+
+    cmd << "labels = [";
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) cmd << ", ";
+        cmd << "'" << labels[i] << "'";
+    }
+    cmd << "]\n";
+
+    cmd << "ax.pie(values, labels=labels, autopct='%1.1f%%', startangle=90)\n";
+    python_commands_ += cmd.str();
+}
+
+void MatplotlibBackend::PlotPolarLine(const char* label, const double* theta,
+                                      const double* r, int count) {
+    if (!in_plot_ || count <= 0) {
+        return;
+    }
+
+    std::ostringstream cmd;
+    cmd << "theta = np.array([";
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) cmd << ", ";
+        cmd << theta[i];
+    }
+    cmd << "])\n";
+
+    cmd << "r = np.array([";
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) cmd << ", ";
+        cmd << r[i];
+    }
+    cmd << "])\n";
+
+    cmd << "ax = plt.subplot(projection='polar')\n";
+    cmd << "ax.plot(theta, r, label='" << label << "')\n";
+    python_commands_ += cmd.str();
+}
+
+// ============================================================================
 // Axis Configuration
 // ============================================================================
 

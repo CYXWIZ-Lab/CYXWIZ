@@ -36,6 +36,16 @@ public:
     virtual void PlotBoxPlot(const char* label, const double* values,
                             int count) = 0;
 
+    // New plot types
+    virtual void PlotStems(const char* label, const double* x_data,
+                          const double* y_data, int count) = 0;
+    virtual void PlotStairs(const char* label, const double* x_data,
+                           const double* y_data, int count) = 0;
+    virtual void PlotPieChart(const char* label, const double* values,
+                             const char* const* labels, int count) = 0;
+    virtual void PlotPolarLine(const char* label, const double* theta,
+                              const double* r, int count) = 0;
+
     // Axis configuration
     virtual void SetAxisLabel(int axis, const char* label) = 0;  // axis: 0=X, 1=Y
     virtual void SetAxisLimits(int axis, double min, double max) = 0;

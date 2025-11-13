@@ -5,6 +5,7 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <cmath>
 
 namespace cyxwiz::plotting {
 
@@ -213,6 +214,58 @@ void ImPlotBackend::PlotBoxPlot(const char* label, const double* values,
     // ImPlot doesn't have built-in box plots, so we draw using error bars
     // TODO: Implement custom box plot rendering
     spdlog::warn("Box plot rendering not fully implemented yet");
+}
+
+// ============================================================================
+// New Plot Types
+// ============================================================================
+
+void ImPlotBackend::PlotStems(const char* label, const double* x_data,
+                              const double* y_data, int count) {
+    if (!state_->in_plot || count <= 0) {
+        return;
+    }
+
+    ImPlot::PlotStems(label, x_data, y_data, count);
+}
+
+void ImPlotBackend::PlotStairs(const char* label, const double* x_data,
+                               const double* y_data, int count) {
+    if (!state_->in_plot || count <= 0) {
+        return;
+    }
+
+    ImPlot::PlotStairs(label, x_data, y_data, count);
+}
+
+void ImPlotBackend::PlotPieChart(const char* label, const double* values,
+                                 const char* const* labels, int count) {
+    if (!state_->in_plot || count <= 0) {
+        return;
+    }
+
+    // ImPlot::PlotPieChart signature: (labels_array, values, count, x, y, radius, format, angle0)
+    ImPlot::PlotPieChart(labels, values, count, 0.0, 0.0, 1.0, "%.1f", 90.0);
+}
+
+void ImPlotBackend::PlotPolarLine(const char* label, const double* theta,
+                                  const double* r, int count) {
+    if (!state_->in_plot || count <= 0) {
+        return;
+    }
+
+    // Convert polar to cartesian for plotting
+    // ImPlot doesn't have direct polar support in this version
+    // We'll need to convert theta/r to x/y
+    std::vector<double> x_cart(count);
+    std::vector<double> y_cart(count);
+
+    for (int i = 0; i < count; ++i) {
+        x_cart[i] = r[i] * std::cos(theta[i]);
+        y_cart[i] = r[i] * std::sin(theta[i]);
+    }
+
+    ImPlot::PlotLine(label, x_cart.data(), y_cart.data(), count);
 }
 
 // ============================================================================

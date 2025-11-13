@@ -38,6 +38,16 @@ public:
     void PlotBoxPlot(const char* label, const double* values,
                     int count) override;
 
+    // New plot types
+    void PlotStems(const char* label, const double* x_data,
+                  const double* y_data, int count) override;
+    void PlotStairs(const char* label, const double* x_data,
+                   const double* y_data, int count) override;
+    void PlotPieChart(const char* label, const double* values,
+                     const char* const* labels, int count) override;
+    void PlotPolarLine(const char* label, const double* theta,
+                      const double* r, int count) override;
+
     // Axis configuration
     void SetAxisLabel(int axis, const char* label) override;
     void SetAxisLimits(int axis, double min, double max) override;
