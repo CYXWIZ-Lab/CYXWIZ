@@ -1,6 +1,5 @@
 #include "toolbar.h"
 #include "plot_window.h"
-#include "plot_test_panel.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -465,18 +464,6 @@ void ToolbarPanel::RenderPlotsMenu() {
                 CreatePlotWindow("Parametric Plot", PlotWindow::PlotWindowType::Parametric);
             }
             ImGui::EndMenu();
-        }
-
-        ImGui::Separator();
-
-        // Plot Test Panel (toggle visibility)
-        if (ImGui::MenuItem("Plot Test Panel")) {
-            if (plot_test_panel_) {
-                plot_test_panel_->SetVisible(!plot_test_panel_->IsVisible());
-                spdlog::info("Plot Test Panel visibility toggled to: {}", plot_test_panel_->IsVisible());
-            } else {
-                spdlog::warn("Plot Test Panel not available - needs to be set via SetPlotTestPanel()");
-            }
         }
 
         ImGui::EndMenu();
