@@ -126,13 +126,62 @@ int64_t HardwareDetector::GetAvailableRAM() {
 }
 
 void HardwareDetector::DetectDevices(protocol::NodeInfo* node_info) {
-    // TODO: Device capability detection temporarily disabled due to protobuf linking issue
-    // Need to investigate why DeviceCapabilities is being resolved as DeviceCapabilitiesA
-    // by the linker. For now, device info will be reported without detailed capabilities.
-    spdlog::warn("Device capability detection temporarily disabled");
+    // Get available devices from the backend
+    auto devices = cyxwiz::Device::GetAvailableDevices();
 
-    // CPU and RAM info is still reported via top-level fields in NodeInfo
-    (void)node_info;  // Unused parameter
+    spdlog::info("Detected {} device(s)", devices.size());
+
+    for (const auto& device_info : devices) {
+        // Add a new HardwareCapabilities message for each device
+        auto* hw_cap = node_info->add_devices();
+
+        // Map cyxwiz::DeviceType to protocol::DeviceType
+        switch (device_info.type) {
+            case cyxwiz::DeviceType::CPU:
+                hw_cap->set_device_type(protocol::DEVICE_CPU);
+                break;
+            case cyxwiz::DeviceType::CUDA:
+                hw_cap->set_device_type(protocol::DEVICE_CUDA);
+                break;
+            case cyxwiz::DeviceType::OPENCL:
+                hw_cap->set_device_type(protocol::DEVICE_OPENCL);
+                break;
+            case cyxwiz::DeviceType::METAL:
+                hw_cap->set_device_type(protocol::DEVICE_METAL);
+                break;
+            case cyxwiz::DeviceType::VULKAN:
+                hw_cap->set_device_type(protocol::DEVICE_VULKAN);
+                break;
+            default:
+                hw_cap->set_device_type(protocol::DEVICE_UNKNOWN);
+                break;
+        }
+
+        // Set basic device info
+        hw_cap->set_device_name(device_info.name);
+        hw_cap->set_memory_total(static_cast<int64_t>(device_info.memory_total));
+        hw_cap->set_memory_available(static_cast<int64_t>(device_info.memory_available));
+        hw_cap->set_compute_units(device_info.compute_units);
+        hw_cap->set_supports_fp64(device_info.supports_fp64);
+        hw_cap->set_supports_fp16(device_info.supports_fp16);
+
+        // Set extended GPU info (for GPU devices)
+        if (device_info.type == cyxwiz::DeviceType::CUDA ||
+            device_info.type == cyxwiz::DeviceType::OPENCL) {
+            hw_cap->set_gpu_model(device_info.name);
+            hw_cap->set_vram_total(static_cast<int64_t>(device_info.memory_total));
+            hw_cap->set_vram_available(static_cast<int64_t>(device_info.memory_available));
+
+            // TODO: Extract more detailed GPU info (driver version, CUDA version, PCIe info, compute capability)
+            // This would require direct ArrayFire/CUDA API calls for full details
+        }
+
+        spdlog::info("  [{}] {} - {:.2f} GB total, {:.2f} GB available",
+                     device_info.device_id,
+                     device_info.name,
+                     device_info.memory_total / (1024.0 * 1024.0 * 1024.0),
+                     device_info.memory_available / (1024.0 * 1024.0 * 1024.0));
+    }
 }
 
 std::string HardwareDetector::GetLocalIPAddress() {

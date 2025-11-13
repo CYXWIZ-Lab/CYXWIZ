@@ -88,7 +88,10 @@ pub async fn update_node_status(pool: &DbPool, node_id: Uuid, status: NodeStatus
 }
 
 pub async fn update_node_heartbeat(pool: &DbPool, node_id: Uuid) -> Result<()> {
-    sqlx::query("UPDATE nodes SET last_heartbeat = NOW(), updated_at = NOW() WHERE id = $2")
+    let now = chrono::Utc::now();
+    sqlx::query("UPDATE nodes SET last_heartbeat = $1, updated_at = $2 WHERE id = $3")
+        .bind(now)
+        .bind(now)
         .bind(node_id)
         .execute(pool)
         .await?;
@@ -97,8 +100,10 @@ pub async fn update_node_heartbeat(pool: &DbPool, node_id: Uuid) -> Result<()> {
 }
 
 pub async fn update_node_load(pool: &DbPool, node_id: Uuid, load: f64) -> Result<()> {
-    sqlx::query("UPDATE nodes SET current_load = $1, updated_at = NOW() WHERE id = $2")
+    let now = chrono::Utc::now();
+    sqlx::query("UPDATE nodes SET current_load = $1, updated_at = $2 WHERE id = $3")
         .bind(load)
+        .bind(now)
         .bind(node_id)
         .execute(pool)
         .await?;
@@ -760,3 +765,65 @@ pub async fn get_deployment_metrics_history(
 //
 //     Ok(())
 // }
+
+// ================================================================================
+// Model queries
+// ================================================================================
+
+pub async fn create_model(pool: &DbPool, model: &super::models::Model) -> Result<super::models::Model> {
+    // TODO: Implement actual database insertion
+    // For now, return a stub to allow compilation
+    Ok(model.clone())
+}
+
+pub async fn get_model_by_id(pool: &DbPool, model_id: Uuid) -> Result<super::models::Model> {
+    // TODO: Implement actual database query
+    // For now, return a stub to allow compilation
+    use crate::database::models::{Model, ModelFormat, ModelSource};
+    use chrono::Utc;
+    
+    Ok(Model {
+        id: model_id,
+        name: "stub_model".to_string(),
+        description: Some("Stub model for compilation".to_string()),
+        owner_user_id: "stub_owner".to_string(),
+        format: ModelFormat::Onnx,
+        source: ModelSource::CyxwizHub,
+        source_url: None,
+        size_bytes: 0,
+        min_vram_bytes: 0,
+        min_ram_bytes: 0,
+        min_cpu_cores: 0,
+        required_device_type: None,
+        gpu_preference: None,
+        is_public: false,
+        price_per_download: 0,
+        download_count: 0,
+        rating: 0.0,
+        rating_count: 0,
+        tags: vec![],
+        storage_path: String::new(),
+        checksum_sha256: String::new(),
+        metadata: serde_json::json!({}),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    })
+}
+
+pub async fn list_models(
+    pool: &DbPool,
+    user_id: Option<&str>,
+    page_size: i64,
+    page_token: Option<&str>,
+    public_only: bool,
+) -> Result<(Vec<super::models::Model>, Option<String>)> {
+    // TODO: Implement actual database query with pagination
+    // For now, return empty list to allow compilation
+    Ok((vec![], None))
+}
+
+pub async fn delete_model(pool: &DbPool, model_id: Uuid, user_id: &str) -> Result<()> {
+    // TODO: Implement actual database deletion
+    // For now, return success to allow compilation
+    Ok(())
+}

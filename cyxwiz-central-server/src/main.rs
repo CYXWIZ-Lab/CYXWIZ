@@ -1,29 +1,31 @@
-// mod api; // Disabled for TUI-only mode
-// mod blockchain; // Disabled for TUI-only mode
+mod api;
+mod blockchain;
 mod cache;
 mod config;
 mod database;
 mod error;
-// mod scheduler; // Disabled for TUI-only mode
+mod pb;
+mod scheduler;
 mod tui;
 
-// Minimal imports for TUI-only mode
+use crate::api::grpc::{
+    DeploymentServiceImpl, JobServiceImpl, ModelServiceImpl, NodeServiceImpl, TerminalServiceImpl,
+};
+use crate::blockchain::{PaymentProcessor, SolanaClient};
 use crate::cache::RedisCache;
 use crate::config::Config;
 use crate::database::{create_pool, run_migrations};
+use crate::scheduler::JobScheduler;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tonic::transport::Server;
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-// Proto code commented out for TUI-only mode
-// pub mod pb {
-//     tonic::include_proto!("cyxwiz.protocol");
-// }
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Running in TUI-only mode (no command line args needed)
+    // Running in TUI-only mode until gRPC compilation issues are resolved
+    // See GRPC_ENABLEMENT_GUIDE.md for details
 
     // Initialize tracing
     tracing_subscriber::registry()
@@ -83,12 +85,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let redis_cache_arc = Arc::new(RwLock::new(redis_cache));
 
-    // Always run in TUI mode for this minimal build
-    info!("Starting in TUI mode...");
-    info!("========================================");
-    return tui::run(db_pool, redis_cache_arc).await.map_err(|e| e.into());
+    // Check command line arguments for mode
+    let args: Vec<String> = std::env::args().collect();
+    let tui_mode = args.iter().any(|arg| arg == "--tui" || arg == "-t");
 
-    /* gRPC and REST servers commented out for minimal TUI-only build
+    if tui_mode {
+        // TUI mode
+        info!("Starting in TUI mode...");
+        info!("========================================");
+        return tui::run(db_pool, redis_cache_arc).await.map_err(|e| e.into());
+    }
+
+    // gRPC and REST server mode (default)
     // Initialize Solana blockchain client
     info!("Initializing Solana client...");
     let solana_client = if std::path::Path::new(&config.blockchain.payer_keypair_path).exists() {
@@ -207,5 +215,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Shutting down gracefully...");
     Ok(())
-    */ // End of commented out gRPC/REST server code
 }
