@@ -2,6 +2,7 @@
 
 #include "plot_3d.h"
 #include <functional>
+#include <random>
 
 namespace cyxwiz::plotting {
 

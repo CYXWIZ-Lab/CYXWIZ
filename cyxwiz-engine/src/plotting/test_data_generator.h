@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <random>
+#include <functional>
 
 namespace cyxwiz::plotting {
 
@@ -51,6 +52,103 @@ public:
     static std::vector<double> GenerateBimodal(size_t count,
                                                double mean1 = -2.0, double std1 = 1.0,
                                                double mean2 = 2.0, double std2 = 1.0);
+
+    // ========================================================================
+    // Mathematical Functions (Real Calculations)
+    // ========================================================================
+
+    /**
+     * Plot any mathematical function y = f(x)
+     * @param func Function to plot
+     * @param x_min Start of x range
+     * @param x_max End of x range
+     * @param count Number of points to calculate
+     */
+    static DataSeries PlotFunction(std::function<double(double)> func,
+                                   double x_min, double x_max, size_t count);
+
+    /**
+     * Plot polynomial: y = a_n*x^n + a_(n-1)*x^(n-1) + ... + a_1*x + a_0
+     * @param coefficients Coefficients [a_0, a_1, ..., a_n]
+     */
+    static DataSeries PlotPolynomial(const std::vector<double>& coefficients,
+                                     double x_min, double x_max, size_t count);
+
+    /**
+     * Plot trigonometric functions
+     */
+    static DataSeries PlotSine(double amplitude, double frequency, double phase,
+                               double x_min, double x_max, size_t count);
+    static DataSeries PlotCosine(double amplitude, double frequency, double phase,
+                                 double x_min, double x_max, size_t count);
+    static DataSeries PlotTangent(double amplitude, double frequency,
+                                  double x_min, double x_max, size_t count);
+
+    /**
+     * Plot exponential: y = a * exp(b * x)
+     */
+    static DataSeries PlotExponential(double a, double b,
+                                      double x_min, double x_max, size_t count);
+
+    /**
+     * Plot logarithmic: y = a * log(b * x)
+     */
+    static DataSeries PlotLogarithmic(double a, double b,
+                                      double x_min, double x_max, size_t count);
+
+    /**
+     * Plot power function: y = a * x^b
+     */
+    static DataSeries PlotPower(double a, double b,
+                                double x_min, double x_max, size_t count);
+
+    /**
+     * Plot rational function: y = (a*x + b) / (c*x + d)
+     */
+    static DataSeries PlotRational(double a, double b, double c, double d,
+                                   double x_min, double x_max, size_t count);
+
+    /**
+     * Plot hyperbolic functions
+     */
+    static DataSeries PlotSinh(double amplitude, double x_min, double x_max, size_t count);
+    static DataSeries PlotCosh(double amplitude, double x_min, double x_max, size_t count);
+    static DataSeries PlotTanh(double amplitude, double x_min, double x_max, size_t count);
+
+    /**
+     * Plot Gaussian (bell curve): y = a * exp(-(x-mu)^2 / (2*sigma^2))
+     */
+    static DataSeries PlotGaussian(double amplitude, double mean, double std_dev,
+                                   double x_min, double x_max, size_t count);
+
+    /**
+     * Plot parametric curve (x(t), y(t))
+     */
+    struct ParametricData {
+        std::vector<double> x;
+        std::vector<double> y;
+        std::vector<double> t;  // Parameter values
+    };
+    static ParametricData PlotParametric(
+        std::function<double(double)> x_func,
+        std::function<double(double)> y_func,
+        double t_min, double t_max, size_t count);
+
+    /**
+     * Plot circle: x^2 + y^2 = r^2
+     */
+    static ParametricData PlotCircle(double radius, size_t count);
+
+    /**
+     * Plot ellipse: (x/a)^2 + (y/b)^2 = 1
+     */
+    static ParametricData PlotEllipse(double a, double b, size_t count);
+
+    /**
+     * Plot lissajous curve: x = A*sin(a*t + delta), y = B*sin(b*t)
+     */
+    static ParametricData PlotLissajous(double A, double B, double a, double b,
+                                        double delta, size_t count);
 
     // ========================================================================
     // Time Series / Signals

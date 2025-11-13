@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <functional>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -553,6 +554,207 @@ std::vector<double> TestDataGenerator::Linspace(double start, double end, size_t
     }
 
     return result;
+}
+
+// ============================================================================
+// Mathematical Functions (Real Calculations)
+// ============================================================================
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotFunction(
+    std::function<double(double)> func,
+    double x_min, double x_max, size_t count) {
+
+    DataSeries series;
+    series.x = Linspace(x_min, x_max, count);
+    series.y.resize(count);
+
+    for (size_t i = 0; i < count; ++i) {
+        series.y[i] = func(series.x[i]);
+    }
+
+    return series;
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotPolynomial(
+    const std::vector<double>& coefficients,
+    double x_min, double x_max, size_t count) {
+
+    auto poly_func = [&coefficients](double x) {
+        double result = 0.0;
+        double x_power = 1.0;
+
+        for (double coef : coefficients) {
+            result += coef * x_power;
+            x_power *= x;
+        }
+
+        return result;
+    };
+
+    return PlotFunction(poly_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotSine(
+    double amplitude, double frequency, double phase,
+    double x_min, double x_max, size_t count) {
+
+    auto sine_func = [amplitude, frequency, phase](double x) {
+        return amplitude * std::sin(2.0 * M_PI * frequency * x + phase);
+    };
+
+    return PlotFunction(sine_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotCosine(
+    double amplitude, double frequency, double phase,
+    double x_min, double x_max, size_t count) {
+
+    auto cosine_func = [amplitude, frequency, phase](double x) {
+        return amplitude * std::cos(2.0 * M_PI * frequency * x + phase);
+    };
+
+    return PlotFunction(cosine_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotTangent(
+    double amplitude, double frequency,
+    double x_min, double x_max, size_t count) {
+
+    auto tan_func = [amplitude, frequency](double x) {
+        return amplitude * std::tan(2.0 * M_PI * frequency * x);
+    };
+
+    return PlotFunction(tan_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotExponential(
+    double a, double b,
+    double x_min, double x_max, size_t count) {
+
+    auto exp_func = [a, b](double x) {
+        return a * std::exp(b * x);
+    };
+
+    return PlotFunction(exp_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotLogarithmic(
+    double a, double b,
+    double x_min, double x_max, size_t count) {
+
+    auto log_func = [a, b](double x) {
+        if (b * x <= 0.0) return 0.0;  // Avoid log of negative/zero
+        return a * std::log(b * x);
+    };
+
+    return PlotFunction(log_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotPower(
+    double a, double b,
+    double x_min, double x_max, size_t count) {
+
+    auto power_func = [a, b](double x) {
+        return a * std::pow(x, b);
+    };
+
+    return PlotFunction(power_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotRational(
+    double a, double b, double c, double d,
+    double x_min, double x_max, size_t count) {
+
+    auto rational_func = [a, b, c, d](double x) {
+        double denominator = c * x + d;
+        if (std::abs(denominator) < 1e-10) return 0.0;  // Avoid division by zero
+        return (a * x + b) / denominator;
+    };
+
+    return PlotFunction(rational_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotSinh(
+    double amplitude, double x_min, double x_max, size_t count) {
+
+    auto sinh_func = [amplitude](double x) {
+        return amplitude * std::sinh(x);
+    };
+
+    return PlotFunction(sinh_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotCosh(
+    double amplitude, double x_min, double x_max, size_t count) {
+
+    auto cosh_func = [amplitude](double x) {
+        return amplitude * std::cosh(x);
+    };
+
+    return PlotFunction(cosh_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotTanh(
+    double amplitude, double x_min, double x_max, size_t count) {
+
+    auto tanh_func = [amplitude](double x) {
+        return amplitude * std::tanh(x);
+    };
+
+    return PlotFunction(tanh_func, x_min, x_max, count);
+}
+
+TestDataGenerator::DataSeries TestDataGenerator::PlotGaussian(
+    double amplitude, double mean, double std_dev,
+    double x_min, double x_max, size_t count) {
+
+    auto gaussian_func = [amplitude, mean, std_dev](double x) {
+        double exponent = -(x - mean) * (x - mean) / (2.0 * std_dev * std_dev);
+        return amplitude * std::exp(exponent);
+    };
+
+    return PlotFunction(gaussian_func, x_min, x_max, count);
+}
+
+TestDataGenerator::ParametricData TestDataGenerator::PlotParametric(
+    std::function<double(double)> x_func,
+    std::function<double(double)> y_func,
+    double t_min, double t_max, size_t count) {
+
+    ParametricData data;
+    data.t = Linspace(t_min, t_max, count);
+    data.x.resize(count);
+    data.y.resize(count);
+
+    for (size_t i = 0; i < count; ++i) {
+        data.x[i] = x_func(data.t[i]);
+        data.y[i] = y_func(data.t[i]);
+    }
+
+    return data;
+}
+
+TestDataGenerator::ParametricData TestDataGenerator::PlotCircle(double radius, size_t count) {
+    auto x_func = [radius](double t) { return radius * std::cos(t); };
+    auto y_func = [radius](double t) { return radius * std::sin(t); };
+
+    return PlotParametric(x_func, y_func, 0.0, 2.0 * M_PI, count);
+}
+
+TestDataGenerator::ParametricData TestDataGenerator::PlotEllipse(double a, double b, size_t count) {
+    auto x_func = [a](double t) { return a * std::cos(t); };
+    auto y_func = [b](double t) { return b * std::sin(t); };
+
+    return PlotParametric(x_func, y_func, 0.0, 2.0 * M_PI, count);
+}
+
+TestDataGenerator::ParametricData TestDataGenerator::PlotLissajous(
+    double A, double B, double a, double b, double delta, size_t count) {
+
+    auto x_func = [A, a, delta](double t) { return A * std::sin(a * t + delta); };
+    auto y_func = [B, b](double t) { return B * std::sin(b * t); };
+
+    return PlotParametric(x_func, y_func, 0.0, 2.0 * M_PI, count);
 }
 
 } // namespace cyxwiz::plotting
