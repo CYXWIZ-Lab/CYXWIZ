@@ -1,5 +1,6 @@
 #include "toolbar.h"
 #include "plot_window.h"
+#include "plot_test_panel.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
