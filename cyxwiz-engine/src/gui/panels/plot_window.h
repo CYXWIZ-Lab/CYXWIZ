@@ -48,6 +48,7 @@ public:
 
     // Plot access
     std::string GetPlotId() const { return plot_id_; }
+    void SetPlotId(const std::string& plot_id) { plot_id_ = plot_id; }
 
     // Export
     void SaveToFile(const std::string& filepath);
@@ -64,12 +65,20 @@ private:
     float noise_level_;
     int num_bins_;
 
+    // Matplotlib image rendering
+    unsigned int matplotlib_texture_id_;
+    int matplotlib_image_width_;
+    int matplotlib_image_height_;
+    std::string matplotlib_temp_file_;
+
     // Helper methods
     void InitializePlot();
     void GenerateDefaultData();
     void RenderMenuBar();  // NEW: Menu bar with File, Edit, View, etc.
     void RenderControls();
     void RenderPlot();
+    bool LoadMatplotlibImage(const std::string& filepath);
+    void UnloadMatplotlibTexture();
 
     // Type-specific data generators
     void GenerateLineData();

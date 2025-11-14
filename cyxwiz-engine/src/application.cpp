@@ -13,8 +13,45 @@
 #include <imgui_impl_opengl3.h>
 #include <cyxwiz/device.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+#include <filesystem>
+
 static void glfw_error_callback(int error, const char* description) {
     spdlog::error("GLFW Error {}: {}", error, description);
+}
+
+// Load window icon from resources
+static bool load_window_icon(GLFWwindow* window) {
+    // Try both possible locations
+    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz.png";
+
+    if (!std::filesystem::exists(icon_path)) {
+        icon_path = "resources/cyxwiz.png";
+        if (!std::filesystem::exists(icon_path)) {
+            spdlog::warn("Window icon not found at either location");
+            return false;
+        }
+    }
+
+    int width, height, channels;
+    unsigned char* pixels = stbi_load(icon_path.string().c_str(), &width, &height, &channels, 4);
+
+    if (!pixels) {
+        spdlog::error("Failed to load window icon: {}", stbi_failure_reason());
+        return false;
+    }
+
+    GLFWimage image;
+    image.width = width;
+    image.height = height;
+    image.pixels = pixels;
+
+    glfwSetWindowIcon(window, 1, &image);
+    stbi_image_free(pixels);
+
+    spdlog::info("Window icon loaded successfully ({}x{})", width, height);
+    return true;
 }
 
 CyxWizApp::CyxWizApp(int argc, char** argv)
@@ -67,6 +104,9 @@ bool CyxWizApp::Initialize() {
         spdlog::error("Failed to create GLFW window");
         return false;
     }
+
+    // Load window icon
+    load_window_icon(window_);
 
     // Make sure window is visible and focused
     glfwShowWindow(window_);

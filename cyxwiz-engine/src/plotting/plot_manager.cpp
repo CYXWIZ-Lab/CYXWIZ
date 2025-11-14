@@ -18,6 +18,8 @@ PlotManager& PlotManager::GetInstance() {
 }
 
 PlotManager::PlotManager() {
+    // Initialize Python backend for Matplotlib support
+    InitializePythonBackend();
     spdlog::info("PlotManager initialized");
 }
 
@@ -247,6 +249,51 @@ bool PlotManager::SavePlotToFile(const std::string& plot_id,
         return false;
     }
 
+    // Render the plot data to matplotlib before saving
+    plot->backend->BeginPlot(plot->config.title.c_str());
+
+    for (const auto& [name, dataset] : plot->datasets) {
+        for (const auto& series : dataset.GetAllSeries()) {
+            // Determine which plotting function to use based on plot type
+            switch (plot->config.type) {
+                case PlotType::Line:
+                    plot->backend->PlotLine(series.name.c_str(),
+                                           series.x_data.data(),
+                                           series.y_data.data(),
+                                           static_cast<int>(series.x_data.size()));
+                    break;
+                case PlotType::Scatter:
+                    plot->backend->PlotScatter(series.name.c_str(),
+                                              series.x_data.data(),
+                                              series.y_data.data(),
+                                              static_cast<int>(series.x_data.size()));
+                    break;
+                case PlotType::Bar:
+                    plot->backend->PlotBars(series.name.c_str(),
+                                           series.x_data.data(),
+                                           series.y_data.data(),
+                                           static_cast<int>(series.x_data.size()));
+                    break;
+                case PlotType::Histogram:
+                    plot->backend->PlotHistogram(series.name.c_str(),
+                                                series.y_data.data(),
+                                                static_cast<int>(series.y_data.size()),
+                                                20);  // Default 20 bins
+                    break;
+                default:
+                    // Default to line plot
+                    plot->backend->PlotLine(series.name.c_str(),
+                                           series.x_data.data(),
+                                           series.y_data.data(),
+                                           static_cast<int>(series.x_data.size()));
+                    break;
+            }
+        }
+    }
+
+    plot->backend->EndPlot();
+
+    // Now save the rendered plot
     return plot->backend->SaveToFile(filepath.c_str());
 }
 
@@ -379,11 +426,11 @@ std::vector<std::string> PlotManager::GetAllPlotIds() const {
 // ============================================================================
 
 bool PlotManager::InitializePythonBackend() {
-    // TODO: Initialize Python interpreter and matplotlib
-    // This will be implemented when Python bindings are added
-    spdlog::warn("Python backend initialization not yet implemented");
-    python_initialized_ = false;
-    return false;
+    // Python interpreter is already initialized by PythonEngine in application.cpp
+    // We just need to mark it as available for Matplotlib backend
+    spdlog::info("Python backend marked as available for Matplotlib");
+    python_initialized_ = true;
+    return true;
 }
 
 void PlotManager::ShutdownPythonBackend() {

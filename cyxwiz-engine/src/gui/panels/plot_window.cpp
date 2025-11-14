@@ -13,6 +13,13 @@
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
+#include <filesystem>
+
+// stb_image for loading PNG images (implementation is in application.cpp)
+#include <stb_image.h>
+
+// OpenGL for texture management - use GLAD for modern OpenGL
+#include <glad/glad.h>
 
 namespace cyxwiz {
 
@@ -24,17 +31,29 @@ PlotWindow::PlotWindow(const std::string& title, PlotWindowType type, bool auto_
     , num_points_(100)
     , noise_level_(0.1f)
     , num_bins_(20)
+    , matplotlib_texture_id_(0)
+    , matplotlib_image_width_(0)
+    , matplotlib_image_height_(0)
 {
-    InitializePlot();
+    // Only initialize plot if we're auto-generating
+    // If not auto-generating, the plot_id will be set externally via SetPlotId()
     if (auto_generate) {
+        InitializePlot();
         GenerateDefaultData();
     }
 }
 
 PlotWindow::~PlotWindow() {
+    UnloadMatplotlibTexture();
+
     if (!plot_id_.empty()) {
         auto& plot_mgr = plotting::PlotManager::GetInstance();
         plot_mgr.DeletePlot(plot_id_);
+    }
+
+    // Clean up temporary file
+    if (!matplotlib_temp_file_.empty() && std::filesystem::exists(matplotlib_temp_file_)) {
+        std::filesystem::remove(matplotlib_temp_file_);
     }
 }
 
@@ -209,7 +228,82 @@ void PlotWindow::RenderControls() {
 
 void PlotWindow::RenderPlot() {
     auto& plot_mgr = plotting::PlotManager::GetInstance();
-    plot_mgr.RenderImPlot(plot_id_);
+
+    // Check which backend this plot is using
+    auto config = plot_mgr.GetPlotConfig(plot_id_);
+
+    if (config.backend == plotting::PlotManager::BackendType::ImPlot) {
+        // Real-time plotting using ImPlot - render directly
+        plot_mgr.RenderImPlot(plot_id_);
+    } else if (config.backend == plotting::PlotManager::BackendType::Matplotlib) {
+        // Offline plotting using Matplotlib - render image if available
+
+        // If we don't have a texture yet, generate the plot and load it
+        if (matplotlib_texture_id_ == 0) {
+            // Create temporary filename
+            matplotlib_temp_file_ = "temp_matplotlib_plot_" + plot_id_ + ".png";
+
+            // Save plot to temporary file
+            if (plot_mgr.SavePlotToFile(plot_id_, matplotlib_temp_file_)) {
+                // Load the image as an OpenGL texture
+                LoadMatplotlibImage(matplotlib_temp_file_);
+            }
+        }
+
+        // Display the plot image if loaded
+        if (matplotlib_texture_id_ != 0) {
+            // Calculate display size to fit window while maintaining aspect ratio
+            ImVec2 available = ImGui::GetContentRegionAvail();
+            float aspect_ratio = static_cast<float>(matplotlib_image_width_) / matplotlib_image_height_;
+
+            ImVec2 display_size;
+            if (available.x / aspect_ratio <= available.y) {
+                // Width-constrained
+                display_size.x = available.x;
+                display_size.y = available.x / aspect_ratio;
+            } else {
+                // Height-constrained
+                display_size.y = available.y - 80;  // Leave room for buttons
+                display_size.x = display_size.y * aspect_ratio;
+            }
+
+            // Center the image
+            float offset_x = (available.x - display_size.x) * 0.5f;
+            if (offset_x > 0) {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset_x);
+            }
+
+            // Render the texture with proper UV coordinates
+            ImGui::Image(
+                (ImTextureID)(intptr_t)matplotlib_texture_id_,
+                display_size,
+                ImVec2(0, 0),  // UV0 - top-left
+                ImVec2(1, 1)   // UV1 - bottom-right
+            );
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Export buttons
+            if (ImGui::Button("Export to PNG", ImVec2(150, 30))) {
+                SaveToFile("matplotlib_plot.png");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Export to SVG", ImVec2(150, 30))) {
+                SaveToFile("matplotlib_plot.svg");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Regenerate", ImVec2(150, 30))) {
+                // Unload current texture and regenerate
+                UnloadMatplotlibTexture();
+            }
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Failed to load matplotlib plot image");
+            ImGui::Text("Plot ID: %s", plot_id_.c_str());
+            ImGui::Text("Temp file: %s", matplotlib_temp_file_.c_str());
+        }
+    }
 }
 
 void PlotWindow::SetDataGenerator(std::function<void()> generator) {
@@ -485,6 +579,61 @@ void PlotWindow::GenerateParametricData() {
         series->y_data = data.y;
     }
     plot_mgr.AddDataset(plot_id_, "parametric", dataset);
+}
+
+// ============================================================================
+// Matplotlib Image Loading
+// ============================================================================
+
+bool PlotWindow::LoadMatplotlibImage(const std::string& filepath) {
+    // Unload previous texture if any
+    UnloadMatplotlibTexture();
+
+    // Check if file exists
+    if (!std::filesystem::exists(filepath)) {
+        spdlog::error("Matplotlib image file not found: {}", filepath);
+        return false;
+    }
+
+    // Load image using stb_image
+    int width, height, channels;
+    unsigned char* image_data = stbi_load(filepath.c_str(), &width, &height, &channels, 4);  // Force RGBA
+
+    if (!image_data) {
+        spdlog::error("Failed to load matplotlib image: {}", filepath);
+        return false;
+    }
+
+    matplotlib_image_width_ = width;
+    matplotlib_image_height_ = height;
+
+    // Create OpenGL texture
+    glGenTextures(1, &matplotlib_texture_id_);
+    glBindTexture(GL_TEXTURE_2D, matplotlib_texture_id_);
+
+    // Set texture parameters
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // Upload texture data
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
+
+    // Free image data
+    stbi_image_free(image_data);
+
+    spdlog::info("Loaded matplotlib plot image: {} ({}x{})", filepath, width, height);
+    return true;
+}
+
+void PlotWindow::UnloadMatplotlibTexture() {
+    if (matplotlib_texture_id_ != 0) {
+        glDeleteTextures(1, &matplotlib_texture_id_);
+        matplotlib_texture_id_ = 0;
+        matplotlib_image_width_ = 0;
+        matplotlib_image_height_ = 0;
+    }
 }
 
 } // namespace cyxwiz

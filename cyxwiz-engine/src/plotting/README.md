@@ -15,6 +15,7 @@ The plotting system is designed with the following principles:
 3. **Data-Centric**: Efficient data structures optimized for both streaming and batch operations
 4. **Extensible**: Easy to add new plot types and backends
 5. **Python Integration**: Leverage matplotlib's statistical capabilities via embedded Python
+6. **GUI Integration**: Matplotlib plots rendered as OpenGL textures in ImGui windows for seamless viewing
 
 ### Component Overview
 
@@ -26,13 +27,16 @@ cyxwiz-engine/src/plotting/
 │   ├── plot_backend.h          # Abstract backend interface
 │   ├── implot_backend.h/cpp    # Real-time plotting (Dear ImPlot)
 │   └── matplotlib_backend.h/cpp # Offline plotting (Python/matplotlib)
-├── plot_types/                 # Specialized plot implementations
+├── gui/panels/
+│   ├── plot_window.h/cpp       # Reusable plot display window (supports both backends)
+│   └── plot_test_control.h/cpp # Test control panel for plot generation
+├── plot_types/                 # Specialized plot implementations (PLANNED)
 │   ├── histogram.h/cpp         # Histogram plots
 │   ├── kde.h/cpp              # Kernel Density Estimation
 │   ├── boxplot.h/cpp          # Box-and-whisker plots
 │   ├── qqplot.h/cpp           # Q-Q plots for normality testing
 │   └── mosaic.h/cpp           # Mosaic plots for categorical data
-└── test_data_generator.h/cpp  # Fake data for testing
+└── test_data_generator.h/cpp  # Fake data for testing (sine, cosine, normal, etc.)
 ```
 
 ## Core Components
@@ -208,13 +212,21 @@ void TrainingDashboardPanel::Render() {
 - **Flexibility**: Full matplotlib API access
 - **Trade-off**: Slower, not suitable for real-time updates
 - **Requirement**: Python interpreter with matplotlib installed
+- **Display**: Plots are rendered to PNG and loaded as OpenGL textures in ImGui windows
+
+**Implementation Details**:
+The matplotlib backend works in three stages:
+
+1. **Plot Generation**: Python commands are accumulated (BeginPlot, PlotLine/Scatter/etc., EndPlot)
+2. **Image Export**: matplotlib saves the figure to a temporary PNG file via Agg backend
+3. **GUI Rendering**: PNG is loaded using stb_image and uploaded to OpenGL texture for display in PlotWindow
 
 **Example Usage**:
 ```cpp
 // Create offline plot
 PlotManager::PlotConfig config;
 config.backend = PlotManager::BackendType::Matplotlib;
-config.type = PlotManager::PlotType::Histogram;
+config.type = PlotManager::PlotType::Line;
 
 auto plot_id = mgr.CreatePlot(config);
 
@@ -224,9 +236,55 @@ dataset.AddSeries("distribution");
 // ... populate data ...
 mgr.AddDataset(plot_id, "dist", dataset);
 
-// Export to file
+// Save to file (triggers: BeginPlot -> PlotLine -> EndPlot -> savefig)
 mgr.SavePlotToFile(plot_id, "distribution.png");
+
+// Display in GUI
+PlotWindow window("My Plot", PlotWindow::PlotWindowType::Line2D);
+window.SetPlotId(plot_id);
+window.Render();  // Shows matplotlib plot as texture
 ```
+
+### 7. PlotWindow (GUI Component)
+
+**Purpose**: Reusable dockable window for displaying plots
+
+**Features**:
+- Supports both ImPlot (direct rendering) and matplotlib (texture rendering)
+- Menu bar with File/Edit/View/Tools/Window/Help
+- Interactive controls (Regenerate Data, Save to File, adjust parameters)
+- Export functionality (PNG, SVG)
+- Automatic data generation for testing
+
+**Usage Example**:
+```cpp
+// Create plot window
+auto window = std::make_shared<PlotWindow>(
+    "Line Plot - Sine Wave",
+    PlotWindow::PlotWindowType::Line2D,
+    true  // auto_generate test data
+);
+
+// Connect to existing plot
+window->SetPlotId(plot_id);
+
+// Render in main loop
+window->Render();
+```
+
+### 8. PlotTestControlPanel (GUI Component)
+
+**Purpose**: Interactive panel for testing plotting system
+
+**Features**:
+- Plot type selection (Line, Scatter, Bar, Histogram, etc.)
+- Backend selection (ImPlot vs Matplotlib)
+- Test data selection (Sine, Cosine, Normal, Exponential, etc.)
+- Generate and Clear All buttons
+- Automatic window management
+
+**Usage**:
+Access from main menu: `Plots > Test Control`
 
 ## Supported Plot Types
 
@@ -289,30 +347,99 @@ SaveToFile("analysis.png")
 
 ## Implementation Status
 
-### ✅ Completed
+### ✅ Completed (Phase 1-5)
 
-- Core architecture (PlotManager, PlotDataset, CircularBuffer)
-- Backend abstraction (PlotBackend interface)
-- ImPlot backend (real-time plotting)
-- Matplotlib backend (skeleton with command queuing)
-- Basic plot types (line, scatter, bar, histogram)
-- Statistics calculation (mean, median, std dev, quartiles)
+**Core Infrastructure**:
+- ✅ PlotManager singleton with plot lifecycle management
+- ✅ PlotDataset with multi-series support
+- ✅ CircularBuffer for bounded real-time data
+- ✅ PlotBackend abstract interface
+- ✅ ImPlotBackend for real-time rendering
+- ✅ MatplotlibBackend with Python integration (pybind11)
+- ✅ Statistics calculation (mean, median, std dev, quartiles)
 
-### 🚧 In Progress
+**GUI Components**:
+- ✅ PlotWindow - Reusable dockable plot display window
+- ✅ PlotTestControlPanel - Interactive testing interface
+- ✅ Matplotlib texture rendering (stb_image + OpenGL)
+- ✅ Menu integration (Plots > Test Control)
 
-- Python/pybind11 integration for matplotlib
-- CMakeLists.txt integration
-- Advanced plot types (mosaic, stem-and-leaf)
-- Test data generator
+**Plot Types**:
+- ✅ Line plots (ImPlot + Matplotlib)
+- ✅ Scatter plots (ImPlot + Matplotlib)
+- ✅ Bar charts (ImPlot + Matplotlib)
+- ✅ Histograms (ImPlot + Matplotlib)
+- ✅ Heatmaps (ImPlot)
 
-### 📋 Planned
+**Data Generation**:
+- ✅ TestDataGenerator with multiple patterns
+  - Sine, Cosine, Normal Distribution
+  - Exponential Decay, Random Scatter
+  - Linear, Polynomial, Damped Oscillation
 
-- GUI test panel for plot development
-- Integration with TrainingDashboardPanel
-- Plot templates and presets
-- Animation support for ImPlot
-- Multi-plot layouts
-- Plot interaction (zoom, pan, selection)
+**File I/O**:
+- ✅ SavePlotToFile with plot data rendering
+- ✅ PNG export via matplotlib
+- ✅ Temporary file management for matplotlib plots
+
+### 🚧 Current Limitations
+
+**Matplotlib Backend**:
+- ⚠️ Some advanced plot types (3D, Polar, Pie) map to basic types
+- ⚠️ Limited customization exposed to C++ API
+- ⚠️ SVG export implemented but needs testing
+
+**ImPlot Backend**:
+- ⚠️ No file export capability (render-only)
+- ⚠️ Limited statistical plot types
+
+**GUI**:
+- ⚠️ Menu bar in PlotWindow is stub (File/Edit/View/etc not implemented)
+- ⚠️ Regenerate functionality uses fixed parameters
+
+### 📋 Planned Enhancements (Contributors Welcome!)
+
+**Priority 1 - Core Functionality**:
+- [ ] Implement PlotWindow menu bar actions (Open, Save As, Copy, Export options)
+- [ ] Add SVG and PDF export support with testing
+- [ ] Implement proper 3D plotting support (Surface, 3D Scatter, 3D Line)
+- [ ] Add Polar plot support in matplotlib backend
+- [ ] Add Pie chart support in matplotlib backend
+- [ ] Implement Stairs plot type
+- [ ] Add Box plot implementation
+- [ ] Add Violin plot implementation
+- [ ] Add KDE (Kernel Density Estimation) plot
+
+**Priority 2 - Advanced Plot Types**:
+- [ ] Q-Q plots for normality testing
+- [ ] Mosaic plots for categorical data
+- [ ] Stem-and-leaf plots
+- [ ] Contour plots
+- [ ] Error bar plots
+- [ ] Candlestick charts (for metrics visualization)
+
+**Priority 3 - GUI Improvements**:
+- [ ] Implement "Save to File" dialog with format selection
+- [ ] Add customizable plot parameters UI
+- [ ] Implement plot themes/color schemes
+- [ ] Add zoom/pan controls for ImPlot
+- [ ] Add data inspection tooltip (hover to see values)
+- [ ] Multi-plot layouts (subplots, grid layouts)
+
+**Priority 4 - Integration**:
+- [ ] Connect to TrainingDashboardPanel for live training metrics
+- [ ] Add plot templates for common ML use cases
+- [ ] Implement data import from CSV/JSON
+- [ ] Add plot comparison tools (overlay multiple runs)
+- [ ] Animation support for training progress
+
+**Priority 5 - Performance & Quality**:
+- [ ] Optimize CircularBuffer for >10K points
+- [ ] Add plot caching to avoid redundant matplotlib calls
+- [ ] Implement progressive rendering for large datasets
+- [ ] Add unit tests for all plot types
+- [ ] Integration tests with GUI components
+- [ ] Memory leak detection and profiling
 
 ## Adding a New Plot Type
 
@@ -627,32 +754,318 @@ spdlog::set_level(spdlog::level::debug);  // Show all debug messages
 
 ## Contributing
 
+We welcome contributions to the CyxWiz plotting system! This section provides comprehensive guidance for contributors.
+
+### Quick Start for Contributors
+
+1. **Setup Development Environment**:
+   ```bash
+   # Clone and build
+   git clone https://github.com/cyxwiz/cyxwiz.git
+   cd cyxwiz
+   cmake --preset windows-release  # or linux-release, macos-release
+   cmake --build build --config Release
+   ```
+
+2. **Test the Plotting System**:
+   ```bash
+   # Run the engine
+   ./build/bin/Release/cyxwiz-engine.exe
+   # Navigate to: Plots > Test Control
+   # Try generating plots with different backends and data
+   ```
+
+3. **Choose a Task**: See "Planned Enhancements" section above for available tasks
+
 ### Guidelines
 
 1. **Follow existing patterns**: Use PlotBackend interface, don't bypass PlotManager
 2. **Add tests**: Every new plot type should have unit tests
 3. **Document**: Update this README and add code comments
-4. **Cross-platform**: Test on Windows, macOS, Linux
+4. **Cross-platform**: Test on Windows, macOS, Linux if possible
 5. **Performance**: Profile with large datasets (10K+ points)
+6. **Incremental PRs**: Submit small, focused changes rather than large rewrites
 
 ### Code Style
 
+**Naming Conventions**:
 ```cpp
 // Good: Descriptive names, clear ownership
 auto& mgr = PlotManager::GetInstance();
 std::string plot_id = mgr.CreatePlot(config);
+PlotDataset dataset;
+CircularBuffer buffer(1000);
 
 // Bad: Unclear ownership, abbreviations
 auto m = PM::get();
 auto id = m->create(c);
+PlotDS ds;
+CircBuf buf(1000);
 ```
+
+**Comments**:
+```cpp
+// Good: Explain why, not what
+// Use circular buffer to prevent memory growth during long training runs
+CircularBuffer buffer(1000);
+
+// Bad: Stating the obvious
+// Create a circular buffer with capacity 1000
+CircularBuffer buffer(1000);
+```
+
+**Error Handling**:
+```cpp
+// Good: Check return values and log errors
+if (!plot_mgr.SavePlotToFile(plot_id, filepath)) {
+    spdlog::error("Failed to save plot {} to {}", plot_id, filepath);
+    return false;
+}
+
+// Bad: Ignore errors
+plot_mgr.SavePlotToFile(plot_id, filepath);
+```
+
+### Architecture Decisions
+
+When implementing new features, follow these design principles:
+
+**1. Backend Abstraction**:
+- Always implement new plot types in BOTH backends (ImPlot and Matplotlib) if applicable
+- If a plot type only makes sense for one backend, document why in comments
+
+**2. PlotManager Orchestration**:
+- Never call backend methods directly from GUI code
+- Route all operations through PlotManager
+- Let PlotManager handle backend selection and data routing
+
+**3. Data Ownership**:
+- PlotDataset owns the data
+- PlotManager owns PlotBackend instances
+- PlotWindow owns GUI state (texture IDs, window flags)
+
+**4. GUI Integration**:
+- Keep plotting logic separate from GUI logic
+- PlotWindow should be reusable for any plot type
+- Use composition over inheritance for specialized plot windows
+
+### Adding a New Plot Type (Detailed Guide)
+
+Let's walk through adding a "Box Plot" as an example:
+
+**Step 1: Define in plot_manager.h**:
+```cpp
+enum class PlotType {
+    Line,
+    Scatter,
+    Bar,
+    Histogram,
+    BoxPlot,  // <- Add this
+    // ... other types
+};
+```
+
+**Step 2: Add to matplotlib_backend.h**:
+```cpp
+class MatplotlibBackend : public PlotBackend {
+public:
+    // ... existing methods ...
+    void PlotBoxPlot(const char* label,
+                     const std::vector<double>& data,
+                     const std::vector<std::string>& labels);
+};
+```
+
+**Step 3: Implement in matplotlib_backend.cpp**:
+```cpp
+void MatplotlibBackend::PlotBoxPlot(const char* label,
+                                     const std::vector<double>& data,
+                                     const std::vector<std::string>& labels) {
+    if (!in_plot_) {
+        spdlog::warn("PlotBoxPlot called outside BeginPlot/EndPlot");
+        return;
+    }
+
+    std::ostringstream cmd;
+
+    // Convert data to Python list
+    cmd << "data = [";
+    for (size_t i = 0; i < data.size(); ++i) {
+        if (i > 0) cmd << ", ";
+        cmd << data[i];
+    }
+    cmd << "]\n";
+
+    // Create box plot
+    cmd << "ax.boxplot(data, labels=['" << label << "'])\n";
+
+    python_commands_ += cmd.str();
+}
+```
+
+**Step 4: Update plot_manager.cpp SavePlotToFile**:
+```cpp
+switch (plot->config.type) {
+    // ... existing cases ...
+    case PlotType::BoxPlot:
+        plot->backend->PlotBoxPlot(series.name.c_str(),
+                                   series.y_data,
+                                   {series.name});
+        break;
+}
+```
+
+**Step 5: Add to plot_test_control.cpp**:
+```cpp
+// In plot type selection array
+const char* plot_types[] = {
+    "Line Plot",
+    "Scatter Plot",
+    // ...
+    "Box Plot",  // <- Add here
+};
+
+// In GeneratePlot() switch
+case 4: plot_type = PlotManager::PlotType::BoxPlot; break;
+```
+
+**Step 6: Add test in plot_window.cpp** (if needed):
+```cpp
+case PlotWindowType::BoxPlot:
+    GenerateBoxPlotData();
+    break;
+```
+
+**Step 7: Write unit test**:
+```cpp
+// In tests/unit/test_plotting.cpp
+TEST_CASE("Box plot generation", "[plotting][boxplot]") {
+    auto& mgr = PlotManager::GetInstance();
+
+    PlotManager::PlotConfig config;
+    config.type = PlotManager::PlotType::BoxPlot;
+    config.backend = PlotManager::BackendType::Matplotlib;
+
+    auto plot_id = mgr.CreatePlot(config);
+
+    PlotDataset dataset;
+    dataset.AddSeries("quartiles");
+    // Add test data...
+
+    REQUIRE(mgr.SavePlotToFile(plot_id, "test_boxplot.png"));
+}
+```
+
+**Step 8: Update this README**:
+- Add BoxPlot to "Supported Plot Types" table
+- Add example usage if unique
+- Update "Implementation Status" to mark as completed
+
+### Testing Your Changes
+
+**Manual Testing**:
+1. Run engine: `./build/bin/Release/cyxwiz-engine.exe`
+2. Open "Plot Test Control" panel
+3. Select your new plot type
+4. Test with different data patterns
+5. Test both ImPlot and Matplotlib backends
+6. Verify export functionality
+
+**Unit Testing**:
+```bash
+cd build/windows-release  # or your build directory
+ctest --output-on-failure -R plotting
+```
+
+**Integration Testing**:
+- Create multiple plots and verify they coexist
+- Test window docking and undocking
+- Test with very large datasets (>10K points)
+- Test export to different formats (PNG, SVG, PDF)
 
 ### Submitting Changes
 
-1. Create feature branch: `git checkout -b feature/your-plot-type`
-2. Implement and test
-3. Update this README if adding new features
-4. Submit PR with description and test results
+1. **Create Feature Branch**:
+   ```bash
+   git checkout master
+   git pull origin master
+   git checkout -b feature/box-plot-implementation
+   ```
+
+2. **Implement and Test**:
+   ```bash
+   # Make your changes
+   # Build and test
+   cmake --build build --config Release
+   ctest
+   ```
+
+3. **Update Documentation**:
+   - Add inline code comments
+   - Update this README
+   - Add usage examples if needed
+
+4. **Commit with Clear Messages**:
+   ```bash
+   git add cyxwiz-engine/src/plotting/
+   git commit -m "Add box plot support to matplotlib backend
+
+   - Implement PlotBoxPlot in MatplotlibBackend
+   - Add BoxPlot enum to PlotType
+   - Wire up in PlotManager::SavePlotToFile
+   - Add to PlotTestControlPanel options
+   - Add unit test for box plot generation
+   - Update README with box plot documentation"
+   ```
+
+5. **Push and Create PR**:
+   ```bash
+   git push origin feature/box-plot-implementation
+   # Create PR on GitHub with description and screenshots
+   ```
+
+### PR Checklist
+
+Before submitting, ensure:
+- [ ] Code compiles on your platform (Windows/Linux/macOS)
+- [ ] Unit tests pass (`ctest`)
+- [ ] Manual testing completed (screenshots helpful)
+- [ ] Code follows existing style (run clang-format if available)
+- [ ] Added/updated comments and documentation
+- [ ] README.md updated if adding features
+- [ ] No compiler warnings introduced
+- [ ] Performance tested with >1K data points
+- [ ] Memory leaks checked (valgrind/Dr. Memory if available)
+
+### Common Tasks for New Contributors
+
+**Easy (Good First Issues)**:
+- [ ] Add new test data patterns to TestDataGenerator (e.g., log curve, step function)
+- [ ] Improve error messages with more context
+- [ ] Add parameter validation to plot methods
+- [ ] Improve PlotWindow button styling and layout
+- [ ] Add keyboard shortcuts to PlotTestControlPanel
+
+**Medium**:
+- [ ] Implement SVG export and test thoroughly
+- [ ] Add plot themes (dark mode, light mode, custom colors)
+- [ ] Implement Stairs plot type
+- [ ] Add tooltips to show data values on hover (ImPlot)
+- [ ] Implement copy-to-clipboard for plots
+
+**Advanced**:
+- [ ] Implement true 3D plotting with matplotlib
+- [ ] Add subplot/multi-panel layout support
+- [ ] Implement plot animation for training progress
+- [ ] Add Jupyter-style interactive controls
+- [ ] Optimize CircularBuffer for millions of points
+
+### Getting Help
+
+- **Questions**: Open a GitHub Discussion
+- **Bugs**: Open a GitHub Issue with reproduction steps
+- **Design Decisions**: Discuss in PR or create RFC issue
+- **Architecture**: Refer to `CLAUDE.md` and this README
 
 ## Future Enhancements
 
@@ -693,6 +1106,14 @@ Part of the CyxWiz project. See root LICENSE file.
 
 ---
 
-**Last Updated**: 2025-11-12
-**Status**: Phase 1 Implementation (Core Infrastructure Complete)
+**Last Updated**: 2025-11-14
+**Status**: Phase 5 Complete - Dual-backend plotting with GUI integration fully operational
+**Key Features**:
+- ✅ ImPlot (real-time) and Matplotlib (offline) backends
+- ✅ PlotWindow with texture rendering for matplotlib plots
+- ✅ Interactive PlotTestControlPanel for testing
+- ✅ TestDataGenerator with 8 data patterns
+- ✅ SavePlotToFile with automatic plot rendering
+
+**Next Phase**: Community contributions for advanced plot types and features
 **Maintainer**: CyxWiz Core Team

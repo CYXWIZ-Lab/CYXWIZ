@@ -1,11 +1,11 @@
 #include "matplotlib_backend.h"
 #include <spdlog/spdlog.h>
+#include <pybind11/pybind11.h>
+#include <pybind11/embed.h>
 #include <sstream>
 #include <vector>
 
-// TODO: Include pybind11 headers when Python integration is added
-// #include <pybind11/pybind11.h>
-// #include <pybind11/numpy.h>
+namespace py = pybind11;
 
 namespace cyxwiz::plotting {
 
@@ -14,11 +14,10 @@ namespace cyxwiz::plotting {
 // ============================================================================
 
 struct MatplotlibBackend::PythonState {
-    // TODO: Add pybind11 objects here
-    // py::object plt_module;
-    // py::object np_module;
-    // py::object fig;
-    // py::object ax;
+    py::object plt_module;
+    py::object np_module;
+    py::object fig;
+    py::object ax;
     bool python_available = false;
 };
 
@@ -43,32 +42,35 @@ bool MatplotlibBackend::Initialize(int width, int height) {
     width_ = width;
     height_ = height;
 
-    // TODO: Initialize Python interpreter and import matplotlib
-    /*
     try {
-        py::module plt = py::module::import("matplotlib.pyplot");
-        py::module np = py::module::import("numpy");
+        // Import matplotlib and set non-interactive backend BEFORE importing pyplot
+        // This prevents matplotlib from trying to create Tk GUI windows
+        py::module_ mpl = py::module_::import("matplotlib");
+        mpl.attr("use")("Agg");  // Use Agg backend (non-interactive, image-only)
+
+        // Now import matplotlib.pyplot and numpy
+        py::module_ plt = py::module_::import("matplotlib.pyplot");
+        py::module_ np = py::module_::import("numpy");
 
         py_state_->plt_module = plt;
         py_state_->np_module = np;
         py_state_->python_available = true;
 
-        spdlog::info("MatplotlibBackend initialized with Python");
+        spdlog::info("MatplotlibBackend initialized with Agg backend (non-interactive)");
         initialized_ = true;
         return true;
+    } catch (const py::error_already_set& e) {
+        spdlog::error("Failed to initialize matplotlib: {}", e.what());
+        spdlog::error("Make sure matplotlib and numpy are installed: pip install matplotlib numpy");
+        py_state_->python_available = false;
+        initialized_ = true;  // Mark as initialized but non-functional
+        return false;
     } catch (const std::exception& e) {
         spdlog::error("Failed to initialize matplotlib: {}", e.what());
+        py_state_->python_available = false;
+        initialized_ = true;
         return false;
     }
-    */
-
-    // Placeholder until Python integration is complete
-    spdlog::warn("MatplotlibBackend: Python integration not yet implemented");
-    spdlog::warn("Matplotlib plotting will be non-functional until pybind11 is integrated");
-
-    py_state_->python_available = false;
-    initialized_ = true;  // Mark as initialized but non-functional
-    return true;
 }
 
 void MatplotlibBackend::Shutdown() {
@@ -106,6 +108,7 @@ void MatplotlibBackend::BeginPlot(const char* title) {
     std::ostringstream cmd;
     cmd << "import matplotlib.pyplot as plt\n";
     cmd << "import numpy as np\n";
+    // Note: Don't close figures here - we need to save them later
     cmd << "fig, ax = plt.subplots(figsize=("
         << (width_ / 100.0) << ", " << (height_ / 100.0) << "))\n";
     cmd << "ax.set_title('" << current_title_ << "')\n";
@@ -133,8 +136,8 @@ void MatplotlibBackend::EndPlot() {
         python_commands_ += "ax.legend()\n";
     }
 
-    // TODO: Execute accumulated Python commands
-    // ExecutePythonCommand(python_commands_);
+    // Execute accumulated Python commands
+    ExecutePythonCommand(python_commands_);
 
     in_plot_ = false;
 }
@@ -498,30 +501,33 @@ void MatplotlibBackend::SetGridVisible(bool visible) {
 // ============================================================================
 
 bool MatplotlibBackend::SaveToFile(const char* filepath) {
-    if (!initialized_) {
+    if (!initialized_ || !py_state_->python_available) {
+        spdlog::error("Cannot save plot: matplotlib not available");
         return false;
     }
 
-    std::string cmd = "plt.savefig('" + std::string(filepath) +
-                     "', dpi=300, bbox_inches='tight')\n";
-    python_commands_ += cmd;
+    // Create save command with necessary imports (plt might be out of scope)
+    std::string cmd = "import matplotlib.pyplot as plt\n";
+    cmd += "plt.savefig('" + std::string(filepath) +
+           "', dpi=300, bbox_inches='tight')\n";
 
-    // TODO: Execute Python commands
-    // ExecutePythonCommand(python_commands_);
+    // Execute save command separately (don't use python_commands_ which has plt.close)
+    ExecutePythonCommand(cmd);
 
-    spdlog::info("Matplotlib plot would be saved to: {}", filepath);
+    spdlog::info("Matplotlib plot saved to: {}", filepath);
     return true;
 }
 
 bool MatplotlibBackend::Show() {
-    if (!initialized_) {
+    if (!initialized_ || !py_state_->python_available) {
+        spdlog::error("Cannot show plot: matplotlib not available");
         return false;
     }
 
     python_commands_ += "plt.show()\n";
 
-    // TODO: Execute Python commands
-    // ExecutePythonCommand(python_commands_);
+    // Execute Python commands to display the plot
+    ExecutePythonCommand(python_commands_);
 
     return true;
 }
@@ -531,16 +537,19 @@ bool MatplotlibBackend::Show() {
 // ============================================================================
 
 void MatplotlibBackend::ExecutePythonCommand(const std::string& cmd) {
-    // TODO: Execute Python code using pybind11
-    /*
+    if (!py_state_->python_available) {
+        spdlog::warn("Python not available, skipping command execution");
+        return;
+    }
+
     try {
         py::exec(cmd);
+        spdlog::debug("Executed Python command:\n{}", cmd);
+    } catch (const py::error_already_set& e) {
+        spdlog::error("Python execution error: {}", e.what());
     } catch (const std::exception& e) {
         spdlog::error("Python execution error: {}", e.what());
     }
-    */
-
-    spdlog::debug("Python command queued (execution pending Python integration):\n{}", cmd);
 }
 
 } // namespace cyxwiz::plotting
