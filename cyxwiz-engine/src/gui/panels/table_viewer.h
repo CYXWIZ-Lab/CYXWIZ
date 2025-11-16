@@ -20,6 +20,7 @@ public:
 
     // Load data from files
     bool LoadCSV(const std::string& filepath);
+    bool LoadTXT(const std::string& filepath, char delimiter = '\t');
     bool LoadHDF5(const std::string& filepath, const std::string& dataset_name = "data");
     bool LoadExcel(const std::string& filepath, const std::string& sheet_name = "");
 

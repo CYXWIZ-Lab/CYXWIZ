@@ -167,6 +167,105 @@ bool DataTable::SaveToCSV(const std::string& filepath) const {
 }
 
 // ============================================================================
+// TXT Support (Tab/Space delimited)
+// ============================================================================
+
+bool DataTable::LoadFromTXT(const std::string& filepath, char delimiter) {
+    std::ifstream file(filepath);
+    if (!file.is_open()) {
+        spdlog::error("Failed to open TXT file: {}", filepath);
+        return false;
+    }
+
+    Clear();
+
+    std::string line;
+    bool first_row = true;
+
+    while (std::getline(file, line)) {
+        // Skip empty lines
+        if (line.empty()) continue;
+
+        std::vector<std::string> tokens;
+        std::stringstream ss(line);
+        std::string token;
+
+        // Parse by delimiter
+        while (std::getline(ss, token, delimiter)) {
+            // Trim whitespace
+            token.erase(0, token.find_first_not_of(" \t\r\n"));
+            token.erase(token.find_last_not_of(" \t\r\n") + 1);
+            tokens.push_back(token);
+        }
+
+        // Skip empty rows
+        if (tokens.empty()) continue;
+
+        if (first_row) {
+            // First row is headers
+            SetHeaders(tokens);
+            first_row = false;
+        } else {
+            // Data rows - try to parse as numbers
+            Row row;
+            for (const auto& str : tokens) {
+                if (str.empty()) {
+                    row.push_back(std::monostate{});
+                } else {
+                    // Try to parse as number
+                    try {
+                        // Check if it's an integer
+                        if (str.find('.') == std::string::npos && str.find('e') == std::string::npos && str.find('E') == std::string::npos) {
+                            int64_t val = std::stoll(str);
+                            row.push_back(val);
+                        } else {
+                            double val = std::stod(str);
+                            row.push_back(val);
+                        }
+                    } catch (...) {
+                        // Not a number, store as string
+                        row.push_back(str);
+                    }
+                }
+            }
+            AddRow(std::move(row));
+        }
+    }
+
+    std::string delim_name = (delimiter == '\t') ? "tab" : "space";
+    spdlog::info("Loaded TXT ({}): {} rows, {} columns", delim_name, GetRowCount(), GetColumnCount());
+    return true;
+}
+
+bool DataTable::SaveToTXT(const std::string& filepath, char delimiter) const {
+    std::ofstream file(filepath);
+    if (!file.is_open()) {
+        spdlog::error("Failed to open TXT file for writing: {}", filepath);
+        return false;
+    }
+
+    // Write headers
+    for (size_t i = 0; i < headers_.size(); i++) {
+        file << headers_[i];
+        if (i < headers_.size() - 1) file << delimiter;
+    }
+    file << "\n";
+
+    // Write data rows
+    for (const auto& row : rows_) {
+        for (size_t i = 0; i < row.size(); i++) {
+            file << GetCellAsString(std::distance(rows_.data(), &row), i);
+            if (i < row.size() - 1) file << delimiter;
+        }
+        file << "\n";
+    }
+
+    std::string delim_name = (delimiter == '\t') ? "tab" : "space";
+    spdlog::info("Saved TXT ({}): {} rows, {} columns", delim_name, GetRowCount(), GetColumnCount());
+    return true;
+}
+
+// ============================================================================
 // HDF5 Support
 // ============================================================================
 

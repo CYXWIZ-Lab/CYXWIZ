@@ -233,6 +233,29 @@ bool TableViewerPanel::LoadCSV(const std::string& filepath) {
     return true;
 }
 
+bool TableViewerPanel::LoadTXT(const std::string& filepath, char delimiter) {
+    auto table = std::make_shared<DataTable>();
+
+    if (!table->LoadFromTXT(filepath, delimiter)) {
+        spdlog::error("Failed to load TXT: {}", filepath);
+        return false;
+    }
+
+    // Extract filename for table name
+    std::filesystem::path path(filepath);
+    std::string table_name = path.stem().string();
+    table->SetName(table_name);
+
+    // Add to registry
+    DataTableRegistry::Instance().AddTable(table_name, table);
+
+    // Set as current table
+    SetTableByName(table_name);
+
+    spdlog::info("Loaded TXT table: {}", table_name);
+    return true;
+}
+
 bool TableViewerPanel::LoadHDF5(const std::string& filepath, const std::string& dataset_name) {
     auto table = std::make_shared<DataTable>();
 

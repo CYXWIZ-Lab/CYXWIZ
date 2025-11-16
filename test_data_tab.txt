@@ -1,0 +1,11 @@
+ID	Product	Price	Quantity	Total
+1	Laptop	999.99	2	1999.98
+2	Mouse	29.99	5	149.95
+3	Keyboard	79.99	3	239.97
+4	Monitor	299.99	1	299.99
+5	Webcam	89.99	2	179.98
+6	Headset	149.99	4	599.96
+7	USB Cable	12.99	10	129.90
+8	Desk Lamp	45.99	3	137.97
+9	Chair	399.99	1	399.99
+10	Mousepad	19.99	6	119.94
