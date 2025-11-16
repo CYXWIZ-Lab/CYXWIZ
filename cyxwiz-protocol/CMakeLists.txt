@@ -74,6 +74,7 @@ if(WIN32)
     target_compile_definitions(cyxwiz-protocol PUBLIC
         # PROTOBUF_USE_DLLS              # Use DLL linkage (disabled - causes arena allocation linker errors)
         GOOGLE_PROTOBUF_NO_THREADLOCAL # Disable thread-local optimization
+        GOOGLE_PROTOBUF_ENABLE_ARENA=0 # Disable arena allocation to avoid linker errors with internal arena classes
     )
 endif()
 

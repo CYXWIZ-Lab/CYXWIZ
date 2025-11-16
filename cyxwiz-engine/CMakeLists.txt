@@ -31,9 +31,12 @@ set(ENGINE_SOURCES
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/command_window.cpp
+    src/gui/panels/script_editor.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
     src/scripting/scripting_engine.cpp
+    # ImGuiColorTextEdit (text editor component)
+    external/ImGuiColorTextEdit/TextEditor.cpp
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
     # Plotting system
@@ -59,9 +62,12 @@ set(ENGINE_HEADERS
     src/gui/panels/plot_window.h
     src/gui/panels/plot_test_control.h
     src/gui/panels/command_window.h
+    src/gui/panels/script_editor.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
     src/scripting/scripting_engine.h
+    # ImGuiColorTextEdit (text editor component)
+    external/ImGuiColorTextEdit/TextEditor.h
     src/network/grpc_client.h
     src/network/job_manager.h
     # Plotting system
@@ -84,6 +90,7 @@ add_executable(cyxwiz-engine
 # Include directories
 target_include_directories(cyxwiz-engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit
 )
 
 # Find OpenGL

@@ -58,7 +58,8 @@ protocol::NodeInfo HardwareDetector::DetectHardwareInfo(const std::string& node_
     info.set_ram_available(GetAvailableRAM());
 
     // Detect GPU/compute devices
-    DetectDevices(&info);
+    // TODO: Fix protobuf arena allocation issue with add_devices()
+    // DetectDevices(&info);
 
     // Network
     info.set_ip_address(GetLocalIPAddress());

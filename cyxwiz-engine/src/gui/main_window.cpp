@@ -8,6 +8,7 @@
 #include "panels/training_dashboard.h"
 #include "panels/plot_test_control.h"
 #include "panels/command_window.h"
+#include "panels/script_editor.h"
 #include "../scripting/scripting_engine.h"
 
 #include <imgui.h>
@@ -35,9 +36,11 @@ MainWindow::MainWindow()
     training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
+    script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
 
-    // Set scripting engine for command window
+    // Set scripting engine for command window and script editor
     command_window_->SetScriptingEngine(scripting_engine_);
+    script_editor_->SetScriptingEngine(scripting_engine_);
 
     // Set up callbacks in the toolbar
     toolbar_->SetResetLayoutCallback([this]() {
@@ -72,6 +75,7 @@ void MainWindow::Render() {
     if (training_dashboard_) training_dashboard_->Render();
     if (plot_test_control_) plot_test_control_->Render();
     if (command_window_) command_window_->Render();
+    if (script_editor_) script_editor_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
@@ -183,6 +187,7 @@ void MainWindow::BuildInitialDockLayout() {
     // Window names must EXACTLY match the names in ImGui::Begin() calls in each panel
     ImGui::DockBuilderDockWindow("Asset Browser", dock_id_left);
     ImGui::DockBuilderDockWindow("Node Editor", dock_id_center);
+    ImGui::DockBuilderDockWindow("Script Editor", dock_id_center); // Tabbed with Node Editor
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("Command Window", dock_id_bottom_left); // Tabbed with Console

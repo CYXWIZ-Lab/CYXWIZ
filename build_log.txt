@@ -1,0 +1,387 @@
+
+============================================================================
+CyxWiz Build Script for Windows
+============================================================================
+
+Configuration:
+  Build Type:      Release
+  Components:      all
+  Parallel Jobs:   8
+  Clean Build:     0
+
+============================================================================
+
+[1/4] Configuring CMake...
+
+-- Running vcpkg install
+Detecting compiler hash for triplet x64-windows...
+Compiler found: C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/cl.exe
+The following packages are already installed:
+  * abseil:x64-windows@20250512.1#1
+  * bzip2[core,tool]:x64-windows@1.0.8#6
+  * c-ares:x64-windows@1.34.5#1
+    catch2:x64-windows@3.11.0
+  * egl-registry:x64-windows@2024-01-25
+  * expat:x64-windows@2.7.3
+    fmt:x64-windows@12.1.0
+    glad[core,loader]:x64-windows@0.1.36
+    glfw3:x64-windows@3.4#1
+    grpc[codegen,core]:x64-windows@1.71.0#3 -- D:\Dev\CyxWiz_Claude\vcpkg-overlays/ports\grpc
+  * hdf5[core,szip,zlib]:x64-windows@1.14.6
+    highfive:x64-windows@3.2.0
+    imgui[core,docking-experimental,glfw-binding,opengl3-binding]:x64-windows@1.91.9
+    implot:x64-windows@0.16
+  * libaec:x64-windows@1.1.3#1
+  * libffi:x64-windows@3.5.2
+  * liblzma:x64-windows@5.8.1
+    nlohmann-json:x64-windows@3.12.0#1
+  * opengl-registry:x64-windows@2024-02-10#1
+    openssl:x64-windows@3.6.0#2
+  * pkgconf:x64-windows@2.5.1#4
+    protobuf:x64-windows@5.29.5#2
+    pybind11:x64-windows@3.0.1
+  * python3[core,extensions]:x64-windows@3.12.9#7
+  * re2:x64-windows@2025-08-12
+    spdlog:x64-windows@1.16.0
+    sqlite3[core,json1]:x64-windows@3.50.4
+    stb:x64-windows@2024-07-29#1
+  * utf8-range:x64-windows@5.29.5
+  * vcpkg-cmake:x64-windows@2024-04-23
+  * vcpkg-cmake-config:x64-windows@2024-05-23
+  * vcpkg-cmake-get-vars:x64-windows@2025-05-29
+  * vcpkg-get-python:x64-windows@2025-02-09
+  * vcpkg-make:x64-windows@2025-10-26
+  * vcpkg-msbuild:x64-windows@2023-08-08
+  * vcpkg-pkgconfig-get-modules:x64-windows@2024-04-03
+  * vcpkg-tool-meson:x64-windows@1.9.0#3
+  * zlib:x64-windows@1.3.1
+catch2 provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(Catch2 CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+
+catch2 provides pkg-config modules:
+
+  # A modern, C++-native test framework for C++14 and above (links in default main)
+  catch2-with-main
+
+  # A modern, C++-native, test framework for C++14 and above
+  catch2
+
+The package fmt provides CMake targets:
+
+    find_package(fmt CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE fmt::fmt)
+
+    # Or use the header-only version
+    find_package(fmt CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE fmt::fmt-header-only)
+
+glad provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(glad CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE glad::glad)
+
+glfw3 provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(glfw3 CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE glfw)
+
+glfw3 provides pkg-config modules:
+
+  # A multi-platform library for OpenGL, window and input
+  glfw3
+
+protobuf provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(protobuf CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE protobuf::libprotoc protobuf::libprotobuf protobuf::libprotobuf-lite)
+
+protobuf provides pkg-config modules:
+
+  # Google's Data Interchange Format
+  protobuf-lite
+
+  # Google's Data Interchange Format
+  protobuf
+
+openssl is compatible with built-in CMake targets:
+
+  find_package(OpenSSL REQUIRED)
+  target_link_libraries(main PRIVATE OpenSSL::SSL)
+  target_link_libraries(main PRIVATE OpenSSL::Crypto)
+
+grpc provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(gRPC CONFIG REQUIRED)
+  # note: 15 additional targets are not displayed.
+  target_link_libraries(main PRIVATE gRPC::gpr gRPC::grpc gRPC::grpc++ gRPC::grpc++_alts)
+
+highfive provides CMake targets:
+
+  find_package(HighFive CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE HighFive)
+
+imgui provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(imgui CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE imgui::imgui)
+
+implot provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(implot CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE implot::implot)
+
+The package nlohmann-json provides CMake targets:
+
+    find_package(nlohmann_json CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE nlohmann_json::nlohmann_json)
+
+The package nlohmann-json can be configured to not provide implicit conversions via a custom triplet file:
+
+    set(nlohmann-json_IMPLICIT_CONVERSIONS OFF)
+
+For more information, see the docs here:
+    
+    https://json.nlohmann.me/api/macros/json_use_implicit_conversions/
+
+sqlite3 provides pkgconfig bindings.
+sqlite3 provides CMake targets:
+
+    find_package(unofficial-sqlite3 CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE unofficial::sqlite3::sqlite3)
+
+pybind11 provides CMake integration:
+
+  # Easy
+  set(PYBIND11_FINDPYTHON ON)
+  find_package(pybind11 CONFIG REQUIRED)
+  pybind11_add_module(MyModule1 src1.cpp)
+
+  # Advanced
+  find_package(Python COMPONENTS Interpreter Development)
+  find_package(pybind11 CONFIG REQUIRED)
+  Python_add_library(MyModule2 src2.cpp)
+  target_link_libraries(MyModule2 PRIVATE pybind11::headers)
+
+The package spdlog provides CMake targets:
+
+    find_package(spdlog CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE spdlog::spdlog)
+
+    # Or use the header-only version
+    find_package(spdlog CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE spdlog::spdlog_header_only)
+
+The package stb provides CMake targets:
+
+    find_package(Stb REQUIRED)
+    target_include_directories(main PRIVATE ${Stb_INCLUDE_DIR})
+All requested installations completed successfully in: 1.13 ms
+-- Running vcpkg install - done
+-- Selecting Windows SDK version 10.0.26100.0 to target Windows 10.0.26200.
+-- Building CyxWiz for Windows
+-- Release build - Optimizations enabled
+-- Found RE2 via CMake.
+CMake Warning (dev) at build/windows-release/vcpkg_installed/x64-windows/share/pybind11/FindPythonLibsNew.cmake:101 (message):
+  Policy CMP0148 is not set: The FindPythonInterp and FindPythonLibs modules
+  are removed.  Run "cmake --help-policy CMP0148" for policy details.  Use
+  the cmake_policy command to set the policy and suppress this warning, or
+  preferably upgrade to using FindPython, either by calling it explicitly
+  before pybind11, or by setting PYBIND11_FINDPYTHON ON before pybind11.
+Call Stack (most recent call first):
+  vcpkg/scripts/buildsystems/vcpkg.cmake:908 (_find_package)
+  build/windows-release/vcpkg_installed/x64-windows/share/pybind11/pybind11Tools.cmake:44 (find_package)
+  build/windows-release/vcpkg_installed/x64-windows/share/pybind11/pybind11Common.cmake:226 (include)
+  build/windows-release/vcpkg_installed/x64-windows/share/pybind11/pybind11Config.cmake:257 (include)
+  vcpkg/scripts/buildsystems/vcpkg.cmake:908 (_find_package)
+  CMakeLists.txt:78 (find_package)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at build/windows-release/vcpkg_installed/x64-windows/share/pythoninterp/vcpkg-cmake-wrapper.cmake:10 (_find_package):
+  Policy CMP0148 is not set: The FindPythonInterp and FindPythonLibs modules
+  are removed.  Run "cmake --help-policy CMP0148" for policy details.  Use
+  the cmake_policy command to set the policy and suppress this warning.
+
+Call Stack (most recent call first):
+  vcpkg/scripts/buildsystems/vcpkg.cmake:862 (include)
+  build/windows-release/vcpkg_installed/x64-windows/share/pybind11/FindPythonLibsNew.cmake:114 (find_package)
+  vcpkg/scripts/buildsystems/vcpkg.cmake:908 (_find_package)
+  build/windows-release/vcpkg_installed/x64-windows/share/pybind11/pybind11Tools.cmake:44 (find_package)
+  build/windows-release/vcpkg_installed/x64-windows/share/pybind11/pybind11Common.cmake:226 (include)
+  build/windows-release/vcpkg_installed/x64-windows/share/pybind11/pybind11Config.cmake:257 (include)
+  vcpkg/scripts/buildsystems/vcpkg.cmake:908 (_find_package)
+  CMakeLists.txt:78 (find_package)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Found pybind11: D:/Dev/CyxWiz_Claude/build/windows-release/vcpkg_installed/x64-windows/include (found version "3.0.1")
+-- ArrayFire found: C:/Program Files/ArrayFire/v3/cmake
+-- ArrayFire found - GPU support enabled
+-- Central Server will be built using Cargo (Rust)
+-- Run: cd cyxwiz-central-server && cargo build --release
+-- 
+-- ========== CyxWiz Configuration ==========
+-- Platform: Windows
+-- Build Type: Release
+-- C++ Standard: 20
+-- 
+-- Components:
+--   Engine (Desktop Client): ON
+--   Server Node: ON
+--   Central Server: ON
+--   Tests: ON
+-- 
+-- Compute Backends:
+--   CUDA: OFF
+--   OpenCL: ON
+--   Android Build: OFF
+-- ==========================================
+-- 
+-- Configuring done (5.2s)
+-- Generating done (0.8s)
+-- Build files have been written to: D:/Dev/CyxWiz_Claude/build/windows-release
+
+[OK] CMake configured successfully (6 sec)
+
+[2/4] Building C++ components...
+
+MSBuild version 18.0.2+995a3dce4 for .NET Framework
+
+  Building Custom Rule D:/Dev/CyxWiz_Claude/cyxwiz-engine/CMakeLists.txt
+  cyxwiz-protocol.vcxproj -> D:\Dev\CyxWiz_Claude\build\windows-release\lib\Release\cyxwiz-protocol.lib
+  plot_bindings.cpp
+  plot_manager.cpp
+  plot_dataset.cpp
+  plot_3d_generator.cpp
+  test_data_generator.cpp
+  implot_backend.cpp
+  matplotlib_backend.cpp
+  stb_image_impl.cpp
+  plot_window.cpp
+  plot_test_control.cpp
+  plot_test_panel.cpp
+  cyxwiz-backend.vcxproj -> D:\Dev\CyxWiz_Claude\build\windows-release\bin\Release\cyxwiz-backend.dll
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\plot_3d_generator.cpp(103,20): warning C4189: 'y': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\plot_3d_generator.cpp(102,20): warning C4189: 'x': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\plot_3d_generator.cpp(135,20): warning C4189: 'y': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\plot_3d_generator.cpp(134,20): warning C4189: 'x': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(198,45): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(212,12): warning C4189: 'max': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(209,12): warning C4189: 'q1': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(208,12): warning C4189: 'min': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(211,12): warning C4189: 'q3': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(210,12): warning C4189: 'median': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(241,46): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(323,44): warning C4100: 'filepath': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\gui\panels\plot_window.cpp(129,23): warning C4189: 'plot_mgr': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\gui\panels\plot_test_panel.cpp(130,15): warning C4189: 'mgr': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\gui\panels\plot_test_panel.cpp(483,11): warning C4189: 'mgr': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+  Building Custom Rule D:/Dev/CyxWiz_Claude/cyxwiz-backend/CMakeLists.txt
+  bindings.cpp
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\python\plot_bindings.cpp(153,31): warning C4100: 'bins': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(247,49): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(306,48): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(324,48): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(342,50): warning C4100: 'cols': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(342,40): warning C4100: 'rows': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(341,69): warning C4100: 'categories': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(341,48): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(401,50): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz_plotting.vcxproj]
+     Creating library D:/Dev/CyxWiz_Claude/build/windows-release/lib/Release/cyxwiz_plotting.lib and object D:/Dev/CyxWiz_Claude/build/windows-release/lib/Release/cyxwiz_plotting.exp
+  Generating code
+     Creating library D:/Dev/CyxWiz_Claude/build/windows-release/lib/Release/pycyxwiz.lib and object D:/Dev/CyxWiz_Claude/build/windows-release/lib/Release/pycyxwiz.exp
+  Generating code
+  Finished generating code
+  cyxwiz_plotting.vcxproj -> D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\python\Release\cyxwiz_plotting.pyd
+  Finished generating code
+  pycyxwiz.vcxproj -> D:\Dev\CyxWiz_Claude\build\windows-release\lib\Release\pycyxwiz.cp314-win_amd64.pyd
+  Building Custom Rule D:/Dev/CyxWiz_Claude/cyxwiz-engine/CMakeLists.txt
+  node_client.cpp
+  Building Custom Rule D:/Dev/CyxWiz_Claude/tests/CMakeLists.txt
+  main.cpp
+  application.cpp
+  main_window.cpp
+  node_editor.cpp
+  console.cpp
+  viewport.cpp
+  properties.cpp
+  toolbar.cpp
+  asset_browser.cpp
+  training_dashboard.cpp
+  plot_window.cpp
+  plot_test_control.cpp
+  test_tensor.cpp
+  command_window.cpp
+  test_device.cpp
+  python_engine.cpp
+  test_optimizer.cpp
+  script_manager.cpp
+  scripting_engine.cpp
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\gui\panels\asset_browser.cpp(251,53): warning C4100: 'item': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\gui\console.cpp(166,37): warning C4244: '=': conversion from 'double' to 'float', possible loss of data [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+  grpc_client.cpp
+  job_manager.cpp
+  plot_dataset.cpp
+  plot_manager.cpp
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\gui\panels\plot_window.cpp(129,23): warning C4189: 'plot_mgr': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+  test_data_generator.cpp
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\network\job_manager.cpp(16,47): warning C4100: 'job_config': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\application.cpp(220,30): warning C4100: 'delta_time': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-protocol\job.pb.h(3608,42): warning C4267: 'return': conversion from 'size_t' to 'int', possible loss of data [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+  (compiling source file '../../../cyxwiz-server-node/src/node_client.cpp')
+  
+D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-protocol\job.pb.h(4193,34): warning C4267: 'return': conversion from 'size_t' to 'int', possible loss of data [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+  (compiling source file '../../../cyxwiz-server-node/src/node_client.cpp')
+  
+D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-protocol\job.pb.h(4437,40): warning C4267: 'return': conversion from 'size_t' to 'int', possible loss of data [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+  (compiling source file '../../../cyxwiz-server-node/src/node_client.cpp')
+  
+D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-protocol\job.pb.h(5636,39): warning C4267: 'return': conversion from 'size_t' to 'int', possible loss of data [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+  (compiling source file '../../../cyxwiz-server-node/src/node_client.cpp')
+  
+  plot_3d_generator.cpp
+D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-protocol\node.pb.h(7411,42): warning C4267: 'return': conversion from 'size_t' to 'int', possible loss of data [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+  (compiling source file '../../../cyxwiz-server-node/src/node_client.cpp')
+  
+  implot_backend.cpp
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\scripting\scripting_engine.cpp(57,47): warning C4101: 'e': unreferenced local variable [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\scripting\scripting_engine.cpp(62,51): warning C4101: 'eval_error': unreferenced local variable [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+  matplotlib_backend.cpp
+  cyxwiz-tests.vcxproj -> D:\Dev\CyxWiz_Claude\build\windows-release\bin\Release\cyxwiz-tests.exe
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\plot_3d_generator.cpp(103,20): warning C4189: 'y': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\plot_3d_generator.cpp(102,20): warning C4189: 'x': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\plot_3d_generator.cpp(135,20): warning C4189: 'y': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\plot_3d_generator.cpp(134,20): warning C4189: 'x': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(198,45): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(212,12): warning C4189: 'max': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(209,12): warning C4189: 'q1': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(208,12): warning C4189: 'min': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(211,12): warning C4189: 'q3': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(210,12): warning C4189: 'median': local variable is initialized but not referenced [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(241,46): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\implot_backend.cpp(323,44): warning C4100: 'filepath': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(247,49): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(306,48): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(324,48): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(342,50): warning C4100: 'cols': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(342,40): warning C4100: 'rows': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(341,69): warning C4100: 'categories': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(341,48): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+D:\Dev\CyxWiz_Claude\cyxwiz-engine\src\plotting\backends\matplotlib_backend.cpp(401,50): warning C4100: 'label': unreferenced parameter [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-engine\cyxwiz-engine.vcxproj]
+node_client.obj : error LNK2019: unresolved external symbol "public: virtual __cdecl cyxwiz::protocol::DeviceCapabilitiesA::~DeviceCapabilitiesA(void)" (??1DeviceCapabilitiesA@protocol@cyxwiz@@UEAA@XZ) referenced in function "private: static void __cdecl cyxwiz::servernode::HardwareDetector::DetectDevices(class cyxwiz::protocol::NodeInfo *)" (?DetectDevices@HardwareDetector@servernode@cyxwiz@@CAXPEAVNodeInfo@protocol@3@@Z) [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+node_client.obj : error LNK2019: unresolved external symbol "public: void __cdecl cyxwiz::protocol::DeviceCapabilitiesA::CopyFrom(class cyxwiz::protocol::DeviceCapabilitiesA const &)" (?CopyFrom@DeviceCapabilitiesA@protocol@cyxwiz@@QEAAXAEBV123@@Z) referenced in function "private: static void __cdecl cyxwiz::servernode::HardwareDetector::DetectDevices(class cyxwiz::protocol::NodeInfo *)" (?DetectDevices@HardwareDetector@servernode@cyxwiz@@CAXPEAVNodeInfo@protocol@3@@Z) [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+node_client.obj : error LNK2019: unresolved external symbol "protected: __cdecl cyxwiz::protocol::DeviceCapabilitiesA::DeviceCapabilitiesA(class google::protobuf::Arena *)" (??0DeviceCapabilitiesA@protocol@cyxwiz@@IEAA@PEAVArena@protobuf@google@@@Z) referenced in function "private: static void * __cdecl google::protobuf::Arena::DefaultConstruct<class cyxwiz::protocol::DeviceCapabilitiesA>(class google::protobuf::Arena *)" (??$DefaultConstruct@VDeviceCapabilitiesA@protocol@cyxwiz@@@Arena@protobuf@google@@CAPEAXPEAV012@@Z) [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+node_client.obj : error LNK2019: unresolved external symbol "const cyxwiz::protocol::DeviceCapabilitiesA::`vftable'" (??_7DeviceCapabilitiesA@protocol@cyxwiz@@6B@) referenced in function "public: __cdecl cyxwiz::protocol::DeviceCapabilitiesA::DeviceCapabilitiesA(void)" (??0DeviceCapabilitiesA@protocol@cyxwiz@@QEAA@XZ) [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+D:\Dev\CyxWiz_Claude\build\windows-release\bin\Release\cyxwiz-server-node.exe : fatal error LNK1120: 4 unresolved externals [D:\Dev\CyxWiz_Claude\build\windows-release\cyxwiz-server-node\cyxwiz-server-node.vcxproj]
+  cyxwiz-engine.vcxproj -> D:\Dev\CyxWiz_Claude\build\windows-release\bin\Release\cyxwiz-engine.exe
+  	Copying resources...
+
+[ERROR] C++ build failed
+

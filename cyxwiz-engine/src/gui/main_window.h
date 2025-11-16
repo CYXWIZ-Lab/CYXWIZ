@@ -17,6 +17,7 @@ class AssetBrowserPanel;
 class TrainingDashboardPanel;
 class PlotTestControlPanel;
 class CommandWindowPanel;
+class ScriptEditorPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -52,6 +53,7 @@ private:
     std::unique_ptr<cyxwiz::TrainingDashboardPanel> training_dashboard_;
     std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
     std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
+    std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
