@@ -190,6 +190,24 @@ void CommandWindowPanel::ClearOutput() {
     output_.push_back(welcome);
 }
 
+void CommandWindowPanel::DisplayScriptOutput(const std::string& script_name, const std::string& output, bool is_error) {
+    // Add script name as command entry
+    OutputEntry script_entry;
+    script_entry.type = OutputEntry::Type::Command;
+    script_entry.text = "Running script: " + script_name;
+    output_.push_back(script_entry);
+
+    // Add output or error
+    if (!output.empty()) {
+        OutputEntry result_entry;
+        result_entry.type = is_error ? OutputEntry::Type::Error : OutputEntry::Type::Result;
+        result_entry.text = output;
+        output_.push_back(result_entry);
+    }
+
+    scroll_to_bottom_ = true;
+}
+
 void CommandWindowPanel::NavigateHistory(int direction) {
     if (command_history_.empty()) return;
 

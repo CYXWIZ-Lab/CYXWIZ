@@ -13,6 +13,8 @@ namespace scripting {
 
 namespace cyxwiz {
 
+class CommandWindowPanel;  // Forward declaration
+
 /**
  * Script Editor Panel
  * Multi-tab text editor for .cyx scripts with Python syntax highlighting
@@ -27,6 +29,9 @@ public:
 
     // Set scripting engine (shared with other panels)
     void SetScriptingEngine(std::shared_ptr<scripting::ScriptingEngine> engine);
+
+    // Set command window for output display
+    void SetCommandWindow(CommandWindowPanel* command_window);
 
     // File operations
     void NewFile();
@@ -82,6 +87,7 @@ private:
     std::vector<std::unique_ptr<EditorTab>> tabs_;
     int active_tab_index_;
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
+    CommandWindowPanel* command_window_;  // For output display
 
     // UI state
     bool show_editor_menu_;

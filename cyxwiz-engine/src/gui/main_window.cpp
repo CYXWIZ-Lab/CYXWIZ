@@ -42,6 +42,9 @@ MainWindow::MainWindow()
     command_window_->SetScriptingEngine(scripting_engine_);
     script_editor_->SetScriptingEngine(scripting_engine_);
 
+    // Connect script editor to command window for output display
+    script_editor_->SetCommandWindow(command_window_.get());
+
     // Set up callbacks in the toolbar
     toolbar_->SetResetLayoutCallback([this]() {
         this->ResetDockLayout();

@@ -25,6 +25,9 @@ public:
     // Set scripting engine (shared with other panels)
     void SetScriptingEngine(std::shared_ptr<scripting::ScriptingEngine> engine);
 
+    // Public method to display output from other panels (e.g., Script Editor)
+    void DisplayScriptOutput(const std::string& script_name, const std::string& output, bool is_error = false);
+
 private:
     // Output entry (command or result)
     struct OutputEntry {

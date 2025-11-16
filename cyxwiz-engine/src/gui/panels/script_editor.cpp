@@ -1,4 +1,5 @@
 #include "script_editor.h"
+#include "command_window.h"
 #include "../../scripting/scripting_engine.h"
 #include <imgui.h>
 #include <fstream>
@@ -17,6 +18,7 @@ namespace cyxwiz {
 ScriptEditorPanel::ScriptEditorPanel()
     : Panel("Script Editor", true)
     , active_tab_index_(-1)
+    , command_window_(nullptr)
     , show_editor_menu_(false)
     , request_focus_(false)
     , close_tab_index_(-1)
@@ -29,6 +31,10 @@ ScriptEditorPanel::ScriptEditorPanel()
 
 void ScriptEditorPanel::SetScriptingEngine(std::shared_ptr<scripting::ScriptingEngine> engine) {
     scripting_engine_ = engine;
+}
+
+void ScriptEditorPanel::SetCommandWindow(CommandWindowPanel* command_window) {
+    command_window_ = command_window;
 }
 
 void ScriptEditorPanel::Render() {
@@ -257,11 +263,31 @@ void ScriptEditorPanel::NewFile() {
     tab->is_new = true;
     tab->is_modified = false;
 
-    // Configure editor
-    tab->editor.SetLanguageDefinition(CreatePythonLanguage());
+    // Configure editor with C++ language def (works for Python too - similar syntax)
+    auto lang = TextEditor::LanguageDefinition::CPlusPlus();
+
+    // Override for Python-specific keywords
+    lang.mKeywords.clear();
+    static const char* const py_keywords[] = {
+        "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
+        "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
+        "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
+        "while", "with", "yield", "async", "await", "print", "len", "range", "str", "int"
+    };
+    for (auto& k : py_keywords)
+        lang.mKeywords.insert(k);
+
+    lang.mSingleLineComment = "#";
+    lang.mCommentStart = "\"\"\"";
+    lang.mCommentEnd = "\"\"\"";
+    lang.mName = "Python";
+
+    tab->editor.SetLanguageDefinition(lang);
     tab->editor.SetPalette(TextEditor::GetDarkPalette());
-    tab->editor.SetShowWhitespaces(false);
+    tab->editor.SetShowWhitespaces(true);  // Show indentation guides
     tab->editor.SetTabSize(4);
+    tab->editor.SetImGuiChildIgnored(false);
+    tab->editor.SetReadOnly(false);
 
     tabs_.push_back(std::move(tab));
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
@@ -303,11 +329,31 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     tab->is_new = false;
     tab->is_modified = false;
 
-    // Configure editor
-    tab->editor.SetLanguageDefinition(CreatePythonLanguage());
+    // Configure editor with C++ language def (works for Python too - similar syntax)
+    auto lang = TextEditor::LanguageDefinition::CPlusPlus();
+
+    // Override for Python-specific keywords
+    lang.mKeywords.clear();
+    static const char* const py_keywords[] = {
+        "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
+        "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
+        "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
+        "while", "with", "yield", "async", "await", "print", "len", "range", "str", "int"
+    };
+    for (auto& k : py_keywords)
+        lang.mKeywords.insert(k);
+
+    lang.mSingleLineComment = "#";
+    lang.mCommentStart = "\"\"\"";
+    lang.mCommentEnd = "\"\"\"";
+    lang.mName = "Python";
+
+    tab->editor.SetLanguageDefinition(lang);
     tab->editor.SetPalette(TextEditor::GetDarkPalette());
-    tab->editor.SetShowWhitespaces(false);
+    tab->editor.SetShowWhitespaces(true);  // Show indentation guides
     tab->editor.SetTabSize(4);
+    tab->editor.SetImGuiChildIgnored(false);
+    tab->editor.SetReadOnly(false);
     tab->editor.SetText(content);
 
     tabs_.push_back(std::move(tab));
@@ -390,32 +436,45 @@ void ScriptEditorPanel::RunScript() {
     if (active_tab_index_ < 0 || !scripting_engine_) return;
 
     auto& tab = tabs_[active_tab_index_];
-    std::string script = tab->editor.GetText();
+    std::string script_text = tab->editor.GetText();
+
+    // Strip out %% markers before executing
+    std::string script;
+    std::istringstream stream(script_text);
+    std::string line;
+    while (std::getline(stream, line)) {
+        // Skip lines containing only %% markers
+        if (line.find("%%") == std::string::npos) {
+            script += line + "\n";
+        }
+    }
 
     spdlog::info("Running script: {}", tab->filename);
     auto result = scripting_engine_->ExecuteScript(script);
 
-    if (!result.success) {
-        spdlog::error("Script error: {}", result.error_message);
-        last_execution_output_ = "Error: " + result.error_message;
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
-
-        // Also print to console
-        printf("[Script Error] %s\n", result.error_message.c_str());
+    // Send output to Command Window if available
+    if (command_window_) {
+        if (!result.success) {
+            command_window_->DisplayScriptOutput(tab->filename, "Error: " + result.error_message, true);
+        } else {
+            std::string output = result.output.empty() ? "Script executed successfully (no output)" : result.output;
+            command_window_->DisplayScriptOutput(tab->filename, output, false);
+        }
     } else {
-        spdlog::info("Script executed successfully");
-        last_execution_output_ = "Script executed successfully";
-        if (!result.output.empty()) {
-            last_execution_output_ += "\nOutput: " + result.output;
+        // Fallback to notification if Command Window not set
+        if (!result.success) {
+            spdlog::error("Script error: {}", result.error_message);
+            last_execution_output_ = "Error: " + result.error_message;
+            printf("[Script Error] %s\n", result.error_message.c_str());
+        } else {
+            spdlog::info("Script executed successfully");
+            last_execution_output_ = result.output.empty() ? "Script executed successfully" : result.output;
+            if (!result.output.empty()) {
+                printf("[Script Output]\n%s\n", result.output.c_str());
+            }
         }
         show_output_notification_ = true;
         output_notification_time_ = 0.0f;
-
-        // Print output to console
-        if (!result.output.empty()) {
-            printf("[Script Output]\n%s\n", result.output.c_str());
-        }
     }
 }
 
@@ -427,26 +486,38 @@ void ScriptEditorPanel::RunSelection() {
 
     if (selected_text.empty()) {
         spdlog::warn("No text selected");
-        last_execution_output_ = "No text selected";
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
+        if (command_window_) {
+            command_window_->DisplayScriptOutput(tab->filename, "No text selected", true);
+        } else {
+            last_execution_output_ = "No text selected";
+            show_output_notification_ = true;
+            output_notification_time_ = 0.0f;
+        }
         return;
     }
 
     spdlog::info("Running selection");
     auto result = scripting_engine_->ExecuteCommand(selected_text);
 
-    if (!result.success) {
-        spdlog::error("Execution error: {}", result.error_message);
-        last_execution_output_ = "Error: " + result.error_message;
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
-        printf("[Selection Error] %s\n", result.error_message.c_str());
+    // Send output to Command Window if available
+    if (command_window_) {
+        if (!result.success) {
+            command_window_->DisplayScriptOutput(tab->filename + " (selection)", "Error: " + result.error_message, true);
+        } else {
+            std::string output = result.output.empty() ? "Selection executed successfully (no output)" : result.output;
+            command_window_->DisplayScriptOutput(tab->filename + " (selection)", output, false);
+        }
     } else {
-        last_execution_output_ = "Selection executed successfully";
-        if (!result.output.empty()) {
-            last_execution_output_ += "\nOutput: " + result.output;
-            printf("[Selection Output]\n%s\n", result.output.c_str());
+        // Fallback to notification
+        if (!result.success) {
+            spdlog::error("Execution error: {}", result.error_message);
+            last_execution_output_ = "Error: " + result.error_message;
+            printf("[Selection Error] %s\n", result.error_message.c_str());
+        } else {
+            last_execution_output_ = result.output.empty() ? "Selection executed successfully" : result.output;
+            if (!result.output.empty()) {
+                printf("[Selection Output]\n%s\n", result.output.c_str());
+            }
         }
         show_output_notification_ = true;
         output_notification_time_ = 0.0f;
@@ -456,32 +527,50 @@ void ScriptEditorPanel::RunSelection() {
 void ScriptEditorPanel::RunCurrentSection() {
     if (active_tab_index_ < 0 || !scripting_engine_) return;
 
+    auto& tab = tabs_[active_tab_index_];
     Section section = GetCurrentSection();
 
     if (section.code.empty()) {
         spdlog::warn("No section found at cursor");
-        last_execution_output_ = "No section found at cursor";
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
+        if (command_window_) {
+            command_window_->DisplayScriptOutput(tab->filename, "No section found at cursor", true);
+        } else {
+            last_execution_output_ = "No section found at cursor";
+            show_output_notification_ = true;
+            output_notification_time_ = 0.0f;
+        }
         return;
     }
 
     spdlog::info("Running section (lines {}-{})", section.start_line, section.end_line);
     auto result = scripting_engine_->ExecuteScript(section.code);
 
-    if (!result.success) {
-        spdlog::error("Section execution error: {}", result.error_message);
-        last_execution_output_ = "Section Error: " + result.error_message;
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
-        printf("[Section Error] %s\n", result.error_message.c_str());
+    // Send output to Command Window if available
+    std::string section_name = tab->filename + " (lines " +
+                              std::to_string(section.start_line) + "-" +
+                              std::to_string(section.end_line) + ")";
+
+    if (command_window_) {
+        if (!result.success) {
+            command_window_->DisplayScriptOutput(section_name, "Error: " + result.error_message, true);
+        } else {
+            std::string output = result.output.empty() ? "Section executed successfully (no output)" : result.output;
+            command_window_->DisplayScriptOutput(section_name, output, false);
+        }
     } else {
-        last_execution_output_ = "Section executed successfully (lines " +
-                                std::to_string(section.start_line) + "-" +
-                                std::to_string(section.end_line) + ")";
-        if (!result.output.empty()) {
-            last_execution_output_ += "\nOutput: " + result.output;
-            printf("[Section Output]\n%s\n", result.output.c_str());
+        // Fallback to notification
+        if (!result.success) {
+            spdlog::error("Section execution error: {}", result.error_message);
+            last_execution_output_ = "Section Error: " + result.error_message;
+            printf("[Section Error] %s\n", result.error_message.c_str());
+        } else {
+            last_execution_output_ = "Section executed successfully (lines " +
+                                    std::to_string(section.start_line) + "-" +
+                                    std::to_string(section.end_line) + ")";
+            if (!result.output.empty()) {
+                last_execution_output_ += "\nOutput: " + result.output;
+                printf("[Section Output]\n%s\n", result.output.c_str());
+            }
         }
         show_output_notification_ = true;
         output_notification_time_ = 0.0f;
@@ -633,53 +722,86 @@ ScriptEditorPanel::Section ScriptEditorPanel::GetCurrentSection() {
     std::string text = tab->editor.GetText();
     std::vector<Section> sections = ParseSections(text);
 
+    spdlog::debug("GetCurrentSection: cursor at line {}, found {} sections", current_line, sections.size());
+    for (size_t i = 0; i < sections.size(); i++) {
+        spdlog::debug("  Section {}: lines {}-{}", i, sections[i].start_line, sections[i].end_line);
+    }
+
     // Find section containing cursor
     for (const auto& section : sections) {
         if (current_line >= section.start_line && current_line <= section.end_line) {
+            spdlog::debug("  -> Found section containing cursor at lines {}-{}", section.start_line, section.end_line);
             return section;
         }
+    }
+
+    // If cursor is on a %% marker line, find the nearest section
+    // Check if current line contains %%
+    std::istringstream stream(text);
+    std::string line;
+    int line_num = 0;
+    while (std::getline(stream, line) && line_num <= current_line) {
+        if (line_num == current_line && line.find("%%") != std::string::npos) {
+            // Cursor is on a %% line, return the section after it
+            for (const auto& section : sections) {
+                if (section.start_line > current_line) {
+                    return section;
+                }
+            }
+        }
+        line_num++;
     }
 
     return empty_section;
 }
 
 TextEditor::LanguageDefinition ScriptEditorPanel::CreatePythonLanguage() {
-    TextEditor::LanguageDefinition lang;
+    static bool inited = false;
+    static TextEditor::LanguageDefinition lang;
 
-    lang.mName = "Python";
-    lang.mCaseSensitive = true;
-    lang.mAutoIndentation = true;
-    lang.mSingleLineComment = "#";
-    lang.mCommentStart = "\"\"\"";
-    lang.mCommentEnd = "\"\"\"";
+    if (!inited) {
+        lang.mName = "Python";
+        lang.mCaseSensitive = true;
+        lang.mAutoIndentation = true;
 
-    // Python keywords
-    static const char* const keywords[] = {
-        "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
-        "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
-        "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
-        "while", "with", "yield", "async", "await"
-    };
+        // Comment markers
+        lang.mSingleLineComment = "#";
+        lang.mCommentStart = "\"\"\"";
+        lang.mCommentEnd = "\"\"\"";
 
-    for (auto& k : keywords) {
-        lang.mKeywords.insert(k);
-    }
+        // Add preprocessor patterns for %% section markers
+        lang.mPreprocChar = '%';
 
-    // Built-in identifiers
-    static const char* const identifiers[] = {
-        "abs", "all", "any", "ascii", "bin", "bool", "bytearray", "bytes", "callable", "chr",
-        "classmethod", "compile", "complex", "delattr", "dict", "dir", "divmod", "enumerate",
-        "eval", "exec", "filter", "float", "format", "frozenset", "getattr", "globals", "hasattr",
-        "hash", "help", "hex", "id", "input", "int", "isinstance", "issubclass", "iter", "len",
-        "list", "locals", "map", "max", "memoryview", "min", "next", "object", "oct", "open",
-        "ord", "pow", "print", "property", "range", "repr", "reversed", "round", "set", "setattr",
-        "slice", "sorted", "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip"
-    };
+        // Python keywords
+        static const char* const keywords[] = {
+            "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
+            "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
+            "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
+            "while", "with", "yield", "async", "await"
+        };
 
-    for (auto& i : identifiers) {
-        TextEditor::Identifier id;
-        id.mDeclaration = "Built-in function";
-        lang.mIdentifiers.insert(std::make_pair(std::string(i), id));
+        for (auto& k : keywords) {
+            lang.mKeywords.insert(k);
+        }
+
+        // Built-in identifiers
+        static const char* const identifiers[] = {
+            "abs", "all", "any", "ascii", "bin", "bool", "bytearray", "bytes", "callable", "chr",
+            "classmethod", "compile", "complex", "delattr", "dict", "dir", "divmod", "enumerate",
+            "eval", "exec", "filter", "float", "format", "frozenset", "getattr", "globals", "hasattr",
+            "hash", "help", "hex", "id", "input", "int", "isinstance", "issubclass", "iter", "len",
+            "list", "locals", "map", "max", "memoryview", "min", "next", "object", "oct", "open",
+            "ord", "pow", "print", "property", "range", "repr", "reversed", "round", "set", "setattr",
+            "slice", "sorted", "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip"
+        };
+
+        for (auto& i : identifiers) {
+            TextEditor::Identifier id;
+            id.mDeclaration = "Built-in function";
+            lang.mIdentifiers.insert(std::make_pair(std::string(i), id));
+        }
+
+        inited = true;
     }
 
     return lang;
