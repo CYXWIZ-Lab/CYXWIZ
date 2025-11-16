@@ -1,0 +1,9 @@
+%%
+print("Section 1")
+x = 10
+%%
+
+%%
+print("Section 2")
+y = 20
+%%
