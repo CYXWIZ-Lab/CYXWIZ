@@ -1,0 +1,282 @@
+# ========================================
+# Model Training Template
+# ========================================
+# This template helps you create and train neural network models using CyxWiz backend.
+#
+# Usage:
+#   1. Define your model architecture in the configuration section
+#   2. Prepare your training data
+#   3. Configure hyperparameters (learning rate, epochs, etc.)
+#   4. Run the script to train your model
+#   5. Evaluate and save results
+
+# === IMPORTS ===
+import math
+import random
+
+# Try to import CyxWiz backend
+try:
+    import pycyxwiz as cyx
+    HAS_CYXWIZ = True
+except ImportError:
+    HAS_CYXWIZ = False
+    print("Warning: pycyxwiz not available")
+    print("Make sure CyxWiz backend is built and in Python path")
+
+# === CONFIGURATION ===
+
+# TODO: Model architecture
+MODEL_CONFIG = {
+    'input_size': 784,      # Input features (e.g., 28x28 = 784 for MNIST)
+    'hidden_sizes': [128, 64],  # Hidden layer sizes
+    'output_size': 10,      # Output classes
+    'activation': 'relu',   # Activation function: 'relu', 'sigmoid', 'tanh'
+}
+
+# TODO: Training hyperparameters
+TRAINING_CONFIG = {
+    'learning_rate': 0.001,
+    'epochs': 10,
+    'batch_size': 32,
+    'optimizer': 'adam',    # 'sgd', 'adam', 'adamw', 'rmsprop'
+    'loss': 'cross_entropy', # 'cross_entropy', 'mse', 'mae'
+}
+
+# TODO: Data configuration
+DATA_CONFIG = {
+    'train_samples': 1000,
+    'test_samples': 200,
+    'num_features': 784,
+    'num_classes': 10,
+}
+
+# === HELPER FUNCTIONS ===
+
+def create_synthetic_data(num_samples, num_features, num_classes):
+    """Create synthetic data for testing (replace with real data loading)"""
+    if not HAS_CYXWIZ:
+        print("Error: CyxWiz backend not available")
+        return None, None
+
+    # TODO: Replace this with your actual data loading
+    # Example: Load from CSV, images, etc.
+
+    # For now, create random data
+    X = cyx.Tensor.randn([num_samples, num_features])
+    y_labels = [random.randint(0, num_classes-1) for _ in range(num_samples)]
+
+    # Convert labels to one-hot encoding
+    y = cyx.Tensor.zeros([num_samples, num_classes])
+    for i, label in enumerate(y_labels):
+        # TODO: Implement one-hot encoding
+        # y[i, label] = 1.0
+        pass
+
+    print(f"Created synthetic dataset: X shape={X.shape()}, y shape={y.shape()}")
+    return X, y
+
+def build_model(config):
+    """Build a neural network model"""
+    if not HAS_CYXWIZ:
+        print("Error: CyxWiz backend not available")
+        return None
+
+    # TODO: Define your model architecture
+    # This is a placeholder - actual implementation depends on CyxWiz API
+
+    print("Building model...")
+    print(f"  Input: {config['input_size']}")
+    for i, hidden_size in enumerate(config['hidden_sizes']):
+        print(f"  Hidden Layer {i+1}: {hidden_size} ({config['activation']})")
+    print(f"  Output: {config['output_size']}")
+
+    # TODO: Create layers and model
+    # Example (pseudo-code):
+    # layers = []
+    # layers.append(cyx.Layer.dense(config['input_size'], config['hidden_sizes'][0]))
+    # layers.append(cyx.Layer.activation(config['activation']))
+    # ...
+    # model = cyx.Model(layers)
+
+    model = None  # Placeholder
+    return model
+
+def create_optimizer(config):
+    """Create optimizer based on configuration"""
+    if not HAS_CYXWIZ:
+        return None
+
+    optimizer_type = config['optimizer'].lower()
+    lr = config['learning_rate']
+
+    # TODO: Create optimizer using CyxWiz API
+    print(f"Creating {optimizer_type} optimizer (lr={lr})")
+
+    # Example (pseudo-code):
+    # if optimizer_type == 'sgd':
+    #     optimizer = cyx.Optimizer.sgd(lr)
+    # elif optimizer_type == 'adam':
+    #     optimizer = cyx.Optimizer.adam(lr)
+    # ...
+
+    optimizer = None  # Placeholder
+    return optimizer
+
+def train_model(model, optimizer, X_train, y_train, config):
+    """Train the model"""
+    if model is None or optimizer is None:
+        print("Error: Model or optimizer not initialized")
+        return
+
+    epochs = config['epochs']
+    batch_size = config['batch_size']
+
+    print(f"\n{'='*60}")
+    print(f"Starting Training")
+    print(f"{'='*60}")
+    print(f"Epochs: {epochs}")
+    print(f"Batch size: {batch_size}")
+    print(f"Learning rate: {config['learning_rate']}")
+
+    # TODO: Implement training loop
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        num_batches = 0
+
+        # TODO: Batch iteration
+        # for batch_idx in range(0, num_samples, batch_size):
+        #     # Get batch
+        #     X_batch = X_train[batch_idx:batch_idx+batch_size]
+        #     y_batch = y_train[batch_idx:batch_idx+batch_size]
+        #
+        #     # Forward pass
+        #     y_pred = model.forward(X_batch)
+        #
+        #     # Compute loss
+        #     loss = compute_loss(y_pred, y_batch, config['loss'])
+        #     epoch_loss += loss
+        #
+        #     # Backward pass
+        #     model.backward()
+        #
+        #     # Update weights
+        #     optimizer.step()
+        #     optimizer.zero_grad()
+        #
+        #     num_batches += 1
+
+        # Placeholder
+        epoch_loss = random.random()  # Simulated loss
+        num_batches = 10
+
+        avg_loss = epoch_loss / max(num_batches, 1)
+        print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
+
+    print(f"{'='*60}")
+    print("Training Complete!")
+    print(f"{'='*60}\n")
+
+def evaluate_model(model, X_test, y_test):
+    """Evaluate model on test data"""
+    if model is None:
+        print("Error: Model not initialized")
+        return
+
+    print(f"\n{'='*60}")
+    print("Evaluating Model")
+    print(f"{'='*60}")
+
+    # TODO: Implement evaluation
+    # y_pred = model.forward(X_test)
+    # accuracy = compute_accuracy(y_pred, y_test)
+    # print(f"Test Accuracy: {accuracy:.2f}%")
+
+    # Placeholder
+    accuracy = random.uniform(85, 95)
+    print(f"Test Accuracy: {accuracy:.2f}%")
+
+    print(f"{'='*60}\n")
+    return accuracy
+
+def save_model(model, filepath="model.h5"):
+    """Save trained model to file"""
+    # TODO: Implement model saving
+    print(f"Saving model to {filepath}...")
+    # model.save(filepath)
+    print("✓ Model saved successfully")
+
+# === MAIN SCRIPT ===
+
+def main():
+    """Main training workflow"""
+    print("=" * 60)
+    print("Model Training Script")
+    print("=" * 60)
+
+    if not HAS_CYXWIZ:
+        print("\n✗ CyxWiz backend not available")
+        print("Cannot train models without CyxWiz backend")
+        print("\nPlease:")
+        print("  1. Build cyxwiz-backend")
+        print("  2. Build Python bindings (pycyxwiz)")
+        print("  3. Add to Python path")
+        return
+
+    # Step 1: Create or load data
+    print("\n[Step 1/5] Loading data...")
+    X_train, y_train = create_synthetic_data(
+        DATA_CONFIG['train_samples'],
+        DATA_CONFIG['num_features'],
+        DATA_CONFIG['num_classes']
+    )
+    X_test, y_test = create_synthetic_data(
+        DATA_CONFIG['test_samples'],
+        DATA_CONFIG['num_features'],
+        DATA_CONFIG['num_classes']
+    )
+
+    if X_train is None or y_train is None:
+        print("✗ Failed to load training data")
+        return
+
+    # Step 2: Build model
+    print("\n[Step 2/5] Building model...")
+    model = build_model(MODEL_CONFIG)
+
+    # Step 3: Create optimizer
+    print("\n[Step 3/5] Creating optimizer...")
+    optimizer = create_optimizer(TRAINING_CONFIG)
+
+    # Step 4: Train model
+    print("\n[Step 4/5] Training model...")
+    train_model(model, optimizer, X_train, y_train, TRAINING_CONFIG)
+
+    # Step 5: Evaluate model
+    print("\n[Step 5/5] Evaluating model...")
+    accuracy = evaluate_model(model, X_test, y_test)
+
+    # Optional: Save model
+    # save_model(model, "my_trained_model.h5")
+
+    print("\n" + "=" * 60)
+    print("Training Pipeline Complete!")
+    print(f"Final Test Accuracy: {accuracy:.2f}%" if accuracy else "N/A")
+    print("=" * 60)
+
+    # TODO: Add your post-training analysis
+    # Examples:
+    # - Plot training curves
+    # - Analyze predictions
+    # - Export model for deployment
+
+    return model
+
+# Run the main function
+if __name__ == "__main__":
+    trained_model = main()
+
+    # TODO: Use 'trained_model' for inference or further training
+    # Example:
+    # if trained_model is not None:
+    #     # Your inference code here
+    #     pass

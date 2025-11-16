@@ -1,0 +1,364 @@
+# ========================================
+# Custom Function Template
+# ========================================
+# This template helps you create reusable helper functions and utilities.
+#
+# Usage:
+#   1. Define your function signature and docstring
+#   2. Implement the function logic
+#   3. Add input validation and error handling
+#   4. Test the function with example inputs
+#   5. Use the function in your scripts or save as a module
+
+# === IMPORTS ===
+import math
+import random
+from typing import List, Dict, Tuple, Any, Optional
+
+# === FUNCTION TEMPLATES ===
+
+# TODO: Simple function template
+def my_function(param1, param2):
+    """
+    Brief description of what this function does.
+
+    Args:
+        param1: Description of first parameter
+        param2: Description of second parameter
+
+    Returns:
+        Description of return value
+
+    Example:
+        >>> result = my_function(10, 20)
+        >>> print(result)
+        30
+    """
+    # TODO: Implement your function logic here
+    result = param1 + param2
+    return result
+
+
+# TODO: Function with type hints
+def typed_function(data: List[float], threshold: float = 0.5) -> List[float]:
+    """
+    Function with type hints for better IDE support and clarity.
+
+    Args:
+        data: List of floating point numbers
+        threshold: Minimum value to keep (default: 0.5)
+
+    Returns:
+        Filtered list containing only values >= threshold
+
+    Example:
+        >>> filtered = typed_function([0.2, 0.6, 0.8, 0.3], threshold=0.5)
+        >>> print(filtered)
+        [0.6, 0.8]
+    """
+    # TODO: Implement your function logic
+    return [x for x in data if x >= threshold]
+
+
+# TODO: Function with error handling
+def safe_divide(numerator: float, denominator: float) -> Optional[float]:
+    """
+    Safely divide two numbers with error handling.
+
+    Args:
+        numerator: The number to divide
+        denominator: The number to divide by
+
+    Returns:
+        Result of division, or None if division by zero
+
+    Example:
+        >>> result = safe_divide(10, 2)
+        >>> print(result)
+        5.0
+        >>> result = safe_divide(10, 0)
+        >>> print(result)
+        None
+    """
+    try:
+        if denominator == 0:
+            print("Warning: Division by zero attempted")
+            return None
+        return numerator / denominator
+    except Exception as e:
+        print(f"Error in division: {e}")
+        return None
+
+
+# TODO: Function with multiple return values
+def calculate_statistics(data: List[float]) -> Tuple[float, float, float, float]:
+    """
+    Calculate basic statistics for a dataset.
+
+    Args:
+        data: List of numbers
+
+    Returns:
+        Tuple of (mean, median, min, max)
+
+    Example:
+        >>> stats = calculate_statistics([1, 2, 3, 4, 5])
+        >>> mean, median, min_val, max_val = stats
+        >>> print(f"Mean: {mean}, Median: {median}")
+        Mean: 3.0, Median: 3
+    """
+    if not data:
+        return 0.0, 0.0, 0.0, 0.0
+
+    # Calculate statistics
+    mean = sum(data) / len(data)
+    sorted_data = sorted(data)
+    median = sorted_data[len(sorted_data) // 2]
+    min_val = min(data)
+    max_val = max(data)
+
+    return mean, median, min_val, max_val
+
+
+# TODO: Function with dict configuration
+def process_with_config(data: Any, config: Dict[str, Any]) -> Any:
+    """
+    Process data using configuration dictionary.
+
+    Args:
+        data: Input data to process
+        config: Configuration dictionary with processing options
+
+    Returns:
+        Processed data
+
+    Example:
+        >>> config = {'normalize': True, 'scale': 10}
+        >>> result = process_with_config([1, 2, 3], config)
+    """
+    # TODO: Implement processing based on config
+    normalize = config.get('normalize', False)
+    scale = config.get('scale', 1.0)
+
+    # Example processing
+    if normalize:
+        # Normalize data
+        pass
+
+    if scale != 1.0:
+        # Scale data
+        pass
+
+    return data
+
+
+# TODO: Decorator function template
+def timing_decorator(func):
+    """
+    Decorator to measure function execution time.
+
+    Example:
+        >>> @timing_decorator
+        ... def slow_function():
+        ...     time.sleep(1)
+        >>> slow_function()
+        Function 'slow_function' took 1.00 seconds
+    """
+    import time
+
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        elapsed = end_time - start_time
+        print(f"Function '{func.__name__}' took {elapsed:.2f} seconds")
+        return result
+
+    return wrapper
+
+
+# TODO: Class template
+class MyUtilityClass:
+    """
+    Utility class for organizing related functions.
+
+    Example:
+        >>> util = MyUtilityClass(param=10)
+        >>> result = util.process([1, 2, 3])
+    """
+
+    def __init__(self, param: int = 0):
+        """
+        Initialize the utility class.
+
+        Args:
+            param: Configuration parameter
+        """
+        self.param = param
+        self.cache = {}
+
+    def process(self, data: List[Any]) -> List[Any]:
+        """
+        Process data using the utility.
+
+        Args:
+            data: Input data list
+
+        Returns:
+            Processed data list
+        """
+        # TODO: Implement processing logic
+        return [x + self.param for x in data]
+
+    def clear_cache(self):
+        """Clear internal cache"""
+        self.cache.clear()
+
+
+# === SPECIALIZED FUNCTION TEMPLATES ===
+
+# TODO: Data transformation function
+def transform_data(input_data: List[Dict], transform_rules: Dict) -> List[Dict]:
+    """
+    Transform data based on rules.
+
+    Args:
+        input_data: List of data dictionaries
+        transform_rules: Dictionary of transformation rules
+
+    Returns:
+        Transformed data
+    """
+    # TODO: Implement transformation logic
+    output_data = []
+
+    for item in input_data:
+        transformed_item = {}
+        for key, value in item.items():
+            # Apply transformation rules
+            if key in transform_rules:
+                transformed_item[key] = transform_rules[key](value)
+            else:
+                transformed_item[key] = value
+        output_data.append(transformed_item)
+
+    return output_data
+
+
+# TODO: Validation function
+def validate_input(data: Any, schema: Dict) -> Tuple[bool, str]:
+    """
+    Validate input data against a schema.
+
+    Args:
+        data: Data to validate
+        schema: Validation schema
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    # TODO: Implement validation logic
+    required_fields = schema.get('required', [])
+    field_types = schema.get('types', {})
+
+    # Check required fields
+    if isinstance(data, dict):
+        for field in required_fields:
+            if field not in data:
+                return False, f"Missing required field: {field}"
+
+        # Check field types
+        for field, expected_type in field_types.items():
+            if field in data and not isinstance(data[field], expected_type):
+                return False, f"Invalid type for {field}"
+
+    return True, ""
+
+
+# TODO: Batch processing function
+def batch_process(items: List[Any], process_fn, batch_size: int = 100) -> List[Any]:
+    """
+    Process items in batches for efficiency.
+
+    Args:
+        items: List of items to process
+        process_fn: Function to apply to each batch
+        batch_size: Number of items per batch
+
+    Returns:
+        List of processed items
+    """
+    results = []
+
+    for i in range(0, len(items), batch_size):
+        batch = items[i:i+batch_size]
+        batch_results = process_fn(batch)
+        results.extend(batch_results)
+
+        # Progress indicator
+        progress = min(i + batch_size, len(items))
+        print(f"Processed {progress}/{len(items)} items...")
+
+    return results
+
+
+# === TESTING SECTION ===
+
+def test_functions():
+    """Test the functions defined above"""
+    print("=" * 60)
+    print("Testing Custom Functions")
+    print("=" * 60)
+
+    # TODO: Test your functions here
+    # Test 1: Simple function
+    print("\n[Test 1] my_function:")
+    result = my_function(10, 20)
+    print(f"  Result: {result}")
+
+    # Test 2: Typed function
+    print("\n[Test 2] typed_function:")
+    filtered = typed_function([0.2, 0.6, 0.8, 0.3], threshold=0.5)
+    print(f"  Filtered: {filtered}")
+
+    # Test 3: Safe divide
+    print("\n[Test 3] safe_divide:")
+    print(f"  10 / 2 = {safe_divide(10, 2)}")
+    print(f"  10 / 0 = {safe_divide(10, 0)}")
+
+    # Test 4: Statistics
+    print("\n[Test 4] calculate_statistics:")
+    stats = calculate_statistics([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    mean, median, min_val, max_val = stats
+    print(f"  Mean: {mean}, Median: {median}, Min: {min_val}, Max: {max_val}")
+
+    # Test 5: Utility class
+    print("\n[Test 5] MyUtilityClass:")
+    util = MyUtilityClass(param=10)
+    result = util.process([1, 2, 3])
+    print(f"  Processed: {result}")
+
+    print("\n" + "=" * 60)
+    print("All tests complete!")
+    print("=" * 60)
+
+
+# === MAIN SCRIPT ===
+
+def main():
+    """Main function"""
+    print("Custom Function Template Loaded")
+    print("\nAvailable functions:")
+    print("  - my_function()")
+    print("  - typed_function()")
+    print("  - safe_divide()")
+    print("  - calculate_statistics()")
+    print("  - MyUtilityClass")
+    print("\nRun test_functions() to see examples")
+
+    # Uncomment to run tests
+    # test_functions()
+
+
+if __name__ == "__main__":
+    main()

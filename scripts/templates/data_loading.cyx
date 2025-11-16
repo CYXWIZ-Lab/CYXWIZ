@@ -1,0 +1,216 @@
+# ========================================
+# Data Loading Template
+# ========================================
+# This template helps you load and explore datasets from various formats.
+# Supported formats: CSV, TXT (tab/space delimited), HDF5
+#
+# Usage:
+#   1. Update the file path in the configuration section
+#   2. Choose the appropriate loading method for your format
+#   3. Run the script to load and display your data
+#   4. Customize the exploration section as needed
+
+# === IMPORTS ===
+import os
+import sys
+
+# CyxWiz data table (if available)
+try:
+    from data_table import DataTable
+    HAS_DATA_TABLE = True
+except ImportError:
+    HAS_DATA_TABLE = False
+    print("Warning: DataTable not available, using pandas fallback")
+
+# Try to import pandas for fallback
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+    print("Warning: pandas not available")
+
+# === CONFIGURATION ===
+# TODO: Update these paths to your data files
+DATA_FILE_CSV = "test_data.csv"
+DATA_FILE_TXT = "test_data_tab.txt"
+DATA_FILE_HDF5 = "test_data.h5"
+
+# TODO: Choose your data format
+# Options: 'csv', 'txt', 'hdf5', 'auto'
+DATA_FORMAT = 'auto'  # Auto-detect from extension
+
+# TODO: For TXT files, specify delimiter
+TXT_DELIMITER = '\t'  # '\t' for tab, ' ' for space, ',' for comma
+
+# === HELPER FUNCTIONS ===
+
+def auto_detect_format(filepath):
+    """Automatically detect file format from extension"""
+    ext = os.path.splitext(filepath)[1].lower()
+    format_map = {
+        '.csv': 'csv',
+        '.txt': 'txt',
+        '.tsv': 'txt',
+        '.h5': 'hdf5',
+        '.hdf5': 'hdf5',
+    }
+    return format_map.get(ext, 'unknown')
+
+def load_data_cyxwiz(filepath, format='auto'):
+    """Load data using CyxWiz DataTable"""
+    if not HAS_DATA_TABLE:
+        print("Error: DataTable not available")
+        return None
+
+    if format == 'auto':
+        format = auto_detect_format(filepath)
+
+    table = DataTable()
+
+    try:
+        if format == 'csv':
+            success = table.LoadFromCSV(filepath)
+        elif format == 'txt':
+            success = table.LoadFromTXT(filepath, TXT_DELIMITER)
+        elif format == 'hdf5':
+            success = table.LoadFromHDF5(filepath)
+        else:
+            print(f"Error: Unknown format '{format}'")
+            return None
+
+        if success:
+            print(f"✓ Loaded {table.RowCount()} rows, {table.ColumnCount()} columns")
+            return table
+        else:
+            print(f"✗ Failed to load {filepath}")
+            return None
+
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        return None
+
+def load_data_pandas(filepath, format='auto'):
+    """Load data using pandas (fallback)"""
+    if not HAS_PANDAS:
+        print("Error: pandas not available")
+        return None
+
+    if format == 'auto':
+        format = auto_detect_format(filepath)
+
+    try:
+        if format == 'csv':
+            df = pd.read_csv(filepath)
+        elif format == 'txt':
+            df = pd.read_csv(filepath, delimiter=TXT_DELIMITER)
+        elif format == 'hdf5':
+            df = pd.read_hdf(filepath)
+        else:
+            print(f"Error: Unknown format '{format}'")
+            return None
+
+        print(f"✓ Loaded {len(df)} rows, {len(df.columns)} columns")
+        return df
+
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        return None
+
+def display_data_info(data):
+    """Display information about the loaded data"""
+    if data is None:
+        print("No data to display")
+        return
+
+    # Handle DataTable
+    if HAS_DATA_TABLE and isinstance(data, DataTable):
+        print("\n=== Dataset Information ===")
+        print(f"Rows: {data.RowCount()}")
+        print(f"Columns: {data.ColumnCount()}")
+        print(f"\nColumn Names:")
+        for i, header in enumerate(data.GetHeaders()):
+            print(f"  {i+1}. {header}")
+
+        print(f"\nFirst 5 rows:")
+        for row_idx in range(min(5, data.RowCount())):
+            row_data = [data.GetCellAsString(row_idx, col_idx)
+                       for col_idx in range(data.ColumnCount())]
+            print(f"  Row {row_idx+1}: {row_data}")
+
+    # Handle pandas DataFrame
+    elif HAS_PANDAS and isinstance(data, pd.DataFrame):
+        print("\n=== Dataset Information ===")
+        print(f"Shape: {data.shape}")
+        print(f"\nColumn Names and Types:")
+        print(data.dtypes)
+        print(f"\nFirst 5 rows:")
+        print(data.head())
+        print(f"\nBasic Statistics:")
+        print(data.describe())
+
+    else:
+        print("Unknown data type")
+
+# === MAIN SCRIPT ===
+
+def main():
+    """Main data loading workflow"""
+    print("=" * 60)
+    print("Data Loading Script")
+    print("=" * 60)
+
+    # TODO: Choose which file to load
+    filepath = DATA_FILE_CSV  # Change to DATA_FILE_TXT or DATA_FILE_HDF5
+
+    # Check if file exists
+    if not os.path.exists(filepath):
+        print(f"Error: File not found: {filepath}")
+        print("Please update the file path in the configuration section.")
+        return
+
+    print(f"\nLoading data from: {filepath}")
+
+    # Try CyxWiz DataTable first, fall back to pandas
+    data = None
+    if HAS_DATA_TABLE:
+        data = load_data_cyxwiz(filepath, DATA_FORMAT)
+
+    if data is None and HAS_PANDAS:
+        print("Falling back to pandas...")
+        data = load_data_pandas(filepath, DATA_FORMAT)
+
+    if data is None:
+        print("\n✗ Failed to load data")
+        print("Make sure:")
+        print("  1. File path is correct")
+        print("  2. File format is supported")
+        print("  3. Required libraries are installed")
+        return
+
+    # Display data information
+    display_data_info(data)
+
+    # TODO: Add your custom data exploration here
+    # Examples:
+    # - Filter rows based on conditions
+    # - Select specific columns
+    # - Calculate statistics
+    # - Create visualizations
+
+    print("\n" + "=" * 60)
+    print("Data loading complete!")
+    print("=" * 60)
+
+    # Return data for further use
+    return data
+
+# Run the main function
+if __name__ == "__main__":
+    loaded_data = main()
+
+    # TODO: Use 'loaded_data' for further analysis
+    # Example:
+    # if loaded_data is not None:
+    #     # Your analysis code here
+    #     pass

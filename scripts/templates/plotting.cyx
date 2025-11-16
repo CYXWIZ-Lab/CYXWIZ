@@ -1,0 +1,354 @@
+# ========================================
+# Data Visualization Template
+# ========================================
+# This template helps you create plots and visualizations using matplotlib.
+#
+# Usage:
+#   1. Prepare your data for plotting
+#   2. Choose the type of plot (line, scatter, bar, histogram, etc.)
+#   3. Customize plot appearance (colors, labels, titles)
+#   4. Run the script to generate and display/save plots
+
+# === IMPORTS ===
+import math
+import random
+
+# Try to import matplotlib
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Non-interactive backend for saving files
+    import matplotlib.pyplot as plt
+    import numpy as np
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
+    print("Warning: matplotlib not available")
+    print("Install with: pip install matplotlib numpy")
+
+# === CONFIGURATION ===
+
+# TODO: Plot configuration
+PLOT_CONFIG = {
+    'figure_size': (10, 6),     # Width, height in inches
+    'dpi': 100,                 # Resolution
+    'style': 'default',         # Plot style: 'default', 'seaborn', 'ggplot', etc.
+    'save_format': 'png',       # 'png', 'pdf', 'svg'
+    'output_dir': 'plots/',     # Directory to save plots
+}
+
+# TODO: Choose plot types to demonstrate
+DEMO_PLOTS = {
+    'line_plot': True,
+    'scatter_plot': True,
+    'bar_chart': True,
+    'histogram': True,
+    'multiple_series': True,
+}
+
+# === HELPER FUNCTIONS ===
+
+def setup_matplotlib():
+    """Configure matplotlib settings"""
+    if not HAS_MATPLOTLIB:
+        return False
+
+    # Set style
+    try:
+        plt.style.use(PLOT_CONFIG['style'])
+    except:
+        print(f"Warning: Style '{PLOT_CONFIG['style']}' not found, using default")
+
+    # Set default figure size
+    plt.rcParams['figure.figsize'] = PLOT_CONFIG['figure_size']
+    plt.rcParams['figure.dpi'] = PLOT_CONFIG['dpi']
+
+    print("✓ Matplotlib configured")
+    return True
+
+def create_sample_data():
+    """Create sample data for demonstration (replace with your data)"""
+    if not HAS_MATPLOTLIB:
+        return None
+
+    # TODO: Replace with your actual data loading
+    # Example: Load from CSV, database, or compute from model output
+
+    # Generate sample data
+    x = np.linspace(0, 10, 100)
+    y1 = np.sin(x)
+    y2 = np.cos(x)
+    y3 = np.sin(x) * np.exp(-x/10)
+
+    # Sample categorical data
+    categories = ['A', 'B', 'C', 'D', 'E']
+    values = [23, 45, 56, 78, 32]
+
+    # Sample distribution data
+    distribution = np.random.normal(100, 15, 1000)
+
+    data = {
+        'x': x,
+        'y1': y1,
+        'y2': y2,
+        'y3': y3,
+        'categories': categories,
+        'values': values,
+        'distribution': distribution,
+    }
+
+    print("✓ Sample data created")
+    return data
+
+def plot_line_chart(data, save_path=None):
+    """Create a line plot"""
+    print("Creating line plot...")
+
+    plt.figure()
+    plt.plot(data['x'], data['y1'], label='sin(x)', linewidth=2, color='blue')
+
+    # TODO: Customize your plot
+    plt.xlabel('X Axis')
+    plt.ylabel('Y Axis')
+    plt.title('Line Plot Example')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"  ✓ Saved to {save_path}")
+    else:
+        plt.show()
+
+    plt.close()
+
+def plot_scatter(data, save_path=None):
+    """Create a scatter plot"""
+    print("Creating scatter plot...")
+
+    plt.figure()
+
+    # Create scatter with varying sizes and colors
+    # TODO: Use your own data for x, y, sizes, colors
+    x = data['x']
+    y = data['y2']
+    sizes = np.abs(data['y3']) * 100
+    colors = data['y1']
+
+    scatter = plt.scatter(x, y, s=sizes, c=colors, cmap='viridis', alpha=0.6)
+    plt.colorbar(scatter, label='Color Scale')
+
+    plt.xlabel('X Axis')
+    plt.ylabel('Y Axis')
+    plt.title('Scatter Plot Example')
+    plt.grid(True, alpha=0.3)
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"  ✓ Saved to {save_path}")
+    else:
+        plt.show()
+
+    plt.close()
+
+def plot_bar_chart(data, save_path=None):
+    """Create a bar chart"""
+    print("Creating bar chart...")
+
+    plt.figure()
+
+    # TODO: Customize bar colors and appearance
+    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8']
+    bars = plt.bar(data['categories'], data['values'], color=colors, alpha=0.7)
+
+    # Add value labels on bars
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height,
+                f'{height:.0f}',
+                ha='center', va='bottom')
+
+    plt.xlabel('Categories')
+    plt.ylabel('Values')
+    plt.title('Bar Chart Example')
+    plt.grid(True, alpha=0.3, axis='y')
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"  ✓ Saved to {save_path}")
+    else:
+        plt.show()
+
+    plt.close()
+
+def plot_histogram(data, save_path=None):
+    """Create a histogram"""
+    print("Creating histogram...")
+
+    plt.figure()
+
+    # TODO: Adjust bins and range for your data
+    plt.hist(data['distribution'], bins=30, color='skyblue',
+             edgecolor='black', alpha=0.7)
+
+    # Add mean and std lines
+    mean = np.mean(data['distribution'])
+    std = np.std(data['distribution'])
+
+    plt.axvline(mean, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean:.2f}')
+    plt.axvline(mean + std, color='orange', linestyle='--', linewidth=1, label=f'±1 Std')
+    plt.axvline(mean - std, color='orange', linestyle='--', linewidth=1)
+
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.title('Histogram Example')
+    plt.legend()
+    plt.grid(True, alpha=0.3, axis='y')
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"  ✓ Saved to {save_path}")
+    else:
+        plt.show()
+
+    plt.close()
+
+def plot_multiple_series(data, save_path=None):
+    """Create a plot with multiple data series"""
+    print("Creating multi-series plot...")
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+    # TODO: Customize your subplots
+    # Subplot 1: Multiple lines
+    ax1.plot(data['x'], data['y1'], label='sin(x)', linewidth=2)
+    ax1.plot(data['x'], data['y2'], label='cos(x)', linewidth=2)
+    ax1.plot(data['x'], data['y3'], label='damped sin(x)', linewidth=2)
+    ax1.set_xlabel('X')
+    ax1.set_ylabel('Y')
+    ax1.set_title('Multiple Time Series')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Subplot 2: Combined bar and line
+    ax2_twin = ax2.twinx()
+    ax2.bar(data['categories'], data['values'], alpha=0.5, label='Values')
+    ax2_twin.plot(data['categories'], [v*1.1 for v in data['values']],
+                 'ro-', linewidth=2, markersize=8, label='Trend')
+
+    ax2.set_xlabel('Categories')
+    ax2.set_ylabel('Bar Values', color='blue')
+    ax2_twin.set_ylabel('Line Values', color='red')
+    ax2.set_title('Combined Bar and Line Chart')
+    ax2.grid(True, alpha=0.3)
+
+    # Combine legends
+    lines1, labels1 = ax2.get_legend_handles_labels()
+    lines2, labels2 = ax2_twin.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"  ✓ Saved to {save_path}")
+    else:
+        plt.show()
+
+    plt.close()
+
+# === ADVANCED PLOT EXAMPLES ===
+
+def plot_training_curves(epochs, train_loss, val_loss, train_acc, val_acc, save_path=None):
+    """Plot training curves (loss and accuracy)"""
+    # TODO: Use with your actual training data
+    print("Creating training curves...")
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Loss plot
+    ax1.plot(epochs, train_loss, 'b-', label='Training Loss', linewidth=2)
+    ax1.plot(epochs, val_loss, 'r-', label='Validation Loss', linewidth=2)
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training and Validation Loss')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Accuracy plot
+    ax2.plot(epochs, train_acc, 'b-', label='Training Accuracy', linewidth=2)
+    ax2.plot(epochs, val_acc, 'r-', label='Validation Accuracy', linewidth=2)
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy (%)')
+    ax2.set_title('Training and Validation Accuracy')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"  ✓ Saved to {save_path}")
+
+    plt.close()
+
+# === MAIN SCRIPT ===
+
+def main():
+    """Main plotting workflow"""
+    print("=" * 60)
+    print("Data Visualization Script")
+    print("=" * 60)
+
+    if not HAS_MATPLOTLIB:
+        print("\n✗ matplotlib not available")
+        print("Install with: pip install matplotlib numpy")
+        return
+
+    # Setup matplotlib
+    setup_matplotlib()
+
+    # Create or load data
+    print("\nLoading data...")
+    data = create_sample_data()
+
+    if data is None:
+        print("✗ Failed to load data")
+        return
+
+    # Create plots based on configuration
+    print(f"\n{'='*60}")
+    print("Generating Plots")
+    print(f"{'='*60}\n")
+
+    # TODO: Uncomment the plots you want to generate
+    if DEMO_PLOTS.get('line_plot', False):
+        plot_line_chart(data, save_path='line_plot.png')
+
+    if DEMO_PLOTS.get('scatter_plot', False):
+        plot_scatter(data, save_path='scatter_plot.png')
+
+    if DEMO_PLOTS.get('bar_chart', False):
+        plot_bar_chart(data, save_path='bar_chart.png')
+
+    if DEMO_PLOTS.get('histogram', False):
+        plot_histogram(data, save_path='histogram.png')
+
+    if DEMO_PLOTS.get('multiple_series', False):
+        plot_multiple_series(data, save_path='multiple_series.png')
+
+    # TODO: Create your custom plots here
+    # Example: Training curves
+    # epochs = list(range(1, 11))
+    # train_loss = [0.9 - i*0.08 for i in epochs]
+    # val_loss = [0.95 - i*0.07 for i in epochs]
+    # train_acc = [60 + i*3 for i in epochs]
+    # val_acc = [58 + i*2.8 for i in epochs]
+    # plot_training_curves(epochs, train_loss, val_loss, train_acc, val_acc, 'training_curves.png')
+
+    print(f"\n{'='*60}")
+    print("Plotting Complete!")
+    print(f"{'='*60}")
+
+# Run the main function
+if __name__ == "__main__":
+    main()
