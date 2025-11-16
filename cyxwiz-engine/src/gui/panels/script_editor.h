@@ -58,6 +58,7 @@ private:
     void RenderMenuBar();
     void RenderEditor();
     void RenderStatusBar();
+    void HandleKeyboardShortcuts();
 
     // File operations helpers
     bool LoadFileContent(const std::string& filepath, std::string& content);
@@ -86,6 +87,11 @@ private:
     bool show_editor_menu_;
     bool request_focus_;
     int close_tab_index_;  // Tab to close (-1 = none)
+
+    // Execution output
+    std::string last_execution_output_;
+    bool show_output_notification_;
+    float output_notification_time_;
 };
 
 } // namespace cyxwiz

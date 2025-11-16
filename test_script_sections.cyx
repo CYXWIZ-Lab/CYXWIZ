@@ -1,0 +1,53 @@
+# CyxWiz Script Editor Test File
+# This file demonstrates section execution with %% markers
+
+%%
+# Section 1: Basic Math
+print("=== Section 1: Basic Math ===")
+x = 10
+y = 20
+result = x + y
+print(f"x + y = {result}")
+%%
+
+%%
+# Section 2: Using variables from Section 1
+print("\n=== Section 2: Variable Usage ===")
+print(f"x was: {x}")
+print(f"y was: {y}")
+doubled = result * 2
+print(f"Result doubled: {doubled}")
+%%
+
+%%
+# Section 3: Lists and Loops
+print("\n=== Section 3: Lists and Loops ===")
+numbers = [1, 2, 3, 4, 5]
+print("Numbers:", numbers)
+squared = [n**2 for n in numbers]
+print("Squared:", squared)
+print("Sum:", sum(squared))
+%%
+
+%%
+# Section 4: Functions
+print("\n=== Section 4: Functions ===")
+
+def greet(name):
+    return f"Hello, {name}!"
+
+print(greet("CyxWiz"))
+print(greet("Script Editor"))
+%%
+
+%%
+# Section 5: Try importing pycyxwiz (if available)
+print("\n=== Section 5: Module Import ===")
+try:
+    import math
+    print(f"π = {math.pi}")
+    print(f"e = {math.e}")
+    print(f"√2 = {math.sqrt(2)}")
+except ImportError as e:
+    print(f"Import error: {e}")
+%%

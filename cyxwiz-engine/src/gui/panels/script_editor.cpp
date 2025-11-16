@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cstdio>
 #include <spdlog/spdlog.h>
 
 #ifdef _WIN32
@@ -19,6 +20,8 @@ ScriptEditorPanel::ScriptEditorPanel()
     , show_editor_menu_(false)
     , request_focus_(false)
     , close_tab_index_(-1)
+    , show_output_notification_(false)
+    , output_notification_time_(0.0f)
 {
     // Create initial empty tab
     NewFile();
@@ -31,16 +34,13 @@ void ScriptEditorPanel::SetScriptingEngine(std::shared_ptr<scripting::ScriptingE
 void ScriptEditorPanel::Render() {
     if (!visible_) return;
 
-    ImGui::Begin(GetName(), &visible_);
+    ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
 
-    // Menu bar (when editor is active)
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow)) {
-        show_editor_menu_ = true;
-    }
+    // Always show menu bar
+    RenderMenuBar();
 
-    if (show_editor_menu_) {
-        RenderMenuBar();
-    }
+    // Handle keyboard shortcuts
+    HandleKeyboardShortcuts();
 
     // Tab bar
     RenderTabBar();
@@ -52,6 +52,19 @@ void ScriptEditorPanel::Render() {
 
     // Status bar
     RenderStatusBar();
+
+    // Show output notification if needed
+    if (show_output_notification_) {
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
+        ImGui::TextWrapped("%s", last_execution_output_.c_str());
+
+        // Auto-hide after 5 seconds
+        output_notification_time_ += ImGui::GetIO().DeltaTime;
+        if (output_notification_time_ > 5.0f) {
+            show_output_notification_ = false;
+            output_notification_time_ = 0.0f;
+        }
+    }
 
     // Handle deferred tab close
     if (close_tab_index_ >= 0) {
@@ -192,6 +205,48 @@ void ScriptEditorPanel::RenderStatusBar() {
 
         ImGui::SameLine(ImGui::GetWindowWidth() - 150);
         ImGui::Text("%s", tab->filepath.empty() ? "Untitled" : tab->filepath.c_str());
+    }
+}
+
+void ScriptEditorPanel::HandleKeyboardShortcuts() {
+    ImGuiIO& io = ImGui::GetIO();
+
+    bool ctrl = io.KeyCtrl;
+    bool shift = io.KeyShift;
+    bool alt = io.KeyAlt;
+
+    // File operations
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_N)) {
+        NewFile();
+    }
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_O)) {
+        OpenFile();
+    }
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_S) && active_tab_index_ >= 0) {
+        SaveFile();
+    }
+    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_S) && active_tab_index_ >= 0) {
+        SaveFileAs();
+    }
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_W) && active_tab_index_ >= 0) {
+        close_tab_index_ = active_tab_index_;
+    }
+
+    // Edit operations (handled by TextEditor internally, but we can add extra handling)
+    // The TextEditor component already handles Ctrl+Z, Ctrl+Y, Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A
+
+    // Execution shortcuts
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F5)) {
+        RunScript();
+    }
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F9)) {
+        RunSelection();
+    }
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+        RunCurrentSection();
+    }
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F10)) {
+        Debug();
     }
 }
 
@@ -342,10 +397,25 @@ void ScriptEditorPanel::RunScript() {
 
     if (!result.success) {
         spdlog::error("Script error: {}", result.error_message);
-        // TODO: Display error in UI
+        last_execution_output_ = "Error: " + result.error_message;
+        show_output_notification_ = true;
+        output_notification_time_ = 0.0f;
+
+        // Also print to console
+        printf("[Script Error] %s\n", result.error_message.c_str());
     } else {
         spdlog::info("Script executed successfully");
-        // TODO: Display output
+        last_execution_output_ = "Script executed successfully";
+        if (!result.output.empty()) {
+            last_execution_output_ += "\nOutput: " + result.output;
+        }
+        show_output_notification_ = true;
+        output_notification_time_ = 0.0f;
+
+        // Print output to console
+        if (!result.output.empty()) {
+            printf("[Script Output]\n%s\n", result.output.c_str());
+        }
     }
 }
 
@@ -357,6 +427,9 @@ void ScriptEditorPanel::RunSelection() {
 
     if (selected_text.empty()) {
         spdlog::warn("No text selected");
+        last_execution_output_ = "No text selected";
+        show_output_notification_ = true;
+        output_notification_time_ = 0.0f;
         return;
     }
 
@@ -365,6 +438,18 @@ void ScriptEditorPanel::RunSelection() {
 
     if (!result.success) {
         spdlog::error("Execution error: {}", result.error_message);
+        last_execution_output_ = "Error: " + result.error_message;
+        show_output_notification_ = true;
+        output_notification_time_ = 0.0f;
+        printf("[Selection Error] %s\n", result.error_message.c_str());
+    } else {
+        last_execution_output_ = "Selection executed successfully";
+        if (!result.output.empty()) {
+            last_execution_output_ += "\nOutput: " + result.output;
+            printf("[Selection Output]\n%s\n", result.output.c_str());
+        }
+        show_output_notification_ = true;
+        output_notification_time_ = 0.0f;
     }
 }
 
@@ -375,6 +460,9 @@ void ScriptEditorPanel::RunCurrentSection() {
 
     if (section.code.empty()) {
         spdlog::warn("No section found at cursor");
+        last_execution_output_ = "No section found at cursor";
+        show_output_notification_ = true;
+        output_notification_time_ = 0.0f;
         return;
     }
 
@@ -383,6 +471,20 @@ void ScriptEditorPanel::RunCurrentSection() {
 
     if (!result.success) {
         spdlog::error("Section execution error: {}", result.error_message);
+        last_execution_output_ = "Section Error: " + result.error_message;
+        show_output_notification_ = true;
+        output_notification_time_ = 0.0f;
+        printf("[Section Error] %s\n", result.error_message.c_str());
+    } else {
+        last_execution_output_ = "Section executed successfully (lines " +
+                                std::to_string(section.start_line) + "-" +
+                                std::to_string(section.end_line) + ")";
+        if (!result.output.empty()) {
+            last_execution_output_ += "\nOutput: " + result.output;
+            printf("[Section Output]\n%s\n", result.output.c_str());
+        }
+        show_output_notification_ = true;
+        output_notification_time_ = 0.0f;
     }
 }
 
