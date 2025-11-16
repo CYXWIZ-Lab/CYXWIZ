@@ -1,0 +1,133 @@
+# Security Test Suite for PythonSandbox
+# These tests verify that dangerous operations are blocked
+
+%%
+# TEST 1: Blocked builtin - eval
+# Expected: ImportError or SecurityError
+print("=== Test 1: Attempting to use eval() ===")
+try:
+    eval("print('This should be blocked')")
+    print("❌ FAIL: eval() was not blocked!")
+except (NameError, SecurityError) as e:
+    print(f"✅ PASS: eval() blocked - {type(e).__name__}")
+%%
+
+%%
+# TEST 2: Blocked builtin - exec
+# Expected: NameError or SecurityError
+print("\n=== Test 2: Attempting to use exec() ===")
+try:
+    exec("print('This should be blocked')")
+    print("❌ FAIL: exec() was not blocked!")
+except (NameError, SecurityError) as e:
+    print(f"✅ PASS: exec() blocked - {type(e).__name__}")
+%%
+
+%%
+# TEST 3: Blocked builtin - __import__
+# Expected: ImportError or NameError
+print("\n=== Test 3: Attempting to use __import__() ===")
+try:
+    os = __import__('os')
+    print("❌ FAIL: __import__() was not blocked!")
+except (NameError, ImportError) as e:
+    print(f"✅ PASS: __import__() blocked - {type(e).__name__}")
+%%
+
+%%
+# TEST 4: Blocked module - os
+# Expected: ImportError
+print("\n=== Test 4: Attempting to import os module ===")
+try:
+    import os
+    print("❌ FAIL: os module was not blocked!")
+except ImportError as e:
+    print(f"✅ PASS: os module blocked - {e}")
+%%
+
+%%
+# TEST 5: Blocked module - subprocess
+# Expected: ImportError
+print("\n=== Test 5: Attempting to import subprocess ===")
+try:
+    import subprocess
+    print("❌ FAIL: subprocess module was not blocked!")
+except ImportError as e:
+    print(f"✅ PASS: subprocess module blocked - {e}")
+%%
+
+%%
+# TEST 6: Blocked builtin - open
+# Expected: NameError
+print("\n=== Test 6: Attempting to use open() ===")
+try:
+    f = open("/etc/passwd", "r")
+    print("❌ FAIL: open() was not blocked!")
+except (NameError, FileNotFoundError, PermissionError) as e:
+    print(f"✅ PASS: open() blocked - {type(e).__name__}")
+%%
+
+%%
+# TEST 7: Allowed module - math
+# Expected: Success
+print("\n=== Test 7: Testing allowed module - math ===")
+try:
+    import math
+    result = math.sqrt(16)
+    print(f"✅ PASS: math module allowed, sqrt(16) = {result}")
+except ImportError as e:
+    print(f"❌ FAIL: math module should be allowed! - {e}")
+%%
+
+%%
+# TEST 8: Allowed module - random
+# Expected: Success
+print("\n=== Test 8: Testing allowed module - random ===")
+try:
+    import random
+    result = random.randint(1, 10)
+    print(f"✅ PASS: random module allowed, random int = {result}")
+except ImportError as e:
+    print(f"❌ FAIL: random module should be allowed! - {e}")
+%%
+
+%%
+# TEST 9: Allowed module - json
+# Expected: Success
+print("\n=== Test 9: Testing allowed module - json ===")
+try:
+    import json
+    data = {"test": "value"}
+    json_str = json.dumps(data)
+    print(f"✅ PASS: json module allowed, serialized = {json_str}")
+except ImportError as e:
+    print(f"❌ FAIL: json module should be allowed! - {e}")
+%%
+
+%%
+# TEST 10: Basic Python operations
+# Expected: Success (these should always work)
+print("\n=== Test 10: Basic Python operations ===")
+x = 10
+y = 20
+result = x + y
+print(f"✅ PASS: Arithmetic works - {x} + {y} = {result}")
+
+numbers = [1, 2, 3, 4, 5]
+squared = [n**2 for n in numbers]
+print(f"✅ PASS: List comprehension works - {squared}")
+
+def greet(name):
+    return f"Hello, {name}!"
+
+print(f"✅ PASS: Functions work - {greet('Sandbox')}")
+%%
+
+%%
+# TEST 11: Timeout test (WARNING: Will run for a while)
+# Uncomment to test timeout mechanism
+# print("\n=== Test 11: Timeout Test ===")
+# print("Starting infinite loop (should timeout after 60s)...")
+# while True:
+#     pass
+%%

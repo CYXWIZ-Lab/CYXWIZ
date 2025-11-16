@@ -7,11 +7,45 @@ namespace py = pybind11;
 
 namespace scripting {
 
-ScriptingEngine::ScriptingEngine() {
+ScriptingEngine::ScriptingEngine()
+    : sandbox_enabled_(false)
+{
     python_engine_ = std::make_unique<PythonEngine>();
+    sandbox_ = std::make_unique<PythonSandbox>();
+    spdlog::info("ScriptingEngine initialized (sandbox disabled by default)");
 }
 
 ScriptingEngine::~ScriptingEngine() = default;
+
+void ScriptingEngine::EnableSandbox(bool enable) {
+    sandbox_enabled_ = enable;
+    spdlog::info("Sandbox {}", enable ? "enabled" : "disabled");
+}
+
+void ScriptingEngine::SetSandboxConfig(const PythonSandbox::Config& config) {
+    if (sandbox_) {
+        sandbox_->SetConfig(config);
+    }
+}
+
+PythonSandbox::Config ScriptingEngine::GetSandboxConfig() const {
+    if (sandbox_) {
+        return sandbox_->GetConfig();
+    }
+    return PythonSandbox::Config();
+}
+
+ExecutionResult ScriptingEngine::ConvertSandboxResult(const PythonSandbox::ExecutionResult& sandbox_result) {
+    ExecutionResult result;
+    result.success = sandbox_result.success;
+    result.output = sandbox_result.output;
+    result.error_message = sandbox_result.error_message;
+    result.timeout_exceeded = sandbox_result.timeout_exceeded;
+    result.memory_exceeded = sandbox_result.memory_exceeded;
+    result.security_violation = sandbox_result.security_violation;
+    result.violation_reason = sandbox_result.violation_reason;
+    return result;
+}
 
 bool ScriptingEngine::IsInitialized() const {
     return python_engine_ != nullptr;
@@ -117,7 +151,13 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
 }
 
 ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {
-    // For multi-line scripts, use ExecuteCommand (same logic)
+    // If sandbox is enabled, use it
+    if (sandbox_enabled_ && sandbox_) {
+        auto sandbox_result = sandbox_->Execute(script);
+        return ConvertSandboxResult(sandbox_result);
+    }
+
+    // Otherwise, use normal execution
     return ExecuteCommand(script);
 }
 
