@@ -20,8 +20,9 @@ public:
 
     void Render() override;
 
-    // Callback for resetting layout
+    // Callbacks
     void SetResetLayoutCallback(std::function<void()> callback) { reset_layout_callback_ = callback; }
+    void SetTogglePlotTestControlCallback(std::function<void()> callback) { toggle_plot_test_control_callback_ = callback; }
 
     // Access to created plot windows
     const std::vector<std::shared_ptr<PlotWindow>>& GetPlotWindows() const { return plot_windows_; }
@@ -46,6 +47,7 @@ private:
     bool show_new_project_dialog_;
     bool show_about_dialog_;
     std::function<void()> reset_layout_callback_;
+    std::function<void()> toggle_plot_test_control_callback_;
 
     // Project creation state
     char project_name_buffer_[256];

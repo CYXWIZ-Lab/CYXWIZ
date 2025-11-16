@@ -21,10 +21,13 @@ public:
     // Panel metadata
     virtual const char* GetName() const { return name_.c_str(); }
     virtual const char* GetIcon() const { return ""; }
+    void SetName(const std::string& name) { name_ = name; }
 
     // Visibility control
     bool IsVisible() const { return visible_; }
     void SetVisible(bool visible) { visible_ = visible; }
+    void Hide() { visible_ = false; }
+    void Show() { visible_ = true; }
     void Toggle() { visible_ = !visible_; }
 
     // Focus tracking

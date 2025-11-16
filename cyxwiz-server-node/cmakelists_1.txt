@@ -1,0 +1,98 @@
+cmake_minimum_required(VERSION 3.20)
+
+project(cyxwiz-server-node)
+
+# Find packages
+find_package(fmt CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(gRPC CONFIG REQUIRED)
+find_package(Protobuf CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+
+# Optional: Find ArrayFire for GPU support
+find_package(ArrayFire QUIET)
+if(ArrayFire_FOUND)
+    message(STATUS "ArrayFire found - GPU support enabled")
+    add_definitions(-DCYXWIZ_HAS_ARRAYFIRE)
+else()
+    message(WARNING "ArrayFire not found - GPU metrics will be limited")
+endif()
+
+# Source files
+set(SERVER_NODE_SOURCES
+    src/main.cpp
+    src/deployment_handler.cpp
+    src/deployment_manager.cpp
+    src/model_loader.cpp
+    src/terminal_handler.cpp
+    src/metrics_collector.cpp
+    src/node_client.cpp
+    # Legacy files (to be refactored)
+    src/node_server.cpp
+    src/job_executor.cpp
+)
+
+# Create executable
+add_executable(cyxwiz-server-node
+    ${SERVER_NODE_SOURCES}
+)
+
+target_include_directories(cyxwiz-server-node PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+)
+
+target_link_libraries(cyxwiz-server-node PRIVATE
+    fmt::fmt
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+    cyxwiz-protocol
+    gRPC::grpc++
+    gRPC::grpc++_reflection
+    protobuf::libprotobuf
+    Threads::Threads
+)
+
+# Platform-specific libraries
+if(WIN32)
+    target_link_libraries(cyxwiz-server-node PRIVATE
+        ws2_32  # Windows Sockets
+    )
+else()
+    target_link_libraries(cyxwiz-server-node PRIVATE
+        util    # For PTY (pseudo-terminal) on Unix/Linux
+        pthread
+    )
+endif()
+
+# ArrayFire linkage
+if(ArrayFire_FOUND)
+    target_link_libraries(cyxwiz-server-node PRIVATE ArrayFire::af)
+endif()
+
+# Compiler options
+target_compile_features(cyxwiz-server-node PRIVATE cxx_std_20)
+
+# Windows: Prevent min/max macro conflicts with C++ standard library
+if(WIN32)
+    target_compile_definitions(cyxwiz-server-node PRIVATE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+        # Protobuf compatibility flags to fix arena allocation issue
+        PROTOBUF_USE_DLLS              # Use DLL linkage
+        GOOGLE_PROTOBUF_NO_THREADLOCAL # Disable thread-local optimization
+    )
+endif()
+
+if(MSVC)
+    target_compile_options(cyxwiz-server-node PRIVATE /W4)
+else()
+    target_compile_options(cyxwiz-server-node PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# Install
+install(TARGETS cyxwiz-server-node
+    RUNTIME DESTINATION bin
+)

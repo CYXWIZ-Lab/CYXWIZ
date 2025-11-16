@@ -2,7 +2,7 @@
 REM ============================================================================
 REM CyxWiz Build Script for Windows
 REM ============================================================================
-REM This script builds the CyxWiz project components with Visual Studio 2022.
+REM This script builds the CyxWiz project components with Visual Studio 18 2026.
 REM
 REM Usage: build.bat [options]
 REM
@@ -151,9 +151,10 @@ set CMAKE_START=%TIME%
 echo.
 
 cmake -B %BUILD_DIR% -S . ^
-    -G "Visual Studio 17 2022" -A x64 ^
+    -G "Visual Studio 18 2026" -A x64 ^
     -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ^
     -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake ^
+    -DVCPKG_OVERLAY_PORTS=vcpkg-overlays/ports ^
     -DCYXWIZ_BUILD_ENGINE=%BUILD_ENGINE% ^
     -DCYXWIZ_BUILD_SERVER_NODE=%BUILD_SERVER_NODE% ^
     -DCYXWIZ_BUILD_CENTRAL_SERVER=%BUILD_CENTRAL_SERVER% ^
@@ -165,7 +166,7 @@ if %ERRORLEVEL% NEQ 0 (
     echo.
     echo Common fixes:
     echo   1. Run setup.bat to ensure vcpkg is installed
-    echo   2. Check that Visual Studio 2022 is installed
+    echo   2. Check that Visual Studio 2026 is installed
     echo   3. Try: build.bat --clean
     echo.
     exit /b 1

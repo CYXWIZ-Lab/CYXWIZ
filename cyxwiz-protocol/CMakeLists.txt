@@ -69,5 +69,13 @@ target_link_libraries(cyxwiz-protocol PUBLIC
     gRPC::grpc++_reflection
 )
 
+# Protobuf compatibility flags for Windows
+if(WIN32)
+    target_compile_definitions(cyxwiz-protocol PUBLIC
+        # PROTOBUF_USE_DLLS              # Use DLL linkage (disabled - causes arena allocation linker errors)
+        GOOGLE_PROTOBUF_NO_THREADLOCAL # Disable thread-local optimization
+    )
+endif()
+
 # Export header location
 set(CYXWIZ_PROTOCOL_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR} PARENT_SCOPE)

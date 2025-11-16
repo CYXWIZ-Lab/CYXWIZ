@@ -15,7 +15,13 @@ namespace cyxwiz {
 class ToolbarPanel;
 class AssetBrowserPanel;
 class TrainingDashboardPanel;
+class PlotTestControlPanel;
+class CommandWindowPanel;
 } // namespace cyxwiz
+
+namespace scripting {
+class ScriptingEngine;
+} // namespace scripting
 
 namespace gui {
 
@@ -27,6 +33,7 @@ public:
     void Render();
     void ResetDockLayout();
     Console* GetConsole() { return console_.get(); }
+    cyxwiz::PlotTestControlPanel* GetPlotTestControl() { return plot_test_control_.get(); }
 
 private:
     void RenderDockSpace();
@@ -43,6 +50,11 @@ private:
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
     std::unique_ptr<cyxwiz::TrainingDashboardPanel> training_dashboard_;
+    std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
+    std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
+
+    // Scripting engine (shared between panels)
+    std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
 
     bool show_about_dialog_;
     bool show_demo_window_;

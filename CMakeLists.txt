@@ -94,6 +94,19 @@ include_directories(${CMAKE_SOURCE_DIR})
 add_subdirectory(cyxwiz-protocol)
 add_subdirectory(cyxwiz-backend)
 
+# CUDA test programs
+if(CYXWIZ_ENABLE_CUDA)
+    # Full backend test
+    add_executable(test_cuda_backend test_cuda_backend.cpp)
+    target_link_libraries(test_cuda_backend PRIVATE cyxwiz-backend)
+    target_include_directories(test_cuda_backend PRIVATE cyxwiz-backend/include)
+
+    # Simple direct CUDA test
+    find_package(CUDAToolkit REQUIRED)
+    add_executable(test_cuda_simple test_cuda_simple.cpp)
+    target_link_libraries(test_cuda_simple PRIVATE CUDA::cudart)
+endif()
+
 # Platform-specific builds
 if(NOT CYXWIZ_ANDROID_BUILD)
     if(CYXWIZ_BUILD_ENGINE)

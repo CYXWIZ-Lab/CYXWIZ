@@ -6,6 +6,9 @@
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
+#include "panels/plot_test_control.h"
+#include "panels/command_window.h"
+#include "../scripting/scripting_engine.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -23,14 +26,28 @@ MainWindow::MainWindow()
     viewport_ = std::make_unique<Viewport>();
     properties_ = std::make_unique<Properties>();
 
+    // Initialize scripting engine (shared resource)
+    scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
+
     // New panel system
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();
+    plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
+    command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
 
-    // Set up the reset layout callback in the toolbar
+    // Set scripting engine for command window
+    command_window_->SetScriptingEngine(scripting_engine_);
+
+    // Set up callbacks in the toolbar
     toolbar_->SetResetLayoutCallback([this]() {
         this->ResetDockLayout();
+    });
+
+    toolbar_->SetTogglePlotTestControlCallback([this]() {
+        if (plot_test_control_) {
+            plot_test_control_->Toggle();
+        }
     });
 
     spdlog::info("MainWindow initialized with docking layout system");
@@ -53,6 +70,8 @@ void MainWindow::Render() {
     // Render new panels
     if (asset_browser_) asset_browser_->Render();
     if (training_dashboard_) training_dashboard_->Render();
+    if (plot_test_control_) plot_test_control_->Render();
+    if (command_window_) command_window_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
@@ -166,6 +185,7 @@ void MainWindow::BuildInitialDockLayout() {
     ImGui::DockBuilderDockWindow("Node Editor", dock_id_center);
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
+    ImGui::DockBuilderDockWindow("Command Window", dock_id_bottom_left); // Tabbed with Console
     ImGui::DockBuilderDockWindow("Training Dashboard", dock_id_bottom_right);
     ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_bottom);
 

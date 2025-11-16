@@ -81,12 +81,27 @@ if(CYXWIZ_HAS_ARRAYFIRE)
     target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
 
     if(CYXWIZ_ENABLE_CUDA)
-        target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::afcuda)
-        target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
+        # Find CUDA Toolkit for cuda_runtime.h and cudart library
+        find_package(CUDAToolkit QUIET)
+        if(CUDAToolkit_FOUND)
+            message(STATUS "CUDA Toolkit found: ${CUDAToolkit_VERSION}")
+            target_link_libraries(cyxwiz-backend PUBLIC
+                ArrayFire::afcuda
+                CUDA::cudart  # CUDA runtime for cudaMemGetInfo()
+            )
+            target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
+        else()
+            message(WARNING "CUDA Toolkit not found. Install from: https://developer.nvidia.com/cuda-downloads")
+            message(WARNING "Building without CUDA memory query support")
+        endif()
     endif()
 
     if(CYXWIZ_ENABLE_OPENCL)
-        target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::afopencl)
+        find_package(OpenCL REQUIRED)
+        target_link_libraries(cyxwiz-backend PUBLIC
+            ArrayFire::afopencl
+            OpenCL::OpenCL  # OpenCL library for clGetDeviceInfo()
+        )
         target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
     endif()
 endif()

@@ -19,6 +19,15 @@
 #include <arpa/inet.h>
 #endif
 
+// Workaround for MSVC protobuf arena allocation issue
+// Force explicit template instantiation to avoid linker errors
+namespace google {
+namespace protobuf {
+// Forward declare to avoid needing full protobuf internals
+class Arena;
+}
+}
+
 namespace cyxwiz {
 namespace servernode {
 

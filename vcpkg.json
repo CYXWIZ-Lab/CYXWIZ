@@ -10,6 +10,7 @@
     "implot",
     "glfw3",
     "glad",
+    "stb",
     "grpc",
     "protobuf",
     "spdlog",
@@ -18,7 +19,8 @@
     "sqlite3",
     "openssl",
     "pybind11",
-    "catch2"
+    "catch2",
+    "highfive"
   ],
   "builtin-baseline": "17ff26d0566ba0fa05e35c9209e92664adb304e3"
 }

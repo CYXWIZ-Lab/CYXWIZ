@@ -1,0 +1,16 @@
+=== CyxWiz Icon Placeholder ===
+
+To add your CyxWiz icon:
+
+1. Create or obtain a PNG image file (recommended size: 256x256 or 512x512)
+2. Name it "cyxwiz.png"
+3. Place it in this resources/ directory
+4. Rebuild the project
+
+The application will automatically:
+- Load the icon when it starts
+- Display it in the window title bar
+- Show a warning if the icon is not found (but continue running normally)
+
+Current status: Icon file "cyxwiz.png" not found.
+The application will run with the default system window icon until you add cyxwiz.png.

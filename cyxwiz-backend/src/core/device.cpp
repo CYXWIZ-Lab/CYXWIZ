@@ -10,6 +10,7 @@
 #ifdef CYXWIZ_ENABLE_OPENCL
 #define CL_TARGET_OPENCL_VERSION 120
 #include <CL/cl.h>
+#include <af/opencl.h>  // For afcl namespace
 #endif
 #endif
 
@@ -45,22 +46,36 @@ DeviceInfo Device::GetInfo() const {
         if (backend == AF_BACKEND_CUDA) {
 #ifdef CYXWIZ_ENABLE_CUDA
             // Use CUDA API to get actual device memory
-            size_t free_bytes = 0, total_bytes = 0;
-            cudaError_t err = cudaMemGetInfo(&free_bytes, &total_bytes);
-            if (err == cudaSuccess) {
-                info.memory_total = total_bytes;
-                info.memory_available = free_bytes;
-                spdlog::debug("CUDA device {}: {} GB total, {} GB free",
-                    device_id_,
-                    total_bytes / (1024.0 * 1024.0 * 1024.0),
-                    free_bytes / (1024.0 * 1024.0 * 1024.0));
-            } else {
-                spdlog::warn("Failed to query CUDA memory: {}", cudaGetErrorString(err));
+            spdlog::info("CUDA backend detected, querying memory for device {}", device_id_);
+
+            // First, ensure we're querying the correct CUDA device
+            cudaError_t set_err = cudaSetDevice(device_id_);
+            if (set_err != cudaSuccess) {
+                spdlog::error("Failed to set CUDA device {}: {}", device_id_, cudaGetErrorString(set_err));
                 info.memory_total = 0;
                 info.memory_available = 0;
+            } else {
+                spdlog::info("Successfully set CUDA device {}", device_id_);
+                size_t free_bytes = 0, total_bytes = 0;
+                cudaError_t err = cudaMemGetInfo(&free_bytes, &total_bytes);
+                if (err == cudaSuccess) {
+                    info.memory_total = total_bytes;
+                    info.memory_available = free_bytes;
+                    spdlog::info("CUDA device {}: {} GB total, {} GB free (raw: {} / {})",
+                        device_id_,
+                        total_bytes / (1024.0 * 1024.0 * 1024.0),
+                        free_bytes / (1024.0 * 1024.0 * 1024.0),
+                        total_bytes,
+                        free_bytes);
+                } else {
+                    spdlog::error("Failed to query CUDA memory: {}", cudaGetErrorString(err));
+                    info.memory_total = 0;
+                    info.memory_available = 0;
+                }
             }
 #else
             // CUDA not available, fall back to zero
+            spdlog::warn("CYXWIZ_ENABLE_CUDA not defined, can't query CUDA memory");
             info.memory_total = 0;
             info.memory_available = 0;
 #endif

@@ -409,62 +409,87 @@ void ToolbarPanel::RenderScriptMenu() {
 
 void ToolbarPanel::RenderPlotsMenu() {
     if (ImGui::BeginMenu("Plots")) {
-        // 2D Plots submenu
-        if (ImGui::BeginMenu("2D Plots")) {
-            if (ImGui::MenuItem("Line Plot")) {
-                CreatePlotWindow("Line Plot", PlotWindow::PlotWindowType::Line2D);
+        // Test Control - Interactive option
+        if (ImGui::MenuItem("Test Control")) {
+            if (toggle_plot_test_control_callback_) {
+                toggle_plot_test_control_callback_();
             }
-            if (ImGui::MenuItem("Scatter Plot")) {
-                CreatePlotWindow("Scatter Plot", PlotWindow::PlotWindowType::Scatter2D);
-            }
-            if (ImGui::MenuItem("Bar Chart")) {
-                CreatePlotWindow("Bar Chart", PlotWindow::PlotWindowType::Bar);
-            }
-            if (ImGui::MenuItem("Stem Plot")) {
-                CreatePlotWindow("Stem Plot", PlotWindow::PlotWindowType::Stem);
-            }
-            if (ImGui::MenuItem("Stair Plot")) {
-                CreatePlotWindow("Stair Plot", PlotWindow::PlotWindowType::Stair);
-            }
-            if (ImGui::MenuItem("Histogram")) {
-                CreatePlotWindow("Histogram", PlotWindow::PlotWindowType::Histogram);
-            }
-            if (ImGui::MenuItem("Pie Chart")) {
-                CreatePlotWindow("Pie Chart", PlotWindow::PlotWindowType::PieChart);
-            }
-            if (ImGui::MenuItem("Box Plot")) {
-                CreatePlotWindow("Box Plot", PlotWindow::PlotWindowType::BoxPlot);
-            }
-            ImGui::EndMenu();
         }
 
-        // 3D Plots submenu
-        if (ImGui::BeginMenu("3D Plots")) {
-            if (ImGui::MenuItem("Surface Plot")) {
-                CreatePlotWindow("Surface Plot", PlotWindow::PlotWindowType::Surface3D);
-            }
-            if (ImGui::MenuItem("3D Scatter")) {
-                CreatePlotWindow("3D Scatter", PlotWindow::PlotWindowType::Scatter3D);
-            }
-            if (ImGui::MenuItem("3D Line")) {
-                CreatePlotWindow("3D Line", PlotWindow::PlotWindowType::Line3D);
-            }
-            ImGui::EndMenu();
-        }
+        ImGui::Separator();
+        ImGui::TextDisabled("Available Plot Types (View Only)");
+        ImGui::Separator();
 
-        // Specialized submenu
-        if (ImGui::BeginMenu("Specialized")) {
-            if (ImGui::MenuItem("Polar Plot")) {
-                CreatePlotWindow("Polar Plot", PlotWindow::PlotWindowType::Polar);
-            }
-            if (ImGui::MenuItem("Heatmap")) {
-                CreatePlotWindow("Heatmap", PlotWindow::PlotWindowType::Heatmap);
-            }
-            if (ImGui::MenuItem("Parametric Plot")) {
-                CreatePlotWindow("Parametric Plot", PlotWindow::PlotWindowType::Parametric);
-            }
-            ImGui::EndMenu();
-        }
+        // Basic 2D Plots (from cheatsheet)
+        if (ImGui::BeginMenu("Basic 2D", false)) { ImGui::EndMenu(); }
+        ImGui::Indent();
+        ImGui::TextDisabled("plot() - Line plot");
+        ImGui::TextDisabled("scatter() - Scatter plot");
+        ImGui::TextDisabled("bar() / barh() - Bar chart");
+        ImGui::TextDisabled("imshow() - Image display");
+        ImGui::TextDisabled("contour() / contourf() - Contour plot");
+        ImGui::TextDisabled("pcolormesh() - Pseudocolor plot");
+        ImGui::TextDisabled("quiver() - Vector field");
+        ImGui::TextDisabled("pie() - Pie chart");
+        ImGui::TextDisabled("fill_between() - Filled area");
+        ImGui::Unindent();
+
+        ImGui::Separator();
+
+        // Advanced 2D Plots
+        if (ImGui::BeginMenu("Advanced 2D", false)) { ImGui::EndMenu(); }
+        ImGui::Indent();
+        ImGui::TextDisabled("step() - Step plot");
+        ImGui::TextDisabled("boxplot() - Box plot");
+        ImGui::TextDisabled("errorbar() - Error bar plot");
+        ImGui::TextDisabled("hist() - Histogram");
+        ImGui::TextDisabled("violinplot() - Violin plot");
+        ImGui::TextDisabled("barbs() - Barbs plot");
+        ImGui::TextDisabled("eventplot() - Event plot");
+        ImGui::TextDisabled("hexbin() - Hexagonal binning");
+        ImGui::Unindent();
+
+        ImGui::Separator();
+
+        // 3D Plots
+        if (ImGui::BeginMenu("3D Plots", false)) { ImGui::EndMenu(); }
+        ImGui::Indent();
+        ImGui::TextDisabled("plot3D() - 3D line plot");
+        ImGui::TextDisabled("scatter3D() - 3D scatter");
+        ImGui::TextDisabled("plot_surface() - Surface plot");
+        ImGui::TextDisabled("plot_wireframe() - Wireframe");
+        ImGui::TextDisabled("contour3D() - 3D contour");
+        ImGui::Unindent();
+
+        ImGui::Separator();
+
+        // Polar Plots
+        if (ImGui::BeginMenu("Polar", false)) { ImGui::EndMenu(); }
+        ImGui::Indent();
+        ImGui::TextDisabled("polar() - Polar plot");
+        ImGui::Unindent();
+
+        ImGui::Separator();
+
+        // Statistical Plots
+        if (ImGui::BeginMenu("Statistical", false)) { ImGui::EndMenu(); }
+        ImGui::Indent();
+        ImGui::TextDisabled("hist() - Histogram");
+        ImGui::TextDisabled("boxplot() - Box plot");
+        ImGui::TextDisabled("violinplot() - Violin plot");
+        ImGui::TextDisabled("kde plot - Density estimation");
+        ImGui::Unindent();
+
+        ImGui::Separator();
+
+        // Specialized Plots
+        if (ImGui::BeginMenu("Specialized", false)) { ImGui::EndMenu(); }
+        ImGui::Indent();
+        ImGui::TextDisabled("heatmap - Heat map");
+        ImGui::TextDisabled("streamplot() - Stream plot");
+        ImGui::TextDisabled("specgram() - Spectrogram");
+        ImGui::TextDisabled("spy() - Sparse matrix viz");
+        ImGui::Unindent();
 
         ImGui::EndMenu();
     }

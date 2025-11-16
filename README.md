@@ -43,16 +43,16 @@ The platform consists of three main components:
 
 **⚠️ Windows Users - READ THIS FIRST:**
 
-All build commands **MUST** be run from **Developer Command Prompt for VS 2022**
+All build commands **MUST** be run from **Developer Command Prompt for VS 18 2026**
 
 **How to open:**
 1. Press **Windows key**
 2. Type "**Developer Command Prompt**"
-3. Select "**Developer Command Prompt for VS 2022**"
+3. Select "**Developer Command Prompt for VS 18 2026**"
 
 **Or** initialize VS tools in cmd:
 ```cmd
-"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
+"C:\Program Files\Microsoft Visual Studio\2026\Community\Common7\Tools\VsDevCmd.bat"
 ```
 
 **Linux/macOS:**
@@ -65,21 +65,41 @@ Regular terminal works fine - no special requirements.
 We provide automated setup and build scripts for easy first-time setup.
 These scripts are available in both the project root and the `scripts/` folder:
 
-**Windows** (from Developer Command Prompt):
+**⚠️ IMPORTANT - Windows Users:**
+The automated scripts **require `cl.exe` in PATH**, which means you **MUST** run them from:
+- **Developer Command Prompt for VS 18 2026** (recommended)
+- OR initialize VS tools first in regular cmd/PowerShell
+
+**If you skip this step**, you'll get errors like:
+- `'cl.exe' is not recognized as an internal or external command`
+- `CMAKE_CXX_COMPILER not set`
+
+**Windows** (from Developer Command Prompt for VS 18 2026):
 ```cmd
 REM 1. First-time setup (installs prerequisites, bootstraps vcpkg)
 setup.bat
 
-# 2. Build all components
+REM 2. Build all components
 build.bat
 
-# Or build specific components:
+REM Or build specific components:
 build.bat --server-node      # Build only Server Node
 build.bat --engine           # Build only Engine
 build.bat --central-server   # Build only Central Server
 build.bat --debug            # Build in Debug mode
 build.bat --clean            # Clean build directory first
 build.bat -j 16              # Use 16 parallel jobs
+```
+
+**Alternative - Initialize VS Tools First:**
+If you're in a regular cmd/PowerShell window:
+```cmd
+REM Run this ONCE per terminal session to add VS tools to PATH
+"C:\Program Files\Microsoft Visual Studio\2026\Community\Common7\Tools\VsDevCmd.bat"
+
+REM Then run the scripts normally
+setup.bat
+build.bat
 ```
 
 **Linux/macOS:**
@@ -103,6 +123,11 @@ build.bat -j 16              # Use 16 parallel jobs
 - `setup.bat`/`setup.sh`: Check for required tools (Visual Studio, CMake, Rust), clone and bootstrap vcpkg, explain dependencies
 - `build.bat`/`build.sh`: Configure CMake, build C++ components, build Rust Central Server, show build summary
 
+**Windows Script Requirements:**
+- Scripts must be run from Developer Command Prompt for VS 18 2026 (or after running VsDevCmd.bat)
+- Regular cmd/PowerShell **will fail** with "cl.exe not found" errors
+- See [Shell Requirements](#shell-requirements) section above for setup instructions
+
 **Skip to [Running the Applications](#running-the-applications)** after building.
 
 ---
@@ -115,7 +140,7 @@ If you prefer manual control or want to understand the build process in detail:
 
 ##### Required for All Platforms
 - **C++ Compiler**:
-  - Windows: Visual Studio 2022 (Community Edition or higher) with C++ Desktop Development workload
+  - Windows: Visual Studio 2026 (Community Edition or higher) with C++ Desktop Development workload
   - Linux: GCC 9+ or Clang 12+
   - macOS: Xcode Command Line Tools (Clang 12+)
 - **CMake**: 3.20 or higher
@@ -157,10 +182,12 @@ CyxWiz uses **vcpkg manifest mode** for automatic C++ dependency management. Thi
 }
 ```
 
-**First build timing:**
-- vcpkg will download and compile **34 packages** (including transitive dependencies)
-- This takes **3-5 minutes** on first run
-- Subsequent builds are **instant** as packages are cached
+**First-Time Build Warning:**
+On first run, vcpkg will download and build **34 packages**. This is **normal** and expected:
+- **Time required**: 3-5 minutes (varies by internet speed)
+- **Disk space**: ~2 GB for packages
+- **Progress**: Will be shown in the terminal
+- **Subsequent builds** use the cached packages and are much faster (1-2 minutes)
 
 **How it works:**
 1. When you run CMake with `-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake`
@@ -185,7 +212,7 @@ cd ..
 # 2. Configure CMake with Visual Studio generator
 # This step installs 34 vcpkg dependencies (takes ~3-5 minutes)
 cmake -B build/windows-release -S . ^
-  -G "Visual Studio 17 2022" -A x64 ^
+  -G "Visual Studio 18 2026" -A x64 ^
   -DCMAKE_BUILD_TYPE=Release ^
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake ^
   -DCYXWIZ_BUILD_ENGINE=ON ^
@@ -221,28 +248,38 @@ cd ..
 - CMake configuration: ~3-4 minutes (protobuf generation, compiler detection)
 - C++ compilation: ~2-3 minutes (protocol library + components)
 - Rust compilation: ~30-60 seconds (Central Server)
-- **Total: ~10-15 minutes**
+- **Total: 6-9 minutes** (may vary based on internet speed and hardware)
 
 Subsequent builds are much faster (1-2 minutes) as dependencies are cached.
 
 **Expected Build Output:**
 ```
-[1/4] Configuring CMake...
-      - Installing vcpkg dependencies (34 packages)... ✓ (3-5 min)
-      - Generating protobuf files... ✓
-      - Configuring project... ✓
-[2/4] Building C++ components...
-      - cyxwiz-protocol library... ✓
-      - cyxwiz-backend library... ✓
-      - cyxwiz-engine executable... ✓
-      - cyxwiz-server-node executable... ✓
-[3/4] Building Central Server (Rust)...
-      - Compiling dependencies... ✓
-      - Building cyxwiz-central-server... ✓
-[4/4] Build Summary:
-      ✓ Executables created in build/bin/Release/
-      ✓ Central Server in cyxwiz-central-server/target/release/
-      ✓ Build successful!
+[1/4] Configuring CMake... ✓ (3-4 min)
+      - Installing vcpkg dependencies (34 packages)
+      - Generating protobuf files
+      - Configuring project
+[2/4] Building C++ components... ✓ (2-3 min)
+      - cyxwiz-protocol library
+      - cyxwiz-backend library
+      - cyxwiz-engine executable
+      - cyxwiz-server-node executable
+[3/4] Building Central Server (Rust)... ✓ (30-60 sec)
+      - Compiling dependencies
+      - Building cyxwiz-central-server
+[4/4] Build Summary
+
+Total Time: 6-9 minutes
+
+Executables:
+  - build\bin\Release\cyxwiz-engine.exe
+  - build\bin\Release\cyxwiz-server-node.exe
+  - cyxwiz-central-server\target\release\cyxwiz-central-server.exe
+```
+
+**Incremental Build Output** (after making code changes):
+```
+Changed files: 4
+Rebuild time: ~30 seconds
 ```
 
 **Expected Warnings (Safe to Ignore):**
@@ -255,7 +292,7 @@ Subsequent builds are much faster (1-2 minutes) as dependencies are cached.
 **Server Node only:**
 ```bash
 # Configure (if not already done)
-cmake -B build/windows-release -S . -G "Visual Studio 17 2022" -A x64 ^
+cmake -B build/windows-release -S . -G "Visual Studio 18 2026" -A x64 ^
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 
 # Build just the Server Node
@@ -282,12 +319,12 @@ cargo build --release
 **Issue: "Ninja not found" error**
 ```bash
 # Use Visual Studio generator instead (recommended for Windows)
-cmake -G "Visual Studio 17 2022" -A x64 ...
+cmake -G "Visual Studio 18 2026" -A x64 ...
 ```
 
 **Issue: "CMAKE_CXX_COMPILER not set"**
-- Ensure Visual Studio 2022 is installed with C++ Desktop Development workload
-- Open "Developer Command Prompt for VS 2022" instead of regular cmd
+- Ensure Visual Studio 2026 is installed with C++ Desktop Development workload
+- Open "Developer Command Prompt for VS 18 2026" instead of regular cmd
 - Or clean build directory: `rmdir /s /q build\windows-release` and reconfigure
 
 **Issue: Port conflicts (50051, 50052, 50053 already in use)**
@@ -304,7 +341,7 @@ taskkill /F /PID <process_id>
 # Set environment variable:
 setx ArrayFire_DIR "C:\Program Files\ArrayFire\v3\cmake"
 # Then reconfigure and rebuild
-cmake -B build/windows-release -S . -G "Visual Studio 17 2022" -A x64 -DCYXWIZ_ENABLE_CUDA=ON
+cmake -B build/windows-release -S . -G "Visual Studio 18 2026" -A x64 -DCYXWIZ_ENABLE_CUDA=ON
 ```
 
 ### Building on Linux/macOS
@@ -522,13 +559,19 @@ ls -lh cyxwiz-central-server/target/release/cyxwiz-central-server
 In the Engine GUI:
 
 1. Click **Plots** menu in the top menu bar
-2. Select **2D Plots → Line Plot**
-3. A dockable window appears showing a sine wave visualization
-4. The plot window has its own menu bar: File, Edit, View, Insert, Tools, Window, Help
-5. Try dragging the plot window to different dock positions
-6. Click **Plot Test Panel** under Plots menu to see real-time plotting
+2. Select **Test Control**
+3. A dockable **Plot Test Control** panel appears with:
+   - **Plot Type** dropdown (Line Plot, Scatter Plot, Histogram, etc.)
+   - **Backend** selection (ImPlot for real-time, Matplotlib for offline)
+   - **Test Data** selection (Sine Wave, Normal Distribution, etc.)
+   - **Generate Plot** button
+4. Select "Line Plot", "ImPlot (Real-time)", and "Sine Wave"
+5. Click **Generate Plot**
+6. A new plot window appears showing a real sine wave with 100 data points
+7. Try dragging the plot window to different dock positions
+8. Generate more plots with different combinations to test both backends
 
-**If these steps work**, your installation is successful! ✅
+**If you can generate plots with real data**, your installation is successful! ✅
 
 #### 4. Test Server Node Registration (Optional)
 
@@ -550,10 +593,19 @@ cargo run --release
 #### Common Setup Issues
 
 **"cl.exe not found" or "CMAKE_CXX_COMPILER not set" (Windows):**
-- **Cause**: Not running from Developer Command Prompt for VS 2022
-- **Fix**: See [Shell Requirements](#shell-requirements) section above
-- Open "Developer Command Prompt for VS 2022" from Windows Start Menu
-- Or run `"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"` first
+- **Cause**: Not running from Developer Command Prompt for VS 18 2026
+- **Why it matters**: The automated scripts (`setup.bat`, `build.bat`) require `cl.exe` in PATH
+- **Fix Option 1** (Recommended):
+  1. Close your current terminal
+  2. Open "Developer Command Prompt for VS 18 2026" from Windows Start Menu
+  3. Navigate to your project folder
+  4. Run `setup.bat` and `build.bat` again
+- **Fix Option 2** (Quick): In your current cmd/PowerShell:
+  ```cmd
+  "C:\Program Files\Microsoft Visual Studio\2026\Community\Common7\Tools\VsDevCmd.bat"
+  setup.bat
+  build.bat
+  ```
 
 **"cmake: command not found":**
 - **Fix**: Download CMake from https://cmake.org/download/
@@ -581,6 +633,13 @@ cargo run --release
 - **Explanation**: OpenCL is optional for GPU acceleration
 - Project works perfectly with CPU-only mode
 - To enable OpenCL: Install GPU drivers (NVIDIA CUDA Toolkit or AMD OpenCL SDK)
+
+**Want accurate GPU memory reporting? Enable CUDA (Optional):**
+- **Quick Start**: Run `enable_cuda.bat` after installing CUDA Toolkit
+- **Full Guide**: See `CUDA_QUICKSTART.md` for 3-step setup
+- **Benefit**: Real-time GPU memory detection instead of estimation
+- **Time**: ~30 minutes (one-time setup)
+- **Required**: NVIDIA GPU (GTX 1000 series or newer)
 
 **"vcpkg dependencies failed to install":**
 ```bash
@@ -959,7 +1018,7 @@ int main() {
 rm -rf build/windows-release  # Windows: rmdir /s /q build\windows-release
 
 # Reconfigure (vcpkg installs imgui automatically)
-cmake -B build/windows-release -S . -G "Visual Studio 17 2022" -A x64 \
+cmake -B build/windows-release -S . -G "Visual Studio 18 2026" -A x64 \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 
 # Build
@@ -1025,7 +1084,7 @@ cat vcpkg.json
 
 # Clean and reconfigure
 rm -rf build/windows-release
-cmake -B build/windows-release -S . -G "Visual Studio 17 2022" -A x64 \
+cmake -B build/windows-release -S . -G "Visual Studio 18 2026" -A x64 \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
@@ -1072,7 +1131,7 @@ git pull
 # Update all packages to latest baseline
 cd ..
 rm -rf build/
-cmake -B build/windows-release -S . -G "Visual Studio 17 2022" -A x64 \
+cmake -B build/windows-release -S . -G "Visual Studio 18 2026" -A x64 \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
@@ -1160,7 +1219,7 @@ build.bat --clean         # Clean build
 
 ```bash
 # Full build (first time)
-cmake -B build/windows-release -S . -G "Visual Studio 17 2022" -A x64 \
+cmake -B build/windows-release -S . -G "Visual Studio 18 2026" -A x64 \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build/windows-release --config Release -j 8
 cd cyxwiz-central-server && cargo build --release && cd ..

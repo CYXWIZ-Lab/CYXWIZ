@@ -7,6 +7,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(implot CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glad CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -28,8 +29,11 @@ set(ENGINE_SOURCES
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/plot_window.cpp
+    src/gui/panels/plot_test_control.cpp
+    src/gui/panels/command_window.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
+    src/scripting/scripting_engine.cpp
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
     # Plotting system
@@ -53,8 +57,11 @@ set(ENGINE_HEADERS
     src/gui/panels/asset_browser.h
     src/gui/panels/training_dashboard.h
     src/gui/panels/plot_window.h
+    src/gui/panels/plot_test_control.h
+    src/gui/panels/command_window.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
+    src/scripting/scripting_engine.h
     src/network/grpc_client.h
     src/network/job_manager.h
     # Plotting system
@@ -122,7 +129,7 @@ endif()
 # Copy resources to build directory
 add_custom_command(TARGET cyxwiz-engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_CURRENT_SOURCE_DIR}/resources
+    ${CMAKE_SOURCE_DIR}/resources
     $<TARGET_FILE_DIR:cyxwiz-engine>/resources
     COMMENT "Copying resources..."
 )
@@ -132,12 +139,24 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
 # Create Python module for plotting bindings
 pybind11_add_module(cyxwiz_plotting
     python/plot_bindings.cpp
+    src/plotting/plot_manager.cpp
+    src/plotting/plot_dataset.cpp
+    src/plotting/plot_3d_generator.cpp
+    src/plotting/test_data_generator.cpp
+    src/plotting/backends/implot_backend.cpp
+    src/plotting/backends/matplotlib_backend.cpp
+    src/plotting/stb_image_impl.cpp
+    src/gui/panels/plot_window.cpp
+    src/gui/panels/plot_test_control.cpp
+    src/gui/panels/plot_test_panel.cpp
 )
 
 # Link the plotting module against necessary libraries
 target_link_libraries(cyxwiz_plotting PRIVATE
     imgui::imgui
     implot::implot
+    glad::glad
+    glfw
     fmt::fmt
     spdlog::spdlog
 )

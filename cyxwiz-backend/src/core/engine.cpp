@@ -26,15 +26,24 @@ bool Initialize() {
         af::info();
         spdlog::info("ArrayFire initialized successfully");
 
+        // Prioritize CUDA backend over OpenCL when both are available
 #ifdef CYXWIZ_ENABLE_CUDA
-        af::setDevice(0);
-        // ArrayFire 3.9 API: deviceInfo requires output parameters
-        char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
-        af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
-        spdlog::info("CUDA backend available - Device: {}", d_name);
-#endif
-
+        try {
+            af::setBackend(AF_BACKEND_CUDA);
+            af::setDevice(0);
+            // ArrayFire 3.9 API: deviceInfo requires output parameters
+            char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
+            af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
+            spdlog::info("CUDA backend active - Device: {}", d_name);
+        } catch (const af::exception& e) {
+            spdlog::warn("Failed to set CUDA backend: {}", e.what());
 #ifdef CYXWIZ_ENABLE_OPENCL
+            // Fallback to OpenCL if CUDA fails
+            af::setBackend(AF_BACKEND_OPENCL);
+            spdlog::info("OpenCL backend available (fallback)");
+#endif
+        }
+#elif defined(CYXWIZ_ENABLE_OPENCL)
         af::setBackend(AF_BACKEND_OPENCL);
         spdlog::info("OpenCL backend available");
 #endif

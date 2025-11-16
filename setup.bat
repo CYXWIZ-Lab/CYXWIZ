@@ -8,7 +8,7 @@ REM This script checks for required dependencies and sets up the build environme
 REM for the CyxWiz project on Windows.
 REM
 REM Requirements checked:
-REM   - Visual Studio 2022 (with C++ tools)
+REM   - Visual Studio 2026 (with C++ tools)
 REM   - CMake 3.20+
 REM   - Python 3.8+ (optional)
 REM   - Rust/Cargo 1.70+
@@ -25,21 +25,21 @@ set ERROR_COUNT=0
 set WARNING_COUNT=0
 
 REM ============================================================================
-REM Check for Visual Studio 2022
+REM Check for Visual Studio 2026
 REM ============================================================================
-echo [1/5] Checking for Visual Studio 2022...
+echo [1/5] Checking for Visual Studio 2026...
 where cl.exe >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Visual Studio 2022 not found in PATH
+    echo [ERROR] Visual Studio 2026 not found in PATH
     echo.
-    echo Please install Visual Studio 2022 with C++ Desktop Development workload:
+    echo Please install Visual Studio 2026 with C++ Desktop Development workload:
     echo https://visualstudio.microsoft.com/downloads/
     echo.
-    echo After installation, run this script from "Developer Command Prompt for VS 2022"
+    echo After installation, run this script from "Developer Command Prompt for VS 18 2026"
     set /a ERROR_COUNT+=1
 ) else (
     cl.exe 2>&1 | findstr /C:"Version" >nul
-    echo [OK] Visual Studio 2022 found
+    echo [OK] Visual Studio 2026 found
 )
 echo.
 

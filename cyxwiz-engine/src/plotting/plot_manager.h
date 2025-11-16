@@ -57,6 +57,9 @@ public:
     PlotManager(PlotManager&&) = delete;
     PlotManager& operator=(PlotManager&&) = delete;
 
+    // Destructor (public for unique_ptr compatibility with VS 2026)
+    ~PlotManager();
+
     // Backend management
     void SetDefaultBackend(BackendType backend);
     BackendType GetDefaultBackend() const { return default_backend_; }
@@ -111,7 +114,6 @@ public:
 
 private:
     PlotManager();
-    ~PlotManager();
 
     struct PlotInstance {
         std::string id;
