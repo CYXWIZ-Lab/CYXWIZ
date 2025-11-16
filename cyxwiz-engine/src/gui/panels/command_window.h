@@ -53,11 +53,22 @@ private:
     void NavigateHistory(int direction); // -1 = up, +1 = down
     void AddToHistory(const std::string& command);
 
+    // Auto-completion
+    void GetCompletions(const std::string& partial, std::vector<std::string>& suggestions);
+    void ApplyCompletion(const std::string& completion);
+    void RenderCompletionPopup();
+
     // Data
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
     std::vector<OutputEntry> output_;
     std::vector<std::string> command_history_;
     int history_position_;
+
+    // Auto-completion state
+    std::vector<std::string> completion_suggestions_;
+    int completion_selected_;
+    bool show_completion_popup_;
+    std::string completion_prefix_;
 
     // UI state
     char input_buffer_[1024];
