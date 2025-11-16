@@ -141,6 +141,34 @@ void ScriptEditorPanel::RenderMenuBar() {
             ImGui::EndMenu();
         }
 
+        // Security menu
+        if (ImGui::BeginMenu("Security")) {
+            bool sandbox_enabled = scripting_engine_ ? scripting_engine_->IsSandboxEnabled() : false;
+
+            if (ImGui::MenuItem("Enable Sandbox", nullptr, &sandbox_enabled)) {
+                if (scripting_engine_) {
+                    scripting_engine_->EnableSandbox(sandbox_enabled);
+                    spdlog::info("Sandbox {}", sandbox_enabled ? "enabled" : "disabled");
+                }
+            }
+
+            ImGui::Separator();
+            ImGui::Text("Sandbox Status:");
+            if (sandbox_enabled) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "  Active - Scripts are sandboxed");
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "  Inactive - Full Python access");
+            }
+
+            ImGui::Separator();
+            ImGui::Text("Protected:");
+            ImGui::BulletText("Blocks: exec, eval, open");
+            ImGui::BulletText("Timeout: 60 seconds");
+            ImGui::BulletText("Allowed: math, random, json");
+
+            ImGui::EndMenu();
+        }
+
         ImGui::EndMenuBar();
     }
 }
@@ -208,6 +236,19 @@ void ScriptEditorPanel::RenderStatusBar() {
             cursor_pos.mColumn + 1,
             tab->is_modified ? "Modified" : "Saved",
             tab->editor.GetTotalLines());
+
+        // Sandbox indicator
+        if (scripting_engine_) {
+            ImGui::SameLine();
+            ImGui::Text("|");
+            ImGui::SameLine();
+            bool sandbox_on = scripting_engine_->IsSandboxEnabled();
+            if (sandbox_on) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "SANDBOX ON");
+            } else {
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Sandbox Off");
+            }
+        }
 
         ImGui::SameLine(ImGui::GetWindowWidth() - 150);
         ImGui::Text("%s", tab->filepath.empty() ? "Untitled" : tab->filepath.c_str());
