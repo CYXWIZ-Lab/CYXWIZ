@@ -11,6 +11,7 @@
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "../scripting/scripting_engine.h"
+#include "../scripting/startup_script_manager.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -57,6 +58,17 @@ MainWindow::MainWindow()
             plot_test_control_->Toggle();
         }
     });
+
+    // Initialize startup script manager
+    startup_script_manager_ = std::make_unique<scripting::StartupScriptManager>(scripting_engine_);
+
+    // Load and execute startup scripts
+    if (startup_script_manager_->LoadConfig()) {
+        spdlog::info("Executing startup scripts...");
+        startup_script_manager_->ExecuteAll(command_window_.get());
+    } else {
+        spdlog::debug("No startup scripts configured or startup_scripts.txt not found");
+    }
 
     spdlog::info("MainWindow initialized with docking layout system");
 }

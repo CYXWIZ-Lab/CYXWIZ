@@ -1,0 +1,15 @@
+# CyxWiz Startup Scripts Configuration
+# Lines starting with # are comments
+# One script path per line (absolute or relative to project root)
+#
+# Example scripts provided in scripts/startup/ directory:
+#   - welcome.cyx: Welcome message and tips
+#   - init_imports.cyx: Auto-import common libraries
+#
+# Uncomment the scripts you want to run on startup:
+
+# scripts/startup/welcome.cyx
+# scripts/startup/init_imports.cyx
+
+# Add your own custom startup scripts below:
+# C:/Users/me/my_startup.cyx

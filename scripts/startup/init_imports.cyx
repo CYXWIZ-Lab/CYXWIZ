@@ -1,0 +1,35 @@
+# init_imports.cyx - Auto-import common libraries on startup
+
+print("=== Initializing common imports ===")
+
+# Standard library imports
+import math
+print("  ✓ math")
+
+import random
+print("  ✓ random")
+
+import json
+print("  ✓ json")
+
+# Try optional libraries
+try:
+    import numpy as np
+    print("  ✓ numpy (as np)")
+except ImportError:
+    print("  ✗ numpy not available")
+
+try:
+    import pandas as pd
+    print("  ✓ pandas (as pd)")
+except ImportError:
+    print("  ✗ pandas not available")
+
+# Try CyxWiz modules
+try:
+    import pycyxwiz
+    print("  ✓ pycyxwiz")
+except ImportError:
+    print("  ✗ pycyxwiz not available")
+
+print("=== Imports complete ===")

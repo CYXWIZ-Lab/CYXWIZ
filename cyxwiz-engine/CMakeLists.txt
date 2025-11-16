@@ -48,6 +48,7 @@ set(ENGINE_SOURCES
     src/scripting/script_manager.cpp
     src/scripting/scripting_engine.cpp
     src/scripting/python_sandbox.cpp
+    src/scripting/startup_script_manager.cpp
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.cpp
     src/network/grpc_client.cpp
@@ -82,6 +83,7 @@ set(ENGINE_HEADERS
     src/scripting/script_manager.h
     src/scripting/scripting_engine.h
     src/scripting/python_sandbox.h
+    src/scripting/startup_script_manager.h
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.h
     src/network/grpc_client.h

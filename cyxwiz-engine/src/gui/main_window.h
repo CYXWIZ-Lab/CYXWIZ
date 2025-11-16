@@ -23,6 +23,7 @@ class TableViewerPanel;
 
 namespace scripting {
 class ScriptingEngine;
+class StartupScriptManager;
 } // namespace scripting
 
 namespace gui {
@@ -59,6 +60,9 @@ private:
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
+
+    // Startup script manager
+    std::unique_ptr<scripting::StartupScriptManager> startup_script_manager_;
 
     bool show_about_dialog_;
     bool show_demo_window_;
