@@ -13,6 +13,16 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
+# Optional: HDF5 support for data files
+find_package(HighFive CONFIG)
+if(HighFive_FOUND)
+    message(STATUS "HighFive found - HDF5 support enabled")
+    set(CYXWIZ_HAS_HDF5 ON)
+else()
+    message(WARNING "HighFive not found - HDF5 support disabled")
+    set(CYXWIZ_HAS_HDF5 OFF)
+endif()
+
 # ImNodes for node editor (may need manual integration if not in vcpkg)
 # Download from: https://github.com/Nelarius/imnodes
 
@@ -32,6 +42,8 @@ set(ENGINE_SOURCES
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/command_window.cpp
     src/gui/panels/script_editor.cpp
+    src/gui/panels/table_viewer.cpp
+    src/data/data_table.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
     src/scripting/scripting_engine.cpp
@@ -64,6 +76,8 @@ set(ENGINE_HEADERS
     src/gui/panels/plot_test_control.h
     src/gui/panels/command_window.h
     src/gui/panels/script_editor.h
+    src/gui/panels/table_viewer.h
+    src/data/data_table.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
     src/scripting/scripting_engine.h
@@ -112,6 +126,12 @@ target_link_libraries(cyxwiz-engine PRIVATE
     cyxwiz-backend
     cyxwiz-protocol
 )
+
+# Optional: Link HDF5 if found
+if(HighFive_FOUND)
+    target_link_libraries(cyxwiz-engine PRIVATE HighFive)
+    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_HDF5)
+endif()
 
 # Platform-specific settings
 if(WIN32)

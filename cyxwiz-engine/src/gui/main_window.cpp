@@ -9,6 +9,7 @@
 #include "panels/plot_test_control.h"
 #include "panels/command_window.h"
 #include "panels/script_editor.h"
+#include "panels/table_viewer.h"
 #include "../scripting/scripting_engine.h"
 
 #include <imgui.h>
@@ -37,6 +38,7 @@ MainWindow::MainWindow()
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
+    table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
 
     // Set scripting engine for command window and script editor
     command_window_->SetScriptingEngine(scripting_engine_);
@@ -79,6 +81,7 @@ void MainWindow::Render() {
     if (plot_test_control_) plot_test_control_->Render();
     if (command_window_) command_window_->Render();
     if (script_editor_) script_editor_->Render();
+    if (table_viewer_) table_viewer_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
