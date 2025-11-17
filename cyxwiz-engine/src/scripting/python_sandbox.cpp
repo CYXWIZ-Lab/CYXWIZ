@@ -326,55 +326,42 @@ PythonSandbox::ExecutionResult PythonSandbox::Execute(const std::string& code) {
     StartMonitoring();
 
     try {
-        // Execute with timeout using std::async
-        auto future = std::async(std::launch::async, [&]() {
-            try {
-                // Redirect stdout/stderr
-                py::object sys = py::module_::import("sys");
-                py::object io = py::module_::import("io");
+        // Execute code directly (async/timeout disabled due to Python GIL conflicts)
+        // TODO: Implement proper timeout using Python signal module or subprocess
 
-                py::object stdout_capture = io.attr("StringIO")();
-                py::object stderr_capture = io.attr("StringIO")();
+        // Redirect stdout/stderr
+        py::object sys = py::module_::import("sys");
+        py::object io = py::module_::import("io");
 
-                py::object original_stdout = sys.attr("stdout");
-                py::object original_stderr = sys.attr("stderr");
+        py::object stdout_capture = io.attr("StringIO")();
+        py::object stderr_capture = io.attr("StringIO")();
 
-                sys.attr("stdout") = stdout_capture;
-                sys.attr("stderr") = stderr_capture;
+        py::object original_stdout = sys.attr("stdout");
+        py::object original_stderr = sys.attr("stderr");
 
-                // Execute code
-                py::exec(code);
+        sys.attr("stdout") = stdout_capture;
+        sys.attr("stderr") = stderr_capture;
 
-                // Restore stdout/stderr
-                sys.attr("stdout") = original_stdout;
-                sys.attr("stderr") = original_stderr;
+        // Execute code
+        py::exec(code);
 
-                // Get captured output
-                result.output = py::str(stdout_capture.attr("getvalue")());
-                std::string stderr_output = py::str(stderr_capture.attr("getvalue")());
+        // Restore stdout/stderr
+        sys.attr("stdout") = original_stdout;
+        sys.attr("stderr") = original_stderr;
 
-                if (!stderr_output.empty()) {
-                    result.output += "\nStderr: " + stderr_output;
-                }
+        // Get captured output
+        result.output = py::str(stdout_capture.attr("getvalue")());
+        std::string stderr_output = py::str(stderr_capture.attr("getvalue")());
 
-                result.success = true;
-
-            } catch (const py::error_already_set& e) {
-                result.error_message = e.what();
-                result.success = false;
-            }
-        });
-
-        // Wait for execution with timeout
-        auto status = future.wait_for(config_.timeout);
-
-        if (status == std::future_status::timeout) {
-            result.timeout_exceeded = true;
-            result.error_message = "Execution timeout exceeded (" +
-                std::to_string(config_.timeout.count()) + "s)";
-            result.success = false;
+        if (!stderr_output.empty()) {
+            result.output += "\nStderr: " + stderr_output;
         }
 
+        result.success = true;
+
+    } catch (const py::error_already_set& e) {
+        result.error_message = e.what();
+        result.success = false;
     } catch (const std::exception& e) {
         result.error_message = std::string("Execution error: ") + e.what();
         result.success = false;
