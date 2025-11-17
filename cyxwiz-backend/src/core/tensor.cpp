@@ -158,10 +158,56 @@ const void* Tensor::Data() const {
 }
 
 Tensor Tensor::Zeros(const std::vector<size_t>& shape, DataType dtype) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // GPU-accelerated zeros creation
+    try {
+        // Convert shape to af::dim4
+        af::dim4 dims(1, 1, 1, 1);
+        for (size_t i = 0; i < shape.size() && i < 4; i++) {
+            dims[i] = static_cast<unsigned int>(shape[i]);
+        }
+
+        // Create ArrayFire array filled with zeros
+        af::array zeros_arr = af::constant(0.0, dims, ToArrayFireType(dtype));
+
+        // Create tensor and copy data back to CPU
+        Tensor t(shape, dtype);
+        zeros_arr.host(t.data_);
+
+        return t;
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire zeros creation failed, using CPU: {}", e.what());
+    }
+#endif
+
+    // CPU fallback (constructor already zeros memory via memset)
     return Tensor(shape, dtype);
 }
 
 Tensor Tensor::Ones(const std::vector<size_t>& shape, DataType dtype) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // GPU-accelerated ones creation
+    try {
+        // Convert shape to af::dim4
+        af::dim4 dims(1, 1, 1, 1);
+        for (size_t i = 0; i < shape.size() && i < 4; i++) {
+            dims[i] = static_cast<unsigned int>(shape[i]);
+        }
+
+        // Create ArrayFire array filled with ones
+        af::array ones_arr = af::constant(1.0, dims, ToArrayFireType(dtype));
+
+        // Create tensor and copy data back to CPU
+        Tensor t(shape, dtype);
+        ones_arr.host(t.data_);
+
+        return t;
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire ones creation failed, using CPU: {}", e.what());
+    }
+#endif
+
+    // CPU fallback
     Tensor t(shape, dtype);
 
     // Fill with ones based on data type
@@ -208,6 +254,29 @@ Tensor Tensor::Ones(const std::vector<size_t>& shape, DataType dtype) {
 }
 
 Tensor Tensor::Random(const std::vector<size_t>& shape, DataType dtype) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // GPU-accelerated random generation
+    try {
+        // Convert shape to af::dim4
+        af::dim4 dims(1, 1, 1, 1);
+        for (size_t i = 0; i < shape.size() && i < 4; i++) {
+            dims[i] = static_cast<unsigned int>(shape[i]);
+        }
+
+        // Create ArrayFire array with random values [0, 1)
+        af::array random_arr = af::randu(dims, ToArrayFireType(dtype));
+
+        // Create tensor and copy data back to CPU
+        Tensor t(shape, dtype);
+        random_arr.host(t.data_);
+
+        return t;
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire random generation failed, using CPU: {}", e.what());
+    }
+#endif
+
+    // CPU fallback
     Tensor t(shape, dtype);
 
     // Fill with random values [0, 1) based on data type
@@ -354,6 +423,26 @@ Tensor Tensor::operator-(const Tensor& other) const {
         throw std::runtime_error("Tensor data types must match for element-wise subtraction");
     }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // GPU-accelerated subtraction
+    try {
+        af::array* a_arr = CreateArrayFireArray(shape_, dtype_, data_);
+        af::array* b_arr = CreateArrayFireArray(other.shape_, other.dtype_, other.data_);
+
+        af::array result_arr = *a_arr - *b_arr;
+
+        Tensor result(shape_, dtype_);
+        result_arr.host(result.data_);
+
+        delete a_arr;
+        delete b_arr;
+
+        return result;
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire subtraction failed, using CPU: {}", e.what());
+    }
+#endif
+
     Tensor result(shape_, dtype_);
     size_t num_elements = NumElements();
 
@@ -416,6 +505,26 @@ Tensor Tensor::operator*(const Tensor& other) const {
         throw std::runtime_error("Tensor data types must match for element-wise multiplication");
     }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // GPU-accelerated multiplication
+    try {
+        af::array* a_arr = CreateArrayFireArray(shape_, dtype_, data_);
+        af::array* b_arr = CreateArrayFireArray(other.shape_, other.dtype_, other.data_);
+
+        af::array result_arr = *a_arr * *b_arr;
+
+        Tensor result(shape_, dtype_);
+        result_arr.host(result.data_);
+
+        delete a_arr;
+        delete b_arr;
+
+        return result;
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire multiplication failed, using CPU: {}", e.what());
+    }
+#endif
+
     Tensor result(shape_, dtype_);
     size_t num_elements = NumElements();
 
@@ -477,6 +586,26 @@ Tensor Tensor::operator/(const Tensor& other) const {
     if (dtype_ != other.dtype_) {
         throw std::runtime_error("Tensor data types must match for element-wise division");
     }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // GPU-accelerated division
+    try {
+        af::array* a_arr = CreateArrayFireArray(shape_, dtype_, data_);
+        af::array* b_arr = CreateArrayFireArray(other.shape_, other.dtype_, other.data_);
+
+        af::array result_arr = *a_arr / *b_arr;
+
+        Tensor result(shape_, dtype_);
+        result_arr.host(result.data_);
+
+        delete a_arr;
+        delete b_arr;
+
+        return result;
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire division failed, using CPU: {}", e.what());
+    }
+#endif
 
     Tensor result(shape_, dtype_);
     size_t num_elements = NumElements();
