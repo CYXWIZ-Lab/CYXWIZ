@@ -237,4 +237,47 @@ PYBIND11_MODULE(pycyxwiz, m) {
     m.def("create_optimizer", &cyxwiz::CreateOptimizer,
           py::arg("type"), py::arg("learning_rate") = 0.001,
           "Create an optimizer instance");
+
+    // Layer base class
+    py::class_<cyxwiz::Layer>(m, "Layer")
+        .def("forward", &cyxwiz::Layer::Forward,
+             py::arg("input"),
+             "Forward pass through the layer")
+        .def("backward", &cyxwiz::Layer::Backward,
+             py::arg("grad_output"),
+             "Backward pass (compute gradients)")
+        .def("get_parameters", &cyxwiz::Layer::GetParameters,
+             "Get layer parameters as dict")
+        .def("set_parameters", &cyxwiz::Layer::SetParameters,
+             py::arg("params"),
+             "Set layer parameters from dict");
+
+    // LinearLayer (fully-connected / dense layer)
+    py::class_<cyxwiz::LinearLayer, cyxwiz::Layer>(m, "LinearLayer")
+        .def(py::init<size_t, size_t, bool>(),
+             py::arg("in_features"),
+             py::arg("out_features"),
+             py::arg("use_bias") = true,
+             "Create a Linear (fully-connected) layer")
+        .def("forward", &cyxwiz::LinearLayer::Forward,
+             py::arg("input"),
+             "Forward pass: output = input @ weight.T + bias")
+        .def("backward", &cyxwiz::LinearLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::LinearLayer::GetParameters,
+             "Get parameters {'weight': Tensor, 'bias': Tensor}")
+        .def("set_parameters", &cyxwiz::LinearLayer::SetParameters,
+             py::arg("params"),
+             "Set parameters from dict")
+        .def("get_gradients", &cyxwiz::LinearLayer::GetGradients,
+             "Get parameter gradients")
+        .def("initialize_weights", &cyxwiz::LinearLayer::InitializeWeights,
+             "Re-initialize weights with Xavier initialization")
+        .def_property_readonly("in_features", &cyxwiz::LinearLayer::GetInFeatures,
+                              "Number of input features")
+        .def_property_readonly("out_features", &cyxwiz::LinearLayer::GetOutFeatures,
+                              "Number of output features")
+        .def_property_readonly("has_bias", &cyxwiz::LinearLayer::HasBias,
+                              "Whether layer has bias term");
 }

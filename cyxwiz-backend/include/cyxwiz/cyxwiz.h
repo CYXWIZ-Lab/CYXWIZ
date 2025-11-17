@@ -23,6 +23,9 @@
 #include "layer.h"
 #include "model.h"
 
+// Concrete layer implementations
+#include "layers/linear.h"
+
 namespace cyxwiz {
 
 // Initialize the backend

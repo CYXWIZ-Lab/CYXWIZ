@@ -129,6 +129,73 @@ Tensor::~Tensor() {
 #endif
 }
 
+Tensor& Tensor::operator=(const Tensor& other) {
+    if (this != &other) {
+        // Free existing data
+        if (owns_data_ && data_) {
+            free(data_);
+        }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        if (af_array_) {
+            delete af_array_;
+            af_array_ = nullptr;
+        }
+#endif
+
+        // Copy from other
+        shape_ = other.shape_;
+        dtype_ = other.dtype_;
+        device_ = other.device_;
+        owns_data_ = true;
+
+        size_t num_bytes = NumBytes();
+        if (num_bytes > 0 && other.data_) {
+            data_ = malloc(num_bytes);
+            memcpy(data_, other.data_, num_bytes);
+        } else {
+            data_ = nullptr;
+        }
+    }
+    return *this;
+}
+
+Tensor& Tensor::operator=(Tensor&& other) noexcept {
+    if (this != &other) {
+        // Free existing data
+        if (owns_data_ && data_) {
+            free(data_);
+        }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        if (af_array_) {
+            delete af_array_;
+        }
+#endif
+
+        // Move from other
+        shape_ = std::move(other.shape_);
+        dtype_ = other.dtype_;
+        device_ = other.device_;
+        data_ = other.data_;
+        owns_data_ = other.owns_data_;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        af_array_ = other.af_array_;
+#endif
+
+        // Clear other
+        other.data_ = nullptr;
+        other.owns_data_ = false;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        other.af_array_ = nullptr;
+#endif
+    }
+    return *this;
+}
+
+Tensor Tensor::Clone() const {
+    Tensor result(shape_, data_, dtype_);
+    return result;
+}
+
 size_t Tensor::NumElements() const {
     size_t count = 1;
     for (size_t dim : shape_) {
