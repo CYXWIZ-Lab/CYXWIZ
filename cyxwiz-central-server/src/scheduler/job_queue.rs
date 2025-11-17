@@ -103,6 +103,8 @@ impl JobScheduler {
                     return Err(e);
                 }
 
+                info!("Job {} successfully sent to node {}", job.id, node.id);
+
                 Ok(())
             }
             None => {
@@ -150,7 +152,7 @@ impl JobScheduler {
         let job = queries::get_job_by_id(&self.db_pool, job_id).await?;
 
         // If retry count is below max, re-queue the job
-        if job.retry_count < self.config.max_retries {
+        if job.retry_count < self.config.max_retries as i32 {
             info!("Re-queuing job {} (retry {}/{})", job_id, job.retry_count, self.config.max_retries);
 
             // Add back to pending queue
@@ -193,7 +195,7 @@ impl JobScheduler {
         Ok(())
     }
 
-    /// Send job assignment to Server Node via gRPC
+    // Send job assignment to Server Node via gRPC
     async fn send_job_to_node(&self, node: &Node, job: &Job) -> Result<()> {
         // For local testing, use hardcoded endpoint
         // TODO: Store node address in database during registration
@@ -244,7 +246,7 @@ impl JobScheduler {
         }
     }
 
-    /// Convert database Job model to protobuf JobConfig
+    // Convert database Job model to protobuf JobConfig
     fn build_job_config(&self, job: &Job) -> Result<JobConfig> {
         // Parse metadata JSON for additional job parameters
         let metadata = &job.metadata;
@@ -280,26 +282,26 @@ impl JobScheduler {
             }
         }
 
-        // Determine job type
+        // Determine job type (using integer values from proto)
         let job_type = match job.job_type.as_str() {
-            "training" => JobType::JobTypeTraining as i32,
-            "inference" => JobType::JobTypeInference as i32,
-            "evaluation" => JobType::JobTypeEvaluation as i32,
-            "preprocessing" => JobType::JobTypePreprocessing as i32,
-            _ => JobType::JobTypeUnknown as i32,
+            "training" => 1,     // JOB_TYPE_TRAINING
+            "inference" => 2,    // JOB_TYPE_INFERENCE
+            "evaluation" => 3,   // JOB_TYPE_EVALUATION
+            "preprocessing" => 4, // JOB_TYPE_PREPROCESSING
+            _ => 0,              // JOB_TYPE_UNKNOWN
         };
 
-        // Determine device type
+        // Determine device type (using integer values from proto)
         let required_device = if job.required_gpu {
-            DeviceType::DeviceGpu as i32
+            2  // DEVICE_CUDA
         } else {
-            DeviceType::DeviceCpu as i32
+            1  // DEVICE_CPU
         };
 
         Ok(JobConfig {
             job_id: job.id.to_string(),
             job_type,
-            priority: JobPriority::PriorityNormal as i32, // TODO: Add priority field to Job model
+            priority: 1, // PRIORITY_NORMAL - TODO: Add priority field to Job model
             model_definition,
             hyperparameters,
             dataset_uri,
