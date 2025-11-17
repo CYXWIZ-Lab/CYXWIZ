@@ -6,6 +6,7 @@
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
+#include "panels/training_plot_panel.h"
 #include "panels/plot_test_control.h"
 #include "panels/command_window.h"
 #include "panels/script_editor.h"
@@ -36,6 +37,7 @@ MainWindow::MainWindow()
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();
+    training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
@@ -90,6 +92,7 @@ void MainWindow::Render() {
     // Render new panels
     if (asset_browser_) asset_browser_->Render();
     if (training_dashboard_) training_dashboard_->Render();
+    if (training_plot_panel_) training_plot_panel_->Render();
     if (plot_test_control_) plot_test_control_->Render();
     if (command_window_) command_window_->Render();
     if (script_editor_) script_editor_->Render();

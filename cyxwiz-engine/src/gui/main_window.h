@@ -15,6 +15,7 @@ namespace cyxwiz {
 class ToolbarPanel;
 class AssetBrowserPanel;
 class TrainingDashboardPanel;
+class TrainingPlotPanel;
 class PlotTestControlPanel;
 class CommandWindowPanel;
 class ScriptEditorPanel;
@@ -53,6 +54,7 @@ private:
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
     std::unique_ptr<cyxwiz::TrainingDashboardPanel> training_dashboard_;
+    std::unique_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
     std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
     std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;

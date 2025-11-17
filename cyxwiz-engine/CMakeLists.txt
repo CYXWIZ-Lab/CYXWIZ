@@ -38,6 +38,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
+    src/gui/panels/training_plot_panel.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/command_window.cpp
@@ -73,6 +74,7 @@ set(ENGINE_HEADERS
     src/gui/panels/toolbar.h
     src/gui/panels/asset_browser.h
     src/gui/panels/training_dashboard.h
+    src/gui/panels/training_plot_panel.h
     src/gui/panels/plot_window.h
     src/gui/panels/plot_test_control.h
     src/gui/panels/command_window.h
