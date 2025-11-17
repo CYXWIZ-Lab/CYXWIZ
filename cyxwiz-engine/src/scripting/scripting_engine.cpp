@@ -1,4 +1,5 @@
 #include "scripting_engine.h"
+#include "../gui/panels/training_plot_panel.h"
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
@@ -192,6 +193,30 @@ ExecutionResult ScriptingEngine::ExecuteFile(const std::string& filepath) {
     }
 
     return result;
+}
+
+void ScriptingEngine::RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel) {
+    if (!IsInitialized()) {
+        spdlog::error("Cannot register Training Dashboard: scripting engine not initialized");
+        return;
+    }
+
+    try {
+        // Import the cyxwiz_plotting module
+        py::module_ plotting_module = py::module_::import("cyxwiz_plotting");
+
+        // Get the set_training_plot_panel function
+        py::object set_func = plotting_module.attr("set_training_plot_panel");
+
+        // Call it with the panel pointer (pybind11 will handle the pointer conversion)
+        set_func(py::cast(panel, py::return_value_policy::reference));
+
+        spdlog::info("Training Dashboard registered with Python successfully");
+    } catch (const py::error_already_set& e) {
+        spdlog::error("Failed to register Training Dashboard with Python: {}", e.what());
+    } catch (const std::exception& e) {
+        spdlog::error("Exception while registering Training Dashboard: {}", e.what());
+    }
 }
 
 } // namespace scripting

@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "../../plotting/plot_manager.h"
+#include <imgui.h>
 #include <vector>
 #include <string>
 #include <mutex>
@@ -38,9 +39,18 @@ public:
     void ShowAccuracyPlot(bool show) { show_accuracy_plot_ = show; }
     void SetAutoScale(bool auto_scale) { auto_scale_ = auto_scale; }
 
+    // Getters for live metrics (thread-safe)
+    bool HasData() const { return !train_loss_.values.empty(); }
+    int GetCurrentEpoch() const;
+    double GetCurrentTrainLoss() const;
+    double GetCurrentValLoss() const;
+    double GetCurrentTrainAccuracy() const;
+    double GetCurrentValAccuracy() const;
+    size_t GetDataPointCount() const;
+
 private:
     struct MetricSeries {
-        std::vector<int> epochs;
+        std::vector<double> epochs;
         std::vector<double> values;
         std::string name;
         ImVec4 color;
@@ -66,7 +76,7 @@ private:
     size_t max_points_ = 1000;
 
     // Thread safety
-    std::mutex data_mutex_;
+    mutable std::mutex data_mutex_;
 
     // Helper methods
     void RenderLossPlot();

@@ -39,6 +39,7 @@ set(ENGINE_SOURCES
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/command_window.cpp
@@ -206,6 +207,8 @@ pybind11_add_module(cyxwiz_plotting
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/plot_test_panel.cpp
+    src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_plot_panel_global.cpp
 )
 
 # Link the plotting module against necessary libraries

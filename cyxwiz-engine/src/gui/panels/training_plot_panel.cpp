@@ -8,7 +8,7 @@
 namespace cyxwiz {
 
 TrainingPlotPanel::TrainingPlotPanel()
-    : Panel("Training Visualization") {
+    : Panel("Training Dashboard") {
 
     // Initialize metric series
     train_loss_.name = "Training Loss";
@@ -35,7 +35,7 @@ void TrainingPlotPanel::Render() {
 
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin(title_.c_str(), &visible_)) {
+    if (!ImGui::Begin(name_.c_str(), &visible_)) {
         ImGui::End();
         return;
     }
@@ -48,22 +48,70 @@ void TrainingPlotPanel::Render() {
 
     ImGui::Separator();
 
-    // Render plots
-    if (show_loss_plot_ && !train_loss_.values.empty()) {
-        RenderLossPlot();
-    }
+    // Check if we have any training data
+    bool has_data = !train_loss_.values.empty() || !train_accuracy_.values.empty() || !custom_metrics_.empty();
 
-    if (show_accuracy_plot_ && !train_accuracy_.values.empty()) {
-        RenderAccuracyPlot();
-    }
+    if (has_data) {
+        // Render plots
+        if (show_loss_plot_ && !train_loss_.values.empty()) {
+            RenderLossPlot();
+        }
 
-    if (show_custom_metrics_ && !custom_metrics_.empty()) {
-        RenderCustomMetricsPlot();
-    }
+        if (show_accuracy_plot_ && !train_accuracy_.values.empty()) {
+            RenderAccuracyPlot();
+        }
 
-    // Render statistics
-    if (!train_loss_.values.empty()) {
-        RenderStatistics();
+        if (show_custom_metrics_ && !custom_metrics_.empty()) {
+            RenderCustomMetricsPlot();
+        }
+
+        // Render statistics
+        if (!train_loss_.values.empty()) {
+            RenderStatistics();
+        }
+    } else {
+        // Show placeholder when no data
+        ImGui::Spacing();
+        ImGui::Spacing();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+
+        float window_width = ImGui::GetContentRegionAvail().x;
+        const char* msg1 = "No training data yet";
+        const char* msg2 = "Run a training script to see real-time metrics";
+        const char* msg3 = "Try: scripts/train_xor_simple.py";
+
+        float text_width1 = ImGui::CalcTextSize(msg1).x;
+        float text_width2 = ImGui::CalcTextSize(msg2).x;
+        float text_width3 = ImGui::CalcTextSize(msg3).x;
+
+        ImGui::SetCursorPosX((window_width - text_width1) * 0.5f);
+        ImGui::Text("%s", msg1);
+
+        ImGui::Spacing();
+
+        ImGui::SetCursorPosX((window_width - text_width2) * 0.5f);
+        ImGui::Text("%s", msg2);
+
+        ImGui::Spacing();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+        ImGui::SetCursorPosX((window_width - text_width3) * 0.5f);
+        ImGui::Text("%s", msg3);
+        ImGui::PopStyleColor();
+
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+        ImGui::Spacing();
+
+        // Show example plot area
+        ImGui::BeginChild("PlaceholderPlot", ImVec2(0, 300), true);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 100, ImGui::GetContentRegionAvail().y * 0.5f - 10));
+        ImGui::Text("Loss/Accuracy plots will appear here");
+        ImGui::PopStyleColor();
+        ImGui::EndChild();
     }
 
     ImGui::End();
@@ -196,7 +244,7 @@ void TrainingPlotPanel::RenderLossPlot() {
     if (ImPlot::BeginPlot("Loss", ImVec2(-1, 250))) {
         ImPlot::SetupAxes("Epoch", "Loss");
 
-        if (auto_scale_) {
+        if (auto_scale_ && !train_loss_.epochs.empty()) {
             ImPlot::SetupAxisLimits(ImAxis_X1, 0,
                 std::max(1, static_cast<int>(train_loss_.epochs.back())),
                 ImGuiCond_Always);
@@ -228,7 +276,7 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
     if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, 250))) {
         ImPlot::SetupAxes("Epoch", "Accuracy (%)");
 
-        if (auto_scale_) {
+        if (auto_scale_ && !train_accuracy_.epochs.empty()) {
             ImPlot::SetupAxisLimits(ImAxis_X1, 0,
                 std::max(1, static_cast<int>(train_accuracy_.epochs.back())),
                 ImGuiCond_Always);
@@ -353,6 +401,41 @@ double TrainingPlotPanel::CalculateMin(const std::vector<double>& values) {
 double TrainingPlotPanel::CalculateMax(const std::vector<double>& values) {
     if (values.empty()) return 0.0;
     return *std::max_element(values.begin(), values.end());
+}
+
+int TrainingPlotPanel::GetCurrentEpoch() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (train_loss_.epochs.empty()) return 0;
+    return static_cast<int>(train_loss_.epochs.back());
+}
+
+double TrainingPlotPanel::GetCurrentTrainLoss() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (train_loss_.values.empty()) return 0.0;
+    return train_loss_.values.back();
+}
+
+double TrainingPlotPanel::GetCurrentValLoss() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (val_loss_.values.empty()) return -1.0;
+    return val_loss_.values.back();
+}
+
+double TrainingPlotPanel::GetCurrentTrainAccuracy() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (train_accuracy_.values.empty()) return -1.0;
+    return train_accuracy_.values.back();
+}
+
+double TrainingPlotPanel::GetCurrentValAccuracy() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (val_accuracy_.values.empty()) return -1.0;
+    return val_accuracy_.values.back();
+}
+
+size_t TrainingPlotPanel::GetDataPointCount() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    return train_loss_.values.size();
 }
 
 } // namespace cyxwiz

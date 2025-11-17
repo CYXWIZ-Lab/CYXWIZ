@@ -27,24 +27,9 @@ using namespace cyxwiz::plotting;
 static std::vector<std::shared_ptr<cyxwiz::PlotWindow>> g_python_plot_windows;
 
 // Global TrainingPlotPanel instance (shared with MainWindow)
-// This should be set by MainWindow when it creates the panel
-static cyxwiz::TrainingPlotPanel* g_training_plot_panel = nullptr;
-
-/**
- * Set the global TrainingPlotPanel instance
- * Called by MainWindow to share the panel with Python scripts
- */
-void set_training_plot_panel(cyxwiz::TrainingPlotPanel* panel) {
-    g_training_plot_panel = panel;
-}
-
-/**
- * Get the global TrainingPlotPanel instance
- * Returns nullptr if not set by MainWindow
- */
-cyxwiz::TrainingPlotPanel* get_training_plot_panel() {
-    return g_training_plot_panel;
-}
+// These functions are defined in training_plot_panel_global.cpp
+extern void set_training_plot_panel(cyxwiz::TrainingPlotPanel* panel);
+extern cyxwiz::TrainingPlotPanel* get_training_plot_panel();
 
 /**
  * Helper: Convert numpy array or list to std::vector<double>

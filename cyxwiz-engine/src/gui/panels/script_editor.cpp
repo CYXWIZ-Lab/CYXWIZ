@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
 #include <algorithm>
 #include <cstdio>
 #include <spdlog/spdlog.h>
@@ -508,21 +509,30 @@ void ScriptEditorPanel::RunScript() {
     if (active_tab_index_ < 0 || !scripting_engine_) return;
 
     auto& tab = tabs_[active_tab_index_];
-    std::string script_text = tab->editor.GetText();
-
-    // Strip out %% markers before executing
-    std::string script;
-    std::istringstream stream(script_text);
-    std::string line;
-    while (std::getline(stream, line)) {
-        // Skip lines containing only %% markers
-        if (line.find("%%") == std::string::npos) {
-            script += line + "\n";
-        }
-    }
 
     spdlog::info("Running script: {}", tab->filename);
-    auto result = scripting_engine_->ExecuteScript(script);
+
+    // If we have a filepath, execute the file directly for better reliability
+    scripting::ExecutionResult result;
+    if (!tab->filepath.empty() && std::filesystem::exists(tab->filepath)) {
+        result = scripting_engine_->ExecuteFile(tab->filepath);
+    } else {
+        // Otherwise, use the text from the editor
+        std::string script_text = tab->editor.GetText();
+
+        // Strip out %% markers before executing
+        std::string script;
+        std::istringstream stream(script_text);
+        std::string line;
+        while (std::getline(stream, line)) {
+            // Skip lines containing only %% markers
+            if (line.find("%%") == std::string::npos) {
+                script += line + "\n";
+            }
+        }
+
+        result = scripting_engine_->ExecuteScript(script);
+    }
 
     // Send output to Command Window if available
     if (command_window_) {

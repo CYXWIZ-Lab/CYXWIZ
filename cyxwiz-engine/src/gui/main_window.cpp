@@ -19,9 +19,6 @@
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 
-// Forward declaration for Python bindings accessor
-extern void set_training_plot_panel(cyxwiz::TrainingPlotPanel* panel);
-
 namespace gui {
 
 MainWindow::MainWindow()
@@ -39,19 +36,25 @@ MainWindow::MainWindow()
     // New panel system
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
-    training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();
-    training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();
+    // training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();  // Removed - merged into TrainingPlotPanel
+    training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
 
-    // Expose TrainingPlotPanel to Python scripts
-    set_training_plot_panel(training_plot_panel_.get());
-
     // Set scripting engine for command window and script editor
     command_window_->SetScriptingEngine(scripting_engine_);
     script_editor_->SetScriptingEngine(scripting_engine_);
+
+    // Expose TrainingPlotPanel to Python scripts through the scripting engine
+    // This avoids DLL boundary issues by using pybind11 directly
+    if (scripting_engine_) {
+        scripting_engine_->RegisterTrainingDashboard(training_plot_panel_.get());
+    }
+
+    // Connect Viewport to TrainingPlotPanel for real-time metrics display
+    viewport_->SetTrainingPanel(training_plot_panel_.get());
 
     // Connect script editor to command window for output display
     script_editor_->SetCommandWindow(command_window_.get());
@@ -97,8 +100,8 @@ void MainWindow::Render() {
 
     // Render new panels
     if (asset_browser_) asset_browser_->Render();
-    if (training_dashboard_) training_dashboard_->Render();
-    if (training_plot_panel_) training_plot_panel_->Render();
+    // if (training_dashboard_) training_dashboard_->Render();  // Removed - merged into TrainingPlotPanel
+    if (training_plot_panel_) training_plot_panel_->Render();  // Now "Training Dashboard"
     if (plot_test_control_) plot_test_control_->Render();
     if (command_window_) command_window_->Render();
     if (script_editor_) script_editor_->Render();

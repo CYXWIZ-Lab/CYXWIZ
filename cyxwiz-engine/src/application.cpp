@@ -11,6 +11,7 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+#include <implot.h>
 #include <cyxwiz/device.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -125,6 +126,7 @@ bool CyxWizApp::Initialize() {
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImPlot::CreateContext();  // Initialize ImPlot for plotting functionality
     ImGuiIO& io = ImGui::GetIO();
 
     // Set persistent ini file path (same directory as executable)
@@ -281,6 +283,7 @@ void CyxWizApp::Shutdown() {
     // Cleanup ImGui
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
+    ImPlot::DestroyContext();  // Cleanup ImPlot context
     ImGui::DestroyContext();
 
     // Cleanup GLFW
