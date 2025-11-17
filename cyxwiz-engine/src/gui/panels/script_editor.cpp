@@ -364,29 +364,33 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     }
 
     // Check if we can replace an existing empty untitled tab
-    bool replaced_empty_tab = false;
-    if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size())) {
-        auto& current_tab = tabs_[active_tab_index_];
-        // Replace if it's a new, unmodified untitled tab
-        std::string current_text = current_tab->editor.GetText();
+    // Look through ALL tabs, not just the active one
+    int empty_tab_index = -1;
+    for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
+        auto& tab = tabs_[i];
+        // Check if this is an empty, unmodified untitled tab
+        std::string tab_text = tab->editor.GetText();
         // Trim whitespace for comparison
-        current_text.erase(0, current_text.find_first_not_of(" \t\n\r"));
-        current_text.erase(current_text.find_last_not_of(" \t\n\r") + 1);
+        tab_text.erase(0, tab_text.find_first_not_of(" \t\n\r"));
+        tab_text.erase(tab_text.find_last_not_of(" \t\n\r") + 1);
 
-        if (current_tab->is_new && !current_tab->is_modified && current_text.empty()) {
-            // Reuse existing tab
-            current_tab->filename = std::filesystem::path(path).filename().string();
-            current_tab->filepath = path;
-            current_tab->is_new = false;
-            current_tab->is_modified = false;
-            current_tab->editor.SetText(content);
-            replaced_empty_tab = true;
-            spdlog::info("Replaced empty tab with file: {}", path);
+        if (tab->is_new && !tab->is_modified && tab_text.empty()) {
+            empty_tab_index = i;
+            break;  // Found first empty untitled tab
         }
     }
 
-    if (replaced_empty_tab) {
+    // Replace the empty untitled tab if found
+    if (empty_tab_index >= 0) {
+        auto& tab = tabs_[empty_tab_index];
+        tab->filename = std::filesystem::path(path).filename().string();
+        tab->filepath = path;
+        tab->is_new = false;
+        tab->is_modified = false;
+        tab->editor.SetText(content);
+        active_tab_index_ = empty_tab_index;  // Switch to this tab
         request_focus_ = true;
+        spdlog::info("Replaced empty untitled tab at index {} with file: {}", empty_tab_index, path);
         return;
     }
 
