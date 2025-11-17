@@ -2,6 +2,7 @@
 #include "cyxwiz/device.h"
 #include <stdexcept>
 #include <cstring>
+#include <cstdlib>
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz {
@@ -118,38 +119,347 @@ Tensor Tensor::Zeros(const std::vector<size_t>& shape, DataType dtype) {
 
 Tensor Tensor::Ones(const std::vector<size_t>& shape, DataType dtype) {
     Tensor t(shape, dtype);
-    // TODO: Fill with ones
+
+    // Fill with ones based on data type
+    size_t num_elements = t.NumElements();
+    switch (dtype) {
+        case DataType::Float32: {
+            float* data = static_cast<float*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = 1.0f;
+            }
+            break;
+        }
+        case DataType::Float64: {
+            double* data = static_cast<double*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = 1.0;
+            }
+            break;
+        }
+        case DataType::Int32: {
+            int32_t* data = static_cast<int32_t*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = 1;
+            }
+            break;
+        }
+        case DataType::Int64: {
+            int64_t* data = static_cast<int64_t*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = 1;
+            }
+            break;
+        }
+        case DataType::UInt8: {
+            uint8_t* data = static_cast<uint8_t*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = 1;
+            }
+            break;
+        }
+    }
+
     return t;
 }
 
 Tensor Tensor::Random(const std::vector<size_t>& shape, DataType dtype) {
     Tensor t(shape, dtype);
-    // TODO: Fill with random values
+
+    // Fill with random values [0, 1) based on data type
+    size_t num_elements = t.NumElements();
+    switch (dtype) {
+        case DataType::Float32: {
+            float* data = static_cast<float*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+            }
+            break;
+        }
+        case DataType::Float64: {
+            double* data = static_cast<double*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = static_cast<double>(rand()) / static_cast<double>(RAND_MAX);
+            }
+            break;
+        }
+        case DataType::Int32: {
+            int32_t* data = static_cast<int32_t*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = rand() % 100;  // Random int [0, 99]
+            }
+            break;
+        }
+        case DataType::Int64: {
+            int64_t* data = static_cast<int64_t*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = rand() % 100;  // Random int [0, 99]
+            }
+            break;
+        }
+        case DataType::UInt8: {
+            uint8_t* data = static_cast<uint8_t*>(t.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = rand() % 256;  // Random byte [0, 255]
+            }
+            break;
+        }
+    }
+
     return t;
 }
 
 Tensor Tensor::operator+(const Tensor& other) const {
-    // TODO: Implement element-wise addition
-    // For now, return a copy
-    return Tensor(*this);
+    // Check shapes match
+    if (shape_ != other.shape_) {
+        throw std::runtime_error("Tensor shapes must match for element-wise addition");
+    }
+
+    // Check data types match
+    if (dtype_ != other.dtype_) {
+        throw std::runtime_error("Tensor data types must match for element-wise addition");
+    }
+
+    // Create result tensor
+    Tensor result(shape_, dtype_);
+    size_t num_elements = NumElements();
+
+    // Perform element-wise addition based on data type
+    switch (dtype_) {
+        case DataType::Float32: {
+            const float* a = static_cast<const float*>(Data());
+            const float* b = static_cast<const float*>(other.Data());
+            float* r = static_cast<float*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] + b[i];
+            }
+            break;
+        }
+        case DataType::Float64: {
+            const double* a = static_cast<const double*>(Data());
+            const double* b = static_cast<const double*>(other.Data());
+            double* r = static_cast<double*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] + b[i];
+            }
+            break;
+        }
+        case DataType::Int32: {
+            const int32_t* a = static_cast<const int32_t*>(Data());
+            const int32_t* b = static_cast<const int32_t*>(other.Data());
+            int32_t* r = static_cast<int32_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] + b[i];
+            }
+            break;
+        }
+        case DataType::Int64: {
+            const int64_t* a = static_cast<const int64_t*>(Data());
+            const int64_t* b = static_cast<const int64_t*>(other.Data());
+            int64_t* r = static_cast<int64_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] + b[i];
+            }
+            break;
+        }
+        case DataType::UInt8: {
+            const uint8_t* a = static_cast<const uint8_t*>(Data());
+            const uint8_t* b = static_cast<const uint8_t*>(other.Data());
+            uint8_t* r = static_cast<uint8_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] + b[i];
+            }
+            break;
+        }
+    }
+
+    return result;
 }
 
 Tensor Tensor::operator-(const Tensor& other) const {
-    // TODO: Implement element-wise subtraction
-    // For now, return a copy
-    return Tensor(*this);
+    if (shape_ != other.shape_) {
+        throw std::runtime_error("Tensor shapes must match for element-wise subtraction");
+    }
+    if (dtype_ != other.dtype_) {
+        throw std::runtime_error("Tensor data types must match for element-wise subtraction");
+    }
+
+    Tensor result(shape_, dtype_);
+    size_t num_elements = NumElements();
+
+    switch (dtype_) {
+        case DataType::Float32: {
+            const float* a = static_cast<const float*>(Data());
+            const float* b = static_cast<const float*>(other.Data());
+            float* r = static_cast<float*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] - b[i];
+            }
+            break;
+        }
+        case DataType::Float64: {
+            const double* a = static_cast<const double*>(Data());
+            const double* b = static_cast<const double*>(other.Data());
+            double* r = static_cast<double*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] - b[i];
+            }
+            break;
+        }
+        case DataType::Int32: {
+            const int32_t* a = static_cast<const int32_t*>(Data());
+            const int32_t* b = static_cast<const int32_t*>(other.Data());
+            int32_t* r = static_cast<int32_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] - b[i];
+            }
+            break;
+        }
+        case DataType::Int64: {
+            const int64_t* a = static_cast<const int64_t*>(Data());
+            const int64_t* b = static_cast<const int64_t*>(other.Data());
+            int64_t* r = static_cast<int64_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] - b[i];
+            }
+            break;
+        }
+        case DataType::UInt8: {
+            const uint8_t* a = static_cast<const uint8_t*>(Data());
+            const uint8_t* b = static_cast<const uint8_t*>(other.Data());
+            uint8_t* r = static_cast<uint8_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] - b[i];
+            }
+            break;
+        }
+    }
+
+    return result;
 }
 
 Tensor Tensor::operator*(const Tensor& other) const {
-    // TODO: Implement element-wise multiplication
-    // For now, return a copy
-    return Tensor(*this);
+    if (shape_ != other.shape_) {
+        throw std::runtime_error("Tensor shapes must match for element-wise multiplication");
+    }
+    if (dtype_ != other.dtype_) {
+        throw std::runtime_error("Tensor data types must match for element-wise multiplication");
+    }
+
+    Tensor result(shape_, dtype_);
+    size_t num_elements = NumElements();
+
+    switch (dtype_) {
+        case DataType::Float32: {
+            const float* a = static_cast<const float*>(Data());
+            const float* b = static_cast<const float*>(other.Data());
+            float* r = static_cast<float*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] * b[i];
+            }
+            break;
+        }
+        case DataType::Float64: {
+            const double* a = static_cast<const double*>(Data());
+            const double* b = static_cast<const double*>(other.Data());
+            double* r = static_cast<double*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] * b[i];
+            }
+            break;
+        }
+        case DataType::Int32: {
+            const int32_t* a = static_cast<const int32_t*>(Data());
+            const int32_t* b = static_cast<const int32_t*>(other.Data());
+            int32_t* r = static_cast<int32_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] * b[i];
+            }
+            break;
+        }
+        case DataType::Int64: {
+            const int64_t* a = static_cast<const int64_t*>(Data());
+            const int64_t* b = static_cast<const int64_t*>(other.Data());
+            int64_t* r = static_cast<int64_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] * b[i];
+            }
+            break;
+        }
+        case DataType::UInt8: {
+            const uint8_t* a = static_cast<const uint8_t*>(Data());
+            const uint8_t* b = static_cast<const uint8_t*>(other.Data());
+            uint8_t* r = static_cast<uint8_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] * b[i];
+            }
+            break;
+        }
+    }
+
+    return result;
 }
 
 Tensor Tensor::operator/(const Tensor& other) const {
-    // TODO: Implement element-wise division
-    // For now, return a copy
-    return Tensor(*this);
+    if (shape_ != other.shape_) {
+        throw std::runtime_error("Tensor shapes must match for element-wise division");
+    }
+    if (dtype_ != other.dtype_) {
+        throw std::runtime_error("Tensor data types must match for element-wise division");
+    }
+
+    Tensor result(shape_, dtype_);
+    size_t num_elements = NumElements();
+
+    switch (dtype_) {
+        case DataType::Float32: {
+            const float* a = static_cast<const float*>(Data());
+            const float* b = static_cast<const float*>(other.Data());
+            float* r = static_cast<float*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] / b[i];
+            }
+            break;
+        }
+        case DataType::Float64: {
+            const double* a = static_cast<const double*>(Data());
+            const double* b = static_cast<const double*>(other.Data());
+            double* r = static_cast<double*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] / b[i];
+            }
+            break;
+        }
+        case DataType::Int32: {
+            const int32_t* a = static_cast<const int32_t*>(Data());
+            const int32_t* b = static_cast<const int32_t*>(other.Data());
+            int32_t* r = static_cast<int32_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] / b[i];
+            }
+            break;
+        }
+        case DataType::Int64: {
+            const int64_t* a = static_cast<const int64_t*>(Data());
+            const int64_t* b = static_cast<const int64_t*>(other.Data());
+            int64_t* r = static_cast<int64_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] / b[i];
+            }
+            break;
+        }
+        case DataType::UInt8: {
+            const uint8_t* a = static_cast<const uint8_t*>(Data());
+            const uint8_t* b = static_cast<const uint8_t*>(other.Data());
+            uint8_t* r = static_cast<uint8_t*>(result.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                r[i] = a[i] / b[i];
+            }
+            break;
+        }
+    }
+
+    return result;
 }
 
 } // namespace cyxwiz
