@@ -4,8 +4,10 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 // Node status enum
+// Note: Using TEXT representation for SQLite compatibility
+// PostgreSQL will also accept TEXT values instead of ENUM type
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "node_status", rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 pub enum NodeStatus {
     Online,
     Offline,
@@ -14,8 +16,10 @@ pub enum NodeStatus {
 }
 
 // Job status enum
+// Note: Using TEXT representation for SQLite compatibility
+// PostgreSQL will also accept TEXT values instead of ENUM type
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "job_status", rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 pub enum JobStatus {
     Pending,
     Assigned,
@@ -26,8 +30,10 @@ pub enum JobStatus {
 }
 
 // Payment status enum
+// Note: Using TEXT representation for SQLite compatibility
+// PostgreSQL will also accept TEXT values instead of ENUM type
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "payment_status", rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 pub enum PaymentStatus {
     Pending,
     Locked,
@@ -219,16 +225,18 @@ impl Job {
 // ============================================================================
 
 // Deployment type enum
+// Note: Using TEXT representation for SQLite compatibility
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "deployment_type", rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 pub enum DeploymentType {
     Local,
     Network,
 }
 
 // Deployment status enum
+// Note: Using TEXT representation for SQLite compatibility
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq)]
-#[sqlx(type_name = "deployment_status", rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 pub enum DeploymentStatus {
     Pending,
     Provisioning,
@@ -241,8 +249,9 @@ pub enum DeploymentStatus {
 }
 
 // Model format enum
+// Note: Using TEXT representation for SQLite compatibility
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "model_format", rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 pub enum ModelFormat {
     Onnx,
     Gguf,
@@ -254,8 +263,9 @@ pub enum ModelFormat {
 }
 
 // Model source enum
+// Note: Using TEXT representation for SQLite compatibility
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "model_source", rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 pub enum ModelSource {
     Local,
     Huggingface,
@@ -264,8 +274,9 @@ pub enum ModelSource {
 }
 
 // Terminal session status enum
+// Note: Using TEXT representation for SQLite compatibility
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq)]
-#[sqlx(type_name = "terminal_session_status", rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 pub enum TerminalSessionStatus {
     Active,
     Closed,
