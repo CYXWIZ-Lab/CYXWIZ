@@ -280,4 +280,50 @@ PYBIND11_MODULE(pycyxwiz, m) {
                               "Number of output features")
         .def_property_readonly("has_bias", &cyxwiz::LinearLayer::HasBias,
                               "Whether layer has bias term");
+
+    // Activation base class
+    py::class_<cyxwiz::Activation>(m, "Activation")
+        .def("forward", &cyxwiz::Activation::Forward,
+             py::arg("input"),
+             "Forward pass through activation")
+        .def("backward", &cyxwiz::Activation::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward pass (compute gradients)");
+
+    // ReLU activation
+    py::class_<cyxwiz::ReLU, cyxwiz::Activation>(m, "ReLU")
+        .def(py::init<>(),
+             "Create ReLU activation: f(x) = max(0, x)")
+        .def("forward", &cyxwiz::ReLU::Forward,
+             py::arg("input"),
+             "Forward: f(x) = max(0, x)")
+        .def("backward", &cyxwiz::ReLU::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: f'(x) = 1 if x > 0 else 0");
+
+    // Sigmoid activation
+    py::class_<cyxwiz::Sigmoid, cyxwiz::Activation>(m, "Sigmoid")
+        .def(py::init<>(),
+             "Create Sigmoid activation: f(x) = 1 / (1 + exp(-x))")
+        .def("forward", &cyxwiz::Sigmoid::Forward,
+             py::arg("input"),
+             "Forward: f(x) = 1 / (1 + exp(-x))")
+        .def("backward", &cyxwiz::Sigmoid::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: f'(x) = f(x) * (1 - f(x))");
+
+    // Tanh activation
+    py::class_<cyxwiz::Tanh, cyxwiz::Activation>(m, "Tanh")
+        .def(py::init<>(),
+             "Create Tanh activation: f(x) = tanh(x)")
+        .def("forward", &cyxwiz::Tanh::Forward,
+             py::arg("input"),
+             "Forward: f(x) = tanh(x)")
+        .def("backward", &cyxwiz::Tanh::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: f'(x) = 1 - tanh(x)^2");
 }

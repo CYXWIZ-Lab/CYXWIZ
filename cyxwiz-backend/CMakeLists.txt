@@ -33,6 +33,9 @@ set(BACKEND_SOURCES
     src/algorithms/layer.cpp
     src/algorithms/model.cpp
     src/algorithms/layers/linear.cpp
+    src/algorithms/activations/relu.cpp
+    src/algorithms/activations/sigmoid.cpp
+    src/algorithms/activations/tanh.cpp
 )
 
 # Header files
@@ -49,6 +52,9 @@ set(BACKEND_HEADERS
     include/cyxwiz/cyxwiz.h
     include/cyxwiz/cyxwiz_c.h
     include/cyxwiz/layers/linear.h
+    include/cyxwiz/activations/relu.h
+    include/cyxwiz/activations/sigmoid.h
+    include/cyxwiz/activations/tanh.h
 )
 
 # Create shared library (DLL/SO)

@@ -26,6 +26,11 @@
 // Concrete layer implementations
 #include "layers/linear.h"
 
+// Concrete activation implementations
+#include "activations/relu.h"
+#include "activations/sigmoid.h"
+#include "activations/tanh.h"
+
 namespace cyxwiz {
 
 // Initialize the backend
