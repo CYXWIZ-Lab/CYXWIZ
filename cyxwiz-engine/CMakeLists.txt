@@ -165,6 +165,30 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     COMMENT "Copying resources..."
 )
 
+# Copy startup scripts to build directory
+add_custom_command(TARGET cyxwiz-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/scripts
+    $<TARGET_FILE_DIR:cyxwiz-engine>/scripts
+    COMMENT "Copying scripts..."
+)
+
+# Copy startup_scripts.txt configuration to build directory
+add_custom_command(TARGET cyxwiz-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_SOURCE_DIR}/startup_scripts.txt
+    $<TARGET_FILE_DIR:cyxwiz-engine>/startup_scripts.txt
+    COMMENT "Copying startup_scripts.txt..."
+)
+
+# Copy test data files to build directory
+add_custom_command(TARGET cyxwiz-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_SOURCE_DIR}/test_data.csv
+    $<TARGET_FILE_DIR:cyxwiz-engine>/test_data.csv
+    COMMENT "Copying test data files..."
+)
+
 # ===== Python Bindings Module =====
 
 # Create Python module for plotting bindings
