@@ -27,7 +27,8 @@ public:
 
         // Allowed modules (Python standard library + CyxWiz modules)
         std::unordered_set<std::string> allowed_modules{
-            // Core utilities
+            // Core Python (required for sandbox cleanup)
+            "builtins",
             "sys",
             "os",
             "io",
@@ -67,12 +68,14 @@ public:
 
         // Blocked builtins (dangerous functions)
         // Note: 'open' is NOT blocked - we use allow_file_read/write to control it
+        // Note: '__import__' is NOT blocked - we need it for our import hook to work
+        //       The import hook itself controls which modules can be imported
         std::unordered_set<std::string> blocked_builtins{
             "exec",
             "eval",
             "compile",
-            "__import__",
-            // "open",  // Removed - allow file reading with restrictions
+            // "__import__",  // Removed - needed for import hook to function
+            // "open",        // Removed - allow file reading with restrictions
             "input",
             "breakpoint",
             "exit",

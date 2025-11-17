@@ -1,0 +1,30 @@
+# Test if Python standard library is accessible
+print("Testing Python imports...")
+
+try:
+    import sys
+    print(f"✓ sys imported: {sys.version}")
+except ImportError as e:
+    print(f"✗ sys import failed: {e}")
+
+try:
+    import os
+    print(f"✓ os imported")
+except ImportError as e:
+    print(f"✗ os import failed: {e}")
+
+try:
+    import csv
+    print(f"✓ csv imported")
+except ImportError as e:
+    print(f"✗ csv import failed: {e}")
+
+print("\nPython path:")
+try:
+    import sys
+    for p in sys.path:
+        print(f"  - {p}")
+except:
+    print("  Cannot access sys.path")
+
+print("\nTest complete!")

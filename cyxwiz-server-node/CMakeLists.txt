@@ -28,6 +28,7 @@ set(SERVER_NODE_SOURCES
     src/terminal_handler.cpp
     src/metrics_collector.cpp
     src/node_client.cpp
+    src/node_service.cpp
     # Legacy files (to be refactored)
     src/node_server.cpp
     src/job_executor.cpp
@@ -80,6 +81,9 @@ if(WIN32)
     target_compile_definitions(cyxwiz-server-node PRIVATE
         NOMINMAX
         WIN32_LEAN_AND_MEAN
+        # Protobuf compatibility flags to fix arena allocation issue
+        PROTOBUF_USE_DLLS              # Use DLL linkage
+        GOOGLE_PROTOBUF_NO_THREADLOCAL # Disable thread-local optimization
     )
 endif()
 

@@ -136,6 +136,19 @@ int64_t HardwareDetector::GetAvailableRAM() {
 }
 
 void HardwareDetector::DetectDevices(protocol::NodeInfo* node_info) {
+    // TODO: Fix protobuf arena allocation linker error with add_devices()
+    // This function is disabled to avoid arena allocation issues with MSVC 19.50 and protobuf
+    // The devices field in NodeInfo uses RepeatedPtrField which triggers internal arena class
+    // instantiation (DeviceCapabilitiesA) that cannot be resolved with the current protobuf build
+    (void)node_info; // Suppress unused parameter warning
+
+    // Device detection is disabled until we can either:
+    // 1. Verify dynamic protobuf DLL exports all required arena symbols
+    // 2. Use an older protobuf version without arena optimization
+    // 3. Manually construct and copy DeviceCapabilities instead of add_devices()
+    spdlog::warn("Device detection disabled due to protobuf arena allocation compatibility issue");
+
+    /* COMMENTED OUT - Triggers DeviceCapabilitiesA arena allocation linker error
     // Get available devices from the backend
     auto devices = cyxwiz::Device::GetAvailableDevices();
 
@@ -192,6 +205,7 @@ void HardwareDetector::DetectDevices(protocol::NodeInfo* node_info) {
                      device_info.memory_total / (1024.0 * 1024.0 * 1024.0),
                      device_info.memory_available / (1024.0 * 1024.0 * 1024.0));
     }
+    */
 }
 
 std::string HardwareDetector::GetLocalIPAddress() {
