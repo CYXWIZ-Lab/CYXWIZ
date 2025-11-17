@@ -234,6 +234,20 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("AdaGrad", cyxwiz::OptimizerType::AdaGrad)
         .export_values();
 
+    // Optimizer base class
+    py::class_<cyxwiz::Optimizer>(m, "Optimizer")
+        .def("step", &cyxwiz::Optimizer::Step,
+             py::arg("parameters"),
+             py::arg("gradients"),
+             "Update parameters using gradients")
+        .def("zero_grad", &cyxwiz::Optimizer::ZeroGrad,
+             "Clear optimizer state")
+        .def("set_learning_rate", &cyxwiz::Optimizer::SetLearningRate,
+             py::arg("lr"),
+             "Set learning rate")
+        .def("get_learning_rate", &cyxwiz::Optimizer::GetLearningRate,
+             "Get current learning rate");
+
     m.def("create_optimizer", &cyxwiz::CreateOptimizer,
           py::arg("type"), py::arg("learning_rate") = 0.001,
           "Create an optimizer instance");
@@ -326,4 +340,30 @@ PYBIND11_MODULE(pycyxwiz, m) {
              py::arg("grad_output"),
              py::arg("input"),
              "Backward: f'(x) = 1 - tanh(x)^2");
+
+    // MSE Loss (concrete implementation)
+    py::class_<cyxwiz::MSELoss>(m, "MSELoss")
+        .def(py::init<>(),
+             "Create MSE Loss: mean((predictions - targets)^2)")
+        .def("forward", &cyxwiz::MSELoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute MSE loss")
+        .def("backward", &cyxwiz::MSELoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: dL/dy = 2*(predictions - targets)/N");
+
+    // CrossEntropy Loss (concrete implementation)
+    py::class_<cyxwiz::CrossEntropyLoss>(m, "CrossEntropyLoss")
+        .def(py::init<>(),
+             "Create CrossEntropy Loss with softmax for classification")
+        .def("forward", &cyxwiz::CrossEntropyLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute cross entropy loss (predictions are logits)")
+        .def("backward", &cyxwiz::CrossEntropyLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t logits");
 }

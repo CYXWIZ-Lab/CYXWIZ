@@ -12,7 +12,33 @@ SGDOptimizer::SGDOptimizer(double learning_rate, double momentum)
 
 void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
                         const std::map<std::string, Tensor>& gradients) {
-    // TODO: Implement SGD with momentum
+    // Simple SGD: param = param - lr * grad
+    // For now, implement simple SGD without momentum using manual data updates
+
+    for (auto& param_pair : parameters) {
+        const std::string& name = param_pair.first;
+        Tensor& param = param_pair.second;
+
+        // Find corresponding gradient
+        auto grad_it = gradients.find(name);
+        if (grad_it == gradients.end()) {
+            continue; // No gradient for this parameter
+        }
+
+        const Tensor& grad = grad_it->second;
+
+        // Manual SGD update: param -= lr * grad
+        if (param.GetDataType() == DataType::Float32) {
+            float* param_data = static_cast<float*>(param.Data());
+            const float* grad_data = static_cast<const float*>(grad.Data());
+            size_t num_elements = param.NumElements();
+
+            for (size_t i = 0; i < num_elements; i++) {
+                param_data[i] -= static_cast<float>(learning_rate_) * grad_data[i];
+            }
+        }
+    }
+
     step_count_++;
 }
 
