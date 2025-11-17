@@ -46,6 +46,36 @@ bool Initialize() {
 #elif defined(CYXWIZ_ENABLE_OPENCL)
         af::setBackend(AF_BACKEND_OPENCL);
         spdlog::info("OpenCL backend available");
+
+        // Select best GPU device (prefer discrete over integrated)
+        int num_devices = af::getDeviceCount();
+        int best_device = 0;
+        bool found_discrete = false;
+
+        for (int i = 0; i < num_devices; i++) {
+            af::setDevice(i);
+            char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
+            af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
+
+            std::string device_name(d_name);
+            bool is_discrete = (device_name.find("NVIDIA") != std::string::npos ||
+                              device_name.find("AMD") != std::string::npos ||
+                              device_name.find("Radeon") != std::string::npos ||
+                              device_name.find("GeForce") != std::string::npos);
+
+            // Prefer first discrete GPU found
+            if (is_discrete && !found_discrete) {
+                best_device = i;
+                found_discrete = true;
+                spdlog::info("Found discrete GPU: {} (device {})", d_name, i);
+                break;  // Use first discrete GPU
+            }
+        }
+
+        af::setDevice(best_device);
+        char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
+        af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
+        spdlog::info("Using OpenCL device {}: {}", best_device, d_name);
 #endif
 
     } catch (const af::exception& e) {
