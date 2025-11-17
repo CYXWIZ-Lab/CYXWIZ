@@ -19,6 +19,9 @@
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 
+// Forward declaration for Python bindings accessor
+extern void set_training_plot_panel(cyxwiz::TrainingPlotPanel* panel);
+
 namespace gui {
 
 MainWindow::MainWindow()
@@ -42,6 +45,9 @@ MainWindow::MainWindow()
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
+
+    // Expose TrainingPlotPanel to Python scripts
+    set_training_plot_panel(training_plot_panel_.get());
 
     // Set scripting engine for command window and script editor
     command_window_->SetScriptingEngine(scripting_engine_);
