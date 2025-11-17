@@ -25,28 +25,54 @@ public:
         std::chrono::seconds timeout{60};           // Max execution time
         size_t max_memory_mb{1024};                 // Max memory usage (1GB)
 
-        // Allowed modules
+        // Allowed modules (Python standard library + CyxWiz modules)
         std::unordered_set<std::string> allowed_modules{
+            // Core utilities
+            "sys",
+            "os",
+            "io",
+            "csv",
+            "time",
+
+            // Math and data
             "math",
             "random",
+            "statistics",
+
+            // Data structures
             "json",
             "datetime",
             "collections",
             "itertools",
             "functools",
+
+            // Text processing
             "re",
+            "string",
+
+            // File formats (safe reading)
+            "pathlib",
+            "tempfile",
+
+            // Optional: Scientific computing (if installed)
+            "numpy",
+            "pandas",
+            "matplotlib",
+            "scipy",
+
             // CyxWiz modules
             "pycyxwiz",
             "cyxwiz_plotting"
         };
 
         // Blocked builtins (dangerous functions)
+        // Note: 'open' is NOT blocked - we use allow_file_read/write to control it
         std::unordered_set<std::string> blocked_builtins{
             "exec",
             "eval",
             "compile",
             "__import__",
-            "open",
+            // "open",  // Removed - allow file reading with restrictions
             "input",
             "breakpoint",
             "exit",
@@ -54,9 +80,10 @@ public:
         };
 
         // File access restrictions
-        bool allow_file_read{false};
-        bool allow_file_write{false};
-        std::string allowed_directory{""};  // If empty, no file access
+        // Default: Allow file reading (safe for templates), deny writing
+        bool allow_file_read{true};   // Allow reading files
+        bool allow_file_write{false};  // Deny writing files (security)
+        std::string allowed_directory{""};  // Empty = current directory
     };
 
     PythonSandbox();
