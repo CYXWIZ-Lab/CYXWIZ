@@ -13,14 +13,11 @@
 # === IMPORTS ===
 import os
 import sys
+import csv
 
-# CyxWiz data table (if available)
-try:
-    from data_table import DataTable
-    HAS_DATA_TABLE = True
-except ImportError:
-    HAS_DATA_TABLE = False
-    print("Warning: DataTable not available, using pandas fallback")
+# Note: DataTable is a C++ GUI component, not a Python module
+# For scripting, we use built-in csv module or pandas
+HAS_DATA_TABLE = False  # Not available in Python scripts
 
 # Try to import pandas for fallback
 try:
@@ -57,37 +54,47 @@ def auto_detect_format(filepath):
     }
     return format_map.get(ext, 'unknown')
 
-def load_data_cyxwiz(filepath, format='auto'):
-    """Load data using CyxWiz DataTable"""
-    if not HAS_DATA_TABLE:
-        print("Error: DataTable not available")
-        return None
-
-    if format == 'auto':
-        format = auto_detect_format(filepath)
-
-    table = DataTable()
-
+def load_data_csv_builtin(filepath):
+    """Load CSV data using Python's built-in csv module"""
     try:
-        if format == 'csv':
-            success = table.LoadFromCSV(filepath)
-        elif format == 'txt':
-            success = table.LoadFromTXT(filepath, TXT_DELIMITER)
-        elif format == 'hdf5':
-            success = table.LoadFromHDF5(filepath)
-        else:
-            print(f"Error: Unknown format '{format}'")
-            return None
+        data = {'headers': [], 'rows': []}
 
-        if success:
-            print(f"✓ Loaded {table.RowCount()} rows, {table.ColumnCount()} columns")
-            return table
-        else:
-            print(f"✗ Failed to load {filepath}")
-            return None
+        with open(filepath, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            data['headers'] = next(reader)  # First row is headers
+            data['rows'] = list(reader)
+
+        print(f"✓ Loaded {len(data['rows'])} rows, {len(data['headers'])} columns")
+        return data
 
     except Exception as e:
-        print(f"Error loading data: {e}")
+        print(f"Error loading CSV: {e}")
+        return None
+
+def load_data_txt_builtin(filepath, delimiter='\t'):
+    """Load TXT data using Python's built-in file operations"""
+    try:
+        data = {'headers': [], 'rows': []}
+
+        with open(filepath, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            if not lines:
+                return None
+
+            # Parse header
+            data['headers'] = [col.strip() for col in lines[0].split(delimiter)]
+
+            # Parse data rows
+            for line in lines[1:]:
+                if line.strip():
+                    row = [col.strip() for col in line.split(delimiter)]
+                    data['rows'].append(row)
+
+        print(f"✓ Loaded {len(data['rows'])} rows, {len(data['headers'])} columns")
+        return data
+
+    except Exception as e:
+        print(f"Error loading TXT: {e}")
         return None
 
 def load_data_pandas(filepath, format='auto'):
@@ -123,20 +130,18 @@ def display_data_info(data):
         print("No data to display")
         return
 
-    # Handle DataTable
-    if HAS_DATA_TABLE and isinstance(data, DataTable):
+    # Handle built-in dictionary format
+    if isinstance(data, dict) and 'headers' in data and 'rows' in data:
         print("\n=== Dataset Information ===")
-        print(f"Rows: {data.RowCount()}")
-        print(f"Columns: {data.ColumnCount()}")
+        print(f"Rows: {len(data['rows'])}")
+        print(f"Columns: {len(data['headers'])}")
         print(f"\nColumn Names:")
-        for i, header in enumerate(data.GetHeaders()):
+        for i, header in enumerate(data['headers']):
             print(f"  {i+1}. {header}")
 
         print(f"\nFirst 5 rows:")
-        for row_idx in range(min(5, data.RowCount())):
-            row_data = [data.GetCellAsString(row_idx, col_idx)
-                       for col_idx in range(data.ColumnCount())]
-            print(f"  Row {row_idx+1}: {row_data}")
+        for row_idx in range(min(5, len(data['rows']))):
+            print(f"  Row {row_idx+1}: {data['rows'][row_idx]}")
 
     # Handle pandas DataFrame
     elif HAS_PANDAS and isinstance(data, pd.DataFrame):
@@ -171,21 +176,33 @@ def main():
 
     print(f"\nLoading data from: {filepath}")
 
-    # Try CyxWiz DataTable first, fall back to pandas
+    # Determine format and load data
+    format = auto_detect_format(filepath) if DATA_FORMAT == 'auto' else DATA_FORMAT
     data = None
-    if HAS_DATA_TABLE:
-        data = load_data_cyxwiz(filepath, DATA_FORMAT)
 
-    if data is None and HAS_PANDAS:
-        print("Falling back to pandas...")
-        data = load_data_pandas(filepath, DATA_FORMAT)
+    # Try built-in Python methods first
+    if format == 'csv':
+        data = load_data_csv_builtin(filepath)
+    elif format == 'txt':
+        data = load_data_txt_builtin(filepath, TXT_DELIMITER)
+    elif format == 'hdf5':
+        # HDF5 requires pandas or h5py
+        if HAS_PANDAS:
+            data = load_data_pandas(filepath, format)
+        else:
+            print("HDF5 format requires pandas. Install with: pip install pandas")
+
+    # Fall back to pandas if built-in failed and pandas is available
+    if data is None and HAS_PANDAS and format in ['csv', 'txt']:
+        print("Trying pandas...")
+        data = load_data_pandas(filepath, format)
 
     if data is None:
         print("\n✗ Failed to load data")
         print("Make sure:")
         print("  1. File path is correct")
         print("  2. File format is supported")
-        print("  3. Required libraries are installed")
+        print("  3. File is readable and properly formatted")
         return
 
     # Display data information

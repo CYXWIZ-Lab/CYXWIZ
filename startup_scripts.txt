@@ -8,8 +8,8 @@
 #
 # Uncomment the scripts you want to run on startup:
 
-# scripts/startup/welcome.cyx
-# scripts/startup/init_imports.cyx
+scripts/startup/welcome.cyx
+scripts/startup/init_imports.cyx
 
 # Add your own custom startup scripts below:
 # C:/Users/me/my_startup.cyx

@@ -367,9 +367,13 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     bool replaced_empty_tab = false;
     if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size())) {
         auto& current_tab = tabs_[active_tab_index_];
-        // Replace if it's a new, unmodified, empty untitled tab
-        if (current_tab->is_new && !current_tab->is_modified &&
-            current_tab->editor.GetText().empty()) {
+        // Replace if it's a new, unmodified untitled tab
+        std::string current_text = current_tab->editor.GetText();
+        // Trim whitespace for comparison
+        current_text.erase(0, current_text.find_first_not_of(" \t\n\r"));
+        current_text.erase(current_text.find_last_not_of(" \t\n\r") + 1);
+
+        if (current_tab->is_new && !current_tab->is_modified && current_text.empty()) {
             // Reuse existing tab
             current_tab->filename = std::filesystem::path(path).filename().string();
             current_tab->filepath = path;
