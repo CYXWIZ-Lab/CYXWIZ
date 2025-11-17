@@ -5,7 +5,51 @@
 #include <cstdlib>
 #include <spdlog/spdlog.h>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
+
 namespace cyxwiz {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+// Helper: Convert CyxWiz DataType to ArrayFire dtype
+static af::dtype ToArrayFireType(DataType dtype) {
+    switch (dtype) {
+        case DataType::Float32: return af::dtype::f32;
+        case DataType::Float64: return af::dtype::f64;
+        case DataType::Int32: return af::dtype::s32;
+        case DataType::Int64: return af::dtype::s64;
+        case DataType::UInt8: return af::dtype::u8;
+        default: throw std::runtime_error("Unsupported DataType for ArrayFire");
+    }
+}
+
+// Helper: Create ArrayFire array from CPU data
+static af::array* CreateArrayFireArray(const std::vector<size_t>& shape, DataType dtype, const void* data) {
+    // Convert shape to af::dim4
+    af::dim4 dims(1, 1, 1, 1);
+    for (size_t i = 0; i < shape.size() && i < 4; i++) {
+        dims[i] = shape[i];
+    }
+
+    // Create ArrayFire array from host data
+    af::array* arr = new af::array(dims, ToArrayFireType(dtype));
+
+    if (data) {
+        // Copy data from CPU to GPU
+        arr->write(data, arr->bytes(), afHost);
+    }
+
+    return arr;
+}
+
+// Helper: Sync ArrayFire array back to CPU memory
+static void SyncArrayFireToCPU(const af::array* af_arr, void* cpu_data) {
+    if (af_arr && cpu_data) {
+        af_arr->host(cpu_data);
+    }
+}
+#endif
 
 Tensor::Tensor()
     : dtype_(DataType::Float32), device_(nullptr), data_(nullptr), owns_data_(false)
@@ -220,11 +264,37 @@ Tensor Tensor::operator+(const Tensor& other) const {
         throw std::runtime_error("Tensor data types must match for element-wise addition");
     }
 
-    // Create result tensor
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // Use ArrayFire for GPU-accelerated computation
+    try {
+        // Create ArrayFire arrays from CPU data
+        af::array* a_arr = CreateArrayFireArray(shape_, dtype_, data_);
+        af::array* b_arr = CreateArrayFireArray(other.shape_, other.dtype_, other.data_);
+
+        // Perform GPU-accelerated addition
+        af::array result_arr = *a_arr + *b_arr;
+
+        // Create result tensor
+        Tensor result(shape_, dtype_);
+
+        // Copy result back to CPU
+        result_arr.host(result.data_);
+
+        // Cleanup
+        delete a_arr;
+        delete b_arr;
+
+        return result;
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire operation failed, falling back to CPU: {}", e.what());
+        // Fall through to CPU implementation
+    }
+#endif
+
+    // CPU fallback implementation
     Tensor result(shape_, dtype_);
     size_t num_elements = NumElements();
 
-    // Perform element-wise addition based on data type
     switch (dtype_) {
         case DataType::Float32: {
             const float* a = static_cast<const float*>(Data());
