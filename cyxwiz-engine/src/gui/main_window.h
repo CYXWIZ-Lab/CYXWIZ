@@ -20,12 +20,18 @@ class PlotTestControlPanel;
 class CommandWindowPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
+class ConnectionDialog;
 } // namespace cyxwiz
 
 namespace scripting {
 class ScriptingEngine;
 class StartupScriptManager;
 } // namespace scripting
+
+namespace network {
+class GRPCClient;
+class JobManager;
+} // namespace network
 
 namespace gui {
 
@@ -39,6 +45,9 @@ public:
     Console* GetConsole() { return console_.get(); }
     cyxwiz::PlotTestControlPanel* GetPlotTestControl() { return plot_test_control_.get(); }
     cyxwiz::ScriptEditorPanel* GetScriptEditor() { return script_editor_.get(); }
+
+    // Set network components (called by Application after construction)
+    void SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager);
 
 private:
     void RenderDockSpace();
@@ -60,6 +69,7 @@ private:
     std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
+    std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;

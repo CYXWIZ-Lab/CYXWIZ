@@ -13,10 +13,10 @@ pub async fn create_node(pool: &DbPool, node: &Node) -> Result<Node> {
             id, wallet_address, name, status, reputation_score, stake_amount,
             cpu_cores, ram_gb, gpu_model, gpu_memory_gb, has_cuda, has_opencl,
             total_jobs_completed, total_jobs_failed, uptime_percentage, current_load,
-            country, region, last_heartbeat, registered_at, updated_at
+            country, region, ip_address, port, last_heartbeat, registered_at, updated_at
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-            $13, $14, $15, $16, $17, $18, $19, $20, $21
+            $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
         )
         RETURNING *
         "#,
@@ -39,6 +39,8 @@ pub async fn create_node(pool: &DbPool, node: &Node) -> Result<Node> {
     .bind(node.current_load)
     .bind(&node.country)
     .bind(&node.region)
+    .bind(&node.ip_address)
+    .bind(node.port)
     .bind(node.last_heartbeat)
     .bind(node.registered_at)
     .bind(node.updated_at)
@@ -76,6 +78,16 @@ pub async fn get_node_by_wallet(pool: &DbPool, wallet: &str) -> Result<Option<No
 pub async fn list_available_nodes(pool: &DbPool) -> Result<Vec<Node>> {
     let nodes = sqlx::query_as::<_, Node>(
         "SELECT * FROM nodes WHERE status = 'online' AND current_load < 0.9 ORDER BY reputation_score DESC"
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(nodes)
+}
+
+pub async fn get_all_online_nodes(pool: &DbPool) -> Result<Vec<Node>> {
+    let nodes = sqlx::query_as::<_, Node>(
+        "SELECT * FROM nodes WHERE status = 'online'"
     )
     .fetch_all(pool)
     .await?;
@@ -865,5 +877,32 @@ pub async fn list_models(
 pub async fn delete_model(pool: &DbPool, model_id: Uuid, user_id: &str) -> Result<()> {
     // TODO: Implement actual database deletion
     // For now, return success to allow compilation
+    Ok(())
+}
+
+// Get node by IP:port endpoint
+pub async fn get_node_by_endpoint(pool: &DbPool, ip_address: &str, port: i32) -> Result<Option<Node>> {
+    let node = sqlx::query_as::<_, Node>(
+        "SELECT * FROM nodes WHERE ip_address = $1 AND port = $2"
+    )
+    .bind(ip_address)
+    .bind(port)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(node)
+}
+
+// Update node endpoint (IP and port)
+pub async fn update_node_endpoint(pool: &DbPool, node_id: &DbId, ip_address: &str, port: i32) -> Result<()> {
+    sqlx::query(
+        "UPDATE nodes SET ip_address = $1, port = $2, updated_at = NOW() WHERE id = $3"
+    )
+    .bind(ip_address)
+    .bind(port)
+    .bind(node_id)
+    .execute(pool)
+    .await?;
+
     Ok(())
 }

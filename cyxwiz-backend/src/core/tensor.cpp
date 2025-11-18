@@ -29,7 +29,7 @@ static af::array* CreateArrayFireArray(const std::vector<size_t>& shape, DataTyp
     // Convert shape to af::dim4
     af::dim4 dims(1, 1, 1, 1);
     for (size_t i = 0; i < shape.size() && i < 4; i++) {
-        dims[i] = shape[i];
+        dims[static_cast<unsigned int>(i)] = static_cast<unsigned int>(shape[i]);
     }
 
     // Create ArrayFire array from host data
@@ -231,7 +231,7 @@ Tensor Tensor::Zeros(const std::vector<size_t>& shape, DataType dtype) {
         // Convert shape to af::dim4
         af::dim4 dims(1, 1, 1, 1);
         for (size_t i = 0; i < shape.size() && i < 4; i++) {
-            dims[i] = static_cast<unsigned int>(shape[i]);
+            dims[static_cast<unsigned int>(i)] = static_cast<unsigned int>(shape[i]);
         }
 
         // Create ArrayFire array filled with zeros
@@ -258,7 +258,7 @@ Tensor Tensor::Ones(const std::vector<size_t>& shape, DataType dtype) {
         // Convert shape to af::dim4
         af::dim4 dims(1, 1, 1, 1);
         for (size_t i = 0; i < shape.size() && i < 4; i++) {
-            dims[i] = static_cast<unsigned int>(shape[i]);
+            dims[static_cast<unsigned int>(i)] = static_cast<unsigned int>(shape[i]);
         }
 
         // Create ArrayFire array filled with ones
@@ -327,7 +327,7 @@ Tensor Tensor::Random(const std::vector<size_t>& shape, DataType dtype) {
         // Convert shape to af::dim4
         af::dim4 dims(1, 1, 1, 1);
         for (size_t i = 0; i < shape.size() && i < 4; i++) {
-            dims[i] = static_cast<unsigned int>(shape[i]);
+            dims[static_cast<unsigned int>(i)] = static_cast<unsigned int>(shape[i]);
         }
 
         // Create ArrayFire array with random values [0, 1)

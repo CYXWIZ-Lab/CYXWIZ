@@ -45,6 +45,7 @@ set(ENGINE_SOURCES
     src/gui/panels/command_window.cpp
     src/gui/panels/script_editor.cpp
     src/gui/panels/table_viewer.cpp
+    src/gui/panels/connection_dialog.cpp
     src/data/data_table.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
@@ -83,6 +84,7 @@ set(ENGINE_HEADERS
     src/gui/panels/command_window.h
     src/gui/panels/script_editor.h
     src/gui/panels/table_viewer.h
+    src/gui/panels/connection_dialog.h
     src/data/data_table.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h

@@ -497,6 +497,14 @@ void ToolbarPanel::RenderPlotsMenu() {
 
 void ToolbarPanel::RenderDeployMenu() {
     if (ImGui::BeginMenu("Deploy")) {
+        if (ImGui::MenuItem("Connect to Server...")) {
+            if (connect_to_server_callback_) {
+                connect_to_server_callback_();
+            }
+        }
+
+        ImGui::Separator();
+
         if (ImGui::BeginMenu("Export Model")) {
             if (ImGui::MenuItem("ONNX Format")) {
                 // TODO: Export ONNX

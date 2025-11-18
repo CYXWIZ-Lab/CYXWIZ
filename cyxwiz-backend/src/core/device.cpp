@@ -122,14 +122,14 @@ DeviceInfo Device::GetInfo() const {
                 // Try to extract memory size from device name (e.g., "GTX 1050 Ti 4GB")
                 if (device_name.find("1050") != std::string::npos) {
                     info.memory_total = 4LL * 1024 * 1024 * 1024; // 4 GB
-                    info.memory_available = info.memory_total * 0.9; // Estimate 90% available
+                    info.memory_available = static_cast<size_t>(info.memory_total * 0.9); // Estimate 90% available
                     spdlog::info("Using estimated memory for {}: {} GB", device_name,
                         info.memory_total / (1024.0 * 1024.0 * 1024.0));
                 } else if (device_name.find("UHD") != std::string::npos ||
                            device_name.find("Intel") != std::string::npos) {
                     // Integrated Intel graphics typically share system RAM
                     info.memory_total = 2LL * 1024 * 1024 * 1024; // 2 GB shared
-                    info.memory_available = info.memory_total * 0.8;
+                    info.memory_available = static_cast<size_t>(info.memory_total * 0.8);
                     spdlog::info("Using estimated memory for {}: {} GB shared", device_name,
                         info.memory_total / (1024.0 * 1024.0 * 1024.0));
                 }

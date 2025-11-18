@@ -11,6 +11,7 @@
 #include "panels/command_window.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
+#include "panels/connection_dialog.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 
@@ -92,6 +93,22 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow() = default;
 
+void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager) {
+    // Create connection dialog with network components
+    connection_dialog_ = std::make_unique<cyxwiz::ConnectionDialog>(client, job_manager);
+
+    // Set up callback in toolbar to show connection dialog
+    if (toolbar_) {
+        toolbar_->SetConnectToServerCallback([this]() {
+            if (connection_dialog_) {
+                connection_dialog_->Show();
+            }
+        });
+    }
+
+    spdlog::info("Network components set in MainWindow");
+}
+
 void MainWindow::ResetDockLayout() {
     // Force rebuild of the docking layout
     first_time_layout_ = true;
@@ -112,6 +129,7 @@ void MainWindow::Render() {
     if (command_window_) command_window_->Render();
     if (script_editor_) script_editor_->Render();
     if (table_viewer_) table_viewer_->Render();
+    if (connection_dialog_) connection_dialog_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();

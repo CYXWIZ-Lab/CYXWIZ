@@ -163,6 +163,9 @@ bool CyxWizApp::Initialize() {
     grpc_client_ = std::make_unique<network::GRPCClient>();
     job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
 
+    // Connect network components to main window
+    main_window_->SetNetworkComponents(grpc_client_.get(), job_manager_.get());
+
     spdlog::info("Application initialized successfully");
 
     // Log device information to GUI console

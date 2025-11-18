@@ -79,6 +79,10 @@ pub struct Node {
     pub country: Option<String>,
     pub region: Option<String>,
 
+    // Network endpoint
+    pub ip_address: String,
+    pub port: i32,
+
     pub last_heartbeat: DateTime<Utc>,
     pub registered_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

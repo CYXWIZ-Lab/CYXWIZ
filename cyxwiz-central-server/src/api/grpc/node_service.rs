@@ -38,26 +38,57 @@ impl NodeService for NodeServiceImpl {
         let req = request.into_inner();
         let node_info = req.info.ok_or_else(|| Status::invalid_argument("Node info is required"))?;
 
-        info!("Registering node: {}", node_info.name);
+        info!("Registering node: {} from {}:{}", node_info.name, node_info.ip_address, node_info.port);
 
-        // Check if node already exists (by wallet address)
-        match queries::get_node_by_wallet(&self.db_pool, &node_info.wallet_address).await {
-            Ok(Some(existing_node)) => {
-                warn!("Node with wallet {} already registered", node_info.wallet_address);
+        // Check if node already exists (by wallet address or IP:port combination)
+        if !node_info.wallet_address.is_empty() {
+            // Primary check: wallet address (for authenticated nodes)
+            match queries::get_node_by_wallet(&self.db_pool, &node_info.wallet_address).await {
+                Ok(Some(existing_node)) => {
+                    info!("Node with wallet {} already registered, updating IP to {}:{}",
+                          node_info.wallet_address, node_info.ip_address, node_info.port);
 
-                return Ok(Response::new(RegisterNodeResponse {
-                    status: StatusCode::StatusSuccess as i32,
-                    node_id: existing_node.id.to_string(),
-                    session_token: format!("session_{}", existing_node.id),
-                    error: None,
-                }));
+                    // Update IP address and port for existing node
+                    if let Err(e) = queries::update_node_endpoint(&self.db_pool, &existing_node.id,
+                                                                   &node_info.ip_address, node_info.port).await {
+                        warn!("Failed to update node endpoint: {}", e);
+                    }
+
+                    return Ok(Response::new(RegisterNodeResponse {
+                        status: StatusCode::StatusSuccess as i32,
+                        node_id: existing_node.id.to_string(),
+                        session_token: format!("session_{}", existing_node.id),
+                        error: None,
+                    }));
+                }
+                Ok(None) => {
+                    // Continue with registration
+                }
+                Err(e) => {
+                    error!("Database error: {}", e);
+                    return Err(Status::internal(format!("Database error: {}", e)));
+                }
             }
-            Ok(None) => {
-                // Continue with registration
-            }
-            Err(e) => {
-                error!("Database error: {}", e);
-                return Err(Status::internal(format!("Database error: {}", e)));
+        } else {
+            // Fallback check: IP:port combination (for unauthenticated nodes)
+            match queries::get_node_by_endpoint(&self.db_pool, &node_info.ip_address, node_info.port).await {
+                Ok(Some(existing_node)) => {
+                    info!("Node at {}:{} already registered", node_info.ip_address, node_info.port);
+
+                    return Ok(Response::new(RegisterNodeResponse {
+                        status: StatusCode::StatusSuccess as i32,
+                        node_id: existing_node.id.to_string(),
+                        session_token: format!("session_{}", existing_node.id),
+                        error: None,
+                    }));
+                }
+                Ok(None) => {
+                    // Continue with registration
+                }
+                Err(e) => {
+                    error!("Database error: {}", e);
+                    return Err(Status::internal(format!("Database error: {}", e)));
+                }
             }
         }
 
@@ -96,6 +127,9 @@ impl NodeService for NodeServiceImpl {
 
             country: None, // TODO: Extract from region
             region: Some(node_info.region.clone()),
+
+            ip_address: node_info.ip_address.clone(),
+            port: node_info.port,
 
             last_heartbeat: Utc::now(),
             registered_at: Utc::now(),
