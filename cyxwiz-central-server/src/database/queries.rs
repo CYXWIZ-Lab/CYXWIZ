@@ -48,12 +48,18 @@ pub async fn create_node(pool: &DbPool, node: &Node) -> Result<Node> {
     Ok(row)
 }
 
-pub async fn get_node_by_id(pool: &DbPool, node_id: Uuid) -> Result<Node> {
+pub async fn get_node_by_id(pool: &DbPool, node_id: DbId) -> Result<Node> {
+    #[cfg(feature = "sqlite-compat")]
+    let node_id_str = node_id.clone();
+
+    #[cfg(not(feature = "sqlite-compat"))]
+    let node_id_str = node_id.to_string();
+
     let node = sqlx::query_as::<_, Node>("SELECT * FROM nodes WHERE id = $1")
         .bind(node_id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| ServerError::NodeNotFound(node_id.to_string()))?;
+        .ok_or_else(|| ServerError::NodeNotFound(node_id_str))?;
 
     Ok(node)
 }
@@ -77,7 +83,7 @@ pub async fn list_available_nodes(pool: &DbPool) -> Result<Vec<Node>> {
     Ok(nodes)
 }
 
-pub async fn update_node_status(pool: &DbPool, node_id: Uuid, status: NodeStatus) -> Result<()> {
+pub async fn update_node_status(pool: &DbPool, node_id: DbId, status: NodeStatus) -> Result<()> {
     sqlx::query("UPDATE nodes SET status = $1, updated_at = NOW() WHERE id = $2")
         .bind(status)
         .bind(node_id)
@@ -87,7 +93,7 @@ pub async fn update_node_status(pool: &DbPool, node_id: Uuid, status: NodeStatus
     Ok(())
 }
 
-pub async fn update_node_heartbeat(pool: &DbPool, node_id: Uuid) -> Result<()> {
+pub async fn update_node_heartbeat(pool: &DbPool, node_id: DbId) -> Result<()> {
     let now = chrono::Utc::now();
     sqlx::query("UPDATE nodes SET last_heartbeat = $1, updated_at = $2 WHERE id = $3")
         .bind(now)
@@ -99,7 +105,7 @@ pub async fn update_node_heartbeat(pool: &DbPool, node_id: Uuid) -> Result<()> {
     Ok(())
 }
 
-pub async fn update_node_load(pool: &DbPool, node_id: Uuid, load: f64) -> Result<()> {
+pub async fn update_node_load(pool: &DbPool, node_id: DbId, load: f64) -> Result<()> {
     let now = chrono::Utc::now();
     sqlx::query("UPDATE nodes SET current_load = $1, updated_at = $2 WHERE id = $3")
         .bind(load)
@@ -137,7 +143,7 @@ pub async fn create_job(pool: &DbPool, job: &Job) -> Result<Job> {
     .bind(job.estimated_duration_seconds)
     .bind(job.estimated_cost)
     .bind(job.actual_cost)
-    .bind(job.assigned_node_id)
+    .bind(&job.assigned_node_id)
     .bind(job.retry_count)
     .bind(&job.result_hash)
     .bind(&job.error_message)
@@ -152,12 +158,18 @@ pub async fn create_job(pool: &DbPool, job: &Job) -> Result<Job> {
     Ok(row)
 }
 
-pub async fn get_job_by_id(pool: &DbPool, job_id: Uuid) -> Result<Job> {
+pub async fn get_job_by_id(pool: &DbPool, job_id: DbId) -> Result<Job> {
+    #[cfg(feature = "sqlite-compat")]
+    let job_id_str = job_id.clone();
+
+    #[cfg(not(feature = "sqlite-compat"))]
+    let job_id_str = job_id.to_string();
+
     let job = sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE id = $1")
-        .bind(job_id)
+        .bind(&job_id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| ServerError::JobNotFound(job_id.to_string()))?;
+        .ok_or_else(|| ServerError::JobNotFound(job_id_str))?;
 
     Ok(job)
 }
@@ -173,7 +185,7 @@ pub async fn list_pending_jobs(pool: &DbPool, limit: i64) -> Result<Vec<Job>> {
     Ok(jobs)
 }
 
-pub async fn assign_job_to_node(pool: &DbPool, job_id: Uuid, node_id: Uuid) -> Result<()> {
+pub async fn assign_job_to_node(pool: &DbPool, job_id: DbId, node_id: DbId) -> Result<()> {
     sqlx::query(
         "UPDATE jobs SET status = 'assigned', assigned_node_id = $1, updated_at = NOW() WHERE id = $2"
     )
@@ -185,38 +197,66 @@ pub async fn assign_job_to_node(pool: &DbPool, job_id: Uuid, node_id: Uuid) -> R
     Ok(())
 }
 
-pub async fn start_job(pool: &DbPool, job_id: Uuid) -> Result<()> {
-    sqlx::query(
-        "UPDATE jobs SET status = 'running', started_at = NOW(), updated_at = NOW() WHERE id = $1"
-    )
-    .bind(job_id)
-    .execute(pool)
-    .await?;
+pub async fn start_job(pool: &DbPool, job_id: DbId) -> Result<()> {
+    #[cfg(feature = "sqlite-compat")]
+    let query = "UPDATE jobs SET status = 'running', started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1";
+
+    #[cfg(not(feature = "sqlite-compat"))]
+    let query = "UPDATE jobs SET status = 'running', started_at = NOW(), updated_at = NOW() WHERE id = $1";
+
+    sqlx::query(query)
+        .bind(job_id)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
 
-pub async fn complete_job(pool: &DbPool, job_id: Uuid, result_hash: &str, actual_cost: i64) -> Result<()> {
-    sqlx::query(
-        "UPDATE jobs SET status = 'completed', result_hash = $2, actual_cost = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1"
-    )
-    .bind(job_id)
-    .bind(result_hash)
-    .bind(actual_cost)
-    .execute(pool)
-    .await?;
+pub async fn complete_job(pool: &DbPool, job_id: DbId, result_hash: &str, actual_cost: i64) -> Result<()> {
+    #[cfg(feature = "sqlite-compat")]
+    let query = "UPDATE jobs SET status = 'completed', result_hash = $2, actual_cost = $3, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1";
+
+    #[cfg(not(feature = "sqlite-compat"))]
+    let query = "UPDATE jobs SET status = 'completed', result_hash = $2, actual_cost = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1";
+
+    sqlx::query(query)
+        .bind(job_id)
+        .bind(result_hash)
+        .bind(actual_cost)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
 
-pub async fn fail_job(pool: &DbPool, job_id: Uuid, error_msg: &str) -> Result<()> {
-    sqlx::query(
-        "UPDATE jobs SET status = 'failed', error_message = $2, retry_count = retry_count + 1, updated_at = NOW() WHERE id = $1"
-    )
-    .bind(job_id)
-    .bind(error_msg)
-    .execute(pool)
-    .await?;
+pub async fn fail_job(pool: &DbPool, job_id: DbId, error_msg: &str) -> Result<()> {
+    #[cfg(feature = "sqlite-compat")]
+    let query = "UPDATE jobs SET status = 'failed', error_message = $2, retry_count = retry_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1";
+
+    #[cfg(not(feature = "sqlite-compat"))]
+    let query = "UPDATE jobs SET status = 'failed', error_message = $2, retry_count = retry_count + 1, updated_at = NOW() WHERE id = $1";
+
+    sqlx::query(query)
+        .bind(job_id)
+        .bind(error_msg)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+pub async fn update_job_status(pool: &DbPool, job_id: DbId, status: &str) -> Result<()> {
+    #[cfg(feature = "sqlite-compat")]
+    let query = "UPDATE jobs SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1";
+
+    #[cfg(not(feature = "sqlite-compat"))]
+    let query = "UPDATE jobs SET status = $2, updated_at = NOW() WHERE id = $1";
+
+    sqlx::query(query)
+        .bind(job_id)
+        .bind(status)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
@@ -776,12 +816,12 @@ pub async fn create_model(pool: &DbPool, model: &super::models::Model) -> Result
     Ok(model.clone())
 }
 
-pub async fn get_model_by_id(pool: &DbPool, model_id: Uuid) -> Result<super::models::Model> {
+pub async fn get_model_by_id(pool: &DbPool, model_id: DbId) -> Result<super::models::Model> {
     // TODO: Implement actual database query
     // For now, return a stub to allow compilation
     use crate::database::models::{Model, ModelFormat, ModelSource};
     use chrono::Utc;
-    
+
     Ok(Model {
         id: model_id,
         name: "stub_model".to_string(),

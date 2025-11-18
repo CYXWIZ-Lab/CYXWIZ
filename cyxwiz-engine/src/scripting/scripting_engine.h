@@ -6,6 +6,11 @@
 #include <memory>
 #include <functional>
 
+// Forward declarations
+namespace cyxwiz {
+    class TrainingPlotPanel;
+}
+
 namespace scripting {
 
 /**
@@ -53,6 +58,9 @@ public:
 
     // Check if engine is initialized
     bool IsInitialized() const;
+
+    // Register Training Dashboard with Python module
+    void RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel);
 
 private:
     std::unique_ptr<PythonEngine> python_engine_;

@@ -1,0 +1,233 @@
+# ========================================
+# Data Loading Template
+# ========================================
+# This template helps you load and explore datasets from various formats.
+# Supported formats: CSV, TXT (tab/space delimited), HDF5
+#
+# Usage:
+#   1. Update the file path in the configuration section
+#   2. Choose the appropriate loading method for your format
+#   3. Run the script to load and display your data
+#   4. Customize the exploration section as needed
+
+# === IMPORTS ===
+import os
+import sys
+import csv
+
+# Note: DataTable is a C++ GUI component, not a Python module
+# For scripting, we use built-in csv module or pandas
+HAS_DATA_TABLE = False  # Not available in Python scripts
+
+# Try to import pandas for fallback
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+    print("Warning: pandas not available")
+
+# === CONFIGURATION ===
+# TODO: Update these paths to your data files
+DATA_FILE_CSV = "test_data.csv"
+DATA_FILE_TXT = "test_data_tab.txt"
+DATA_FILE_HDF5 = "test_data.h5"
+
+# TODO: Choose your data format
+# Options: 'csv', 'txt', 'hdf5', 'auto'
+DATA_FORMAT = 'auto'  # Auto-detect from extension
+
+# TODO: For TXT files, specify delimiter
+TXT_DELIMITER = '\t'  # '\t' for tab, ' ' for space, ',' for comma
+
+# === HELPER FUNCTIONS ===
+
+def auto_detect_format(filepath):
+    """Automatically detect file format from extension"""
+    ext = os.path.splitext(filepath)[1].lower()
+    format_map = {
+        '.csv': 'csv',
+        '.txt': 'txt',
+        '.tsv': 'txt',
+        '.h5': 'hdf5',
+        '.hdf5': 'hdf5',
+    }
+    return format_map.get(ext, 'unknown')
+
+def load_data_csv_builtin(filepath):
+    """Load CSV data using Python's built-in csv module"""
+    try:
+        data = {'headers': [], 'rows': []}
+
+        with open(filepath, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            data['headers'] = next(reader)  # First row is headers
+            data['rows'] = list(reader)
+
+        print(f"✓ Loaded {len(data['rows'])} rows, {len(data['headers'])} columns")
+        return data
+
+    except Exception as e:
+        print(f"Error loading CSV: {e}")
+        return None
+
+def load_data_txt_builtin(filepath, delimiter='\t'):
+    """Load TXT data using Python's built-in file operations"""
+    try:
+        data = {'headers': [], 'rows': []}
+
+        with open(filepath, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            if not lines:
+                return None
+
+            # Parse header
+            data['headers'] = [col.strip() for col in lines[0].split(delimiter)]
+
+            # Parse data rows
+            for line in lines[1:]:
+                if line.strip():
+                    row = [col.strip() for col in line.split(delimiter)]
+                    data['rows'].append(row)
+
+        print(f"✓ Loaded {len(data['rows'])} rows, {len(data['headers'])} columns")
+        return data
+
+    except Exception as e:
+        print(f"Error loading TXT: {e}")
+        return None
+
+def load_data_pandas(filepath, format='auto'):
+    """Load data using pandas (fallback)"""
+    if not HAS_PANDAS:
+        print("Error: pandas not available")
+        return None
+
+    if format == 'auto':
+        format = auto_detect_format(filepath)
+
+    try:
+        if format == 'csv':
+            df = pd.read_csv(filepath)
+        elif format == 'txt':
+            df = pd.read_csv(filepath, delimiter=TXT_DELIMITER)
+        elif format == 'hdf5':
+            df = pd.read_hdf(filepath)
+        else:
+            print(f"Error: Unknown format '{format}'")
+            return None
+
+        print(f"✓ Loaded {len(df)} rows, {len(df.columns)} columns")
+        return df
+
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        return None
+
+def display_data_info(data):
+    """Display information about the loaded data"""
+    if data is None:
+        print("No data to display")
+        return
+
+    # Handle built-in dictionary format
+    if isinstance(data, dict) and 'headers' in data and 'rows' in data:
+        print("\n=== Dataset Information ===")
+        print(f"Rows: {len(data['rows'])}")
+        print(f"Columns: {len(data['headers'])}")
+        print(f"\nColumn Names:")
+        for i, header in enumerate(data['headers']):
+            print(f"  {i+1}. {header}")
+
+        print(f"\nFirst 5 rows:")
+        for row_idx in range(min(5, len(data['rows']))):
+            print(f"  Row {row_idx+1}: {data['rows'][row_idx]}")
+
+    # Handle pandas DataFrame
+    elif HAS_PANDAS and isinstance(data, pd.DataFrame):
+        print("\n=== Dataset Information ===")
+        print(f"Shape: {data.shape}")
+        print(f"\nColumn Names and Types:")
+        print(data.dtypes)
+        print(f"\nFirst 5 rows:")
+        print(data.head())
+        print(f"\nBasic Statistics:")
+        print(data.describe())
+
+    else:
+        print("Unknown data type")
+
+# === MAIN SCRIPT ===
+
+def main():
+    """Main data loading workflow"""
+    print("=" * 60)
+    print("Data Loading Script")
+    print("=" * 60)
+
+    # TODO: Choose which file to load
+    filepath = DATA_FILE_CSV  # Change to DATA_FILE_TXT or DATA_FILE_HDF5
+
+    # Check if file exists
+    if not os.path.exists(filepath):
+        print(f"Error: File not found: {filepath}")
+        print("Please update the file path in the configuration section.")
+        return
+
+    print(f"\nLoading data from: {filepath}")
+
+    # Determine format and load data
+    format = auto_detect_format(filepath) if DATA_FORMAT == 'auto' else DATA_FORMAT
+    data = None
+
+    # Try built-in Python methods first
+    if format == 'csv':
+        data = load_data_csv_builtin(filepath)
+    elif format == 'txt':
+        data = load_data_txt_builtin(filepath, TXT_DELIMITER)
+    elif format == 'hdf5':
+        # HDF5 requires pandas or h5py
+        if HAS_PANDAS:
+            data = load_data_pandas(filepath, format)
+        else:
+            print("HDF5 format requires pandas. Install with: pip install pandas")
+
+    # Fall back to pandas if built-in failed and pandas is available
+    if data is None and HAS_PANDAS and format in ['csv', 'txt']:
+        print("Trying pandas...")
+        data = load_data_pandas(filepath, format)
+
+    if data is None:
+        print("\n✗ Failed to load data")
+        print("Make sure:")
+        print("  1. File path is correct")
+        print("  2. File format is supported")
+        print("  3. File is readable and properly formatted")
+        return
+
+    # Display data information
+    display_data_info(data)
+
+    # TODO: Add your custom data exploration here
+    # Examples:
+    # - Filter rows based on conditions
+    # - Select specific columns
+    # - Calculate statistics
+    # - Create visualizations
+
+    print("\n" + "=" * 60)
+    print("Data loading complete!")
+    print("=" * 60)
+
+    # Return data for further use
+    return data
+
+# Run the main function
+if __name__ == "__main__":
+    loaded_data = main()
+
+    # TODO: Use 'loaded_data' for further analysis
+    # Example:
+    # if loaded_data is not None:
+    #     # Your analysis code here
+    #     pass

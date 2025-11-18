@@ -1,0 +1,226 @@
+# Test Script: Verify Sandbox Import Fix
+# ========================================
+# This script tests that the sandbox import fix is working correctly.
+#
+# To test:
+# 1. Run this script with Sandbox OFF (should pass)
+# 2. Run this script with Sandbox ON (should pass)
+# 3. Run test_data_loading.cyx with Sandbox ON (should pass)
+
+print("=" * 60)
+print("Sandbox Import Fix Verification Test")
+print("=" * 60)
+print()
+
+# === TEST 1: Core Python Modules ===
+print("TEST 1: Core Python Modules")
+print("-" * 60)
+
+passed = 0
+failed = 0
+
+# Test builtins
+try:
+    import builtins
+    print(f"  ✓ builtins imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ builtins import FAILED: {e}")
+    failed += 1
+
+# Test sys
+try:
+    import sys
+    print(f"  ✓ sys imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ sys import FAILED: {e}")
+    failed += 1
+
+# Test os
+try:
+    import os
+    print(f"  ✓ os imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ os import FAILED: {e}")
+    failed += 1
+
+# Test io
+try:
+    import io
+    print(f"  ✓ io imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ io import FAILED: {e}")
+    failed += 1
+
+# Test csv
+try:
+    import csv
+    print(f"  ✓ csv imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ csv import FAILED: {e}")
+    failed += 1
+
+# Test time
+try:
+    import time
+    print(f"  ✓ time imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ time import FAILED: {e}")
+    failed += 1
+
+print()
+
+# === TEST 2: Standard Library Modules ===
+print("TEST 2: Standard Library Modules")
+print("-" * 60)
+
+# Test math
+try:
+    import math
+    print(f"  ✓ math imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ math import FAILED: {e}")
+    failed += 1
+
+# Test random
+try:
+    import random
+    print(f"  ✓ random imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ random import FAILED: {e}")
+    failed += 1
+
+# Test json
+try:
+    import json
+    print(f"  ✓ json imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ json import FAILED: {e}")
+    failed += 1
+
+# Test datetime
+try:
+    import datetime
+    print(f"  ✓ datetime imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ datetime import FAILED: {e}")
+    failed += 1
+
+# Test collections
+try:
+    import collections
+    print(f"  ✓ collections imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ collections import FAILED: {e}")
+    failed += 1
+
+# Test re
+try:
+    import re
+    print(f"  ✓ re imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ re import FAILED: {e}")
+    failed += 1
+
+# Test pathlib
+try:
+    import pathlib
+    print(f"  ✓ pathlib imported successfully")
+    passed += 1
+except ImportError as e:
+    print(f"  ✗ pathlib import FAILED: {e}")
+    failed += 1
+
+print()
+
+# === TEST 3: Python Version and Path ===
+print("TEST 3: Python Environment")
+print("-" * 60)
+
+import sys
+print(f"  Python version: {sys.version}")
+print(f"  Python executable: {sys.executable}")
+print(f"  Python path entries: {len(sys.path)}")
+
+print()
+
+# === TEST 4: File Operations (if allowed) ===
+print("TEST 4: File Operations")
+print("-" * 60)
+
+try:
+    import os
+    print(f"  Current directory: {os.getcwd()}")
+
+    # Try to list files
+    files = os.listdir('.')
+    print(f"  Files in current directory: {len(files)}")
+
+    # Try to read a test file
+    if os.path.exists('test_data.csv'):
+        print(f"  ✓ test_data.csv exists and is accessible")
+        passed += 1
+    else:
+        print(f"  ✗ test_data.csv not found")
+        failed += 1
+
+except Exception as e:
+    print(f"  ✗ File operations failed: {e}")
+    failed += 1
+
+print()
+
+# === TEST 5: CSV Reading ===
+print("TEST 5: CSV Module Functionality")
+print("-" * 60)
+
+try:
+    import csv
+    import io
+
+    # Test CSV reading from string
+    csv_data = "name,age,city\nAlice,30,NYC\nBob,25,LA"
+    reader = csv.reader(io.StringIO(csv_data))
+    rows = list(reader)
+
+    if len(rows) == 3:
+        print(f"  ✓ CSV parsing works correctly ({len(rows)} rows)")
+        passed += 1
+    else:
+        print(f"  ✗ CSV parsing returned unexpected rows: {len(rows)}")
+        failed += 1
+
+except Exception as e:
+    print(f"  ✗ CSV module test failed: {e}")
+    failed += 1
+
+print()
+
+# === RESULTS ===
+print("=" * 60)
+print("TEST RESULTS")
+print("=" * 60)
+print(f"  Passed: {passed}")
+print(f"  Failed: {failed}")
+print(f"  Total:  {passed + failed}")
+print()
+
+if failed == 0:
+    print("  ✓ ALL TESTS PASSED!")
+    print("  The sandbox import fix is working correctly.")
+else:
+    print(f"  ✗ {failed} TESTS FAILED")
+    print("  Please check the error messages above.")
+
+print("=" * 60)

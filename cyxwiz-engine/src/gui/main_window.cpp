@@ -6,11 +6,13 @@
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
+#include "panels/training_plot_panel.h"
 #include "panels/plot_test_control.h"
 #include "panels/command_window.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "../scripting/scripting_engine.h"
+#include "../scripting/startup_script_manager.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -34,7 +36,8 @@ MainWindow::MainWindow()
     // New panel system
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
-    training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();
+    // training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();  // Removed - merged into TrainingPlotPanel
+    training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
@@ -44,8 +47,23 @@ MainWindow::MainWindow()
     command_window_->SetScriptingEngine(scripting_engine_);
     script_editor_->SetScriptingEngine(scripting_engine_);
 
+    // Expose TrainingPlotPanel to Python scripts through the scripting engine
+    // This avoids DLL boundary issues by using pybind11 directly
+    if (scripting_engine_) {
+        scripting_engine_->RegisterTrainingDashboard(training_plot_panel_.get());
+    }
+
+    // Connect Viewport to TrainingPlotPanel for real-time metrics display
+    viewport_->SetTrainingPanel(training_plot_panel_.get());
+
     // Connect script editor to command window for output display
     script_editor_->SetCommandWindow(command_window_.get());
+
+    // Connect Node Editor to Script Editor for code generation output
+    node_editor_->SetScriptEditor(script_editor_.get());
+
+    // Connect Node Editor to Properties panel for node selection display
+    node_editor_->SetPropertiesPanel(properties_.get());
 
     // Set up callbacks in the toolbar
     toolbar_->SetResetLayoutCallback([this]() {
@@ -57,6 +75,17 @@ MainWindow::MainWindow()
             plot_test_control_->Toggle();
         }
     });
+
+    // Initialize startup script manager
+    startup_script_manager_ = std::make_unique<scripting::StartupScriptManager>(scripting_engine_);
+
+    // Load and execute startup scripts
+    if (startup_script_manager_->LoadConfig()) {
+        spdlog::info("Executing startup scripts...");
+        startup_script_manager_->ExecuteAll(command_window_.get());
+    } else {
+        spdlog::debug("No startup scripts configured or startup_scripts.txt not found");
+    }
 
     spdlog::info("MainWindow initialized with docking layout system");
 }
@@ -77,7 +106,8 @@ void MainWindow::Render() {
 
     // Render new panels
     if (asset_browser_) asset_browser_->Render();
-    if (training_dashboard_) training_dashboard_->Render();
+    // if (training_dashboard_) training_dashboard_->Render();  // Removed - merged into TrainingPlotPanel
+    if (training_plot_panel_) training_plot_panel_->Render();  // Now "Training Dashboard"
     if (plot_test_control_) plot_test_control_->Render();
     if (command_window_) command_window_->Render();
     if (script_editor_) script_editor_->Render();

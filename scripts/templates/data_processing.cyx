@@ -1,0 +1,523 @@
+# ========================================
+# Data Processing Template
+# ========================================
+# This template helps you process, transform, and prepare data for analysis or training.
+#
+# Usage:
+#   1. Load your raw data
+#   2. Define processing steps (cleaning, transformation, normalization)
+#   3. Apply processing pipeline
+#   4. Validate processed data
+#   5. Save or export results
+
+# === IMPORTS ===
+import math
+import random
+from typing import List, Dict, Any, Optional, Tuple
+
+# Try to import useful libraries
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+    print("Warning: numpy not available")
+
+# === CONFIGURATION ===
+
+# TODO: Processing configuration
+PROCESSING_CONFIG = {
+    'remove_nulls': True,
+    'normalize': False,
+    'scale_range': (0, 1),
+    'handle_outliers': True,
+    'outlier_threshold': 3.0,  # Standard deviations
+}
+
+# TODO: Data validation rules
+VALIDATION_RULES = {
+    'min_rows': 1,
+    'max_rows': 1000000,
+    'required_columns': [],  # List of column names that must exist
+    'numeric_columns': [],   # Columns that must be numeric
+}
+
+# === DATA CLEANING FUNCTIONS ===
+
+def remove_null_values(data: List[Dict]) -> List[Dict]:
+    """
+    Remove rows containing null/None values.
+
+    Args:
+        data: List of data dictionaries
+
+    Returns:
+        Cleaned data without null values
+    """
+    print("Removing null values...")
+
+    cleaned_data = []
+    null_count = 0
+
+    for row in data:
+        has_null = any(value is None or value == '' for value in row.values())
+        if not has_null:
+            cleaned_data.append(row)
+        else:
+            null_count += 1
+
+    print(f"  Removed {null_count} rows with null values")
+    print(f"  Remaining: {len(cleaned_data)} rows")
+
+    return cleaned_data
+
+
+def fill_missing_values(data: List[Dict], strategy: str = 'mean') -> List[Dict]:
+    """
+    Fill missing values using specified strategy.
+
+    Args:
+        data: List of data dictionaries
+        strategy: 'mean', 'median', 'mode', or 'zero'
+
+    Returns:
+        Data with filled values
+    """
+    print(f"Filling missing values (strategy: {strategy})...")
+
+    if not data:
+        return data
+
+    # TODO: Implement missing value imputation
+    # Calculate fill values based on strategy
+    # Apply to each column with missing data
+
+    print(f"  Filled missing values in data")
+    return data
+
+
+def remove_duplicates(data: List[Dict], key_columns: Optional[List[str]] = None) -> List[Dict]:
+    """
+    Remove duplicate rows from data.
+
+    Args:
+        data: List of data dictionaries
+        key_columns: Columns to consider for uniqueness (None = all columns)
+
+    Returns:
+        Data without duplicates
+    """
+    print("Removing duplicates...")
+
+    if key_columns:
+        # Check duplicates based on specific columns
+        seen = set()
+        unique_data = []
+
+        for row in data:
+            key = tuple(row.get(col) for col in key_columns)
+            if key not in seen:
+                seen.add(key)
+                unique_data.append(row)
+    else:
+        # Check duplicates based on all columns
+        unique_data = []
+        seen = []
+
+        for row in data:
+            if row not in seen:
+                seen.append(row)
+                unique_data.append(row)
+
+    removed = len(data) - len(unique_data)
+    print(f"  Removed {removed} duplicate rows")
+
+    return unique_data
+
+
+# === DATA TRANSFORMATION FUNCTIONS ===
+
+def normalize_numeric_columns(data: List[Dict], columns: List[str]) -> List[Dict]:
+    """
+    Normalize numeric columns to 0-1 range using min-max scaling.
+
+    Args:
+        data: List of data dictionaries
+        columns: Column names to normalize
+
+    Returns:
+        Data with normalized columns
+    """
+    print(f"Normalizing columns: {columns}...")
+
+    if not data or not columns:
+        return data
+
+    # TODO: Calculate min/max for each column
+    for col in columns:
+        values = [row.get(col, 0) for row in data if isinstance(row.get(col), (int, float))]
+
+        if not values:
+            continue
+
+        min_val = min(values)
+        max_val = max(values)
+        range_val = max_val - min_val
+
+        if range_val == 0:
+            print(f"  Warning: Column '{col}' has constant value, skipping")
+            continue
+
+        # Normalize values
+        for row in data:
+            if col in row and isinstance(row[col], (int, float)):
+                row[col] = (row[col] - min_val) / range_val
+
+        print(f"  ✓ Normalized '{col}' (range: {min_val:.2f} - {max_val:.2f})")
+
+    return data
+
+
+def standardize_columns(data: List[Dict], columns: List[str]) -> List[Dict]:
+    """
+    Standardize columns to zero mean and unit variance (z-score normalization).
+
+    Args:
+        data: List of data dictionaries
+        columns: Column names to standardize
+
+    Returns:
+        Data with standardized columns
+    """
+    print(f"Standardizing columns: {columns}...")
+
+    if not data or not columns:
+        return data
+
+    for col in columns:
+        values = [row.get(col, 0) for row in data if isinstance(row.get(col), (int, float))]
+
+        if not values:
+            continue
+
+        # Calculate mean and std
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / len(values)
+        std = math.sqrt(variance)
+
+        if std == 0:
+            print(f"  Warning: Column '{col}' has zero std, skipping")
+            continue
+
+        # Standardize values
+        for row in data:
+            if col in row and isinstance(row[col], (int, float)):
+                row[col] = (row[col] - mean) / std
+
+        print(f"  ✓ Standardized '{col}' (mean: {mean:.2f}, std: {std:.2f})")
+
+    return data
+
+
+def apply_log_transform(data: List[Dict], columns: List[str]) -> List[Dict]:
+    """
+    Apply logarithmic transformation to skewed data.
+
+    Args:
+        data: List of data dictionaries
+        columns: Column names to transform
+
+    Returns:
+        Data with log-transformed columns
+    """
+    print(f"Applying log transform to: {columns}...")
+
+    for col in columns:
+        for row in data:
+            if col in row and isinstance(row[col], (int, float)):
+                if row[col] > 0:
+                    row[col] = math.log(row[col])
+                else:
+                    print(f"  Warning: Skipping negative/zero value in '{col}'")
+
+        print(f"  ✓ Log transformed '{col}'")
+
+    return data
+
+
+# === OUTLIER DETECTION AND HANDLING ===
+
+def detect_outliers(data: List[Dict], column: str, threshold: float = 3.0) -> List[int]:
+    """
+    Detect outliers using z-score method.
+
+    Args:
+        data: List of data dictionaries
+        column: Column name to check
+        threshold: Z-score threshold (default: 3.0)
+
+    Returns:
+        List of row indices containing outliers
+    """
+    values = [row.get(column, 0) for row in data if isinstance(row.get(column), (int, float))]
+
+    if not values:
+        return []
+
+    # Calculate mean and std
+    mean = sum(values) / len(values)
+    variance = sum((x - mean) ** 2 for x in values) / len(values)
+    std = math.sqrt(variance)
+
+    if std == 0:
+        return []
+
+    # Find outliers
+    outlier_indices = []
+    for i, row in enumerate(data):
+        value = row.get(column)
+        if isinstance(value, (int, float)):
+            z_score = abs((value - mean) / std)
+            if z_score > threshold:
+                outlier_indices.append(i)
+
+    return outlier_indices
+
+
+def handle_outliers(data: List[Dict], columns: List[str],
+                   method: str = 'remove', threshold: float = 3.0) -> List[Dict]:
+    """
+    Handle outliers using specified method.
+
+    Args:
+        data: List of data dictionaries
+        columns: Columns to check for outliers
+        method: 'remove', 'cap', or 'winsorize'
+        threshold: Z-score threshold
+
+    Returns:
+        Data with outliers handled
+    """
+    print(f"Handling outliers (method: {method}, threshold: {threshold})...")
+
+    outlier_indices = set()
+
+    for col in columns:
+        col_outliers = detect_outliers(data, col, threshold)
+        outlier_indices.update(col_outliers)
+        print(f"  Found {len(col_outliers)} outliers in '{col}'")
+
+    if method == 'remove':
+        # Remove rows with outliers
+        cleaned_data = [row for i, row in enumerate(data) if i not in outlier_indices]
+        print(f"  Removed {len(outlier_indices)} rows with outliers")
+        return cleaned_data
+
+    elif method == 'cap':
+        # TODO: Cap outliers at threshold value
+        print(f"  Capped {len(outlier_indices)} outlier values")
+        return data
+
+    else:
+        print(f"  Unknown method: {method}")
+        return data
+
+
+# === FEATURE ENGINEERING ===
+
+def create_derived_features(data: List[Dict]) -> List[Dict]:
+    """
+    Create new features from existing ones.
+
+    Args:
+        data: List of data dictionaries
+
+    Returns:
+        Data with additional derived features
+    """
+    print("Creating derived features...")
+
+    # TODO: Implement your feature engineering logic
+    # Examples:
+    # - Combine existing features
+    # - Create polynomial features
+    # - Generate interaction terms
+    # - Extract date/time components
+
+    for row in data:
+        # Example: Create a ratio feature
+        if 'value1' in row and 'value2' in row:
+            if row['value2'] != 0:
+                row['value_ratio'] = row['value1'] / row['value2']
+
+        # Example: Create a sum feature
+        if 'feature_a' in row and 'feature_b' in row:
+            row['feature_sum'] = row['feature_a'] + row['feature_b']
+
+    print("  ✓ Created derived features")
+    return data
+
+
+# === DATA VALIDATION ===
+
+def validate_data(data: List[Dict], rules: Dict) -> Tuple[bool, List[str]]:
+    """
+    Validate processed data against rules.
+
+    Args:
+        data: Processed data to validate
+        rules: Validation rules dictionary
+
+    Returns:
+        Tuple of (is_valid, list of error messages)
+    """
+    print("Validating processed data...")
+
+    errors = []
+
+    # Check row count
+    if len(data) < rules.get('min_rows', 0):
+        errors.append(f"Too few rows: {len(data)} < {rules['min_rows']}")
+
+    if len(data) > rules.get('max_rows', float('inf')):
+        errors.append(f"Too many rows: {len(data)} > {rules['max_rows']}")
+
+    # Check required columns
+    if data and rules.get('required_columns'):
+        first_row_keys = set(data[0].keys())
+        for col in rules['required_columns']:
+            if col not in first_row_keys:
+                errors.append(f"Missing required column: {col}")
+
+    # Check numeric columns
+    if data and rules.get('numeric_columns'):
+        for col in rules['numeric_columns']:
+            for i, row in enumerate(data):
+                if col in row and not isinstance(row[col], (int, float)):
+                    errors.append(f"Non-numeric value in '{col}' at row {i}")
+                    break
+
+    is_valid = len(errors) == 0
+
+    if is_valid:
+        print("  ✓ Validation passed")
+    else:
+        print(f"  ✗ Validation failed with {len(errors)} errors")
+
+    return is_valid, errors
+
+
+# === MAIN PROCESSING PIPELINE ===
+
+def process_data(raw_data: List[Dict], config: Dict) -> List[Dict]:
+    """
+    Main data processing pipeline.
+
+    Args:
+        raw_data: Raw input data
+        config: Processing configuration
+
+    Returns:
+        Processed data
+    """
+    print("\n" + "=" * 60)
+    print("DATA PROCESSING PIPELINE")
+    print("=" * 60)
+
+    data = raw_data.copy()
+
+    # Step 1: Remove nulls
+    if config.get('remove_nulls', False):
+        data = remove_null_values(data)
+
+    # Step 2: Remove duplicates
+    data = remove_duplicates(data)
+
+    # Step 3: Handle outliers
+    if config.get('handle_outliers', False):
+        # TODO: Specify columns to check
+        numeric_cols = []  # Add your numeric column names
+        if numeric_cols:
+            data = handle_outliers(data, numeric_cols,
+                                 threshold=config.get('outlier_threshold', 3.0))
+
+    # Step 4: Normalization
+    if config.get('normalize', False):
+        # TODO: Specify columns to normalize
+        numeric_cols = []  # Add your numeric column names
+        if numeric_cols:
+            data = normalize_numeric_columns(data, numeric_cols)
+
+    # Step 5: Feature engineering
+    data = create_derived_features(data)
+
+    print("\n" + "=" * 60)
+    print(f"Processing complete: {len(raw_data)} → {len(data)} rows")
+    print("=" * 60)
+
+    return data
+
+
+# === TESTING ===
+
+def create_sample_data() -> List[Dict]:
+    """Create sample data for testing"""
+    print("Creating sample dataset...")
+
+    data = []
+    for i in range(100):
+        row = {
+            'id': i,
+            'value1': random.uniform(0, 100),
+            'value2': random.uniform(0, 50),
+            'category': random.choice(['A', 'B', 'C']),
+            'score': random.gauss(50, 15),  # Normal distribution
+        }
+        data.append(row)
+
+    # Add some null values
+    for i in range(5):
+        idx = random.randint(0, len(data)-1)
+        data[idx]['value1'] = None
+
+    # Add some duplicates
+    data.append(data[0].copy())
+    data.append(data[1].copy())
+
+    print(f"  Created {len(data)} sample rows")
+    return data
+
+
+def main():
+    """Main function"""
+    print("=" * 60)
+    print("Data Processing Script")
+    print("=" * 60)
+
+    # TODO: Load your actual data here
+    # raw_data = load_data_from_file("data.csv")
+
+    # For testing, use sample data
+    raw_data = create_sample_data()
+
+    # Process data
+    processed_data = process_data(raw_data, PROCESSING_CONFIG)
+
+    # Validate processed data
+    is_valid, errors = validate_data(processed_data, VALIDATION_RULES)
+
+    if not is_valid:
+        print("\nValidation Errors:")
+        for error in errors:
+            print(f"  - {error}")
+
+    # TODO: Save or export processed data
+    # save_to_file(processed_data, "processed_data.csv")
+
+    print("\nProcessing pipeline complete!")
+
+    return processed_data
+
+
+if __name__ == "__main__":
+    processed = main()

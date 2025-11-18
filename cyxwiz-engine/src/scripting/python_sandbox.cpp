@@ -124,18 +124,31 @@ class SandboxImportHook:
         self.original_import = builtins.__import__
 
     def __call__(self, name, *args, **kwargs):
+        # Debug: Log import attempt
+        print(f"[SANDBOX] Import request: {name}")
+
+        # Check if module is already imported (avoids re-checking)
+        if name in sys.modules:
+            print(f"[SANDBOX] {name} already in sys.modules, allowing")
+            return self.original_import(name, *args, **kwargs)
+
         # Check if module or its parent is allowed
         module_parts = name.split('.')
         for i in range(len(module_parts)):
             partial_name = '.'.join(module_parts[:i+1])
             if partial_name in self.allowed_modules:
+                print(f"[SANDBOX] {name} matched whitelist as {partial_name}, allowing")
                 return self.original_import(name, *args, **kwargs)
 
         # Module not allowed
+        print(f"[SANDBOX] {name} NOT in whitelist, blocking")
+        print(f"[SANDBOX] Whitelist has {len(self.allowed_modules)} modules")
         raise ImportError(f"Module '{name}' is not allowed in sandbox environment")
 
 # Install the hook
 allowed_modules = __ALLOWED_MODULES__
+print(f"[SANDBOX] Installing import hook with {len(allowed_modules)} allowed modules:")
+print(f"[SANDBOX] Allowed: {sorted(allowed_modules)[:10]}...")  # Show first 10
 builtins.__import__ = SandboxImportHook(allowed_modules)
 )";
 
@@ -160,6 +173,13 @@ builtins.__import__ = SandboxImportHook(allowed_modules)
 
         spdlog::info("Import hook installed with {} allowed modules", config_.allowed_modules.size());
 
+        // Debug: Log the allowed modules
+        std::ostringstream debug_modules;
+        for (const auto& module : config_.allowed_modules) {
+            debug_modules << module << " ";
+        }
+        spdlog::debug("Allowed modules: {}", debug_modules.str());
+
     } catch (const py::error_already_set& e) {
         spdlog::error("Failed to setup import hook: {}", e.what());
     }
@@ -173,16 +193,23 @@ void PythonSandbox::SetupFileAccessHook() {
 
 void PythonSandbox::CleanupHooks() {
     try {
-        // Restore original __import__
-        std::string cleanup_code = R"(
-import builtins
-import sys
-if hasattr(builtins.__import__, 'original_import'):
-    builtins.__import__ = builtins.__import__.original_import
-)";
-        py::exec(cleanup_code);
+        // Use pybind11 C++ API directly to avoid import issues
+        // py::module_::import() uses Python C API and bypasses __import__ hook
+        py::module_ builtins = py::module_::import("builtins");
 
-        spdlog::debug("Sandbox hooks cleaned up");
+        // Get current __import__ function
+        py::object current_import = builtins.attr("__import__");
+
+        // Check if our sandbox hook is installed (has original_import attribute)
+        if (py::hasattr(current_import, "original_import")) {
+            // Restore the original __import__
+            py::object original_import = current_import.attr("original_import");
+            builtins.attr("__import__") = original_import;
+            spdlog::debug("Sandbox import hook cleaned up");
+        } else {
+            spdlog::debug("No sandbox hook to clean up (already clean)");
+        }
+
     } catch (const py::error_already_set& e) {
         spdlog::error("Failed to cleanup hooks: {}", e.what());
     }
@@ -326,55 +353,42 @@ PythonSandbox::ExecutionResult PythonSandbox::Execute(const std::string& code) {
     StartMonitoring();
 
     try {
-        // Execute with timeout using std::async
-        auto future = std::async(std::launch::async, [&]() {
-            try {
-                // Redirect stdout/stderr
-                py::object sys = py::module_::import("sys");
-                py::object io = py::module_::import("io");
+        // Execute code directly (async/timeout disabled due to Python GIL conflicts)
+        // TODO: Implement proper timeout using Python signal module or subprocess
 
-                py::object stdout_capture = io.attr("StringIO")();
-                py::object stderr_capture = io.attr("StringIO")();
+        // Redirect stdout/stderr
+        py::object sys = py::module_::import("sys");
+        py::object io = py::module_::import("io");
 
-                py::object original_stdout = sys.attr("stdout");
-                py::object original_stderr = sys.attr("stderr");
+        py::object stdout_capture = io.attr("StringIO")();
+        py::object stderr_capture = io.attr("StringIO")();
 
-                sys.attr("stdout") = stdout_capture;
-                sys.attr("stderr") = stderr_capture;
+        py::object original_stdout = sys.attr("stdout");
+        py::object original_stderr = sys.attr("stderr");
 
-                // Execute code
-                py::exec(code);
+        sys.attr("stdout") = stdout_capture;
+        sys.attr("stderr") = stderr_capture;
 
-                // Restore stdout/stderr
-                sys.attr("stdout") = original_stdout;
-                sys.attr("stderr") = original_stderr;
+        // Execute code
+        py::exec(code);
 
-                // Get captured output
-                result.output = py::str(stdout_capture.attr("getvalue")());
-                std::string stderr_output = py::str(stderr_capture.attr("getvalue")());
+        // Restore stdout/stderr
+        sys.attr("stdout") = original_stdout;
+        sys.attr("stderr") = original_stderr;
 
-                if (!stderr_output.empty()) {
-                    result.output += "\nStderr: " + stderr_output;
-                }
+        // Get captured output
+        result.output = py::str(stdout_capture.attr("getvalue")());
+        std::string stderr_output = py::str(stderr_capture.attr("getvalue")());
 
-                result.success = true;
-
-            } catch (const py::error_already_set& e) {
-                result.error_message = e.what();
-                result.success = false;
-            }
-        });
-
-        // Wait for execution with timeout
-        auto status = future.wait_for(config_.timeout);
-
-        if (status == std::future_status::timeout) {
-            result.timeout_exceeded = true;
-            result.error_message = "Execution timeout exceeded (" +
-                std::to_string(config_.timeout.count()) + "s)";
-            result.success = false;
+        if (!stderr_output.empty()) {
+            result.output += "\nStderr: " + stderr_output;
         }
 
+        result.success = true;
+
+    } catch (const py::error_already_set& e) {
+        result.error_message = e.what();
+        result.success = false;
     } catch (const std::exception& e) {
         result.error_message = std::string("Execution error: ") + e.what();
         result.success = false;

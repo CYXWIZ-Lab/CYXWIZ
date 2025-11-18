@@ -1,9 +1,10 @@
 // build.rs - gRPC proto compilation
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compile proto files for gRPC services
+    // Enable both server (for incoming gRPC from clients) and client (for outgoing gRPC to Server Nodes)
     tonic_build::configure()
         .build_server(true)
-        .build_client(false)
+        .build_client(true)  // Enable client code generation for calling Server Nodes
         .compile(
             &[
                 "../cyxwiz-protocol/proto/common.proto",

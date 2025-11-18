@@ -23,6 +23,18 @@
 #include "layer.h"
 #include "model.h"
 
+// Concrete layer implementations
+#include "layers/linear.h"
+
+// Concrete activation implementations
+#include "activations/relu.h"
+#include "activations/sigmoid.h"
+#include "activations/tanh.h"
+
+// Concrete loss implementations
+#include "losses/mse.h"
+#include "losses/cross_entropy.h"
+
 namespace cyxwiz {
 
 // Initialize the backend

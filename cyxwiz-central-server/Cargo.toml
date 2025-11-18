@@ -5,6 +5,11 @@ edition = "2021"
 authors = ["CyxWiz Team"]
 description = "CyxWiz Central Server - Decentralized compute orchestrator"
 
+[features]
+# SQLite compatibility mode for integration tests
+# Uses String for IDs instead of UUID to match SQLite TEXT columns
+sqlite-compat = []
+
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }
 tonic = "0.10"
@@ -44,6 +49,14 @@ crossterm = "0.27"
 
 [build-dependencies]
 tonic-build = "0.10"
+
+[dev-dependencies]
+tempfile = "3.8"
+serial_test = "3.0"
+
+[lib]
+name = "cyxwiz_central_server"
+path = "src/lib.rs"
 
 [[bin]]
 name = "cyxwiz-central-server"

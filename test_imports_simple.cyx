@@ -1,0 +1,45 @@
+# Simple Import Test
+# This script tests basic Python imports with the sandbox
+
+print("=" * 60)
+print("Simple Import Test")
+print("=" * 60)
+
+# Import all modules at the top (only once each)
+import builtins
+import sys
+import os
+import io
+import csv
+import time
+import math
+import random
+import json
+import datetime
+
+print("\nAll imports successful!")
+print("-" * 60)
+
+# Test that modules actually work
+print("\n1. Testing sys module:")
+print(f"   Python version: {sys.version}")
+
+print("\n2. Testing os module:")
+print(f"   Current directory: {os.getcwd()}")
+
+print("\n3. Testing math module:")
+print(f"   math.pi = {math.pi}")
+
+print("\n4. Testing csv module:")
+csv_data = "name,age\nAlice,30\nBob,25"
+reader = csv.reader(io.StringIO(csv_data))
+rows = list(reader)
+print(f"   CSV parsed {len(rows)} rows")
+
+print("\n5. Testing datetime module:")
+now = datetime.datetime.now()
+print(f"   Current time: {now}")
+
+print("\n" + "=" * 60)
+print("All tests passed!")
+print("=" * 60)

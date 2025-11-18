@@ -4,13 +4,11 @@ mod cache;
 mod config;
 mod database;
 mod error;
-mod pb;
+mod pb; // Needed by scheduler for gRPC client
 mod scheduler;
 mod tui;
 
-use crate::api::grpc::{
-    DeploymentServiceImpl, JobServiceImpl, ModelServiceImpl, NodeServiceImpl, TerminalServiceImpl,
-};
+use crate::api::grpc::{JobServiceImpl, JobStatusServiceImpl, NodeServiceImpl};
 use crate::blockchain::{PaymentProcessor, SolanaClient};
 use crate::cache::RedisCache;
 use crate::config::Config;
@@ -85,13 +83,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let redis_cache_arc = Arc::new(RwLock::new(redis_cache));
 
+    // Initialize job scheduler (runs in both TUI and gRPC modes)
+    info!("Starting job scheduler...");
+    let scheduler = Arc::new(JobScheduler::new(
+        db_pool.clone(),
+        redis_cache_arc.read().await.clone(),
+        config.scheduler.clone(),
+    ));
+
+    // Start scheduler loop in background
+    let scheduler_clone = Arc::clone(&scheduler);
+    tokio::spawn(async move {
+        scheduler_clone.run().await;
+    });
+    info!("Job scheduler started");
+
     // Check command line arguments for mode
     let args: Vec<String> = std::env::args().collect();
     let tui_mode = args.iter().any(|arg| arg == "--tui" || arg == "-t");
 
     if tui_mode {
-        // TUI mode
-        info!("Starting in TUI mode...");
+        // TUI mode with scheduler
+        info!("Starting in TUI mode with live job processing...");
         info!("========================================");
         return tui::run(db_pool, redis_cache_arc).await.map_err(|e| e.into());
     }
@@ -136,21 +149,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(PaymentProcessor::new(dummy_client))
     };
 
-    // Initialize job scheduler
-    info!("Starting job scheduler...");
-    let scheduler = Arc::new(JobScheduler::new(
-        db_pool.clone(),
-        redis_cache_arc.read().await.clone(),
-        config.scheduler.clone(),
-    ));
-
-    // Start scheduler loop in background
-    let scheduler_clone = Arc::clone(&scheduler);
-    tokio::spawn(async move {
-        scheduler_clone.run().await;
-    });
-    info!("Job scheduler started");
-
     // Initialize gRPC services
     let job_service = JobServiceImpl::new(
         db_pool.clone(),
@@ -158,14 +156,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&payment_processor),
     );
     let node_service = NodeServiceImpl::new(db_pool.clone(), Arc::clone(&scheduler));
+    let job_status_service = JobStatusServiceImpl::new(db_pool.clone());
 
     // Initialize deployment services
-    let deployment_service = DeploymentServiceImpl::new(db_pool.clone());
-    let terminal_service = TerminalServiceImpl::new(db_pool.clone());
-    let model_service = ModelServiceImpl::new(
-        db_pool.clone(),
-        std::path::PathBuf::from("./storage/models"),
-    );
+    // let deployment_service = DeploymentServiceImpl::new(db_pool.clone()); // Temporarily disabled
+    // let terminal_service = TerminalServiceImpl::new(db_pool.clone()); // Temporarily disabled
+    // let model_service = ModelServiceImpl::new(  // Temporarily disabled
+    //     db_pool.clone(),
+    //     std::path::PathBuf::from("./storage/models"),
+    // );
 
     // Build gRPC server
     let grpc_addr = config.server.grpc_address.parse()?;
@@ -174,38 +173,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_server = Server::builder()
         .add_service(pb::job_service_server::JobServiceServer::new(job_service))
         .add_service(pb::node_service_server::NodeServiceServer::new(node_service))
-        .add_service(pb::deployment_service_server::DeploymentServiceServer::new(deployment_service))
-        .add_service(pb::terminal_service_server::TerminalServiceServer::new(terminal_service))
-        .add_service(pb::model_service_server::ModelServiceServer::new(model_service))
+        .add_service(pb::job_status_service_server::JobStatusServiceServer::new(job_status_service))
+        // .add_service(pb::deployment_service_server::DeploymentServiceServer::new(deployment_service)) // Temporarily disabled
+        // .add_service(pb::terminal_service_server::TerminalServiceServer::new(terminal_service)) // Temporarily disabled
+        // .add_service(pb::model_service_server::ModelServiceServer::new(model_service)) // Temporarily disabled
         .serve(grpc_addr);
 
-    // Build REST API server
-    let rest_addr = config.server.rest_address.parse::<std::net::SocketAddr>()?;
-    info!("Starting REST API server on {}", rest_addr);
-
-    let rest_app = api::rest::create_router(db_pool.clone());
-    let rest_server = axum::serve(
-        tokio::net::TcpListener::bind(rest_addr).await?,
-        rest_app.into_make_service(),
-    );
-
     info!("========================================");
-    info!("🚀 Server ready!");
+    info!("🚀 gRPC Server ready!");
     info!("   gRPC endpoint: {}", grpc_addr);
-    info!("   REST API:      http://{}", rest_addr);
-    info!("   Health check:  http://{}/api/health", rest_addr);
+    info!("   JobService: ENABLED (SubmitJob, GetJobStatus, CancelJob, StreamJobUpdates, ListJobs)");
+    info!("   NodeService: ENABLED (RegisterNode, Heartbeat, ReportProgress, ReportCompletion)");
+    info!("   JobStatusService: ENABLED (UpdateJobStatus, ReportJobResult)");
+    info!("   REST API: ENABLED (job submission and status queries now available)");
     info!("========================================");
 
-    // Run both servers concurrently
+    // Run gRPC server
     tokio::select! {
         result = grpc_server => {
             if let Err(e) = result {
                 error!("gRPC server error: {}", e);
-            }
-        }
-        result = rest_server => {
-            if let Err(e) = result {
-                error!("REST server error: {}", e);
             }
         }
         _ = tokio::signal::ctrl_c() => {

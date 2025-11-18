@@ -40,6 +40,9 @@ public:
     void SaveFileAs();
     void CloseFile(int tab_index);
 
+    // Load generated code (from Node Editor)
+    void LoadGeneratedCode(const std::string& code, const std::string& framework_name);
+
     // Execution
     void RunScript();
     void RunSelection();
@@ -92,6 +95,7 @@ private:
     // UI state
     bool show_editor_menu_;
     bool request_focus_;
+    bool request_window_focus_;
     int close_tab_index_;  // Tab to close (-1 = none)
 
     // Execution output

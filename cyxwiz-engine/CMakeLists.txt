@@ -23,8 +23,8 @@ else()
     set(CYXWIZ_HAS_HDF5 OFF)
 endif()
 
-# ImNodes for node editor (may need manual integration if not in vcpkg)
-# Download from: https://github.com/Nelarius/imnodes
+# ImNodes for visual node editor - integrated manually
+# Source: https://github.com/Nelarius/imnodes
 
 # Source files
 set(ENGINE_SOURCES
@@ -38,6 +38,8 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
+    src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/command_window.cpp
@@ -48,8 +50,11 @@ set(ENGINE_SOURCES
     src/scripting/script_manager.cpp
     src/scripting/scripting_engine.cpp
     src/scripting/python_sandbox.cpp
+    src/scripting/startup_script_manager.cpp
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.cpp
+    # ImNodes (visual node editor)
+    external/imnodes/imnodes.cpp
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
     # Plotting system
@@ -72,6 +77,7 @@ set(ENGINE_HEADERS
     src/gui/panels/toolbar.h
     src/gui/panels/asset_browser.h
     src/gui/panels/training_dashboard.h
+    src/gui/panels/training_plot_panel.h
     src/gui/panels/plot_window.h
     src/gui/panels/plot_test_control.h
     src/gui/panels/command_window.h
@@ -82,6 +88,7 @@ set(ENGINE_HEADERS
     src/scripting/script_manager.h
     src/scripting/scripting_engine.h
     src/scripting/python_sandbox.h
+    src/scripting/startup_script_manager.h
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.h
     src/network/grpc_client.h
@@ -107,6 +114,7 @@ add_executable(cyxwiz-engine
 target_include_directories(cyxwiz-engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imnodes
 )
 
 # Find OpenGL
@@ -163,6 +171,30 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     COMMENT "Copying resources..."
 )
 
+# Copy startup scripts to build directory
+add_custom_command(TARGET cyxwiz-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/scripts
+    $<TARGET_FILE_DIR:cyxwiz-engine>/scripts
+    COMMENT "Copying scripts..."
+)
+
+# Copy startup_scripts.txt configuration to build directory
+add_custom_command(TARGET cyxwiz-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_SOURCE_DIR}/startup_scripts.txt
+    $<TARGET_FILE_DIR:cyxwiz-engine>/startup_scripts.txt
+    COMMENT "Copying startup_scripts.txt..."
+)
+
+# Copy test data files to build directory
+add_custom_command(TARGET cyxwiz-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_SOURCE_DIR}/test_data.csv
+    $<TARGET_FILE_DIR:cyxwiz-engine>/test_data.csv
+    COMMENT "Copying test data files..."
+)
+
 # ===== Python Bindings Module =====
 
 # Create Python module for plotting bindings
@@ -178,6 +210,8 @@ pybind11_add_module(cyxwiz_plotting
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/plot_test_panel.cpp
+    src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_plot_panel_global.cpp
 )
 
 # Link the plotting module against necessary libraries

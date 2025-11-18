@@ -11,15 +11,11 @@ use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-pub mod pb {
-    tonic::include_proto!("cyxwiz.protocol");
-}
-
 use crate::pb::{
     node_service_server::NodeService, AssignJobRequest, AssignJobResponse, HeartbeatRequest,
     HeartbeatResponse, RegisterNodeRequest, RegisterNodeResponse, ReportCompletionRequest,
     ReportCompletionResponse, ReportProgressRequest, ReportProgressResponse, StatusCode,
-    GetNodeMetricsRequest, GetNodeMetricsResponse,
+    GetNodeMetricsRequest, GetNodeMetricsResponse, MetricPoint, DeviceType,
 };
 
 pub struct NodeServiceImpl {
@@ -27,15 +23,14 @@ pub struct NodeServiceImpl {
     scheduler: Arc<JobScheduler>,
 }
 
-impl crate::pb::node_service_server::NodeServiceImpl {
+impl NodeServiceImpl {
     pub fn new(db_pool: DbPool, scheduler: Arc<JobScheduler>) -> Self {
         Self { db_pool, scheduler }
     }
 }
 
 #[tonic::async_trait]
-#[tonic::async_trait]
-impl crate::pb::node_service_server::NodeService for NodeServiceImpl {
+impl NodeService for NodeServiceImpl {
     async fn register_node(
         &self,
         request: Request<RegisterNodeRequest>,
@@ -68,12 +63,12 @@ impl crate::pb::node_service_server::NodeService for NodeServiceImpl {
 
         // Extract device capabilities
         let devices = &node_info.devices;
-        let has_cuda = devices.iter().any(|d| d.device_type == pb::DeviceType::DeviceCuda as i32);
-        let has_opencl = devices.iter().any(|d| d.device_type == pb::DeviceType::DeviceOpencl as i32);
+        let has_cuda = devices.iter().any(|d| d.device_type == DeviceType::DeviceCuda as i32);
+        let has_opencl = devices.iter().any(|d| d.device_type == DeviceType::DeviceOpencl as i32);
 
         let gpu_device = devices.iter().find(|d| {
-            d.device_type == pb::DeviceType::DeviceCuda as i32
-                || d.device_type == pb::DeviceType::DeviceOpencl as i32
+            d.device_type == DeviceType::DeviceCuda as i32
+                || d.device_type == DeviceType::DeviceOpencl as i32
         });
 
         let node_id = Uuid::new_v4();
@@ -251,9 +246,9 @@ impl crate::pb::node_service_server::NodeService for NodeServiceImpl {
 
         match queries::get_node_metrics_history(&self.db_pool, node_id, 100).await {
             Ok(metrics) => {
-                let metric_points: Vec<pb::MetricPoint> = metrics
+                let metric_points: Vec<MetricPoint> = metrics
                     .iter()
-                    .map(|m| pb::MetricPoint {
+                    .map(|m| MetricPoint {
                         timestamp: m.timestamp.timestamp(),
                         cpu_usage: m.cpu_usage_percent,
                         gpu_usage: m.gpu_usage_percent.unwrap_or(0.0),

@@ -13,6 +13,7 @@
 #include "../src/plotting/plot_dataset.h"
 #include "../src/plotting/plot_3d.h"
 #include "../src/gui/panels/plot_window.h"
+#include "../src/gui/panels/training_plot_panel.h"
 
 #include <memory>
 #include <vector>
@@ -24,6 +25,11 @@ using namespace cyxwiz::plotting;
 // Global registry for PlotWindows created from Python
 // This ensures they persist and can be accessed by the GUI thread
 static std::vector<std::shared_ptr<cyxwiz::PlotWindow>> g_python_plot_windows;
+
+// Global TrainingPlotPanel instance (shared with MainWindow)
+// These functions are defined in training_plot_panel_global.cpp
+extern void set_training_plot_panel(cyxwiz::TrainingPlotPanel* panel);
+extern cyxwiz::TrainingPlotPanel* get_training_plot_panel();
 
 /**
  * Helper: Convert numpy array or list to std::vector<double>
@@ -481,6 +487,51 @@ PYBIND11_MODULE(cyxwiz_plotting, m) {
              "Initialize the Python/Matplotlib backend")
         .def("shutdown_python_backend", &PlotManager::ShutdownPythonBackend,
              "Shutdown the Python/Matplotlib backend");
+
+    // ===== TrainingPlotPanel =====
+
+    py::class_<cyxwiz::TrainingPlotPanel>(m, "TrainingPlotPanel",
+        "Real-time training visualization panel for ML training metrics")
+        .def("add_loss_point", &cyxwiz::TrainingPlotPanel::AddLossPoint,
+             "Add a loss data point for the current epoch",
+             py::arg("epoch"), py::arg("train_loss"), py::arg("val_loss") = -1.0)
+        .def("add_accuracy_point", &cyxwiz::TrainingPlotPanel::AddAccuracyPoint,
+             "Add an accuracy data point for the current epoch",
+             py::arg("epoch"), py::arg("train_acc"), py::arg("val_acc") = -1.0)
+        .def("add_custom_metric", &cyxwiz::TrainingPlotPanel::AddCustomMetric,
+             "Add a custom metric data point",
+             py::arg("metric_name"), py::arg("epoch"), py::arg("value"))
+        .def("clear", &cyxwiz::TrainingPlotPanel::Clear,
+             "Clear all data from the panel")
+        .def("reset_plots", &cyxwiz::TrainingPlotPanel::ResetPlots,
+             "Reset all plots")
+        .def("set_max_points", &cyxwiz::TrainingPlotPanel::SetMaxPoints,
+             "Set maximum number of data points to keep",
+             py::arg("max_points"))
+        .def("export_to_csv", &cyxwiz::TrainingPlotPanel::ExportToCSV,
+             "Export training metrics to CSV file",
+             py::arg("filepath"))
+        .def("export_plot_image", &cyxwiz::TrainingPlotPanel::ExportPlotImage,
+             "Export plot as image (TODO: not yet implemented)",
+             py::arg("filepath"))
+        .def("show_loss_plot", &cyxwiz::TrainingPlotPanel::ShowLossPlot,
+             "Show or hide the loss plot",
+             py::arg("show"))
+        .def("show_accuracy_plot", &cyxwiz::TrainingPlotPanel::ShowAccuracyPlot,
+             "Show or hide the accuracy plot",
+             py::arg("show"))
+        .def("set_auto_scale", &cyxwiz::TrainingPlotPanel::SetAutoScale,
+             "Enable or disable auto-scaling",
+             py::arg("auto_scale"));
+
+    // Global TrainingPlotPanel accessor functions
+    m.def("set_training_plot_panel", &set_training_plot_panel,
+          "Set the global TrainingPlotPanel instance (called by MainWindow)",
+          py::arg("panel"));
+
+    m.def("get_training_plot_panel", &get_training_plot_panel,
+          "Get the global TrainingPlotPanel instance",
+          py::return_value_policy::reference);
 
     // ===== Convenience Functions =====
 
