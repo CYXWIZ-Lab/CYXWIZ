@@ -313,14 +313,63 @@ void NodeEditor::RenderNodes() {
             ImNodes::EndInputAttribute();
         }
 
-        // Node parameters (if any)
-        if (!node.parameters.empty()) {
-            ImGui::Spacing();
-            for (const auto& [key, value] : node.parameters) {
-                ImGui::Text("%s: %s", key.c_str(), value.c_str());
+        // Display key parameter based on node type
+        ImGui::Spacing();
+        switch (node.type) {
+            case NodeType::Input: {
+                auto it = node.parameters.find("shape");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Shape: %s", it->second.c_str());
+                }
+                break;
             }
-            ImGui::Spacing();
+            case NodeType::Dense: {
+                auto it = node.parameters.find("units");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Units: %s", it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::Conv2D: {
+                auto it = node.parameters.find("filters");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Filters: %s", it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::MaxPool2D: {
+                auto it = node.parameters.find("pool_size");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Pool: %s", it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::Dropout: {
+                auto it = node.parameters.find("rate");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Rate: %s", it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::BatchNorm: {
+                auto it = node.parameters.find("momentum");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Momentum: %s", it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::Output: {
+                auto it = node.parameters.find("classes");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Classes: %s", it->second.c_str());
+                }
+                break;
+            }
+            default:
+                // For activation layers and other nodes without parameters, show nothing
+                break;
         }
+        ImGui::Spacing();
 
         // Output pins
         for (const auto& pin : node.outputs) {
