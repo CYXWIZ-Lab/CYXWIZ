@@ -6,6 +6,9 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <map>
+#include <set>
+#include <queue>
+#include <functional>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #ifdef _WIN32
@@ -1558,20 +1561,158 @@ bool NodeEditor::ValidateGraph(std::string& error_message) {
         return false;
     }
 
-    bool has_input = false;
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::Input) {
-            has_input = true;
-            break;
-        }
-    }
-
-    if (!has_input) {
+    // Check for Input node
+    if (!HasInputNode()) {
         error_message = "Graph must have at least one Input node.";
         return false;
     }
 
+    // Check for Output node
+    if (!HasOutputNode()) {
+        error_message = "Graph must have at least one Output node.";
+        return false;
+    }
+
+    // Check for cycles
+    if (HasCycle()) {
+        error_message = "Graph contains cycles. Neural networks must be acyclic (DAG).";
+        return false;
+    }
+
+    // Check that all nodes are reachable from input
+    if (!AllNodesReachable()) {
+        error_message = "Some nodes are not connected to the network. All nodes must be reachable from input nodes.";
+        return false;
+    }
+
     return true;
+}
+
+bool NodeEditor::HasCycle() {
+    // Build adjacency list
+    std::map<int, std::vector<int>> adj;
+    for (const auto& link : links_) {
+        adj[link.from_node].push_back(link.to_node);
+    }
+
+    // Track visited nodes and recursion stack for DFS
+    std::set<int> visited;
+    std::set<int> rec_stack;
+
+    // DFS function to detect cycle
+    std::function<bool(int)> dfs = [&](int node_id) -> bool {
+        visited.insert(node_id);
+        rec_stack.insert(node_id);
+
+        // Visit all neighbors
+        if (adj.find(node_id) != adj.end()) {
+            for (int neighbor : adj[node_id]) {
+                if (!visited.count(neighbor)) {
+                    // Recursively visit unvisited neighbors
+                    if (dfs(neighbor)) {
+                        return true;  // Cycle found in subtree
+                    }
+                } else if (rec_stack.count(neighbor)) {
+                    // Found a back edge (cycle detected)
+                    spdlog::warn("Cycle detected: node {} -> node {}", node_id, neighbor);
+                    return true;
+                }
+            }
+        }
+
+        // Remove from recursion stack before returning
+        rec_stack.erase(node_id);
+        return false;
+    };
+
+    // Check each unvisited node (handles disconnected components)
+    for (const auto& node : nodes_) {
+        if (!visited.count(node.id)) {
+            if (dfs(node.id)) {
+                return true;  // Cycle found
+            }
+        }
+    }
+
+    return false;  // No cycles found
+}
+
+bool NodeEditor::AllNodesReachable() {
+    if (nodes_.empty()) return true;
+
+    // Find all Input nodes
+    std::vector<int> input_nodes;
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::Input) {
+            input_nodes.push_back(node.id);
+        }
+    }
+
+    if (input_nodes.empty()) return false;
+
+    // Build adjacency list
+    std::map<int, std::vector<int>> adj;
+    for (const auto& link : links_) {
+        adj[link.from_node].push_back(link.to_node);
+    }
+
+    // BFS from all input nodes to find reachable nodes
+    std::set<int> reachable;
+    std::queue<int> queue;
+
+    // Start from all input nodes
+    for (int input_id : input_nodes) {
+        queue.push(input_id);
+        reachable.insert(input_id);
+    }
+
+    // Perform BFS
+    while (!queue.empty()) {
+        int current = queue.front();
+        queue.pop();
+
+        // Visit all neighbors
+        if (adj.find(current) != adj.end()) {
+            for (int neighbor : adj[current]) {
+                if (!reachable.count(neighbor)) {
+                    reachable.insert(neighbor);
+                    queue.push(neighbor);
+                }
+            }
+        }
+    }
+
+    // Check if all nodes are reachable
+    bool all_reachable = (reachable.size() == nodes_.size());
+
+    if (!all_reachable) {
+        // Log which nodes are unreachable for debugging
+        for (const auto& node : nodes_) {
+            if (!reachable.count(node.id)) {
+                spdlog::warn("Node {} ('{}') is not reachable from input nodes", node.id, node.name);
+            }
+        }
+    }
+
+    return all_reachable;
+}
+
+bool NodeEditor::HasInputNode() {
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::Input) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool NodeEditor::HasOutputNode() {
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::Output) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ========== Save/Load Implementation ==========

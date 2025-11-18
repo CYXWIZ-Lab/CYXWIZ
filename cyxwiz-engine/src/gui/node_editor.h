@@ -130,6 +130,12 @@ private:
     void GenerateCodeForFramework(CodeFramework framework);
     bool ValidateGraph(std::string& error_message);
 
+    // Graph validation helpers
+    bool HasCycle();
+    bool AllNodesReachable();
+    bool HasInputNode();
+    bool HasOutputNode();
+
     // Framework-specific generators
     std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
     std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
