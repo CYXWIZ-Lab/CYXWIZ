@@ -37,9 +37,21 @@ CREATE TABLE IF NOT EXISTS nodes_new (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Step 2: Copy existing data
-INSERT INTO nodes_new
-SELECT * FROM nodes;
+-- Step 2: Copy existing data (explicitly specify columns to handle schema differences)
+INSERT INTO nodes_new (
+    id, wallet_address, name, status, reputation_score, stake_amount,
+    cpu_cores, ram_gb, gpu_model, gpu_memory_gb, has_cuda, has_opencl,
+    total_jobs_completed, total_jobs_failed, uptime_percentage, current_load,
+    country, region, ip_address, port,
+    last_heartbeat, registered_at, updated_at
+)
+SELECT
+    id, wallet_address, name, status, reputation_score, stake_amount,
+    cpu_cores, ram_gb, gpu_model, gpu_memory_gb, has_cuda, has_opencl,
+    total_jobs_completed, total_jobs_failed, uptime_percentage, current_load,
+    country, region, ip_address, port,
+    last_heartbeat, registered_at, updated_at
+FROM nodes;
 
 -- Step 3: Drop old table
 DROP TABLE nodes;

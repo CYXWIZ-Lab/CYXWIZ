@@ -13,7 +13,7 @@ use crate::blockchain::{PaymentProcessor, SolanaClient};
 use crate::cache::RedisCache;
 use crate::config::Config;
 use crate::database::{create_pool, run_migrations};
-use crate::scheduler::JobScheduler;
+use crate::scheduler::{JobScheduler, NodeMonitor};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
@@ -97,6 +97,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         scheduler_clone.run().await;
     });
     info!("Job scheduler started");
+
+    // Start node monitor in background to detect disconnected nodes
+    info!("Starting node monitor...");
+    let node_monitor = NodeMonitor::new(
+        db_pool.clone(),
+        30,  // 30 seconds timeout - mark offline if no heartbeat
+        10   // Check every 10 seconds
+    );
+    tokio::spawn(async move {
+        node_monitor.run().await;
+    });
+    info!("Node monitor started");
 
     // Check command line arguments for mode
     let args: Vec<String> = std::env::args().collect();

@@ -96,7 +96,7 @@ pub async fn get_all_online_nodes(pool: &DbPool) -> Result<Vec<Node>> {
 }
 
 pub async fn update_node_status(pool: &DbPool, node_id: DbId, status: NodeStatus) -> Result<()> {
-    sqlx::query("UPDATE nodes SET status = $1, updated_at = NOW() WHERE id = $2")
+    sqlx::query("UPDATE nodes SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
         .bind(status)
         .bind(node_id)
         .execute(pool)
