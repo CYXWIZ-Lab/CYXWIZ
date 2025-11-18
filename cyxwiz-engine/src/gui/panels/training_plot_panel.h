@@ -92,4 +92,8 @@ private:
     double CalculateMax(const std::vector<double>& values);
 };
 
+// Global accessor functions for Python integration
+void set_training_plot_panel(cyxwiz::TrainingPlotPanel* panel);
+cyxwiz::TrainingPlotPanel* get_training_plot_panel();
+
 } // namespace cyxwiz

@@ -38,6 +38,7 @@ public:
     void ResetDockLayout();
     Console* GetConsole() { return console_.get(); }
     cyxwiz::PlotTestControlPanel* GetPlotTestControl() { return plot_test_control_.get(); }
+    cyxwiz::ScriptEditorPanel* GetScriptEditor() { return script_editor_.get(); }
 
 private:
     void RenderDockSpace();

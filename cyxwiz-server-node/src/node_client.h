@@ -52,6 +52,32 @@ public:
     // Check if successfully registered
     bool IsRegistered() const { return is_registered_; }
 
+    // ========================================================================
+    // Job Status Reporting (Server Node → Central Server)
+    // ========================================================================
+
+    // Update job progress during training
+    bool UpdateJobStatus(
+        const std::string& job_id,
+        protocol::StatusCode status,
+        double progress,                              // 0.0 to 1.0
+        const std::map<std::string, double>& metrics, // loss, accuracy, etc.
+        int32_t current_epoch,
+        const std::string& log_message = ""
+    );
+
+    // Report final job result (completion or failure)
+    bool ReportJobResult(
+        const std::string& job_id,
+        protocol::StatusCode final_status,            // STATUS_SUCCESS or STATUS_FAILED
+        const std::map<std::string, double>& final_metrics,
+        const std::string& model_weights_uri = "",
+        const std::string& model_weights_hash = "",
+        int64_t model_size = 0,
+        int64_t total_compute_time_ms = 0,
+        const std::string& error_message = ""
+    );
+
 private:
     void HeartbeatLoop();
 
@@ -61,6 +87,7 @@ private:
     bool is_registered_;
 
     std::unique_ptr<protocol::NodeService::Stub> stub_;
+    std::unique_ptr<protocol::JobStatusService::Stub> job_status_stub_;
     std::shared_ptr<grpc::Channel> channel_;
 
     // Heartbeat thread

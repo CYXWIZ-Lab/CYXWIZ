@@ -1,4 +1,4 @@
-// mod api; // Temporarily disabled - has incomplete service implementations
+mod api;
 mod blockchain;
 mod cache;
 mod config;
@@ -8,9 +8,7 @@ mod pb; // Needed by scheduler for gRPC client
 mod scheduler;
 mod tui;
 
-// use crate::api::grpc::{
-//     JobServiceImpl, NodeServiceImpl,
-// };
+use crate::api::grpc::{JobServiceImpl, JobStatusServiceImpl, NodeServiceImpl};
 use crate::blockchain::{PaymentProcessor, SolanaClient};
 use crate::cache::RedisCache;
 use crate::config::Config;
@@ -111,14 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return tui::run(db_pool, redis_cache_arc).await.map_err(|e| e.into());
     }
 
-    // gRPC and REST server mode is temporarily disabled while we fix service implementations
-    // For now, default to TUI mode with scheduler
-    info!("gRPC server mode temporarily disabled - starting TUI mode with live job processing...");
-    info!("========================================");
-    return tui::run(db_pool, redis_cache_arc).await.map_err(|e| e.into());
-
-    /*
-    // gRPC and REST server mode (default) - TEMPORARILY DISABLED
+    // gRPC and REST server mode (default)
     // Initialize Solana blockchain client
     info!("Initializing Solana client...");
     let solana_client = if std::path::Path::new(&config.blockchain.payer_keypair_path).exists() {
@@ -165,6 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&payment_processor),
     );
     let node_service = NodeServiceImpl::new(db_pool.clone(), Arc::clone(&scheduler));
+    let job_status_service = JobStatusServiceImpl::new(db_pool.clone());
 
     // Initialize deployment services
     // let deployment_service = DeploymentServiceImpl::new(db_pool.clone()); // Temporarily disabled
@@ -181,38 +173,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_server = Server::builder()
         .add_service(pb::job_service_server::JobServiceServer::new(job_service))
         .add_service(pb::node_service_server::NodeServiceServer::new(node_service))
+        .add_service(pb::job_status_service_server::JobStatusServiceServer::new(job_status_service))
         // .add_service(pb::deployment_service_server::DeploymentServiceServer::new(deployment_service)) // Temporarily disabled
         // .add_service(pb::terminal_service_server::TerminalServiceServer::new(terminal_service)) // Temporarily disabled
         // .add_service(pb::model_service_server::ModelServiceServer::new(model_service)) // Temporarily disabled
         .serve(grpc_addr);
 
-    // Build REST API server
-    let rest_addr = config.server.rest_address.parse::<std::net::SocketAddr>()?;
-    info!("Starting REST API server on {}", rest_addr);
-
-    let rest_app = api::rest::create_router(db_pool.clone());
-    let rest_server = axum::serve(
-        tokio::net::TcpListener::bind(rest_addr).await?,
-        rest_app.into_make_service(),
-    );
-
     info!("========================================");
-    info!("🚀 Server ready!");
+    info!("🚀 gRPC Server ready!");
     info!("   gRPC endpoint: {}", grpc_addr);
-    info!("   REST API:      http://{}", rest_addr);
-    info!("   Health check:  http://{}/api/health", rest_addr);
+    info!("   JobService: ENABLED (SubmitJob, GetJobStatus, CancelJob, StreamJobUpdates, ListJobs)");
+    info!("   NodeService: ENABLED (RegisterNode, Heartbeat, ReportProgress, ReportCompletion)");
+    info!("   JobStatusService: ENABLED (UpdateJobStatus, ReportJobResult)");
+    info!("   REST API: ENABLED (job submission and status queries now available)");
     info!("========================================");
 
-    // Run both servers concurrently
+    // Run gRPC server
     tokio::select! {
         result = grpc_server => {
             if let Err(e) = result {
                 error!("gRPC server error: {}", e);
-            }
-        }
-        result = rest_server => {
-            if let Err(e) = result {
-                error!("REST server error: {}", e);
             }
         }
         _ = tokio::signal::ctrl_c() => {
@@ -222,5 +202,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Shutting down gracefully...");
     Ok(())
-    */
 }

@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::pb::{
     job_service_server::JobService, CancelJobRequest, CancelJobResponse, GetJobStatusRequest,
     GetJobStatusResponse, ListJobsRequest, ListJobsResponse, SubmitJobRequest,
-    SubmitJobResponse, StatusCode,
+    SubmitJobResponse, StatusCode, Error, JobStatus, JobUpdateStream,
 };
 
 pub struct JobServiceImpl {
@@ -25,7 +25,7 @@ pub struct JobServiceImpl {
     payment_processor: Arc<PaymentProcessor>,
 }
 
-impl crate::pb::job_service_server::JobServiceImpl {
+impl JobServiceImpl {
     pub fn new(
         db_pool: DbPool,
         scheduler: Arc<JobScheduler>,
@@ -40,9 +40,8 @@ impl crate::pb::job_service_server::JobServiceImpl {
 }
 
 #[tonic::async_trait]
-#[tonic::async_trait]
-impl crate::pb::job_service_server::JobService for JobServiceImpl {
-    type StreamJobUpdatesStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<pb::JobUpdateStream, tonic::Status>>;
+impl JobService for JobServiceImpl {
+    type StreamJobUpdatesStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<JobUpdateStream, tonic::Status>>;
 
     async fn submit_job(
         &self,
@@ -152,7 +151,7 @@ impl crate::pb::job_service_server::JobService for JobServiceImpl {
                             job_id: String::new(),
                             status: StatusCode::StatusError as i32,
                             assigned_node_id: String::new(),
-                            error: Some(pb::Error {
+                            error: Some(Error {
                                 code: 1,
                                 message: format!("Failed to create payment escrow: {}", e),
                                 details: String::new(),
@@ -196,14 +195,14 @@ impl crate::pb::job_service_server::JobService for JobServiceImpl {
                 };
 
                 Ok(Response::new(GetJobStatusResponse {
-                    status: Some(pb::JobStatus {
+                    status: Some(JobStatus {
                         job_id: job.id.to_string(),
                         status: status_code as i32,
                         progress,
                         current_node_id: job.assigned_node_id.map(|id| id.to_string()).unwrap_or_default(),
                         start_time: job.started_at.map(|t| t.timestamp()).unwrap_or(0),
                         end_time: job.completed_at.map(|t| t.timestamp()).unwrap_or(0),
-                        error: job.error_message.map(|msg| pb::Error {
+                        error: job.error_message.map(|msg| Error {
                             code: 1,
                             message: msg,
                             details: String::new(),
@@ -261,7 +260,7 @@ impl crate::pb::job_service_server::JobService for JobServiceImpl {
                         Ok(Response::new(CancelJobResponse {
                             status: StatusCode::StatusError as i32,
                             refund_issued: false,
-                            error: Some(pb::Error {
+                            error: Some(Error {
                                 code: 1,
                                 message: format!("Failed to issue refund: {}", e),
                                 details: String::new(),

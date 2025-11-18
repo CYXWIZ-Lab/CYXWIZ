@@ -23,8 +23,8 @@ else()
     set(CYXWIZ_HAS_HDF5 OFF)
 endif()
 
-# ImNodes for node editor (may need manual integration if not in vcpkg)
-# Download from: https://github.com/Nelarius/imnodes
+# ImNodes for visual node editor - integrated manually
+# Source: https://github.com/Nelarius/imnodes
 
 # Source files
 set(ENGINE_SOURCES
@@ -53,6 +53,8 @@ set(ENGINE_SOURCES
     src/scripting/startup_script_manager.cpp
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.cpp
+    # ImNodes (visual node editor)
+    external/imnodes/imnodes.cpp
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
     # Plotting system
@@ -112,6 +114,7 @@ add_executable(cyxwiz-engine
 target_include_directories(cyxwiz-engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imnodes
 )
 
 # Find OpenGL

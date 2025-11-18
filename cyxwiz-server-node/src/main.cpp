@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
     std::string deployment_address = "0.0.0.0:50052";  // Different from Central Server's 50051
     std::string terminal_address = "0.0.0.0:50053";
     std::string node_service_address = "0.0.0.0:50054";  // NodeService for job assignment
-    std::string central_server = "localhost:50051";    // Central Server address
+    std::string central_server = "192.168.1.116:50051";    // Central Server address
 
     spdlog::info("Node ID: {}", node_id);
     spdlog::info("Deployment service: {}", deployment_address);

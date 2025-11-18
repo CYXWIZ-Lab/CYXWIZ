@@ -1,0 +1,200 @@
+// Node Editor Enhancements - Add to node_editor.cpp
+
+// 1. Initialize selected_node_id_ in constructor
+// Add to NodeEditor::NodeEditor() : ... list
+// , selected_node_id_(-1)
+
+// 2. GetNodeColor - Color-code nodes by type
+ImU32 NodeEditor::GetNodeColor(NodeType type) {
+    switch (type) {
+        // Input/Output - Blue
+        case NodeType::Input:
+        case NodeType::Output:
+            return IM_COL32(100, 150, 255, 255);
+
+        // Dense layers - Green
+        case NodeType::Dense:
+            return IM_COL32(100, 255, 100, 255);
+
+        // Convolutional layers - Cyan
+        case NodeType::Conv2D:
+        case NodeType::MaxPool2D:
+            return IM_COL32(100, 255, 255, 255);
+
+        // Activation functions - Orange
+        case NodeType::ReLU:
+        case NodeType::Sigmoid:
+        case NodeType::Tanh:
+        case NodeType::Softmax:
+        case NodeType::LeakyReLU:
+            return IM_COL32(255, 180, 100, 255);
+
+        // Regularization - Purple
+        case NodeType::Dropout:
+        case NodeType::BatchNorm:
+            return IM_COL32(200, 100, 255, 255);
+
+        // Utility - Gray
+        case NodeType::Flatten:
+            return IM_COL32(180, 180, 180, 255);
+
+        // Loss/Optimizer - Red
+        case NodeType::MSELoss:
+        case NodeType::CrossEntropyLoss:
+        case NodeType::SGD:
+        case NodeType::Adam:
+        case NodeType::AdamW:
+            return IM_COL32(255, 100, 100, 255);
+
+        default:
+            return IM_COL32(150, 150, 150, 255);
+    }
+}
+
+// 3. RenderNodeParameters - Editable parameters inline
+void NodeEditor::RenderNodeParameters(MLNode& node) {
+    if (node.type == NodeType::Dense) {
+        ImGui::Text("Units:");
+        ImGui::SameLine();
+
+        // Get current value or default
+        std::string& units_str = node.parameters["units"];
+        if (units_str.empty()) units_str = "64";
+
+        static char buffer[16] = {};
+        strncpy(buffer, units_str.c_str(), sizeof(buffer) - 1);
+
+        ImGui::SetNextItemWidth(60.0f);
+        if (ImGui::InputText(("##units_" + std::to_string(node.id)).c_str(), buffer, sizeof(buffer), ImGuiInputTextFlags_CharsDecimal)) {
+            units_str = buffer;
+        }
+    }
+    else if (node.type == NodeType::Dropout) {
+        ImGui::Text("Rate:");
+        ImGui::SameLine();
+
+        std::string& rate_str = node.parameters["rate"];
+        if (rate_str.empty()) rate_str = "0.5";
+
+        float rate = std::stof(rate_str);
+        ImGui::SetNextItemWidth(80.0f);
+        if (ImGui::SliderFloat(("##dropout_" + std::to_string(node.id)).c_str(), &rate, 0.0f, 0.9f, "%.2f")) {
+            rate_str = std::to_string(rate);
+        }
+    }
+    else if (node.type == NodeType::Conv2D) {
+        ImGui::Text("Filters:");
+        ImGui::SameLine();
+
+        std::string& filters_str = node.parameters["filters"];
+        if (filters_str.empty()) filters_str = "32";
+
+        static char f_buffer[16] = {};
+        strncpy(f_buffer, filters_str.c_str(), sizeof(f_buffer) - 1);
+
+        ImGui::SetNextItemWidth(60.0f);
+        if (ImGui::InputText(("##filters_" + std::to_string(node.id)).c_str(), f_buffer, sizeof(f_buffer), ImGuiInputTextFlags_CharsDecimal)) {
+            filters_str = f_buffer;
+        }
+
+        ImGui::Text("Kernel:");
+        ImGui::SameLine();
+
+        std::string& kernel_str = node.parameters["kernel_size"];
+        if (kernel_str.empty()) kernel_str = "3";
+
+        static char k_buffer[16] = {};
+        strncpy(k_buffer, kernel_str.c_str(), sizeof(k_buffer) - 1);
+
+        ImGui::SetNextItemWidth(60.0f);
+        if (ImGui::InputText(("##kernel_" + std::to_string(node.id)).c_str(), k_buffer, sizeof(k_buffer), ImGuiInputTextFlags_CharsDecimal)) {
+            kernel_str = k_buffer;
+        }
+    }
+}
+
+// 4. RenderPropertiesPanel - Bottom properties panel
+void NodeEditor::RenderPropertiesPanel() {
+    ImGui::Separator();
+    ImGui::Text("Properties");
+    ImGui::Separator();
+
+    if (selected_node_id_ < 0) {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No node selected");
+        ImGui::Text("Click on a node to edit its properties");
+        return;
+    }
+
+    // Find selected node
+    MLNode* selected_node = nullptr;
+    for (auto& node : nodes_) {
+        if (node.id == selected_node_id_) {
+            selected_node = &node;
+            break;
+        }
+    }
+
+    if (!selected_node) {
+        selected_node_id_ = -1;
+        return;
+    }
+
+    ImGui::Text("Node: %s (ID: %d)", selected_node->name.c_str(), selected_node->id);
+    ImGui::Spacing();
+
+    // Edit node name
+    static char name_buffer[64];
+    strncpy(name_buffer, selected_node->name.c_str(), sizeof(name_buffer) - 1);
+    if (ImGui::InputText("Name", name_buffer, sizeof(name_buffer))) {
+        selected_node->name = name_buffer;
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("Parameters:");
+
+    // Type-specific parameter editing
+    RenderNodeParameters(*selected_node);
+}
+
+// 5. ValidateGraph - Check graph structure
+bool NodeEditor::ValidateGraph(std::string& error_message) {
+    if (nodes_.empty()) {
+        error_message = "Graph is empty. Add some nodes first.";
+        return false;
+    }
+
+    // Check for at least one Input node
+    bool has_input = false;
+    bool has_output = false;
+
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::Input) has_input = true;
+        if (node.type == NodeType::Output) has_output = true;
+    }
+
+    if (!has_input) {
+        error_message = "Graph must have at least one Input node.";
+        return false;
+    }
+
+    if (!has_output) {
+        error_message = "Graph must have at least one Output node.";
+        return false;
+    }
+
+    // Check for disconnected nodes (except Input)
+    std::set<int> connected_nodes;
+    for (const auto& link : links_) {
+        connected_nodes.insert(link.from_node);
+        connected_nodes.insert(link.to_node);
+    }
+
+    for (const auto& node : nodes_) {
+        if (node.type != NodeType::Input && connected_nodes.find(node.id) == connected_nodes.end()) {
+            error_message = "Node '" + node.name + "' is not connected to the graph.";
+            return false;
+        }
+    }
+
+    return true;
+}

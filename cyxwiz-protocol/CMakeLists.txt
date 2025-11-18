@@ -78,5 +78,15 @@ if(WIN32)
     )
 endif()
 
+# Suppress warnings in generated protobuf code
+if(MSVC)
+    # Disable warnings for protobuf-generated code
+    set_source_files_properties(
+        ${PROTO_SRCS} ${GRPC_SRCS}
+        PROPERTIES
+        COMPILE_FLAGS "/wd4100 /wd4244 /wd4267 /wd4996"  # unreferenced params, size_t conversions, deprecated
+    )
+endif()
+
 # Export header location
 set(CYXWIZ_PROTOCOL_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR} PARENT_SCOPE)

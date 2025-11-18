@@ -1,6 +1,13 @@
 #pragma once
 
+#include <string>
+#include <map>
+
 namespace gui {
+
+// Forward declarations
+enum class NodeType;
+struct MLNode;
 
 class Properties {
 public:
@@ -9,12 +16,15 @@ public:
 
     void Render();
 
-private:
-    bool show_window_;
+    // Set the currently selected node to display properties for
+    void SetSelectedNode(MLNode* node);
+    void ClearSelection();
 
-    // Example properties (TODO: replace with actual node/layer properties)
-    int units_ = 64;
-    float learning_rate_ = 0.001f;
+private:
+    void RenderNodeProperties(MLNode& node);
+
+    bool show_window_;
+    MLNode* selected_node_ = nullptr;
 };
 
 } // namespace gui

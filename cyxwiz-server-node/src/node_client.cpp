@@ -281,6 +281,7 @@ NodeClient::NodeClient(const std::string& central_server_address, const std::str
     // Create gRPC channel
     channel_ = grpc::CreateChannel(central_server_address, grpc::InsecureChannelCredentials());
     stub_ = protocol::NodeService::NewStub(channel_);
+    job_status_stub_ = protocol::JobStatusService::NewStub(channel_);
 }
 
 NodeClient::~NodeClient() {
@@ -419,6 +420,129 @@ void NodeClient::HeartbeatLoop() {
     }
 
     spdlog::debug("Heartbeat loop stopped");
+}
+
+// ============================================================================
+// Job Status Reporting Implementation
+// ============================================================================
+
+bool NodeClient::UpdateJobStatus(
+    const std::string& job_id,
+    protocol::StatusCode status,
+    double progress,
+    const std::map<std::string, double>& metrics,
+    int32_t current_epoch,
+    const std::string& log_message)
+{
+    if (!is_registered_) {
+        spdlog::error("Cannot report job status: node not registered");
+        return false;
+    }
+
+    spdlog::debug("Reporting job status for job {} - {:.1f}% complete", job_id, progress * 100.0);
+
+    // Build request
+    protocol::UpdateJobStatusRequest request;
+    request.set_node_id(node_id_);
+    request.set_job_id(job_id);
+    request.set_status(status);
+    request.set_progress(progress);
+    request.set_current_epoch(current_epoch);
+    request.set_log_message(log_message);
+
+    // Add metrics
+    auto* metrics_map = request.mutable_metrics();
+    for (const auto& [key, value] : metrics) {
+        (*metrics_map)[key] = value;
+    }
+
+    // Send request
+    protocol::UpdateJobStatusResponse response;
+    grpc::ClientContext context;
+
+    auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
+    context.set_deadline(deadline);
+
+    grpc::Status grpc_status = job_status_stub_->UpdateJobStatus(&context, request, &response);
+
+    if (grpc_status.ok()) {
+        if (response.status() == protocol::STATUS_SUCCESS) {
+            spdlog::debug("Job status update successful");
+            if (!response.should_continue()) {
+                spdlog::warn("Central Server requested job cancellation");
+            }
+            return response.should_continue();
+        } else {
+            spdlog::error("Job status update failed: {}",
+                         response.has_error() ? response.error().message() : "Unknown error");
+            return false;
+        }
+    } else {
+        spdlog::error("gRPC error during job status update: {} (code: {})",
+                     grpc_status.error_message(), static_cast<int>(grpc_status.error_code()));
+        return false;
+    }
+}
+
+bool NodeClient::ReportJobResult(
+    const std::string& job_id,
+    protocol::StatusCode final_status,
+    const std::map<std::string, double>& final_metrics,
+    const std::string& model_weights_uri,
+    const std::string& model_weights_hash,
+    int64_t model_size,
+    int64_t total_compute_time_ms,
+    const std::string& error_message)
+{
+    if (!is_registered_) {
+        spdlog::error("Cannot report job result: node not registered");
+        return false;
+    }
+
+    spdlog::info("Reporting final result for job {} - status: {}",
+                 job_id,
+                 final_status == protocol::STATUS_SUCCESS ? "SUCCESS" : "FAILED");
+
+    // Build request
+    protocol::ReportJobResultRequest request;
+    request.set_node_id(node_id_);
+    request.set_job_id(job_id);
+    request.set_final_status(final_status);
+    request.set_model_weights_uri(model_weights_uri);
+    request.set_model_weights_hash(model_weights_hash);
+    request.set_model_size(model_size);
+    request.set_total_compute_time(total_compute_time_ms);
+    request.set_error_message(error_message);
+
+    // Add final metrics
+    auto* metrics_map = request.mutable_final_metrics();
+    for (const auto& [key, value] : final_metrics) {
+        (*metrics_map)[key] = value;
+    }
+
+    // Send request
+    protocol::ReportJobResultResponse response;
+    grpc::ClientContext context;
+
+    auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(30);
+    context.set_deadline(deadline);
+
+    grpc::Status grpc_status = job_status_stub_->ReportJobResult(&context, request, &response);
+
+    if (grpc_status.ok()) {
+        if (response.status() == protocol::STATUS_SUCCESS) {
+            spdlog::info("Job result reported successfully");
+            return true;
+        } else {
+            spdlog::error("Job result reporting failed: {}",
+                         response.has_error() ? response.error().message() : "Unknown error");
+            return false;
+        }
+    } else {
+        spdlog::error("gRPC error during job result reporting: {} (code: {})",
+                     grpc_status.error_message(), static_cast<int>(grpc_status.error_code()));
+        return false;
+    }
 }
 
 } // namespace servernode

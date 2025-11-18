@@ -22,6 +22,7 @@ ScriptEditorPanel::ScriptEditorPanel()
     , command_window_(nullptr)
     , show_editor_menu_(false)
     , request_focus_(false)
+    , request_window_focus_(false)
     , close_tab_index_(-1)
     , show_output_notification_(false)
     , output_notification_time_(0.0f)
@@ -42,6 +43,12 @@ void ScriptEditorPanel::Render() {
     if (!visible_) return;
 
     ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
+
+    // Handle window focus request (bring to front)
+    if (request_window_focus_) {
+        ImGui::SetWindowFocus();
+        request_window_focus_ = false;
+    }
 
     // Always show menu bar
     RenderMenuBar();
@@ -434,6 +441,69 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     request_focus_ = true;
 
     spdlog::info("Opened file: {}", path);
+}
+
+void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::string& framework_name) {
+    std::string target_filename = "generated_" + framework_name + ".py";
+
+    // Check if a tab with this filename already exists
+    int existing_tab_index = -1;
+    for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
+        if (tabs_[i]->filename == target_filename) {
+            existing_tab_index = i;
+            break;
+        }
+    }
+
+    if (existing_tab_index >= 0) {
+        // Update existing tab
+        auto& tab = tabs_[existing_tab_index];
+        tab->editor.SetText(code);
+        tab->is_modified = true;
+        active_tab_index_ = existing_tab_index;
+        request_focus_ = true;
+        request_window_focus_ = true;
+        spdlog::info("Updated existing {} code tab", framework_name);
+    } else {
+        // Create new tab with generated code
+        auto tab = std::make_unique<EditorTab>();
+        tab->filename = target_filename;
+        tab->filepath = "";  // Not saved yet
+        tab->is_new = true;
+        tab->is_modified = true;  // Has content, mark as modified
+
+        // Configure Python language syntax highlighting
+        auto lang = TextEditor::LanguageDefinition::CPlusPlus();
+        lang.mKeywords.clear();
+        static const char* const py_keywords[] = {
+            "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
+            "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
+            "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
+            "while", "with", "yield", "async", "await", "print", "len", "range", "str", "int"
+        };
+        for (auto& k : py_keywords)
+            lang.mKeywords.insert(k);
+
+        lang.mSingleLineComment = "#";
+        lang.mCommentStart = "\"\"\"";
+        lang.mCommentEnd = "\"\"\"";
+        lang.mName = "Python";
+
+        tab->editor.SetLanguageDefinition(lang);
+        tab->editor.SetPalette(TextEditor::GetDarkPalette());
+        tab->editor.SetShowWhitespaces(true);
+        tab->editor.SetTabSize(4);
+        tab->editor.SetImGuiChildIgnored(false);
+        tab->editor.SetReadOnly(false);
+        tab->editor.SetText(code);
+
+        tabs_.push_back(std::move(tab));
+        active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
+        request_focus_ = true;
+        request_window_focus_ = true;
+
+        spdlog::info("Loaded generated {} code into new tab", framework_name);
+    }
 }
 
 void ScriptEditorPanel::SaveFile() {

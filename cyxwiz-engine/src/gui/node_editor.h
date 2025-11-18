@@ -124,6 +124,8 @@ private:
     bool LoadGraph(const std::string& filepath);
     void ShowSaveDialog();
     void ShowLoadDialog();
+    void ExportCodeToFile();
+    void ShowExportDialog();
 
     // Code generation
     void GeneratePythonCode();

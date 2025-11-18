@@ -204,3 +204,57 @@ message GetNodeInfoResponse {
   NodeInfo info = 1;
   Error error = 2;
 }
+
+// ============================================================================
+// Job Status Reporting Service (Server Node → Central Server)
+// ============================================================================
+
+// Update job status (progress or state change)
+message UpdateJobStatusRequest {
+  string node_id = 1;
+  string job_id = 2;
+  StatusCode status = 3;           // running, completed, failed
+  double progress = 4;              // 0.0 to 1.0
+  map<string, double> metrics = 5;  // loss, accuracy, etc.
+  int32 current_epoch = 6;
+  string log_message = 7;           // Optional progress message
+}
+
+message UpdateJobStatusResponse {
+  StatusCode status = 1;
+  bool should_continue = 2;         // Central Server can request cancellation
+  Error error = 3;
+}
+
+// Report final job completion with results
+message ReportJobResultRequest {
+  string node_id = 1;
+  string job_id = 2;
+  StatusCode final_status = 3;     // success or failed
+
+  // Final metrics
+  map<string, double> final_metrics = 4;
+
+  // Model output (if applicable)
+  string model_weights_uri = 5;    // IPFS hash or storage location
+  string model_weights_hash = 6;   // SHA256 for verification
+  int64 model_size = 7;            // bytes
+
+  // Compute stats
+  int64 total_compute_time = 8;    // milliseconds
+  string error_message = 9;        // If failed
+}
+
+message ReportJobResultResponse {
+  StatusCode status = 1;
+  Error error = 2;
+}
+
+// Job Status Service - Implemented by Central Server, called by Server Nodes
+service JobStatusService {
+  // Update job progress during execution
+  rpc UpdateJobStatus(UpdateJobStatusRequest) returns (UpdateJobStatusResponse);
+
+  // Report final job result (completion or failure)
+  rpc ReportJobResult(ReportJobResultRequest) returns (ReportJobResultResponse);
+}

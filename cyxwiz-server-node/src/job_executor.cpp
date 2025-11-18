@@ -1,4 +1,5 @@
 #include "job_executor.h"
+#include "node_client.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -169,6 +170,31 @@ void JobExecutor::ExecuteJob(const std::string& job_id) {
 
     // Mark as not running
     state->is_running = false;
+
+    // Report final result to Central Server
+    if (node_client_ && node_client_->IsRegistered()) {
+        // Build final metrics map
+        std::map<std::string, double> final_metrics;
+        final_metrics["loss"] = state->current_metrics.loss;
+        final_metrics["accuracy"] = state->current_metrics.accuracy;
+
+        // Calculate total compute time
+        auto now = std::chrono::steady_clock::now();
+        auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - state->start_time);
+
+        // Send final result to Central Server
+        node_client_->ReportJobResult(
+            job_id,
+            success ? protocol::STATUS_SUCCESS : protocol::STATUS_FAILED,
+            final_metrics,
+            "",  // model_weights_uri - TODO: implement model saving
+            "",  // model_weights_hash - TODO: implement model saving
+            0,   // model_size - TODO: implement model saving
+            total_time.count(),
+            error_msg
+        );
+    }
 
     // Call completion callback
     {
@@ -353,9 +379,27 @@ void JobExecutor::ReportProgress(const std::string& job_id, JobState* state) {
     }
 
     // Report to Central Server via NodeClient if available
-    if (node_client_) {
-        // TODO: Implement ReportJobProgress on NodeClient
-        // node_client_->ReportJobProgress(job_id, status);
+    if (node_client_ && node_client_->IsRegistered()) {
+        // Build metrics map
+        std::map<std::string, double> metrics;
+        metrics["loss"] = state->current_metrics.loss;
+        metrics["accuracy"] = state->current_metrics.accuracy;
+        metrics["learning_rate"] = state->current_metrics.learning_rate;
+
+        // Add custom metrics
+        for (const auto& [key, value] : state->current_metrics.custom_metrics) {
+            metrics[key] = value;
+        }
+
+        // Send status update to Central Server
+        node_client_->UpdateJobStatus(
+            job_id,
+            protocol::STATUS_IN_PROGRESS,
+            progress,
+            metrics,
+            state->current_metrics.current_epoch,
+            ""  // log_message - empty for now
+        );
     }
 }
 

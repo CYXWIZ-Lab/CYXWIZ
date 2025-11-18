@@ -1,4 +1,5 @@
 use crate::config::RedisConfig;
+use crate::database::models::DbId;
 use crate::error::Result;
 use redis::{aio::ConnectionManager, AsyncCommands, Client};
 use serde::{Deserialize, Serialize};
@@ -38,15 +39,26 @@ impl RedisCache {
     }
 
     // Job queue operations
-    pub async fn push_job(&mut self, job_id: Uuid) -> Result<()> {
+    pub async fn push_job(&mut self, job_id: DbId) -> Result<()> {
         let manager = self.get_manager()?;
-        manager.rpush("job_queue", job_id.to_string()).await?;
+        #[cfg(feature = "sqlite-compat")]
+        let job_id_str = job_id;
+
+        #[cfg(not(feature = "sqlite-compat"))]
+        let job_id_str = job_id.to_string();
+
+        manager.rpush("job_queue", job_id_str).await?;
         Ok(())
     }
 
-    pub async fn pop_job(&mut self) -> Result<Option<Uuid>> {
+    pub async fn pop_job(&mut self) -> Result<Option<DbId>> {
         let manager = self.get_manager()?;
         let result: Option<String> = manager.lpop("job_queue", None).await?;
+
+        #[cfg(feature = "sqlite-compat")]
+        return Ok(result);
+
+        #[cfg(not(feature = "sqlite-compat"))]
         Ok(result.and_then(|s| Uuid::parse_str(&s).ok()))
     }
 
@@ -57,32 +69,63 @@ impl RedisCache {
     }
 
     // Node status cache
-    pub async fn cache_node_status(&mut self, node_id: Uuid, status: &str, ttl_secs: u64) -> Result<()> {
+    pub async fn cache_node_status(&mut self, node_id: DbId, status: &str, ttl_secs: u64) -> Result<()> {
+        #[cfg(feature = "sqlite-compat")]
         let key = format!("node:{}:status", node_id);
+
+        #[cfg(not(feature = "sqlite-compat"))]
+        let key = format!("node:{}:status", node_id);
+
         let manager = self.get_manager()?;
         manager.set_ex(&key, status, ttl_secs).await?;
         Ok(())
     }
 
-    pub async fn get_node_status(&mut self, node_id: Uuid) -> Result<Option<String>> {
+    pub async fn get_node_status(&mut self, node_id: DbId) -> Result<Option<String>> {
+        #[cfg(feature = "sqlite-compat")]
         let key = format!("node:{}:status", node_id);
+
+        #[cfg(not(feature = "sqlite-compat"))]
+        let key = format!("node:{}:status", node_id);
+
         let manager = self.get_manager()?;
         let result: Option<String> = manager.get(&key).await?;
         Ok(result)
     }
 
     // Job assignment cache
-    pub async fn cache_job_assignment(&mut self, job_id: Uuid, node_id: Uuid, ttl_secs: u64) -> Result<()> {
+    pub async fn cache_job_assignment(&mut self, job_id: DbId, node_id: DbId, ttl_secs: u64) -> Result<()> {
+        #[cfg(feature = "sqlite-compat")]
         let key = format!("job:{}:assigned_node", job_id);
+
+        #[cfg(not(feature = "sqlite-compat"))]
+        let key = format!("job:{}:assigned_node", job_id);
+
+        #[cfg(feature = "sqlite-compat")]
+        let node_id_str = node_id;
+
+        #[cfg(not(feature = "sqlite-compat"))]
+        let node_id_str = node_id.to_string();
+
         let manager = self.get_manager()?;
-        manager.set_ex(&key, node_id.to_string(), ttl_secs).await?;
+        manager.set_ex(&key, node_id_str, ttl_secs).await?;
         Ok(())
     }
 
-    pub async fn get_job_assignment(&mut self, job_id: Uuid) -> Result<Option<Uuid>> {
+    pub async fn get_job_assignment(&mut self, job_id: DbId) -> Result<Option<DbId>> {
+        #[cfg(feature = "sqlite-compat")]
         let key = format!("job:{}:assigned_node", job_id);
+
+        #[cfg(not(feature = "sqlite-compat"))]
+        let key = format!("job:{}:assigned_node", job_id);
+
         let manager = self.get_manager()?;
         let result: Option<String> = manager.get(&key).await?;
+
+        #[cfg(feature = "sqlite-compat")]
+        return Ok(result);
+
+        #[cfg(not(feature = "sqlite-compat"))]
         Ok(result.and_then(|s| Uuid::parse_str(&s).ok()))
     }
 

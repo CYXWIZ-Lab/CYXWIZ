@@ -81,6 +81,7 @@ if(WIN32)
     target_compile_definitions(cyxwiz-server-node PRIVATE
         NOMINMAX
         WIN32_LEAN_AND_MEAN
+        NOGDI  # Exclude GDI (fixes DeviceCapabilities conflict)
         # Protobuf compatibility flags to fix arena allocation issue
         PROTOBUF_USE_DLLS              # Use DLL linkage
         GOOGLE_PROTOBUF_NO_THREADLOCAL # Disable thread-local optimization

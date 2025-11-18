@@ -59,6 +59,12 @@ MainWindow::MainWindow()
     // Connect script editor to command window for output display
     script_editor_->SetCommandWindow(command_window_.get());
 
+    // Connect Node Editor to Script Editor for code generation output
+    node_editor_->SetScriptEditor(script_editor_.get());
+
+    // Connect Node Editor to Properties panel for node selection display
+    node_editor_->SetPropertiesPanel(properties_.get());
+
     // Set up callbacks in the toolbar
     toolbar_->SetResetLayoutCallback([this]() {
         this->ResetDockLayout();

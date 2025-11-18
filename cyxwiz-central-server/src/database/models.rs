@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
+// Conditional type aliases for database compatibility
+// SQLite (tests) uses TEXT for IDs, PostgreSQL (production) uses UUID
+#[cfg(feature = "sqlite-compat")]
+pub type DbId = String;
+
+#[cfg(not(feature = "sqlite-compat"))]
+pub type DbId = Uuid;
+
 // Node status enum
 // Note: Using TEXT representation for SQLite compatibility
 // PostgreSQL will also accept TEXT values instead of ENUM type
@@ -18,7 +26,7 @@ pub enum NodeStatus {
 // Job status enum
 // Note: Using TEXT representation for SQLite compatibility
 // PostgreSQL will also accept TEXT values instead of ENUM type
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(rename_all = "lowercase")]
 pub enum JobStatus {
     Pending,
@@ -46,7 +54,7 @@ pub enum PaymentStatus {
 // Node model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Node {
-    pub id: Uuid,
+    pub id: DbId,
     pub wallet_address: String,
     pub name: String,
     pub status: NodeStatus,
@@ -79,7 +87,7 @@ pub struct Node {
 // Job model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Job {
-    pub id: Uuid,
+    pub id: DbId,
     pub user_wallet: String,
     pub status: JobStatus,
     pub job_type: String, // "training", "inference", etc.
@@ -95,7 +103,7 @@ pub struct Job {
     pub actual_cost: Option<i64>,
 
     // Assignment
-    pub assigned_node_id: Option<Uuid>,
+    pub assigned_node_id: Option<DbId>,
     pub retry_count: i32,
 
     // Results
@@ -114,9 +122,9 @@ pub struct Job {
 // Payment model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Payment {
-    pub id: Uuid,
-    pub job_id: Uuid,
-    pub node_id: Option<Uuid>,
+    pub id: DbId,
+    pub job_id: DbId,
+    pub node_id: Option<DbId>,
     pub user_wallet: String,
     pub node_wallet: Option<String>,
 
@@ -139,8 +147,8 @@ pub struct Payment {
 // Node metrics (time-series data)
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct NodeMetrics {
-    pub id: Uuid,
-    pub node_id: Uuid,
+    pub id: DbId,
+    pub node_id: DbId,
 
     pub cpu_usage_percent: f64,
     pub ram_usage_percent: f64,
@@ -286,7 +294,7 @@ pub enum TerminalSessionStatus {
 // Model registry entry
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Model {
-    pub id: Uuid,
+    pub id: DbId,
     pub name: String,
     pub description: Option<String>,
     pub owner_user_id: String, // Wallet address
@@ -326,9 +334,9 @@ pub struct Model {
 // Deployment instance
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Deployment {
-    pub id: Uuid,
+    pub id: DbId,
     pub user_id: String, // Wallet address
-    pub model_id: Uuid,
+    pub model_id: DbId,
 
     // Configuration
     #[sqlx(rename = "type")]
@@ -337,7 +345,7 @@ pub struct Deployment {
     pub status_message: Option<String>,
 
     // Network deployment specific
-    pub assigned_node_id: Option<Uuid>,
+    pub assigned_node_id: Option<DbId>,
     pub max_price_per_hour: Option<i64>,
     pub actual_hourly_rate: Option<i64>,
     pub preferred_region: Option<String>,
@@ -372,8 +380,8 @@ pub struct Deployment {
 // Terminal session
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct TerminalSession {
-    pub id: Uuid,
-    pub deployment_id: Uuid,
+    pub id: DbId,
+    pub deployment_id: DbId,
     pub user_id: String, // Wallet address
 
     pub status: TerminalSessionStatus,
@@ -394,8 +402,8 @@ pub struct TerminalSession {
 // Deployment metrics (time-series data)
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct DeploymentMetric {
-    pub id: Uuid,
-    pub deployment_id: Uuid,
+    pub id: DbId,
+    pub deployment_id: DbId,
 
     // Resource usage
     pub cpu_usage_percent: f64,
@@ -417,8 +425,8 @@ pub struct DeploymentMetric {
 // Model download record
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ModelDownload {
-    pub id: Uuid,
-    pub model_id: Uuid,
+    pub id: DbId,
+    pub model_id: DbId,
     pub user_id: String, // Wallet address
 
     pub payment_amount: i64,
@@ -430,8 +438,8 @@ pub struct ModelDownload {
 // Model rating
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ModelRating {
-    pub id: Uuid,
-    pub model_id: Uuid,
+    pub id: DbId,
+    pub model_id: DbId,
     pub user_id: String, // Wallet address
 
     pub rating: i32, // 1-5

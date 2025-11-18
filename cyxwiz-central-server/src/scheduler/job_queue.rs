@@ -1,7 +1,7 @@
 use crate::cache::RedisCache;
 use crate::config::SchedulerConfig;
 use crate::database::{
-    models::{Job, Node},
+    models::{Job, Node, DbId},
     queries,
 };
 use crate::error::Result;
@@ -89,11 +89,11 @@ impl JobScheduler {
                 );
 
                 // Update database
-                queries::assign_job_to_node(&self.db_pool, job.id, node.id).await?;
+                queries::assign_job_to_node(&self.db_pool, job.id.clone(), node.id.clone()).await?;
 
                 // Cache assignment
                 let mut cache = self.cache.write().await;
-                cache.cache_job_assignment(job.id, node.id, 3600).await?;
+                cache.cache_job_assignment(job.id.clone(), node.id.clone(), 3600).await?;
 
                 // Notify node via gRPC about new job assignment
                 if let Err(e) = self.send_job_to_node(node, job).await {
@@ -117,14 +117,14 @@ impl JobScheduler {
     /// Handle job completion
     pub async fn handle_job_completion(
         &self,
-        job_id: Uuid,
+        job_id: DbId,
         result_hash: &str,
         actual_cost: i64,
     ) -> Result<()> {
         info!("Job {} completed with result hash {}", job_id, result_hash);
 
         // Update job status in database
-        queries::complete_job(&self.db_pool, job_id, result_hash, actual_cost).await?;
+        queries::complete_job(&self.db_pool, job_id.clone(), result_hash, actual_cost).await?;
 
         // Get job details
         let job = queries::get_job_by_id(&self.db_pool, job_id).await?;
@@ -142,14 +142,14 @@ impl JobScheduler {
     }
 
     /// Handle job failure
-    pub async fn handle_job_failure(&self, job_id: Uuid, error_message: &str) -> Result<()> {
+    pub async fn handle_job_failure(&self, job_id: DbId, error_message: &str) -> Result<()> {
         error!("Job {} failed: {}", job_id, error_message);
 
         // Mark job as failed
-        queries::fail_job(&self.db_pool, job_id, error_message).await?;
+        queries::fail_job(&self.db_pool, job_id.clone(), error_message).await?;
 
         // Get job details
-        let job = queries::get_job_by_id(&self.db_pool, job_id).await?;
+        let job = queries::get_job_by_id(&self.db_pool, job_id.clone()).await?;
 
         // If retry count is below max, re-queue the job
         if job.retry_count < self.config.max_retries as i32 {

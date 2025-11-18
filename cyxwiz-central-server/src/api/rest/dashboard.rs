@@ -117,6 +117,7 @@ async fn list_nodes(
 }
 
 async fn get_node(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    #[cfg(not(feature = "sqlite-compat"))]
     let node_id = match Uuid::parse_str(&id) {
         Ok(id) => id,
         Err(_) => {
@@ -127,6 +128,9 @@ async fn get_node(State(state): State<AppState>, Path(id): Path<String>) -> impl
                 .into_response()
         }
     };
+
+    #[cfg(feature = "sqlite-compat")]
+    let node_id = id.clone();
 
     match queries::get_node_by_id(&state.db_pool, node_id).await {
         Ok(node) => Json(serde_json::json!({
@@ -172,7 +176,7 @@ async fn list_jobs(
                     status: format!("{:?}", j.status),
                     job_type: j.job_type.clone(),
                     created_at: j.created_at.to_rfc3339(),
-                    assigned_node: j.assigned_node_id.map(|id| id.to_string()),
+                    assigned_node: j.assigned_node_id.as_ref().map(|id| id.to_string()),
                 })
                 .collect();
 
@@ -187,6 +191,7 @@ async fn list_jobs(
 }
 
 async fn get_job(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    #[cfg(not(feature = "sqlite-compat"))]
     let job_id = match Uuid::parse_str(&id) {
         Ok(id) => id,
         Err(_) => {
@@ -197,6 +202,9 @@ async fn get_job(State(state): State<AppState>, Path(id): Path<String>) -> impl 
                 .into_response()
         }
     };
+
+    #[cfg(feature = "sqlite-compat")]
+    let job_id = id.clone();
 
     match queries::get_job_by_id(&state.db_pool, job_id).await {
         Ok(job) => Json(serde_json::json!({
