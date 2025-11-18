@@ -60,6 +60,7 @@ fn render_jobs_table(f: &mut Frame, app: &App, area: Rect) {
 
         let node_display = job
             .assigned_node_id
+            .as_ref()
             .map(|id| {
                 let node_str = id.to_string();
                 if node_str.len() >= 8 {

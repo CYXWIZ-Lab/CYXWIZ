@@ -1,6 +1,4 @@
-use crate::database::{models::Job, queries, DbPool};
-use crate::error::ServerError;
-use std::sync::Arc;
+use crate::database::{queries, DbPool};
 use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -41,33 +39,41 @@ impl JobStatusService for JobStatusServiceImpl {
         );
 
         // Parse job ID
-        let job_id = Uuid::parse_str(&req.job_id)
+        let job_id_uuid = Uuid::parse_str(&req.job_id)
             .map_err(|e| Status::invalid_argument(format!("Invalid job ID: {}", e)))?;
 
+        #[cfg(feature = "sqlite-compat")]
+        let job_id = req.job_id.clone();
+
+        #[cfg(not(feature = "sqlite-compat"))]
+        let job_id = job_id_uuid;
+
         // Retrieve job from database to verify it exists
-        let job = match queries::get_job_by_id(&self.db_pool, job_id).await {
+        let job = match queries::get_job_by_id(&self.db_pool, job_id.clone()).await {
             Ok(job) => job,
             Err(e) => {
-                error!("Failed to retrieve job {}: {}", job_id, e);
-                return Err(Status::not_found(format!("Job not found: {}", job_id)));
+                error!("Failed to retrieve job {}: {}", req.job_id, e);
+                return Err(Status::not_found(format!("Job not found: {}", req.job_id)));
             }
         };
 
         // Verify the node ID matches the assigned node
         if let Some(assigned_node_id) = &job.assigned_node_id {
-            let node_uuid = Uuid::parse_str(&req.node_id)
-                .unwrap_or_else(|_| {
-                    // Handle legacy timestamp-based IDs by comparing as string
-                    if job.assigned_node_id.as_ref().map(|id| id.to_string()) == Some(req.node_id.clone()) {
-                        return job.assigned_node_id.unwrap();
-                    }
-                    Uuid::nil()
-                });
+            #[cfg(feature = "sqlite-compat")]
+            let node_matches = assigned_node_id == &req.node_id;
 
-            if assigned_node_id != &node_uuid && node_uuid != Uuid::nil() {
+            #[cfg(not(feature = "sqlite-compat"))]
+            let node_matches = {
+                match Uuid::parse_str(&req.node_id) {
+                    Ok(node_uuid) => assigned_node_id == &node_uuid,
+                    Err(_) => false,
+                }
+            };
+
+            if !node_matches {
                 warn!(
                     "Node ID mismatch for job {}: expected {}, got {}",
-                    job_id, assigned_node_id, req.node_id
+                    req.job_id, assigned_node_id, req.node_id
                 );
                 // For now, allow mismatches (for testing compatibility)
                 // TODO: Enforce strict node ID matching in production
@@ -81,6 +87,12 @@ impl JobStatusService for JobStatusServiceImpl {
             x if x == StatusCode::StatusFailed as i32 => "failed",
             _ => "assigned", // Unknown status, keep current
         };
+
+        // Update job status in database
+        if let Err(e) = queries::update_job_status(&self.db_pool, job_id.clone(), status_str).await {
+            error!("Failed to update job {} status to {}: {}", req.job_id, status_str, e);
+            return Err(Status::internal(format!("Failed to update job status: {}", e)));
+        }
 
         // TODO: Update job progress, current_epoch, and metrics in database
         // This requires adding these fields to the jobs table first
@@ -124,15 +136,21 @@ impl JobStatusService for JobStatusServiceImpl {
         );
 
         // Parse job ID
-        let job_id = Uuid::parse_str(&req.job_id)
+        let job_id_uuid = Uuid::parse_str(&req.job_id)
             .map_err(|e| Status::invalid_argument(format!("Invalid job ID: {}", e)))?;
 
+        #[cfg(feature = "sqlite-compat")]
+        let job_id = req.job_id.clone();
+
+        #[cfg(not(feature = "sqlite-compat"))]
+        let job_id = job_id_uuid;
+
         // Retrieve job to verify it exists
-        let job = match queries::get_job_by_id(&self.db_pool, job_id).await {
+        let job = match queries::get_job_by_id(&self.db_pool, job_id.clone()).await {
             Ok(job) => job,
             Err(e) => {
-                error!("Failed to retrieve job {}: {}", job_id, e);
-                return Err(Status::not_found(format!("Job not found: {}", job_id)));
+                error!("Failed to retrieve job {}: {}", req.job_id, e);
+                return Err(Status::not_found(format!("Job not found: {}", req.job_id)));
             }
         };
 
@@ -145,36 +163,36 @@ impl JobStatusService for JobStatusServiceImpl {
 
         // Log final metrics
         if !req.final_metrics.is_empty() {
-            info!("Job {} final metrics: {:?}", job_id, req.final_metrics);
+            info!("Job {} final metrics: {:?}", req.job_id, req.final_metrics);
         }
 
         // Log model output if present
         if !req.model_weights_uri.is_empty() {
             info!(
                 "Job {} produced model: {} (size: {} bytes, hash: {})",
-                job_id, req.model_weights_uri, req.model_size, req.model_weights_hash
+                req.job_id, req.model_weights_uri, req.model_size, req.model_weights_hash
             );
         }
 
         // Log compute time
         info!(
             "Job {} total compute time: {:.2}s",
-            job_id,
+            req.job_id,
             req.total_compute_time as f64 / 1000.0
         );
 
         // Log error if job failed
         if !req.error_message.is_empty() {
-            error!("Job {} failed with error: {}", job_id, req.error_message);
+            error!("Job {} failed with error: {}", req.job_id, req.error_message);
         }
 
         // Update job status in database
         match queries::update_job_status(&self.db_pool, job_id, final_status).await {
             Ok(_) => {
-                info!("Updated job {} status to: {}", job_id, final_status);
+                info!("Updated job {} status to: {}", req.job_id, final_status);
             }
             Err(e) => {
-                error!("Failed to update job {} status: {}", job_id, e);
+                error!("Failed to update job {} status: {}", req.job_id, e);
                 return Err(Status::internal(format!("Database error: {}", e)));
             }
         }
