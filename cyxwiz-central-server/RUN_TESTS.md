@@ -54,7 +54,10 @@ The test suite requires the Protocol Buffers compiler (`protoc`) to build the gR
    cd D:/Dev/CyxWiz_Claude/vcpkg
    ./vcpkg install protobuf
    ```
-
+4. Other features that should now work:
+    - Delete links: Ctrl+Click on a connection
+    - Delete nodes: Select and press Delete key
+    - Multi-select: Ctrl+Click on nodes
 2. **Direct download**:
    - Download from: https://github.com/protocolbuffers/protobuf/releases
    - Extract and add to PATH or set PROTOC environment variable
