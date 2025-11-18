@@ -1494,40 +1494,60 @@ const MLNode* NodeEditor::FindNodeById(int node_id) const {
 // ========== Color-Coding Implementation ==========
 unsigned int NodeEditor::GetNodeColor(NodeType type) {
     switch (type) {
+        // Input/Output - Distinct Blue Gradient
         case NodeType::Input:
+            return IM_COL32(41, 128, 185, 255);   // Strong Blue
         case NodeType::Output:
-            return IM_COL32(100, 150, 255, 255);  // Blue
+            return IM_COL32(52, 152, 219, 255);   // Lighter Blue
 
+        // Core Layers - Green Tones
         case NodeType::Dense:
-            return IM_COL32(100, 255, 100, 255);  // Green
+            return IM_COL32(39, 174, 96, 255);    // Emerald Green
 
+        // Convolutional Layers - Purple Tones
         case NodeType::Conv2D:
+            return IM_COL32(142, 68, 173, 255);   // Purple
         case NodeType::MaxPool2D:
-            return IM_COL32(100, 255, 255, 255);  // Cyan
+            return IM_COL32(155, 89, 182, 255);   // Light Purple
 
+        // Activation Functions - Warm Orange/Yellow
         case NodeType::ReLU:
+            return IM_COL32(243, 156, 18, 255);   // Orange
         case NodeType::Sigmoid:
+            return IM_COL32(241, 196, 15, 255);   // Gold
         case NodeType::Tanh:
+            return IM_COL32(230, 126, 34, 255);   // Carrot
         case NodeType::Softmax:
+            return IM_COL32(211, 84, 0, 255);     // Dark Orange
         case NodeType::LeakyReLU:
-            return IM_COL32(255, 180, 100, 255);  // Orange
+            return IM_COL32(235, 152, 78, 255);   // Light Orange
 
+        // Regularization - Red/Pink Tones
         case NodeType::Dropout:
+            return IM_COL32(231, 76, 60, 255);    // Red
         case NodeType::BatchNorm:
-            return IM_COL32(200, 100, 255, 255);  // Purple
+            return IM_COL32(236, 112, 99, 255);   // Light Red
 
+        // Utility Layers - Teal
         case NodeType::Flatten:
-            return IM_COL32(180, 180, 180, 255);  // Gray
+            return IM_COL32(22, 160, 133, 255);   // Teal
 
+        // Loss Functions - Dark Red
         case NodeType::MSELoss:
+            return IM_COL32(192, 57, 43, 255);    // Dark Red
         case NodeType::CrossEntropyLoss:
+            return IM_COL32(169, 50, 38, 255);    // Darker Red
+
+        // Optimizers - Dark Blue/Gray
         case NodeType::SGD:
+            return IM_COL32(44, 62, 80, 255);     // Dark Blue Gray
         case NodeType::Adam:
+            return IM_COL32(52, 73, 94, 255);     // Blue Gray
         case NodeType::AdamW:
-            return IM_COL32(255, 100, 100, 255);  // Red
+            return IM_COL32(69, 90, 100, 255);    // Light Blue Gray
 
         default:
-            return IM_COL32(150, 150, 150, 255);
+            return IM_COL32(127, 140, 141, 255);  // Neutral Gray
     }
 }
 
