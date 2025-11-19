@@ -1,0 +1,983 @@
+   Compiling cyxwiz-central-server v0.1.0 (D:\Dev\CyxWiz_Claude\cyxwiz-central-server)
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `pb`
+  --> src\api\grpc\node_service.rs:68:64
+   |
+68 |         let has_cuda = devices.iter().any(|d| d.device_type == pb::DeviceType::DeviceCuda as i32);
+   |                                                                ^^ use of unresolved module or unlinked crate `pb`
+   |
+   = help: if you wanted to use a crate named `pb`, use `cargo add pb` to add it to your `Cargo.toml`
+help: consider importing one of these enums
+   |
+ 1 + use crate::api::grpc::deployment_service::pb::DeviceType;
+   |
+ 1 + use crate::api::grpc::model_service::pb::DeviceType;
+   |
+ 1 + use crate::api::grpc::terminal_service::pb::DeviceType;
+   |
+ 1 + use crate::pb::DeviceType;
+   |
+help: if you import `DeviceType`, refer to it directly
+   |
+68 -         let has_cuda = devices.iter().any(|d| d.device_type == pb::DeviceType::DeviceCuda as i32);
+68 +         let has_cuda = devices.iter().any(|d| d.device_type == DeviceType::DeviceCuda as i32);
+   |
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `pb`
+  --> src\api\grpc\node_service.rs:69:66
+   |
+69 |         let has_opencl = devices.iter().any(|d| d.device_type == pb::DeviceType::DeviceOpencl as i32);
+   |                                                                  ^^ use of unresolved module or unlinked crate `pb`
+   |
+   = help: if you wanted to use a crate named `pb`, use `cargo add pb` to add it to your `Cargo.toml`
+help: consider importing one of these enums
+   |
+ 1 + use crate::api::grpc::deployment_service::pb::DeviceType;
+   |
+ 1 + use crate::api::grpc::model_service::pb::DeviceType;
+   |
+ 1 + use crate::api::grpc::terminal_service::pb::DeviceType;
+   |
+ 1 + use crate::pb::DeviceType;
+   |
+help: if you import `DeviceType`, refer to it directly
+   |
+69 -         let has_opencl = devices.iter().any(|d| d.device_type == pb::DeviceType::DeviceOpencl as i32);
+69 +         let has_opencl = devices.iter().any(|d| d.device_type == DeviceType::DeviceOpencl as i32);
+   |
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `pb`
+  --> src\api\grpc\node_service.rs:72:30
+   |
+72 |             d.device_type == pb::DeviceType::DeviceCuda as i32
+   |                              ^^ use of unresolved module or unlinked crate `pb`
+   |
+   = help: if you wanted to use a crate named `pb`, use `cargo add pb` to add it to your `Cargo.toml`
+help: consider importing one of these enums
+   |
+ 1 + use crate::api::grpc::deployment_service::pb::DeviceType;
+   |
+ 1 + use crate::api::grpc::model_service::pb::DeviceType;
+   |
+ 1 + use crate::api::grpc::terminal_service::pb::DeviceType;
+   |
+ 1 + use crate::pb::DeviceType;
+   |
+help: if you import `DeviceType`, refer to it directly
+   |
+72 -             d.device_type == pb::DeviceType::DeviceCuda as i32
+72 +             d.device_type == DeviceType::DeviceCuda as i32
+   |
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `pb`
+  --> src\api\grpc\node_service.rs:73:37
+   |
+73 |                 || d.device_type == pb::DeviceType::DeviceOpencl as i32
+   |                                     ^^ use of unresolved module or unlinked crate `pb`
+   |
+   = help: if you wanted to use a crate named `pb`, use `cargo add pb` to add it to your `Cargo.toml`
+help: consider importing one of these enums
+   |
+ 1 + use crate::api::grpc::deployment_service::pb::DeviceType;
+   |
+ 1 + use crate::api::grpc::model_service::pb::DeviceType;
+   |
+ 1 + use crate::api::grpc::terminal_service::pb::DeviceType;
+   |
+ 1 + use crate::pb::DeviceType;
+   |
+help: if you import `DeviceType`, refer to it directly
+   |
+73 -                 || d.device_type == pb::DeviceType::DeviceOpencl as i32
+73 +                 || d.device_type == DeviceType::DeviceOpencl as i32
+   |
+
+warning: unused import: `job_service_server::JobService`
+  --> src\api\grpc\job_service.rs:17:5
+   |
+17 |     job_service_server::JobService, CancelJobRequest, CancelJobResponse, GetJobStatusRequest,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `node_service_server::NodeService`
+  --> src\api\grpc\node_service.rs:16:5
+   |
+16 |     node_service_server::NodeService, AssignJobRequest, AssignJobResponse, HeartbeatRequest,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> src\api\grpc\deployment_service.rs:8:5
+  |
+8 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> src\api\grpc\deployment_service.rs:10:28
+   |
+10 | use tracing::{error, info, warn};
+   |                            ^^^^
+
+warning: unused imports: `Pubkey` and `Signature`
+ --> src\blockchain\payment_processor.rs:2:19
+  |
+2 |     SolanaClient, Pubkey, Signature, Instruction, AccountMeta, Transaction, pubkey, signature, system_program
+  |                   ^^^^^^  ^^^^^^^^^
+
+warning: unused imports: `PaymentStatus` and `Payment`
+ --> src\blockchain\payment_processor.rs:4:31
+  |
+4 | use crate::database::models::{Payment, PaymentStatus};
+  |                               ^^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused import: `Keypair`
+ --> src\blockchain\mod.rs:5:39
+  |
+5 | pub use solana_client::{SolanaClient, Keypair};
+  |                                       ^^^^^^^
+
+warning: unused import: `sqlx::Row`
+ --> src\database\queries.rs:5:5
+  |
+5 | use sqlx::Row;
+  |     ^^^^^^^^^
+
+warning: unused import: `Code`
+ --> src\error.rs:2:13
+  |
+2 | use tonic::{Code, Status};
+  |             ^^^^
+
+warning: unused import: `uuid::Uuid`
+ --> src\scheduler\matcher.rs:2:5
+  |
+2 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused import: `crate::error::Result`
+ --> src\tui\app.rs:3:5
+  |
+3 | use crate::error::Result;
+  |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Gauge`
+ --> src\tui\views\dashboard.rs:6:31
+  |
+6 |     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Sparkline},
+  |                               ^^^^^
+
+warning: unused imports: `ListItem` and `List`
+ --> src\tui\views\nodes.rs:6:31
+  |
+6 |     widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table},
+  |                               ^^^^  ^^^^^^^^
+
+warning: unused variable: `state`
+  --> src\api\rest\dashboard.rs:77:34
+   |
+77 | async fn get_network_stats(State(state): State<AppState>) -> impl IntoResponse {
+   |                                  ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `query`
+  --> src\api\rest\dashboard.rs:93:11
+   |
+93 |     Query(query): Query<ListQuery>,
+   |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: this function depends on never type fallback being `()`
+  --> src\cache\mod.rs:41:5
+   |
+41 |     pub async fn push_job(&mut self, job_id: Uuid) -> Result<()> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in Rust 2024 and in a future release in all editions!
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/never-type-fallback.html>
+   = help: specify the types explicitly
+note: in edition 2024, the requirement `!: FromRedisValue` will fail
+  --> src\cache\mod.rs:43:17
+   |
+43 |         manager.rpush("job_queue", job_id.to_string()).await?;
+   |                 ^^^^^
+   = note: `#[warn(dependency_on_unit_never_type_fallback)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+help: use `()` annotations to avoid fallback changes
+   |
+43 |         manager.rpush::<_, _, ()>("job_queue", job_id.to_string()).await?;
+   |                      ++++++++++++
+
+warning: this function depends on never type fallback being `()`
+  --> src\cache\mod.rs:60:5
+   |
+60 |     pub async fn cache_node_status(&mut self, node_id: Uuid, status: &str, ttl_secs: u64) -> Result<()> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in Rust 2024 and in a future release in all editions!
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/never-type-fallback.html>
+   = help: specify the types explicitly
+note: in edition 2024, the requirement `!: FromRedisValue` will fail
+  --> src\cache\mod.rs:63:17
+   |
+63 |         manager.set_ex(&key, status, ttl_secs).await?;
+   |                 ^^^^^^
+help: use `()` annotations to avoid fallback changes
+   |
+63 |         manager.set_ex::<_, _, ()>(&key, status, ttl_secs).await?;
+   |                       ++++++++++++
+
+warning: this function depends on never type fallback being `()`
+  --> src\cache\mod.rs:75:5
+   |
+75 |     pub async fn cache_job_assignment(&mut self, job_id: Uuid, node_id: Uuid, ttl_secs: u64) -> Result<()> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in Rust 2024 and in a future release in all editions!
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/never-type-fallback.html>
+   = help: specify the types explicitly
+note: in edition 2024, the requirement `!: FromRedisValue` will fail
+  --> src\cache\mod.rs:78:17
+   |
+78 |         manager.set_ex(&key, node_id.to_string(), ttl_secs).await?;
+   |                 ^^^^^^
+help: use `()` annotations to avoid fallback changes
+   |
+78 |         manager.set_ex::<_, _, ()>(&key, node_id.to_string(), ttl_secs).await?;
+   |                       ++++++++++++
+
+warning: this function depends on never type fallback being `()`
+  --> src\cache\mod.rs:90:5
+   |
+90 |     pub async fn check_rate_limit(&mut self, key: &str, max_requests: usize, window_secs: i64) -> Result<bool> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in Rust 2024 and in a future release in all editions!
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/never-type-fallback.html>
+   = help: specify the types explicitly
+note: in edition 2024, the requirement `!: FromRedisValue` will fail
+  --> src\cache\mod.rs:96:21
+   |
+96 |             manager.expire(&rate_key, window_secs).await?;
+   |                     ^^^^^^
+help: use `()` annotations to avoid fallback changes
+   |
+96 |             manager.expire::<_, ()>(&rate_key, window_secs).await?;
+   |                           +++++++++
+
+warning: this function depends on never type fallback being `()`
+   --> src\cache\mod.rs:103:5
+    |
+103 |     pub async fn set<T: Serialize>(&mut self, key: &str, value: &T, ttl_secs: Option<u64>) -> Result<()> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in Rust 2024 and in a future release in all editions!
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/never-type-fallback.html>
+    = help: specify the types explicitly
+note: in edition 2024, the requirement `!: FromRedisValue` will fail
+   --> src\cache\mod.rs:108:21
+    |
+108 |             manager.set_ex(key, serialized, ttl).await?;
+    |                     ^^^^^^
+help: use `()` annotations to avoid fallback changes
+    |
+108 ~             manager.set_ex::<_, _, ()>(key, serialized, ttl).await?;
+109 |         } else {
+110 ~             manager.set::<_, _, ()>(key, serialized).await?;
+    |
+
+warning: this function depends on never type fallback being `()`
+   --> src\cache\mod.rs:129:5
+    |
+129 |     pub async fn delete(&mut self, key: &str) -> Result<()> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in Rust 2024 and in a future release in all editions!
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/never-type-fallback.html>
+    = help: specify the types explicitly
+note: in edition 2024, the requirement `!: FromRedisValue` will fail
+   --> src\cache\mod.rs:131:17
+    |
+131 |         manager.del(key).await?;
+    |                 ^^^
+help: use `()` annotations to avoid fallback changes
+    |
+131 |         manager.del::<_, ()>(key).await?;
+    |                    +++++++++
+
+warning: unused variable: `pool`
+   --> src\database\queries.rs:784:27
+    |
+784 | pub async fn create_model(pool: &DbPool, model: &super::models::Model) -> Result<super::models::Model> {
+    |                           ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `pool`
+   --> src\database\queries.rs:790:30
+    |
+790 | pub async fn get_model_by_id(pool: &DbPool, model_id: Uuid) -> Result<super::models::Model> {
+    |                              ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `pool`
+   --> src\database\queries.rs:825:5
+    |
+825 |     pool: &DbPool,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `user_id`
+   --> src\database\queries.rs:826:5
+    |
+826 |     user_id: Option<&str>,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_user_id`
+
+warning: unused variable: `page_size`
+   --> src\database\queries.rs:827:5
+    |
+827 |     page_size: i64,
+    |     ^^^^^^^^^
+    |
+help: if this is intentional, prefix it with an underscore
+    |
+827 |     _page_size: i64,
+    |     +
+help: you might have meant to pattern match on the similarly named constant `RAM_COST_PER_GB_PER_SECOND`
+    |
+827 -     page_size: i64,
+827 +     scheduler::matcher::JobMatcher::estimate_cost::RAM_COST_PER_GB_PER_SECOND: i64,
+    |
+
+warning: unused variable: `page_token`
+   --> src\database\queries.rs:828:5
+    |
+828 |     page_token: Option<&str>,
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_page_token`
+
+warning: unused variable: `public_only`
+   --> src\database\queries.rs:829:5
+    |
+829 |     public_only: bool,
+    |     ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_public_only`
+
+warning: unused variable: `pool`
+   --> src\database\queries.rs:836:27
+    |
+836 | pub async fn delete_model(pool: &DbPool, model_id: Uuid, user_id: &str) -> Result<()> {
+    |                           ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `model_id`
+   --> src\database\queries.rs:836:42
+    |
+836 | pub async fn delete_model(pool: &DbPool, model_id: Uuid, user_id: &str) -> Result<()> {
+    |                                          ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_model_id`
+
+warning: unused variable: `user_id`
+   --> src\database\queries.rs:836:58
+    |
+836 | pub async fn delete_model(pool: &DbPool, model_id: Uuid, user_id: &str) -> Result<()> {
+    |                                                          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_user_id`
+
+warning: unused variable: `node_id`
+   --> src\scheduler\job_queue.rs:262:21
+    |
+262 |         if let Some(node_id) = job.assigned_node_id {
+    |                     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_id`
+
+error[E0599]: `f64` is not an iterator
+   --> src\api\grpc\deployment_service.rs:186:59
+    |
+186 |             max_price_per_hour: config.max_price_per_hour.map(|p| (p * 1_000_000_000.0) as i64),
+    |                                                           ^^^ `f64` is not an iterator
+    |
+    = note: the following trait bounds were not satisfied:
+            `f64: Iterator`
+            which is required by `&mut f64: Iterator`
+
+error[E0599]: no variant or associated item named `ModelFormatOnnx` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:51:28
+     |
+  51 |             PbModelFormat::ModelFormatOnnx => ModelFormat::Onnx,
+     |                            ^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatOnnx` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatGguf` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:52:28
+     |
+  52 |             PbModelFormat::ModelFormatGguf => ModelFormat::Gguf,
+     |                            ^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatGguf` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatPytorch` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:53:28
+     |
+  53 |             PbModelFormat::ModelFormatPytorch => ModelFormat::Pytorch,
+     |                            ^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatPytorch` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatTensorflow` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:54:28
+     |
+  54 |             PbModelFormat::ModelFormatTensorflow => ModelFormat::Tensorflow,
+     |                            ^^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatTensorflow` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatSafetensors` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:55:28
+     |
+  55 |             PbModelFormat::ModelFormatSafetensors => ModelFormat::Safetensors,
+     |                            ^^^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatSafetensors` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatTflite` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:56:28
+     |
+  56 |             PbModelFormat::ModelFormatTflite => ModelFormat::Tflite,
+     |                            ^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatTflite` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatTorchscript` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:57:28
+     |
+  57 |             PbModelFormat::ModelFormatTorchscript => ModelFormat::Torchscript,
+     |                            ^^^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatTorchscript` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelSourceLocal` found for enum `model_service::pb::ModelSource` in the current scope
+    --> src\api\grpc\model_service.rs:65:28
+     |
+  65 |             PbModelSource::ModelSourceLocal => ModelSource::Local,
+     |                            ^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelSource`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3129:1
+     |
+3129 | pub enum ModelSource {
+     | -------------------- variant or associated item `ModelSourceLocal` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelSourceHuggingface` found for enum `model_service::pb::ModelSource` in the current scope
+    --> src\api\grpc\model_service.rs:66:28
+     |
+  66 |             PbModelSource::ModelSourceHuggingface => ModelSource::Huggingface,
+     |                            ^^^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelSource`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3129:1
+     |
+3129 | pub enum ModelSource {
+     | -------------------- variant or associated item `ModelSourceHuggingface` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelSourceCyxwizHub` found for enum `model_service::pb::ModelSource` in the current scope
+    --> src\api\grpc\model_service.rs:67:28
+     |
+  67 |             PbModelSource::ModelSourceCyxwizHub => ModelSource::CyxwizHub,
+     |                            ^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelSource`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3129:1
+     |
+3129 | pub enum ModelSource {
+     | -------------------- variant or associated item `ModelSourceCyxwizHub` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelSourceUrl` found for enum `model_service::pb::ModelSource` in the current scope
+    --> src\api\grpc\model_service.rs:68:28
+     |
+  68 |             PbModelSource::ModelSourceUrl => ModelSource::Url,
+     |                            ^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelSource`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3129:1
+     |
+3129 | pub enum ModelSource {
+     | -------------------- variant or associated item `ModelSourceUrl` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatOnnx` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:76:49
+     |
+  76 |             ModelFormat::Onnx => PbModelFormat::ModelFormatOnnx as i32,
+     |                                                 ^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatOnnx` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatGguf` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:77:49
+     |
+  77 |             ModelFormat::Gguf => PbModelFormat::ModelFormatGguf as i32,
+     |                                                 ^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatGguf` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatPytorch` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:78:52
+     |
+  78 |             ModelFormat::Pytorch => PbModelFormat::ModelFormatPytorch as i32,
+     |                                                    ^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatPytorch` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatTensorflow` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:79:55
+     |
+  79 |             ModelFormat::Tensorflow => PbModelFormat::ModelFormatTensorflow as i32,
+     |                                                       ^^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatTensorflow` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatSafetensors` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:80:56
+     |
+  80 |             ModelFormat::Safetensors => PbModelFormat::ModelFormatSafetensors as i32,
+     |                                                        ^^^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatSafetensors` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatTflite` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:81:51
+     |
+  81 |             ModelFormat::Tflite => PbModelFormat::ModelFormatTflite as i32,
+     |                                                   ^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatTflite` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatTorchscript` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:82:56
+     |
+  82 |             ModelFormat::Torchscript => PbModelFormat::ModelFormatTorchscript as i32,
+     |                                                        ^^^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatTorchscript` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelSourceLocal` found for enum `model_service::pb::ModelSource` in the current scope
+    --> src\api\grpc\model_service.rs:89:50
+     |
+  89 |             ModelSource::Local => PbModelSource::ModelSourceLocal as i32,
+     |                                                  ^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelSource`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3129:1
+     |
+3129 | pub enum ModelSource {
+     | -------------------- variant or associated item `ModelSourceLocal` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelSourceHuggingface` found for enum `model_service::pb::ModelSource` in the current scope
+    --> src\api\grpc\model_service.rs:90:56
+     |
+  90 |             ModelSource::Huggingface => PbModelSource::ModelSourceHuggingface as i32,
+     |                                                        ^^^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelSource`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3129:1
+     |
+3129 | pub enum ModelSource {
+     | -------------------- variant or associated item `ModelSourceHuggingface` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelSourceCyxwizHub` found for enum `model_service::pb::ModelSource` in the current scope
+    --> src\api\grpc\model_service.rs:91:54
+     |
+  91 |             ModelSource::CyxwizHub => PbModelSource::ModelSourceCyxwizHub as i32,
+     |                                                      ^^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelSource`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3129:1
+     |
+3129 | pub enum ModelSource {
+     | -------------------- variant or associated item `ModelSourceCyxwizHub` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelSourceUrl` found for enum `model_service::pb::ModelSource` in the current scope
+    --> src\api\grpc\model_service.rs:92:48
+     |
+  92 |             ModelSource::Url => PbModelSource::ModelSourceUrl as i32,
+     |                                                ^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelSource`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3129:1
+     |
+3129 | pub enum ModelSource {
+     | -------------------- variant or associated item `ModelSourceUrl` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelFormatUnknown` found for enum `model_service::pb::ModelFormat` in the current scope
+    --> src\api\grpc\model_service.rs:143:112
+     |
+ 143 |         let format = Self::pb_format_to_db(PbModelFormat::try_from(model_info.format).unwrap_or(PbModelFormat::ModelFormatUnknown))?;
+     |                                                                                                                ^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelFormat`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:2970:1
+     |
+2970 | pub enum ModelFormat {
+     | -------------------- variant or associated item `ModelFormatUnknown` not found for this enum
+
+error[E0599]: no variant or associated item named `ModelSourceUnknown` found for enum `model_service::pb::ModelSource` in the current scope
+    --> src\api\grpc\model_service.rs:144:112
+     |
+ 144 |         let source = Self::pb_source_to_db(PbModelSource::try_from(model_info.source).unwrap_or(PbModelSource::ModelSourceUnknown))?;
+     |                                                                                                                ^^^^^^^^^^^^^^^^^^ variant or associated item not found in `model_service::pb::ModelSource`
+     |
+    ::: D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3129:1
+     |
+3129 | pub enum ModelSource {
+     | -------------------- variant or associated item `ModelSourceUnknown` not found for this enum
+
+error[E0061]: this function takes 5 arguments but 6 arguments were supplied
+   --> src\api\grpc\model_service.rs:442:15
+    |
+442 |         match queries::list_models(
+    |               ^^^^^^^^^^^^^^^^^^^^
+...
+445 |             &req.tags,
+    |             --------- unexpected argument #3 of type `&Vec<std::string::String>`
+446 |             req.public_only,
+    |             --------------- expected `i64`, found `bool`
+447 |             page_size,
+448 |             offset,
+    |             ------ expected `bool`, found `i64`
+    |
+note: expected `Option<&str>`, found `i64`
+   --> src\api\grpc\model_service.rs:447:13
+    |
+447 |             page_size,
+    |             ^^^^^^^^^
+    = note: expected enum `std::option::Option<&str>`
+               found type `i64`
+note: function defined here
+   --> src\database\queries.rs:824:14
+    |
+824 | pub async fn list_models(
+    |              ^^^^^^^^^^^
+...
+828 |     page_token: Option<&str>,
+    |     ------------------------
+help: did you mean
+    |
+442 ~         match queries::list_models(
+443 +             &self.db_pool,
+444 +             search_query,
+445 +             offset,
+446 +             /* std::option::Option<&str> */,
+447 +             req.public_only,
+448 +         )
+    |
+
+error[E0599]: no method named `iter` found for tuple `(Vec<Model>, std::option::Option<std::string::String>)` in the current scope
+   --> src\api\grpc\model_service.rs:454:28
+    |
+454 |                     models.iter().map(|m| self.model_to_pb(m)).collect();
+    |                            ^^^^ method not found in `(Vec<Model>, std::option::Option<std::string::String>)`
+    |
+help: some of the expressions' fields have a method of the same name
+    |
+454 |                     models.0.iter().map(|m| self.model_to_pb(m)).collect();
+    |                            ++
+454 |                     models.1.iter().map(|m| self.model_to_pb(m)).collect();
+    |                            ++
+
+error[E0599]: no method named `len` found for tuple `(Vec<Model>, std::option::Option<std::string::String>)` in the current scope
+   --> src\api\grpc\model_service.rs:456:49
+    |
+456 |                 let next_page_token = if models.len() == page_size as usize {
+    |                                                 ^^^ method not found in `(Vec<Model>, std::option::Option<std::string::String>)`
+    |
+help: one of the expressions' fields has a method of the same name
+    |
+456 |                 let next_page_token = if models.0.len() == page_size as usize {
+    |                                                 ++
+
+error[E0277]: the trait bound `DeploymentServiceImpl: pb_inner::deployment_service_server::DeploymentService` is not satisfied
+    --> src\main.rs:177:82
+     |
+ 177 |         .add_service(pb::deployment_service_server::DeploymentServiceServer::new(deployment_service))
+     |                      ----------------------------------------------------------- ^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+     |                      |
+     |                      required by a bound introduced by this call
+     |
+help: the trait `pb_inner::deployment_service_server::DeploymentService` is not implemented for `DeploymentServiceImpl`
+    --> src\api\grpc\deployment_service.rs:27:1
+     |
+  27 | pub struct DeploymentServiceImpl {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3172:5
+     |
+3172 |     pub trait DeploymentService: Send + Sync + 'static {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `pb_inner::deployment_service_server::DeploymentServiceServer::<T>::new`
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3232:13
+     |
+3232 |     impl<T: DeploymentService> DeploymentServiceServer<T> {
+     |             ^^^^^^^^^^^^^^^^^ required by this bound in `DeploymentServiceServer::<T>::new`
+3233 |         pub fn new(inner: T) -> Self {
+     |                --- required by a bound in this associated function
+
+error[E0277]: the trait bound `DeploymentServiceImpl: pb_inner::deployment_service_server::DeploymentService` is not satisfied
+    --> src\main.rs:177:22
+     |
+ 177 |         .add_service(pb::deployment_service_server::DeploymentServiceServer::new(deployment_service))
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+     |
+help: the trait `pb_inner::deployment_service_server::DeploymentService` is not implemented for `DeploymentServiceImpl`
+    --> src\api\grpc\deployment_service.rs:27:1
+     |
+  27 | pub struct DeploymentServiceImpl {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3172:5
+     |
+3172 |     pub trait DeploymentService: Send + Sync + 'static {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `pb_inner::deployment_service_server::DeploymentServiceServer`
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3224:43
+     |
+3224 |     pub struct DeploymentServiceServer<T: DeploymentService> {
+     |                                           ^^^^^^^^^^^^^^^^^ required by this bound in `DeploymentServiceServer`
+
+error[E0277]: the trait bound `DeploymentServiceImpl: pb_inner::deployment_service_server::DeploymentService` is not satisfied
+    --> src\main.rs:177:10
+     |
+ 177 |         .add_service(pb::deployment_service_server::DeploymentServiceServer::new(deployment_service))
+     |          ^^^^^^^^^^^ unsatisfied trait bound
+     |
+help: the trait `pb_inner::deployment_service_server::DeploymentService` is not implemented for `DeploymentServiceImpl`
+    --> src\api\grpc\deployment_service.rs:27:1
+     |
+  27 | pub struct DeploymentServiceImpl {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3172:5
+     |
+3172 |     pub trait DeploymentService: Send + Sync + 'static {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required for `pb_inner::deployment_service_server::DeploymentServiceServer<DeploymentServiceImpl>` to implement `Service<tonic::codegen::http::request::Request<tonic::transport::Body>>`
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3284:16
+     |
+3284 |     impl<T, B> tonic::codegen::Service<http::Request<B>> for DeploymentServiceServer<T>
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+3285 |     where
+3286 |         T: DeploymentService,
+     |            ----------------- unsatisfied trait bound introduced here
+
+error[E0277]: the trait bound `TerminalServiceImpl: pb_inner::terminal_service_server::TerminalService` is not satisfied
+    --> src\main.rs:178:78
+     |
+ 178 |         .add_service(pb::terminal_service_server::TerminalServiceServer::new(terminal_service))
+     |                      ------------------------------------------------------- ^^^^^^^^^^^^^^^^ unsatisfied trait bound
+     |                      |
+     |                      required by a bound introduced by this call
+     |
+help: the trait `pb_inner::terminal_service_server::TerminalService` is not implemented for `TerminalServiceImpl`
+    --> src\api\grpc\terminal_service.rs:63:1
+     |
+  63 | pub struct TerminalServiceImpl {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3635:5
+     |
+3635 |     pub trait TerminalService: Send + Sync + 'static {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `pb_inner::terminal_service_server::TerminalServiceServer::<T>::new`
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3682:13
+     |
+3682 |     impl<T: TerminalService> TerminalServiceServer<T> {
+     |             ^^^^^^^^^^^^^^^ required by this bound in `TerminalServiceServer::<T>::new`
+3683 |         pub fn new(inner: T) -> Self {
+     |                --- required by a bound in this associated function
+
+error[E0277]: the trait bound `TerminalServiceImpl: pb_inner::terminal_service_server::TerminalService` is not satisfied
+    --> src\main.rs:178:22
+     |
+ 178 |         .add_service(pb::terminal_service_server::TerminalServiceServer::new(terminal_service))
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+     |
+help: the trait `pb_inner::terminal_service_server::TerminalService` is not implemented for `TerminalServiceImpl`
+    --> src\api\grpc\terminal_service.rs:63:1
+     |
+  63 | pub struct TerminalServiceImpl {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3635:5
+     |
+3635 |     pub trait TerminalService: Send + Sync + 'static {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `pb_inner::terminal_service_server::TerminalServiceServer`
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3674:41
+     |
+3674 |     pub struct TerminalServiceServer<T: TerminalService> {
+     |                                         ^^^^^^^^^^^^^^^ required by this bound in `TerminalServiceServer`
+
+error[E0277]: the trait bound `TerminalServiceImpl: pb_inner::terminal_service_server::TerminalService` is not satisfied
+    --> src\main.rs:178:10
+     |
+ 178 |         .add_service(pb::terminal_service_server::TerminalServiceServer::new(terminal_service))
+     |          ^^^^^^^^^^^ unsatisfied trait bound
+     |
+help: the trait `pb_inner::terminal_service_server::TerminalService` is not implemented for `TerminalServiceImpl`
+    --> src\api\grpc\terminal_service.rs:63:1
+     |
+  63 | pub struct TerminalServiceImpl {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3635:5
+     |
+3635 |     pub trait TerminalService: Send + Sync + 'static {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required for `pb_inner::terminal_service_server::TerminalServiceServer<TerminalServiceImpl>` to implement `Service<tonic::codegen::http::request::Request<tonic::transport::Body>>`
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3734:16
+     |
+3734 |     impl<T, B> tonic::codegen::Service<http::Request<B>> for TerminalServiceServer<T>
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^     ^^^^^^^^^^^^^^^^^^^^^^^^
+3735 |     where
+3736 |         T: TerminalService,
+     |            --------------- unsatisfied trait bound introduced here
+
+error[E0277]: the trait bound `ModelServiceImpl: pb_inner::model_service_server::ModelService` is not satisfied
+    --> src\main.rs:179:72
+     |
+ 179 |         .add_service(pb::model_service_server::ModelServiceServer::new(model_service))
+     |                      ------------------------------------------------- ^^^^^^^^^^^^^ unsatisfied trait bound
+     |                      |
+     |                      required by a bound introduced by this call
+     |
+help: the trait `pb_inner::model_service_server::ModelService` is not implemented for `ModelServiceImpl`
+    --> src\api\grpc\model_service.rs:35:1
+     |
+  35 | pub struct ModelServiceImpl {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3989:5
+     |
+3989 |     pub trait ModelService: Send + Sync + 'static {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `pb_inner::model_service_server::ModelServiceServer::<T>::new`
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:4052:13
+     |
+4052 |     impl<T: ModelService> ModelServiceServer<T> {
+     |             ^^^^^^^^^^^^ required by this bound in `ModelServiceServer::<T>::new`
+4053 |         pub fn new(inner: T) -> Self {
+     |                --- required by a bound in this associated function
+
+error[E0277]: the trait bound `ModelServiceImpl: pb_inner::model_service_server::ModelService` is not satisfied
+    --> src\main.rs:179:22
+     |
+ 179 |         .add_service(pb::model_service_server::ModelServiceServer::new(model_service))
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+     |
+help: the trait `pb_inner::model_service_server::ModelService` is not implemented for `ModelServiceImpl`
+    --> src\api\grpc\model_service.rs:35:1
+     |
+  35 | pub struct ModelServiceImpl {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3989:5
+     |
+3989 |     pub trait ModelService: Send + Sync + 'static {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `pb_inner::model_service_server::ModelServiceServer`
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:4044:38
+     |
+4044 |     pub struct ModelServiceServer<T: ModelService> {
+     |                                      ^^^^^^^^^^^^ required by this bound in `ModelServiceServer`
+
+error[E0277]: the trait bound `ModelServiceImpl: pb_inner::model_service_server::ModelService` is not satisfied
+    --> src\main.rs:179:10
+     |
+ 179 |         .add_service(pb::model_service_server::ModelServiceServer::new(model_service))
+     |          ^^^^^^^^^^^ unsatisfied trait bound
+     |
+help: the trait `pb_inner::model_service_server::ModelService` is not implemented for `ModelServiceImpl`
+    --> src\api\grpc\model_service.rs:35:1
+     |
+  35 | pub struct ModelServiceImpl {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:3989:5
+     |
+3989 |     pub trait ModelService: Send + Sync + 'static {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required for `pb_inner::model_service_server::ModelServiceServer<ModelServiceImpl>` to implement `Service<tonic::codegen::http::request::Request<tonic::transport::Body>>`
+    --> D:\Dev\CyxWiz_Claude\cyxwiz-central-server\target\release\build\cyxwiz-central-server-559ba8a5a933942e\out/cyxwiz.protocol.rs:4104:16
+     |
+4104 |     impl<T, B> tonic::codegen::Service<http::Request<B>> for ModelServiceServer<T>
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^     ^^^^^^^^^^^^^^^^^^^^^
+4105 |     where
+4106 |         T: ModelService,
+     |            ------------ unsatisfied trait bound introduced here
+
+warning: unused variable: `current_status`
+   --> src\api\grpc\node_service.rs:137:29
+    |
+137 |                 if let Some(current_status) = req.current_status {
+    |                             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_current_status`
+
+warning: unused variable: `deployment_type`
+  --> src\api\grpc\deployment_service.rs:39:13
+   |
+39 |         let deployment_type = match deployment.deployment_type {
+   |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_deployment_type`
+
+warning: unused variable: `model`
+  --> src\api\grpc\deployment_service.rs:37:57
+   |
+37 |     fn deployment_to_pb(&self, deployment: &Deployment, model: &Model) -> PbDeployment {
+   |                                                         ^^^^^ help: if this is intentional, prefix it with an underscore: `_model`
+
+warning: unused variable: `app`
+  --> src\tui\views\blockchain.rs:90:39
+   |
+90 | fn render_transactions(f: &mut Frame, app: &App, area: Rect) {
+   |                                       ^^^ help: if this is intentional, prefix it with an underscore: `_app`
+
+warning: unused variable: `app`
+   --> src\tui\views\dashboard.rs:112:41
+    |
+112 | fn render_job_throughput(f: &mut Frame, app: &App, area: Rect) {
+    |                                         ^^^ help: if this is intentional, prefix it with an underscore: `_app`
+
+warning: unused variable: `load_bar`
+   --> src\tui\views\dashboard.rs:155:13
+    |
+155 |         let load_bar = "▓".repeat((load_percent / 20) as usize);
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_load_bar`
+
+warning: unused variable: `app`
+  --> src\tui\views\settings.rs:10:30
+   |
+10 | pub fn render(f: &mut Frame, app: &App, area: Rect) {
+   |                              ^^^ help: if this is intentional, prefix it with an underscore: `_app`
+
+Some errors have detailed explanations: E0061, E0277, E0433, E0599.
+For more information about an error, try `rustc --explain E0061`.
+warning: `cyxwiz-central-server` (bin "cyxwiz-central-server") generated 39 warnings
+error: could not compile `cyxwiz-central-server` (bin "cyxwiz-central-server") due to 41 previous errors; 45 warnings emitted

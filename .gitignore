@@ -85,3 +85,6 @@ coverage/
 
 # Private/Company IP
 cyxwiz-central-server/
+
+# External dependencies (git repos)
+cyxwiz-engine/external/imnodes/

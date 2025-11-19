@@ -407,9 +407,39 @@ void NodeClient::SetActiveJobs(const std::vector<std::string>& job_ids) {
 void NodeClient::HeartbeatLoop() {
     spdlog::debug("Heartbeat loop started");
 
+    bool was_connected = true;  // Track previous connection state
+    int consecutive_failures = 0;
+
     while (!should_stop_heartbeat_) {
-        if (!SendHeartbeat()) {
-            spdlog::warn("Heartbeat failed, will retry...");
+        bool heartbeat_success = SendHeartbeat();
+
+        if (!heartbeat_success) {
+            consecutive_failures++;
+
+            // First failure - connection lost
+            if (was_connected) {
+                spdlog::error("Connection to Central Server lost!");
+                spdlog::warn("Attempting to reconnect...");
+                was_connected = false;
+            } else {
+                // Subsequent failures - only log periodically to avoid spam
+                if (consecutive_failures % 6 == 0) {  // Every minute (6 x 10s)
+                    spdlog::warn("Still attempting to reconnect to Central Server... ({} attempts)", consecutive_failures);
+                }
+            }
+        } else {
+            // Heartbeat succeeded
+            if (!was_connected) {
+                // Connection restored!
+                spdlog::info("========================================");
+                spdlog::info("Connection to Central Server RESTORED!");
+                spdlog::info("  Node ID: {}", node_id_);
+                spdlog::info("  Server: {}", central_server_address_);
+                spdlog::info("  After {} failed attempts", consecutive_failures);
+                spdlog::info("========================================");
+                was_connected = true;
+                consecutive_failures = 0;
+            }
         }
 
         // Sleep for interval
