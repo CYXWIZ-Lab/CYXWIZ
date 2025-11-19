@@ -82,3 +82,6 @@ checkpoints/
 # Testing
 test_results/
 coverage/
+
+# Private/Company IP
+cyxwiz-central-server/
