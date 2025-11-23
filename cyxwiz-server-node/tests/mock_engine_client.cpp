@@ -36,21 +36,21 @@ public:
         ConnectResponse response;
         grpc::ClientContext context;
 
-        std::cout << "🔗 Connecting to node at " << node_address_ << "..." << std::endl;
+        std::cout << "[>>] Connecting to node at " << node_address_ << "..." << std::endl;
 
         grpc::Status status = stub_->ConnectToNode(&context, request, &response);
 
         if (!status.ok()) {
-            std::cerr << "❌ Connection failed: " << status.error_message() << std::endl;
+            std::cerr << "[ERROR] Connection failed: " << status.error_message() << std::endl;
             return false;
         }
 
         if (response.status() != STATUS_SUCCESS) {
-            std::cerr << "❌ Connection rejected: " << response.error().message() << std::endl;
+            std::cerr << "[ERROR] Connection rejected: " << response.error().message() << std::endl;
             return false;
         }
 
-        std::cout << "✅ Connected to node: " << response.node_id() << std::endl;
+        std::cout << "[OK] Connected to node: " << response.node_id() << std::endl;
         std::cout << "   Capabilities:" << std::endl;
         std::cout << "   - Max Memory: " << response.capabilities().max_memory() / (1024*1024) << " MB" << std::endl;
         std::cout << "   - Max Batch Size: " << response.capabilities().max_batch_size() << std::endl;
@@ -81,22 +81,22 @@ public:
         SendJobResponse response;
         grpc::ClientContext context;
 
-        std::cout << "📤 Sending job " << job_id << " (epochs=" << epochs
+        std::cout << "[>>] Sending job " << job_id << " (epochs=" << epochs
                   << ", batch_size=" << batch_size << ")..." << std::endl;
 
         grpc::Status status = stub_->SendJob(&context, request, &response);
 
         if (!status.ok()) {
-            std::cerr << "❌ SendJob failed: " << status.error_message() << std::endl;
+            std::cerr << "[ERROR] SendJob failed: " << status.error_message() << std::endl;
             return false;
         }
 
         if (response.status() != STATUS_SUCCESS || !response.accepted()) {
-            std::cerr << "❌ Job rejected: " << response.rejection_reason() << std::endl;
+            std::cerr << "[ERROR] Job rejected: " << response.rejection_reason() << std::endl;
             return false;
         }
 
-        std::cout << "✅ Job accepted! Estimated start: "
+        std::cout << "[OK] Job accepted! Estimated start: "
                   << response.estimated_start_time() << std::endl;
 
         return true;
@@ -106,7 +106,7 @@ public:
         grpc::ClientContext context;
         auto stream = stub_->StreamTrainingMetrics(&context);
 
-        std::cout << "\n📊 Starting training stream for " << job_id << "..." << std::endl;
+        std::cout << "\n[**] Starting training stream for " << job_id << "..." << std::endl;
         std::cout << "   Commands: [p] pause, [r] resume, [s] stop, [c] checkpoint\n" << std::endl;
 
         // Thread to read updates from server
@@ -131,13 +131,13 @@ public:
                 }
                 else if (update.has_checkpoint()) {
                     auto& ckpt = update.checkpoint();
-                    std::cout << "  💾 Checkpoint at epoch " << ckpt.epoch()
+                    std::cout << "  [SAVE] Checkpoint at epoch " << ckpt.epoch()
                               << " | Hash: " << ckpt.checkpoint_hash().substr(0, 8) << "..."
                               << std::endl;
                 }
                 else if (update.has_complete()) {
                     auto& complete = update.complete();
-                    std::cout << "\n  ✅ Training Complete!" << std::endl;
+                    std::cout << "\n  [DONE] Training Complete!" << std::endl;
                     std::cout << "     Success: " << (complete.success() ? "Yes" : "No") << std::endl;
                     std::cout << "     Final Loss: " << complete.final_metrics().at("loss") << std::endl;
                     std::cout << "     Final Accuracy: " << complete.final_metrics().at("accuracy") << std::endl;
@@ -147,12 +147,12 @@ public:
                 }
                 else if (update.has_error()) {
                     auto& error = update.error();
-                    std::cerr << "  ❌ Training Error: " << error.error_message() << std::endl;
+                    std::cerr << "  [ERROR] Training Error: " << error.error_message() << std::endl;
                     break;
                 }
                 else if (update.has_log()) {
                     auto& log = update.log();
-                    std::cout << "  📝 [" << log.source() << "] " << log.message() << std::endl;
+                    std::cout << "  [LOG] [" << log.source() << "] " << log.message() << std::endl;
                 }
             }
         });
@@ -165,26 +165,26 @@ public:
                     TrainingCommand cmd;
                     cmd.set_pause(true);
                     stream->Write(cmd);
-                    std::cout << "⏸️  Pause command sent" << std::endl;
+                    std::cout << "[||] Pause command sent" << std::endl;
                 }
                 else if (command == "r") {
                     TrainingCommand cmd;
                     cmd.set_pause(false);
                     stream->Write(cmd);
-                    std::cout << "▶️  Resume command sent" << std::endl;
+                    std::cout << "[>] Resume command sent" << std::endl;
                 }
                 else if (command == "s") {
                     TrainingCommand cmd;
                     cmd.set_stop(true);
                     stream->Write(cmd);
-                    std::cout << "⏹️  Stop command sent" << std::endl;
+                    std::cout << "[X] Stop command sent" << std::endl;
                     break;
                 }
                 else if (command == "c") {
                     TrainingCommand cmd;
                     cmd.set_request_checkpoint(true);
                     stream->Write(cmd);
-                    std::cout << "💾 Checkpoint request sent" << std::endl;
+                    std::cout << "[SAVE] Checkpoint request sent" << std::endl;
                 }
                 else if (command == "q") {
                     break;
@@ -200,7 +200,7 @@ public:
         }
 
         if (!status.ok()) {
-            std::cerr << "❌ Stream ended with error: " << status.error_message() << std::endl;
+            std::cerr << "[ERROR] Stream ended with error: " << status.error_message() << std::endl;
         }
     }
 
@@ -213,7 +213,7 @@ public:
         grpc::ClientContext context;
         auto reader = stub_->DownloadWeights(&context, request);
 
-        std::cout << "\n📥 Downloading weights for " << job_id << "..." << std::endl;
+        std::cout << "\n[<<] Downloading weights for " << job_id << "..." << std::endl;
 
         size_t total_bytes = 0;
         int chunks_received = 0;
@@ -241,10 +241,10 @@ public:
         grpc::Status status = reader->Finish();
 
         if (status.ok()) {
-            std::cout << "✅ Download complete! Total: " << (total_bytes / (1024*1024))
+            std::cout << "[OK] Download complete! Total: " << (total_bytes / (1024*1024))
                       << " MB in " << chunks_received << " chunks" << std::endl;
         } else {
-            std::cerr << "❌ Download failed: " << status.error_message() << std::endl;
+            std::cerr << "[ERROR] Download failed: " << status.error_message() << std::endl;
         }
     }
 
@@ -296,11 +296,11 @@ int main(int argc, char* argv[]) {
         // Test 4: Download Weights
         client.DownloadWeights(job_id, "/tmp/model.pt");
 
-        std::cout << "\n✅ All tests completed successfully!" << std::endl;
+        std::cout << "\n[OK] All tests completed successfully!" << std::endl;
         return 0;
 
     } catch (const std::exception& e) {
-        std::cerr << "❌ Exception: " << e.what() << std::endl;
+        std::cerr << "[ERROR] Exception: " << e.what() << std::endl;
         return 1;
     }
 }

@@ -8,7 +8,13 @@
 #include <atomic>
 
 #include "execution.grpc.pb.h"
-#include "job_executor.h"
+
+// Forward declaration
+namespace cyxwiz {
+namespace server_node {
+class JobExecutor;
+}
+}
 
 namespace cyxwiz {
 namespace server_node {

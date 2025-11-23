@@ -109,7 +109,6 @@ if(CYXWIZ_BUILD_TESTS)
     add_executable(test_job_execution_service
         tests/test_job_execution_service.cpp
         src/job_execution_service.cpp
-        src/job_executor.cpp
     )
 
     target_include_directories(test_job_execution_service PRIVATE
@@ -157,6 +156,35 @@ if(CYXWIZ_BUILD_TESTS)
 
     if(WIN32)
         target_compile_definitions(mock_engine_client PRIVATE
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN
+            NOGDI
+            PROTOBUF_USE_DLLS
+            GOOGLE_PROTOBUF_NO_THREADLOCAL
+        )
+    endif()
+
+    # Standalone P2P Server (for manual testing)
+    add_executable(standalone_p2p_server
+        tests/standalone_p2p_server.cpp
+        src/job_execution_service.cpp
+    )
+
+    target_include_directories(standalone_p2p_server PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+    )
+
+    target_link_libraries(standalone_p2p_server PRIVATE
+        cyxwiz-protocol
+        gRPC::grpc++
+        protobuf::libprotobuf
+        spdlog::spdlog
+        Threads::Threads
+    )
+
+    if(WIN32)
+        target_compile_definitions(standalone_p2p_server PRIVATE
             NOMINMAX
             WIN32_LEAN_AND_MEAN
             NOGDI

@@ -92,7 +92,7 @@ TEST_CASE("JobExecutionService - ConnectToNode", "[p2p][connect]") {
         grpc::Status status = test.stub->ConnectToNode(&context, request, &response);
 
         REQUIRE(status.ok());  // gRPC call succeeds
-        REQUIRE(response.status() == STATUS_UNAUTHORIZED);  // But auth fails
+        REQUIRE(response.status() == STATUS_ERROR);  // But auth fails
         REQUIRE(response.has_error());
     }
 

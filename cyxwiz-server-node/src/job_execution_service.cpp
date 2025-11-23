@@ -14,12 +14,12 @@ namespace fs = std::filesystem;
 
 JobExecutionServiceImpl::JobExecutionServiceImpl() {
     // Initialize node capabilities
-    capabilities_.add_supported_devices(cyxwiz::protocol::DEVICE_TYPE_CPU);
+    capabilities_.add_supported_devices(cyxwiz::protocol::DEVICE_CPU);
 #ifdef CYXWIZ_ENABLE_CUDA
-    capabilities_.add_supported_devices(cyxwiz::protocol::DEVICE_TYPE_CUDA);
+    capabilities_.add_supported_devices(cyxwiz::protocol::DEVICE_CUDA);
 #endif
 #ifdef CYXWIZ_ENABLE_OPENCL
-    capabilities_.add_supported_devices(cyxwiz::protocol::DEVICE_TYPE_OPENCL);
+    capabilities_.add_supported_devices(cyxwiz::protocol::DEVICE_OPENCL);
 #endif
 
     capabilities_.set_max_memory(8LL * 1024 * 1024 * 1024); // 8GB default
@@ -108,7 +108,7 @@ grpc::Status JobExecutionServiceImpl::ConnectToNode(
 
     // Verify auth token
     if (!VerifyAuthToken(request->auth_token(), request->job_id())) {
-        response->set_status(cyxwiz::protocol::STATUS_UNAUTHORIZED);
+        response->set_status(cyxwiz::protocol::STATUS_ERROR);
         response->mutable_error()->set_code(401);
         response->mutable_error()->set_message("Invalid or expired auth token");
         return grpc::Status::OK;
@@ -148,19 +148,22 @@ grpc::Status JobExecutionServiceImpl::SendJob(
         std::lock_guard<std::mutex> lock(connections_mutex_);
         auto it = connections_.find(context->peer());
         if (it == connections_.end() || !it->second.is_authenticated) {
-            response->set_status(cyxwiz::protocol::STATUS_UNAUTHORIZED);
+            response->set_status(cyxwiz::protocol::STATUS_ERROR);
             response->mutable_error()->set_code(401);
             response->mutable_error()->set_message("Not authenticated");
             return grpc::Status::OK;
         }
     }
 
-    // Check if we can accept the job
-    if (!job_executor_ || !job_executor_->CanAcceptJob()) {
-        response->set_status(cyxwiz::protocol::STATUS_RESOURCE_EXHAUSTED);
-        response->set_accepted(false);
-        response->set_rejection_reason("Node at capacity");
-        return grpc::Status::OK;
+    // Check if we have too many active jobs (simple capacity check)
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        if (active_jobs_.size() >= 10) {  // Max 10 concurrent jobs
+            response->set_status(cyxwiz::protocol::STATUS_ERROR);
+            response->set_accepted(false);
+            response->set_rejection_reason("Node at capacity");
+            return grpc::Status::OK;
+        }
     }
 
     // Create job session
@@ -177,7 +180,7 @@ grpc::Status JobExecutionServiceImpl::SendJob(
         std::string dataset_path = SaveDatasetToFile(request->job_id(),
                                                      request->initial_dataset());
         if (dataset_path.empty()) {
-            response->set_status(cyxwiz::protocol::STATUS_INTERNAL_ERROR);
+            response->set_status(cyxwiz::protocol::STATUS_ERROR);
             response->set_accepted(false);
             response->set_rejection_reason("Failed to save dataset");
             return grpc::Status::OK;
