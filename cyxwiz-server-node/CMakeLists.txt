@@ -29,6 +29,7 @@ set(SERVER_NODE_SOURCES
     src/metrics_collector.cpp
     src/node_client.cpp
     src/node_service.cpp
+    src/job_execution_service.cpp  # P2P service
     # Legacy files (to be refactored)
     src/node_server.cpp
     src/job_executor.cpp
@@ -98,3 +99,74 @@ endif()
 install(TARGETS cyxwiz-server-node
     RUNTIME DESTINATION bin
 )
+
+# ========== Tests ==========
+if(CYXWIZ_BUILD_TESTS)
+    find_package(Catch2 CONFIG REQUIRED)
+    enable_testing()
+
+    # P2P Service Tests
+    add_executable(test_job_execution_service
+        tests/test_job_execution_service.cpp
+        src/job_execution_service.cpp
+        src/job_executor.cpp
+    )
+
+    target_include_directories(test_job_execution_service PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+    )
+
+    target_link_libraries(test_job_execution_service PRIVATE
+        Catch2::Catch2
+        Catch2::Catch2WithMain
+        fmt::fmt
+        spdlog::spdlog
+        cyxwiz-backend
+        cyxwiz-protocol
+        gRPC::grpc++
+        protobuf::libprotobuf
+        Threads::Threads
+    )
+
+    if(WIN32)
+        target_compile_definitions(test_job_execution_service PRIVATE
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN
+            NOGDI
+            PROTOBUF_USE_DLLS
+            GOOGLE_PROTOBUF_NO_THREADLOCAL
+        )
+    endif()
+
+    # Mock Engine Client (standalone test tool)
+    add_executable(mock_engine_client
+        tests/mock_engine_client.cpp
+    )
+
+    target_include_directories(mock_engine_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+    )
+
+    target_link_libraries(mock_engine_client PRIVATE
+        cyxwiz-protocol
+        gRPC::grpc++
+        protobuf::libprotobuf
+        Threads::Threads
+    )
+
+    if(WIN32)
+        target_compile_definitions(mock_engine_client PRIVATE
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN
+            NOGDI
+            PROTOBUF_USE_DLLS
+            GOOGLE_PROTOBUF_NO_THREADLOCAL
+        )
+    endif()
+
+    # Register tests with CTest
+    add_test(NAME P2PServiceTests COMMAND test_job_execution_service)
+
+    message(STATUS "Server Node P2P tests enabled")
+endif()
