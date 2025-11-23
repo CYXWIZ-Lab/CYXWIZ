@@ -138,6 +138,21 @@ message MetricPoint {
   double power_consumption = 6;
 }
 
+// P2P: Job acceptance notification for direct Engine→Node connection
+message JobAcceptedRequest {
+  string node_id = 1;
+  string job_id = 2;
+  string engine_address = 3;       // Where Engine connected from
+  int64 accepted_at = 4;           // Unix timestamp
+  string node_endpoint = 5;        // The endpoint Engine connected to
+}
+
+message JobAcceptedResponse {
+  StatusCode status = 1;
+  bool acknowledged = 2;
+  Error error = 3;
+}
+
 // Node Service - Central Server to Server Node
 service NodeService {
   // Node registration
@@ -157,6 +172,9 @@ service NodeService {
 
   // Get node metrics
   rpc GetNodeMetrics(GetNodeMetricsRequest) returns (GetNodeMetricsResponse);
+
+  // P2P: Notify that job was accepted directly from Engine
+  rpc NotifyJobAccepted(JobAcceptedRequest) returns (JobAcceptedResponse);
 }
 
 // Node Discovery Service - For finding available nodes

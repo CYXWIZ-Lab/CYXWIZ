@@ -1,0 +1,175 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+import "common.proto";
+import "job.proto";
+
+// Service running on Server Node (port 50052) for P2P communication with Engine
+service JobExecutionService {
+  // Engine establishes connection with auth token
+  rpc ConnectToNode(ConnectRequest) returns (ConnectResponse);
+
+  // Engine sends job details and dataset
+  rpc SendJob(SendJobRequest) returns (SendJobResponse);
+
+  // Bidirectional streaming for real-time training updates
+  rpc StreamTrainingMetrics(stream TrainingCommand) returns (stream TrainingUpdate);
+
+  // Engine downloads final model weights
+  rpc DownloadWeights(DownloadRequest) returns (stream WeightsChunk);
+}
+
+// Connection establishment
+message ConnectRequest {
+  string auth_token = 1;
+  string job_id = 2;
+  string engine_version = 3;
+}
+
+message ConnectResponse {
+  StatusCode status = 1;
+  string node_id = 2;
+  NodeCapabilities capabilities = 3;
+  Error error = 4;
+}
+
+// Node capabilities for Engine to understand what's supported
+message NodeCapabilities {
+  repeated DeviceType supported_devices = 1;
+  int64 max_memory = 2;
+  int32 max_batch_size = 3;
+  repeated string supported_optimizers = 4;
+  bool supports_checkpointing = 5;
+  bool supports_distributed = 6;
+}
+
+// Job submission to node
+message SendJobRequest {
+  string job_id = 1;
+  JobConfig config = 2;
+  bytes initial_dataset = 3;  // Or dataset URI
+  string dataset_uri = 4;     // Alternative to inline data
+}
+
+message SendJobResponse {
+  StatusCode status = 1;
+  bool accepted = 2;
+  int64 estimated_start_time = 3;
+  string rejection_reason = 4;
+  Error error = 5;
+}
+
+// Engine → Server Node commands during training
+message TrainingCommand {
+  oneof command {
+    bool pause = 1;
+    bool resume = 2;
+    bool stop = 3;
+    bool request_checkpoint = 4;
+    UpdateHyperparameters update_params = 5;
+  }
+}
+
+message UpdateHyperparameters {
+  double learning_rate = 1;
+  int32 batch_size = 2;
+  map<string, double> other_params = 3;
+}
+
+// Server Node → Engine updates during training
+message TrainingUpdate {
+  string job_id = 1;
+  int64 timestamp = 2;  // Unix timestamp
+
+  oneof update {
+    TrainingProgress progress = 3;
+    TrainingCheckpoint checkpoint = 4;
+    TrainingComplete complete = 5;
+    TrainingError error = 6;
+    LogMessage log = 7;
+  }
+}
+
+// Detailed training progress
+message TrainingProgress {
+  int32 current_epoch = 1;
+  int32 total_epochs = 2;
+  int32 current_batch = 3;
+  int32 total_batches = 4;
+  double progress_percentage = 5;  // 0.0 to 1.0
+
+  // Training metrics
+  map<string, double> metrics = 6;  // loss, accuracy, val_loss, val_accuracy, etc.
+
+  // Resource usage
+  double gpu_usage = 7;        // 0.0 to 1.0
+  double cpu_usage = 8;        // 0.0 to 1.0
+  double memory_usage = 9;     // 0.0 to 1.0
+  int64 gpu_memory_used = 10;  // bytes
+  int64 gpu_memory_total = 11; // bytes
+
+  // Time estimates
+  int64 estimated_time_remaining = 12;  // seconds
+  int64 elapsed_time = 13;              // seconds
+  double samples_per_second = 14;       // training speed
+}
+
+// Model checkpoint during training
+message TrainingCheckpoint {
+  int32 epoch = 1;
+  bytes weights_data = 2;     // Compressed model weights
+  int64 weights_size = 3;      // Uncompressed size
+  string compression_type = 4; // "gzip", "lz4", "none"
+  string checkpoint_hash = 5;  // SHA256 of weights
+  map<string, double> metrics_at_checkpoint = 6;
+}
+
+// Training completion
+message TrainingComplete {
+  bool success = 1;
+  string result_hash = 2;
+  map<string, double> final_metrics = 3;
+  int64 total_training_time = 4;    // seconds
+  int64 total_epochs_completed = 5;
+  string weights_location = 6;      // Where to download final weights
+  int64 final_weights_size = 7;     // bytes
+  string proof_of_compute = 8;      // Cryptographic proof
+}
+
+// Training error
+message TrainingError {
+  string error_code = 1;
+  string error_message = 2;
+  string stack_trace = 3;
+  int32 epoch_at_error = 4;
+  bool recoverable = 5;
+}
+
+// Log messages from training
+message LogMessage {
+  enum Level {
+    DEBUG = 0;
+    INFO = 1;
+    WARNING = 2;
+    ERROR = 3;
+  }
+  Level level = 1;
+  string message = 2;
+  string source = 3;  // component that generated the log
+}
+
+// Download final weights
+message DownloadRequest {
+  string job_id = 1;
+  int64 offset = 2;     // For resuming interrupted downloads
+  int32 chunk_size = 3; // Preferred chunk size
+}
+
+message WeightsChunk {
+  bytes data = 1;
+  int64 offset = 2;
+  int64 total_size = 3;
+  bool is_last_chunk = 4;
+  string checksum = 5;  // Checksum of this chunk
+}

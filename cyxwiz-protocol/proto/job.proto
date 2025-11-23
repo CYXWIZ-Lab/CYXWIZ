@@ -90,13 +90,28 @@ message SubmitJobRequest {
   bytes initial_data = 2;         // Optional inline data
 }
 
+// Node assignment for P2P connection
+message NodeAssignment {
+  string node_id = 1;
+  string node_endpoint = 2;       // e.g., "192.168.1.100:50052"
+  string auth_token = 3;          // JWT token for Engine→Node auth
+  int64 token_expires_at = 4;     // Unix timestamp
+  string node_public_key = 5;     // For TLS verification
+}
+
 // Job submission response
 message SubmitJobResponse {
   string job_id = 1;
   StatusCode status = 2;
-  string assigned_node_id = 3;
-  Error error = 4;
-  int64 estimated_start_time = 5;
+
+  // For P2P connection (new)
+  NodeAssignment node_assignment = 3;
+
+  // Legacy field (kept for backward compatibility)
+  string assigned_node_id = 4;
+
+  Error error = 5;
+  int64 estimated_start_time = 6;
 }
 
 // Job status query

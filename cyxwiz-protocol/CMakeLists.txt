@@ -13,6 +13,7 @@ set(PROTO_FILES
     proto/node.proto
     proto/common.proto
     proto/deployment.proto
+    proto/execution.proto
 )
 
 # Generate C++ code from proto files
