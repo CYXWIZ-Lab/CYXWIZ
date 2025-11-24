@@ -58,6 +58,9 @@ set(ENGINE_SOURCES
     external/imnodes/imnodes.cpp
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
+    src/network/p2p_client.cpp
+    src/gui/panels/p2p_training_panel.cpp
+    src/gui/panels/job_status_panel.cpp
     # Plotting system
     src/plotting/plot_dataset.cpp
     src/plotting/plot_manager.cpp
@@ -95,6 +98,9 @@ set(ENGINE_HEADERS
     external/ImGuiColorTextEdit/TextEditor.h
     src/network/grpc_client.h
     src/network/job_manager.h
+    src/network/p2p_client.h
+    src/gui/panels/p2p_training_panel.h
+    src/gui/panels/job_status_panel.h
     # Plotting system
     src/plotting/plot_dataset.h
     src/plotting/plot_manager.h

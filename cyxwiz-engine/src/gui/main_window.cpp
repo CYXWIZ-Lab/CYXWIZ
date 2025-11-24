@@ -12,6 +12,7 @@
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "panels/connection_dialog.h"
+#include "panels/job_status_panel.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 
@@ -43,6 +44,7 @@ MainWindow::MainWindow()
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
+    job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
 
     // Set scripting engine for command window and script editor
     command_window_->SetScriptingEngine(scripting_engine_);
@@ -97,6 +99,11 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
     // Create connection dialog with network components
     connection_dialog_ = std::make_unique<cyxwiz::ConnectionDialog>(client, job_manager);
 
+    // Set JobManager for JobStatusPanel
+    if (job_status_panel_) {
+        job_status_panel_->SetJobManager(job_manager);
+    }
+
     // Set up callback in toolbar to show connection dialog
     if (toolbar_) {
         toolbar_->SetConnectToServerCallback([this]() {
@@ -130,6 +137,7 @@ void MainWindow::Render() {
     if (script_editor_) script_editor_->Render();
     if (table_viewer_) table_viewer_->Render();
     if (connection_dialog_) connection_dialog_->Render();
+    if (job_status_panel_) job_status_panel_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();

@@ -28,6 +28,10 @@ public:
     bool CancelJob(const std::string& job_id,
                     cyxwiz::protocol::CancelJobResponse& response);
 
+    bool ListJobs(cyxwiz::protocol::ListJobsResponse& response,
+                  const std::string& user_id = "",
+                  int page_size = 100);
+
     // Get last error message
     std::string GetLastError() const { return last_error_; }
 

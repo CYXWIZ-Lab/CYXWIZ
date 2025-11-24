@@ -22,10 +22,10 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-from . import common_pb2 as common__pb2
+import common_pb2 as common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\tjob.proto\x12\x0f\x63yxwiz.protocol\x1a\x0c\x63ommon.proto\"\x81\x04\n\tJobConfig\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12*\n\x08job_type\x18\x02 \x01(\x0e\x32\x18.cyxwiz.protocol.JobType\x12.\n\x08priority\x18\x03 \x01(\x0e\x32\x1c.cyxwiz.protocol.JobPriority\x12\x18\n\x10model_definition\x18\x04 \x01(\t\x12H\n\x0fhyperparameters\x18\x05 \x03(\x0b\x32/.cyxwiz.protocol.JobConfig.HyperparametersEntry\x12\x13\n\x0b\x64\x61taset_uri\x18\x06 \x01(\t\x12\x12\n\nbatch_size\x18\x07 \x01(\x05\x12\x0e\n\x06\x65pochs\x18\x08 \x01(\x05\x12\x34\n\x0frequired_device\x18\t \x01(\x0e\x32\x1b.cyxwiz.protocol.DeviceType\x12\x18\n\x10\x65stimated_memory\x18\n \x01(\x03\x12\x1a\n\x12\x65stimated_duration\x18\x0b \x01(\x03\x12\x16\n\x0epayment_amount\x18\x0c \x01(\x01\x12\x17\n\x0fpayment_address\x18\r \x01(\t\x12\x16\n\x0e\x65scrow_tx_hash\x18\x0e \x01(\t\x1a\x36\n\x14HyperparametersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xc1\x02\n\tJobStatus\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\x12\x10\n\x08progress\x18\x03 \x01(\x01\x12\x17\n\x0f\x63urrent_node_id\x18\x04 \x01(\t\x12\x12\n\nstart_time\x18\x05 \x01(\x03\x12\x10\n\x08\x65nd_time\x18\x06 \x01(\x03\x12%\n\x05\x65rror\x18\x07 \x01(\x0b\x32\x16.cyxwiz.protocol.Error\x12\x38\n\x07metrics\x18\x08 \x03(\x0b\x32\'.cyxwiz.protocol.JobStatus.MetricsEntry\x12\x15\n\rcurrent_epoch\x18\t \x01(\x05\x1a.\n\x0cMetricsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\"\xf0\x02\n\tJobResult\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\x12\x19\n\x11model_weights_uri\x18\x03 \x01(\t\x12\x1a\n\x12model_weights_hash\x18\x04 \x01(\t\x12\x12\n\nmodel_size\x18\x05 \x01(\x03\x12\x43\n\rfinal_metrics\x18\x06 \x03(\x0b\x32,.cyxwiz.protocol.JobResult.FinalMetricsEntry\x12\x1a\n\x12total_compute_time\x18\x07 \x01(\x03\x12\x17\n\x0f\x65nergy_consumed\x18\x08 \x01(\x01\x12\x18\n\x10proof_of_compute\x18\t \x01(\t\x12\x12\n\nsignatures\x18\n \x03(\t\x1a\x33\n\x11\x46inalMetricsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\"T\n\x10SubmitJobRequest\x12*\n\x06\x63onfig\x18\x01 \x01(\x0b\x32\x1a.cyxwiz.protocol.JobConfig\x12\x14\n\x0cinitial_data\x18\x02 \x01(\x0c\"\xaf\x01\n\x11SubmitJobResponse\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\x12\x18\n\x10\x61ssigned_node_id\x18\x03 \x01(\t\x12%\n\x05\x65rror\x18\x04 \x01(\x0b\x32\x16.cyxwiz.protocol.Error\x12\x1c\n\x14\x65stimated_start_time\x18\x05 \x01(\x03\"%\n\x13GetJobStatusRequest\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"i\n\x14GetJobStatusResponse\x12*\n\x06status\x18\x01 \x01(\x0b\x32\x1a.cyxwiz.protocol.JobStatus\x12%\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x16.cyxwiz.protocol.Error\"2\n\x10\x43\x61ncelJobRequest\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t\"~\n\x11\x43\x61ncelJobResponse\x12+\n\x06status\x18\x01 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\x12\x15\n\rrefund_issued\x18\x02 \x01(\x08\x12%\n\x05\x65rror\x18\x03 \x01(\x0b\x32\x16.cyxwiz.protocol.Error\"\xfb\x01\n\x0fJobUpdateStream\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12*\n\x06status\x18\x02 \x01(\x0b\x32\x1a.cyxwiz.protocol.JobStatus\x12G\n\x0clive_metrics\x18\x03 \x03(\x0b\x32\x31.cyxwiz.protocol.JobUpdateStream.LiveMetricsEntry\x12\x13\n\x0blog_message\x18\x04 \x01(\t\x12\x1a\n\x12visualization_data\x18\x05 \x01(\x0c\x1a\x32\n\x10LiveMetricsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\"\xac\x01\n\x0fListJobsRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x11\n\tpage_size\x18\x02 \x01(\x05\x12\x12\n\npage_token\x18\x03 \x01(\t\x12-\n\x0b\x66ilter_type\x18\x04 \x01(\x0e\x32\x18.cyxwiz.protocol.JobType\x12\x32\n\rfilter_status\x18\x05 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\"j\n\x10ListJobsResponse\x12(\n\x04jobs\x18\x01 \x03(\x0b\x32\x1a.cyxwiz.protocol.JobStatus\x12\x17\n\x0fnext_page_token\x18\x02 \x01(\t\x12\x13\n\x0btotal_count\x18\x03 \x01(\x05*\x83\x01\n\x07JobType\x12\x14\n\x10JOB_TYPE_UNKNOWN\x10\x00\x12\x15\n\x11JOB_TYPE_TRAINING\x10\x01\x12\x16\n\x12JOB_TYPE_INFERENCE\x10\x02\x12\x17\n\x13JOB_TYPE_EVALUATION\x10\x03\x12\x1a\n\x16JOB_TYPE_PREPROCESSING\x10\x04*^\n\x0bJobPriority\x12\x10\n\x0cPRIORITY_LOW\x10\x00\x12\x13\n\x0fPRIORITY_NORMAL\x10\x01\x12\x11\n\rPRIORITY_HIGH\x10\x02\x12\x15\n\x11PRIORITY_CRITICAL\x10\x03\x32\xc0\x03\n\nJobService\x12R\n\tSubmitJob\x12!.cyxwiz.protocol.SubmitJobRequest\x1a\".cyxwiz.protocol.SubmitJobResponse\x12[\n\x0cGetJobStatus\x12$.cyxwiz.protocol.GetJobStatusRequest\x1a%.cyxwiz.protocol.GetJobStatusResponse\x12R\n\tCancelJob\x12!.cyxwiz.protocol.CancelJobRequest\x1a\".cyxwiz.protocol.CancelJobResponse\x12\\\n\x10StreamJobUpdates\x12$.cyxwiz.protocol.GetJobStatusRequest\x1a .cyxwiz.protocol.JobUpdateStream0\x01\x12O\n\x08ListJobs\x12 .cyxwiz.protocol.ListJobsRequest\x1a!.cyxwiz.protocol.ListJobsResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\tjob.proto\x12\x0f\x63yxwiz.protocol\x1a\x0c\x63ommon.proto\"\x81\x04\n\tJobConfig\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12*\n\x08job_type\x18\x02 \x01(\x0e\x32\x18.cyxwiz.protocol.JobType\x12.\n\x08priority\x18\x03 \x01(\x0e\x32\x1c.cyxwiz.protocol.JobPriority\x12\x18\n\x10model_definition\x18\x04 \x01(\t\x12H\n\x0fhyperparameters\x18\x05 \x03(\x0b\x32/.cyxwiz.protocol.JobConfig.HyperparametersEntry\x12\x13\n\x0b\x64\x61taset_uri\x18\x06 \x01(\t\x12\x12\n\nbatch_size\x18\x07 \x01(\x05\x12\x0e\n\x06\x65pochs\x18\x08 \x01(\x05\x12\x34\n\x0frequired_device\x18\t \x01(\x0e\x32\x1b.cyxwiz.protocol.DeviceType\x12\x18\n\x10\x65stimated_memory\x18\n \x01(\x03\x12\x1a\n\x12\x65stimated_duration\x18\x0b \x01(\x03\x12\x16\n\x0epayment_amount\x18\x0c \x01(\x01\x12\x17\n\x0fpayment_address\x18\r \x01(\t\x12\x16\n\x0e\x65scrow_tx_hash\x18\x0e \x01(\t\x1a\x36\n\x14HyperparametersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xc1\x02\n\tJobStatus\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\x12\x10\n\x08progress\x18\x03 \x01(\x01\x12\x17\n\x0f\x63urrent_node_id\x18\x04 \x01(\t\x12\x12\n\nstart_time\x18\x05 \x01(\x03\x12\x10\n\x08\x65nd_time\x18\x06 \x01(\x03\x12%\n\x05\x65rror\x18\x07 \x01(\x0b\x32\x16.cyxwiz.protocol.Error\x12\x38\n\x07metrics\x18\x08 \x03(\x0b\x32\'.cyxwiz.protocol.JobStatus.MetricsEntry\x12\x15\n\rcurrent_epoch\x18\t \x01(\x05\x1a.\n\x0cMetricsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\"\xf0\x02\n\tJobResult\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\x12\x19\n\x11model_weights_uri\x18\x03 \x01(\t\x12\x1a\n\x12model_weights_hash\x18\x04 \x01(\t\x12\x12\n\nmodel_size\x18\x05 \x01(\x03\x12\x43\n\rfinal_metrics\x18\x06 \x03(\x0b\x32,.cyxwiz.protocol.JobResult.FinalMetricsEntry\x12\x1a\n\x12total_compute_time\x18\x07 \x01(\x03\x12\x17\n\x0f\x65nergy_consumed\x18\x08 \x01(\x01\x12\x18\n\x10proof_of_compute\x18\t \x01(\t\x12\x12\n\nsignatures\x18\n \x03(\t\x1a\x33\n\x11\x46inalMetricsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\"T\n\x10SubmitJobRequest\x12*\n\x06\x63onfig\x18\x01 \x01(\x0b\x32\x1a.cyxwiz.protocol.JobConfig\x12\x14\n\x0cinitial_data\x18\x02 \x01(\x0c\"\x7f\n\x0eNodeAssignment\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x15\n\rnode_endpoint\x18\x02 \x01(\t\x12\x12\n\nauth_token\x18\x03 \x01(\t\x12\x18\n\x10token_expires_at\x18\x04 \x01(\x03\x12\x17\n\x0fnode_public_key\x18\x05 \x01(\t\"\xe9\x01\n\x11SubmitJobResponse\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\x12\x38\n\x0fnode_assignment\x18\x03 \x01(\x0b\x32\x1f.cyxwiz.protocol.NodeAssignment\x12\x18\n\x10\x61ssigned_node_id\x18\x04 \x01(\t\x12%\n\x05\x65rror\x18\x05 \x01(\x0b\x32\x16.cyxwiz.protocol.Error\x12\x1c\n\x14\x65stimated_start_time\x18\x06 \x01(\x03\"%\n\x13GetJobStatusRequest\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"\xa3\x01\n\x14GetJobStatusResponse\x12*\n\x06status\x18\x01 \x01(\x0b\x32\x1a.cyxwiz.protocol.JobStatus\x12\x38\n\x0fnode_assignment\x18\x02 \x01(\x0b\x32\x1f.cyxwiz.protocol.NodeAssignment\x12%\n\x05\x65rror\x18\x03 \x01(\x0b\x32\x16.cyxwiz.protocol.Error\"2\n\x10\x43\x61ncelJobRequest\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t\"~\n\x11\x43\x61ncelJobResponse\x12+\n\x06status\x18\x01 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\x12\x15\n\rrefund_issued\x18\x02 \x01(\x08\x12%\n\x05\x65rror\x18\x03 \x01(\x0b\x32\x16.cyxwiz.protocol.Error\"\xfb\x01\n\x0fJobUpdateStream\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12*\n\x06status\x18\x02 \x01(\x0b\x32\x1a.cyxwiz.protocol.JobStatus\x12G\n\x0clive_metrics\x18\x03 \x03(\x0b\x32\x31.cyxwiz.protocol.JobUpdateStream.LiveMetricsEntry\x12\x13\n\x0blog_message\x18\x04 \x01(\t\x12\x1a\n\x12visualization_data\x18\x05 \x01(\x0c\x1a\x32\n\x10LiveMetricsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\"\xac\x01\n\x0fListJobsRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x11\n\tpage_size\x18\x02 \x01(\x05\x12\x12\n\npage_token\x18\x03 \x01(\t\x12-\n\x0b\x66ilter_type\x18\x04 \x01(\x0e\x32\x18.cyxwiz.protocol.JobType\x12\x32\n\rfilter_status\x18\x05 \x01(\x0e\x32\x1b.cyxwiz.protocol.StatusCode\"j\n\x10ListJobsResponse\x12(\n\x04jobs\x18\x01 \x03(\x0b\x32\x1a.cyxwiz.protocol.JobStatus\x12\x17\n\x0fnext_page_token\x18\x02 \x01(\t\x12\x13\n\x0btotal_count\x18\x03 \x01(\x05*\x83\x01\n\x07JobType\x12\x14\n\x10JOB_TYPE_UNKNOWN\x10\x00\x12\x15\n\x11JOB_TYPE_TRAINING\x10\x01\x12\x16\n\x12JOB_TYPE_INFERENCE\x10\x02\x12\x17\n\x13JOB_TYPE_EVALUATION\x10\x03\x12\x1a\n\x16JOB_TYPE_PREPROCESSING\x10\x04*^\n\x0bJobPriority\x12\x10\n\x0cPRIORITY_LOW\x10\x00\x12\x13\n\x0fPRIORITY_NORMAL\x10\x01\x12\x11\n\rPRIORITY_HIGH\x10\x02\x12\x15\n\x11PRIORITY_CRITICAL\x10\x03\x32\xc0\x03\n\nJobService\x12R\n\tSubmitJob\x12!.cyxwiz.protocol.SubmitJobRequest\x1a\".cyxwiz.protocol.SubmitJobResponse\x12[\n\x0cGetJobStatus\x12$.cyxwiz.protocol.GetJobStatusRequest\x1a%.cyxwiz.protocol.GetJobStatusResponse\x12R\n\tCancelJob\x12!.cyxwiz.protocol.CancelJobRequest\x1a\".cyxwiz.protocol.CancelJobResponse\x12\\\n\x10StreamJobUpdates\x12$.cyxwiz.protocol.GetJobStatusRequest\x1a .cyxwiz.protocol.JobUpdateStream0\x01\x12O\n\x08ListJobs\x12 .cyxwiz.protocol.ListJobsRequest\x1a!.cyxwiz.protocol.ListJobsResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -40,10 +40,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_JOBRESULT_FINALMETRICSENTRY']._serialized_options = b'8\001'
   _globals['_JOBUPDATESTREAM_LIVEMETRICSENTRY']._loaded_options = None
   _globals['_JOBUPDATESTREAM_LIVEMETRICSENTRY']._serialized_options = b'8\001'
-  _globals['_JOBTYPE']._serialized_start=2383
-  _globals['_JOBTYPE']._serialized_end=2514
-  _globals['_JOBPRIORITY']._serialized_start=2516
-  _globals['_JOBPRIORITY']._serialized_end=2610
+  _globals['_JOBTYPE']._serialized_start=2629
+  _globals['_JOBTYPE']._serialized_end=2760
+  _globals['_JOBPRIORITY']._serialized_start=2762
+  _globals['_JOBPRIORITY']._serialized_end=2856
   _globals['_JOBCONFIG']._serialized_start=45
   _globals['_JOBCONFIG']._serialized_end=558
   _globals['_JOBCONFIG_HYPERPARAMETERSENTRY']._serialized_start=504
@@ -58,24 +58,26 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_JOBRESULT_FINALMETRICSENTRY']._serialized_end=1253
   _globals['_SUBMITJOBREQUEST']._serialized_start=1255
   _globals['_SUBMITJOBREQUEST']._serialized_end=1339
-  _globals['_SUBMITJOBRESPONSE']._serialized_start=1342
-  _globals['_SUBMITJOBRESPONSE']._serialized_end=1517
-  _globals['_GETJOBSTATUSREQUEST']._serialized_start=1519
-  _globals['_GETJOBSTATUSREQUEST']._serialized_end=1556
-  _globals['_GETJOBSTATUSRESPONSE']._serialized_start=1558
-  _globals['_GETJOBSTATUSRESPONSE']._serialized_end=1663
-  _globals['_CANCELJOBREQUEST']._serialized_start=1665
-  _globals['_CANCELJOBREQUEST']._serialized_end=1715
-  _globals['_CANCELJOBRESPONSE']._serialized_start=1717
-  _globals['_CANCELJOBRESPONSE']._serialized_end=1843
-  _globals['_JOBUPDATESTREAM']._serialized_start=1846
-  _globals['_JOBUPDATESTREAM']._serialized_end=2097
-  _globals['_JOBUPDATESTREAM_LIVEMETRICSENTRY']._serialized_start=2047
-  _globals['_JOBUPDATESTREAM_LIVEMETRICSENTRY']._serialized_end=2097
-  _globals['_LISTJOBSREQUEST']._serialized_start=2100
-  _globals['_LISTJOBSREQUEST']._serialized_end=2272
-  _globals['_LISTJOBSRESPONSE']._serialized_start=2274
-  _globals['_LISTJOBSRESPONSE']._serialized_end=2380
-  _globals['_JOBSERVICE']._serialized_start=2613
-  _globals['_JOBSERVICE']._serialized_end=3061
+  _globals['_NODEASSIGNMENT']._serialized_start=1341
+  _globals['_NODEASSIGNMENT']._serialized_end=1468
+  _globals['_SUBMITJOBRESPONSE']._serialized_start=1471
+  _globals['_SUBMITJOBRESPONSE']._serialized_end=1704
+  _globals['_GETJOBSTATUSREQUEST']._serialized_start=1706
+  _globals['_GETJOBSTATUSREQUEST']._serialized_end=1743
+  _globals['_GETJOBSTATUSRESPONSE']._serialized_start=1746
+  _globals['_GETJOBSTATUSRESPONSE']._serialized_end=1909
+  _globals['_CANCELJOBREQUEST']._serialized_start=1911
+  _globals['_CANCELJOBREQUEST']._serialized_end=1961
+  _globals['_CANCELJOBRESPONSE']._serialized_start=1963
+  _globals['_CANCELJOBRESPONSE']._serialized_end=2089
+  _globals['_JOBUPDATESTREAM']._serialized_start=2092
+  _globals['_JOBUPDATESTREAM']._serialized_end=2343
+  _globals['_JOBUPDATESTREAM_LIVEMETRICSENTRY']._serialized_start=2293
+  _globals['_JOBUPDATESTREAM_LIVEMETRICSENTRY']._serialized_end=2343
+  _globals['_LISTJOBSREQUEST']._serialized_start=2346
+  _globals['_LISTJOBSREQUEST']._serialized_end=2518
+  _globals['_LISTJOBSRESPONSE']._serialized_start=2520
+  _globals['_LISTJOBSRESPONSE']._serialized_end=2626
+  _globals['_JOBSERVICE']._serialized_start=2859
+  _globals['_JOBSERVICE']._serialized_end=3307
 # @@protoc_insertion_point(module_scope)

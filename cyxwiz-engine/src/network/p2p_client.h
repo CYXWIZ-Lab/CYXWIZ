@@ -1,0 +1,165 @@
+#pragma once
+
+#include <string>
+#include <memory>
+#include <functional>
+#include <thread>
+#include <atomic>
+#include <grpcpp/grpcpp.h>
+#include "execution.grpc.pb.h"
+#include "job.pb.h"
+
+namespace network {
+
+// Forward declarations
+struct NodeCapabilities {
+    uint64_t max_memory;
+    uint32_t max_batch_size;
+    std::vector<cyxwiz::protocol::DeviceType> supported_devices;
+    bool supports_checkpointing;
+    bool supports_distributed;
+};
+
+struct TrainingProgress {
+    uint32_t current_epoch;
+    uint32_t total_epochs;
+    uint32_t current_batch;
+    uint32_t total_batches;
+    float progress_percentage;
+    std::map<std::string, float> metrics;  // loss, accuracy, etc.
+    float gpu_usage;
+    float memory_usage;
+};
+
+struct CheckpointInfo {
+    uint32_t epoch;
+    std::string checkpoint_hash;
+    std::string storage_uri;
+    uint64_t size_bytes;
+};
+
+struct TrainingComplete {
+    bool success;
+    std::map<std::string, float> final_metrics;
+    uint64_t total_training_time;
+    std::string result_hash;
+    std::string model_uri;
+};
+
+// Callback types for P2P events
+using ProgressCallback = std::function<void(const TrainingProgress&)>;
+using CheckpointCallback = std::function<void(const CheckpointInfo&)>;
+using CompletionCallback = std::function<void(const TrainingComplete&)>;
+using ErrorCallback = std::function<void(const std::string& error_message, bool is_fatal)>;
+using LogCallback = std::function<void(const std::string& source, const std::string& message)>;
+
+/**
+ * P2PClient - Direct communication with Server Node for job execution
+ *
+ * This client handles the P2P workflow:
+ * 1. Connect to assigned node (with JWT token from Central Server)
+ * 2. Send job configuration and dataset
+ * 3. Stream real-time training metrics (bidirectional)
+ * 4. Download trained model weights
+ *
+ * Usage:
+ *   P2PClient client;
+ *   client.SetProgressCallback([](const TrainingProgress& prog) { ... });
+ *   client.ConnectToNode("localhost:50052", "job_123", "jwt_token");
+ *   client.SendJob(job_config, dataset);
+ *   client.StartTrainingStream("job_123");
+ *   // ... wait for completion
+ *   client.DownloadWeights("job_123", "./model.pt");
+ */
+class P2PClient {
+public:
+    P2PClient();
+    ~P2PClient();
+
+    // Connection management
+    bool ConnectToNode(const std::string& node_address,
+                      const std::string& job_id,
+                      const std::string& auth_token,
+                      const std::string& engine_version = "CyxWiz-Engine/1.0.0");
+
+    void Disconnect();
+    bool IsConnected() const { return connected_; }
+
+    // Get node information
+    const std::string& GetNodeId() const { return node_id_; }
+    const std::string& GetNodeAddress() const { return node_address_; }
+    const NodeCapabilities& GetNodeCapabilities() const { return capabilities_; }
+
+    // Job submission
+    bool SendJob(const cyxwiz::protocol::JobConfig& config,
+                const std::string& initial_dataset = "");
+
+    bool SendJobWithDatasetURI(const cyxwiz::protocol::JobConfig& config,
+                              const std::string& dataset_uri);
+
+    // Training control and monitoring
+    bool StartTrainingStream(const std::string& job_id);
+    void StopTrainingStream();
+    bool IsStreaming() const { return streaming_; }
+
+    // Interactive training control (sent via bidirectional stream)
+    bool PauseTraining();
+    bool ResumeTraining();
+    bool StopTraining();
+    bool RequestCheckpoint();
+
+    // Weights download
+    bool DownloadWeights(const std::string& job_id,
+                        const std::string& output_path,
+                        size_t chunk_size = 1024 * 1024);  // Default 1MB chunks
+
+    bool DownloadWeightsWithOffset(const std::string& job_id,
+                                   const std::string& output_path,
+                                   size_t offset,
+                                   size_t chunk_size = 1024 * 1024);
+
+    // Event callbacks
+    void SetProgressCallback(ProgressCallback callback) { progress_callback_ = callback; }
+    void SetCheckpointCallback(CheckpointCallback callback) { checkpoint_callback_ = callback; }
+    void SetCompletionCallback(CompletionCallback callback) { completion_callback_ = callback; }
+    void SetErrorCallback(ErrorCallback callback) { error_callback_ = callback; }
+    void SetLogCallback(LogCallback callback) { log_callback_ = callback; }
+
+    // Error handling
+    std::string GetLastError() const { return last_error_; }
+
+private:
+    // Internal streaming thread function
+    void StreamingThreadFunc(const std::string& job_id);
+
+    // Send control command during streaming
+    bool SendTrainingCommand(const cyxwiz::protocol::TrainingCommand& command);
+
+    // Connection state
+    bool connected_;
+    std::atomic<bool> streaming_;
+    std::string node_address_;
+    std::string node_id_;
+    std::string current_job_id_;
+    NodeCapabilities capabilities_;
+    std::string last_error_;
+
+    // gRPC communication
+    std::shared_ptr<grpc::Channel> channel_;
+    std::unique_ptr<cyxwiz::protocol::JobExecutionService::Stub> stub_;
+
+    // Bidirectional streaming
+    std::unique_ptr<grpc::ClientContext> stream_context_;
+    std::shared_ptr<grpc::ClientReaderWriter<cyxwiz::protocol::TrainingCommand,
+                                             cyxwiz::protocol::TrainingUpdate>> stream_;
+    std::thread streaming_thread_;
+
+    // Event callbacks
+    ProgressCallback progress_callback_;
+    CheckpointCallback checkpoint_callback_;
+    CompletionCallback completion_callback_;
+    ErrorCallback error_callback_;
+    LogCallback log_callback_;
+};
+
+} // namespace network

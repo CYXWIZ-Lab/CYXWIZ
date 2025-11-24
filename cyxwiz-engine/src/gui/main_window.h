@@ -21,6 +21,7 @@ class CommandWindowPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
 class ConnectionDialog;
+class JobStatusPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -70,6 +71,7 @@ private:
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
+    std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;

@@ -153,4 +153,41 @@ bool GRPCClient::CancelJob(const std::string& job_id,
     }
 }
 
+bool GRPCClient::ListJobs(cyxwiz::protocol::ListJobsResponse& response,
+                           const std::string& user_id,
+                           int page_size) {
+    if (!connected_ || !job_stub_) {
+        last_error_ = "Not connected to server";
+        spdlog::error(last_error_);
+        return false;
+    }
+
+    try {
+        cyxwiz::protocol::ListJobsRequest request;
+        if (!user_id.empty()) {
+            request.set_user_id(user_id);
+        }
+        request.set_page_size(page_size);
+
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+
+        grpc::Status status = job_stub_->ListJobs(&context, request, &response);
+
+        if (status.ok()) {
+            spdlog::debug("ListJobs returned {} jobs", response.jobs_size());
+            return true;
+        } else {
+            last_error_ = "List jobs failed: " + status.error_message();
+            spdlog::error(last_error_);
+            return false;
+        }
+
+    } catch (const std::exception& e) {
+        last_error_ = std::string("List jobs error: ") + e.what();
+        spdlog::error(last_error_);
+        return false;
+    }
+}
+
 } // namespace network
