@@ -119,20 +119,21 @@ private:
     std::unique_ptr<cyxwiz::Optimizer> CreateOptimizer(
         const std::unordered_map<std::string, double>& hyperparameters);
 
-    // Helper: Load data from local file
-    bool LoadLocalDataset(const std::string& file_path,
+    // Dataset loading helpers
+    bool LoadMockDataset(std::vector<cyxwiz::Tensor>& train_data,
+                        std::vector<cyxwiz::Tensor>& train_labels);
+
+    bool LoadMNISTDataset(const std::string& path,
                          std::vector<cyxwiz::Tensor>& train_data,
                          std::vector<cyxwiz::Tensor>& train_labels);
 
-    // Helper: Load data from HTTP/HTTPS URI
-    bool LoadRemoteDataset(const std::string& uri,
-                          std::vector<cyxwiz::Tensor>& train_data,
-                          std::vector<cyxwiz::Tensor>& train_labels);
+    bool LoadCIFAR10Dataset(const std::string& path,
+                           std::vector<cyxwiz::Tensor>& train_data,
+                           std::vector<cyxwiz::Tensor>& train_labels);
 
-    // Helper: Parse CSV dataset
-    bool ParseCSVDataset(const std::string& csv_content,
-                        std::vector<cyxwiz::Tensor>& train_data,
-                        std::vector<cyxwiz::Tensor>& train_labels);
+    bool LoadCSVDataset(const std::string& path,
+                       std::vector<cyxwiz::Tensor>& train_data,
+                       std::vector<cyxwiz::Tensor>& train_labels);
 
     // Member variables
     std::string node_id_;

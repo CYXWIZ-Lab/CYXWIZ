@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package cyxwiz.wallet;
+package cyxwiz.protocol;
 
 import "common.proto";
 
@@ -27,7 +27,7 @@ message ConnectWalletRequest {
 
 // Connect wallet response
 message ConnectWalletResponse {
-    common.StatusCode status = 1;
+    StatusCode status = 1;
     string message = 2;
     bool is_valid = 3;
     string wallet_address = 4;
@@ -40,7 +40,7 @@ message GetBalanceRequest {
 
 // Get balance response
 message GetBalanceResponse {
-    common.StatusCode status = 1;
+    StatusCode status = 1;
     string message = 2;
     double sol_balance = 3;           // SOL balance
     double cyxwiz_balance = 4;        // CYXWIZ token balance
@@ -84,7 +84,7 @@ message GetTransactionHistoryRequest {
 
 // Get transaction history response
 message GetTransactionHistoryResponse {
-    common.StatusCode status = 1;
+    StatusCode status = 1;
     string message = 2;
     repeated Transaction transactions = 3;
     int32 total_count = 4;
@@ -100,7 +100,7 @@ message EstimateJobCostRequest {
 
 // Estimate job cost response
 message EstimateJobCostResponse {
-    common.StatusCode status = 1;
+    StatusCode status = 1;
     string message = 2;
     double estimated_cost = 3;      // Cost in CYXWIZ tokens
     double estimated_time_minutes = 4;

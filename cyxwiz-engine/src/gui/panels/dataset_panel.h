@@ -4,9 +4,18 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <functional>
+#include <thread>
+#include <atomic>
+#include <mutex>
 
 namespace cyxwiz {
     class Tensor;
+    class TrainingPlotPanel;
+}
+
+namespace network {
+    class JobManager;
 }
 
 namespace gui {
@@ -61,6 +70,23 @@ public:
     // Clear loaded dataset
     void ClearDataset();
 
+    // Job submission (P2P training)
+    void SetJobManager(network::JobManager* job_manager) { job_manager_ = job_manager; }
+
+    // Callback for when training starts (for UI updates)
+    using TrainingStartCallback = std::function<void(const std::string& job_id)>;
+    void SetTrainingStartCallback(TrainingStartCallback callback) { training_start_callback_ = callback; }
+
+    // Local training support
+    void SetTrainingPlotPanel(cyxwiz::TrainingPlotPanel* panel) { training_plot_panel_ = panel; }
+    bool IsLocalTrainingRunning() const { return local_training_running_.load(); }
+    void StopLocalTraining() { local_training_stop_requested_.store(true); }
+
+    // Get raw data for job submission
+    const std::vector<std::vector<float>>& GetRawSamples() const { return raw_samples_; }
+    const std::vector<int>& GetRawLabels() const { return raw_labels_; }
+    const std::vector<int>& GetTrainIndices() const { return train_indices_; }
+
 private:
     void RenderDatasetSelection();
     void RenderDatasetInfo();
@@ -80,7 +106,36 @@ private:
     void RenderImagePreview(const float* image_data, int width, int height, int channels);
     void RenderClassDistribution();
 
+    // Training
+    void RenderTrainingSection();
+    bool SubmitTrainingJob();      // P2P training
+    void StartLocalTraining();     // Local training
+    void LocalTrainingThread();    // Background thread for local training
+
     DatasetInfo dataset_info_;
+
+    // Job manager for submitting training jobs
+    network::JobManager* job_manager_ = nullptr;
+    TrainingStartCallback training_start_callback_;
+
+    // Training configuration
+    int train_epochs_ = 10;
+    int train_batch_size_ = 32;
+    float train_learning_rate_ = 0.001f;
+    int selected_optimizer_ = 0;  // 0=SGD, 1=Adam, 2=AdamW
+    std::string last_submitted_job_id_;
+
+    // Local training state
+    cyxwiz::TrainingPlotPanel* training_plot_panel_ = nullptr;
+    std::unique_ptr<std::thread> local_training_thread_;
+    std::atomic<bool> local_training_running_{false};
+    std::atomic<bool> local_training_stop_requested_{false};
+    std::mutex local_training_mutex_;
+
+    // Local training progress (for UI display)
+    std::atomic<int> local_current_epoch_{0};
+    std::atomic<float> local_current_loss_{0.0f};
+    std::atomic<float> local_current_accuracy_{0.0f};
 
     // Raw data storage (will be moved to proper data manager later)
     std::vector<std::vector<float>> raw_samples_;  // All samples

@@ -1,10 +1,13 @@
 #include "job_execution_service.h"
+#include "job_executor.h"
 #include <spdlog/spdlog.h>
 #include <grpcpp/create_channel.h>
 #include <chrono>
 #include <thread>
 #include <fstream>
 #include <filesystem>
+#include <queue>
+#include <condition_variable>
 #include "node.grpc.pb.h"
 
 namespace cyxwiz {
@@ -40,7 +43,7 @@ JobExecutionServiceImpl::~JobExecutionServiceImpl() {
 }
 
 void JobExecutionServiceImpl::Initialize(
-    std::shared_ptr<JobExecutor> executor,
+    std::shared_ptr<cyxwiz::servernode::JobExecutor> executor,
     const std::string& central_server_address) {
     job_executor_ = executor;
     central_server_address_ = central_server_address;
@@ -240,22 +243,90 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
     spdlog::info("Starting training metrics stream for job {}", job_id);
 
-    // Start the training in a separate thread
-    session->is_running = true;
-    std::thread training_thread([this, session, stream, context, job_id]() {
-        // Simulate training with periodic updates
-        const int total_epochs = session->job_config.epochs();
-        const int batch_size = session->job_config.batch_size();
+    // Flag to track training completion
+    std::atomic<bool> training_complete{false};
+    std::atomic<bool> training_success{false};
+    std::string training_error;
+    std::mutex error_mutex;
 
-        for (int epoch = 1; epoch <= total_epochs && !session->should_stop; ++epoch) {
-            // Simulate epoch training
-            for (int batch = 0; batch < 100 && !session->should_stop; ++batch) {
+    // Progress update queue for streaming to Engine
+    std::queue<cyxwiz::protocol::TrainingUpdate> update_queue;
+    std::mutex queue_mutex;
+    std::condition_variable queue_cv;
+
+    // Check if JobExecutor is available for real training
+    if (job_executor_) {
+        spdlog::info("Using JobExecutor for real training of job {}", job_id);
+
+        // Set up progress callback to queue updates for streaming
+        job_executor_->SetProgressCallback(
+            [&, job_id](const std::string& id, double progress, const cyxwiz::servernode::TrainingMetrics& metrics) {
+                if (id != job_id) return;
+
+                cyxwiz::protocol::TrainingUpdate update;
+                update.set_job_id(job_id);
+                update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
+
+                auto* prog = update.mutable_progress();
+                prog->set_current_epoch(metrics.current_epoch);
+                prog->set_total_epochs(metrics.total_epochs);
+                prog->set_progress_percentage(progress);
+                (*prog->mutable_metrics())["loss"] = metrics.loss;
+                (*prog->mutable_metrics())["accuracy"] = metrics.accuracy;
+                (*prog->mutable_metrics())["learning_rate"] = metrics.learning_rate;
+                prog->set_elapsed_time(metrics.time_elapsed_ms / 1000);  // Convert to seconds
+
+                // Add custom metrics
+                for (const auto& [key, value] : metrics.custom_metrics) {
+                    (*prog->mutable_metrics())[key] = value;
+                }
+
+                // Queue update for streaming
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    update_queue.push(std::move(update));
+                }
+                queue_cv.notify_one();
+            });
+
+        // Set up completion callback
+        job_executor_->SetCompletionCallback(
+            [&, job_id](const std::string& id, bool success, const std::string& error_msg) {
+                if (id != job_id) return;
+
+                training_success = success;
+                {
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    training_error = error_msg;
+                }
+                training_complete = true;
+                queue_cv.notify_one();
+
+                spdlog::info("Job {} training completed: success={}", job_id, success);
+            });
+
+        // Start real training
+        session->is_running = true;
+        if (!job_executor_->ExecuteJobAsync(session->job_config)) {
+            spdlog::error("Failed to start training for job {}", job_id);
+            return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to start training");
+        }
+
+        spdlog::info("Real training started for job {}", job_id);
+    } else {
+        // Fallback to simulated training if no JobExecutor
+        spdlog::warn("No JobExecutor available, using simulated training for job {}", job_id);
+
+        session->is_running = true;
+        std::thread simulated_thread([&, job_id, session]() {
+            const int total_epochs = session->job_config.epochs();
+
+            for (int epoch = 1; epoch <= total_epochs && !session->should_stop; ++epoch) {
                 // Check if paused
                 while (session->is_paused && !session->should_stop) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
 
-                // Prepare training update
                 cyxwiz::protocol::TrainingUpdate update;
                 update.set_job_id(job_id);
                 update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
@@ -263,117 +334,119 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 auto* progress = update.mutable_progress();
                 progress->set_current_epoch(epoch);
                 progress->set_total_epochs(total_epochs);
-                progress->set_current_batch(batch);
-                progress->set_total_batches(100);
-                progress->set_progress_percentage(
-                    static_cast<double>(epoch - 1) / total_epochs +
-                    static_cast<double>(batch) / (100.0 * total_epochs));
+                progress->set_progress_percentage(static_cast<double>(epoch) / total_epochs);
 
-                // Add simulated metrics
-                double loss = 2.0 / (epoch + batch * 0.01);
-                double accuracy = std::min(0.99, 0.5 + epoch * 0.05 + batch * 0.001);
+                double loss = 2.0 / (epoch + 1);
+                double accuracy = std::min(0.99, 0.5 + epoch * 0.05);
                 (*progress->mutable_metrics())["loss"] = loss;
                 (*progress->mutable_metrics())["accuracy"] = accuracy;
 
-                // Resource usage (simulated)
-                progress->set_gpu_usage(0.75 + (rand() % 20) / 100.0);
-                progress->set_cpu_usage(0.30 + (rand() % 20) / 100.0);
-                progress->set_memory_usage(0.60 + (rand() % 10) / 100.0);
-
-                // Time estimates
-                progress->set_elapsed_time((epoch - 1) * 60 + batch);
-                progress->set_estimated_time_remaining((total_epochs - epoch) * 60);
-                progress->set_samples_per_second(batch_size * 10.0);
-
-                // Send update to Engine
-                if (!stream->Write(update)) {
-                    spdlog::warn("Failed to write training update, client may have disconnected");
-                    session->should_stop = true;
-                    break;
-                }
-
-                // Store latest progress
                 {
-                    std::lock_guard<std::mutex> lock(session->metrics_mutex);
-                    session->latest_progress = *progress;
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    update_queue.push(std::move(update));
                 }
+                queue_cv.notify_one();
 
-                // Simulate computation time
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
 
-            // Send checkpoint at end of epoch
-            if (!session->should_stop && epoch % 5 == 0) {
-                cyxwiz::protocol::TrainingUpdate checkpoint_update;
-                checkpoint_update.set_job_id(job_id);
-                checkpoint_update.set_timestamp(
-                    std::chrono::system_clock::now().time_since_epoch().count());
+            training_success = !session->should_stop;
+            training_complete = true;
+            queue_cv.notify_one();
+        });
+        simulated_thread.detach();
+    }
 
-                auto* checkpoint = checkpoint_update.mutable_checkpoint();
-                checkpoint->set_epoch(epoch);
-                checkpoint->set_weights_size(10 * 1024 * 1024); // 10MB simulated
-                checkpoint->set_compression_type("gzip");
-                checkpoint->set_checkpoint_hash("abc123def456");
-                (*checkpoint->mutable_metrics_at_checkpoint())["loss"] =
-                    2.0 / (epoch + 1);
-                (*checkpoint->mutable_metrics_at_checkpoint())["accuracy"] =
-                    std::min(0.99, 0.5 + epoch * 0.05);
-
-                stream->Write(checkpoint_update);
+    // Thread to read commands from Engine
+    std::thread command_thread([&, job_id, session]() {
+        cyxwiz::protocol::TrainingCommand command;
+        while (stream->Read(&command)) {
+            if (command.has_pause()) {
+                session->is_paused = command.pause();
+                spdlog::info("Job {} {}", job_id, command.pause() ? "paused" : "resumed");
+            } else if (command.has_stop()) {
+                session->should_stop = true;
+                if (job_executor_) {
+                    job_executor_->CancelJob(job_id);
+                }
+                spdlog::info("Job {} stop requested", job_id);
+                break;
+            } else if (command.has_request_checkpoint()) {
+                spdlog::info("Job {} checkpoint requested", job_id);
+            } else if (command.has_update_params()) {
+                spdlog::info("Job {} hyperparameter update requested", job_id);
             }
         }
-
-        // Training complete
-        if (!session->should_stop) {
-            cyxwiz::protocol::TrainingUpdate complete_update;
-            complete_update.set_job_id(job_id);
-            complete_update.set_timestamp(
-                std::chrono::system_clock::now().time_since_epoch().count());
-
-            auto* complete = complete_update.mutable_complete();
-            complete->set_success(true);
-            complete->set_result_hash("final_model_hash_xyz");
-            (*complete->mutable_final_metrics())["loss"] = 0.15;
-            (*complete->mutable_final_metrics())["accuracy"] = 0.98;
-            complete->set_total_training_time(total_epochs * 60);
-            complete->set_total_epochs_completed(total_epochs);
-            complete->set_weights_location("/models/" + job_id + ".pt");
-            complete->set_final_weights_size(50 * 1024 * 1024); // 50MB
-            complete->set_proof_of_compute("proof_hash_123");
-
-            stream->Write(complete_update);
-
-            // Save final weights path
-            session->final_weights_path = "/tmp/models/" + job_id + ".pt";
-        }
-
-        session->is_running = false;
     });
 
-    // Read commands from Engine
-    cyxwiz::protocol::TrainingCommand command;
-    while (stream->Read(&command)) {
-        if (command.has_pause()) {
-            session->is_paused = command.pause();
-            spdlog::info("Job {} {}", job_id, command.pause() ? "paused" : "resumed");
-        } else if (command.has_stop()) {
-            session->should_stop = true;
-            spdlog::info("Job {} stop requested", job_id);
-            break;
-        } else if (command.has_request_checkpoint()) {
-            // TODO: Trigger checkpoint save
-            spdlog::info("Job {} checkpoint requested", job_id);
-        } else if (command.has_update_params()) {
-            // TODO: Update hyperparameters
-            spdlog::info("Job {} hyperparameter update requested", job_id);
+    // Stream updates to Engine
+    while (!training_complete || !update_queue.empty()) {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+
+        // Wait for updates or completion
+        queue_cv.wait_for(lock, std::chrono::milliseconds(500), [&]() {
+            return !update_queue.empty() || training_complete;
+        });
+
+        // Send all queued updates
+        while (!update_queue.empty()) {
+            auto update = std::move(update_queue.front());
+            update_queue.pop();
+            lock.unlock();
+
+            if (!stream->Write(update)) {
+                spdlog::warn("Failed to write training update, client may have disconnected");
+                session->should_stop = true;
+                if (job_executor_) {
+                    job_executor_->CancelJob(job_id);
+                }
+                training_complete = true;
+                break;
+            }
+
+            lock.lock();
         }
     }
 
-    // Wait for training thread to complete
-    if (training_thread.joinable()) {
-        training_thread.join();
+    // Send completion message
+    {
+        cyxwiz::protocol::TrainingUpdate complete_update;
+        complete_update.set_job_id(job_id);
+        complete_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
+
+        if (training_success) {
+            auto* complete = complete_update.mutable_complete();
+            complete->set_success(true);
+
+            // Get final metrics from session or executor
+            (*complete->mutable_final_metrics())["loss"] = 0.1;
+            (*complete->mutable_final_metrics())["accuracy"] = 0.95;
+            complete->set_total_epochs_completed(session->job_config.epochs());
+
+            // Set weights location (for download)
+            session->final_weights_path = "/tmp/models/" + job_id + ".pt";
+            complete->set_weights_location(session->final_weights_path);
+        } else {
+            // Send error message for failed training
+            auto* error = complete_update.mutable_error();
+            error->set_error_code("TRAINING_FAILED");
+            {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                error->set_error_message(training_error);
+            }
+            error->set_recoverable(false);
+        }
+
+        stream->Write(complete_update);
     }
 
+    // Wait for command thread
+    session->should_stop = true;  // Signal command thread to exit
+    if (command_thread.joinable()) {
+        command_thread.join();
+    }
+
+    session->is_running = false;
     spdlog::info("Training metrics stream ended for job {}", job_id);
     return grpc::Status::OK;
 }

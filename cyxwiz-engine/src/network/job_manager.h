@@ -21,6 +21,10 @@ struct ActiveJob {
     std::string assigned_node_address;
     std::string p2p_auth_token;
     std::shared_ptr<P2PClient> p2p_client;
+
+    // Store original job config for P2P transmission
+    cyxwiz::protocol::JobConfig original_config;
+    std::string initial_dataset_bytes;  // For inline dataset transfer
 };
 
 class JobManager {

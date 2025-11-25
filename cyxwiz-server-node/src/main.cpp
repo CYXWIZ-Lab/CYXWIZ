@@ -18,6 +18,7 @@
 #include "node_client.h"
 #include "job_executor.h"
 #include "node_service.h"
+#include "job_execution_service.h"
 
 // Global flag for shutdown
 std::atomic<bool> g_shutdown{false};
@@ -45,22 +46,24 @@ int main(int argc, char** argv) {
 
     // TODO: Parse command line arguments for node_id, listen addresses, etc.
     std::string node_id = "node_" + std::to_string(std::time(nullptr));
-    std::string deployment_address = "0.0.0.0:50052";  // Different from Central Server's 50051
+    std::string p2p_service_address = "0.0.0.0:50052";  // P2P service for Engine connections
     std::string terminal_address = "0.0.0.0:50053";
     std::string node_service_address = "0.0.0.0:50054";  // NodeService for job assignment
+    std::string deployment_address = "0.0.0.0:50055";  // Deployment service
     std::string central_server = "localhost:50051";    // Central Server address
 
     spdlog::info("Node ID: {}", node_id);
-    spdlog::info("Deployment service: {}", deployment_address);
+    spdlog::info("P2P service (Engine): {}", p2p_service_address);
     spdlog::info("Terminal service: {}", terminal_address);
     spdlog::info("Node service: {}", node_service_address);
+    spdlog::info("Deployment service: {}", deployment_address);
 
     try {
         // Get current device for job execution (or nullptr to let JobExecutor choose)
         cyxwiz::Device* device = cyxwiz::Device::GetCurrentDevice();
 
-        // Create JobExecutor for ML training jobs
-        auto job_executor = std::make_unique<cyxwiz::servernode::JobExecutor>(node_id, device);
+        // Create JobExecutor for ML training jobs (shared_ptr for multiple service access)
+        auto job_executor = std::make_shared<cyxwiz::servernode::JobExecutor>(node_id, device);
 
         // NodeClient will be set up after registration
         cyxwiz::servernode::NodeClient* node_client_ptr = nullptr;
@@ -115,6 +118,19 @@ int main(int argc, char** argv) {
 
         spdlog::info("NodeService started on {}", node_service_address);
 
+        // Create and start P2P JobExecutionService for direct Engine connections
+        auto p2p_service = std::make_unique<cyxwiz::server_node::JobExecutionServiceImpl>();
+        p2p_service->Initialize(job_executor, central_server);
+
+        if (!p2p_service->StartServer(p2p_service_address)) {
+            spdlog::error("Failed to start P2P JobExecutionService");
+            node_grpc_server->Shutdown();
+            cyxwiz::Shutdown();
+            return 1;
+        }
+
+        spdlog::info("P2P JobExecutionService started on {}", p2p_service_address);
+
         // Create deployment manager
         auto deployment_manager = std::make_shared<cyxwiz::servernode::DeploymentManager>(node_id);
 
@@ -158,9 +174,10 @@ int main(int argc, char** argv) {
 
         spdlog::info("========================================");
         spdlog::info("Server Node is ready!");
+        spdlog::info("  P2P service (Engine): {}", p2p_service_address);
+        spdlog::info("  Node service:         {}", node_service_address);
         spdlog::info("  Deployment endpoint:  {}", deployment_address);
         spdlog::info("  Terminal endpoint:    {}", terminal_address);
-        spdlog::info("  Node service:         {}", node_service_address);
         spdlog::info("  Active jobs:          {}", job_executor->GetActiveJobCount());
         spdlog::info("========================================");
         spdlog::info("Press Ctrl+C to shutdown");
@@ -174,6 +191,9 @@ int main(int argc, char** argv) {
         spdlog::info("Shutting down gracefully...");
 
         // Stop services
+        spdlog::info("Stopping P2P JobExecutionService...");
+        p2p_service->StopServer();
+
         spdlog::info("Stopping NodeService gRPC server...");
         node_grpc_server->Shutdown();
 

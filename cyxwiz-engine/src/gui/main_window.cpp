@@ -14,9 +14,11 @@
 #include "panels/table_viewer.h"
 #include "panels/connection_dialog.h"
 #include "panels/job_status_panel.h"
+#include "panels/p2p_training_panel.h"
 #include "panels/wallet_panel.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
+#include "../network/job_manager.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -48,6 +50,7 @@ MainWindow::MainWindow()
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
+    p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
 
     // Set scripting engine for command window and script editor
@@ -100,12 +103,28 @@ MainWindow::MainWindow()
 MainWindow::~MainWindow() = default;
 
 void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager) {
+    // Store job manager reference
+    job_manager_ = job_manager;
+
     // Create connection dialog with network components
     connection_dialog_ = std::make_unique<cyxwiz::ConnectionDialog>(client, job_manager);
 
     // Set JobManager for JobStatusPanel
     if (job_status_panel_) {
         job_status_panel_->SetJobManager(job_manager);
+    }
+
+    // Set JobManager for DatasetPanel (enables training job submission)
+    if (dataset_panel_) {
+        dataset_panel_->SetJobManager(job_manager);
+
+        // Set TrainingPlotPanel for local training visualization
+        dataset_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
+
+        // Set callback to start P2P monitoring when training starts
+        dataset_panel_->SetTrainingStartCallback([this](const std::string& job_id) {
+            StartJobMonitoring(job_id);
+        });
     }
 
     // Set up callback in toolbar to show connection dialog
@@ -120,6 +139,34 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
     spdlog::info("Network components set in MainWindow");
 }
 
+void MainWindow::StartJobMonitoring(const std::string& job_id) {
+    spdlog::info("Starting P2P monitoring for job: {}", job_id);
+
+    monitoring_job_id_ = job_id;
+
+    // Note: The P2PClient won't be available immediately - it's created when
+    // the job is assigned to a node. For now, we'll start monitoring with
+    // the job_id, and the P2PTrainingPanel will connect when the client is ready.
+
+    if (p2p_training_panel_) {
+        // Start monitoring - this sets up the panel state
+        // The P2PClient will be connected later when available
+        p2p_training_panel_->StartMonitoring(job_id, "");
+        p2p_training_panel_->Show();
+
+        spdlog::info("P2PTrainingPanel now monitoring job: {}", job_id);
+    }
+
+    // Try to get the P2PClient if it's already available
+    if (job_manager_) {
+        auto p2p_client = job_manager_->GetP2PClient(job_id);
+        if (p2p_client && p2p_training_panel_) {
+            p2p_training_panel_->SetP2PClient(p2p_client);
+            spdlog::info("P2PClient connected to monitoring panel");
+        }
+    }
+}
+
 void MainWindow::ResetDockLayout() {
     // Force rebuild of the docking layout
     first_time_layout_ = true;
@@ -127,6 +174,16 @@ void MainWindow::ResetDockLayout() {
 }
 
 void MainWindow::Render() {
+    // Check if we need to connect P2PClient to monitoring panel
+    if (!monitoring_job_id_.empty() && job_manager_ && p2p_training_panel_) {
+        auto p2p_client = job_manager_->GetP2PClient(monitoring_job_id_);
+        if (p2p_client) {
+            // Check if P2PTrainingPanel doesn't have the client yet
+            // (SetP2PClient is idempotent so we can call it multiple times safely)
+            p2p_training_panel_->SetP2PClient(p2p_client);
+        }
+    }
+
     RenderDockSpace();
 
     // Render new panel system - Toolbar (replaces old menu bar)
@@ -142,6 +199,7 @@ void MainWindow::Render() {
     if (table_viewer_) table_viewer_->Render();
     if (connection_dialog_) connection_dialog_->Render();
     if (job_status_panel_) job_status_panel_->Render();
+    if (p2p_training_panel_) p2p_training_panel_->Render();
     if (wallet_panel_) wallet_panel_->Render();
 
     // Render original panels

@@ -9,9 +9,9 @@
 
 #include "execution.grpc.pb.h"
 
-// Forward declaration
+// Forward declaration - JobExecutor is in servernode namespace
 namespace cyxwiz {
-namespace server_node {
+namespace servernode {
 class JobExecutor;
 }
 }
@@ -34,7 +34,7 @@ public:
     ~JobExecutionServiceImpl();
 
     // Initialize the service with dependencies
-    void Initialize(std::shared_ptr<JobExecutor> executor,
+    void Initialize(std::shared_ptr<cyxwiz::servernode::JobExecutor> executor,
                    const std::string& central_server_address);
 
     // Start the P2P server on the specified port
@@ -113,7 +113,7 @@ private:
     std::atomic<bool> is_running_{false};
 
     // Dependencies
-    std::shared_ptr<JobExecutor> job_executor_;
+    std::shared_ptr<cyxwiz::servernode::JobExecutor> job_executor_;
     std::string central_server_address_;
 
     // Connection and job tracking

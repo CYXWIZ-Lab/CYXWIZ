@@ -166,6 +166,7 @@ bool JobManager::SubmitJob(const cyxwiz::protocol::JobConfig& config, std::strin
     active_job.status.set_status((cyxwiz::protocol::StatusCode)3); // STATUS_PENDING (avoid Windows macro conflict)
     active_job.last_update = std::chrono::steady_clock::now();
     active_job.is_p2p_job = false;  // Traditional job, not P2P
+    active_job.original_config = config;  // Store the original config for P2P transmission
     active_jobs_.push_back(active_job);
 
     return true;
@@ -302,12 +303,32 @@ bool JobManager::StartP2PExecution(const std::string& job_id) {
         return false;
     }
 
-    // Send job configuration to node
-    cyxwiz::protocol::JobConfig job_config;
-    // TODO: Load job config from original submission (currently we don't store it)
-    // For now, we'll need to pass it as parameter or store it in ActiveJob
+    // Send job configuration and dataset to node
+    spdlog::info("Sending job config to node...");
+    if (!job->initial_dataset_bytes.empty()) {
+        // Send with inline dataset bytes
+        if (!p2p_client->SendJob(job->original_config, job->initial_dataset_bytes)) {
+            spdlog::error("Failed to send job with dataset: {}", p2p_client->GetLastError());
+            return false;
+        }
+        spdlog::info("Job config and dataset ({} bytes) sent to node", job->initial_dataset_bytes.size());
+    } else if (!job->original_config.dataset_uri().empty()) {
+        // Send with dataset URI (Server Node will fetch/load the dataset)
+        if (!p2p_client->SendJobWithDatasetURI(job->original_config, job->original_config.dataset_uri())) {
+            spdlog::error("Failed to send job with dataset URI: {}", p2p_client->GetLastError());
+            return false;
+        }
+        spdlog::info("Job config sent to node with dataset URI: {}", job->original_config.dataset_uri());
+    } else {
+        // Send without dataset (model-only or other job types)
+        if (!p2p_client->SendJob(job->original_config)) {
+            spdlog::error("Failed to send job config: {}", p2p_client->GetLastError());
+            return false;
+        }
+        spdlog::info("Job config sent to node (no dataset)");
+    }
 
-    // Start training stream
+    // Start training stream to receive real-time updates
     if (!p2p_client->StartTrainingStream(job_id)) {
         spdlog::error("Failed to start training stream: {}", p2p_client->GetLastError());
         return false;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 namespace gui {
 
@@ -24,6 +25,7 @@ class ScriptEditorPanel;
 class TableViewerPanel;
 class ConnectionDialog;
 class JobStatusPanel;
+class P2PTrainingPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -52,6 +54,12 @@ public:
     // Set network components (called by Application after construction)
     void SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager);
 
+    // Get P2PTrainingPanel for job monitoring
+    cyxwiz::P2PTrainingPanel* GetP2PTrainingPanel() { return p2p_training_panel_.get(); }
+
+    // Start monitoring a job in P2PTrainingPanel
+    void StartJobMonitoring(const std::string& job_id);
+
 private:
     void RenderDockSpace();
     void BuildInitialDockLayout();
@@ -75,6 +83,7 @@ private:
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
+    std::unique_ptr<cyxwiz::P2PTrainingPanel> p2p_training_panel_;
     std::unique_ptr<gui::WalletPanel> wallet_panel_;
 
     // Scripting engine (shared between panels)
@@ -86,6 +95,10 @@ private:
     bool show_about_dialog_;
     bool show_demo_window_;
     bool first_time_layout_;
+
+    // Network components
+    network::JobManager* job_manager_ = nullptr;
+    std::string monitoring_job_id_;
 };
 
 } // namespace gui
