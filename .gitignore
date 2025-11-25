@@ -39,6 +39,7 @@ cmake_install.cmake
 *.vcxproj*
 *.xcodeproj/
 *.xcworkspace/
+imgui.ini
 
 # Dependencies
 vcpkg_installed/
@@ -85,6 +86,35 @@ coverage/
 
 # Private/Company IP
 cyxwiz-central-server/
+
+# Blockchain (contains keypairs, wallets, private keys)
+cyxwiz-blockchain/
+*-keypair.json
+*.keypair
+id.json
+.solana/
+
+# Test scripts and temporary files
+test_*.py
+nul
+startup_scripts.txt
+install-solana*.bat
+install-solana*.ps1
+*.png
+
+# Session notes and planning docs (temporary)
+SESSION_*.md
+PHASE*.md
+*_SUMMARY.md
+*_PLAN.md
+*_PROGRESS.md
+*_COMPLETE.md
+*_GUIDE.md
+TODO_FEATURES.md
+P2P_*.md
+ENGINE_*.md
+GUI_*.md
+WALLET_*.md
 
 # External dependencies (git repos)
 cyxwiz-engine/external/imnodes/

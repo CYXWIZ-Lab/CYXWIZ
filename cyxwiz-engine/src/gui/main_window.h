@@ -8,6 +8,8 @@ class NodeEditor;
 class Console;
 class Viewport;
 class Properties;
+class DatasetPanel;
+class WalletPanel;
 
 } // namespace gui
 
@@ -60,6 +62,7 @@ private:
     std::unique_ptr<Console> console_;
     std::unique_ptr<Viewport> viewport_;
     std::unique_ptr<Properties> properties_;
+    std::unique_ptr<DatasetPanel> dataset_panel_;
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
@@ -72,6 +75,7 @@ private:
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
+    std::unique_ptr<gui::WalletPanel> wallet_panel_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;

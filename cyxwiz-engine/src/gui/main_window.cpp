@@ -3,6 +3,7 @@
 #include "console.h"
 #include "viewport.h"
 #include "properties.h"
+#include "panels/dataset_panel.h"
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
@@ -13,6 +14,7 @@
 #include "panels/table_viewer.h"
 #include "panels/connection_dialog.h"
 #include "panels/job_status_panel.h"
+#include "panels/wallet_panel.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 
@@ -31,6 +33,7 @@ MainWindow::MainWindow()
     console_ = std::make_unique<Console>();
     viewport_ = std::make_unique<Viewport>();
     properties_ = std::make_unique<Properties>();
+    dataset_panel_ = std::make_unique<DatasetPanel>();
 
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
@@ -45,6 +48,7 @@ MainWindow::MainWindow()
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
+    wallet_panel_ = std::make_unique<gui::WalletPanel>();
 
     // Set scripting engine for command window and script editor
     command_window_->SetScriptingEngine(scripting_engine_);
@@ -138,12 +142,14 @@ void MainWindow::Render() {
     if (table_viewer_) table_viewer_->Render();
     if (connection_dialog_) connection_dialog_->Render();
     if (job_status_panel_) job_status_panel_->Render();
+    if (wallet_panel_) wallet_panel_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
     if (console_) console_->Render();
     if (viewport_) viewport_->Render();
     if (properties_) properties_->Render();
+    if (dataset_panel_) dataset_panel_->Render();
 
     if (show_about_dialog_) {
         ShowAboutDialog();

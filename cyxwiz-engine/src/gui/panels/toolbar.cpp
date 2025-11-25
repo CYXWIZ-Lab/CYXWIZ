@@ -235,6 +235,7 @@ void ToolbarPanel::RenderViewMenu() {
         ImGui::MenuItem("Console", nullptr, true);
         ImGui::MenuItem("Training Dashboard", nullptr, true);
         ImGui::MenuItem("Viewport (Profiler)", nullptr, true);
+        ImGui::MenuItem("Wallet", nullptr, true);
 
         ImGui::Separator();
 

@@ -1,6 +1,7 @@
 #include "application.h"
 #include "gui/main_window.h"
 #include "gui/console.h"
+#include "gui/console_sink.h"
 #include "scripting/python_engine.h"
 #include "network/grpc_client.h"
 #include "network/job_manager.h"
@@ -8,6 +9,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -165,6 +167,24 @@ bool CyxWizApp::Initialize() {
 
     // Connect network components to main window
     main_window_->SetNetworkComponents(grpc_client_.get(), job_manager_.get());
+
+    // Register console sink with spdlog to show logs in GUI
+    if (main_window_ && main_window_->GetConsole()) {
+        auto* console = main_window_->GetConsole();
+
+        // Add welcome message directly to console
+        console->AddSuccess("=== CyxWiz Engine Console ===");
+        console->AddInfo("Console panel initialized - logs will appear here");
+
+        // Register spdlog sink for future logs
+        auto console_sink = std::make_shared<gui::ConsoleSinkMt>(console);
+        auto logger = spdlog::default_logger();
+        logger->sinks().push_back(console_sink);
+
+        // Test log to verify spdlog integration
+        spdlog::info("✓ Console logging enabled");
+        console->AddSuccess("✓ spdlog integration working");
+    }
 
     spdlog::info("Application initialized successfully");
 

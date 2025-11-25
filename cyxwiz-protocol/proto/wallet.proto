@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package cyxwiz.wallet;
+
+import "common.proto";
+
+// Wallet service for blockchain operations
+// Provides a gRPC proxy for Solana wallet operations from the Engine
+service WalletService {
+    // Connect wallet (validate address)
+    rpc ConnectWallet(ConnectWalletRequest) returns (ConnectWalletResponse);
+
+    // Get wallet balance
+    rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+
+    // Get transaction history
+    rpc GetTransactionHistory(GetTransactionHistoryRequest) returns (GetTransactionHistoryResponse);
+
+    // Estimate job cost
+    rpc EstimateJobCost(EstimateJobCostRequest) returns (EstimateJobCostResponse);
+}
+
+// Connect wallet request
+message ConnectWalletRequest {
+    string wallet_address = 1;  // Solana public key (base58)
+}
+
+// Connect wallet response
+message ConnectWalletResponse {
+    common.StatusCode status = 1;
+    string message = 2;
+    bool is_valid = 3;
+    string wallet_address = 4;
+}
+
+// Get balance request
+message GetBalanceRequest {
+    string wallet_address = 1;
+}
+
+// Get balance response
+message GetBalanceResponse {
+    common.StatusCode status = 1;
+    string message = 2;
+    double sol_balance = 3;           // SOL balance
+    double cyxwiz_balance = 4;        // CYXWIZ token balance
+    string token_mint = 5;            // CYXWIZ token mint address
+}
+
+// Transaction type
+enum TransactionType {
+    UNKNOWN = 0;
+    JOB_PAYMENT = 1;
+    REWARD_CLAIM = 2;
+    STAKE = 3;
+    UNSTAKE = 4;
+    REFUND = 5;
+}
+
+// Transaction status
+enum TransactionStatus {
+    PENDING = 0;
+    CONFIRMED = 1;
+    FAILED = 2;
+}
+
+// Transaction record
+message Transaction {
+    string signature = 1;
+    TransactionType type = 2;
+    TransactionStatus status = 3;
+    double amount = 4;              // Amount in CYXWIZ tokens
+    int64 timestamp = 5;            // Unix timestamp
+    string description = 6;
+    uint64 job_id = 7;              // Associated job ID (if applicable)
+}
+
+// Get transaction history request
+message GetTransactionHistoryRequest {
+    string wallet_address = 1;
+    int32 limit = 2;                // Max transactions to return (default: 10)
+    int32 offset = 3;               // Pagination offset
+}
+
+// Get transaction history response
+message GetTransactionHistoryResponse {
+    common.StatusCode status = 1;
+    string message = 2;
+    repeated Transaction transactions = 3;
+    int32 total_count = 4;
+}
+
+// Estimate job cost request
+message EstimateJobCostRequest {
+    string model_type = 1;          // e.g., "MNIST", "ResNet-18", "GPT-2"
+    int32 epochs = 2;
+    int32 dataset_size = 3;
+    string node_tier = 4;           // e.g., "basic", "premium", "enterprise"
+}
+
+// Estimate job cost response
+message EstimateJobCostResponse {
+    common.StatusCode status = 1;
+    string message = 2;
+    double estimated_cost = 3;      // Cost in CYXWIZ tokens
+    double estimated_time_minutes = 4;
+    string breakdown = 5;           // Cost breakdown explanation
+}

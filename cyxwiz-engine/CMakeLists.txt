@@ -46,6 +46,7 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor.cpp
     src/gui/panels/table_viewer.cpp
     src/gui/panels/connection_dialog.cpp
+    src/gui/panels/dataset_panel.cpp
     src/data/data_table.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
@@ -61,6 +62,7 @@ set(ENGINE_SOURCES
     src/network/p2p_client.cpp
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/job_status_panel.cpp
+    src/gui/panels/wallet_panel.cpp
     # Plotting system
     src/plotting/plot_dataset.cpp
     src/plotting/plot_manager.cpp
@@ -75,6 +77,7 @@ set(ENGINE_HEADERS
     src/gui/main_window.h
     src/gui/node_editor.h
     src/gui/console.h
+    src/gui/console_sink.h
     src/gui/viewport.h
     src/gui/properties.h
     src/gui/panel.h
@@ -88,6 +91,7 @@ set(ENGINE_HEADERS
     src/gui/panels/script_editor.h
     src/gui/panels/table_viewer.h
     src/gui/panels/connection_dialog.h
+    src/gui/panels/dataset_panel.h
     src/data/data_table.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
@@ -101,6 +105,7 @@ set(ENGINE_HEADERS
     src/network/p2p_client.h
     src/gui/panels/p2p_training_panel.h
     src/gui/panels/job_status_panel.h
+    src/gui/panels/wallet_panel.h
     # Plotting system
     src/plotting/plot_dataset.h
     src/plotting/plot_manager.h
