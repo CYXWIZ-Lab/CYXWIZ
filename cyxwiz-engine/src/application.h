@@ -4,6 +4,8 @@
 #include <string>
 
 struct GLFWwindow;
+struct ImGuiIO;
+struct ImFont;
 
 namespace gui {
     class MainWindow;
@@ -33,6 +35,7 @@ private:
     void HandleInput();
     void Update(float delta_time);
     void Render();
+    void LoadFonts(ImGuiIO& io);
 
     GLFWwindow* window_;
     std::unique_ptr<gui::MainWindow> main_window_;
@@ -43,4 +46,11 @@ private:
     bool running_;
     double last_frame_time_;
     std::string imgui_ini_path_;  // Store ini file path
+
+    // Fonts
+    ImFont* font_regular_ = nullptr;
+    ImFont* font_medium_ = nullptr;
+    ImFont* font_bold_ = nullptr;
+    ImFont* font_mono_ = nullptr;
+    ImFont* font_mono_bold_ = nullptr;
 };

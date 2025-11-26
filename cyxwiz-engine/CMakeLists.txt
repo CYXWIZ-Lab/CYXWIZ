@@ -63,6 +63,7 @@ set(ENGINE_SOURCES
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/job_status_panel.cpp
     src/gui/panels/wallet_panel.cpp
+    src/gui/theme.cpp
     # Plotting system
     src/plotting/plot_dataset.cpp
     src/plotting/plot_manager.cpp
@@ -106,6 +107,7 @@ set(ENGINE_HEADERS
     src/gui/panels/p2p_training_panel.h
     src/gui/panels/job_status_panel.h
     src/gui/panels/wallet_panel.h
+    src/gui/theme.h
     # Plotting system
     src/plotting/plot_dataset.h
     src/plotting/plot_manager.h

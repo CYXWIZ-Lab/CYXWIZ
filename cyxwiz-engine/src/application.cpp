@@ -2,6 +2,7 @@
 #include "gui/main_window.h"
 #include "gui/console.h"
 #include "gui/console_sink.h"
+#include "gui/theme.h"
 #include "scripting/python_engine.h"
 #include "network/grpc_client.h"
 #include "network/job_manager.h"
@@ -20,6 +21,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 #include <filesystem>
+#include <vector>
 
 static void glfw_error_callback(int error, const char* description) {
     spdlog::error("GLFW Error {}: {}", error, description);
@@ -142,8 +144,8 @@ bool CyxWizApp::Initialize() {
     // TODO: ViewportsEnable causes crash on Windows - needs investigation
     // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
-    // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
+    // Setup Dear ImGui style - Apply CyxWiz professional theme
+    gui::GetTheme().ApplyPreset(gui::ThemePreset::CyxWizDark);
 
     // When viewports are enabled we tweak WindowRounding/WindowBg
     ImGuiStyle& style = ImGui::GetStyle();
@@ -156,8 +158,8 @@ bool CyxWizApp::Initialize() {
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
-    // Load fonts
-    // io.Fonts->AddFontFromFileTTF("resources/fonts/Roboto-Medium.ttf", 16.0f);
+    // Load professional fonts
+    LoadFonts(io);
 
     // Initialize components
     main_window_ = std::make_unique<gui::MainWindow>();
@@ -319,4 +321,100 @@ void CyxWizApp::Shutdown() {
     glfwTerminate();
 
     spdlog::info("Application shut down complete");
+}
+
+void CyxWizApp::LoadFonts(ImGuiIO& io) {
+    // Font configuration for crisp rendering
+    ImFontConfig font_config;
+    font_config.OversampleH = 2;
+    font_config.OversampleV = 1;
+    font_config.PixelSnapH = true;
+
+    // Try multiple font paths (running from different directories)
+    std::vector<std::string> font_paths = {
+        "resources/fonts/",
+        "cyxwiz-engine/resources/fonts/",
+        "../resources/fonts/"
+    };
+
+    std::string font_base_path;
+    for (const auto& path : font_paths) {
+        if (std::filesystem::exists(path + "Inter-Regular.ttf")) {
+            font_base_path = path;
+            break;
+        }
+    }
+
+    if (font_base_path.empty()) {
+        spdlog::warn("Custom fonts not found, using default ImGui font");
+        io.Fonts->AddFontDefault();
+        return;
+    }
+
+    spdlog::info("Loading fonts from: {}", font_base_path);
+
+    // Define font sizes (scaled for high DPI)
+    const float base_font_size = 15.0f;
+    const float mono_font_size = 14.0f;
+
+    // Load Inter font family (UI font)
+    std::string inter_regular = font_base_path + "Inter-Regular.ttf";
+    std::string inter_medium = font_base_path + "Inter-Medium.ttf";
+    std::string inter_bold = font_base_path + "Inter-Bold.ttf";
+
+    // Load JetBrains Mono (code font)
+    std::string mono_regular = font_base_path + "JetBrainsMono-Regular.ttf";
+    std::string mono_bold = font_base_path + "JetBrainsMono-Bold.ttf";
+
+    // Load regular font (this becomes the default)
+    if (std::filesystem::exists(inter_regular)) {
+        font_regular_ = io.Fonts->AddFontFromFileTTF(inter_regular.c_str(), base_font_size, &font_config);
+        if (font_regular_) {
+            spdlog::info("Loaded Inter-Regular ({}px)", base_font_size);
+        }
+    }
+
+    // Load medium font
+    if (std::filesystem::exists(inter_medium)) {
+        font_medium_ = io.Fonts->AddFontFromFileTTF(inter_medium.c_str(), base_font_size, &font_config);
+        if (font_medium_) {
+            spdlog::info("Loaded Inter-Medium ({}px)", base_font_size);
+        }
+    }
+
+    // Load bold font
+    if (std::filesystem::exists(inter_bold)) {
+        font_bold_ = io.Fonts->AddFontFromFileTTF(inter_bold.c_str(), base_font_size, &font_config);
+        if (font_bold_) {
+            spdlog::info("Loaded Inter-Bold ({}px)", base_font_size);
+        }
+    }
+
+    // Load monospace font (for code/console)
+    if (std::filesystem::exists(mono_regular)) {
+        font_mono_ = io.Fonts->AddFontFromFileTTF(mono_regular.c_str(), mono_font_size, &font_config);
+        if (font_mono_) {
+            spdlog::info("Loaded JetBrainsMono-Regular ({}px)", mono_font_size);
+        }
+    }
+
+    // Load monospace bold font
+    if (std::filesystem::exists(mono_bold)) {
+        font_mono_bold_ = io.Fonts->AddFontFromFileTTF(mono_bold.c_str(), mono_font_size, &font_config);
+        if (font_mono_bold_) {
+            spdlog::info("Loaded JetBrainsMono-Bold ({}px)", mono_font_size);
+        }
+    }
+
+    // If no fonts were loaded, add default
+    if (!font_regular_) {
+        spdlog::warn("Failed to load Inter-Regular, using default font");
+        io.Fonts->AddFontDefault();
+    }
+
+    // Build font atlas
+    spdlog::info("Building font atlas...");
+    spdlog::default_logger()->flush();  // Force flush before potential crash
+    io.Fonts->Build();
+    spdlog::info("Font atlas built successfully");
 }

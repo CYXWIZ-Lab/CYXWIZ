@@ -1,5 +1,6 @@
 #include "toolbar.h"
 #include "plot_window.h"
+#include "../theme.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -252,6 +253,21 @@ void ToolbarPanel::RenderViewMenu() {
             }
             if (ImGui::MenuItem("Load Layout...")) {
                 // TODO: Load saved layout from file
+            }
+            ImGui::EndMenu();
+        }
+
+        // Theme selector
+        if (ImGui::BeginMenu("Theme")) {
+            auto& theme = gui::GetTheme();
+            auto current_preset = theme.GetCurrentPreset();
+
+            for (auto preset : gui::Theme::GetAvailablePresets()) {
+                bool is_selected = (current_preset == preset);
+                if (ImGui::MenuItem(gui::Theme::GetPresetName(preset), nullptr, is_selected)) {
+                    theme.ApplyPreset(preset);
+                    spdlog::info("Theme changed to: {}", gui::Theme::GetPresetName(preset));
+                }
             }
             ImGui::EndMenu();
         }
