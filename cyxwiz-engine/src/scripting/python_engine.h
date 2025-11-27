@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <Python.h>
 
 namespace scripting {
 
@@ -14,8 +15,14 @@ public:
     bool ExecuteScript(const std::string& script);
     bool ExecuteFile(const std::string& filepath);
 
+    // GIL management for multi-threaded use
+    // After initialization, call ReleaseGIL() to allow background threads to use Python
+    void ReleaseGIL();
+    void AcquireGIL();
+
 private:
     bool initialized_;
+    PyThreadState* main_thread_state_ = nullptr;  // Saved when releasing GIL
 };
 
 } // namespace scripting

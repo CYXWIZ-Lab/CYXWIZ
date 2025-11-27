@@ -102,6 +102,10 @@ private:
     std::string last_execution_output_;
     bool show_output_notification_;
     float output_notification_time_;
+
+    // Async execution state
+    bool script_running_;
+    float running_indicator_time_;
 };
 
 } // namespace cyxwiz

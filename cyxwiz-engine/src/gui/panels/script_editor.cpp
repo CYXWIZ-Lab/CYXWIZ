@@ -26,6 +26,8 @@ ScriptEditorPanel::ScriptEditorPanel()
     , close_tab_index_(-1)
     , show_output_notification_(false)
     , output_notification_time_(0.0f)
+    , script_running_(false)
+    , running_indicator_time_(0.0f)
 {
     // Create initial empty tab
     NewFile();
@@ -41,6 +43,39 @@ void ScriptEditorPanel::SetCommandWindow(CommandWindowPanel* command_window) {
 
 void ScriptEditorPanel::Render() {
     if (!visible_) return;
+
+    // Poll for pending output from async script execution
+    if (scripting_engine_ && scripting_engine_->IsScriptRunning()) {
+        script_running_ = true;
+        running_indicator_time_ += ImGui::GetIO().DeltaTime;
+
+        // Get any pending output and display it
+        std::string pending = scripting_engine_->GetPendingOutput();
+        if (!pending.empty() && command_window_) {
+            command_window_->DisplayScriptOutput("Running...", pending, false);
+        }
+    } else if (script_running_) {
+        // Script just finished - check for result
+        script_running_ = false;
+        running_indicator_time_ = 0.0f;
+
+        auto result = scripting_engine_->GetAsyncResult();
+        if (result.has_value()) {
+            auto& r = result.value();
+            if (command_window_) {
+                if (r.was_cancelled) {
+                    command_window_->DisplayScriptOutput("Script", "Script cancelled by user", true);
+                } else if (!r.success) {
+                    command_window_->DisplayScriptOutput("Script", "Error: " + r.error_message, true);
+                } else if (!r.output.empty()) {
+                    command_window_->DisplayScriptOutput("Script", r.output, false);
+                } else {
+                    command_window_->DisplayScriptOutput("Script", "Script completed successfully", false);
+                }
+            }
+            spdlog::info("Async script execution finished. Success: {}", r.success);
+        }
+    }
 
     ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
 
@@ -133,17 +168,34 @@ void ScriptEditorPanel::RenderMenuBar() {
         }
 
         if (ImGui::BeginMenu("Run")) {
-            if (ImGui::MenuItem("Run Script", "F5", false, active_tab_index_ >= 0)) {
+            // Show running indicator
+            if (script_running_) {
+                // Animated indicator
+                const char* indicators[] = {"Running.", "Running..", "Running..."};
+                int idx = static_cast<int>(running_indicator_time_ * 2) % 3;
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%s", indicators[idx]);
+                ImGui::Separator();
+            }
+
+            bool not_running = !script_running_;
+            if (ImGui::MenuItem("Run Script", "F5", false, active_tab_index_ >= 0 && not_running)) {
                 RunScript();
             }
-            if (ImGui::MenuItem("Run Selection", "F9", false, active_tab_index_ >= 0)) {
+            if (ImGui::MenuItem("Stop Script", "Shift+F5", false, script_running_)) {
+                if (scripting_engine_) {
+                    scripting_engine_->StopScript();
+                    spdlog::info("Stop script requested");
+                }
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Run Selection", "F9", false, active_tab_index_ >= 0 && not_running)) {
                 RunSelection();
             }
-            if (ImGui::MenuItem("Run Section", "Ctrl+Enter", false, active_tab_index_ >= 0)) {
+            if (ImGui::MenuItem("Run Section", "Ctrl+Enter", false, active_tab_index_ >= 0 && not_running)) {
                 RunCurrentSection();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Debug", "F10", false, active_tab_index_ >= 0)) {
+            if (ImGui::MenuItem("Debug", "F10", false, active_tab_index_ >= 0 && not_running)) {
                 Debug();
             }
             ImGui::EndMenu();
@@ -245,6 +297,17 @@ void ScriptEditorPanel::RenderStatusBar() {
             tab->is_modified ? "Modified" : "Saved",
             tab->editor.GetTotalLines());
 
+        // Script running indicator
+        if (script_running_) {
+            ImGui::SameLine();
+            ImGui::Text("|");
+            ImGui::SameLine();
+            // Animated running indicator
+            const char* indicators[] = {".", "..", "..."};
+            int idx = static_cast<int>(running_indicator_time_ * 2) % 3;
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "RUNNING%s (Shift+F5 to stop)", indicators[idx]);
+        }
+
         // Sandbox indicator
         if (scripting_engine_) {
             ImGui::SameLine();
@@ -291,16 +354,23 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     // The TextEditor component already handles Ctrl+Z, Ctrl+Y, Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A
 
     // Execution shortcuts
-    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F5)) {
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F5) && !script_running_) {
         RunScript();
     }
-    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F9)) {
+    // Stop script with Shift+F5
+    if (!ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F5) && script_running_) {
+        if (scripting_engine_) {
+            scripting_engine_->StopScript();
+            spdlog::info("Stop script requested via Shift+F5");
+        }
+    }
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F9) && !script_running_) {
         RunSelection();
     }
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Enter) && !script_running_) {
         RunCurrentSection();
     }
-    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F10)) {
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F10) && !script_running_) {
         Debug();
     }
 }
@@ -578,20 +648,34 @@ void ScriptEditorPanel::CloseFile(int tab_index) {
 void ScriptEditorPanel::RunScript() {
     if (active_tab_index_ < 0 || !scripting_engine_) return;
 
+    // Don't start if already running
+    if (script_running_) {
+        spdlog::warn("Script already running");
+        return;
+    }
+
     auto& tab = tabs_[active_tab_index_];
 
-    spdlog::info("Running script: {}", tab->filename);
+    spdlog::info("Running script asynchronously: {}", tab->filename);
 
-    // If we have a filepath, execute the file directly for better reliability
-    scripting::ExecutionResult result;
+    // Get script text - prefer file if it exists
+    std::string script;
     if (!tab->filepath.empty() && std::filesystem::exists(tab->filepath)) {
-        result = scripting_engine_->ExecuteFile(tab->filepath);
-    } else {
-        // Otherwise, use the text from the editor
+        // Read file content
+        std::ifstream file(tab->filepath);
+        if (file.is_open()) {
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            script = buffer.str();
+            file.close();
+        }
+    }
+
+    if (script.empty()) {
+        // Use text from editor
         std::string script_text = tab->editor.GetText();
 
         // Strip out %% markers before executing
-        std::string script;
         std::istringstream stream(script_text);
         std::string line;
         while (std::getline(stream, line)) {
@@ -600,34 +684,17 @@ void ScriptEditorPanel::RunScript() {
                 script += line + "\n";
             }
         }
-
-        result = scripting_engine_->ExecuteScript(script);
     }
 
-    // Send output to Command Window if available
+    // Show running indicator in command window
     if (command_window_) {
-        if (!result.success) {
-            command_window_->DisplayScriptOutput(tab->filename, "Error: " + result.error_message, true);
-        } else {
-            std::string output = result.output.empty() ? "Script executed successfully (no output)" : result.output;
-            command_window_->DisplayScriptOutput(tab->filename, output, false);
-        }
-    } else {
-        // Fallback to notification if Command Window not set
-        if (!result.success) {
-            spdlog::error("Script error: {}", result.error_message);
-            last_execution_output_ = "Error: " + result.error_message;
-            printf("[Script Error] %s\n", result.error_message.c_str());
-        } else {
-            spdlog::info("Script executed successfully");
-            last_execution_output_ = result.output.empty() ? "Script executed successfully" : result.output;
-            if (!result.output.empty()) {
-                printf("[Script Output]\n%s\n", result.output.c_str());
-            }
-        }
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
+        command_window_->DisplayScriptOutput(tab->filename, "Script started...", false);
     }
+
+    // Execute asynchronously
+    scripting_engine_->ExecuteScriptAsync(script);
+    script_running_ = true;
+    running_indicator_time_ = 0.0f;
 }
 
 void ScriptEditorPanel::RunSelection() {

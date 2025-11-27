@@ -229,7 +229,25 @@ bool CyxWizApp::Initialize() {
 int CyxWizApp::Run() {
     last_frame_time_ = glfwGetTime();
 
-    while (!glfwWindowShouldClose(window_) && running_) {
+    while (running_) {
+        // Check if user is trying to close the window
+        if (glfwWindowShouldClose(window_)) {
+            if (force_close_) {
+                // User confirmed force close
+                break;
+            }
+
+            // Check if we should prevent close (script running)
+            if (ShouldPreventClose()) {
+                // Cancel the close and show confirmation dialog
+                glfwSetWindowShouldClose(window_, GLFW_FALSE);
+                show_close_confirmation_ = true;
+            } else {
+                // OK to close
+                break;
+            }
+        }
+
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - last_frame_time_);
         last_frame_time_ = current_time;
@@ -240,6 +258,65 @@ int CyxWizApp::Run() {
     }
 
     return 0;
+}
+
+bool CyxWizApp::ShouldPreventClose() {
+    // Check if a script is running
+    if (main_window_ && main_window_->IsScriptRunning()) {
+        return true;
+    }
+    return false;
+}
+
+void CyxWizApp::HandleCloseConfirmation() {
+    if (!show_close_confirmation_) return;
+
+    // Center the popup
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("Script Running###CloseConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("A Python script is currently running.");
+        ImGui::Spacing();
+        ImGui::Text("What would you like to do?");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Stop Script & Close", ImVec2(150, 0))) {
+            // Stop the script and close
+            if (main_window_) {
+                main_window_->StopRunningScript();
+            }
+            show_close_confirmation_ = false;
+            running_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Force Close", ImVec2(100, 0))) {
+            // Force close without stopping
+            show_close_confirmation_ = false;
+            force_close_ = true;
+            running_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+            show_close_confirmation_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // Open the popup if we need to show it
+    if (show_close_confirmation_ && !ImGui::IsPopupOpen("Script Running###CloseConfirm")) {
+        ImGui::OpenPopup("Script Running###CloseConfirm");
+    }
 }
 
 void CyxWizApp::HandleInput() {
@@ -269,6 +346,9 @@ void CyxWizApp::Render() {
             spdlog::error("Unknown exception in main_window_->Render()");
         }
     }
+
+    // Handle close confirmation dialog
+    HandleCloseConfirmation();
 
     // Rendering
     ImGui::Render();

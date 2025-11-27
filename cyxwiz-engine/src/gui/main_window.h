@@ -60,6 +60,15 @@ public:
     // Start monitoring a job in P2PTrainingPanel
     void StartJobMonitoring(const std::string& job_id);
 
+    // Check if a script is currently running
+    bool IsScriptRunning() const;
+
+    // Stop any running script
+    void StopRunningScript();
+
+    // Get the scripting engine
+    std::shared_ptr<scripting::ScriptingEngine> GetScriptingEngine() { return scripting_engine_; }
+
 private:
     void RenderDockSpace();
     void BuildInitialDockLayout();

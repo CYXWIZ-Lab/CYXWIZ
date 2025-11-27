@@ -167,6 +167,19 @@ void MainWindow::StartJobMonitoring(const std::string& job_id) {
     }
 }
 
+bool MainWindow::IsScriptRunning() const {
+    if (scripting_engine_) {
+        return scripting_engine_->IsScriptRunning();
+    }
+    return false;
+}
+
+void MainWindow::StopRunningScript() {
+    if (scripting_engine_) {
+        scripting_engine_->StopScript();
+    }
+}
+
 void MainWindow::ResetDockLayout() {
     // Force rebuild of the docking layout
     first_time_layout_ = true;

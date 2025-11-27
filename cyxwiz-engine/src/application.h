@@ -47,6 +47,14 @@ private:
     double last_frame_time_;
     std::string imgui_ini_path_;  // Store ini file path
 
+    // Close confirmation state
+    bool show_close_confirmation_ = false;
+    bool force_close_ = false;
+
+    // Close confirmation handling
+    void HandleCloseConfirmation();
+    bool ShouldPreventClose();
+
     // Fonts
     ImFont* font_regular_ = nullptr;
     ImFont* font_medium_ = nullptr;
