@@ -242,6 +242,11 @@ int CyxWizApp::Run() {
                 // Cancel the close and show confirmation dialog
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
                 show_close_confirmation_ = true;
+            }
+            // Check for unsaved files
+            else if (HasUnsavedWork()) {
+                glfwSetWindowShouldClose(window_, GLFW_FALSE);
+                show_unsaved_confirmation_ = true;
             } else {
                 // OK to close
                 break;
@@ -263,6 +268,14 @@ int CyxWizApp::Run() {
 bool CyxWizApp::ShouldPreventClose() {
     // Check if a script is running
     if (main_window_ && main_window_->IsScriptRunning()) {
+        return true;
+    }
+    return false;
+}
+
+bool CyxWizApp::HasUnsavedWork() {
+    // Check for unsaved files in script editor
+    if (main_window_ && main_window_->HasUnsavedFiles()) {
         return true;
     }
     return false;
@@ -319,6 +332,67 @@ void CyxWizApp::HandleCloseConfirmation() {
     }
 }
 
+void CyxWizApp::HandleUnsavedConfirmation() {
+    if (!show_unsaved_confirmation_) return;
+
+    // Center the popup
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("Unsaved Changes###UnsavedConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("You have unsaved changes in the following files:");
+        ImGui::Spacing();
+
+        // List unsaved files
+        if (main_window_) {
+            auto unsaved_files = main_window_->GetUnsavedFileNames();
+            for (const auto& filename : unsaved_files) {
+                ImGui::BulletText("%s", filename.c_str());
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Text("What would you like to do?");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Save All & Close", ImVec2(130, 0))) {
+            // Save all files and close
+            if (main_window_) {
+                main_window_->SaveAllFiles();
+            }
+            show_unsaved_confirmation_ = false;
+            running_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Discard & Close", ImVec2(120, 0))) {
+            // Close without saving
+            show_unsaved_confirmation_ = false;
+            force_close_ = true;
+            running_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+            show_unsaved_confirmation_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // Open the popup if we need to show it
+    if (show_unsaved_confirmation_ && !ImGui::IsPopupOpen("Unsaved Changes###UnsavedConfirm")) {
+        ImGui::OpenPopup("Unsaved Changes###UnsavedConfirm");
+    }
+}
+
 void CyxWizApp::HandleInput() {
     glfwPollEvents();
 }
@@ -347,8 +421,9 @@ void CyxWizApp::Render() {
         }
     }
 
-    // Handle close confirmation dialog
+    // Handle close confirmation dialogs
     HandleCloseConfirmation();
+    HandleUnsavedConfirmation();
 
     // Rendering
     ImGui::Render();

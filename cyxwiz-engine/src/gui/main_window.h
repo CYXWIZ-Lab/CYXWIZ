@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace gui {
 
@@ -65,6 +66,11 @@ public:
 
     // Stop any running script
     void StopRunningScript();
+
+    // Check for unsaved files in Script Editor
+    bool HasUnsavedFiles() const;
+    std::vector<std::string> GetUnsavedFileNames() const;
+    void SaveAllFiles();
 
     // Get the scripting engine
     std::shared_ptr<scripting::ScriptingEngine> GetScriptingEngine() { return scripting_engine_; }

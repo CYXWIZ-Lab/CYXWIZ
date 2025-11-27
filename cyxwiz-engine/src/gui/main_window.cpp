@@ -180,6 +180,26 @@ void MainWindow::StopRunningScript() {
     }
 }
 
+bool MainWindow::HasUnsavedFiles() const {
+    if (script_editor_) {
+        return script_editor_->HasUnsavedFiles();
+    }
+    return false;
+}
+
+std::vector<std::string> MainWindow::GetUnsavedFileNames() const {
+    if (script_editor_) {
+        return script_editor_->GetUnsavedFileNames();
+    }
+    return {};
+}
+
+void MainWindow::SaveAllFiles() {
+    if (script_editor_) {
+        script_editor_->SaveAllFiles();
+    }
+}
+
 void MainWindow::ResetDockLayout() {
     // Force rebuild of the docking layout
     first_time_layout_ = true;

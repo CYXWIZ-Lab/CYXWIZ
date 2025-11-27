@@ -49,11 +49,14 @@ private:
 
     // Close confirmation state
     bool show_close_confirmation_ = false;
+    bool show_unsaved_confirmation_ = false;
     bool force_close_ = false;
 
     // Close confirmation handling
     void HandleCloseConfirmation();
+    void HandleUnsavedConfirmation();
     bool ShouldPreventClose();
+    bool HasUnsavedWork();
 
     // Fonts
     ImFont* font_regular_ = nullptr;

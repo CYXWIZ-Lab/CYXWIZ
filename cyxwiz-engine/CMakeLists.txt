@@ -178,10 +178,10 @@ if(APPLE)
     )
 endif()
 
-# Copy resources to build directory
+# Copy resources to build directory (use cyxwiz-engine's resources, not root)
 add_custom_command(TARGET cyxwiz-engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/resources
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources
     $<TARGET_FILE_DIR:cyxwiz-engine>/resources
     COMMENT "Copying resources..."
 )

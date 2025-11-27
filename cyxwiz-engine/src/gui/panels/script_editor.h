@@ -49,6 +49,11 @@ public:
     void RunCurrentSection();  // Execute code between %% markers
     void Debug();
 
+    // Check for unsaved files (for application close confirmation)
+    bool HasUnsavedFiles() const;
+    std::vector<std::string> GetUnsavedFileNames() const;
+    void SaveAllFiles();  // Save all unsaved files
+
 private:
     // Tab/File representation
     struct EditorTab {
@@ -106,6 +111,37 @@ private:
     // Async execution state
     bool script_running_;
     float running_indicator_time_;
+
+    // View settings
+    enum class EditorTheme { Dark, Light, RetroBlu, Monokai, Dracula, OneDark, GitHub };
+    EditorTheme current_theme_ = EditorTheme::Monokai;  // Default to Monokai
+    float font_scale_ = 1.6f;  // 1.0 = Small, 1.3 = Medium, 1.6 = Large (default), 2.0 = Extra Large
+    bool show_whitespace_ = true;
+    bool syntax_highlighting_ = true;
+    int tab_size_ = 4;  // 2, 4, or 8
+
+    // Save/Close dialog state
+    bool show_save_before_run_dialog_ = false;      // "Save before running?" dialog
+    bool show_save_before_close_dialog_ = false;    // "Save changes?" dialog when closing
+    int pending_close_tab_index_ = -1;              // Tab waiting to be closed after dialog
+    bool run_after_save_ = false;                   // Flag to run script after saving
+
+    // Dialog rendering helpers
+    void RenderSaveBeforeRunDialog();
+    void RenderSaveBeforeCloseDialog();
+    void DoRunScript();      // Internal run after save check passed
+    void DoCloseFile(int tab_index);  // Internal close after save check passed
+
+    // Apply settings to all tabs
+    void ApplyThemeToAllTabs();
+    void ApplyTabSizeToAllTabs();
+    void ApplySyntaxHighlightingToAllTabs();
+
+    // Custom theme palettes
+    static TextEditor::Palette GetMonokaiPalette();
+    static TextEditor::Palette GetDraculaPalette();
+    static TextEditor::Palette GetOneDarkPalette();
+    static TextEditor::Palette GetGitHubPalette();
 };
 
 } // namespace cyxwiz
