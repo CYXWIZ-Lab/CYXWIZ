@@ -3,6 +3,8 @@
 #include "console.h"
 #include "viewport.h"
 #include "properties.h"
+#include "dock_style.h"
+#include "icons.h"
 #include "panels/dataset_panel.h"
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
@@ -86,6 +88,56 @@ MainWindow::MainWindow()
         }
     });
 
+    // Set up New Script callback (called after script is created to refresh asset browser)
+    toolbar_->SetNewScriptCallback([this]() {
+        if (asset_browser_) {
+            asset_browser_->Refresh();
+        }
+    });
+
+    // Set up Open Script in Editor callback (called with file path to open)
+    toolbar_->SetOpenScriptInEditorCallback([this](const std::string& file_path) {
+        if (script_editor_) {
+            script_editor_->OpenFile(file_path);
+            spdlog::info("Opened script in editor: {}", file_path);
+        }
+    });
+
+    // Set up Save All callback
+    toolbar_->SetSaveAllCallback([this]() {
+        SaveAllFiles();
+        spdlog::info("All files saved via toolbar");
+    });
+
+    // Set up Exit callback (called when user confirms exit)
+    toolbar_->SetExitCallback([this]() {
+        if (exit_request_callback_) {
+            exit_request_callback_();
+        }
+    });
+
+    // Set up Has Unsaved Changes callback (called to check if confirmation dialog is needed)
+    toolbar_->SetHasUnsavedChangesCallback([this]() -> bool {
+        return HasUnsavedFiles();
+    });
+
+    // Set up asset browser double-click callback to open files in script editor
+    asset_browser_->SetOnAssetDoubleClick([this](const cyxwiz::AssetBrowserPanel::AssetItem& item) {
+        if (!item.is_directory && script_editor_) {
+            // Get file extension
+            std::string ext = std::filesystem::path(item.absolute_path).extension().string();
+
+            // Open text-based files in script editor
+            if (ext == ".py" || ext == ".cyx" || ext == ".txt" ||
+                ext == ".json" || ext == ".md" || ext == ".csv" ||
+                ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
+                ext == ".ini" || ext == ".cfg" || ext == ".conf") {
+                script_editor_->OpenFile(item.absolute_path);
+                spdlog::info("Opened file in script editor: {}", item.name);
+            }
+        }
+    });
+
     // Initialize startup script manager
     startup_script_manager_ = std::make_unique<scripting::StartupScriptManager>(scripting_engine_);
 
@@ -96,6 +148,12 @@ MainWindow::MainWindow()
     } else {
         spdlog::debug("No startup scripts configured or startup_scripts.txt not found");
     }
+
+    // Install custom dock node handler for Unreal-style tabs
+    DockStyle::InstallCustomHandler();
+
+    // Register panels with sidebar for hide/unhide toggles
+    RegisterPanelsWithSidebar();
 
     spdlog::info("MainWindow initialized with docking layout system");
 }
@@ -219,6 +277,9 @@ void MainWindow::Render() {
 
     RenderDockSpace();
 
+    // Render Unreal-style sidebar for panel toggles
+    RenderSidebar();
+
     // Render new panel system - Toolbar (replaces old menu bar)
     if (toolbar_) toolbar_->Render();
 
@@ -249,6 +310,42 @@ void MainWindow::Render() {
     if (show_demo_window_) {
         ImGui::ShowDemoWindow(&show_demo_window_);
     }
+}
+
+// Helper function to draw active tab indicator on a dock node
+static void DrawDockNodeActiveTabIndicator(ImGuiDockNode* node) {
+    if (!node) return;
+
+    // Recursively process child nodes
+    if (node->ChildNodes[0]) DrawDockNodeActiveTabIndicator(node->ChildNodes[0]);
+    if (node->ChildNodes[1]) DrawDockNodeActiveTabIndicator(node->ChildNodes[1]);
+
+    // Only process leaf nodes with tab bars
+    if (!node->TabBar || node->Windows.Size == 0) return;
+
+    ImGuiTabBar* tab_bar = node->TabBar;
+    const DockTabStyle& style = GetDockStyle().GetStyle();
+
+    // Only draw if we have an active tab and indicator is enabled
+    if (!style.show_active_indicator || tab_bar->VisibleTabId == 0) return;
+
+    ImGuiTabItem* active_tab = ImGui::TabBarFindTabByID(tab_bar, tab_bar->VisibleTabId);
+    if (!active_tab) return;
+
+    // Get the draw list for the host window
+    ImGuiWindow* host_window = node->HostWindow;
+    if (!host_window) return;
+
+    ImDrawList* draw_list = host_window->DrawList;
+
+    // Calculate tab position relative to the tab bar
+    ImVec2 tab_bar_min = tab_bar->BarRect.Min;
+    ImVec2 tab_min = ImVec2(tab_bar_min.x + active_tab->Offset, tab_bar_min.y);
+    ImVec2 tab_max = ImVec2(tab_min.x + active_tab->Width, tab_bar_min.y + style.active_indicator_height);
+
+    // Draw the indicator line at the TOP of the active tab
+    ImU32 indicator_color = ImGui::ColorConvertFloat4ToU32(style.active_indicator_color);
+    draw_list->AddRectFilled(tab_min, tab_max, indicator_color);
 }
 
 void MainWindow::RenderDockSpace() {
@@ -296,6 +393,12 @@ void MainWindow::RenderDockSpace() {
         }
 
         ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+
+        // Draw Unreal-style active tab indicators on all dock nodes
+        ImGuiDockNode* root_node = ImGui::DockBuilderGetNode(dockspace_id);
+        if (root_node) {
+            DrawDockNodeActiveTabIndicator(root_node);
+        }
     }
 
     ImGui::End();
@@ -382,6 +485,63 @@ void MainWindow::ShowAboutDialog() {
     }
 
     ImGui::End();
+}
+
+void MainWindow::RegisterPanelsWithSidebar() {
+    DockStyle& dock_style = GetDockStyle();
+
+    // Clear any existing registrations
+    dock_style.ClearPanels();
+
+    // Register main panels with FontAwesome icons
+
+    // Main editing panels
+    if (node_editor_) {
+        dock_style.RegisterPanel("Node Editor", ICON_FA_DIAGRAM_PROJECT, node_editor_->GetVisiblePtr());
+    }
+    if (script_editor_) {
+        dock_style.RegisterPanel("Script Editor", ICON_FA_CODE, script_editor_->GetVisiblePtr());
+    }
+
+    // Side panels
+    if (asset_browser_) {
+        dock_style.RegisterPanel("Asset Browser", ICON_FA_IMAGES, asset_browser_->GetVisiblePtr());
+    }
+    if (properties_) {
+        dock_style.RegisterPanel("Properties", ICON_FA_SLIDERS, properties_->GetVisiblePtr());
+    }
+
+    // Bottom panels
+    if (console_) {
+        dock_style.RegisterPanel("Console", ICON_FA_TERMINAL, console_->GetVisiblePtr());
+    }
+    if (command_window_) {
+        dock_style.RegisterPanel("Command", ICON_FA_CHEVRON_RIGHT, command_window_->GetVisiblePtr());
+    }
+    if (training_plot_panel_) {
+        dock_style.RegisterPanel("Training", ICON_FA_CHART_LINE, training_plot_panel_->GetVisiblePtr());
+    }
+    if (viewport_) {
+        dock_style.RegisterPanel("Viewport", ICON_FA_CUBES, viewport_->GetVisiblePtr());
+    }
+
+    // Additional panels (less commonly used)
+    if (dataset_panel_) {
+        dock_style.RegisterPanel("Dataset", ICON_FA_DATABASE, dataset_panel_->GetVisiblePtr());
+    }
+    if (job_status_panel_) {
+        dock_style.RegisterPanel("Jobs", ICON_FA_LIST_CHECK, job_status_panel_->GetVisiblePtr());
+    }
+    if (wallet_panel_) {
+        dock_style.RegisterPanel("Wallet", ICON_FA_WALLET, wallet_panel_->GetVisiblePtr());
+    }
+
+    spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
+}
+
+void MainWindow::RenderSidebar() {
+    // Render the Unreal-style sidebar (auto-hides, appears on hover)
+    GetDockStyle().RenderSidebarToggles();
 }
 
 } // namespace gui

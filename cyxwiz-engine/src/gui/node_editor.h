@@ -101,6 +101,9 @@ public:
     // Set properties panel for node selection display
     void SetPropertiesPanel(Properties* properties) { properties_panel_ = properties; }
 
+    // Visibility control for sidebar integration
+    bool* GetVisiblePtr() { return &show_window_; }
+
 private:
     void ShowToolbar();
     void RenderNodes();

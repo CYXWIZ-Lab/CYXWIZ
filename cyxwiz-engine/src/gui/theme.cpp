@@ -1,4 +1,5 @@
 #include "theme.h"
+#include "dock_style.h"
 #include <imgui.h>
 #include <imnodes.h>
 
@@ -54,6 +55,7 @@ void Theme::ApplyPreset(ThemePreset preset) {
 
     ApplyStyleConfig();
     ApplyImNodesStyle();  // Apply matching node editor styling
+    ApplyDockStyle();     // Apply matching dock tab styling
 }
 
 void Theme::ApplyConfig(const ThemeConfig& config) {
@@ -865,6 +867,75 @@ void Theme::ApplyImNodesStyle() {
     style.Colors[ImNodesCol_MiniMapLinkSelected] = style.Colors[ImNodesCol_LinkSelected];
     style.Colors[ImNodesCol_MiniMapCanvas] = ColorToU32(ImVec4(0.08f, 0.08f, 0.10f, 0.50f));
     style.Colors[ImNodesCol_MiniMapCanvasOutline] = ColorToU32(ImVec4(0.25f, 0.25f, 0.30f, 1.0f));
+}
+
+// ============================================================================
+// Dock Style Integration - Matches dock tabs to current theme
+// ============================================================================
+void Theme::ApplyDockStyle() {
+    DockStyle& dock_style = GetDockStyle();
+
+    // Map theme presets to dock style presets
+    switch (current_preset_) {
+        case ThemePreset::UnrealEngine:
+            dock_style.ApplyPreset(DockStylePreset::UnrealEngine);
+            break;
+
+        case ThemePreset::VSCodeDark:
+            dock_style.ApplyPreset(DockStylePreset::VSCode);
+            break;
+
+        case ThemePreset::CyxWizDark:
+        case ThemePreset::ModernDark: {
+            // Use Unreal-style but with CyxWiz blue accent
+            dock_style.ApplyPreset(DockStylePreset::UnrealEngine);
+
+            // Override with CyxWiz blue accent
+            DockTabStyle style = dock_style.GetStyle();
+            style.active_indicator_color = ImVec4(0.20f, 0.55f, 0.85f, 1.0f);  // CyxWiz blue
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        case ThemePreset::CyxWizLight: {
+            // Light theme variant
+            dock_style.ApplyPreset(DockStylePreset::Unity);
+
+            DockTabStyle style = dock_style.GetStyle();
+            // Adjust for light theme
+            style.tab_bg = ImVec4(0.88f, 0.88f, 0.90f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.92f, 0.92f, 0.94f, 1.0f);
+            style.tab_bg_active = ImVec4(0.96f, 0.96f, 0.98f, 1.0f);
+            style.tab_bg_unfocused = ImVec4(0.85f, 0.85f, 0.87f, 1.0f);
+            style.tab_text = ImVec4(0.35f, 0.35f, 0.38f, 1.0f);
+            style.tab_text_active = ImVec4(0.10f, 0.10f, 0.12f, 1.0f);
+            style.active_indicator_color = ImVec4(0.20f, 0.50f, 0.80f, 1.0f);
+            style.dock_bg = ImVec4(0.92f, 0.92f, 0.94f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        case ThemePreset::HighContrast: {
+            // High contrast with bold indicator
+            dock_style.ApplyPreset(DockStylePreset::VSCode);
+
+            DockTabStyle style = dock_style.GetStyle();
+            style.tab_bg = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.15f, 0.15f, 0.15f, 1.0f);
+            style.tab_bg_active = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+            style.tab_text = ImVec4(0.80f, 0.80f, 0.80f, 1.0f);
+            style.tab_text_active = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+            style.active_indicator_color = ImVec4(0.0f, 0.80f, 1.0f, 1.0f);  // Cyan
+            style.active_indicator_height = 3.0f;
+            style.dock_bg = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        default:
+            dock_style.ApplyPreset(DockStylePreset::Default);
+            break;
+    }
 }
 
 } // namespace gui

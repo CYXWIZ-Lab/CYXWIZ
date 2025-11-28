@@ -34,6 +34,9 @@ public:
     void AddSuccess(const std::string& message);
     void Clear();
 
+    // Visibility control for sidebar integration
+    bool* GetVisiblePtr() { return &show_window_; }
+
 private:
     void RenderLogTab(const char* name, LogLevel filter);
     void RenderAllTab();

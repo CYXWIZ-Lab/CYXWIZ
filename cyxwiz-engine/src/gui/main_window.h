@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace gui {
 
@@ -75,10 +76,16 @@ public:
     // Get the scripting engine
     std::shared_ptr<scripting::ScriptingEngine> GetScriptingEngine() { return scripting_engine_; }
 
+    // Exit request callback (set by Application to trigger window close)
+    using ExitRequestCallback = std::function<void()>;
+    void SetExitRequestCallback(ExitRequestCallback callback) { exit_request_callback_ = callback; }
+
 private:
     void RenderDockSpace();
     void BuildInitialDockLayout();
     void ShowAboutDialog();
+    void RegisterPanelsWithSidebar();
+    void RenderSidebar();
 
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;
@@ -114,6 +121,9 @@ private:
     // Network components
     network::JobManager* job_manager_ = nullptr;
     std::string monitoring_job_id_;
+
+    // Exit request callback
+    ExitRequestCallback exit_request_callback_;
 };
 
 } // namespace gui

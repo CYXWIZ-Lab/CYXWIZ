@@ -6,6 +6,9 @@
 #include <vector>
 #include <functional>
 
+// Forward declaration
+namespace gui { class DockStyle; }
+
 namespace gui {
 
 /**
@@ -83,6 +86,9 @@ public:
     // Color customization
     void SetAccentColor(const ImVec4& color);
     ImVec4 GetAccentColor() const { return accent_color_; }
+
+    // Apply matching dock style for current theme
+    void ApplyDockStyle();
 
 private:
     // Theme application methods

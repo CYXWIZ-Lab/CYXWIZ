@@ -12,7 +12,7 @@
 namespace cyxwiz {
 
 PlotTestControlPanel::PlotTestControlPanel()
-    : Panel("Plot Test Control", true)
+    : Panel("Plot Test Control", false)  // Hidden by default - use toolbar button to show
     , selected_plot_type_(0)
     , selected_backend_(0)
     , selected_test_data_(0)

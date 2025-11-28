@@ -9,6 +9,12 @@
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
+#endif
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <imgui.h>
@@ -26,6 +32,32 @@
 static void glfw_error_callback(int error, const char* description) {
     spdlog::error("GLFW Error {}: {}", error, description);
 }
+
+#ifdef _WIN32
+// Enable dark mode for Windows title bar (Windows 10 1809+ / Windows 11)
+static void enable_dark_title_bar(GLFWwindow* window) {
+    HWND hwnd = glfwGetWin32Window(window);
+    if (!hwnd) return;
+
+    // DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 10 20H1+)
+    // For older Windows 10 builds, use undocumented value 19
+    BOOL dark_mode = TRUE;
+
+    // Try the official attribute first (Windows 10 20H1+)
+    HRESULT hr = DwmSetWindowAttribute(hwnd, 20, &dark_mode, sizeof(dark_mode));
+
+    if (FAILED(hr)) {
+        // Fall back to undocumented attribute for older Windows 10 builds
+        hr = DwmSetWindowAttribute(hwnd, 19, &dark_mode, sizeof(dark_mode));
+    }
+
+    if (SUCCEEDED(hr)) {
+        spdlog::info("Dark title bar enabled");
+    } else {
+        spdlog::debug("Dark title bar not available on this Windows version");
+    }
+}
+#endif
 
 // Load window icon from resources
 static bool load_window_icon(GLFWwindow* window) {
@@ -114,6 +146,11 @@ bool CyxWizApp::Initialize() {
     // Load window icon
     load_window_icon(window_);
 
+#ifdef _WIN32
+    // Enable dark mode for Windows title bar
+    enable_dark_title_bar(window_);
+#endif
+
     // Make sure window is visible and focused
     glfwShowWindow(window_);
     glfwFocusWindow(window_);
@@ -169,6 +206,12 @@ bool CyxWizApp::Initialize() {
 
     // Connect network components to main window
     main_window_->SetNetworkComponents(grpc_client_.get(), job_manager_.get());
+
+    // Set exit request callback (triggered by File > Exit menu)
+    main_window_->SetExitRequestCallback([this]() {
+        spdlog::info("Exit requested via menu");
+        glfwSetWindowShouldClose(window_, GLFW_TRUE);
+    });
 
     // Register console sink with spdlog to show logs in GUI
     if (main_window_ && main_window_->GetConsole()) {
@@ -521,11 +564,29 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     std::string mono_regular = font_base_path + "JetBrainsMono-Regular.ttf";
     std::string mono_bold = font_base_path + "JetBrainsMono-Bold.ttf";
 
+    // FontAwesome icon font
+    std::string fa_solid = font_base_path + "fa-solid-900.ttf";
+
+    // Icon font glyph ranges (FontAwesome 6)
+    static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
+
+    // Icon font config (for merging)
+    ImFontConfig icon_config;
+    icon_config.MergeMode = true;
+    icon_config.PixelSnapH = true;
+    icon_config.GlyphMinAdvanceX = base_font_size;  // Make icons monospaced
+
     // Load regular font (this becomes the default)
     if (std::filesystem::exists(inter_regular)) {
         font_regular_ = io.Fonts->AddFontFromFileTTF(inter_regular.c_str(), base_font_size, &font_config);
         if (font_regular_) {
             spdlog::info("Loaded Inter-Regular ({}px)", base_font_size);
+
+            // Merge FontAwesome icons into regular font
+            if (std::filesystem::exists(fa_solid)) {
+                io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
+                spdlog::info("Merged FontAwesome icons into regular font");
+            }
         }
     }
 
@@ -534,6 +595,11 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         font_medium_ = io.Fonts->AddFontFromFileTTF(inter_medium.c_str(), base_font_size, &font_config);
         if (font_medium_) {
             spdlog::info("Loaded Inter-Medium ({}px)", base_font_size);
+
+            // Merge FontAwesome icons
+            if (std::filesystem::exists(fa_solid)) {
+                io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
+            }
         }
     }
 
@@ -542,6 +608,11 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         font_bold_ = io.Fonts->AddFontFromFileTTF(inter_bold.c_str(), base_font_size, &font_config);
         if (font_bold_) {
             spdlog::info("Loaded Inter-Bold ({}px)", base_font_size);
+
+            // Merge FontAwesome icons
+            if (std::filesystem::exists(fa_solid)) {
+                io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
+            }
         }
     }
 
@@ -550,6 +621,13 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         font_mono_ = io.Fonts->AddFontFromFileTTF(mono_regular.c_str(), mono_font_size, &font_config);
         if (font_mono_) {
             spdlog::info("Loaded JetBrainsMono-Regular ({}px)", mono_font_size);
+
+            // Merge FontAwesome icons
+            if (std::filesystem::exists(fa_solid)) {
+                icon_config.GlyphMinAdvanceX = mono_font_size;
+                io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), mono_font_size - 1.0f, &icon_config, icon_ranges);
+                icon_config.GlyphMinAdvanceX = base_font_size;  // Reset
+            }
         }
     }
 
@@ -558,6 +636,12 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         font_mono_bold_ = io.Fonts->AddFontFromFileTTF(mono_bold.c_str(), mono_font_size, &font_config);
         if (font_mono_bold_) {
             spdlog::info("Loaded JetBrainsMono-Bold ({}px)", mono_font_size);
+
+            // Merge FontAwesome icons
+            if (std::filesystem::exists(fa_solid)) {
+                icon_config.GlyphMinAdvanceX = mono_font_size;
+                io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), mono_font_size - 1.0f, &icon_config, icon_ranges);
+            }
         }
     }
 

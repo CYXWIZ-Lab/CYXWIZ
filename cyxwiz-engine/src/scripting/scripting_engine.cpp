@@ -1,10 +1,13 @@
 #include "scripting_engine.h"
 #include "../gui/panels/training_plot_panel.h"
+#include "../core/project_manager.h"
 #include <Python.h>  // For PyThreadState_SetAsyncExc, PyThread_get_thread_ident
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <optional>
+#include <filesystem>
+#include <algorithm>
 
 namespace py = pybind11;
 
@@ -106,12 +109,12 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         try {
             // Try exec first (for statements)
             py::exec(command);
-        } catch (const py::error_already_set& e) {
+        } catch (const py::error_already_set&) {
             // If exec fails, try eval (for expressions)
             try {
                 py_result = py::eval(command);
                 has_result = true;
-            } catch (const py::error_already_set& eval_error) {
+            } catch (const py::error_already_set&) {
                 // Restore stdout/stderr before throwing
                 sys.attr("stdout") = original_stdout;
                 sys.attr("stderr") = original_stderr;
@@ -387,6 +390,58 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script)
         spdlog::info("Python thread ID: {}", tid);
 
         py::object sys = py::module_::import("sys");
+        py::object os = py::module_::import("os");
+
+        // Set working directory to project root if a project is open
+        std::string project_root;
+        if (cyxwiz::ProjectManager::Instance().HasActiveProject()) {
+            project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+            // Normalize path separators for Python (use forward slashes)
+            std::replace(project_root.begin(), project_root.end(), '\\', '/');
+
+            try {
+                // Change Python's working directory
+                os.attr("chdir")(project_root);
+                spdlog::info("Python working directory set to project root: {}", project_root);
+
+                // Add project root to sys.path if not already present
+                py::list sys_path = sys.attr("path").cast<py::list>();
+                bool found = false;
+                for (size_t i = 0; i < sys_path.size(); ++i) {
+                    std::string path_entry = py::str(sys_path[i]);
+                    std::replace(path_entry.begin(), path_entry.end(), '\\', '/');
+                    if (path_entry == project_root) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    sys_path.insert(0, project_root);
+                    spdlog::info("Added project root to sys.path");
+                }
+
+                // Also add the scripts subfolder if it exists
+                std::string scripts_path = cyxwiz::ProjectManager::Instance().GetScriptsPath();
+                std::replace(scripts_path.begin(), scripts_path.end(), '\\', '/');
+                if (std::filesystem::exists(scripts_path)) {
+                    bool scripts_found = false;
+                    for (size_t i = 0; i < sys_path.size(); ++i) {
+                        std::string path_entry = py::str(sys_path[i]);
+                        std::replace(path_entry.begin(), path_entry.end(), '\\', '/');
+                        if (path_entry == scripts_path) {
+                            scripts_found = true;
+                            break;
+                        }
+                    }
+                    if (!scripts_found) {
+                        sys_path.insert(0, scripts_path);
+                        spdlog::info("Added scripts folder to sys.path: {}", scripts_path);
+                    }
+                }
+            } catch (const py::error_already_set& e) {
+                spdlog::warn("Failed to set Python working directory: {}", e.what());
+            }
+        }
 
         // Create output callback wrapper
         auto queue_func = [this](const std::string& text) {

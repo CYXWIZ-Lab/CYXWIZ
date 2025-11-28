@@ -29,6 +29,7 @@ public:
     void Hide() { visible_ = false; }
     void Show() { visible_ = true; }
     void Toggle() { visible_ = !visible_; }
+    bool* GetVisiblePtr() { return &visible_; }  // For sidebar toggle binding
 
     // Focus tracking
     bool IsFocused() const { return focused_; }

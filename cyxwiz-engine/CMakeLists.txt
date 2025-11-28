@@ -30,6 +30,7 @@ endif()
 set(ENGINE_SOURCES
     src/main.cpp
     src/application.cpp
+    src/core/project_manager.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
     src/gui/console.cpp
@@ -64,6 +65,7 @@ set(ENGINE_SOURCES
     src/gui/panels/job_status_panel.cpp
     src/gui/panels/wallet_panel.cpp
     src/gui/theme.cpp
+    src/gui/dock_style.cpp
     # Plotting system
     src/plotting/plot_dataset.cpp
     src/plotting/plot_manager.cpp
@@ -108,6 +110,7 @@ set(ENGINE_HEADERS
     src/gui/panels/job_status_panel.h
     src/gui/panels/wallet_panel.h
     src/gui/theme.h
+    src/gui/dock_style.h
     # Plotting system
     src/plotting/plot_dataset.h
     src/plotting/plot_manager.h

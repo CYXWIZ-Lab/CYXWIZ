@@ -20,6 +20,9 @@ public:
     void SetSelectedNode(MLNode* node);
     void ClearSelection();
 
+    // Visibility control for sidebar integration
+    bool* GetVisiblePtr() { return &show_window_; }
+
 private:
     void RenderNodeProperties(MLNode& node);
 

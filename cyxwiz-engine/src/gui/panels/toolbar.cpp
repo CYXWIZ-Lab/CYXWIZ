@@ -6,10 +6,16 @@
 #include <filesystem>
 #include <fstream>
 #include <cstring>
+#include <algorithm>
+#include <cctype>
+#include "../dock_style.h"
+#include "../../core/project_manager.h"
+#include "../icons.h"
 
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
+#include <commdlg.h>
 #endif
 
 namespace cyxwiz {
@@ -37,6 +43,13 @@ void ToolbarPanel::Render() {
         RenderPlotsMenu();
         RenderDeployMenu();
         RenderHelpMenu();
+
+        // Show current project name in menu bar if active
+        auto& pm = ProjectManager::Instance();
+        if (pm.HasActiveProject()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("| Project: %s", pm.GetProjectName().c_str());
+        }
 
         ImGui::EndMainMenuBar();
     }
@@ -74,7 +87,8 @@ void ToolbarPanel::Render() {
                 std::string proj_path = project_path_buffer_;
 
                 if (!proj_name.empty() && !proj_path.empty()) {
-                    if (CreateProjectOnDisk(proj_name, proj_path)) {
+                    auto& pm = ProjectManager::Instance();
+                    if (pm.CreateProject(proj_name, proj_path)) {
                         spdlog::info("Project created: {}/{}", proj_path, proj_name);
                         show_new_project_dialog_ = false;
                         // Clear buffers
@@ -114,31 +128,701 @@ void ToolbarPanel::Render() {
             ImGui::EndPopup();
         }
     }
+
+    // Save As dialog
+    if (show_save_as_dialog_) {
+        ImGui::OpenPopup("Save Project As");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+        if (ImGui::BeginPopupModal("Save Project As", &show_save_as_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Save a copy of the project with a new name");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::Text("New Project Name:");
+            ImGui::SetNextItemWidth(350);
+            ImGui::InputText("##saveasname", save_as_name_buffer_, sizeof(save_as_name_buffer_));
+
+            ImGui::Spacing();
+
+            ImGui::Text("Location:");
+            ImGui::SetNextItemWidth(280);
+            ImGui::InputText("##saveaspath", save_as_path_buffer_, sizeof(save_as_path_buffer_));
+            ImGui::SameLine();
+            if (ImGui::Button("Browse...##saveas")) {
+                std::string selected_folder = OpenFolderDialog();
+                if (!selected_folder.empty()) {
+                    strncpy(save_as_path_buffer_, selected_folder.c_str(), sizeof(save_as_path_buffer_) - 1);
+                    save_as_path_buffer_[sizeof(save_as_path_buffer_) - 1] = '\0';
+                }
+            }
+
+            ImGui::Spacing();
+
+            // Preview the new project path
+            std::string new_name = save_as_name_buffer_;
+            std::string new_path = save_as_path_buffer_;
+            if (!new_name.empty() && !new_path.empty()) {
+                std::filesystem::path preview_path = std::filesystem::path(new_path) / new_name;
+                ImGui::TextDisabled("Will create: %s", preview_path.string().c_str());
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            bool valid_input = strlen(save_as_name_buffer_) > 0 && strlen(save_as_path_buffer_) > 0;
+
+            if (!valid_input) {
+                ImGui::BeginDisabled();
+            }
+
+            if (ImGui::Button("Save", ImVec2(120, 0))) {
+                auto& pm = ProjectManager::Instance();
+                if (pm.SaveProjectAs(save_as_name_buffer_, save_as_path_buffer_)) {
+                    spdlog::info("Project saved as: {}", save_as_name_buffer_);
+                    show_save_as_dialog_ = false;
+                    memset(save_as_name_buffer_, 0, sizeof(save_as_name_buffer_));
+                    memset(save_as_path_buffer_, 0, sizeof(save_as_path_buffer_));
+                } else {
+                    spdlog::error("Failed to save project as: {}", save_as_name_buffer_);
+                }
+            }
+
+            if (!valid_input) {
+                ImGui::EndDisabled();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                show_save_as_dialog_ = false;
+                memset(save_as_name_buffer_, 0, sizeof(save_as_name_buffer_));
+                memset(save_as_path_buffer_, 0, sizeof(save_as_path_buffer_));
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    // Auto Save timer logic
+    if (auto_save_enabled_) {
+        float delta_time = ImGui::GetIO().DeltaTime;
+        auto_save_timer_ += delta_time;
+
+        if (auto_save_timer_ >= auto_save_interval_) {
+            auto_save_timer_ = 0.0f;
+
+            // Trigger save all callback
+            if (save_all_callback_) {
+                save_all_callback_();
+                spdlog::info("Auto-save triggered");
+            }
+        }
+    } else {
+        // Reset timer when disabled
+        auto_save_timer_ = 0.0f;
+    }
+
+    // New Script dialog
+    if (show_new_script_dialog_) {
+        ImGui::OpenPopup("New Script");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+        if (ImGui::BeginPopupModal("New Script", &show_new_script_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Create a new script file");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Script name input
+            ImGui::Text("Script Name:");
+            ImGui::SetNextItemWidth(300);
+            ImGui::InputText("##scriptname", new_script_name_, sizeof(new_script_name_));
+
+            ImGui::Spacing();
+
+            // Script type selection
+            ImGui::Text("Script Type:");
+            ImGui::RadioButton(".cyx (CyxWiz Script)", &new_script_type_, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton(".py (Python Script)", &new_script_type_, 1);
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Preview the filename
+            std::string script_name = new_script_name_;
+            std::string extension = (new_script_type_ == 0) ? ".cyx" : ".py";
+            if (!script_name.empty()) {
+                // Add extension if not already present
+                std::string lower_name = script_name;
+                std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
+                if (lower_name.length() < 4 ||
+                    (lower_name.substr(lower_name.length() - 4) != ".cyx" &&
+                     lower_name.substr(lower_name.length() - 3) != ".py")) {
+                    script_name += extension;
+                }
+                ImGui::TextDisabled("Will create: %s", script_name.c_str());
+            }
+
+            ImGui::Spacing();
+
+            // Check if we have an active project
+            auto& pm = ProjectManager::Instance();
+            bool has_project = pm.HasActiveProject();
+
+            if (!has_project) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
+                ImGui::TextWrapped("Note: No active project. Script will be created in the current directory.");
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+            }
+
+            // Create and Cancel buttons
+            bool name_valid = strlen(new_script_name_) > 0;
+
+            if (!name_valid) {
+                ImGui::BeginDisabled();
+            }
+
+            if (ImGui::Button("Create", ImVec2(120, 0))) {
+                // Build full path
+                std::string filename = new_script_name_;
+                std::string ext = (new_script_type_ == 0) ? ".cyx" : ".py";
+
+                // Add extension if not present
+                std::string lower_fn = filename;
+                std::transform(lower_fn.begin(), lower_fn.end(), lower_fn.begin(), ::tolower);
+                if (lower_fn.length() < 4 ||
+                    (lower_fn.substr(lower_fn.length() - 4) != ".cyx" &&
+                     lower_fn.substr(lower_fn.length() - 3) != ".py")) {
+                    filename += ext;
+                }
+
+                std::filesystem::path file_path;
+                if (has_project) {
+                    file_path = std::filesystem::path(pm.GetScriptsPath()) / filename;
+                } else {
+                    file_path = std::filesystem::path(filename);
+                }
+
+                // Create the file with default content
+                std::ofstream file(file_path);
+                if (file.is_open()) {
+                    if (new_script_type_ == 0) {
+                        // .cyx file default content
+                        file << "# CyxWiz Script\n";
+                        file << "# " << filename << "\n\n";
+                        file << "# Define your ML pipeline here\n\n";
+                    } else {
+                        // .py file default content
+                        file << "# Python Script\n";
+                        file << "# " << filename << "\n\n";
+                        file << "import pycyxwiz\n\n";
+                        file << "def main():\n";
+                        file << "    pass\n\n";
+                        file << "if __name__ == '__main__':\n";
+                        file << "    main()\n";
+                    }
+                    file.close();
+
+                    spdlog::info("Created script: {}", file_path.string());
+
+                    // Open the script in editor
+                    if (open_script_in_editor_callback_) {
+                        open_script_in_editor_callback_(file_path.string());
+                    }
+
+                    // Refresh asset browser
+                    if (new_script_callback_) {
+                        new_script_callback_();
+                    }
+
+                    show_new_script_dialog_ = false;
+                    memset(new_script_name_, 0, sizeof(new_script_name_));
+                } else {
+                    spdlog::error("Failed to create script: {}", file_path.string());
+                }
+            }
+
+            if (!name_valid) {
+                ImGui::EndDisabled();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                show_new_script_dialog_ = false;
+                memset(new_script_name_, 0, sizeof(new_script_name_));
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    // Account Settings dialog
+    if (show_account_settings_dialog_) {
+        ImGui::OpenPopup("##AccountSettings");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+        // Professional styling
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 24));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 12));
+
+        ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar;
+
+        if (ImGui::BeginPopupModal("##AccountSettings", &show_account_settings_dialog_, flags)) {
+
+            if (!is_logged_in_) {
+                // ========== Sign In View ==========
+
+                // Logo/Brand area
+                ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);  // Use default font
+                float window_width = ImGui::GetWindowWidth();
+
+                // Center the title
+                const char* title = "CyxWiz";
+                float title_width = ImGui::CalcTextSize(title).x;
+                ImGui::SetCursorPosX((window_width - title_width) * 0.5f);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+                ImGui::Text("%s", title);
+                ImGui::PopStyleColor();
+                ImGui::PopFont();
+
+                ImGui::Spacing();
+
+                // Subtitle
+                const char* subtitle = "Sign in to your account";
+                float subtitle_width = ImGui::CalcTextSize(subtitle).x;
+                ImGui::SetCursorPosX((window_width - subtitle_width) * 0.5f);
+                ImGui::TextDisabled("%s", subtitle);
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Input fields with consistent width
+                float input_width = 320.0f;
+                float start_x = (window_width - input_width) * 0.5f;
+
+                // Email or Phone field
+                ImGui::SetCursorPosX(start_x);
+                ImGui::Text("Email or Phone");
+                ImGui::SetCursorPosX(start_x);
+                ImGui::SetNextItemWidth(input_width);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+                ImGui::InputText("##identifier", login_identifier_, sizeof(login_identifier_));
+                ImGui::PopStyleColor(2);
+
+                ImGui::Spacing();
+
+                // Password field
+                ImGui::SetCursorPosX(start_x);
+                ImGui::Text("Password");
+                ImGui::SetCursorPosX(start_x);
+                ImGui::SetNextItemWidth(input_width);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+                bool enter_pressed = ImGui::InputText("##password", login_password_, sizeof(login_password_),
+                    ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::PopStyleColor(2);
+
+                // Error message
+                if (!login_error_message_.empty()) {
+                    ImGui::Spacing();
+                    ImGui::SetCursorPosX(start_x);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                    ImGui::Text("%s", login_error_message_.c_str());
+                    ImGui::PopStyleColor();
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Sign In button
+                ImGui::SetCursorPosX(start_x);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.52f, 0.96f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.60f, 1.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.45f, 0.85f, 1.0f));
+
+                if (ImGui::Button("Sign In", ImVec2(input_width, 38)) || enter_pressed) {
+                    // Validate input
+                    std::string identifier = login_identifier_;
+                    std::string password = login_password_;
+
+                    if (identifier.empty()) {
+                        login_error_message_ = "Please enter your email or phone number";
+                    } else if (password.empty()) {
+                        login_error_message_ = "Please enter your password";
+                    } else {
+                        // Auto-detect if email or phone
+                        bool is_email = identifier.find('@') != std::string::npos;
+                        bool is_phone = !is_email && identifier.length() >= 10 &&
+                            std::all_of(identifier.begin(), identifier.end(),
+                                [](char c) { return std::isdigit(c) || c == '+' || c == '-' || c == ' ' || c == '(' || c == ')'; });
+
+                        if (!is_email && !is_phone) {
+                            login_error_message_ = "Please enter a valid email or phone number";
+                        } else {
+                            // TODO: Actual authentication API call
+                            is_logged_in_ = true;
+                            logged_in_user_ = identifier;
+                            login_error_message_.clear();
+                            spdlog::info("User signed in: {} ({})", identifier, is_email ? "email" : "phone");
+                            memset(login_password_, 0, sizeof(login_password_));
+                        }
+                    }
+                }
+                ImGui::PopStyleColor(3);
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Links row
+                ImGui::SetCursorPosX(start_x);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.55f, 1.0f));
+
+                ImGui::Text("Forgot password?");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+                    ImGui::SetTooltip("Reset your password");
+                    ImGui::PopStyleColor();
+                }
+                if (ImGui::IsItemClicked()) {
+                    spdlog::info("Forgot password clicked");
+                }
+
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(start_x + input_width - ImGui::CalcTextSize("Create account").x);
+
+                ImGui::Text("Create account");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+                    ImGui::SetTooltip("Sign up for CyxWiz");
+                    ImGui::PopStyleColor();
+                }
+                if (ImGui::IsItemClicked()) {
+                    spdlog::info("Create account clicked");
+                }
+
+                ImGui::PopStyleColor();
+
+            } else {
+                // ========== Logged In View ==========
+
+                // Header with user avatar placeholder
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+                ImGui::Text(ICON_FA_USER "  Account");
+                ImGui::PopStyleColor();
+
+                ImGui::Spacing();
+
+                // User card
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+                ImGui::BeginChild("##UserCard", ImVec2(-1, 60), true, ImGuiWindowFlags_NoScrollbar);
+
+                ImGui::SetCursorPos(ImVec2(12, 12));
+
+                // Avatar circle placeholder
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                ImVec2 pos = ImGui::GetCursorScreenPos();
+                draw_list->AddCircleFilled(ImVec2(pos.x + 18, pos.y + 18), 18,
+                    IM_COL32(64, 100, 180, 255));
+                draw_list->AddText(ImVec2(pos.x + 10, pos.y + 8),
+                    IM_COL32(255, 255, 255, 255),
+                    std::string(1, static_cast<char>(std::toupper(logged_in_user_[0]))).c_str());
+
+                ImGui::SetCursorPos(ImVec2(52, 14));
+                ImGui::Text("Signed in as");
+                ImGui::SetCursorPos(ImVec2(52, 32));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
+                ImGui::Text("%s", logged_in_user_.c_str());
+                ImGui::PopStyleColor();
+
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Wallet Section
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.75f, 1.0f));
+                ImGui::Text(ICON_FA_WALLET "  WALLET");
+                ImGui::PopStyleColor();
+
+                ImGui::Spacing();
+
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+                ImGui::BeginChild("##WalletCard", ImVec2(-1, 70), true, ImGuiWindowFlags_NoScrollbar);
+
+                ImGui::SetCursorPos(ImVec2(12, 10));
+                ImGui::TextDisabled("Connect your Solana wallet");
+                ImGui::SetCursorPos(ImVec2(12, 30));
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.30f, 1.0f));
+                if (ImGui::Button(ICON_FA_LINK " Connect Wallet", ImVec2(150, 28))) {
+                    spdlog::info("Connect wallet clicked");
+                }
+                ImGui::PopStyleColor(2);
+
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Server Section
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.75f, 1.0f));
+                ImGui::Text(ICON_FA_SERVER "  SERVER");
+                ImGui::PopStyleColor();
+
+                ImGui::Spacing();
+
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+                ImGui::BeginChild("##ServerCard", ImVec2(-1, 65), true, ImGuiWindowFlags_NoScrollbar);
+
+                ImGui::SetCursorPos(ImVec2(12, 10));
+                ImGui::Text("Default Server");
+                ImGui::SetCursorPos(ImVec2(12, 32));
+
+                static char server_address[256] = "localhost:50051";
+                ImGui::SetNextItemWidth(-24);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
+                ImGui::InputText("##server", server_address, sizeof(server_address));
+                ImGui::PopStyleColor();
+
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Sign Out button
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.18f, 0.18f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.25f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
+                if (ImGui::Button("Sign Out", ImVec2(-1, 36))) {
+                    is_logged_in_ = false;
+                    logged_in_user_.clear();
+                    memset(login_identifier_, 0, sizeof(login_identifier_));
+                    memset(login_password_, 0, sizeof(login_password_));
+                    login_error_message_.clear();
+                    spdlog::info("User signed out");
+                }
+                ImGui::PopStyleColor(3);
+            }
+
+            ImGui::Spacing();
+
+            // Close button (subtle, bottom right)
+            float close_width = 70;
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - close_width - 24);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            if (ImGui::Button("Close", ImVec2(close_width, 28))) {
+                show_account_settings_dialog_ = false;
+            }
+            ImGui::PopStyleColor(3);
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopStyleVar(5);
+    }
+
+    // Exit confirmation dialog
+    if (show_exit_confirmation_dialog_) {
+        ImGui::OpenPopup("##ExitConfirmation");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 12));
+
+        ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar;
+
+        if (ImGui::BeginPopupModal("##ExitConfirmation", &show_exit_confirmation_dialog_, flags)) {
+            // Warning icon and title
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f));
+            ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION);
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::Text("Unsaved Changes");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::TextWrapped("You have unsaved changes. Do you want to save before closing?");
+
+            ImGui::Spacing();
+            ImGui::Spacing();
+
+            // Button row
+            float button_width = 100.0f;
+            float total_width = button_width * 3 + ImGui::GetStyle().ItemSpacing.x * 2;
+            float start_x = (ImGui::GetWindowWidth() - total_width) * 0.5f;
+
+            ImGui::SetCursorPosX(start_x);
+
+            // Save & Exit button (primary action)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.52f, 0.96f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.60f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.45f, 0.85f, 1.0f));
+            if (ImGui::Button("Save & Exit", ImVec2(button_width, 32))) {
+                // Save all and then exit
+                if (save_all_callback_) {
+                    save_all_callback_();
+                }
+                show_exit_confirmation_dialog_ = false;
+                if (exit_callback_) {
+                    exit_callback_();
+                }
+            }
+            ImGui::PopStyleColor(3);
+
+            ImGui::SameLine();
+
+            // Don't Save button (secondary action)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.18f, 0.18f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.25f, 0.25f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
+            if (ImGui::Button("Don't Save", ImVec2(button_width, 32))) {
+                // Exit without saving
+                show_exit_confirmation_dialog_ = false;
+                if (exit_callback_) {
+                    exit_callback_();
+                }
+            }
+            ImGui::PopStyleColor(3);
+
+            ImGui::SameLine();
+
+            // Cancel button
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.38f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.20f, 0.23f, 1.0f));
+            if (ImGui::Button("Cancel", ImVec2(button_width, 32))) {
+                show_exit_confirmation_dialog_ = false;
+            }
+            ImGui::PopStyleColor(3);
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopStyleVar(5);
+    }
 }
 
 void ToolbarPanel::RenderFileMenu() {
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Project", "Ctrl+N")) {
+        // Increase padding for menu items
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 6));
+
+        // ========== Project Section ==========
+        if (ImGui::MenuItem(ICON_FA_FILE " New Project", "Ctrl+Shift+N")) {
             show_new_project_dialog_ = true;
         }
 
-        if (ImGui::MenuItem("Open Project...", "Ctrl+O")) {
-            // TODO: Open file dialog
+        if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Project...", "Ctrl+Shift+O")) {
+            std::string file_path = OpenFileDialog("CyxWiz Projects (*.cyxwiz)\0*.cyxwiz\0All Files (*.*)\0*.*\0", "Open Project");
+            if (!file_path.empty()) {
+                auto& pm = ProjectManager::Instance();
+                if (pm.OpenProject(file_path)) {
+                    spdlog::info("Project opened: {}", file_path);
+                } else {
+                    spdlog::error("Failed to open project: {}", file_path);
+                }
+            }
         }
 
+        if (ImGui::MenuItem(ICON_FA_XMARK " Close Project", nullptr, false, ProjectManager::Instance().HasActiveProject())) {
+            ProjectManager::Instance().CloseProject();
+        }
+
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
-        if (ImGui::MenuItem("Save", "Ctrl+S")) {
-            // TODO: Save current project
+        // ========== Script Section ==========
+        if (ImGui::MenuItem(ICON_FA_FILE_CODE " New Script...", "Ctrl+N")) {
+            show_new_script_dialog_ = true;
+            memset(new_script_name_, 0, sizeof(new_script_name_));
+            new_script_type_ = 0;  // Default to .cyx
         }
 
-        if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
-            // TODO: Save project with new name
+        if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Script...", "Ctrl+O")) {
+            std::string file_path = OpenFileDialog(
+                "CyxWiz Scripts (*.cyx)\0*.cyx\0Python Scripts (*.py)\0*.py\0All Scripts (*.cyx;*.py)\0*.cyx;*.py\0All Files (*.*)\0*.*\0",
+                "Open Script");
+            if (!file_path.empty()) {
+                if (open_script_in_editor_callback_) {
+                    open_script_in_editor_callback_(file_path);
+                }
+                spdlog::info("Opening script: {}", file_path);
+            }
         }
 
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
-        if (ImGui::BeginMenu("Import")) {
+        // ========== Save Section ==========
+        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save", "Ctrl+S", false, ProjectManager::Instance().HasActiveProject())) {
+            auto& pm = ProjectManager::Instance();
+            if (pm.SaveProject()) {
+                spdlog::info("Project saved");
+            }
+        }
+
+        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save As...", "Ctrl+Shift+S", false, ProjectManager::Instance().HasActiveProject())) {
+            show_save_as_dialog_ = true;
+            // Pre-fill with current project name and a suggestion for new location
+            auto& pm = ProjectManager::Instance();
+            strncpy(save_as_name_buffer_, (pm.GetProjectName() + "_copy").c_str(), sizeof(save_as_name_buffer_) - 1);
+            save_as_name_buffer_[sizeof(save_as_name_buffer_) - 1] = '\0';
+            // Use parent of current project root as default location
+            std::filesystem::path current_root(pm.GetProjectRoot());
+            std::string parent_path = current_root.parent_path().string();
+            strncpy(save_as_path_buffer_, parent_path.c_str(), sizeof(save_as_path_buffer_) - 1);
+            save_as_path_buffer_[sizeof(save_as_path_buffer_) - 1] = '\0';
+        }
+
+        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save All", "Ctrl+Alt+S")) {
+            if (save_all_callback_) {
+                save_all_callback_();
+            }
+        }
+
+        ImGui::Spacing();
+
+        // Auto-save toggle with checkmark
+        if (ImGui::MenuItem(ICON_FA_CLOCK " Auto Save", nullptr, auto_save_enabled_)) {
+            auto_save_enabled_ = !auto_save_enabled_;
+            spdlog::info("Auto-save {}", auto_save_enabled_ ? "enabled" : "disabled");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ========== Import/Export Section ==========
+        if (ImGui::BeginMenu(ICON_FA_DOWNLOAD " Import")) {
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
             if (ImGui::MenuItem("ONNX Model...")) {
                 // TODO: Import ONNX
             }
@@ -148,10 +832,12 @@ void ToolbarPanel::RenderFileMenu() {
             if (ImGui::MenuItem("TensorFlow Model...")) {
                 // TODO: Import TF
             }
+            ImGui::PopStyleVar();
             ImGui::EndMenu();
         }
 
-        if (ImGui::BeginMenu("Export")) {
+        if (ImGui::BeginMenu(ICON_FA_DOWNLOAD " Export")) {
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
             if (ImGui::MenuItem("ONNX...")) {
                 // TODO: Export ONNX
             }
@@ -161,23 +847,77 @@ void ToolbarPanel::RenderFileMenu() {
             if (ImGui::MenuItem("LoRA Adapter...")) {
                 // TODO: Export LoRA
             }
+            ImGui::PopStyleVar();
             ImGui::EndMenu();
         }
 
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
-        if (ImGui::BeginMenu("Recent Projects")) {
-            ImGui::MenuItem("project1.cyxwiz");
-            ImGui::MenuItem("project2.cyxwiz");
+        // ========== Recent Projects Section ==========
+        auto& pm = ProjectManager::Instance();
+        const auto& recent = pm.GetRecentProjects();
+
+        if (ImGui::BeginMenu(ICON_FA_CLOCK " Recent Projects", !recent.empty())) {
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
+
+            for (const auto& rp : recent) {
+                // Show project name with path as tooltip
+                std::string label = rp.name;
+                if (ImGui::MenuItem(label.c_str())) {
+                    if (pm.OpenProject(rp.path)) {
+                        spdlog::info("Opened recent project: {}", rp.name);
+                    } else {
+                        spdlog::error("Failed to open recent project: {}", rp.path);
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", rp.path.c_str());
+                }
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Clear Recent Projects")) {
+                pm.ClearRecentProjects();
+            }
+
+            ImGui::PopStyleVar();
             ImGui::EndMenu();
         }
 
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
-        if (ImGui::MenuItem("Exit", "Alt+F4")) {
-            // TODO: Exit application
+        // ========== Settings Section ==========
+        if (ImGui::MenuItem(ICON_FA_USER " Account Settings...")) {
+            show_account_settings_dialog_ = true;
+            if (account_settings_callback_) {
+                account_settings_callback_();
+            }
         }
 
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ========== Exit ==========
+        if (ImGui::MenuItem(ICON_FA_XMARK " Exit", "Alt+F4")) {
+            // Check for unsaved changes
+            bool has_unsaved = has_unsaved_changes_callback_ && has_unsaved_changes_callback_();
+            if (has_unsaved) {
+                show_exit_confirmation_dialog_ = true;
+            } else {
+                // No unsaved changes, exit directly
+                if (exit_callback_) {
+                    exit_callback_();
+                }
+            }
+        }
+
+        ImGui::PopStyleVar();
         ImGui::EndMenu();
     }
 }
@@ -625,70 +1365,35 @@ std::string ToolbarPanel::OpenFolderDialog() {
 #endif
 }
 
-bool ToolbarPanel::CreateProjectOnDisk(const std::string& project_name, const std::string& project_path) {
-    try {
-        namespace fs = std::filesystem;
 
-        // Create project directory
-        fs::path project_dir = fs::path(project_path) / project_name;
-        if (fs::exists(project_dir)) {
-            spdlog::error("Project directory already exists: {}", project_dir.string());
-            return false;
-        }
+std::string ToolbarPanel::OpenFileDialog(const char* filter, const char* title) {
+#ifdef _WIN32
+    OPENFILENAMEA ofn;
+    char szFile[260] = { 0 };
 
-        fs::create_directories(project_dir);
-        spdlog::info("Created project directory: {}", project_dir.string());
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = nullptr;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = filter;
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = nullptr;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = nullptr;
+    ofn.lpstrTitle = title;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
-        // Create subdirectories
-        fs::create_directories(project_dir / "models");
-        fs::create_directories(project_dir / "datasets");
-        fs::create_directories(project_dir / "scripts");
-        fs::create_directories(project_dir / "checkpoints");
-        fs::create_directories(project_dir / "exports");
-
-        // Create project file (.cyxwiz)
-        fs::path project_file = project_dir / (project_name + ".cyxwiz");
-        std::ofstream file(project_file);
-        if (!file.is_open()) {
-            spdlog::error("Failed to create project file: {}", project_file.string());
-            return false;
-        }
-
-        // Write basic project configuration (JSON format)
-        file << "{\n";
-        file << "  \"name\": \"" << project_name << "\",\n";
-        file << "  \"version\": \"0.1.0\",\n";
-        file << "  \"created\": \"" << std::time(nullptr) << "\",\n";
-        file << "  \"description\": \"CyxWiz Machine Learning Project\",\n";
-        file << "  \"models\": [],\n";
-        file << "  \"datasets\": [],\n";
-        file << "  \"scripts\": []\n";
-        file << "}\n";
-        file.close();
-
-        spdlog::info("Created project file: {}", project_file.string());
-
-        // Create README.md
-        fs::path readme = project_dir / "README.md";
-        std::ofstream readme_file(readme);
-        if (readme_file.is_open()) {
-            readme_file << "# " << project_name << "\n\n";
-            readme_file << "CyxWiz Machine Learning Project\n\n";
-            readme_file << "## Directory Structure\n\n";
-            readme_file << "- `models/` - Neural network models\n";
-            readme_file << "- `datasets/` - Training and validation datasets\n";
-            readme_file << "- `scripts/` - Python scripts for training and inference\n";
-            readme_file << "- `checkpoints/` - Training checkpoints\n";
-            readme_file << "- `exports/` - Exported models (ONNX, GGUF, etc.)\n";
-            readme_file.close();
-        }
-
-        return true;
-
-    } catch (const std::exception& e) {
-        spdlog::error("Failed to create project: {}", e.what());
-        return false;
+    if (GetOpenFileNameA(&ofn)) {
+        return std::string(szFile);
     }
+    return "";
+#else
+    (void)filter;
+    (void)title;
+    spdlog::warn("File dialog not implemented for this platform");
+    return "";
+#endif
 }
 
 void ToolbarPanel::CreatePlotWindow(const std::string& title, PlotWindow::PlotWindowType type) {
