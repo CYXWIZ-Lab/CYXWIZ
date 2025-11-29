@@ -11,6 +11,33 @@ namespace fs = std::filesystem;
 
 namespace cyxwiz {
 
+// EditorSettings JSON serialization
+EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
+    EditorSettings settings;
+    settings.theme = j.value("theme", 3);
+    settings.font_scale = j.value("font_scale", 1.6f);
+    settings.tab_size = j.value("tab_size", 4);
+    settings.show_whitespace = j.value("show_whitespace", true);
+    settings.syntax_highlighting = j.value("syntax_highlighting", true);
+    settings.word_wrap = j.value("word_wrap", false);
+    settings.show_line_numbers = j.value("show_line_numbers", true);
+    settings.auto_indent = j.value("auto_indent", true);
+    return settings;
+}
+
+nlohmann::json EditorSettings::ToJson() const {
+    nlohmann::json j;
+    j["theme"] = theme;
+    j["font_scale"] = font_scale;
+    j["tab_size"] = tab_size;
+    j["show_whitespace"] = show_whitespace;
+    j["syntax_highlighting"] = syntax_highlighting;
+    j["word_wrap"] = word_wrap;
+    j["show_line_numbers"] = show_line_numbers;
+    j["auto_indent"] = auto_indent;
+    return j;
+}
+
 // Static default filters
 static const std::map<std::string, std::vector<std::string>> s_default_filters = {
     {"Scripts", {".py", ".cyx"}},
@@ -44,6 +71,19 @@ ProjectConfig ProjectConfig::FromJson(const nlohmann::json& j) {
         }
     }
 
+    // Load editor settings
+    if (j.contains("editor_settings") && j["editor_settings"].is_object()) {
+        config.editor_settings = EditorSettings::FromJson(j["editor_settings"]);
+    }
+
+    // Load open scripts
+    if (j.contains("open_scripts") && j["open_scripts"].is_array()) {
+        for (const auto& script : j["open_scripts"]) {
+            config.open_scripts.push_back(script.get<std::string>());
+        }
+    }
+    config.active_script_index = j.value("active_script_index", 0);
+
     return config;
 }
 
@@ -55,6 +95,9 @@ nlohmann::json ProjectConfig::ToJson() const {
     j["description"] = description;
     j["recent_files"] = recent_files;
     j["filters"] = filters;
+    j["editor_settings"] = editor_settings.ToJson();
+    j["open_scripts"] = open_scripts;
+    j["active_script_index"] = active_script_index;
     return j;
 }
 
@@ -288,6 +331,11 @@ std::string ProjectManager::GetExportsPath() const {
 std::string ProjectManager::GetPluginsPath() const {
     if (!HasActiveProject()) return "";
     return (fs::path(project_root_) / "plugins").string();
+}
+
+std::string ProjectManager::GetLayoutFilePath() const {
+    if (!HasActiveProject()) return "";
+    return (fs::path(project_root_) / "layout.ini").string();
 }
 
 std::string ProjectManager::ResolveAssetPath(const std::string& relative_path) const {

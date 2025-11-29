@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <filesystem>
+#include <functional>
 
 namespace scripting {
     class ScriptingEngine;
@@ -53,6 +54,65 @@ public:
     bool HasUnsavedFiles() const;
     std::vector<std::string> GetUnsavedFileNames() const;
     void SaveAllFiles();  // Save all unsaved files
+
+    // Find/Replace operations
+    bool FindInEditor(const std::string& search_text, bool case_sensitive, bool whole_word, bool use_regex);
+    bool FindNext();
+    bool FindPrevious();
+    bool Replace(const std::string& search_text, const std::string& replace_text,
+                 bool case_sensitive, bool whole_word, bool use_regex);
+    int ReplaceAll(const std::string& search_text, const std::string& replace_text,
+                   bool case_sensitive, bool whole_word, bool use_regex);
+
+    // Comment operations
+    void ToggleLineComment();
+    void ToggleBlockComment();
+
+    // Edit operations (for Edit menu)
+    void Undo();
+    void Redo();
+    void Cut();
+    void Copy();
+    void Paste();
+    void Delete();
+    void SelectAll();
+
+    // Navigation
+    void GoToLine(int line_number);
+
+    // Line operations
+    void DuplicateLine();
+    void MoveLineUp();
+    void MoveLineDown();
+    void Indent();
+    void Outdent();
+
+    // Text transformation
+    void TransformToUppercase();
+    void TransformToLowercase();
+    void TransformToTitleCase();
+
+    // Multi-line operations
+    void SortLinesAscending();
+    void SortLinesDescending();
+    void JoinLines();
+
+    // Settings access (for Preferences synchronization)
+    void SetFontScale(float scale) { font_scale_ = scale; }
+    void SetTabSize(int size);
+    void SetShowWhitespace(bool show);
+    void SetWordWrap(bool wrap);
+    void SetAutoIndent(bool indent);
+    void SetTheme(int theme_index);
+    float GetFontScale() const { return font_scale_; }
+    int GetTabSize() const { return tab_size_; }
+    bool GetShowWhitespace() const { return show_whitespace_; }
+    bool GetWordWrap() const { return word_wrap_; }
+    bool GetAutoIndent() const { return auto_indent_; }
+    int GetThemeIndex() const { return static_cast<int>(current_theme_); }
+
+    // Callbacks for settings changes (Script Editor -> Preferences sync)
+    void SetOnSettingsChangedCallback(std::function<void()> callback) { on_settings_changed_callback_ = callback; }
 
 private:
     // Tab/File representation
@@ -118,6 +178,8 @@ private:
     float font_scale_ = 1.6f;  // 1.0 = Small, 1.3 = Medium, 1.6 = Large (default), 2.0 = Extra Large
     bool show_whitespace_ = true;
     bool syntax_highlighting_ = true;
+    bool word_wrap_ = false;
+    bool auto_indent_ = true;
     int tab_size_ = 4;  // 2, 4, or 8
 
     // Save/Close dialog state
@@ -142,6 +204,15 @@ private:
     static TextEditor::Palette GetDraculaPalette();
     static TextEditor::Palette GetOneDarkPalette();
     static TextEditor::Palette GetGitHubPalette();
+
+    // Find/Replace state
+    std::string last_search_text_;
+    bool last_case_sensitive_ = false;
+    bool last_whole_word_ = false;
+    bool last_use_regex_ = false;
+
+    // Settings changed callback (for syncing with Preferences)
+    std::function<void()> on_settings_changed_callback_;
 };
 
 } // namespace cyxwiz

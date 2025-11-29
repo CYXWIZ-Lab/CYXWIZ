@@ -10,6 +10,24 @@
 namespace cyxwiz {
 
 /**
+ * Editor settings stored in project file
+ */
+struct EditorSettings {
+    int theme = 3;           // 0=Dark, 1=Light, 2=RetroBlu, 3=Monokai, 4=Dracula, 5=OneDark, 6=GitHub
+    float font_scale = 1.6f; // 1.0=Small, 1.3=Medium, 1.6=Large, 2.0=Extra Large
+    int tab_size = 4;        // 2, 4, or 8
+    bool show_whitespace = true;
+    bool syntax_highlighting = true;
+    bool word_wrap = false;
+    bool show_line_numbers = true;
+    bool auto_indent = true;
+
+    // JSON serialization
+    static EditorSettings FromJson(const nlohmann::json& j);
+    nlohmann::json ToJson() const;
+};
+
+/**
  * Project configuration stored in .cyxwiz files
  */
 struct ProjectConfig {
@@ -20,6 +38,13 @@ struct ProjectConfig {
     std::vector<std::string> recent_files;
     // Filter definitions (custom filters can be added)
     std::map<std::string, std::vector<std::string>> filters; // filter_name -> extensions
+
+    // Editor/UI settings
+    EditorSettings editor_settings;
+
+    // Open files in Script Editor (to restore on project load)
+    std::vector<std::string> open_scripts;
+    int active_script_index = 0;
 
     // JSON serialization
     static ProjectConfig FromJson(const nlohmann::json& j);
@@ -65,6 +90,7 @@ public:
     std::string GetCheckpointsPath() const;
     std::string GetExportsPath() const;
     std::string GetPluginsPath() const;
+    std::string GetLayoutFilePath() const;  // Path to project-specific imgui.ini
 
     // Resolve relative path to absolute
     std::string ResolveAssetPath(const std::string& relative_path) const;

@@ -80,12 +80,23 @@ public:
     using ExitRequestCallback = std::function<void()>;
     void SetExitRequestCallback(ExitRequestCallback callback) { exit_request_callback_ = callback; }
 
+    // Project settings persistence
+    void SaveProjectSettings();      // Save current editor settings and layout to project
+    void LoadProjectSettings();      // Load editor settings and layout from project
+    void SaveLayout();               // Save only ImGui layout to project
+    void LoadLayout();               // Load only ImGui layout from project
+
+    // Called when project is opened/closed
+    void OnProjectOpened(const std::string& project_root);
+    void OnProjectClosed(const std::string& project_root);
+
 private:
     void RenderDockSpace();
     void BuildInitialDockLayout();
     void ShowAboutDialog();
     void RegisterPanelsWithSidebar();
     void RenderSidebar();
+    void HandleGlobalShortcuts();
 
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;

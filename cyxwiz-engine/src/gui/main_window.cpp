@@ -21,11 +21,14 @@
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
+#include "../core/project_manager.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
+#include <filesystem>
+#include <fstream>
 
 namespace gui {
 
@@ -82,10 +85,27 @@ MainWindow::MainWindow()
         this->ResetDockLayout();
     });
 
+    toolbar_->SetSaveLayoutCallback([this]() {
+        this->SaveLayout();
+    });
+
+    toolbar_->SetSaveProjectSettingsCallback([this]() {
+        this->SaveProjectSettings();
+    });
+
     toolbar_->SetTogglePlotTestControlCallback([this]() {
         if (plot_test_control_) {
             plot_test_control_->Toggle();
         }
+    });
+
+    // Register callbacks with ProjectManager for project lifecycle events
+    cyxwiz::ProjectManager::Instance().SetOnProjectOpened([this](const std::string& project_root) {
+        this->OnProjectOpened(project_root);
+    });
+
+    cyxwiz::ProjectManager::Instance().SetOnProjectClosed([this](const std::string& project_root) {
+        this->OnProjectClosed(project_root);
     });
 
     // Set up New Script callback (called after script is created to refresh asset browser)
@@ -120,6 +140,226 @@ MainWindow::MainWindow()
     toolbar_->SetHasUnsavedChangesCallback([this]() -> bool {
         return HasUnsavedFiles();
     });
+
+    // Set up Edit menu callbacks for Find/Replace
+    toolbar_->SetFindCallback([this](const std::string& text, bool case_sensitive, bool whole_word, bool use_regex) {
+        if (script_editor_) {
+            script_editor_->FindInEditor(text, case_sensitive, whole_word, use_regex);
+        }
+    });
+
+    toolbar_->SetReplaceCallback([this](const std::string& find_text, const std::string& replace_text,
+                                        bool case_sensitive, bool whole_word, bool use_regex) {
+        if (script_editor_) {
+            script_editor_->Replace(find_text, replace_text, case_sensitive, whole_word, use_regex);
+        }
+    });
+
+    toolbar_->SetReplaceAllCallback([this](const std::string& find_text, const std::string& replace_text,
+                                           bool case_sensitive, bool whole_word, bool use_regex) {
+        if (script_editor_) {
+            int count = script_editor_->ReplaceAll(find_text, replace_text, case_sensitive, whole_word, use_regex);
+            spdlog::info("Replaced {} occurrences", count);
+        }
+    });
+
+    // Set up edit operation callbacks
+    toolbar_->SetUndoCallback([this]() {
+        if (script_editor_) {
+            script_editor_->Undo();
+        }
+    });
+
+    toolbar_->SetRedoCallback([this]() {
+        if (script_editor_) {
+            script_editor_->Redo();
+        }
+    });
+
+    toolbar_->SetCutCallback([this]() {
+        if (script_editor_) {
+            script_editor_->Cut();
+        }
+    });
+
+    toolbar_->SetCopyCallback([this]() {
+        if (script_editor_) {
+            script_editor_->Copy();
+        }
+    });
+
+    toolbar_->SetPasteCallback([this]() {
+        if (script_editor_) {
+            script_editor_->Paste();
+        }
+    });
+
+    toolbar_->SetDeleteCallback([this]() {
+        if (script_editor_) {
+            script_editor_->Delete();
+        }
+    });
+
+    toolbar_->SetSelectAllCallback([this]() {
+        if (script_editor_) {
+            script_editor_->SelectAll();
+        }
+    });
+
+    // Set up comment toggle callbacks
+    toolbar_->SetToggleLineCommentCallback([this]() {
+        if (script_editor_) {
+            script_editor_->ToggleLineComment();
+        }
+    });
+
+    toolbar_->SetToggleBlockCommentCallback([this]() {
+        if (script_editor_) {
+            script_editor_->ToggleBlockComment();
+        }
+    });
+
+    // Set up Go to Line callback
+    toolbar_->SetGoToLineCallback([this](int line) {
+        if (script_editor_) {
+            script_editor_->GoToLine(line);
+        }
+    });
+
+    // Set up line operation callbacks
+    toolbar_->SetDuplicateLineCallback([this]() {
+        if (script_editor_) {
+            script_editor_->DuplicateLine();
+        }
+    });
+
+    toolbar_->SetMoveLineUpCallback([this]() {
+        if (script_editor_) {
+            script_editor_->MoveLineUp();
+        }
+    });
+
+    toolbar_->SetMoveLineDownCallback([this]() {
+        if (script_editor_) {
+            script_editor_->MoveLineDown();
+        }
+    });
+
+    toolbar_->SetIndentCallback([this]() {
+        if (script_editor_) {
+            script_editor_->Indent();
+        }
+    });
+
+    toolbar_->SetOutdentCallback([this]() {
+        if (script_editor_) {
+            script_editor_->Outdent();
+        }
+    });
+
+    // Set up text transformation callbacks
+    toolbar_->SetTransformUppercaseCallback([this]() {
+        if (script_editor_) {
+            script_editor_->TransformToUppercase();
+        }
+    });
+
+    toolbar_->SetTransformLowercaseCallback([this]() {
+        if (script_editor_) {
+            script_editor_->TransformToLowercase();
+        }
+    });
+
+    toolbar_->SetTransformTitleCaseCallback([this]() {
+        if (script_editor_) {
+            script_editor_->TransformToTitleCase();
+        }
+    });
+
+    // Set up sort and join lines callbacks
+    toolbar_->SetSortLinesAscCallback([this]() {
+        if (script_editor_) {
+            script_editor_->SortLinesAscending();
+        }
+    });
+
+    toolbar_->SetSortLinesDescCallback([this]() {
+        if (script_editor_) {
+            script_editor_->SortLinesDescending();
+        }
+    });
+
+    toolbar_->SetJoinLinesCallback([this]() {
+        if (script_editor_) {
+            script_editor_->JoinLines();
+        }
+    });
+
+    // Set up editor settings callbacks (Preferences -> Script Editor synchronization)
+    toolbar_->SetEditorThemeCallback([this](int theme_index) {
+        if (script_editor_) {
+            script_editor_->SetTheme(theme_index);
+            spdlog::info("Editor theme changed to index {}", theme_index);
+        }
+    });
+
+    toolbar_->SetEditorTabSizeCallback([this](int tab_size) {
+        if (script_editor_) {
+            script_editor_->SetTabSize(tab_size);
+            spdlog::info("Editor tab size changed to {}", tab_size);
+        }
+    });
+
+    toolbar_->SetEditorFontScaleCallback([this](float scale) {
+        if (script_editor_) {
+            script_editor_->SetFontScale(scale);
+            spdlog::info("Editor font scale changed to {}", scale);
+        }
+    });
+
+    toolbar_->SetEditorShowWhitespaceCallback([this](bool show) {
+        if (script_editor_) {
+            script_editor_->SetShowWhitespace(show);
+            spdlog::info("Editor show whitespace changed to {}", show);
+        }
+    });
+
+    toolbar_->SetEditorWordWrapCallback([this](bool wrap) {
+        if (script_editor_) {
+            script_editor_->SetWordWrap(wrap);
+            spdlog::info("Editor word wrap changed to {}", wrap);
+        }
+    });
+
+    toolbar_->SetEditorAutoIndentCallback([this](bool indent) {
+        if (script_editor_) {
+            script_editor_->SetAutoIndent(indent);
+            spdlog::info("Editor auto indent changed to {}", indent);
+        }
+    });
+
+    // Initialize toolbar editor settings from script editor's current values
+    if (script_editor_) {
+        toolbar_->SetEditorTheme(script_editor_->GetThemeIndex());
+        toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
+        toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
+        toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
+        toolbar_->SetEditorWordWrap(script_editor_->GetWordWrap());
+        toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
+
+        // Set up callback for when settings change in Script Editor (View menu)
+        // This syncs changes back to the Preferences dialog
+        script_editor_->SetOnSettingsChangedCallback([this]() {
+            if (toolbar_ && script_editor_) {
+                toolbar_->SetEditorTheme(script_editor_->GetThemeIndex());
+                toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
+                toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
+                toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
+                toolbar_->SetEditorWordWrap(script_editor_->GetWordWrap());
+                toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
+            }
+        });
+    }
 
     // Set up asset browser double-click callback to open files in script editor
     asset_browser_->SetOnAssetDoubleClick([this](const cyxwiz::AssetBrowserPanel::AssetItem& item) {
@@ -265,6 +505,9 @@ void MainWindow::ResetDockLayout() {
 }
 
 void MainWindow::Render() {
+    // Handle global keyboard shortcuts
+    HandleGlobalShortcuts();
+
     // Check if we need to connect P2PClient to monitoring panel
     if (!monitoring_job_id_.empty() && job_manager_ && p2p_training_panel_) {
         auto p2p_client = job_manager_->GetP2PClient(monitoring_job_id_);
@@ -542,6 +785,210 @@ void MainWindow::RegisterPanelsWithSidebar() {
 void MainWindow::RenderSidebar() {
     // Render the Unreal-style sidebar (auto-hides, appears on hover)
     GetDockStyle().RenderSidebarToggles();
+}
+
+
+void MainWindow::HandleGlobalShortcuts() {
+    ImGuiIO& io = ImGui::GetIO();
+
+    bool ctrl = io.KeyCtrl;
+    bool shift = io.KeyShift;
+    bool alt = io.KeyAlt;
+
+    // Don't capture shortcuts if a dialog is already open
+    if (toolbar_) {
+        if (toolbar_->IsFindDialogOpen() || toolbar_->IsReplaceDialogOpen() ||
+            toolbar_->IsFindInFilesDialogOpen() || toolbar_->IsReplaceInFilesDialogOpen()) {
+            return;
+        }
+    }
+
+    // Find (Ctrl+F)
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F)) {
+        if (toolbar_) {
+            toolbar_->OpenFindDialog();
+            spdlog::info("Opened Find dialog via Ctrl+F");
+        }
+    }
+
+    // Replace (Ctrl+H)
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_H)) {
+        if (toolbar_) {
+            toolbar_->OpenReplaceDialog();
+            spdlog::info("Opened Replace dialog via Ctrl+H");
+        }
+    }
+
+    // Find in Files (Ctrl+Shift+F)
+    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F)) {
+        if (toolbar_) {
+            toolbar_->OpenFindInFilesDialog();
+            spdlog::info("Opened Find in Files dialog via Ctrl+Shift+F");
+        }
+    }
+
+    // Replace in Files (Ctrl+Shift+H)
+    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_H)) {
+        if (toolbar_) {
+            toolbar_->OpenReplaceInFilesDialog();
+            spdlog::info("Opened Replace in Files dialog via Ctrl+Shift+H");
+        }
+    }
+
+    // Toggle Line Comment (Ctrl+/)
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Slash)) {
+        if (script_editor_) {
+            script_editor_->ToggleLineComment();
+            spdlog::info("Toggled line comment via Ctrl+/");
+        }
+    }
+
+    // Toggle Block Comment (Shift+Alt+A)
+    if (!ctrl && shift && alt && ImGui::IsKeyPressed(ImGuiKey_A)) {
+        if (script_editor_) {
+            script_editor_->ToggleBlockComment();
+            spdlog::info("Toggled block comment via Shift+Alt+A");
+        }
+    }
+
+    // Go to Line (Ctrl+G) - Opens dialog in toolbar
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_G)) {
+        // Note: This opens the Go to Line dialog in the toolbar
+        // The toolbar handles the dialog rendering
+    }
+
+    // Duplicate Line (Ctrl+D)
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_D)) {
+        if (script_editor_) {
+            script_editor_->DuplicateLine();
+            spdlog::info("Duplicated line via Ctrl+D");
+        }
+    }
+
+    // Move Line Up (Alt+Up)
+    if (!ctrl && !shift && alt && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+        if (script_editor_) {
+            script_editor_->MoveLineUp();
+            spdlog::info("Moved line up via Alt+Up");
+        }
+    }
+
+    // Move Line Down (Alt+Down)
+    if (!ctrl && !shift && alt && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        if (script_editor_) {
+            script_editor_->MoveLineDown();
+            spdlog::info("Moved line down via Alt+Down");
+        }
+    }
+
+    // Join Lines (Ctrl+J)
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_J)) {
+        if (script_editor_) {
+            script_editor_->JoinLines();
+            spdlog::info("Joined lines via Ctrl+J");
+        }
+    }
+}
+
+// ============================================================================
+// Project Settings Persistence
+// ============================================================================
+
+void MainWindow::SaveLayout() {
+    // Save to the default imgui.ini in the executable directory
+    // This ensures consistent layout across all projects
+    ImGui::SaveIniSettingsToDisk("imgui.ini");
+    spdlog::info("Saved layout to imgui.ini");
+}
+
+void MainWindow::LoadLayout() {
+    // Layout is loaded automatically from imgui.ini by ImGui
+    // This function is kept for API compatibility but doesn't need to do anything
+    // Per-project layouts are disabled to avoid dock corruption issues
+}
+
+void MainWindow::SaveProjectSettings() {
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    if (!pm.HasActiveProject()) {
+        spdlog::warn("Cannot save project settings: no active project");
+        return;
+    }
+
+    // Get current editor settings from script editor
+    cyxwiz::EditorSettings& settings = pm.GetConfig().editor_settings;
+    if (script_editor_) {
+        settings.theme = script_editor_->GetThemeIndex();
+        settings.font_scale = script_editor_->GetFontScale();
+        settings.tab_size = script_editor_->GetTabSize();
+        settings.show_whitespace = script_editor_->GetShowWhitespace();
+    }
+
+    // Save layout file
+    SaveLayout();
+
+    // Save project file (includes editor settings)
+    pm.SaveProject();
+    spdlog::info("Saved project settings");
+}
+
+void MainWindow::LoadProjectSettings() {
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    if (!pm.HasActiveProject()) {
+        return;
+    }
+
+    const cyxwiz::EditorSettings& settings = pm.GetConfig().editor_settings;
+
+    // Apply editor settings to script editor
+    if (script_editor_) {
+        script_editor_->SetTheme(settings.theme);
+        script_editor_->SetFontScale(settings.font_scale);
+        script_editor_->SetTabSize(settings.tab_size);
+        script_editor_->SetShowWhitespace(settings.show_whitespace);
+    }
+
+    // Sync settings to toolbar/preferences
+    if (toolbar_) {
+        toolbar_->SetEditorTheme(settings.theme);
+        toolbar_->SetEditorTabSize(settings.tab_size);
+        toolbar_->SetEditorFontScale(settings.font_scale);
+        toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
+    }
+
+    // Load layout file
+    LoadLayout();
+
+    // Restore open scripts
+    const auto& open_scripts = pm.GetConfig().open_scripts;
+    for (const auto& script_path : open_scripts) {
+        if (script_editor_ && std::filesystem::exists(script_path)) {
+            script_editor_->OpenFile(script_path);
+        }
+    }
+
+    spdlog::info("Loaded project settings (theme={}, font_scale={:.1f}, tab_size={})",
+                 settings.theme, settings.font_scale, settings.tab_size);
+}
+
+void MainWindow::OnProjectOpened(const std::string& project_root) {
+    spdlog::info("Project opened: {}", project_root);
+
+    // Load project settings and layout
+    LoadProjectSettings();
+
+    // Set project root and refresh asset browser to show project files
+    if (asset_browser_) {
+        asset_browser_->SetProjectRoot(project_root);
+        asset_browser_->Refresh();
+    }
+}
+
+void MainWindow::OnProjectClosed(const std::string& project_root) {
+    spdlog::info("Project closed: {}", project_root);
+
+    // Save current settings before closing
+    // Note: This is called AFTER project state is cleared, so we can't save here
+    // Settings should be saved before CloseProject() is called
 }
 
 } // namespace gui

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <cstdio>
+#include <regex>
 #include <spdlog/spdlog.h>
 
 #ifdef _WIN32
@@ -239,7 +240,7 @@ void ScriptEditorPanel::RenderMenuBar() {
             ImGui::EndMenu();
         }
 
-        // View menu for theme and font settings
+        // View menu - quick access to editor settings (synced with Preferences)
         if (ImGui::BeginMenu("View")) {
             // Theme submenu
             if (ImGui::BeginMenu("Theme")) {
@@ -248,18 +249,22 @@ void ScriptEditorPanel::RenderMenuBar() {
                 if (ImGui::MenuItem("Monokai", nullptr, current_theme_ == EditorTheme::Monokai)) {
                     current_theme_ = EditorTheme::Monokai;
                     ApplyThemeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("Dracula", nullptr, current_theme_ == EditorTheme::Dracula)) {
                     current_theme_ = EditorTheme::Dracula;
                     ApplyThemeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("One Dark", nullptr, current_theme_ == EditorTheme::OneDark)) {
                     current_theme_ = EditorTheme::OneDark;
                     ApplyThemeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("GitHub", nullptr, current_theme_ == EditorTheme::GitHub)) {
                     current_theme_ = EditorTheme::GitHub;
                     ApplyThemeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 ImGui::Unindent(10.0f);
                 ImGui::Separator();
@@ -268,14 +273,17 @@ void ScriptEditorPanel::RenderMenuBar() {
                 if (ImGui::MenuItem("Dark", nullptr, current_theme_ == EditorTheme::Dark)) {
                     current_theme_ = EditorTheme::Dark;
                     ApplyThemeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("Light", nullptr, current_theme_ == EditorTheme::Light)) {
                     current_theme_ = EditorTheme::Light;
                     ApplyThemeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("Retro Blue", nullptr, current_theme_ == EditorTheme::RetroBlu)) {
                     current_theme_ = EditorTheme::RetroBlu;
                     ApplyThemeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 ImGui::Unindent(10.0f);
                 ImGui::EndMenu();
@@ -285,15 +293,19 @@ void ScriptEditorPanel::RenderMenuBar() {
             if (ImGui::BeginMenu("Font Size")) {
                 if (ImGui::MenuItem("Small", nullptr, font_scale_ == 1.0f)) {
                     font_scale_ = 1.0f;
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("Medium", nullptr, font_scale_ == 1.3f)) {
                     font_scale_ = 1.3f;
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("Large", nullptr, font_scale_ == 1.6f)) {
                     font_scale_ = 1.6f;
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("Extra Large", nullptr, font_scale_ == 2.0f)) {
                     font_scale_ = 2.0f;
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 ImGui::EndMenu();
             }
@@ -303,14 +315,17 @@ void ScriptEditorPanel::RenderMenuBar() {
                 if (ImGui::MenuItem("2 Spaces", nullptr, tab_size_ == 2)) {
                     tab_size_ = 2;
                     ApplyTabSizeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("4 Spaces", nullptr, tab_size_ == 4)) {
                     tab_size_ = 4;
                     ApplyTabSizeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("8 Spaces", nullptr, tab_size_ == 8)) {
                     tab_size_ = 8;
                     ApplyTabSizeToAllTabs();
+                    if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 ImGui::EndMenu();
             }
@@ -324,11 +339,14 @@ void ScriptEditorPanel::RenderMenuBar() {
 
             // Show Whitespace toggle
             if (ImGui::MenuItem("Show Whitespace", nullptr, &show_whitespace_)) {
-                // Apply to all tabs
                 for (auto& tab : tabs_) {
                     tab->editor.SetShowWhitespaces(show_whitespace_);
                 }
+                if (on_settings_changed_callback_) on_settings_changed_callback_();
             }
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Also in: Edit > Preferences > Editor");
 
             ImGui::EndMenu();
         }
@@ -406,14 +424,16 @@ void ScriptEditorPanel::RenderTabBar() {
                 tab_label += "*";
             }
 
+            // Use unique ID to avoid issues with duplicate filenames
+            std::string tab_id = tab_label + "##" + std::to_string(i);
+
             ImGuiTabItemFlags tab_flags = ImGuiTabItemFlags_None;
             if (request_focus_ && i == active_tab_index_) {
                 tab_flags |= ImGuiTabItemFlags_SetSelected;
-                request_focus_ = false;
             }
 
             bool open = true;
-            if (ImGui::BeginTabItem(tab_label.c_str(), &open, tab_flags)) {
+            if (ImGui::BeginTabItem(tab_id.c_str(), &open, tab_flags)) {
                 active_tab_index_ = i;
                 ImGui::EndTabItem();
             }
@@ -423,6 +443,9 @@ void ScriptEditorPanel::RenderTabBar() {
                 close_tab_index_ = i;
             }
         }
+
+        // Clear request_focus_ after processing all tabs
+        request_focus_ = false;
 
         // "+" button to add new tab
         if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) {
@@ -604,6 +627,7 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         if (tabs_[i]->filepath == path) {
             active_tab_index_ = i;
             request_focus_ = true;
+            request_window_focus_ = true;  // Focus the Script Editor window
             spdlog::info("File already open: {}", path);
             return;
         }
@@ -643,6 +667,7 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         tab->editor.SetText(content);
         active_tab_index_ = empty_tab_index;  // Switch to this tab
         request_focus_ = true;
+        request_window_focus_ = true;  // Focus the Script Editor window
         spdlog::info("Replaced empty untitled tab at index {} with file: {}", empty_tab_index, path);
         return;
     }
@@ -689,6 +714,7 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     tabs_.push_back(std::move(tab));
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
     request_focus_ = true;
+    request_window_focus_ = true;  // Focus the Script Editor window
 
     spdlog::info("Opened file: {}", path);
 }
@@ -1538,6 +1564,1035 @@ void ScriptEditorPanel::RenderSaveBeforeCloseDialog() {
         }
 
         ImGui::EndPopup();
+    }
+}
+
+
+// ==================== Find/Replace Operations ====================
+
+bool ScriptEditorPanel::FindInEditor(const std::string& search_text, bool case_sensitive, bool whole_word, bool use_regex) {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return false;
+    }
+
+    if (search_text.empty()) {
+        return false;
+    }
+
+    // Store search parameters for FindNext/FindPrevious
+    last_search_text_ = search_text;
+    last_case_sensitive_ = case_sensitive;
+    last_whole_word_ = whole_word;
+    last_use_regex_ = use_regex;
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    std::string text = editor.GetText();
+
+    // Get current cursor position
+    auto cursor = editor.GetCursorPosition();
+    int start_pos = 0;
+
+    // Convert cursor position to character offset
+    auto lines = editor.GetTextLines();
+    for (int i = 0; i < cursor.mLine && i < static_cast<int>(lines.size()); ++i) {
+        start_pos += static_cast<int>(lines[i].length()) + 1;  // +1 for newline
+    }
+    start_pos += cursor.mColumn;
+
+    // If there's a selection that matches the search text, skip past it
+    if (editor.HasSelection()) {
+        std::string selected = editor.GetSelectedText();
+        std::string match_text = selected;
+        std::string search_check = search_text;
+
+        if (!case_sensitive) {
+            std::transform(match_text.begin(), match_text.end(), match_text.begin(), ::tolower);
+            std::transform(search_check.begin(), search_check.end(), search_check.begin(), ::tolower);
+        }
+
+        if (match_text == search_check) {
+            // Skip past the current selection
+            start_pos += static_cast<int>(selected.length());
+        }
+    }
+
+    // Search from current position
+    size_t found_pos = std::string::npos;
+    size_t match_len = search_text.length();
+
+    if (use_regex) {
+        try {
+            std::regex::flag_type flags = std::regex::ECMAScript;
+            if (!case_sensitive) flags |= std::regex::icase;
+
+            std::regex re(search_text, flags);
+            std::smatch match;
+            std::string search_area = text.substr(start_pos);
+
+            if (std::regex_search(search_area, match, re)) {
+                found_pos = start_pos + match.position(0);
+                match_len = match.length(0);
+            } else {
+                // Wrap around and search from beginning
+                if (std::regex_search(text, match, re)) {
+                    found_pos = match.position(0);
+                    match_len = match.length(0);
+                }
+            }
+        } catch (const std::regex_error& e) {
+            spdlog::warn("Invalid regex: {}", e.what());
+            return false;
+        }
+    } else {
+        std::string search_text_lower = search_text;
+        std::string text_lower = text;
+
+        if (!case_sensitive) {
+            std::transform(search_text_lower.begin(), search_text_lower.end(),
+                           search_text_lower.begin(), ::tolower);
+            std::transform(text_lower.begin(), text_lower.end(),
+                           text_lower.begin(), ::tolower);
+        }
+
+        // Search from current position
+        found_pos = text_lower.find(search_text_lower, start_pos);
+
+        // Wrap around if not found
+        if (found_pos == std::string::npos) {
+            found_pos = text_lower.find(search_text_lower, 0);
+        }
+
+        // Check whole word boundary
+        if (found_pos != std::string::npos && whole_word) {
+            bool start_ok = (found_pos == 0) || !std::isalnum(static_cast<unsigned char>(text_lower[found_pos - 1]));
+            bool end_ok = (found_pos + search_text_lower.length() >= text_lower.length()) ||
+                          !std::isalnum(static_cast<unsigned char>(text_lower[found_pos + search_text_lower.length()]));
+            if (!start_ok || !end_ok) {
+                found_pos = std::string::npos;
+            }
+        }
+    }
+
+    if (found_pos != std::string::npos) {
+        // Convert character offset to line/column
+        int line = 0;
+        int col = 0;
+        size_t pos = 0;
+
+        for (const auto& line_text : lines) {
+            if (pos + line_text.length() >= found_pos) {
+                col = static_cast<int>(found_pos - pos);
+                break;
+            }
+            pos += line_text.length() + 1;  // +1 for newline
+            line++;
+        }
+
+        // Select the found text
+        TextEditor::Coordinates start_coord(line, col);
+        TextEditor::Coordinates end_coord(line, col + static_cast<int>(match_len));
+
+        // Handle multi-line match
+        size_t end_pos = found_pos + match_len;
+        pos = 0;
+        for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
+            if (pos + lines[i].length() >= end_pos) {
+                end_coord.mLine = i;
+                end_coord.mColumn = static_cast<int>(end_pos - pos);
+                break;
+            }
+            pos += lines[i].length() + 1;
+        }
+
+        editor.SetSelection(start_coord, end_coord);
+        editor.SetCursorPosition(start_coord);
+
+        spdlog::info("Found '{}' at line {}, col {}", search_text, line + 1, col + 1);
+        return true;
+    }
+
+    spdlog::info("'{}' not found", search_text);
+    return false;
+}
+
+bool ScriptEditorPanel::FindNext() {
+    if (last_search_text_.empty()) {
+        return false;
+    }
+
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return false;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+
+    // If there's a selection (current match), move cursor past it before searching
+    if (editor.HasSelection()) {
+        // Get selection end and move cursor there
+        auto cursor = editor.GetCursorPosition();
+        auto text = editor.GetText();
+        auto lines = editor.GetTextLines();
+
+        // Calculate character offset of current position
+        int current_offset = 0;
+        for (int i = 0; i < cursor.mLine && i < static_cast<int>(lines.size()); ++i) {
+            current_offset += static_cast<int>(lines[i].length()) + 1;
+        }
+        current_offset += cursor.mColumn;
+
+        // Move cursor forward by the length of the search text to skip current match
+        int new_offset = current_offset + static_cast<int>(last_search_text_.length());
+
+        // Convert back to coordinates
+        int line = 0;
+        int col = 0;
+        int pos = 0;
+        for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
+            if (pos + static_cast<int>(lines[i].length()) >= new_offset) {
+                line = i;
+                col = new_offset - pos;
+                break;
+            }
+            pos += static_cast<int>(lines[i].length()) + 1;
+            line = i + 1;
+            col = 0;
+        }
+
+        // Clear selection and set cursor to end of current match
+        editor.SetCursorPosition(TextEditor::Coordinates(line, col));
+    }
+
+    return FindInEditor(last_search_text_, last_case_sensitive_, last_whole_word_, last_use_regex_);
+}
+
+bool ScriptEditorPanel::FindPrevious() {
+    // TODO: Implement backward search
+    spdlog::info("FindPrevious not yet implemented");
+    return false;
+}
+
+bool ScriptEditorPanel::Replace(const std::string& search_text, const std::string& replace_text,
+                                 bool case_sensitive, bool whole_word, bool use_regex) {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return false;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+
+    // If there's a selection matching the search text, replace it
+    if (editor.HasSelection()) {
+        std::string selected = editor.GetSelectedText();
+        std::string match_text = selected;
+        std::string search_check = search_text;
+
+        if (!case_sensitive) {
+            std::transform(match_text.begin(), match_text.end(), match_text.begin(), ::tolower);
+            std::transform(search_check.begin(), search_check.end(), search_check.begin(), ::tolower);
+        }
+
+        if (match_text == search_check) {
+            // Replace the selection
+            editor.Delete();
+
+            auto cursor = editor.GetCursorPosition();
+            editor.InsertText(replace_text);
+
+            tabs_[active_tab_index_]->is_modified = true;
+
+            spdlog::info("Replaced '{}' with '{}'", search_text, replace_text);
+
+            // Find next occurrence
+            FindInEditor(search_text, case_sensitive, whole_word, use_regex);
+            return true;
+        }
+    }
+
+    // No valid selection, find next occurrence
+    return FindInEditor(search_text, case_sensitive, whole_word, use_regex);
+}
+
+int ScriptEditorPanel::ReplaceAll(const std::string& search_text, const std::string& replace_text,
+                                   bool case_sensitive, bool whole_word, bool use_regex) {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return 0;
+    }
+
+    if (search_text.empty()) {
+        return 0;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    std::string text = editor.GetText();
+    int count = 0;
+
+    if (use_regex) {
+        try {
+            std::regex::flag_type flags = std::regex::ECMAScript;
+            if (!case_sensitive) flags |= std::regex::icase;
+
+            std::regex re(search_text, flags);
+
+            // Count matches
+            std::string temp = text;
+            std::smatch match;
+            while (std::regex_search(temp, match, re)) {
+                count++;
+                temp = match.suffix().str();
+            }
+
+            // Replace all
+            std::string result = std::regex_replace(text, re, replace_text);
+            editor.SetText(result);
+
+        } catch (const std::regex_error& e) {
+            spdlog::warn("Invalid regex: {}", e.what());
+            return 0;
+        }
+    } else {
+        std::string search_lower = search_text;
+        std::string text_lower = text;
+
+        if (!case_sensitive) {
+            std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(), ::tolower);
+            std::transform(text_lower.begin(), text_lower.end(), text_lower.begin(), ::tolower);
+        }
+
+        // Find and replace all occurrences
+        std::string result;
+        size_t pos = 0;
+        size_t last_pos = 0;
+
+        while ((pos = text_lower.find(search_lower, last_pos)) != std::string::npos) {
+            bool match_ok = true;
+
+            if (whole_word) {
+                bool start_ok = (pos == 0) || !std::isalnum(static_cast<unsigned char>(text_lower[pos - 1]));
+                bool end_ok = (pos + search_lower.length() >= text_lower.length()) ||
+                              !std::isalnum(static_cast<unsigned char>(text_lower[pos + search_lower.length()]));
+                match_ok = start_ok && end_ok;
+            }
+
+            if (match_ok) {
+                result += text.substr(last_pos, pos - last_pos);
+                result += replace_text;
+                count++;
+            } else {
+                result += text.substr(last_pos, pos - last_pos + search_text.length());
+            }
+
+            last_pos = pos + search_text.length();
+        }
+
+        result += text.substr(last_pos);
+
+        if (count > 0) {
+            editor.SetText(result);
+        }
+    }
+
+    if (count > 0) {
+        tabs_[active_tab_index_]->is_modified = true;
+        spdlog::info("Replaced {} occurrences of '{}' with '{}'", count, search_text, replace_text);
+    }
+
+    return count;
+}
+
+// ==================== Comment Operations ====================
+
+void ScriptEditorPanel::ToggleLineComment() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+
+    // Get current line
+    auto cursor = editor.GetCursorPosition();
+    auto lines = editor.GetTextLines();
+
+    if (cursor.mLine >= static_cast<int>(lines.size())) {
+        return;
+    }
+
+    std::string line = lines[cursor.mLine];
+
+    // Find first non-whitespace character
+    size_t first_char = line.find_first_not_of(" \t");
+
+    if (first_char != std::string::npos && line.substr(first_char, 1) == "#") {
+        // Remove comment
+        std::string new_line = line.substr(0, first_char) + line.substr(first_char + 1);
+        // Remove space after # if present
+        if (first_char < new_line.length() && new_line[first_char] == ' ') {
+            new_line = new_line.substr(0, first_char) + new_line.substr(first_char + 1);
+        }
+
+        // Replace line
+        TextEditor::Coordinates start(cursor.mLine, 0);
+        TextEditor::Coordinates end(cursor.mLine, static_cast<int>(line.length()));
+        editor.SetSelection(start, end);
+        editor.Delete();
+        editor.InsertText(new_line);
+    } else {
+        // Add comment
+        std::string new_line;
+        if (first_char != std::string::npos) {
+            new_line = line.substr(0, first_char) + "# " + line.substr(first_char);
+        } else {
+            new_line = "# " + line;
+        }
+
+        // Replace line
+        TextEditor::Coordinates start(cursor.mLine, 0);
+        TextEditor::Coordinates end(cursor.mLine, static_cast<int>(line.length()));
+        editor.SetSelection(start, end);
+        editor.Delete();
+        editor.InsertText(new_line);
+    }
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::ToggleBlockComment() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+
+    if (!editor.HasSelection()) {
+        spdlog::info("Select text to toggle block comment");
+        return;
+    }
+
+    std::string selected = editor.GetSelectedText();
+
+    // Check if already a block comment (Python uses triple quotes)
+    if (selected.length() >= 6 &&
+        selected.substr(0, 3) == "\"\"\"" &&
+        selected.substr(selected.length() - 3) == "\"\"\"") {
+        // Remove block comment
+        selected = selected.substr(3, selected.length() - 6);
+    } else {
+        // Add block comment
+        selected = "\"\"\"" + selected + "\"\"\"";
+    }
+
+    editor.Delete();
+    editor.InsertText(selected);
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+// ============================================================================
+// Edit Operations
+// ============================================================================
+
+void ScriptEditorPanel::Undo() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    if (editor.CanUndo()) {
+        editor.Undo();
+        tabs_[active_tab_index_]->is_modified = true;
+    }
+}
+
+void ScriptEditorPanel::Redo() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    if (editor.CanRedo()) {
+        editor.Redo();
+        tabs_[active_tab_index_]->is_modified = true;
+    }
+}
+
+void ScriptEditorPanel::Cut() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+
+    // If no selection, select the entire current line (including newline)
+    if (!editor.HasSelection()) {
+        auto cursor = editor.GetCursorPosition();
+        int line = cursor.mLine;
+        int totalLines = editor.GetTotalLines();
+
+        // Select from start of current line to start of next line (or end of file)
+        TextEditor::Coordinates start(line, 0);
+        TextEditor::Coordinates end;
+
+        if (line + 1 < totalLines) {
+            // Select up to the start of the next line (includes the newline)
+            end = TextEditor::Coordinates(line + 1, 0);
+        } else {
+            // Last line - get line length from text lines
+            auto lines = editor.GetTextLines();
+            int lineLen = (line < static_cast<int>(lines.size())) ? static_cast<int>(lines[line].size()) : 0;
+            end = TextEditor::Coordinates(line, lineLen);
+        }
+
+        editor.SetSelection(start, end);
+    }
+
+    editor.Cut();
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::Copy() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    editor.Copy();
+}
+
+void ScriptEditorPanel::Paste() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    editor.Paste();
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::Delete() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+
+    // If no selection, select the entire current line (including newline)
+    if (!editor.HasSelection()) {
+        auto cursor = editor.GetCursorPosition();
+        int line = cursor.mLine;
+        int totalLines = editor.GetTotalLines();
+
+        // Select from start of current line to start of next line (or end of file)
+        TextEditor::Coordinates start(line, 0);
+        TextEditor::Coordinates end;
+
+        if (line + 1 < totalLines) {
+            // Select up to the start of the next line (includes the newline)
+            end = TextEditor::Coordinates(line + 1, 0);
+        } else {
+            // Last line - get line length from text lines
+            auto lines = editor.GetTextLines();
+            int lineLen = (line < static_cast<int>(lines.size())) ? static_cast<int>(lines[line].size()) : 0;
+            end = TextEditor::Coordinates(line, lineLen);
+        }
+
+        editor.SetSelection(start, end);
+    }
+
+    editor.Delete();
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::SelectAll() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    editor.SelectAll();
+}
+
+// ========== Navigation ==========
+
+void ScriptEditorPanel::GoToLine(int line_number) {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    int total_lines = editor.GetTotalLines();
+
+    // Clamp line number to valid range (1-based input, 0-based internal)
+    if (line_number < 1) line_number = 1;
+    if (line_number > total_lines) line_number = total_lines;
+
+    // Set cursor position (0-based line number)
+    TextEditor::Coordinates pos(line_number - 1, 0);
+    editor.SetCursorPosition(pos);
+
+    // Optionally select the entire line for visibility
+    auto lines = editor.GetTextLines();
+    int line_idx = line_number - 1;
+    int line_len = (line_idx < static_cast<int>(lines.size())) ? static_cast<int>(lines[line_idx].size()) : 0;
+    editor.SetSelection(pos, TextEditor::Coordinates(line_idx, line_len));
+}
+
+// ========== Line Operations ==========
+
+void ScriptEditorPanel::DuplicateLine() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    auto cursor = editor.GetCursorPosition();
+    int line = cursor.mLine;
+
+    auto lines = editor.GetTextLines();
+    if (line < 0 || line >= static_cast<int>(lines.size())) {
+        return;
+    }
+
+    std::string line_text = lines[line];
+
+    // Move to end of current line
+    int line_len = static_cast<int>(line_text.size());
+    editor.SetCursorPosition(TextEditor::Coordinates(line, line_len));
+
+    // Insert newline + duplicate content
+    std::string to_insert = "\n" + line_text;
+    editor.InsertText(to_insert);
+
+    // Move cursor to the new duplicated line
+    editor.SetCursorPosition(TextEditor::Coordinates(line + 1, cursor.mColumn));
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::MoveLineUp() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    auto cursor = editor.GetCursorPosition();
+    int line = cursor.mLine;
+
+    if (line <= 0) {
+        return;  // Already at the top
+    }
+
+    auto lines = editor.GetTextLines();
+    if (line >= static_cast<int>(lines.size())) {
+        return;
+    }
+
+    // Swap current line with line above
+    std::string current_line = lines[line];
+    std::string above_line = lines[line - 1];
+
+    // Select and delete both lines
+    int above_len = static_cast<int>(above_line.size());
+    int current_len = static_cast<int>(current_line.size());
+
+    editor.SetSelection(
+        TextEditor::Coordinates(line - 1, 0),
+        TextEditor::Coordinates(line, current_len)
+    );
+
+    // Replace with swapped content
+    std::string new_text = current_line + "\n" + above_line;
+    editor.Delete();
+    editor.InsertText(new_text);
+
+    // Move cursor up
+    editor.SetCursorPosition(TextEditor::Coordinates(line - 1, cursor.mColumn));
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::MoveLineDown() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    auto cursor = editor.GetCursorPosition();
+    int line = cursor.mLine;
+
+    auto lines = editor.GetTextLines();
+    if (line < 0 || line >= static_cast<int>(lines.size()) - 1) {
+        return;  // Already at the bottom
+    }
+
+    // Swap current line with line below
+    std::string current_line = lines[line];
+    std::string below_line = lines[line + 1];
+
+    int current_len = static_cast<int>(current_line.size());
+    int below_len = static_cast<int>(below_line.size());
+
+    editor.SetSelection(
+        TextEditor::Coordinates(line, 0),
+        TextEditor::Coordinates(line + 1, below_len)
+    );
+
+    // Replace with swapped content
+    std::string new_text = below_line + "\n" + current_line;
+    editor.Delete();
+    editor.InsertText(new_text);
+
+    // Move cursor down
+    editor.SetCursorPosition(TextEditor::Coordinates(line + 1, cursor.mColumn));
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::Indent() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+
+    // Get selection or current line
+    if (editor.HasSelection()) {
+        auto sel_start = editor.GetSelectionStart();
+        auto sel_end = editor.GetSelectionEnd();
+
+        auto lines = editor.GetTextLines();
+        std::string indent_str(tab_size_, ' ');
+
+        // Build new text with indentation
+        std::string new_text;
+        for (int i = sel_start.mLine; i <= sel_end.mLine && i < static_cast<int>(lines.size()); ++i) {
+            new_text += indent_str + lines[i];
+            if (i < sel_end.mLine) {
+                new_text += "\n";
+            }
+        }
+
+        // Select entire lines and replace
+        int last_line_len = (sel_end.mLine < static_cast<int>(lines.size())) ?
+            static_cast<int>(lines[sel_end.mLine].size()) : 0;
+        editor.SetSelection(
+            TextEditor::Coordinates(sel_start.mLine, 0),
+            TextEditor::Coordinates(sel_end.mLine, last_line_len)
+        );
+        editor.Delete();
+        editor.InsertText(new_text);
+
+        // Restore selection
+        editor.SetSelection(
+            TextEditor::Coordinates(sel_start.mLine, 0),
+            TextEditor::Coordinates(sel_end.mLine, last_line_len + tab_size_)
+        );
+    } else {
+        // Just insert tab at cursor
+        std::string indent_str(tab_size_, ' ');
+        editor.InsertText(indent_str);
+    }
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::Outdent() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    auto cursor = editor.GetCursorPosition();
+
+    auto lines = editor.GetTextLines();
+    int start_line = cursor.mLine;
+    int end_line = cursor.mLine;
+
+    if (editor.HasSelection()) {
+        start_line = editor.GetSelectionStart().mLine;
+        end_line = editor.GetSelectionEnd().mLine;
+    }
+
+    // Build new text with removed indentation
+    std::string new_text;
+    for (int i = start_line; i <= end_line && i < static_cast<int>(lines.size()); ++i) {
+        std::string line = lines[i];
+        // Remove up to tab_size_ leading spaces
+        int spaces_to_remove = 0;
+        for (int j = 0; j < tab_size_ && j < static_cast<int>(line.size()); ++j) {
+            if (line[j] == ' ') {
+                spaces_to_remove++;
+            } else {
+                break;
+            }
+        }
+        if (spaces_to_remove > 0) {
+            line = line.substr(spaces_to_remove);
+        }
+        new_text += line;
+        if (i < end_line) {
+            new_text += "\n";
+        }
+    }
+
+    // Select entire lines and replace
+    int last_line_len = (end_line < static_cast<int>(lines.size())) ?
+        static_cast<int>(lines[end_line].size()) : 0;
+    editor.SetSelection(
+        TextEditor::Coordinates(start_line, 0),
+        TextEditor::Coordinates(end_line, last_line_len)
+    );
+    editor.Delete();
+    editor.InsertText(new_text);
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+// ========== Text Transformation ==========
+
+void ScriptEditorPanel::TransformToUppercase() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    if (!editor.HasSelection()) {
+        return;
+    }
+
+    std::string selected = editor.GetSelectedText();
+    std::string upper;
+    upper.reserve(selected.size());
+    for (char c : selected) {
+        upper += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+
+    editor.Delete();
+    editor.InsertText(upper);
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::TransformToLowercase() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    if (!editor.HasSelection()) {
+        return;
+    }
+
+    std::string selected = editor.GetSelectedText();
+    std::string lower;
+    lower.reserve(selected.size());
+    for (char c : selected) {
+        lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    editor.Delete();
+    editor.InsertText(lower);
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::TransformToTitleCase() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    if (!editor.HasSelection()) {
+        return;
+    }
+
+    std::string selected = editor.GetSelectedText();
+    std::string title;
+    title.reserve(selected.size());
+    bool capitalize_next = true;
+
+    for (char c : selected) {
+        if (std::isspace(static_cast<unsigned char>(c))) {
+            capitalize_next = true;
+            title += c;
+        } else if (capitalize_next) {
+            title += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            capitalize_next = false;
+        } else {
+            title += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+    }
+
+    editor.Delete();
+    editor.InsertText(title);
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+// ========== Multi-line Operations ==========
+
+void ScriptEditorPanel::SortLinesAscending() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    if (!editor.HasSelection()) {
+        return;
+    }
+
+    auto sel_start = editor.GetSelectionStart();
+    auto sel_end = editor.GetSelectionEnd();
+    auto lines = editor.GetTextLines();
+
+    // Collect lines in selection
+    std::vector<std::string> selected_lines;
+    for (int i = sel_start.mLine; i <= sel_end.mLine && i < static_cast<int>(lines.size()); ++i) {
+        selected_lines.push_back(lines[i]);
+    }
+
+    // Sort ascending
+    std::sort(selected_lines.begin(), selected_lines.end());
+
+    // Build replacement text
+    std::string new_text;
+    for (size_t i = 0; i < selected_lines.size(); ++i) {
+        new_text += selected_lines[i];
+        if (i < selected_lines.size() - 1) {
+            new_text += "\n";
+        }
+    }
+
+    // Replace
+    int last_line_len = (sel_end.mLine < static_cast<int>(lines.size())) ?
+        static_cast<int>(lines[sel_end.mLine].size()) : 0;
+    editor.SetSelection(
+        TextEditor::Coordinates(sel_start.mLine, 0),
+        TextEditor::Coordinates(sel_end.mLine, last_line_len)
+    );
+    editor.Delete();
+    editor.InsertText(new_text);
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::SortLinesDescending() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    if (!editor.HasSelection()) {
+        return;
+    }
+
+    auto sel_start = editor.GetSelectionStart();
+    auto sel_end = editor.GetSelectionEnd();
+    auto lines = editor.GetTextLines();
+
+    // Collect lines in selection
+    std::vector<std::string> selected_lines;
+    for (int i = sel_start.mLine; i <= sel_end.mLine && i < static_cast<int>(lines.size()); ++i) {
+        selected_lines.push_back(lines[i]);
+    }
+
+    // Sort descending
+    std::sort(selected_lines.begin(), selected_lines.end(), std::greater<std::string>());
+
+    // Build replacement text
+    std::string new_text;
+    for (size_t i = 0; i < selected_lines.size(); ++i) {
+        new_text += selected_lines[i];
+        if (i < selected_lines.size() - 1) {
+            new_text += "\n";
+        }
+    }
+
+    // Replace
+    int last_line_len = (sel_end.mLine < static_cast<int>(lines.size())) ?
+        static_cast<int>(lines[sel_end.mLine].size()) : 0;
+    editor.SetSelection(
+        TextEditor::Coordinates(sel_start.mLine, 0),
+        TextEditor::Coordinates(sel_end.mLine, last_line_len)
+    );
+    editor.Delete();
+    editor.InsertText(new_text);
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+void ScriptEditorPanel::JoinLines() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    if (!editor.HasSelection()) {
+        return;
+    }
+
+    auto sel_start = editor.GetSelectionStart();
+    auto sel_end = editor.GetSelectionEnd();
+    auto lines = editor.GetTextLines();
+
+    // Collect lines in selection and join with spaces
+    std::string joined;
+    for (int i = sel_start.mLine; i <= sel_end.mLine && i < static_cast<int>(lines.size()); ++i) {
+        std::string line = lines[i];
+        // Trim trailing whitespace
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) {
+            line.pop_back();
+        }
+        if (!joined.empty() && !line.empty()) {
+            joined += " ";
+        }
+        joined += line;
+    }
+
+    // Replace
+    int last_line_len = (sel_end.mLine < static_cast<int>(lines.size())) ?
+        static_cast<int>(lines[sel_end.mLine].size()) : 0;
+    editor.SetSelection(
+        TextEditor::Coordinates(sel_start.mLine, 0),
+        TextEditor::Coordinates(sel_end.mLine, last_line_len)
+    );
+    editor.Delete();
+    editor.InsertText(joined);
+
+    tabs_[active_tab_index_]->is_modified = true;
+}
+
+// ========== Settings ==========
+
+void ScriptEditorPanel::SetTabSize(int size) {
+    if (size >= 1 && size <= 8) {
+        tab_size_ = size;
+        ApplyTabSizeToAllTabs();
+    }
+}
+
+void ScriptEditorPanel::SetShowWhitespace(bool show) {
+    show_whitespace_ = show;
+    // Apply to all tabs
+    for (auto& tab : tabs_) {
+        tab->editor.SetShowWhitespaces(show);
+    }
+}
+
+void ScriptEditorPanel::SetWordWrap(bool wrap) {
+    word_wrap_ = wrap;
+    // Apply to all tabs
+    for (auto& tab : tabs_) {
+        tab->editor.SetWordWrap(wrap);
+    }
+}
+
+void ScriptEditorPanel::SetAutoIndent(bool indent) {
+    auto_indent_ = indent;
+    // Apply to all tabs
+    for (auto& tab : tabs_) {
+        tab->editor.SetAutoIndent(indent);
+    }
+}
+
+void ScriptEditorPanel::SetTheme(int theme_index) {
+    if (theme_index >= 0 && theme_index <= 6) {
+        current_theme_ = static_cast<EditorTheme>(theme_index);
+        ApplyThemeToAllTabs();
     }
 }
 

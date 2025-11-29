@@ -8,6 +8,8 @@
 #include <cstring>
 #include <algorithm>
 #include <cctype>
+#include <regex>
+#include <sstream>
 #include "../dock_style.h"
 #include "../../core/project_manager.h"
 #include "../icons.h"
@@ -27,6 +29,188 @@ ToolbarPanel::ToolbarPanel()
 {
     memset(project_name_buffer_, 0, sizeof(project_name_buffer_));
     memset(project_path_buffer_, 0, sizeof(project_path_buffer_));
+}
+
+void ToolbarPanel::SetEditorFontScale(float scale) {
+    // Convert font scale to font size index for UI
+    // 1.0 -> 10, 1.3 -> 13, 1.6 -> 16, 2.0 -> 20
+    if (scale <= 1.15f) editor_font_size_ = 10;
+    else if (scale <= 1.45f) editor_font_size_ = 13;
+    else if (scale <= 1.8f) editor_font_size_ = 16;
+    else editor_font_size_ = 20;
+}
+
+// Helper function to check if a file matches any of the given patterns
+static bool MatchesFilePattern(const std::string& filename, const std::string& patterns) {
+    if (patterns.empty()) return true;
+
+    // Split patterns by semicolon
+    std::vector<std::string> pattern_list;
+    std::stringstream ss(patterns);
+    std::string pattern;
+    while (std::getline(ss, pattern, ';')) {
+        // Trim whitespace
+        size_t start = pattern.find_first_not_of(" \t");
+        size_t end = pattern.find_last_not_of(" \t");
+        if (start != std::string::npos && end != std::string::npos) {
+            pattern_list.push_back(pattern.substr(start, end - start + 1));
+        }
+    }
+
+    // Check if filename matches any pattern
+    for (const auto& pat : pattern_list) {
+        // Convert glob pattern to regex
+        std::string regex_pattern;
+        for (char c : pat) {
+            switch (c) {
+                case '*': regex_pattern += ".*"; break;
+                case '?': regex_pattern += "."; break;
+                case '.': regex_pattern += "\\."; break;
+                default: regex_pattern += c; break;
+            }
+        }
+        regex_pattern = "^" + regex_pattern + "$";
+
+        try {
+            std::regex re(regex_pattern, std::regex::icase);
+            if (std::regex_match(filename, re)) {
+                return true;
+            }
+        } catch (const std::regex_error&) {
+            // If regex fails, try simple extension match
+            if (pat.length() > 1 && pat[0] == '*') {
+                std::string ext = pat.substr(1);
+                if (filename.length() >= ext.length() &&
+                    filename.substr(filename.length() - ext.length()) == ext) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+// Helper function to search in a single line
+static bool SearchInLine(const std::string& line, const std::string& search_text,
+                         bool case_sensitive, bool whole_word, bool use_regex,
+                         int& match_start, int& match_length) {
+    if (search_text.empty()) return false;
+
+    if (use_regex) {
+        try {
+            std::regex::flag_type flags = std::regex::ECMAScript;
+            if (!case_sensitive) flags |= std::regex::icase;
+
+            std::regex re(search_text, flags);
+            std::smatch match;
+            if (std::regex_search(line, match, re)) {
+                match_start = static_cast<int>(match.position(0));
+                match_length = static_cast<int>(match.length(0));
+                return true;
+            }
+        } catch (const std::regex_error& e) {
+            spdlog::warn("Invalid regex pattern: {}", e.what());
+            return false;
+        }
+    } else {
+        std::string search_line = line;
+        std::string search_term = search_text;
+
+        if (!case_sensitive) {
+            std::transform(search_line.begin(), search_line.end(), search_line.begin(), ::tolower);
+            std::transform(search_term.begin(), search_term.end(), search_term.begin(), ::tolower);
+        }
+
+        size_t pos = search_line.find(search_term);
+        if (pos != std::string::npos) {
+            if (whole_word) {
+                // Check word boundaries
+                bool start_ok = (pos == 0) || !std::isalnum(static_cast<unsigned char>(search_line[pos - 1]));
+                bool end_ok = (pos + search_term.length() >= search_line.length()) ||
+                              !std::isalnum(static_cast<unsigned char>(search_line[pos + search_term.length()]));
+                if (!start_ok || !end_ok) {
+                    return false;
+                }
+            }
+            match_start = static_cast<int>(pos);
+            match_length = static_cast<int>(search_term.length());
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void ToolbarPanel::SearchInFiles(const std::string& search_text, const std::string& search_path,
+                                  const std::string& file_patterns, bool case_sensitive,
+                                  bool whole_word, bool use_regex) {
+    search_results_.clear();
+    search_in_progress_ = true;
+
+    if (search_text.empty() || search_path.empty()) {
+        search_in_progress_ = false;
+        return;
+    }
+
+    namespace fs = std::filesystem;
+
+    try {
+        int files_searched = 0;
+        int max_results = 1000;  // Limit results to prevent UI slowdown
+
+        for (const auto& entry : fs::recursive_directory_iterator(search_path,
+                fs::directory_options::skip_permission_denied)) {
+            if (!entry.is_regular_file()) continue;
+
+            std::string filename = entry.path().filename().string();
+            if (!MatchesFilePattern(filename, file_patterns)) continue;
+
+            files_searched++;
+
+            // Read file and search
+            std::ifstream file(entry.path());
+            if (!file.is_open()) continue;
+
+            std::string line;
+            int line_number = 0;
+
+            while (std::getline(file, line) && search_results_.size() < max_results) {
+                line_number++;
+
+                int match_start = 0, match_length = 0;
+                if (SearchInLine(line, search_text, case_sensitive, whole_word, use_regex,
+                                 match_start, match_length)) {
+                    SearchResult result;
+                    result.file_path = entry.path().string();
+                    result.line_number = line_number;
+                    result.line_content = line;
+                    result.match_start = match_start;
+                    result.match_length = match_length;
+
+                    // Truncate line if too long
+                    if (result.line_content.length() > 200) {
+                        result.line_content = result.line_content.substr(0, 200) + "...";
+                    }
+
+                    search_results_.push_back(result);
+                }
+            }
+
+            if (search_results_.size() >= max_results) {
+                spdlog::info("Search stopped: max results ({}) reached", max_results);
+                break;
+            }
+        }
+
+        spdlog::info("Search complete: found {} results in {} files",
+                     search_results_.size(), files_searched);
+
+    } catch (const fs::filesystem_error& e) {
+        spdlog::error("Filesystem error during search: {}", e.what());
+    }
+
+    search_in_progress_ = false;
 }
 
 void ToolbarPanel::Render() {
@@ -726,618 +910,794 @@ void ToolbarPanel::Render() {
 
         ImGui::PopStyleVar(5);
     }
-}
 
-void ToolbarPanel::RenderFileMenu() {
-    if (ImGui::BeginMenu("File")) {
-        // Increase padding for menu items
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 6));
+    // ========== Find Dialog ==========
+    if (show_find_dialog_) {
+        ImGui::OpenPopup("Find");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
-        // ========== Project Section ==========
-        if (ImGui::MenuItem(ICON_FA_FILE " New Project", "Ctrl+Shift+N")) {
-            show_new_project_dialog_ = true;
-        }
+        if (ImGui::BeginPopupModal("Find", &show_find_dialog_, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+            ImGui::Text("Find in current editor:");
+            ImGui::Spacing();
 
-        if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Project...", "Ctrl+Shift+O")) {
-            std::string file_path = OpenFileDialog("CyxWiz Projects (*.cyxwiz)\0*.cyxwiz\0All Files (*.*)\0*.*\0", "Open Project");
-            if (!file_path.empty()) {
-                auto& pm = ProjectManager::Instance();
-                if (pm.OpenProject(file_path)) {
-                    spdlog::info("Project opened: {}", file_path);
-                } else {
-                    spdlog::error("Failed to open project: {}", file_path);
-                }
-            }
-        }
+            // Search text input
+            ImGui::SetNextItemWidth(-1);
+            bool enter_pressed = ImGui::InputText("##findtext", find_text_buffer_, sizeof(find_text_buffer_),
+                ImGuiInputTextFlags_EnterReturnsTrue);
 
-        if (ImGui::MenuItem(ICON_FA_XMARK " Close Project", nullptr, false, ProjectManager::Instance().HasActiveProject())) {
-            ProjectManager::Instance().CloseProject();
-        }
+            ImGui::Spacing();
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+            // Options
+            ImGui::Checkbox("Case sensitive", &find_case_sensitive_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Whole word", &find_whole_word_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Regex", &find_use_regex_);
 
-        // ========== Script Section ==========
-        if (ImGui::MenuItem(ICON_FA_FILE_CODE " New Script...", "Ctrl+N")) {
-            show_new_script_dialog_ = true;
-            memset(new_script_name_, 0, sizeof(new_script_name_));
-            new_script_type_ = 0;  // Default to .cyx
-        }
-
-        if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Script...", "Ctrl+O")) {
-            std::string file_path = OpenFileDialog(
-                "CyxWiz Scripts (*.cyx)\0*.cyx\0Python Scripts (*.py)\0*.py\0All Scripts (*.cyx;*.py)\0*.cyx;*.py\0All Files (*.*)\0*.*\0",
-                "Open Script");
-            if (!file_path.empty()) {
-                if (open_script_in_editor_callback_) {
-                    open_script_in_editor_callback_(file_path);
-                }
-                spdlog::info("Opening script: {}", file_path);
-            }
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // ========== Save Section ==========
-        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save", "Ctrl+S", false, ProjectManager::Instance().HasActiveProject())) {
-            auto& pm = ProjectManager::Instance();
-            if (pm.SaveProject()) {
-                spdlog::info("Project saved");
-            }
-        }
-
-        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save As...", "Ctrl+Shift+S", false, ProjectManager::Instance().HasActiveProject())) {
-            show_save_as_dialog_ = true;
-            // Pre-fill with current project name and a suggestion for new location
-            auto& pm = ProjectManager::Instance();
-            strncpy(save_as_name_buffer_, (pm.GetProjectName() + "_copy").c_str(), sizeof(save_as_name_buffer_) - 1);
-            save_as_name_buffer_[sizeof(save_as_name_buffer_) - 1] = '\0';
-            // Use parent of current project root as default location
-            std::filesystem::path current_root(pm.GetProjectRoot());
-            std::string parent_path = current_root.parent_path().string();
-            strncpy(save_as_path_buffer_, parent_path.c_str(), sizeof(save_as_path_buffer_) - 1);
-            save_as_path_buffer_[sizeof(save_as_path_buffer_) - 1] = '\0';
-        }
-
-        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save All", "Ctrl+Alt+S")) {
-            if (save_all_callback_) {
-                save_all_callback_();
-            }
-        }
-
-        ImGui::Spacing();
-
-        // Auto-save toggle with checkmark
-        if (ImGui::MenuItem(ICON_FA_CLOCK " Auto Save", nullptr, auto_save_enabled_)) {
-            auto_save_enabled_ = !auto_save_enabled_;
-            spdlog::info("Auto-save {}", auto_save_enabled_ ? "enabled" : "disabled");
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // ========== Import/Export Section ==========
-        if (ImGui::BeginMenu(ICON_FA_DOWNLOAD " Import")) {
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
-            if (ImGui::MenuItem("ONNX Model...")) {
-                // TODO: Import ONNX
-            }
-            if (ImGui::MenuItem("PyTorch Model...")) {
-                // TODO: Import PyTorch
-            }
-            if (ImGui::MenuItem("TensorFlow Model...")) {
-                // TODO: Import TF
-            }
-            ImGui::PopStyleVar();
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu(ICON_FA_DOWNLOAD " Export")) {
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
-            if (ImGui::MenuItem("ONNX...")) {
-                // TODO: Export ONNX
-            }
-            if (ImGui::MenuItem("GGUF...")) {
-                // TODO: Export GGUF
-            }
-            if (ImGui::MenuItem("LoRA Adapter...")) {
-                // TODO: Export LoRA
-            }
-            ImGui::PopStyleVar();
-            ImGui::EndMenu();
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // ========== Recent Projects Section ==========
-        auto& pm = ProjectManager::Instance();
-        const auto& recent = pm.GetRecentProjects();
-
-        if (ImGui::BeginMenu(ICON_FA_CLOCK " Recent Projects", !recent.empty())) {
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
-
-            for (const auto& rp : recent) {
-                // Show project name with path as tooltip
-                std::string label = rp.name;
-                if (ImGui::MenuItem(label.c_str())) {
-                    if (pm.OpenProject(rp.path)) {
-                        spdlog::info("Opened recent project: {}", rp.name);
-                    } else {
-                        spdlog::error("Failed to open recent project: {}", rp.path);
-                    }
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", rp.path.c_str());
-                }
-            }
-
+            ImGui::Spacing();
             ImGui::Separator();
+            ImGui::Spacing();
 
-            if (ImGui::MenuItem("Clear Recent Projects")) {
-                pm.ClearRecentProjects();
+            // Buttons
+            float button_width = 100.0f;
+
+            if (ImGui::Button("Find Next", ImVec2(button_width, 0)) || enter_pressed) {
+                if (find_callback_ && strlen(find_text_buffer_) > 0) {
+                    find_callback_(find_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Find Previous", ImVec2(button_width, 0))) {
+                // TODO: Find previous
+                if (find_callback_ && strlen(find_text_buffer_) > 0) {
+                    find_callback_(find_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(button_width, 0))) {
+                show_find_dialog_ = false;
             }
 
-            ImGui::PopStyleVar();
-            ImGui::EndMenu();
+            ImGui::EndPopup();
         }
+    }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+    // ========== Replace Dialog ==========
+    if (show_replace_dialog_) {
+        ImGui::OpenPopup("Replace");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
-        // ========== Settings Section ==========
-        if (ImGui::MenuItem(ICON_FA_USER " Account Settings...")) {
-            show_account_settings_dialog_ = true;
-            if (account_settings_callback_) {
-                account_settings_callback_();
+        if (ImGui::BeginPopupModal("Replace", &show_replace_dialog_, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+            ImGui::Text("Find and replace in current editor:");
+            ImGui::Spacing();
+
+            // Search text input
+            ImGui::Text("Find:");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##findtext_replace", find_text_buffer_, sizeof(find_text_buffer_));
+
+            ImGui::Spacing();
+
+            // Replace text input
+            ImGui::Text("Replace with:");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##replacetext", replace_text_buffer_, sizeof(replace_text_buffer_));
+
+            ImGui::Spacing();
+
+            // Options
+            ImGui::Checkbox("Case sensitive##replace", &find_case_sensitive_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Whole word##replace", &find_whole_word_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Regex##replace", &find_use_regex_);
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Buttons
+            float button_width = 90.0f;
+
+            if (ImGui::Button("Find Next", ImVec2(button_width, 0))) {
+                if (find_callback_ && strlen(find_text_buffer_) > 0) {
+                    find_callback_(find_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
+                }
             }
+            ImGui::SameLine();
+            if (ImGui::Button("Replace", ImVec2(button_width, 0))) {
+                if (replace_callback_ && strlen(find_text_buffer_) > 0) {
+                    replace_callback_(find_text_buffer_, replace_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Replace All", ImVec2(button_width, 0))) {
+                if (replace_all_callback_ && strlen(find_text_buffer_) > 0) {
+                    replace_all_callback_(find_text_buffer_, replace_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(button_width, 0))) {
+                show_replace_dialog_ = false;
+            }
+
+            ImGui::EndPopup();
         }
+    }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+    // ========== Find in Files Dialog ==========
+    if (show_find_in_files_dialog_) {
+        ImGui::OpenPopup("Find in Files");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(550, 400), ImGuiCond_Appearing);
 
-        // ========== Exit ==========
-        if (ImGui::MenuItem(ICON_FA_XMARK " Exit", "Alt+F4")) {
-            // Check for unsaved changes
-            bool has_unsaved = has_unsaved_changes_callback_ && has_unsaved_changes_callback_();
-            if (has_unsaved) {
-                show_exit_confirmation_dialog_ = true;
+        if (ImGui::BeginPopupModal("Find in Files", &show_find_in_files_dialog_, ImGuiWindowFlags_NoMove)) {
+            ImGui::Text("Search across project files:");
+            ImGui::Spacing();
+
+            // Search text input
+            ImGui::Text("Search for:");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##findtext_files", find_text_buffer_, sizeof(find_text_buffer_));
+
+            ImGui::Spacing();
+
+            // File pattern
+            ImGui::Text("File patterns (e.g., *.py;*.cyx):");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##filepattern", find_in_files_pattern_, sizeof(find_in_files_pattern_));
+
+            ImGui::Spacing();
+
+            // Search path
+            ImGui::Text("Search in:");
+            ImGui::SetNextItemWidth(-70);
+            ImGui::InputText("##searchpath", find_in_files_path_, sizeof(find_in_files_path_));
+            ImGui::SameLine();
+            if (ImGui::Button("Browse...##findinfiles")) {
+                std::string selected_folder = OpenFolderDialog();
+                if (!selected_folder.empty()) {
+                    strncpy(find_in_files_path_, selected_folder.c_str(), sizeof(find_in_files_path_) - 1);
+                    find_in_files_path_[sizeof(find_in_files_path_) - 1] = '\0';
+                }
+            }
+
+            ImGui::Spacing();
+
+            // Options
+            ImGui::Checkbox("Case sensitive##files", &find_case_sensitive_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Whole word##files", &find_whole_word_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Regex##files", &find_use_regex_);
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Search button
+            if (ImGui::Button("Search", ImVec2(100, 0))) {
+                if (strlen(find_text_buffer_) > 0 && strlen(find_in_files_path_) > 0) {
+                    SearchInFiles(find_text_buffer_, find_in_files_path_, find_in_files_pattern_,
+                                  find_case_sensitive_, find_whole_word_, find_use_regex_);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(100, 0))) {
+                show_find_in_files_dialog_ = false;
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Results area
+            if (search_results_.empty()) {
+                ImGui::Text("Results:");
             } else {
-                // No unsaved changes, exit directly
-                if (exit_callback_) {
-                    exit_callback_();
+                ImGui::Text("Results: %zu matches", search_results_.size());
+            }
+            ImGui::BeginChild("##searchresults", ImVec2(-1, -1), true);
+
+            if (search_in_progress_) {
+                ImGui::TextDisabled("Searching...");
+            } else if (search_results_.empty()) {
+                ImGui::TextDisabled("No results. Enter search text and click Search.");
+            } else {
+                std::string current_file;
+                for (const auto& result : search_results_) {
+                    // Group by file
+                    if (result.file_path != current_file) {
+                        current_file = result.file_path;
+                        ImGui::Spacing();
+                        // Display relative path if in project
+                        std::filesystem::path file_path(result.file_path);
+                        std::string display_path = file_path.filename().string();
+                        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), ICON_FA_FILE_CODE " %s", display_path.c_str());
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(%s)", result.file_path.c_str());
+                    }
+
+                    // Display line with clickable result
+                    ImGui::Indent(20.0f);
+                    std::string label = std::to_string(result.line_number) + ": " + result.line_content;
+                    if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_None)) {
+                        // Open file at line
+                        if (open_script_in_editor_callback_) {
+                            open_script_in_editor_callback_(result.file_path);
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Click to open file at line %d", result.line_number);
+                    }
+                    ImGui::Unindent(20.0f);
                 }
             }
-        }
 
-        ImGui::PopStyleVar();
-        ImGui::EndMenu();
+            ImGui::EndChild();
+
+            ImGui::EndPopup();
+        }
     }
-}
 
-void ToolbarPanel::RenderEditMenu() {
-    if (ImGui::BeginMenu("Edit")) {
-        if (ImGui::MenuItem("Undo", "Ctrl+Z")) {
-            // TODO: Undo
-        }
+    // ========== Replace in Files Dialog ==========
+    if (show_replace_in_files_dialog_) {
+        ImGui::OpenPopup("Replace in Files");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(550, 450), ImGuiCond_Appearing);
 
-        if (ImGui::MenuItem("Redo", "Ctrl+Y")) {
-            // TODO: Redo
-        }
+        if (ImGui::BeginPopupModal("Replace in Files", &show_replace_in_files_dialog_, ImGuiWindowFlags_NoMove)) {
+            ImGui::Text("Find and replace across project files:");
+            ImGui::Spacing();
 
-        ImGui::Separator();
+            // Search text input
+            ImGui::Text("Find:");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##findtext_replacefiles", find_text_buffer_, sizeof(find_text_buffer_));
 
-        if (ImGui::MenuItem("Cut", "Ctrl+X")) {
-            // TODO: Cut
-        }
+            ImGui::Spacing();
 
-        if (ImGui::MenuItem("Copy", "Ctrl+C")) {
-            // TODO: Copy
-        }
+            // Replace text input
+            ImGui::Text("Replace with:");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##replacetext_files", replace_text_buffer_, sizeof(replace_text_buffer_));
 
-        if (ImGui::MenuItem("Paste", "Ctrl+V")) {
-            // TODO: Paste
-        }
+            ImGui::Spacing();
 
-        if (ImGui::MenuItem("Delete", "Delete")) {
-            // TODO: Delete
-        }
+            // File pattern
+            ImGui::Text("File patterns (e.g., *.py;*.cyx):");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##filepattern_replace", find_in_files_pattern_, sizeof(find_in_files_pattern_));
 
-        ImGui::Separator();
+            ImGui::Spacing();
 
-        if (ImGui::MenuItem("Select All", "Ctrl+A")) {
-            // TODO: Select all
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Preferences...")) {
-            // TODO: Open preferences
-        }
-
-        ImGui::EndMenu();
-    }
-}
-
-void ToolbarPanel::RenderViewMenu() {
-    if (ImGui::BeginMenu("View")) {
-        // Panel visibility toggles
-        // TODO: Get references to actual panels and toggle their visibility
-        ImGui::MenuItem("Asset Browser", nullptr, true);
-        ImGui::MenuItem("Node Editor", nullptr, true);
-        ImGui::MenuItem("Properties", nullptr, true);
-        ImGui::MenuItem("Console", nullptr, true);
-        ImGui::MenuItem("Training Dashboard", nullptr, true);
-        ImGui::MenuItem("Viewport (Profiler)", nullptr, true);
-        ImGui::MenuItem("Wallet", nullptr, true);
-
-        ImGui::Separator();
-
-        if (ImGui::BeginMenu("Layout")) {
-            if (ImGui::MenuItem("Reset to Default Layout")) {
-                // Call the reset layout callback if set
-                if (reset_layout_callback_) {
-                    reset_layout_callback_();
+            // Search path
+            ImGui::Text("Search in:");
+            ImGui::SetNextItemWidth(-70);
+            ImGui::InputText("##searchpath_replace", find_in_files_path_, sizeof(find_in_files_path_));
+            ImGui::SameLine();
+            if (ImGui::Button("Browse...##replaceinfiles")) {
+                std::string selected_folder = OpenFolderDialog();
+                if (!selected_folder.empty()) {
+                    strncpy(find_in_files_path_, selected_folder.c_str(), sizeof(find_in_files_path_) - 1);
+                    find_in_files_path_[sizeof(find_in_files_path_) - 1] = '\0';
                 }
             }
+
+            ImGui::Spacing();
+
+            // Options
+            ImGui::Checkbox("Case sensitive##replacefiles", &find_case_sensitive_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Whole word##replacefiles", &find_whole_word_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Regex##replacefiles", &find_use_regex_);
+
+            ImGui::Spacing();
             ImGui::Separator();
-            if (ImGui::MenuItem("Save Layout...")) {
-                // TODO: Save current layout to file
-            }
-            if (ImGui::MenuItem("Load Layout...")) {
-                // TODO: Load saved layout from file
-            }
-            ImGui::EndMenu();
-        }
+            ImGui::Spacing();
 
-        // Theme selector
-        if (ImGui::BeginMenu("Theme")) {
-            auto& theme = gui::GetTheme();
-            auto current_preset = theme.GetCurrentPreset();
-
-            for (auto preset : gui::Theme::GetAvailablePresets()) {
-                bool is_selected = (current_preset == preset);
-                if (ImGui::MenuItem(gui::Theme::GetPresetName(preset), nullptr, is_selected)) {
-                    theme.ApplyPreset(preset);
-                    spdlog::info("Theme changed to: {}", gui::Theme::GetPresetName(preset));
+            // Action buttons
+            if (ImGui::Button("Find All", ImVec2(100, 0))) {
+                if (strlen(find_text_buffer_) > 0 && strlen(find_in_files_path_) > 0) {
+                    SearchInFiles(find_text_buffer_, find_in_files_path_, find_in_files_pattern_,
+                                  find_case_sensitive_, find_whole_word_, find_use_regex_);
                 }
             }
-            ImGui::EndMenu();
+            ImGui::SameLine();
+            if (ImGui::Button("Replace All", ImVec2(100, 0))) {
+                // First search for all matches
+                if (strlen(find_text_buffer_) > 0 && strlen(find_in_files_path_) > 0) {
+                    SearchInFiles(find_text_buffer_, find_in_files_path_, find_in_files_pattern_,
+                                  find_case_sensitive_, find_whole_word_, find_use_regex_);
+                    // TODO: Implement actual replace in files (requires file modification)
+                    spdlog::info("Replace All: Found {} occurrences. Replace functionality not yet implemented.",
+                                 search_results_.size());
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(100, 0))) {
+                show_replace_in_files_dialog_ = false;
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Results area
+            if (search_results_.empty()) {
+                ImGui::Text("Results:");
+            } else {
+                ImGui::Text("Results: %zu matches", search_results_.size());
+            }
+            ImGui::BeginChild("##replaceresults", ImVec2(-1, -1), true);
+
+            if (search_in_progress_) {
+                ImGui::TextDisabled("Searching...");
+            } else if (search_results_.empty()) {
+                ImGui::TextDisabled("No results. Enter search text and click Find All.");
+            } else {
+                std::string current_file;
+                for (const auto& result : search_results_) {
+                    // Group by file
+                    if (result.file_path != current_file) {
+                        current_file = result.file_path;
+                        ImGui::Spacing();
+                        std::filesystem::path file_path(result.file_path);
+                        std::string display_path = file_path.filename().string();
+                        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), ICON_FA_FILE_CODE " %s", display_path.c_str());
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(%s)", result.file_path.c_str());
+                    }
+
+                    // Display line with clickable result
+                    ImGui::Indent(20.0f);
+                    std::string label = std::to_string(result.line_number) + ": " + result.line_content;
+                    if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_None)) {
+                        if (open_script_in_editor_callback_) {
+                            open_script_in_editor_callback_(result.file_path);
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Click to open file at line %d", result.line_number);
+                    }
+                    ImGui::Unindent(20.0f);
+                }
+            }
+
+            ImGui::EndChild();
+
+            ImGui::EndPopup();
         }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Fullscreen", "F11")) {
-            // TODO: Toggle fullscreen mode
-        }
-
-        ImGui::EndMenu();
     }
-}
 
-void ToolbarPanel::RenderNodesMenu() {
-    if (ImGui::BeginMenu("Nodes")) {
-        if (ImGui::BeginMenu("Add Layer")) {
-            if (ImGui::MenuItem("Dense/Linear")) {
-                // TODO: Add dense layer
-            }
-            if (ImGui::MenuItem("Convolutional")) {
-                // TODO: Add conv layer
-            }
-            if (ImGui::MenuItem("Pooling")) {
-                // TODO: Add pooling layer
-            }
-            if (ImGui::MenuItem("Dropout")) {
-                // TODO: Add dropout
-            }
-            if (ImGui::MenuItem("Batch Normalization")) {
-                // TODO: Add batch norm
-            }
-            if (ImGui::MenuItem("Attention")) {
-                // TODO: Add attention
-            }
-            ImGui::EndMenu();
+    // ========== Preferences Dialog ==========
+    if (show_preferences_dialog_) {
+        // Initialize default shortcuts if empty
+        if (shortcuts_.empty()) {
+            shortcuts_ = {
+                // File operations
+                {"New File", "Ctrl+N", "Create a new file", false},
+                {"Open File", "Ctrl+O", "Open an existing file", false},
+                {"Save", "Ctrl+S", "Save current file", false},
+                {"Save As", "Ctrl+Shift+S", "Save with new name", false},
+                {"Close File", "Ctrl+W", "Close current file", false},
+                // Edit operations
+                {"Undo", "Ctrl+Z", "Undo last action", false},
+                {"Redo", "Ctrl+Y", "Redo last action", false},
+                {"Cut", "Ctrl+X", "Cut selection", false},
+                {"Copy", "Ctrl+C", "Copy selection", false},
+                {"Paste", "Ctrl+V", "Paste from clipboard", false},
+                {"Select All", "Ctrl+A", "Select all text", false},
+                {"Find", "Ctrl+F", "Find text", false},
+                {"Replace", "Ctrl+H", "Find and replace", false},
+                {"Go to Line", "Ctrl+G", "Jump to line number", false},
+                // Code editing
+                {"Toggle Comment", "Ctrl+/", "Toggle line comment", false},
+                {"Block Comment", "Shift+Alt+A", "Toggle block comment", false},
+                {"Duplicate Line", "Ctrl+D", "Duplicate current line", true},
+                {"Move Line Up", "Alt+Up", "Move line up", true},
+                {"Move Line Down", "Alt+Down", "Move line down", true},
+                {"Indent", "Tab", "Increase indentation", false},
+                {"Outdent", "Shift+Tab", "Decrease indentation", false},
+                {"Join Lines", "Ctrl+J", "Join selected lines", true},
+                // Script execution
+                {"Run Script", "F5", "Execute current script", false},
+                {"Run Selection", "Ctrl+Enter", "Execute selection", false},
+                {"Stop Script", "Ctrl+Break", "Stop running script", false},
+            };
         }
 
-        ImGui::Separator();
+        ImGui::OpenPopup("Preferences");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(650, 500), ImGuiCond_Appearing);
 
-        if (ImGui::MenuItem("Group Selected", "Ctrl+G")) {
-            // TODO: Group nodes
+        if (ImGui::BeginPopupModal("Preferences", &show_preferences_dialog_, ImGuiWindowFlags_NoMove)) {
+            // Tab bar for different preference sections
+            if (ImGui::BeginTabBar("PreferenceTabs")) {
+
+                // ========== General Tab ==========
+                if (ImGui::BeginTabItem(ICON_FA_GEAR " General")) {
+                    preferences_tab_ = 0;
+                    ImGui::Spacing();
+
+                    ImGui::Text("Startup");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Checkbox("Restore last session on startup", &general_restore_last_session_);
+                    ImGui::Checkbox("Check for updates on startup", &general_check_updates_);
+
+                    ImGui::Spacing();
+                    ImGui::Text("Recent Files Limit:");
+                    ImGui::SetNextItemWidth(100);
+                    ImGui::InputInt("##recent_limit", &general_recent_files_limit_);
+                    if (general_recent_files_limit_ < 1) general_recent_files_limit_ = 1;
+                    if (general_recent_files_limit_ > 50) general_recent_files_limit_ = 50;
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Exit Behavior");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Checkbox("Confirm before exit with unsaved changes", &general_confirm_on_exit_);
+
+                    ImGui::EndTabItem();
+                }
+
+                // ========== Editor Tab ==========
+                if (ImGui::BeginTabItem(ICON_FA_PEN " Editor")) {
+                    preferences_tab_ = 1;
+                    ImGui::Spacing();
+
+                    ImGui::Text("Theme & Colors");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Text("Editor Theme:");
+                    ImGui::SetNextItemWidth(200);
+                    const char* theme_items[] = { "Dark", "Light", "Retro Blue", "Monokai", "Dracula", "One Dark", "GitHub" };
+                    int prev_theme = editor_theme_;
+                    if (ImGui::Combo("##editor_theme", &editor_theme_, theme_items, IM_ARRAYSIZE(theme_items))) {
+                        if (editor_theme_callback_ && editor_theme_ != prev_theme) {
+                            editor_theme_callback_(editor_theme_);
+                        }
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Font & Display");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Text("Font Size:");
+                    ImGui::SetNextItemWidth(200);
+                    const char* font_size_items[] = { "Small (1.0x)", "Medium (1.3x)", "Large (1.6x)", "Extra Large (2.0x)" };
+                    int font_size_index = 2;  // Default to Large
+                    if (editor_font_size_ <= 10) font_size_index = 0;
+                    else if (editor_font_size_ <= 14) font_size_index = 1;
+                    else if (editor_font_size_ <= 18) font_size_index = 2;
+                    else font_size_index = 3;
+
+                    if (ImGui::Combo("##font_size", &font_size_index, font_size_items, IM_ARRAYSIZE(font_size_items))) {
+                        float scales[] = { 1.0f, 1.3f, 1.6f, 2.0f };
+                        int sizes[] = { 10, 13, 16, 20 };
+                        editor_font_size_ = sizes[font_size_index];
+                        if (editor_font_scale_callback_) {
+                            editor_font_scale_callback_(scales[font_size_index]);
+                        }
+                    }
+
+                    ImGui::Spacing();
+
+                    ImGui::Text("Tab Size:");
+                    ImGui::SetNextItemWidth(200);
+                    const char* tab_size_items[] = { "2 Spaces", "4 Spaces", "8 Spaces" };
+                    int tab_size_index = (editor_tab_size_ == 2) ? 0 : (editor_tab_size_ == 8) ? 2 : 1;
+                    int prev_tab_index = tab_size_index;
+                    if (ImGui::Combo("##tab_size", &tab_size_index, tab_size_items, IM_ARRAYSIZE(tab_size_items))) {
+                        int sizes[] = { 2, 4, 8 };
+                        editor_tab_size_ = sizes[tab_size_index];
+                        if (editor_tab_size_callback_ && tab_size_index != prev_tab_index) {
+                            editor_tab_size_callback_(editor_tab_size_);
+                        }
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Editor Features");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    bool prev_show_whitespace = editor_show_whitespace_;
+                    if (ImGui::Checkbox("Show Whitespace Characters", &editor_show_whitespace_)) {
+                        if (editor_show_whitespace_callback_ && editor_show_whitespace_ != prev_show_whitespace) {
+                            editor_show_whitespace_callback_(editor_show_whitespace_);
+                        }
+                    }
+
+                    bool prev_word_wrap = editor_word_wrap_;
+                    if (ImGui::Checkbox("Word Wrap", &editor_word_wrap_)) {
+                        if (editor_word_wrap_callback_ && editor_word_wrap_ != prev_word_wrap) {
+                            editor_word_wrap_callback_(editor_word_wrap_);
+                        }
+                    }
+
+                    bool prev_auto_indent = editor_auto_indent_;
+                    if (ImGui::Checkbox("Auto Indent", &editor_auto_indent_)) {
+                        if (editor_auto_indent_callback_ && editor_auto_indent_ != prev_auto_indent) {
+                            editor_auto_indent_callback_(editor_auto_indent_);
+                        }
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Line numbers are always shown. Current line is highlighted.");
+                    ImGui::TextDisabled("These settings will be saved with your project.");
+
+                    ImGui::EndTabItem();
+                }
+
+                // ========== Appearance Tab ==========
+                if (ImGui::BeginTabItem(ICON_FA_PALETTE " Appearance")) {
+                    preferences_tab_ = 2;
+                    ImGui::Spacing();
+
+                    ImGui::Text("User Interface");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Text("UI Scale:");
+                    ImGui::SetNextItemWidth(200);
+                    ImGui::SliderFloat("##ui_scale", &appearance_ui_scale_, 0.8f, 2.0f, "%.1fx");
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset##scale")) {
+                        appearance_ui_scale_ = 1.0f;
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Checkbox("Smooth Scrolling", &appearance_smooth_scrolling_);
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Layout");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Text("Sidebar Position:");
+                    ImGui::RadioButton("Left", &appearance_sidebar_position_, 0);
+                    ImGui::SameLine();
+                    ImGui::RadioButton("Right", &appearance_sidebar_position_, 1);
+
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Note: Editor theme can be changed in the Editor tab.");
+
+                    ImGui::EndTabItem();
+                }
+
+                // ========== Files Tab ==========
+                if (ImGui::BeginTabItem(ICON_FA_FILE " Files")) {
+                    preferences_tab_ = 3;
+                    ImGui::Spacing();
+
+                    ImGui::Text("File Encoding");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Text("Default Encoding:");
+                    const char* encodings[] = { "UTF-8", "UTF-16", "ASCII" };
+                    ImGui::SetNextItemWidth(150);
+                    ImGui::Combo("##encoding", &files_default_encoding_, encodings, IM_ARRAYSIZE(encodings));
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Line Endings");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Text("Default Line Ending:");
+                    const char* line_endings[] = { "Auto (OS default)", "LF (Unix/macOS)", "CRLF (Windows)" };
+                    ImGui::SetNextItemWidth(200);
+                    ImGui::Combo("##line_ending", &files_line_ending_, line_endings, IM_ARRAYSIZE(line_endings));
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Save Options");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Checkbox("Trim trailing whitespace on save", &files_trim_trailing_whitespace_);
+                    ImGui::Checkbox("Insert final newline on save", &files_insert_final_newline_);
+
+                    ImGui::EndTabItem();
+                }
+
+                // ========== Python/Scripting Tab ==========
+                if (ImGui::BeginTabItem(ICON_FA_CODE " Python")) {
+                    preferences_tab_ = 4;
+                    ImGui::Spacing();
+
+                    // Python Interpreter Path
+                    ImGui::Text("Python Interpreter Path:");
+                    ImGui::SetNextItemWidth(-100);
+                    ImGui::InputText("##python_path", python_interpreter_path_, sizeof(python_interpreter_path_));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Browse##python")) {
+                        std::string path = OpenFileDialog("Python Executable (python.exe)\0python.exe\0All Files (*.*)\0*.*\0", "Select Python Interpreter");
+                        if (!path.empty()) {
+                            strncpy(python_interpreter_path_, path.c_str(), sizeof(python_interpreter_path_) - 1);
+                        }
+                    }
+                    ImGui::TextDisabled("Leave empty to use system default");
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    // Startup Script
+                    ImGui::Text("Startup Script (run on launch):");
+                    ImGui::SetNextItemWidth(-100);
+                    ImGui::InputText("##startup_script", python_startup_script_, sizeof(python_startup_script_));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Browse##startup")) {
+                        std::string path = OpenFileDialog("Python Scripts (*.py)\0*.py\0CyxWiz Scripts (*.cyx)\0*.cyx\0All Files (*.*)\0*.*\0", "Select Startup Script");
+                        if (!path.empty()) {
+                            strncpy(python_startup_script_, path.c_str(), sizeof(python_startup_script_) - 1);
+                        }
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    // Auto-import options
+                    ImGui::Text("Auto-Import Libraries:");
+                    ImGui::Checkbox("Import NumPy as 'np'", &python_auto_import_numpy_);
+                    ImGui::Checkbox("Import CyxWiz module", &python_auto_import_cyxwiz_);
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    // Output limit
+                    ImGui::Text("Console Output Limit (lines):");
+                    ImGui::SetNextItemWidth(150);
+                    ImGui::InputInt("##output_limit", &python_output_limit_);
+                    if (python_output_limit_ < 100) python_output_limit_ = 100;
+                    if (python_output_limit_ > 10000) python_output_limit_ = 10000;
+                    ImGui::TextDisabled("Range: 100 - 10000 lines");
+
+                    ImGui::EndTabItem();
+                }
+
+                // ========== Keyboard Shortcuts Tab ==========
+                if (ImGui::BeginTabItem(ICON_FA_KEYBOARD " Shortcuts")) {
+                    preferences_tab_ = 5;
+                    ImGui::Spacing();
+
+                    ImGui::TextDisabled("Double-click a shortcut to edit. Some shortcuts are system-level and cannot be changed.");
+                    ImGui::Spacing();
+
+                    // Table of shortcuts
+                    if (ImGui::BeginTable("ShortcutsTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 280))) {
+                        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180);
+                        ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthFixed, 150);
+                        ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableHeadersRow();
+
+                        for (int i = 0; i < static_cast<int>(shortcuts_.size()); ++i) {
+                            auto& shortcut = shortcuts_[i];
+                            ImGui::TableNextRow();
+
+                            // Action column
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", shortcut.action.c_str());
+
+                            // Shortcut column
+                            ImGui::TableNextColumn();
+                            if (editing_shortcut_index_ == i) {
+                                // Edit mode
+                                ImGui::SetNextItemWidth(-1);
+                                if (ImGui::InputText("##edit_shortcut", shortcut_edit_buffer_, sizeof(shortcut_edit_buffer_), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                                    shortcut.shortcut = shortcut_edit_buffer_;
+                                    editing_shortcut_index_ = -1;
+                                }
+                                if (ImGui::IsItemDeactivated() && !ImGui::IsItemActive()) {
+                                    editing_shortcut_index_ = -1;
+                                }
+                            } else {
+                                // Display mode
+                                if (shortcut.editable) {
+                                    if (ImGui::Selectable(shortcut.shortcut.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+                                        editing_shortcut_index_ = i;
+                                        strncpy(shortcut_edit_buffer_, shortcut.shortcut.c_str(), sizeof(shortcut_edit_buffer_) - 1);
+                                    }
+                                } else {
+                                    ImGui::TextDisabled("%s", shortcut.shortcut.c_str());
+                                }
+                            }
+
+                            // Description column
+                            ImGui::TableNextColumn();
+                            ImGui::TextDisabled("%s", shortcut.description.c_str());
+                        }
+
+                        ImGui::EndTable();
+                    }
+
+                    ImGui::Spacing();
+                    if (ImGui::Button("Reset to Defaults")) {
+                        shortcuts_.clear();  // Will be re-initialized on next open
+                    }
+
+                    ImGui::EndTabItem();
+                }
+
+                ImGui::EndTabBar();
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Dialog buttons
+            float button_width = 100.0f;
+            float total_width = button_width * 2 + ImGui::GetStyle().ItemSpacing.x;
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total_width) * 0.5f);
+
+            if (ImGui::Button("OK", ImVec2(button_width, 0))) {
+                // Save preferences to project if one is open
+                if (save_project_settings_callback_) {
+                    save_project_settings_callback_();
+                }
+                show_preferences_dialog_ = false;
+                spdlog::info("Preferences saved");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+                show_preferences_dialog_ = false;
+            }
+
+            ImGui::EndPopup();
         }
-
-        if (ImGui::MenuItem("Ungroup", "Ctrl+Shift+G")) {
-            // TODO: Ungroup nodes
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
-            // TODO: Duplicate selected
-        }
-
-        if (ImGui::MenuItem("Delete Selected", "Delete")) {
-            // TODO: Delete selected nodes
-        }
-
-        ImGui::EndMenu();
     }
-}
 
-void ToolbarPanel::RenderTrainMenu() {
-    if (ImGui::BeginMenu("Train")) {
-        if (ImGui::MenuItem("Start Training", "F5")) {
-            // TODO: Start training
-        }
+    // ========== Go to Line Dialog ==========
+    if (show_go_to_line_dialog_) {
+        ImGui::OpenPopup("Go to Line");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
-        if (ImGui::MenuItem("Pause", "F6")) {
-            // TODO: Pause training
-        }
+        if (ImGui::BeginPopupModal("Go to Line", &show_go_to_line_dialog_, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+            ImGui::Text("Enter line number:");
+            ImGui::Spacing();
 
-        if (ImGui::MenuItem("Stop", "Shift+F5")) {
-            // TODO: Stop training
-        }
+            ImGui::SetNextItemWidth(200);
+            bool enter_pressed = ImGui::InputInt("##linenumber", &go_to_line_number_, 1, 10, ImGuiInputTextFlags_EnterReturnsTrue);
+            if (go_to_line_number_ < 1) go_to_line_number_ = 1;
 
-        ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
 
-        if (ImGui::MenuItem("Training Settings...")) {
-            // TODO: Open training settings
-        }
-
-        if (ImGui::MenuItem("Optimizer Settings...")) {
-            // TODO: Open optimizer settings
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Resume from Checkpoint...")) {
-            // TODO: Resume training
-        }
-
-        ImGui::EndMenu();
-    }
-}
-
-void ToolbarPanel::RenderDatasetMenu() {
-    if (ImGui::BeginMenu("Dataset")) {
-        if (ImGui::MenuItem("Import Dataset...")) {
-            // TODO: Import dataset
-        }
-
-        if (ImGui::MenuItem("Create Custom Dataset...")) {
-            // TODO: Create dataset
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Preprocess...")) {
-            // TODO: Preprocess dataset
-        }
-
-        if (ImGui::MenuItem("Tokenize...")) {
-            // TODO: Tokenize dataset
-        }
-
-        if (ImGui::MenuItem("Augment...")) {
-            // TODO: Data augmentation
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Dataset Statistics")) {
-            // TODO: Show statistics
-        }
-
-        ImGui::EndMenu();
-    }
-}
-
-void ToolbarPanel::RenderScriptMenu() {
-    if (ImGui::BeginMenu("Script")) {
-        if (ImGui::MenuItem("Open Python Console", "F12")) {
-            // TODO: Show Python console
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("New Script...")) {
-            // TODO: Create new script
-        }
-
-        if (ImGui::MenuItem("Run Script...", "Ctrl+R")) {
-            // TODO: Run script
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Script Editor...")) {
-            // TODO: Open script editor
-        }
-
-        ImGui::EndMenu();
-    }
-}
-
-void ToolbarPanel::RenderPlotsMenu() {
-    if (ImGui::BeginMenu("Plots")) {
-        // Test Control - Interactive option
-        if (ImGui::MenuItem("Test Control")) {
-            if (toggle_plot_test_control_callback_) {
-                toggle_plot_test_control_callback_();
+            if (ImGui::Button("Go", ImVec2(80, 0)) || enter_pressed) {
+                if (go_to_line_callback_) {
+                    go_to_line_callback_(go_to_line_number_);
+                }
+                show_go_to_line_dialog_ = false;
             }
-        }
-
-        ImGui::Separator();
-        ImGui::TextDisabled("Available Plot Types (View Only)");
-        ImGui::Separator();
-
-        // Basic 2D Plots (from cheatsheet)
-        if (ImGui::BeginMenu("Basic 2D", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("plot() - Line plot");
-        ImGui::TextDisabled("scatter() - Scatter plot");
-        ImGui::TextDisabled("bar() / barh() - Bar chart");
-        ImGui::TextDisabled("imshow() - Image display");
-        ImGui::TextDisabled("contour() / contourf() - Contour plot");
-        ImGui::TextDisabled("pcolormesh() - Pseudocolor plot");
-        ImGui::TextDisabled("quiver() - Vector field");
-        ImGui::TextDisabled("pie() - Pie chart");
-        ImGui::TextDisabled("fill_between() - Filled area");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // Advanced 2D Plots
-        if (ImGui::BeginMenu("Advanced 2D", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("step() - Step plot");
-        ImGui::TextDisabled("boxplot() - Box plot");
-        ImGui::TextDisabled("errorbar() - Error bar plot");
-        ImGui::TextDisabled("hist() - Histogram");
-        ImGui::TextDisabled("violinplot() - Violin plot");
-        ImGui::TextDisabled("barbs() - Barbs plot");
-        ImGui::TextDisabled("eventplot() - Event plot");
-        ImGui::TextDisabled("hexbin() - Hexagonal binning");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // 3D Plots
-        if (ImGui::BeginMenu("3D Plots", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("plot3D() - 3D line plot");
-        ImGui::TextDisabled("scatter3D() - 3D scatter");
-        ImGui::TextDisabled("plot_surface() - Surface plot");
-        ImGui::TextDisabled("plot_wireframe() - Wireframe");
-        ImGui::TextDisabled("contour3D() - 3D contour");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // Polar Plots
-        if (ImGui::BeginMenu("Polar", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("polar() - Polar plot");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // Statistical Plots
-        if (ImGui::BeginMenu("Statistical", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("hist() - Histogram");
-        ImGui::TextDisabled("boxplot() - Box plot");
-        ImGui::TextDisabled("violinplot() - Violin plot");
-        ImGui::TextDisabled("kde plot - Density estimation");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // Specialized Plots
-        if (ImGui::BeginMenu("Specialized", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("heatmap - Heat map");
-        ImGui::TextDisabled("streamplot() - Stream plot");
-        ImGui::TextDisabled("specgram() - Spectrogram");
-        ImGui::TextDisabled("spy() - Sparse matrix viz");
-        ImGui::Unindent();
-
-        ImGui::EndMenu();
-    }
-}
-
-void ToolbarPanel::RenderDeployMenu() {
-    if (ImGui::BeginMenu("Deploy")) {
-        if (ImGui::MenuItem("Connect to Server...")) {
-            if (connect_to_server_callback_) {
-                connect_to_server_callback_();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+                show_go_to_line_dialog_ = false;
             }
+
+            ImGui::EndPopup();
         }
-
-        ImGui::Separator();
-
-        if (ImGui::BeginMenu("Export Model")) {
-            if (ImGui::MenuItem("ONNX Format")) {
-                // TODO: Export ONNX
-            }
-            if (ImGui::MenuItem("GGUF Format")) {
-                // TODO: Export GGUF
-            }
-            if (ImGui::MenuItem("LoRA Adapter")) {
-                // TODO: Export LoRA
-            }
-            if (ImGui::MenuItem("Safetensors")) {
-                // TODO: Export safetensors
-            }
-            ImGui::EndMenu();
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::BeginMenu("Quantize")) {
-            if (ImGui::MenuItem("INT8")) {
-                // TODO: Quantize INT8
-            }
-            if (ImGui::MenuItem("INT4")) {
-                // TODO: Quantize INT4
-            }
-            if (ImGui::MenuItem("FP16")) {
-                // TODO: Quantize FP16
-            }
-            ImGui::EndMenu();
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Deploy to Server Node...")) {
-            // TODO: Deploy to node
-        }
-
-        if (ImGui::MenuItem("Publish to Marketplace...")) {
-            // TODO: Publish model
-        }
-
-        ImGui::EndMenu();
-    }
-}
-
-void ToolbarPanel::RenderHelpMenu() {
-    if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("Documentation", "F1")) {
-            // TODO: Open docs
-        }
-
-        if (ImGui::MenuItem("Keyboard Shortcuts")) {
-            // TODO: Show shortcuts
-        }
-
-        if (ImGui::MenuItem("API Reference")) {
-            // TODO: Open API docs
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Report Issue...")) {
-            // TODO: Open issue tracker
-        }
-
-        if (ImGui::MenuItem("Check for Updates...")) {
-            // TODO: Check updates
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("About CyxWiz")) {
-            show_about_dialog_ = true;
-        }
-
-        ImGui::EndMenu();
     }
 }
 
@@ -1394,13 +1754,6 @@ std::string ToolbarPanel::OpenFileDialog(const char* filter, const char* title) 
     spdlog::warn("File dialog not implemented for this platform");
     return "";
 #endif
-}
-
-void ToolbarPanel::CreatePlotWindow(const std::string& title, PlotWindow::PlotWindowType type) {
-    // Create new plot window with auto-generated data
-    auto plot_window = std::make_shared<PlotWindow>(title, type, true);
-    plot_windows_.push_back(plot_window);
-    spdlog::info("Created new plot window: {}", title);
 }
 
 } // namespace cyxwiz

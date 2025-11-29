@@ -37,6 +37,10 @@ set(ENGINE_SOURCES
     src/gui/viewport.cpp
     src/gui/properties.cpp
     src/gui/panels/toolbar.cpp
+    src/gui/panels/toolbar_file_menu.cpp
+    src/gui/panels/toolbar_edit_menu.cpp
+    src/gui/panels/toolbar_view_menu.cpp
+    src/gui/panels/toolbar_other_menus.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp

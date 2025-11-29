@@ -31,6 +31,10 @@
 #define ICON_FA_PENCIL              "\xef\x8c\x83"  // U+F303
 #define ICON_FA_ROTATE_LEFT         "\xef\x8b\xaa"  // U+F2EA
 #define ICON_FA_ROTATE_RIGHT        "\xef\x8b\xb9"  // U+F2F9
+#define ICON_FA_OBJECT_GROUP        "\xef\x89\x87"  // U+F247 - select all
+#define ICON_FA_RIGHT_LEFT          "\xef\x8d\xa2"  // U+F362 - exchange/swap
+#define ICON_FA_COMMENT             "\xef\x81\xb5"  // U+F075 - comment
+#define ICON_FA_COMMENTS            "\xef\x82\x86"  // U+F086 - comments/block
 
 // View/Layout
 #define ICON_FA_TABLE_COLUMNS       "\xef\x83\x9b"  // U+F0DB
@@ -114,6 +118,8 @@
 // Settings/Tools
 #define ICON_FA_GEAR                "\xef\x80\x93"  // U+F013
 #define ICON_FA_GEARS               "\xef\x82\x85"  // U+F085
+#define ICON_FA_CODE                "\xef\x84\xa1"  // U+F121 - code/scripting
+#define ICON_FA_KEYBOARD            "\xef\x84\x9c"  // U+F11C - keyboard
 #define ICON_FA_WRENCH              "\xef\x82\xad"  // U+F0AD
 #define ICON_FA_SCREWDRIVER_WRENCH  "\xef\x9f\x99"  // U+F7D9
 #define ICON_FA_PALETTE             "\xef\x94\xbf"  // U+F53F
