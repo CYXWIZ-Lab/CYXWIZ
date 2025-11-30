@@ -29,16 +29,11 @@ AssetBrowserPanel::AssetBrowserPanel()
     std::memset(new_script_name_, 0, sizeof(new_script_name_));
     std::memset(new_folder_name_, 0, sizeof(new_folder_name_));
 
-    // Register with ProjectManager callbacks
-    auto& pm = ProjectManager::Instance();
-    pm.SetOnProjectOpened([this](const std::string& root) {
-        SetProjectRoot(root);
-    });
-    pm.SetOnProjectClosed([this](const std::string&) {
-        Clear();
-    });
+    // Note: ProjectManager callbacks are managed by MainWindow to avoid callback conflicts
+    // MainWindow::OnProjectOpened calls SetProjectRoot and MainWindow::OnProjectClosed calls Clear
 
     // Initialize with current project if exists
+    auto& pm = ProjectManager::Instance();
     if (pm.HasActiveProject()) {
         SetProjectRoot(pm.GetProjectRoot());
     }
@@ -51,6 +46,18 @@ void AssetBrowserPanel::Render() {
     if (needs_refresh_) {
         needs_refresh_ = false;
         Refresh();
+    }
+
+    // Check if async scan completed and swap in the new tree
+    if (scan_completed_.load()) {
+        std::lock_guard<std::mutex> lock(pending_tree_mutex_);
+        if (pending_directory_root_) {
+            directory_root_ = std::move(pending_directory_root_);
+            SortAssets();
+            ClearSelection();
+        }
+        scan_completed_.store(false);
+        is_scanning_directory_.store(false);
     }
 
     ImGui::Begin(GetName(), &visible_);
@@ -123,8 +130,23 @@ void AssetBrowserPanel::Render() {
         }
     }
 
-    // Main content area - directory view
-    ImGui::BeginChild("AssetContentRegion", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()), false);
+    // Main content area - directory view with optional preview pane
+    float preview_width = 0.0f;
+
+    // Check if any selected item is a dataset for preview pane
+    bool has_dataset_selected = false;
+    for (auto* item : selected_items_) {
+        if (item && IsDatasetFile(*item)) {
+            has_dataset_selected = true;
+            break;
+        }
+    }
+
+    if (show_dataset_preview_ && has_dataset_selected) {
+        preview_width = 200.0f;
+    }
+
+    ImGui::BeginChild("AssetContentRegion", ImVec2(-preview_width, -ImGui::GetFrameHeightWithSpacing()), false);
 
     RenderDirectoryView();
 
@@ -169,6 +191,12 @@ void AssetBrowserPanel::Render() {
 
     ImGui::EndChild();
 
+    // Render dataset preview pane if needed
+    if (show_dataset_preview_ && has_dataset_selected) {
+        ImGui::SameLine();
+        RenderDatasetPreview();
+    }
+
     // Status bar at bottom
     RenderStatusBar();
 
@@ -192,13 +220,163 @@ void AssetBrowserPanel::Refresh() {
         return;
     }
 
-    spdlog::info("Refreshing asset browser for project: {}", project_root_);
+    // If already scanning, cancel and restart
+    if (is_scanning_directory_.load()) {
+        AsyncTaskManager::Instance().Cancel(scanning_task_id_);
+    }
 
-    // Build directory tree
-    BuildDirectoryTree();
+    spdlog::info("Refreshing asset browser async for project: {}", project_root_);
+
+    is_scanning_directory_.store(true);
+    scan_completed_.store(false);
+
+    // Capture necessary values for the async task
+    std::string project_root = project_root_;
+    bool show_hidden = show_hidden_files_;
+
+    scanning_task_id_ = AsyncTaskManager::Instance().RunAsync(
+        "Scanning project files",
+        [this, project_root, show_hidden](LambdaTask& task) {
+            task.ReportProgress(0.0f, "Scanning directory structure...");
+
+            // Build the tree in background
+            auto new_root = std::make_unique<AssetItem>();
+            new_root->name = "Project";
+            new_root->is_directory = true;
+            new_root->is_expanded = true;
+            new_root->absolute_path = project_root;
+            new_root->relative_path = "";
+
+            // Count total entries first for progress reporting
+            size_t total_entries = 0;
+            size_t processed_entries = 0;
+
+            try {
+                for (auto it = fs::recursive_directory_iterator(project_root,
+                         fs::directory_options::skip_permission_denied);
+                     it != fs::recursive_directory_iterator(); ++it) {
+                    total_entries++;
+                }
+            } catch (...) {
+                // Ignore errors in counting
+            }
+
+            if (task.ShouldStop()) return;
+
+            // Recursively build tree from a directory
+            std::function<void(AssetItem&, const fs::path&)> build_tree;
+            build_tree = [&](AssetItem& parent, const fs::path& dir_path) {
+                if (!fs::exists(dir_path) || !fs::is_directory(dir_path)) return;
+                if (task.ShouldStop()) return;
+
+                try {
+                    for (const auto& entry : fs::directory_iterator(dir_path)) {
+                        if (task.ShouldStop()) return;
+
+                        std::string filename = entry.path().filename().string();
+
+                        // Skip .cyxwiz project files
+                        std::string ext = entry.path().extension().string();
+                        if (ext == ".cyxwiz") {
+                            continue;
+                        }
+
+                        // Skip hidden files unless show_hidden is true
+                        if (!show_hidden && !filename.empty() && filename[0] == '.') {
+                            continue;
+                        }
+
+                        auto item = std::make_unique<AssetItem>();
+                        item->name = entry.path().filename().string();
+                        item->absolute_path = entry.path().string();
+                        // Make relative path manually since we don't have ProjectManager in thread
+                        item->relative_path = fs::relative(entry.path(), project_root).string();
+                        item->is_directory = entry.is_directory();
+
+                        if (entry.is_directory()) {
+                            item->type = AssetType::Folder;
+                            item->is_expanded = false;
+                            // Recursively scan subdirectories
+                            build_tree(*item, entry.path());
+                        } else {
+                            item->type = DetermineAssetType(entry.path().string());
+                            try {
+                                item->file_size = fs::file_size(entry.path());
+                            } catch (...) {
+                                item->file_size = 0;
+                            }
+                        }
+
+                        // Get last modified time
+                        try {
+                            auto ftime = fs::last_write_time(entry.path());
+                            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                                ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+                            auto time = std::chrono::system_clock::to_time_t(sctp);
+                            char buf[64];
+                            std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", std::localtime(&time));
+                            item->modified_time = buf;
+                        } catch (...) {
+                            item->modified_time = "Unknown";
+                        }
+
+                        parent.children.push_back(std::move(item));
+
+                        // Update progress
+                        processed_entries++;
+                        if (total_entries > 0 && processed_entries % 50 == 0) {
+                            float progress = static_cast<float>(processed_entries) / static_cast<float>(total_entries);
+                            task.ReportProgress(progress * 0.9f, "Scanning files...");
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    spdlog::warn("Error scanning directory {}: {}", dir_path.string(), e.what());
+                }
+            };
+
+            // Build tree from project root
+            build_tree(*new_root, project_root);
+
+            if (task.ShouldStop()) return;
+
+            task.ReportProgress(0.95f, "Finalizing...");
+
+            // Store the result
+            {
+                std::lock_guard<std::mutex> lock(pending_tree_mutex_);
+                pending_directory_root_ = std::move(new_root);
+            }
+            scan_completed_.store(true);
+
+            task.MarkCompleted();
+        },
+        nullptr, // No progress callback needed
+        [this](bool success, const std::string& error) {
+            // Note: If the task was cancelled (e.g., new scan started), success will be false
+            // but that's expected behavior, not an error. Only log actual failures.
+            if (!success && !error.empty()) {
+                spdlog::error("Directory scan failed: {}", error);
+            }
+            // Reset scanning state on any completion (success, cancel, or failure)
+            is_scanning_directory_.store(false);
+        }
+    );
 }
 
 void AssetBrowserPanel::Clear() {
+    // Cancel any ongoing directory scan
+    if (is_scanning_directory_.load()) {
+        AsyncTaskManager::Instance().Cancel(scanning_task_id_);
+        is_scanning_directory_.store(false);
+    }
+    scan_completed_.store(false);
+
+    // Clear pending tree data
+    {
+        std::lock_guard<std::mutex> lock(pending_tree_mutex_);
+        pending_directory_root_.reset();
+    }
+
     directory_root_.reset();
     selected_items_.clear();
     last_clicked_item_ = nullptr;
@@ -289,6 +467,16 @@ void AssetBrowserPanel::RenderToolbar() {
 }
 
 void AssetBrowserPanel::RenderDirectoryView() {
+    // Show loading indicator while scanning
+    if (is_scanning_directory_.load()) {
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_SPINNER " Scanning project files...");
+
+        // Show existing tree while scanning (if any)
+        if (!directory_root_) {
+            return;
+        }
+    }
+
     if (!directory_root_) {
         ImGui::TextDisabled("No project loaded");
         return;
@@ -419,6 +607,10 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
 
     // Handle double-click for files (directories are handled by TreeNode arrow)
     if (!item.is_directory && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+        // Special handling for dataset files - load into DataRegistry
+        if (IsDatasetFile(item)) {
+            LoadDatasetFromItem(item);
+        }
         // Fire callback for file double-click
         if (on_double_click_) {
             on_double_click_(item);
@@ -1325,6 +1517,144 @@ bool AssetBrowserPanel::HasMatchingChildren(const AssetItem& item, const std::st
         }
     }
     return false;
+}
+
+// Dataset integration methods
+
+bool AssetBrowserPanel::IsDatasetFile(const AssetItem& item) const {
+    return item.type == AssetType::Dataset;
+}
+
+void AssetBrowserPanel::LoadDatasetFromItem(const AssetItem& item) {
+    // Use async loading by default for better UX
+    LoadDatasetFromItemAsync(item);
+}
+
+void AssetBrowserPanel::LoadDatasetFromItemAsync(const AssetItem& item) {
+    if (!IsDatasetFile(item)) return;
+
+    if (is_loading_dataset_.load()) {
+        spdlog::warn("Already loading a dataset, please wait...");
+        return;
+    }
+
+    spdlog::info("Loading dataset async from Asset Browser: {}", item.absolute_path);
+
+    is_loading_dataset_.store(true);
+    loading_dataset_path_ = item.absolute_path;
+
+    // Capture path and callback by value to avoid dangling references
+    std::string path = item.absolute_path;
+    DatasetCallback callback = on_dataset_loaded_;
+
+    loading_task_id_ = AsyncTaskManager::Instance().RunAsync(
+        "Loading: " + item.name,
+        [this, path, callback](LambdaTask& task) {
+            task.ReportProgress(0.1f, "Opening file...");
+
+            auto& registry = DataRegistry::Instance();
+
+            task.ReportProgress(0.3f, "Parsing data...");
+            if (task.ShouldStop()) return;
+
+            DatasetHandle handle = registry.LoadDataset(path);
+
+            task.ReportProgress(0.9f, "Finalizing...");
+            if (task.ShouldStop()) return;
+
+            if (handle.IsValid()) {
+                spdlog::info("Dataset loaded successfully: {} ({} samples)",
+                    handle.GetName(), handle.GetInfo().num_samples);
+
+                // Store for callback on main thread
+                // Note: callback will be fired via completion callback
+                task.MarkCompleted();
+            } else {
+                task.MarkFailed("Failed to load dataset");
+            }
+        },
+        nullptr, // No progress callback needed
+        [this, path, callback](bool success, const std::string& error) {
+            is_loading_dataset_.store(false);
+
+            if (success && callback) {
+                // Reload the handle on main thread and fire callback
+                auto& registry = DataRegistry::Instance();
+                auto handle = registry.GetDataset(path);
+                if (handle.IsValid()) {
+                    callback(path, handle);
+                }
+            } else if (!success) {
+                spdlog::error("Async dataset load failed: {}", error);
+            }
+        }
+    );
+}
+
+void AssetBrowserPanel::RenderDatasetPreview() {
+    if (!show_dataset_preview_) return;
+
+    // Get first selected item that is a dataset
+    AssetItem* dataset_item = nullptr;
+    for (auto* item : selected_items_) {
+        if (item && IsDatasetFile(*item)) {
+            dataset_item = item;
+            break;
+        }
+    }
+
+    if (!dataset_item) return;
+
+    // Check if we need to update preview
+    if (preview_path_ != dataset_item->absolute_path) {
+        preview_path_ = dataset_item->absolute_path;
+        auto& registry = DataRegistry::Instance();
+        current_preview_ = registry.GetPreview(preview_path_, 5);
+    }
+
+    // Render preview in a side panel
+    ImGui::BeginChild("DatasetPreviewPane", ImVec2(200, 0), true);
+
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_DATABASE " Dataset Preview");
+    ImGui::Separator();
+
+    ImGui::Text("Type: %s", DataRegistry::TypeToString(current_preview_.type).c_str());
+    ImGui::Text("Samples: %zu", current_preview_.num_samples);
+    ImGui::Text("Classes: %zu", current_preview_.num_classes);
+
+    if (!current_preview_.shape.empty()) {
+        std::string shape_str = "[";
+        for (size_t i = 0; i < current_preview_.shape.size(); ++i) {
+            if (i > 0) shape_str += ", ";
+            shape_str += std::to_string(current_preview_.shape[i]);
+        }
+        shape_str += "]";
+        ImGui::Text("Shape: %s", shape_str.c_str());
+    }
+
+    ImGui::Text("Size: %s", FormatFileSize(current_preview_.file_size).c_str());
+
+    ImGui::Separator();
+
+    // Show column names for tabular data
+    if (!current_preview_.columns.empty()) {
+        ImGui::Text("Columns:");
+        for (size_t i = 0; i < current_preview_.columns.size() && i < 5; ++i) {
+            ImGui::BulletText("%s", current_preview_.columns[i].c_str());
+        }
+        if (current_preview_.columns.size() > 5) {
+            ImGui::Text("  ... and %zu more", current_preview_.columns.size() - 5);
+        }
+    }
+
+    ImGui::Separator();
+
+    // Load button
+    if (ImGui::Button("Load Dataset", ImVec2(-1, 0))) {
+        LoadDatasetFromItem(*dataset_item);
+    }
+
+    ImGui::EndChild();
 }
 
 } // namespace cyxwiz

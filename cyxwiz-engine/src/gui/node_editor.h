@@ -40,15 +40,26 @@ enum class NodeType {
     // Optimizers
     SGD,
     Adam,
-    AdamW
+    AdamW,
+    // Data Pipeline Nodes
+    DatasetInput,       // Load dataset from DataRegistry
+    DataLoader,         // Batch iterator with shuffle/drop_last
+    Augmentation,       // Transform pipeline for data augmentation
+    DataSplit,          // Train/val/test splitter
+    TensorReshape,      // Reshape tensor dimensions
+    Normalize,          // Normalize values (mean/std)
+    OneHotEncode        // Label encoding
 };
 
 // Attribute for node pins (inputs/outputs)
 enum class PinType {
     Tensor,      // General tensor data
+    Labels,      // Label tensor (for classification)
     Parameters,  // Model parameters
     Loss,        // Loss value
-    Optimizer    // Optimizer state
+    Optimizer,   // Optimizer state
+    Dataset      // Dataset handle reference
+    // Note: Shape is metadata (node parameter), not a data flow type
 };
 
 // Node pin structure

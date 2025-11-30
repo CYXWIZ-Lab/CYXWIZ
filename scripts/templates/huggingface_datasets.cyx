@@ -1,0 +1,230 @@
+# =============================================================================
+# HuggingFace Datasets - Example Script
+# =============================================================================
+# This script demonstrates how to download and prepare datasets from HuggingFace
+# for use in CyxWiz Engine.
+#
+# Prerequisites:
+#   pip install datasets pillow numpy
+#
+# Usage:
+#   1. Modify the DATASET_NAME variable to your desired dataset
+#   2. Run this script in the Python Console
+#   3. Load the saved files using the Custom dataset loader
+# =============================================================================
+
+import os
+import json
+import numpy as np
+
+# Try to import the datasets library
+try:
+    from datasets import load_dataset
+    print("HuggingFace datasets library loaded successfully!")
+except ImportError:
+    print("ERROR: 'datasets' library not installed.")
+    print("Please run: pip install datasets")
+    raise SystemExit(1)
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+# Dataset to download (change this to any HuggingFace dataset)
+DATASET_NAME = "mnist"  # Options: "mnist", "cifar10", "cifar100", "imdb", "fashion_mnist", etc.
+
+# Output directory for the processed data
+OUTPUT_DIR = "./data/huggingface"
+
+# Split to download ("train", "test", "validation", or "all")
+SPLIT = "train"
+
+# Maximum samples to download (None for all)
+MAX_SAMPLES = None  # Set to e.g., 1000 for testing
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def ensure_dir(path):
+    """Create directory if it doesn't exist."""
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def save_image_dataset(dataset, output_path, max_samples=None):
+    """Save an image dataset to JSON format compatible with CyxWiz."""
+    print(f"Processing image dataset...")
+
+    data = []
+    labels = []
+
+    # Get sample count
+    total = len(dataset)
+    if max_samples:
+        total = min(total, max_samples)
+
+    for i, sample in enumerate(dataset):
+        if max_samples and i >= max_samples:
+            break
+
+        # Handle different image formats
+        if "image" in sample:
+            img = sample["image"]
+            # Convert PIL Image to numpy array
+            if hasattr(img, 'convert'):
+                img = np.array(img.convert('L') if img.mode != 'RGB' else img)
+            img_flat = img.flatten().tolist()
+        elif "img" in sample:
+            img = np.array(sample["img"])
+            img_flat = img.flatten().tolist()
+        else:
+            print(f"Warning: No image field found in sample {i}")
+            continue
+
+        # Normalize to 0-1 range
+        img_flat = [x / 255.0 for x in img_flat]
+        data.append(img_flat)
+
+        # Get label
+        if "label" in sample:
+            labels.append(int(sample["label"]))
+        elif "labels" in sample:
+            labels.append(int(sample["labels"]))
+        else:
+            labels.append(0)
+
+        # Progress indicator
+        if (i + 1) % 1000 == 0:
+            print(f"  Processed {i + 1}/{total} samples...")
+
+    # Determine shape from first sample
+    if data:
+        sample_size = len(data[0])
+        # Try to infer image dimensions
+        sqrt = int(np.sqrt(sample_size))
+        if sqrt * sqrt == sample_size:
+            shape = [sqrt, sqrt, 1]  # Grayscale
+        elif sample_size % 3 == 0:
+            sqrt = int(np.sqrt(sample_size // 3))
+            if sqrt * sqrt * 3 == sample_size:
+                shape = [sqrt, sqrt, 3]  # RGB
+            else:
+                shape = [sample_size]
+        else:
+            shape = [sample_size]
+    else:
+        shape = []
+
+    # Save to JSON
+    output = {
+        "data": data,
+        "labels": labels,
+        "shape": shape,
+        "num_samples": len(data),
+        "num_classes": len(set(labels)),
+        "source": f"huggingface/{DATASET_NAME}"
+    }
+
+    with open(output_path, 'w') as f:
+        json.dump(output, f)
+
+    print(f"Saved {len(data)} samples to {output_path}")
+    print(f"Shape: {shape}, Classes: {len(set(labels))}")
+    return output_path
+
+def save_text_dataset(dataset, output_path, max_samples=None):
+    """Save a text dataset to JSON format."""
+    print(f"Processing text dataset...")
+
+    data = []
+    labels = []
+
+    total = len(dataset)
+    if max_samples:
+        total = min(total, max_samples)
+
+    for i, sample in enumerate(dataset):
+        if max_samples and i >= max_samples:
+            break
+
+        # Handle different text formats
+        text = sample.get("text", sample.get("sentence", sample.get("content", "")))
+        label = sample.get("label", sample.get("labels", 0))
+
+        data.append(text)
+        labels.append(int(label))
+
+        if (i + 1) % 1000 == 0:
+            print(f"  Processed {i + 1}/{total} samples...")
+
+    output = {
+        "data": data,
+        "labels": labels,
+        "num_samples": len(data),
+        "num_classes": len(set(labels)),
+        "source": f"huggingface/{DATASET_NAME}"
+    }
+
+    with open(output_path, 'w') as f:
+        json.dump(output, f)
+
+    print(f"Saved {len(data)} samples to {output_path}")
+    return output_path
+
+# =============================================================================
+# Main Execution
+# =============================================================================
+
+print(f"\n{'='*60}")
+print(f"HuggingFace Dataset Downloader")
+print(f"{'='*60}")
+print(f"Dataset: {DATASET_NAME}")
+print(f"Split: {SPLIT}")
+print(f"Output: {OUTPUT_DIR}")
+print(f"{'='*60}\n")
+
+# Create output directory
+ensure_dir(OUTPUT_DIR)
+
+# Load the dataset
+print(f"Downloading {DATASET_NAME}...")
+try:
+    if SPLIT == "all":
+        dataset = load_dataset(DATASET_NAME)
+    else:
+        dataset = load_dataset(DATASET_NAME, split=SPLIT)
+except Exception as e:
+    print(f"ERROR: Failed to load dataset: {e}")
+    print("\nAvailable datasets: mnist, cifar10, cifar100, fashion_mnist, imdb, ag_news, ...")
+    raise
+
+# Determine dataset type and process
+if isinstance(dataset, dict):
+    # Multiple splits
+    for split_name, split_data in dataset.items():
+        output_file = os.path.join(OUTPUT_DIR, f"{DATASET_NAME}_{split_name}.json")
+
+        # Check if it's an image or text dataset
+        sample = split_data[0]
+        if "image" in sample or "img" in sample:
+            save_image_dataset(split_data, output_file, MAX_SAMPLES)
+        else:
+            save_text_dataset(split_data, output_file, MAX_SAMPLES)
+else:
+    # Single split
+    output_file = os.path.join(OUTPUT_DIR, f"{DATASET_NAME}_{SPLIT}.json")
+
+    sample = dataset[0]
+    if "image" in sample or "img" in sample:
+        save_image_dataset(dataset, output_file, MAX_SAMPLES)
+    else:
+        save_text_dataset(dataset, output_file, MAX_SAMPLES)
+
+print(f"\n{'='*60}")
+print(f"Done! Dataset saved to {OUTPUT_DIR}")
+print(f"{'='*60}")
+print(f"\nTo load in CyxWiz:")
+print(f"  1. Open Dataset Manager")
+print(f"  2. Select 'Custom' dataset type")
+print(f"  3. Browse to: {OUTPUT_DIR}")
+print(f"  4. Select the JSON file and click 'Load Custom Dataset'")

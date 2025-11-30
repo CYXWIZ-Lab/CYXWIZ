@@ -6,6 +6,7 @@
 #include "scripting/python_engine.h"
 #include "network/grpc_client.h"
 #include "network/job_manager.h"
+#include "core/async_task_manager.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -445,6 +446,9 @@ void CyxWizApp::Update(float delta_time) {
     if (job_manager_) {
         job_manager_->Update();
     }
+
+    // Process async task completion callbacks
+    cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
 }
 
 void CyxWizApp::Render() {

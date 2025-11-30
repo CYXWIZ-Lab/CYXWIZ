@@ -1,0 +1,266 @@
+# =============================================================================
+# Kaggle Datasets - Example Script
+# =============================================================================
+# This script demonstrates how to download and prepare datasets from Kaggle
+# for use in CyxWiz Engine.
+#
+# Prerequisites:
+#   1. pip install kaggle pandas numpy
+#   2. Create a Kaggle account at https://www.kaggle.com
+#   3. Go to Account Settings > API > Create New Token
+#   4. Place the downloaded kaggle.json in:
+#      - Windows: C:\Users\<username>\.kaggle\kaggle.json
+#      - Linux/Mac: ~/.kaggle/kaggle.json
+#
+# Usage:
+#   1. Modify the DATASET_SLUG variable to your desired dataset
+#   2. Run this script in the Python Console
+#   3. Load the saved files using the Custom dataset loader
+# =============================================================================
+
+import os
+import json
+import zipfile
+import numpy as np
+
+# Try to import required libraries
+try:
+    import kaggle
+    print("Kaggle API loaded successfully!")
+except ImportError:
+    print("ERROR: 'kaggle' library not installed.")
+    print("Please run: pip install kaggle")
+    raise SystemExit(1)
+
+try:
+    import pandas as pd
+    print("Pandas loaded successfully!")
+except ImportError:
+    print("WARNING: 'pandas' not installed. Some features may not work.")
+    print("Please run: pip install pandas")
+    pd = None
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+# Dataset to download (format: "owner/dataset-name" or just "dataset-name" for competitions)
+DATASET_SLUG = "titanic"  # Examples: "titanic", "uciml/iris", "zalando-research/fashionmnist"
+
+# Whether this is a competition dataset (True) or a regular dataset (False)
+IS_COMPETITION = True  # Set to False for non-competition datasets
+
+# Output directory
+OUTPUT_DIR = "./data/kaggle"
+
+# Specific file to process (None to process all CSV files)
+TARGET_FILE = None  # e.g., "train.csv"
+
+# Label column name (for supervised learning datasets)
+LABEL_COLUMN = None  # e.g., "Survived", "label", "target" - None for auto-detect
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def ensure_dir(path):
+    """Create directory if it doesn't exist."""
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def download_dataset(slug, output_dir, is_competition=False):
+    """Download a dataset from Kaggle."""
+    print(f"\nDownloading {'competition' if is_competition else 'dataset'}: {slug}")
+
+    try:
+        if is_competition:
+            kaggle.api.competition_download_files(slug, path=output_dir, quiet=False)
+        else:
+            kaggle.api.dataset_download_files(slug, path=output_dir, unzip=True, quiet=False)
+
+        # Unzip if needed
+        for file in os.listdir(output_dir):
+            if file.endswith('.zip'):
+                zip_path = os.path.join(output_dir, file)
+                print(f"Extracting {file}...")
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(output_dir)
+                os.remove(zip_path)
+
+        print(f"Download complete!")
+        return True
+
+    except Exception as e:
+        print(f"ERROR: Failed to download: {e}")
+        print("\nTroubleshooting:")
+        print("  1. Check your Kaggle API credentials in ~/.kaggle/kaggle.json")
+        print("  2. For competitions, make sure you've accepted the rules on Kaggle")
+        print("  3. Verify the dataset/competition name is correct")
+        return False
+
+def find_csv_files(directory):
+    """Find all CSV files in a directory."""
+    csv_files = []
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if file.endswith('.csv'):
+                csv_files.append(os.path.join(root, file))
+    return csv_files
+
+def auto_detect_label_column(df):
+    """Try to auto-detect the label column."""
+    common_label_names = [
+        'label', 'labels', 'target', 'class', 'y',
+        'Survived', 'survived',
+        'Species', 'species',
+        'diagnosis', 'Diagnosis'
+    ]
+
+    for col in common_label_names:
+        if col in df.columns:
+            return col
+
+    # If no common name found, use the last column
+    return df.columns[-1]
+
+def process_csv_to_json(csv_path, output_path, label_column=None):
+    """Convert a CSV file to CyxWiz-compatible JSON format."""
+    if pd is None:
+        print("ERROR: pandas is required to process CSV files")
+        return None
+
+    print(f"\nProcessing: {os.path.basename(csv_path)}")
+
+    # Read CSV
+    df = pd.read_csv(csv_path)
+    print(f"  Shape: {df.shape}")
+    print(f"  Columns: {list(df.columns)}")
+
+    # Auto-detect or use provided label column
+    if label_column is None:
+        label_column = auto_detect_label_column(df)
+    print(f"  Label column: {label_column}")
+
+    # Separate features and labels
+    if label_column in df.columns:
+        labels = df[label_column].tolist()
+        features_df = df.drop(columns=[label_column])
+    else:
+        print(f"  WARNING: Label column '{label_column}' not found, using index as label")
+        labels = list(range(len(df)))
+        features_df = df
+
+    # Convert labels to integers if they're categorical
+    unique_labels = list(set(labels))
+    if not all(isinstance(l, (int, float)) for l in labels):
+        label_map = {label: i for i, label in enumerate(unique_labels)}
+        labels = [label_map[l] for l in labels]
+        print(f"  Label mapping: {label_map}")
+
+    # Convert features to numeric, handling non-numeric columns
+    numeric_df = features_df.select_dtypes(include=[np.number])
+    if len(numeric_df.columns) < len(features_df.columns):
+        print(f"  Dropping non-numeric columns: {set(features_df.columns) - set(numeric_df.columns)}")
+
+    # Handle missing values
+    numeric_df = numeric_df.fillna(0)
+
+    # Normalize features
+    data = numeric_df.values.tolist()
+
+    # Build output
+    output = {
+        "data": data,
+        "labels": labels,
+        "shape": [len(data[0]) if data else 0],
+        "num_samples": len(data),
+        "num_classes": len(set(labels)),
+        "columns": list(numeric_df.columns),
+        "source": f"kaggle/{DATASET_SLUG}"
+    }
+
+    # Save to JSON
+    with open(output_path, 'w') as f:
+        json.dump(output, f)
+
+    print(f"  Saved to: {output_path}")
+    print(f"  Samples: {len(data)}, Features: {len(data[0]) if data else 0}, Classes: {len(set(labels))}")
+
+    return output_path
+
+# =============================================================================
+# Main Execution
+# =============================================================================
+
+print(f"\n{'='*60}")
+print(f"Kaggle Dataset Downloader")
+print(f"{'='*60}")
+print(f"Dataset: {DATASET_SLUG}")
+print(f"Type: {'Competition' if IS_COMPETITION else 'Dataset'}")
+print(f"Output: {OUTPUT_DIR}")
+print(f"{'='*60}\n")
+
+# Check Kaggle credentials
+try:
+    kaggle.api.authenticate()
+    print("Kaggle API authenticated successfully!")
+except Exception as e:
+    print(f"ERROR: Kaggle authentication failed: {e}")
+    print("\nPlease ensure your kaggle.json is in the correct location:")
+    print("  Windows: C:\\Users\\<username>\\.kaggle\\kaggle.json")
+    print("  Linux/Mac: ~/.kaggle/kaggle.json")
+    raise
+
+# Create output directory
+dataset_dir = os.path.join(OUTPUT_DIR, DATASET_SLUG.replace('/', '_'))
+ensure_dir(dataset_dir)
+
+# Download the dataset
+if not download_dataset(DATASET_SLUG, dataset_dir, IS_COMPETITION):
+    raise SystemExit(1)
+
+# Find and process CSV files
+csv_files = find_csv_files(dataset_dir)
+if not csv_files:
+    print("\nNo CSV files found. The dataset may use a different format.")
+    print(f"Check the contents of: {dataset_dir}")
+else:
+    print(f"\nFound {len(csv_files)} CSV file(s)")
+
+    for csv_file in csv_files:
+        if TARGET_FILE and os.path.basename(csv_file) != TARGET_FILE:
+            continue
+
+        # Generate output filename
+        base_name = os.path.splitext(os.path.basename(csv_file))[0]
+        output_file = os.path.join(dataset_dir, f"{base_name}.json")
+
+        process_csv_to_json(csv_file, output_file, LABEL_COLUMN)
+
+print(f"\n{'='*60}")
+print(f"Done! Dataset saved to {dataset_dir}")
+print(f"{'='*60}")
+print(f"\nTo load in CyxWiz:")
+print(f"  1. Open Dataset Manager")
+print(f"  2. Select 'Custom' dataset type")
+print(f"  3. Browse to: {dataset_dir}")
+print(f"  4. Select a JSON file and click 'Load Custom Dataset'")
+
+# =============================================================================
+# Popular Kaggle Datasets Reference
+# =============================================================================
+#
+# Competitions (IS_COMPETITION = True):
+#   - "titanic"           : Titanic survival prediction
+#   - "house-prices"      : House price prediction
+#   - "digit-recognizer"  : MNIST digit recognition
+#   - "dogs-vs-cats"      : Image classification
+#
+# Datasets (IS_COMPETITION = False):
+#   - "uciml/iris"                        : Iris flower classification
+#   - "zalando-research/fashionmnist"     : Fashion image classification
+#   - "uciml/breast-cancer-wisconsin-data": Breast cancer classification
+#   - "kaggle/heart-disease-cleveland"    : Heart disease prediction
+#   - "uciml/adult-census-income"         : Income prediction
+#
+# =============================================================================

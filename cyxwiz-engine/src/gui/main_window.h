@@ -5,6 +5,10 @@
 #include <vector>
 #include <functional>
 
+namespace cyxwiz {
+class TaskProgressPanel;
+} // namespace cyxwiz
+
 namespace gui {
 
 class NodeEditor;
@@ -96,6 +100,7 @@ private:
     void ShowAboutDialog();
     void RegisterPanelsWithSidebar();
     void RenderSidebar();
+    void RenderStatusBar();
     void HandleGlobalShortcuts();
 
     // Original panels
@@ -118,6 +123,7 @@ private:
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
     std::unique_ptr<cyxwiz::P2PTrainingPanel> p2p_training_panel_;
     std::unique_ptr<gui::WalletPanel> wallet_panel_;
+    std::unique_ptr<cyxwiz::TaskProgressPanel> task_progress_panel_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;

@@ -18,10 +18,12 @@
 #include "panels/job_status_panel.h"
 #include "panels/p2p_training_panel.h"
 #include "panels/wallet_panel.h"
+#include "panels/task_progress_panel.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
 #include "../core/project_manager.h"
+#include "../core/data_registry.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -57,6 +59,7 @@ MainWindow::MainWindow()
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
+    task_progress_panel_ = std::make_unique<cyxwiz::TaskProgressPanel>();
 
     // Set scripting engine for command window and script editor
     command_window_->SetScriptingEngine(scripting_engine_);
@@ -378,6 +381,16 @@ MainWindow::MainWindow()
         }
     });
 
+    // Set up asset browser callback for dataset loading
+    asset_browser_->SetOnDatasetLoaded([this](const std::string& path, cyxwiz::DatasetHandle handle) {
+        if (dataset_panel_ && handle.IsValid()) {
+            // Dataset is already loaded via DataRegistry, just update the DatasetPanel to use it
+            spdlog::info("Dataset loaded from Asset Browser: {}", path);
+            // Show the dataset panel so user can see the loaded data
+            dataset_panel_->SetVisible(true);
+        }
+    });
+
     // Initialize startup script manager
     startup_script_manager_ = std::make_unique<scripting::StartupScriptManager>(scripting_engine_);
 
@@ -538,6 +551,7 @@ void MainWindow::Render() {
     if (job_status_panel_) job_status_panel_->Render();
     if (p2p_training_panel_) p2p_training_panel_->Render();
     if (wallet_panel_) wallet_panel_->Render();
+    if (task_progress_panel_) task_progress_panel_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
@@ -553,6 +567,9 @@ void MainWindow::Render() {
     if (show_demo_window_) {
         ImGui::ShowDemoWindow(&show_demo_window_);
     }
+
+    // Render status bar at the bottom of the screen
+    RenderStatusBar();
 }
 
 // Helper function to draw active tab indicator on a dock node
@@ -778,6 +795,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     if (wallet_panel_) {
         dock_style.RegisterPanel("Wallet", ICON_FA_WALLET, wallet_panel_->GetVisiblePtr());
     }
+    if (task_progress_panel_) {
+        dock_style.RegisterPanel("Tasks", ICON_FA_SPINNER, task_progress_panel_->GetVisiblePtr());
+    }
 
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
 }
@@ -986,9 +1006,74 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 void MainWindow::OnProjectClosed(const std::string& project_root) {
     spdlog::info("Project closed: {}", project_root);
 
-    // Save current settings before closing
-    // Note: This is called AFTER project state is cleared, so we can't save here
-    // Settings should be saved before CloseProject() is called
+    // Note: Settings should be saved before CloseProject() is called
+    // (the toolbar handles this in its Close Project menu action)
+
+    // Clear the asset browser
+    if (asset_browser_) {
+        asset_browser_->Clear();
+    }
+
+    // Reset the dock layout to default when project is closed
+    // This gives a clean slate for the next project
+    first_time_layout_ = true;  // This will trigger BuildInitialDockLayout on next render
+}
+
+void MainWindow::RenderStatusBar() {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float status_bar_height = 24.0f;
+
+    // Position status bar at the bottom of the screen
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - status_bar_height));
+    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, status_bar_height));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNav;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+
+    if (ImGui::Begin("##StatusBar", nullptr, flags)) {
+        // Left side: Project info
+        auto& pm = cyxwiz::ProjectManager::Instance();
+        if (pm.HasActiveProject()) {
+            ImGui::Text("%s %s", ICON_FA_FOLDER_OPEN, pm.GetProjectName().c_str());
+        } else {
+            ImGui::TextDisabled("%s No Project", ICON_FA_FOLDER);
+        }
+
+        // Center: Spacer
+        ImGui::SameLine();
+        (void)ImGui::GetContentRegionAvail().x; // Reserve for future use
+
+        // Right side: Task indicator (if tasks are running)
+        if (task_progress_panel_ && task_progress_panel_->HasActiveTasks()) {
+            // Calculate position for right-aligned content
+            std::string status = task_progress_panel_->GetStatusSummary();
+            float text_width = ImGui::CalcTextSize(status.c_str()).x + 30; // + icon width
+
+            ImGui::SameLine(ImGui::GetWindowWidth() - text_width - 16);
+
+            // Show task indicator that opens the task panel when clicked
+            if (cyxwiz::TaskStatusIndicator::Render()) {
+                task_progress_panel_->Show();
+            }
+
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s", status.c_str());
+        } else {
+            // Show ready status on the right
+            float text_width = ImGui::CalcTextSize("Ready").x + 20;
+            ImGui::SameLine(ImGui::GetWindowWidth() - text_width - 16);
+            ImGui::TextDisabled("%s Ready", ICON_FA_CIRCLE_CHECK);
+        }
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 } // namespace gui

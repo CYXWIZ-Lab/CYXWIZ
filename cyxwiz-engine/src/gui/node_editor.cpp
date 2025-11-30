@@ -1,6 +1,7 @@
 #include "node_editor.h"
 #include "panels/script_editor.h"
 #include "properties.h"
+#include "../core/data_registry.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -47,65 +48,146 @@ NodeEditor::NodeEditor()
     ImNodesStyle& style = ImNodes::GetStyle();
     style.Flags |= ImNodesStyleFlags_GridLines;
 
-    // Create a comprehensive sample neural network graph
-    // This demonstrates a complete MNIST-style classifier
+    // Create a complete training pipeline demonstrating Data Pipeline nodes
+    // This shows how DatasetInput, DataSplit, and model nodes connect
+    // with Data and Labels flowing through train/val/test splits
 
-    // Layer 1: Input layer
-    MLNode input = CreateNode(NodeType::Input, "Input Layer");
-    nodes_.push_back(input);
-    ImNodes::SetNodeGridSpacePos(input.id, ImVec2(100.0f, 100.0f));
+    // ========== DATA PIPELINE (Left side - Cyan nodes) ==========
 
-    // Layer 2: First dense layer
-    MLNode dense1 = CreateNode(NodeType::Dense, "Dense (128)");
+    // 1. Dataset Input - Source of all data (full dataset)
+    MLNode dataset_input = CreateNode(NodeType::DatasetInput, "MNIST Dataset");
+    dataset_input.parameters["dataset_name"] = "mnist";
+    dataset_input.parameters["split"] = "full";  // Load full dataset for splitting
+    nodes_.push_back(dataset_input);
+    ImNodes::SetNodeGridSpacePos(dataset_input.id, ImVec2(50.0f, 150.0f));
+
+    // 2. DataSplit - Split into train/val/test sets
+    MLNode datasplit = CreateNode(NodeType::DataSplit, "DataSplit");
+    datasplit.parameters["train_ratio"] = "0.8";
+    datasplit.parameters["val_ratio"] = "0.1";
+    datasplit.parameters["test_ratio"] = "0.1";
+    nodes_.push_back(datasplit);
+    ImNodes::SetNodeGridSpacePos(datasplit.id, ImVec2(250.0f, 150.0f));
+
+    // 3. Normalize - Normalize pixel values (receives Train Data)
+    MLNode normalize = CreateNode(NodeType::Normalize, "Normalize");
+    normalize.parameters["mean"] = "0.1307";
+    normalize.parameters["std"] = "0.3081";
+    nodes_.push_back(normalize);
+    ImNodes::SetNodeGridSpacePos(normalize.id, ImVec2(500.0f, 50.0f));
+
+    // 4. Reshape - Flatten 28x28 to 784
+    MLNode reshape = CreateNode(NodeType::TensorReshape, "Flatten");
+    reshape.parameters["shape"] = "-1,784";
+    nodes_.push_back(reshape);
+    ImNodes::SetNodeGridSpacePos(reshape.id, ImVec2(700.0f, 50.0f));
+
+    // 5. One-Hot Encode - Convert train labels to one-hot vectors
+    MLNode onehot = CreateNode(NodeType::OneHotEncode, "One-Hot Labels");
+    onehot.parameters["num_classes"] = "10";
+    nodes_.push_back(onehot);
+    ImNodes::SetNodeGridSpacePos(onehot.id, ImVec2(500.0f, 300.0f));
+
+    // ========== MODEL LAYERS (Center - Green/Orange nodes) ==========
+
+    // 6. Dense layer 1
+    MLNode dense1 = CreateNode(NodeType::Dense, "Dense (256)");
+    dense1.parameters["units"] = "256";
     nodes_.push_back(dense1);
-    ImNodes::SetNodeGridSpacePos(dense1.id, ImVec2(300.0f, 100.0f));
+    ImNodes::SetNodeGridSpacePos(dense1.id, ImVec2(900.0f, 50.0f));
 
-    // Layer 3: ReLU activation
+    // 7. ReLU activation
     MLNode relu1 = CreateNode(NodeType::ReLU, "ReLU");
     nodes_.push_back(relu1);
-    ImNodes::SetNodeGridSpacePos(relu1.id, ImVec2(500.0f, 100.0f));
+    ImNodes::SetNodeGridSpacePos(relu1.id, ImVec2(1100.0f, 50.0f));
 
-    // Layer 4: Dropout for regularization
-    MLNode dropout1 = CreateNode(NodeType::Dropout, "Dropout (0.2)");
-    nodes_.push_back(dropout1);
-    ImNodes::SetNodeGridSpacePos(dropout1.id, ImVec2(700.0f, 100.0f));
+    // 8. Dropout
+    MLNode dropout = CreateNode(NodeType::Dropout, "Dropout");
+    dropout.parameters["rate"] = "0.2";
+    nodes_.push_back(dropout);
+    ImNodes::SetNodeGridSpacePos(dropout.id, ImVec2(1300.0f, 50.0f));
 
-    // Layer 5: Second dense layer
-    MLNode dense2 = CreateNode(NodeType::Dense, "Dense (64)");
+    // 9. Dense layer 2
+    MLNode dense2 = CreateNode(NodeType::Dense, "Dense (128)");
+    dense2.parameters["units"] = "128";
     nodes_.push_back(dense2);
-    ImNodes::SetNodeGridSpacePos(dense2.id, ImVec2(300.0f, 300.0f));
+    ImNodes::SetNodeGridSpacePos(dense2.id, ImVec2(900.0f, 200.0f));
 
-    // Layer 6: Second ReLU activation
+    // 10. ReLU activation 2
     MLNode relu2 = CreateNode(NodeType::ReLU, "ReLU");
     nodes_.push_back(relu2);
-    ImNodes::SetNodeGridSpacePos(relu2.id, ImVec2(500.0f, 300.0f));
+    ImNodes::SetNodeGridSpacePos(relu2.id, ImVec2(1100.0f, 200.0f));
 
-    // Layer 7: Output layer
+    // 11. Output layer (10 classes for MNIST)
     MLNode output = CreateNode(NodeType::Output, "Output (10)");
+    output.parameters["classes"] = "10";
     nodes_.push_back(output);
-    ImNodes::SetNodeGridSpacePos(output.id, ImVec2(700.0f, 300.0f));
+    ImNodes::SetNodeGridSpacePos(output.id, ImVec2(1300.0f, 200.0f));
 
-    // Create connections between layers
-    // Input -> Dense1
-    CreateLink(input.outputs[0].id, dense1.inputs[0].id, input.id, dense1.id);
+    // ========== LOSS & OPTIMIZER (Bottom - Red/Gray nodes) ==========
 
-    // Dense1 -> ReLU1
-    CreateLink(dense1.outputs[0].id, relu1.inputs[0].id, dense1.id, relu1.id);
+    // 12. Cross Entropy Loss - compares predictions with labels
+    MLNode loss = CreateNode(NodeType::CrossEntropyLoss, "CrossEntropy Loss");
+    nodes_.push_back(loss);
+    ImNodes::SetNodeGridSpacePos(loss.id, ImVec2(1100.0f, 350.0f));
 
-    // ReLU1 -> Dropout1
-    CreateLink(relu1.outputs[0].id, dropout1.inputs[0].id, relu1.id, dropout1.id);
+    // 13. Adam Optimizer
+    MLNode optimizer = CreateNode(NodeType::Adam, "Adam Optimizer");
+    nodes_.push_back(optimizer);
+    ImNodes::SetNodeGridSpacePos(optimizer.id, ImVec2(1300.0f, 350.0f));
 
-    // Dropout1 -> Dense2
-    CreateLink(dropout1.outputs[0].id, dense2.inputs[0].id, dropout1.id, dense2.id);
+    // ========== CREATE CONNECTIONS ==========
 
-    // Dense2 -> ReLU2
-    CreateLink(dense2.outputs[0].id, relu2.inputs[0].id, dense2.id, relu2.id);
+    // DatasetInput -> DataSplit (full dataset gets split)
+    CreateLink(dataset_input.outputs[0].id, datasplit.inputs[0].id,
+               dataset_input.id, datasplit.id);  // Data -> DataSplit.Data
+    CreateLink(dataset_input.outputs[1].id, datasplit.inputs[1].id,
+               dataset_input.id, datasplit.id);  // Labels -> DataSplit.Labels
 
-    // ReLU2 -> Output
-    CreateLink(relu2.outputs[0].id, output.inputs[0].id, relu2.id, output.id);
+    // Train Data flow: DataSplit.TrainData -> Normalize -> Reshape -> Dense1
+    CreateLink(datasplit.outputs[0].id, normalize.inputs[0].id,
+               datasplit.id, normalize.id);  // TrainData -> Normalize
 
-    spdlog::info("Created sample neural network graph with {} nodes and {} connections",
+    CreateLink(normalize.outputs[0].id, reshape.inputs[0].id,
+               normalize.id, reshape.id);  // Normalize -> Reshape
+
+    CreateLink(reshape.outputs[0].id, dense1.inputs[0].id,
+               reshape.id, dense1.id);  // Reshape -> Dense1
+
+    // Train Labels flow: DataSplit.TrainLabels -> OneHot -> Loss
+    CreateLink(datasplit.outputs[1].id, onehot.inputs[0].id,
+               datasplit.id, onehot.id);  // TrainLabels -> OneHot
+
+    CreateLink(onehot.outputs[0].id, loss.inputs[1].id,
+               onehot.id, loss.id);  // OneHot -> Loss (target)
+
+    // Model forward pass
+    CreateLink(dense1.outputs[0].id, relu1.inputs[0].id,
+               dense1.id, relu1.id);
+
+    CreateLink(relu1.outputs[0].id, dropout.inputs[0].id,
+               relu1.id, dropout.id);
+
+    CreateLink(dropout.outputs[0].id, dense2.inputs[0].id,
+               dropout.id, dense2.id);
+
+    CreateLink(dense2.outputs[0].id, relu2.inputs[0].id,
+               dense2.id, relu2.id);
+
+    CreateLink(relu2.outputs[0].id, output.inputs[0].id,
+               relu2.id, output.id);
+
+    // Output -> Loss (predictions)
+    CreateLink(output.outputs[0].id, loss.inputs[0].id,
+               output.id, loss.id);
+
+    // Loss -> Optimizer
+    CreateLink(loss.outputs[0].id, optimizer.inputs[0].id,
+               loss.id, optimizer.id);
+
+    spdlog::info("Created complete training pipeline with {} nodes and {} connections",
                  nodes_.size(), links_.size());
+    spdlog::info("Pipeline shows: DatasetInput -> DataSplit -> TrainData -> Normalize -> Reshape -> Model -> Loss <- OneHot(TrainLabels)");
 }
 
 NodeEditor::~NodeEditor() {
@@ -377,6 +459,73 @@ void NodeEditor::RenderNodes() {
                 }
                 break;
             }
+
+            // Data Pipeline Nodes
+            case NodeType::DatasetInput: {
+                auto it = node.parameters.find("dataset_name");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Dataset: %s", it->second.c_str());
+                } else {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 0.7f), "Dataset: <select>");
+                }
+                auto split_it = node.parameters.find("split");
+                if (split_it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Split: %s", split_it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::DataLoader: {
+                auto it = node.parameters.find("batch_size");
+                if (it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Batch: %s", it->second.c_str());
+                }
+                auto shuffle_it = node.parameters.find("shuffle");
+                if (shuffle_it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Shuffle: %s", shuffle_it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::Augmentation: {
+                auto it = node.parameters.find("transforms");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Transforms: %s", it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::DataSplit: {
+                auto train_it = node.parameters.find("train_ratio");
+                auto val_it = node.parameters.find("val_ratio");
+                auto test_it = node.parameters.find("test_ratio");
+                if (train_it != node.parameters.end() && val_it != node.parameters.end() && test_it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Split: %s/%s/%s",
+                        train_it->second.c_str(), val_it->second.c_str(), test_it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::TensorReshape: {
+                auto it = node.parameters.find("shape");
+                if (it != node.parameters.end() && !it->second.empty()) {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Shape: %s", it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::Normalize: {
+                auto mean_it = node.parameters.find("mean");
+                auto std_it = node.parameters.find("std");
+                if (mean_it != node.parameters.end() && std_it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Mean: %s", mean_it->second.c_str());
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Std: %s", std_it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::OneHotEncode: {
+                auto it = node.parameters.find("num_classes");
+                if (it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Classes: %s", it->second.c_str());
+                }
+                break;
+            }
+
             default:
                 // For activation layers and other nodes without parameters, show nothing
                 break;
@@ -532,6 +681,42 @@ void NodeEditor::ShowContextMenu() {
         ImGui::CloseCurrentPopup();
     }
 
+    ImGui::Separator();
+
+    if (ImGui::BeginMenu("Data Pipeline")) {
+        if (ImGui::MenuItem("Dataset Input")) {
+            AddNode(NodeType::DatasetInput, "Dataset Input");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Data Loader")) {
+            AddNode(NodeType::DataLoader, "Data Loader");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Augmentation")) {
+            AddNode(NodeType::Augmentation, "Augmentation");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Data Split")) {
+            AddNode(NodeType::DataSplit, "Data Split");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Reshape")) {
+            AddNode(NodeType::TensorReshape, "Reshape");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Normalize")) {
+            AddNode(NodeType::Normalize, "Normalize");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("One-Hot Encode")) {
+            AddNode(NodeType::OneHotEncode, "One-Hot Encode");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
+    ImGui::Separator();
+
     if (ImGui::MenuItem("Output Layer")) {
         AddNode(NodeType::Output, "Output");
         ImGui::CloseCurrentPopup();
@@ -616,7 +801,8 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::Output: {
-            // Output node has input only
+            // Output node - final layer that produces predictions
+            // Input: From previous layer
             NodePin input_pin;
             input_pin.id = next_pin_id_++;
             input_pin.type = PinType::Tensor;
@@ -624,7 +810,15 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.is_input = true;
             node.inputs.push_back(input_pin);
 
-            node.parameters["units"] = "10";
+            // Output: Predictions (goes to Loss function)
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Predictions";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["classes"] = "10";
             break;
         }
 
@@ -733,6 +927,310 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // Initialize default parameters
             node.parameters["momentum"] = "0.99";
             node.parameters["epsilon"] = "0.001";
+            break;
+        }
+
+        // ========== Data Pipeline Nodes ==========
+
+        case NodeType::DatasetInput: {
+            // DatasetInput node - loads from DataRegistry
+            // No input pins (this is a source node)
+
+            // Output: Data tensor
+            NodePin data_pin;
+            data_pin.id = next_pin_id_++;
+            data_pin.type = PinType::Tensor;
+            data_pin.name = "Data";
+            data_pin.is_input = false;
+            node.outputs.push_back(data_pin);
+
+            // Output: Labels tensor
+            NodePin labels_pin;
+            labels_pin.id = next_pin_id_++;
+            labels_pin.type = PinType::Labels;
+            labels_pin.name = "Labels";
+            labels_pin.is_input = false;
+            node.outputs.push_back(labels_pin);
+
+            // Note: Shape is metadata (displayed in properties panel), not a data flow output.
+            // In ML frameworks, shape is intrinsic to tensors (accessed via tensor.shape).
+
+            // Parameters
+            node.parameters["dataset_name"] = "";  // Name in DataRegistry
+            node.parameters["split"] = "train";    // train, val, test
+            break;
+        }
+
+        case NodeType::DataLoader: {
+            // DataLoader node - batch iterator
+            // Input: Dataset reference
+            NodePin dataset_pin;
+            dataset_pin.id = next_pin_id_++;
+            dataset_pin.type = PinType::Dataset;
+            dataset_pin.name = "Dataset";
+            dataset_pin.is_input = true;
+            node.inputs.push_back(dataset_pin);
+
+            // Output: Batched data
+            NodePin batch_pin;
+            batch_pin.id = next_pin_id_++;
+            batch_pin.type = PinType::Tensor;
+            batch_pin.name = "Batch";
+            batch_pin.is_input = false;
+            node.outputs.push_back(batch_pin);
+
+            // Output: Batched labels
+            NodePin labels_pin;
+            labels_pin.id = next_pin_id_++;
+            labels_pin.type = PinType::Labels;
+            labels_pin.name = "Labels";
+            labels_pin.is_input = false;
+            node.outputs.push_back(labels_pin);
+
+            // Parameters
+            node.parameters["batch_size"] = "32";
+            node.parameters["shuffle"] = "true";
+            node.parameters["drop_last"] = "false";
+            node.parameters["num_workers"] = "4";
+            break;
+        }
+
+        case NodeType::Augmentation: {
+            // Augmentation node - transform pipeline
+            // Input: Data tensor
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            // Output: Augmented data
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            // Parameters (transform pipeline)
+            node.parameters["transforms"] = "RandomFlip,Normalize";
+            node.parameters["flip_prob"] = "0.5";
+            node.parameters["normalize_mean"] = "0.0";
+            node.parameters["normalize_std"] = "1.0";
+            break;
+        }
+
+        case NodeType::DataSplit: {
+            // DataSplit node - train/val/test splitter
+            // Input: Data tensor
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Tensor;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            // Input: Labels tensor
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            // Output: Train Data
+            NodePin train_data;
+            train_data.id = next_pin_id_++;
+            train_data.type = PinType::Tensor;
+            train_data.name = "Train Data";
+            train_data.is_input = false;
+            node.outputs.push_back(train_data);
+
+            // Output: Train Labels
+            NodePin train_labels;
+            train_labels.id = next_pin_id_++;
+            train_labels.type = PinType::Labels;
+            train_labels.name = "Train Labels";
+            train_labels.is_input = false;
+            node.outputs.push_back(train_labels);
+
+            // Output: Val Data
+            NodePin val_data;
+            val_data.id = next_pin_id_++;
+            val_data.type = PinType::Tensor;
+            val_data.name = "Val Data";
+            val_data.is_input = false;
+            node.outputs.push_back(val_data);
+
+            // Output: Val Labels
+            NodePin val_labels;
+            val_labels.id = next_pin_id_++;
+            val_labels.type = PinType::Labels;
+            val_labels.name = "Val Labels";
+            val_labels.is_input = false;
+            node.outputs.push_back(val_labels);
+
+            // Output: Test Data
+            NodePin test_data;
+            test_data.id = next_pin_id_++;
+            test_data.type = PinType::Tensor;
+            test_data.name = "Test Data";
+            test_data.is_input = false;
+            node.outputs.push_back(test_data);
+
+            // Output: Test Labels
+            NodePin test_labels;
+            test_labels.id = next_pin_id_++;
+            test_labels.type = PinType::Labels;
+            test_labels.name = "Test Labels";
+            test_labels.is_input = false;
+            node.outputs.push_back(test_labels);
+
+            // Parameters
+            node.parameters["train_ratio"] = "0.8";
+            node.parameters["val_ratio"] = "0.1";
+            node.parameters["test_ratio"] = "0.1";
+            node.parameters["stratified"] = "true";
+            node.parameters["seed"] = "42";
+            break;
+        }
+
+        case NodeType::TensorReshape: {
+            // TensorReshape node
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["shape"] = "-1,28,28,1";
+            break;
+        }
+
+        case NodeType::Normalize: {
+            // Normalize node
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["mean"] = "0.0";
+            node.parameters["std"] = "1.0";
+            break;
+        }
+
+        case NodeType::OneHotEncode: {
+            // OneHotEncode node
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Labels;
+            input_pin.name = "Labels";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "OneHot";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["num_classes"] = "10";
+            break;
+        }
+
+        // ========== Loss Functions ==========
+
+        case NodeType::MSELoss:
+        case NodeType::CrossEntropyLoss: {
+            // Loss function: takes predictions and targets, outputs loss value
+            // Input 1: Predictions (from model output)
+            NodePin pred_pin;
+            pred_pin.id = next_pin_id_++;
+            pred_pin.type = PinType::Tensor;
+            pred_pin.name = "Predictions";
+            pred_pin.is_input = true;
+            node.inputs.push_back(pred_pin);
+
+            // Input 2: Targets (ground truth labels)
+            NodePin target_pin;
+            target_pin.id = next_pin_id_++;
+            target_pin.type = PinType::Tensor;
+            target_pin.name = "Targets";
+            target_pin.is_input = true;
+            node.inputs.push_back(target_pin);
+
+            // Output: Loss value
+            NodePin loss_pin;
+            loss_pin.id = next_pin_id_++;
+            loss_pin.type = PinType::Loss;
+            loss_pin.name = "Loss";
+            loss_pin.is_input = false;
+            node.outputs.push_back(loss_pin);
+
+            // Parameters
+            if (node.type == NodeType::CrossEntropyLoss) {
+                node.parameters["reduction"] = "mean";  // mean, sum, none
+            }
+            break;
+        }
+
+        // ========== Optimizers ==========
+
+        case NodeType::SGD:
+        case NodeType::Adam:
+        case NodeType::AdamW: {
+            // Optimizer: takes loss and updates model parameters
+            // Input: Loss value
+            NodePin loss_pin;
+            loss_pin.id = next_pin_id_++;
+            loss_pin.type = PinType::Loss;
+            loss_pin.name = "Loss";
+            loss_pin.is_input = true;
+            node.inputs.push_back(loss_pin);
+
+            // Output: Optimizer state (for chaining or visualization)
+            NodePin state_pin;
+            state_pin.id = next_pin_id_++;
+            state_pin.type = PinType::Optimizer;
+            state_pin.name = "State";
+            state_pin.is_input = false;
+            node.outputs.push_back(state_pin);
+
+            // Parameters based on optimizer type
+            if (node.type == NodeType::SGD) {
+                node.parameters["learning_rate"] = "0.01";
+                node.parameters["momentum"] = "0.9";
+                node.parameters["weight_decay"] = "0.0";
+            } else if (node.type == NodeType::Adam) {
+                node.parameters["learning_rate"] = "0.001";
+                node.parameters["beta1"] = "0.9";
+                node.parameters["beta2"] = "0.999";
+                node.parameters["epsilon"] = "1e-8";
+            } else if (node.type == NodeType::AdamW) {
+                node.parameters["learning_rate"] = "0.001";
+                node.parameters["beta1"] = "0.9";
+                node.parameters["beta2"] = "0.999";
+                node.parameters["weight_decay"] = "0.01";
+            }
             break;
         }
 
@@ -1557,6 +2055,22 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(52, 73, 94, 255);     // Blue Gray
         case NodeType::AdamW:
             return IM_COL32(69, 90, 100, 255);    // Light Blue Gray
+
+        // Data Pipeline Nodes - Cyan/Teal Tones
+        case NodeType::DatasetInput:
+            return IM_COL32(0, 188, 212, 255);    // Cyan 500
+        case NodeType::DataLoader:
+            return IM_COL32(0, 172, 193, 255);    // Cyan 600
+        case NodeType::Augmentation:
+            return IM_COL32(0, 151, 167, 255);    // Cyan 700
+        case NodeType::DataSplit:
+            return IM_COL32(38, 198, 218, 255);   // Cyan 400
+        case NodeType::TensorReshape:
+            return IM_COL32(77, 208, 225, 255);   // Cyan 300
+        case NodeType::Normalize:
+            return IM_COL32(128, 222, 234, 255);  // Cyan 200
+        case NodeType::OneHotEncode:
+            return IM_COL32(0, 131, 143, 255);    // Cyan 800
 
         default:
             return IM_COL32(127, 140, 141, 255);  // Neutral Gray

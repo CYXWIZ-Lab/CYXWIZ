@@ -1,6 +1,7 @@
 #include "dataset_panel.h"
 #include "training_plot_panel.h"
 #include "../../network/job_manager.h"
+#include "../../core/texture_manager.h"
 #include "job.pb.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -12,6 +13,7 @@
 #include <numeric>
 #include <chrono>
 #include <nlohmann/json.hpp>
+#include <filesystem>
 
 // cyxwiz-backend includes for local training
 #include <cyxwiz/cyxwiz.h>
@@ -38,10 +40,20 @@ DatasetPanel::~DatasetPanel() {
     }
 }
 
+const cyxwiz::DatasetInfo& DatasetPanel::GetDatasetInfo() const {
+    return cached_info_;
+}
+
+const std::vector<size_t>& DatasetPanel::GetTrainIndices() const {
+    static std::vector<size_t> empty;
+    if (!current_dataset_.IsValid()) return empty;
+    return current_dataset_.GetTrainIndices();
+}
+
 void DatasetPanel::Render() {
     if (!visible_) return;
 
-    ImGui::SetNextWindowSize(ImVec2(600, 700), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(700, 750), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(name_.c_str(), &visible_)) {
 
         // Header
@@ -49,29 +61,60 @@ void DatasetPanel::Render() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // Main layout - two columns
-        ImGui::BeginChild("LeftPanel", ImVec2(280, 0), true);
-        RenderDatasetSelection();
-        ImGui::EndChild();
+        // Tab bar for different views
+        if (ImGui::BeginTabBar("DatasetTabs")) {
+            if (ImGui::BeginTabItem("Load Dataset")) {
+                ImGui::BeginChild("LoadPanel", ImVec2(0, 0), false);
 
-        ImGui::SameLine();
+                // Two column layout
+                ImGui::Columns(2, "LoadColumns", true);
+                ImGui::SetColumnWidth(0, 280);
 
-        ImGui::BeginChild("RightPanel", ImVec2(0, 0), true);
-        if (IsDatasetLoaded()) {
-            RenderDatasetInfo();
-            ImGui::Spacing();
-            RenderSplitConfiguration();
-            ImGui::Spacing();
-            RenderTrainingSection();
-            ImGui::Spacing();
-            RenderStatistics();
-            ImGui::Spacing();
-            RenderDataPreview();
-        } else {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No dataset loaded");
-            ImGui::Text("Select a dataset type and load data");
+                RenderDatasetSelection();
+
+                ImGui::NextColumn();
+
+                if (IsDatasetLoaded()) {
+                    RenderDatasetInfo();
+                    ImGui::Spacing();
+                    RenderSplitConfiguration();
+                    ImGui::Spacing();
+                    RenderStatistics();
+                } else {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No dataset loaded");
+                    ImGui::Text("Select a dataset type and load data");
+                }
+
+                ImGui::Columns(1);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Loaded Datasets")) {
+                RenderLoadedDatasets();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Preview")) {
+                if (IsDatasetLoaded()) {
+                    RenderDataPreview();
+                } else {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a dataset to preview samples");
+                }
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Training")) {
+                if (IsDatasetLoaded()) {
+                    RenderTrainingSection();
+                } else {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a dataset to train a model");
+                }
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
         }
-        ImGui::EndChild();
     }
     ImGui::End();
 }
@@ -81,67 +124,145 @@ void DatasetPanel::RenderDatasetSelection() {
     ImGui::Spacing();
 
     // Dataset type selection
-    const char* types[] = {"CSV", "Images", "MNIST", "CIFAR-10"};
-    int current_type = static_cast<int>(selected_type_) - 1;
-    if (current_type < 0) current_type = 0;
+    const char* types[] = {"CSV", "Images", "MNIST", "CIFAR-10", "HuggingFace", "Kaggle", "Custom"};
+    int current_type = 0;
+    if (selected_type_ == cyxwiz::DatasetType::CSV) current_type = 0;
+    else if (selected_type_ == cyxwiz::DatasetType::ImageFolder) current_type = 1;
+    else if (selected_type_ == cyxwiz::DatasetType::MNIST) current_type = 2;
+    else if (selected_type_ == cyxwiz::DatasetType::CIFAR10) current_type = 3;
+    else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) current_type = 4;
+    else if (selected_type_ == cyxwiz::DatasetType::Kaggle) current_type = 5;
+    else if (selected_type_ == cyxwiz::DatasetType::Custom) current_type = 6;
 
     if (ImGui::Combo("##Type", &current_type, types, IM_ARRAYSIZE(types))) {
-        selected_type_ = static_cast<DatasetType>(current_type + 1);
+        switch (current_type) {
+            case 0: selected_type_ = cyxwiz::DatasetType::CSV; break;
+            case 1: selected_type_ = cyxwiz::DatasetType::ImageFolder; break;
+            case 2: selected_type_ = cyxwiz::DatasetType::MNIST; break;
+            case 3: selected_type_ = cyxwiz::DatasetType::CIFAR10; break;
+            case 4: selected_type_ = cyxwiz::DatasetType::HuggingFace; break;
+            case 5: selected_type_ = cyxwiz::DatasetType::Kaggle; break;
+            case 6: selected_type_ = cyxwiz::DatasetType::Custom; break;
+        }
     }
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
-    // File path input
-    ImGui::Text("Dataset Path");
-    ImGui::InputText("##Path", file_path_buffer_, sizeof(file_path_buffer_));
+    // Show different input based on type
+    if (selected_type_ == cyxwiz::DatasetType::HuggingFace) {
+        // HuggingFace dataset name input
+        ImGui::Text("Dataset Name");
+        ImGui::InputText("##HFName", hf_dataset_name_, sizeof(hf_dataset_name_));
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "e.g., mnist, cifar10, imdb");
 
-    ImGui::SameLine();
-    if (ImGui::Button("Browse...")) {
-        ShowFileBrowser();
-    }
+        ImGui::Spacing();
 
-    ImGui::Spacing();
-
-    // Load button
-    if (ImGui::Button("Load Dataset", ImVec2(-1, 0))) {
-        std::string path = file_path_buffer_;
-        if (!path.empty()) {
-            // Auto-detect dataset type from file extension if path is a file
-            DatasetType detected_type = selected_type_;
-
-            // Check if path ends with .csv - override to CSV type
-            std::string lower_path = path;
-            std::transform(lower_path.begin(), lower_path.end(), lower_path.begin(), ::tolower);
-            if (lower_path.size() > 4 && lower_path.substr(lower_path.size() - 4) == ".csv") {
-                detected_type = DatasetType::CSV;
-                spdlog::info("Auto-detected CSV file format");
+        // Load button for HuggingFace
+        if (ImGui::Button("Load from HuggingFace", ImVec2(-1, 0))) {
+            std::string name = hf_dataset_name_;
+            if (!name.empty()) {
+                LoadHuggingFaceDatasetAsync(name);
             }
+        }
+    } else if (selected_type_ == cyxwiz::DatasetType::Kaggle) {
+        // Kaggle dataset slug input
+        ImGui::Text("Dataset Slug");
+        ImGui::InputText("##KaggleSlug", kaggle_dataset_slug_, sizeof(kaggle_dataset_slug_));
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "e.g., titanic, uciml/iris, zalando-research/fashionmnist");
 
-            bool success = false;
-            switch (detected_type) {
-                case DatasetType::CSV:
-                    success = LoadCSVDataset(path);
-                    break;
-                case DatasetType::Images:
-                    success = LoadImageDataset(path);
-                    break;
-                case DatasetType::MNIST:
-                    success = LoadMNISTDataset(path);
-                    break;
-                case DatasetType::CIFAR10:
-                    success = LoadCIFAR10Dataset(path);
-                    break;
-                default:
-                    spdlog::error("Unknown dataset type - please select a type from the dropdown");
+        ImGui::Spacing();
+
+        // Load button for Kaggle
+        if (ImGui::Button("Load from Kaggle", ImVec2(-1, 0))) {
+            std::string slug = kaggle_dataset_slug_;
+            if (!slug.empty()) {
+                LoadKaggleDatasetAsync(slug);
             }
+        }
+    } else if (selected_type_ == cyxwiz::DatasetType::Custom) {
+        // Custom dataset configuration
+        ImGui::Text("Data Path");
+        ImGui::InputText("##CustomPath", file_path_buffer_, sizeof(file_path_buffer_));
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...##Custom")) {
+            ShowFileBrowser();
+        }
 
-            if (success) {
-                spdlog::info("Dataset loaded successfully");
-                ApplySplit();
-            } else {
-                spdlog::error("Failed to load dataset");
+        ImGui::Spacing();
+
+        // Format selection
+        static int format_idx = 0;
+        const char* formats[] = {"Auto-detect", "JSON", "CSV", "TSV", "Binary", "Folder"};
+        ImGui::Text("Format");
+        ImGui::Combo("##CustomFormat", &format_idx, formats, IM_ARRAYSIZE(formats));
+
+        ImGui::Spacing();
+
+        // Schema configuration (collapsible)
+        if (ImGui::CollapsingHeader("Schema Configuration")) {
+            static char data_key[64] = "data";
+            static char labels_key[64] = "labels";
+            static int label_column = -1;
+            static bool has_header = false;
+            static bool normalize = true;
+            static float scale = 1.0f;
+
+            ImGui::InputText("Data Key (JSON)", data_key, sizeof(data_key));
+            ImGui::InputText("Labels Key (JSON)", labels_key, sizeof(labels_key));
+            ImGui::InputInt("Label Column (CSV)", &label_column);
+            ImGui::Checkbox("Has Header (CSV)", &has_header);
+            ImGui::Checkbox("Normalize", &normalize);
+            ImGui::InputFloat("Scale Factor", &scale, 0.001f, 0.01f, "%.4f");
+        }
+
+        ImGui::Spacing();
+
+        // Load button for Custom
+        if (ImGui::Button("Load Custom Dataset", ImVec2(-1, 0))) {
+            std::string path = file_path_buffer_;
+            if (!path.empty()) {
+                // Build config
+                cyxwiz::CustomConfig config;
+                config.data_path = path;
+
+                // Set format based on selection
+                switch (format_idx) {
+                    case 0: config.format = ""; break;  // Auto-detect
+                    case 1: config.format = "json"; break;
+                    case 2: config.format = "csv"; break;
+                    case 3: config.format = "tsv"; break;
+                    case 4: config.format = "binary"; break;
+                    case 5: config.format = "folder"; break;
+                }
+
+                auto& registry = cyxwiz::DataRegistry::Instance();
+                auto handle = registry.LoadCustom(config);
+                if (handle.IsValid()) {
+                    current_dataset_ = handle;
+                    cached_info_ = handle.GetInfo();
+                    spdlog::info("Loaded custom dataset: {} samples", cached_info_.num_samples);
+                }
+            }
+        }
+    } else {
+        // File path input for other types
+        ImGui::Text("Dataset Path");
+        ImGui::InputText("##Path", file_path_buffer_, sizeof(file_path_buffer_));
+
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...")) {
+            ShowFileBrowser();
+        }
+
+        ImGui::Spacing();
+
+        // Load button
+        if (ImGui::Button("Load Dataset", ImVec2(-1, 0))) {
+            std::string path = file_path_buffer_;
+            if (!path.empty()) {
+                LoadDatasetAsync(path);
             }
         }
     }
@@ -163,16 +284,182 @@ void DatasetPanel::RenderDatasetSelection() {
     ImGui::Spacing();
 
     if (ImGui::Button("MNIST (Default)", ImVec2(-1, 0))) {
-        if (LoadMNISTDataset("./data/mnist")) {
-            ApplySplit();
-        }
+        LoadMNISTDatasetAsync("./data/mnist");
     }
 
     if (ImGui::Button("CIFAR-10 (Default)", ImVec2(-1, 0))) {
-        if (LoadCIFAR10Dataset("./data/cifar10")) {
-            ApplySplit();
+        LoadCIFAR10DatasetAsync("./data/cifar10");
+    }
+
+    ImGui::Spacing();
+
+    // HuggingFace quick load buttons
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "HuggingFace Datasets");
+    ImGui::Spacing();
+
+    if (ImGui::Button("HF: MNIST", ImVec2(-1, 0))) {
+        LoadHuggingFaceDatasetAsync("mnist");
+    }
+
+    if (ImGui::Button("HF: CIFAR-10", ImVec2(-1, 0))) {
+        LoadHuggingFaceDatasetAsync("cifar10");
+    }
+
+    if (ImGui::Button("HF: IMDB", ImVec2(-1, 0))) {
+        LoadHuggingFaceDatasetAsync("imdb");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Kaggle Datasets section
+    ImGui::TextColored(ImVec4(0.2f, 0.7f, 1.0f, 1.0f), "Kaggle Datasets");
+    ImGui::Spacing();
+
+    if (ImGui::Button("Kaggle: Titanic", ImVec2(-1, 0))) {
+        LoadKaggleDatasetAsync("titanic");
+    }
+
+    if (ImGui::Button("Kaggle: Iris", ImVec2(-1, 0))) {
+        LoadKaggleDatasetAsync("uciml/iris");
+    }
+
+    if (ImGui::Button("Kaggle: Digits", ImVec2(-1, 0))) {
+        LoadKaggleDatasetAsync("digits");
+    }
+
+    if (ImGui::Button("Kaggle: Fashion-MNIST", ImVec2(-1, 0))) {
+        LoadKaggleDatasetAsync("zalando-research/fashionmnist");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Enhanced memory usage display
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    cyxwiz::MemoryStats stats = registry.GetMemoryStats();
+
+    // Add texture memory if available
+    auto& texture_mgr = cyxwiz::TextureManager::Instance();
+    stats.texture_memory = texture_mgr.GetMemoryUsage();
+
+    ImGui::Text("Memory Usage");
+
+    // Main memory progress bar with color coding
+    float memory_ratio = stats.GetUsagePercent() / 100.0f;
+    ImVec4 progress_color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green
+    if (memory_ratio > 0.75f) {
+        progress_color = ImVec4(1.0f, 0.5f, 0.0f, 1.0f);  // Orange
+    }
+    if (memory_ratio > 0.9f) {
+        progress_color = ImVec4(1.0f, 0.2f, 0.2f, 1.0f);  // Red
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, progress_color);
+    ImGui::ProgressBar(memory_ratio, ImVec2(-1, 0));
+    ImGui::PopStyleColor();
+
+    ImGui::Text("%s / %s (%.1f%%)",
+        stats.FormatBytes(stats.total_allocated).c_str(),
+        stats.FormatBytes(stats.memory_limit).c_str(),
+        stats.GetUsagePercent());
+
+    // Collapsible section for detailed stats
+    if (ImGui::TreeNode("Details")) {
+        ImGui::Text("Datasets: %zu", stats.datasets_count);
+        ImGui::Text("Peak: %s", stats.FormatBytes(stats.peak_usage).c_str());
+        ImGui::Text("Cached: %s", stats.FormatBytes(stats.total_cached).c_str());
+        ImGui::Text("Textures: %s", stats.FormatBytes(stats.texture_memory).c_str());
+
+        ImGui::Spacing();
+        ImGui::Text("Cache Stats:");
+        ImGui::Text("  Hits: %zu", stats.cache_hits);
+        ImGui::Text("  Misses: %zu", stats.cache_misses);
+        ImGui::Text("  Hit Rate: %.1f%%", stats.GetCacheHitRate());
+        ImGui::Text("  Evictions: %zu", stats.cache_evictions);
+
+        if (ImGui::Button("Reset Stats", ImVec2(-1, 0))) {
+            registry.ResetCacheStats();
+        }
+
+        ImGui::TreePop();
+    }
+}
+
+void DatasetPanel::RenderLoadedDatasets() {
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    auto datasets = registry.ListDatasets();
+
+    ImGui::Text("Loaded Datasets: %zu", datasets.size());
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (datasets.empty()) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No datasets loaded");
+        return;
+    }
+
+    // Dataset list
+    ImGui::BeginChild("DatasetList", ImVec2(250, 0), true);
+    for (size_t i = 0; i < datasets.size(); ++i) {
+        const auto& info = datasets[i];
+        bool is_selected = (selected_dataset_index_ == static_cast<int>(i));
+
+        std::string label = info.name + " (" + cyxwiz::DataRegistry::TypeToString(info.type) + ")";
+        if (ImGui::Selectable(label.c_str(), is_selected)) {
+            selected_dataset_index_ = static_cast<int>(i);
+            // Switch to this dataset
+            current_dataset_ = registry.GetDataset(info.name);
+            if (current_dataset_.IsValid()) {
+                cached_info_ = current_dataset_.GetInfo();
+            }
         }
     }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    // Selected dataset details
+    ImGui::BeginChild("DatasetDetails", ImVec2(0, 0), true);
+    if (selected_dataset_index_ >= 0 && selected_dataset_index_ < static_cast<int>(datasets.size())) {
+        const auto& info = datasets[selected_dataset_index_];
+
+        ImGui::Text("Name: %s", info.name.c_str());
+        ImGui::Text("Type: %s", cyxwiz::DataRegistry::TypeToString(info.type).c_str());
+        ImGui::Text("Path: %s", info.path.c_str());
+        ImGui::Separator();
+        ImGui::Text("Samples: %zu", info.num_samples);
+        ImGui::Text("Classes: %zu", info.num_classes);
+        ImGui::Text("Shape: %s", info.GetShapeString().c_str());
+        ImGui::Separator();
+        ImGui::Text("Train: %zu", info.train_count);
+        ImGui::Text("Val: %zu", info.val_count);
+        ImGui::Text("Test: %zu", info.test_count);
+        ImGui::Separator();
+        ImGui::Text("Memory: %.2f MB", info.memory_usage / (1024.0 * 1024.0));
+
+        ImGui::Spacing();
+
+        if (ImGui::Button("Set as Active", ImVec2(-1, 0))) {
+            current_dataset_ = registry.GetDataset(info.name);
+            if (current_dataset_.IsValid()) {
+                cached_info_ = current_dataset_.GetInfo();
+                spdlog::info("Set active dataset: {}", info.name);
+            }
+        }
+
+        if (ImGui::Button("Unload", ImVec2(-1, 0))) {
+            if (current_dataset_.IsValid() && current_dataset_.GetName() == info.name) {
+                current_dataset_ = cyxwiz::DatasetHandle();
+                cached_info_ = cyxwiz::DatasetInfo();
+            }
+            registry.UnloadDataset(info.name);
+            selected_dataset_index_ = -1;
+        }
+    }
+    ImGui::EndChild();
 }
 
 void DatasetPanel::RenderDatasetInfo() {
@@ -180,30 +467,11 @@ void DatasetPanel::RenderDatasetInfo() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::Text("Name: %s", dataset_info_.name.c_str());
-    ImGui::Text("Type: %s",
-        dataset_info_.type == DatasetType::CSV ? "CSV" :
-        dataset_info_.type == DatasetType::Images ? "Images" :
-        dataset_info_.type == DatasetType::MNIST ? "MNIST" :
-        dataset_info_.type == DatasetType::CIFAR10 ? "CIFAR-10" : "Unknown");
-
-    ImGui::Text("Total Samples: %d", dataset_info_.num_samples);
-    ImGui::Text("Number of Classes: %d", dataset_info_.num_classes);
-
-    if (!dataset_info_.input_shape.empty()) {
-        ImGui::Text("Input Shape: [");
-        ImGui::SameLine();
-        for (size_t i = 0; i < dataset_info_.input_shape.size(); ++i) {
-            ImGui::Text("%d", dataset_info_.input_shape[i]);
-            if (i < dataset_info_.input_shape.size() - 1) {
-                ImGui::SameLine();
-                ImGui::Text("x");
-                ImGui::SameLine();
-            }
-        }
-        ImGui::SameLine();
-        ImGui::Text("]");
-    }
+    ImGui::Text("Name: %s", cached_info_.name.c_str());
+    ImGui::Text("Type: %s", cyxwiz::DataRegistry::TypeToString(cached_info_.type).c_str());
+    ImGui::Text("Total Samples: %zu", cached_info_.num_samples);
+    ImGui::Text("Number of Classes: %zu", cached_info_.num_classes);
+    ImGui::Text("Shape: %s", cached_info_.GetShapeString().c_str());
 }
 
 void DatasetPanel::RenderSplitConfiguration() {
@@ -212,23 +480,23 @@ void DatasetPanel::RenderSplitConfiguration() {
     ImGui::Spacing();
 
     bool changed = false;
-    changed |= ImGui::SliderFloat("Train", &dataset_info_.train_ratio, 0.0f, 1.0f, "%.2f");
-    changed |= ImGui::SliderFloat("Val", &dataset_info_.val_ratio, 0.0f, 1.0f, "%.2f");
-    changed |= ImGui::SliderFloat("Test", &dataset_info_.test_ratio, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::SliderFloat("Train", &split_config_.train_ratio, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::SliderFloat("Val", &split_config_.val_ratio, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::SliderFloat("Test", &split_config_.test_ratio, 0.0f, 1.0f, "%.2f");
 
     // Normalize to sum to 1.0
-    float total = dataset_info_.train_ratio + dataset_info_.val_ratio + dataset_info_.test_ratio;
+    float total = split_config_.train_ratio + split_config_.val_ratio + split_config_.test_ratio;
     if (total > 0.0f && std::abs(total - 1.0f) > 0.01f) {
-        dataset_info_.train_ratio /= total;
-        dataset_info_.val_ratio /= total;
-        dataset_info_.test_ratio /= total;
+        split_config_.train_ratio /= total;
+        split_config_.val_ratio /= total;
+        split_config_.test_ratio /= total;
     }
 
     ImGui::Spacing();
     ImGui::Text("Split sizes:");
-    ImGui::Text("  Train: %d samples", dataset_info_.train_count);
-    ImGui::Text("  Val:   %d samples", dataset_info_.val_count);
-    ImGui::Text("  Test:  %d samples", dataset_info_.test_count);
+    ImGui::Text("  Train: %zu samples", cached_info_.train_count);
+    ImGui::Text("  Val:   %zu samples", cached_info_.val_count);
+    ImGui::Text("  Test:  %zu samples", cached_info_.test_count);
 
     ImGui::Spacing();
     if (ImGui::Button("Apply Split", ImVec2(-1, 0))) {
@@ -248,12 +516,17 @@ void DatasetPanel::RenderStatistics() {
         // Find max count for normalization
         int max_count = *std::max_element(class_counts_.begin(), class_counts_.end());
 
-        for (size_t i = 0; i < class_counts_.size(); ++i) {
+        for (size_t i = 0; i < class_counts_.size() && i < 10; ++i) {
             float ratio = max_count > 0 ? static_cast<float>(class_counts_[i]) / max_count : 0.0f;
 
-            ImGui::Text("Class %zu:", i);
+            std::string class_label = i < class_names_.size() ? class_names_[i] : std::to_string(i);
+            ImGui::Text("%s:", class_label.c_str());
             ImGui::SameLine(80);
             ImGui::ProgressBar(ratio, ImVec2(-1, 0), std::to_string(class_counts_[i]).c_str());
+        }
+
+        if (class_counts_.size() > 10) {
+            ImGui::Text("... and %zu more classes", class_counts_.size() - 10);
         }
     }
 }
@@ -263,66 +536,79 @@ void DatasetPanel::RenderDataPreview() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    if (raw_samples_.empty()) {
-        ImGui::Text("No samples to preview");
+    if (!current_dataset_.IsValid()) {
+        ImGui::Text("No dataset loaded");
+        return;
+    }
+
+    size_t dataset_size = current_dataset_.Size();
+    if (dataset_size == 0) {
+        ImGui::Text("Dataset is empty");
         return;
     }
 
     // Navigation
-    ImGui::Text("Sample %d / %d", preview_sample_idx_ + 1, static_cast<int>(raw_samples_.size()));
+    ImGui::Text("Sample %d / %zu", preview_sample_idx_ + 1, dataset_size);
 
     if (ImGui::Button("<< Prev")) {
-        preview_sample_idx_ = (preview_sample_idx_ - 1 + raw_samples_.size()) % raw_samples_.size();
+        preview_sample_idx_ = (preview_sample_idx_ - 1 + static_cast<int>(dataset_size)) % static_cast<int>(dataset_size);
     }
     ImGui::SameLine();
     if (ImGui::Button("Next >>")) {
-        preview_sample_idx_ = (preview_sample_idx_ + 1) % raw_samples_.size();
+        preview_sample_idx_ = (preview_sample_idx_ + 1) % static_cast<int>(dataset_size);
     }
+    ImGui::SameLine();
+    ImGui::SliderInt("##SampleIdx", &preview_sample_idx_, 0, static_cast<int>(dataset_size) - 1);
 
     ImGui::Spacing();
 
-    if (preview_sample_idx_ < raw_samples_.size()) {
-        const auto& sample = raw_samples_[preview_sample_idx_];
-        int label = preview_sample_idx_ < raw_labels_.size() ? raw_labels_[preview_sample_idx_] : -1;
+    // Get and display the sample
+    auto [sample, label] = current_dataset_.GetSample(preview_sample_idx_);
 
-        ImGui::Text("Label: %d", label);
-        ImGui::Spacing();
+    ImGui::Text("Label: %d", label);
+    if (label >= 0 && label < static_cast<int>(class_names_.size())) {
+        ImGui::SameLine();
+        ImGui::Text("(%s)", class_names_[label].c_str());
+    }
+    ImGui::Spacing();
 
-        // Render based on dataset type
-        if (dataset_info_.type == DatasetType::MNIST || dataset_info_.type == DatasetType::CIFAR10) {
-            if (!dataset_info_.input_shape.empty() && dataset_info_.input_shape.size() == 3) {
-                int width = dataset_info_.input_shape[0];
-                int height = dataset_info_.input_shape[1];
-                int channels = dataset_info_.input_shape[2];
+    // Render based on dataset type
+    if (cached_info_.type == cyxwiz::DatasetType::MNIST ||
+        cached_info_.type == cyxwiz::DatasetType::CIFAR10) {
+        if (!cached_info_.shape.empty() && cached_info_.shape.size() >= 2) {
+            int width = static_cast<int>(cached_info_.shape[0]);
+            int height = static_cast<int>(cached_info_.shape[1]);
+            int channels = cached_info_.shape.size() > 2 ? static_cast<int>(cached_info_.shape[2]) : 1;
 
-                if (sample.size() == width * height * channels) {
-                    RenderImagePreview(sample.data(), width, height, channels);
-                }
+            if (sample.size() == static_cast<size_t>(width * height * channels)) {
+                RenderImagePreview(sample.data(), width, height, channels);
             }
-        } else {
-            // CSV/tabular data - show values
-            ImGui::Text("Features:");
-            int cols = std::min(8, static_cast<int>(sample.size()));
-            for (int i = 0; i < cols; ++i) {
-                ImGui::Text("  [%d] = %.4f", i, sample[i]);
-            }
-            if (sample.size() > cols) {
-                ImGui::Text("  ... (%zu more)", sample.size() - cols);
-            }
+        }
+    } else {
+        // CSV/tabular data - show values
+        ImGui::Text("Features:");
+        int cols = std::min(8, static_cast<int>(sample.size()));
+        for (int i = 0; i < cols; ++i) {
+            ImGui::Text("  [%d] = %.4f", i, sample[i]);
+        }
+        if (sample.size() > static_cast<size_t>(cols)) {
+            ImGui::Text("  ... (%zu more)", sample.size() - cols);
         }
     }
 }
 
 void DatasetPanel::RenderImagePreview(const float* image_data, int width, int height, int channels) {
-    // Convert float data to RGBA for ImGui texture
-    // For now, display as text info (actual texture rendering would require OpenGL texture creation)
     ImGui::Text("Image: %dx%d, %d channels", width, height, channels);
-    ImGui::Text("Min: %.3f, Max: %.3f",
-        *std::min_element(image_data, image_data + width * height * channels),
-        *std::max_element(image_data, image_data + width * height * channels));
 
-    // TODO: Create OpenGL texture and display with ImGui::Image()
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Image visualization TODO");
+    int total_pixels = width * height * channels;
+    float min_val = *std::min_element(image_data, image_data + total_pixels);
+    float max_val = *std::max_element(image_data, image_data + total_pixels);
+    ImGui::Text("Value range: [%.3f, %.3f]", min_val, max_val);
+
+    ImGui::Spacing();
+
+    // Use TextureManager for GPU-accelerated image preview
+    cyxwiz::RenderImageWithTexture(image_data, width, height, channels);
 }
 
 void DatasetPanel::ShowFileBrowser() {
@@ -334,9 +620,9 @@ void DatasetPanel::ShowFileBrowser() {
     ofn.lpstrFile = file_path_buffer_;
     ofn.nMaxFile = sizeof(file_path_buffer_);
 
-    if (selected_type_ == DatasetType::CSV) {
+    if (selected_type_ == cyxwiz::DatasetType::CSV) {
         ofn.lpstrFilter = "CSV Files\0*.csv\0All Files\0*.*\0";
-    } else if (selected_type_ == DatasetType::Images) {
+    } else if (selected_type_ == cyxwiz::DatasetType::ImageFolder) {
         ofn.lpstrFilter = "Image Files\0*.png;*.jpg;*.jpeg;*.bmp\0All Files\0*.*\0";
     } else {
         ofn.lpstrFilter = "All Files\0*.*\0";
@@ -346,7 +632,6 @@ void DatasetPanel::ShowFileBrowser() {
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
     if (GetOpenFileNameA(&ofn)) {
-        // File path is already in file_path_buffer_
         spdlog::info("Selected file: {}", file_path_buffer_);
     }
 #else
@@ -354,205 +639,85 @@ void DatasetPanel::ShowFileBrowser() {
 #endif
 }
 
+bool DatasetPanel::LoadDataset(const std::string& path) {
+    auto& registry = cyxwiz::DataRegistry::Instance();
+
+    // Auto-detect type if not specified
+    cyxwiz::DatasetType detected_type = selected_type_;
+    if (detected_type == cyxwiz::DatasetType::None) {
+        detected_type = cyxwiz::DataRegistry::DetectType(path);
+    }
+
+    bool success = false;
+    switch (detected_type) {
+        case cyxwiz::DatasetType::CSV:
+            success = LoadCSVDataset(path);
+            break;
+        case cyxwiz::DatasetType::ImageFolder:
+            success = LoadImageDataset(path);
+            break;
+        case cyxwiz::DatasetType::MNIST:
+            success = LoadMNISTDataset(path);
+            break;
+        case cyxwiz::DatasetType::CIFAR10:
+            success = LoadCIFAR10Dataset(path);
+            break;
+        default:
+            // Try generic load
+            current_dataset_ = registry.LoadDataset(path);
+            success = current_dataset_.IsValid();
+    }
+
+    if (success && current_dataset_.IsValid()) {
+        cached_info_ = current_dataset_.GetInfo();
+        spdlog::info("Dataset loaded successfully: {}", cached_info_.name);
+    }
+
+    return success;
+}
+
 bool DatasetPanel::LoadCSVDataset(const std::string& path) {
     spdlog::info("Loading CSV dataset from: {}", path);
 
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        spdlog::error("Failed to open file: {}", path);
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    current_dataset_ = registry.LoadCSV(path);
+
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("Failed to load CSV dataset");
         return false;
     }
 
-    ClearDataset();
+    cached_info_ = current_dataset_.GetInfo();
+    ApplySplit();
 
-    std::string line;
-    int line_num = 0;
-    bool has_header = false;
-
-    while (std::getline(file, line)) {
-        line_num++;
-
-        if (line.empty()) continue;
-
-        std::vector<float> features;
-        std::stringstream ss(line);
-        std::string value;
-
-        // Parse comma-separated values
-        while (std::getline(ss, value, ',')) {
-            try {
-                float f = std::stof(value);
-                features.push_back(f);
-            } catch (...) {
-                if (line_num == 1) {
-                    has_header = true;
-                    break;
-                }
-            }
-        }
-
-        if (features.empty()) continue;
-        if (has_header && line_num == 1) continue;
-
-        // Last column is label
-        int label = static_cast<int>(features.back());
-        features.pop_back();
-
-        raw_samples_.push_back(features);
-        raw_labels_.push_back(label);
-    }
-
-    file.close();
-
-    if (raw_samples_.empty()) {
-        spdlog::error("No samples loaded from CSV");
-        return false;
-    }
-
-    // Update dataset info
-    dataset_info_.type = DatasetType::CSV;
-    dataset_info_.path = path;
-    dataset_info_.name = path.substr(path.find_last_of("/\\") + 1);
-    dataset_info_.num_samples = static_cast<int>(raw_samples_.size());
-    dataset_info_.num_classes = *std::max_element(raw_labels_.begin(), raw_labels_.end()) + 1;
-    dataset_info_.input_shape = {static_cast<int>(raw_samples_[0].size())};
-
-    // Calculate class distribution
-    class_counts_.resize(dataset_info_.num_classes, 0);
-    for (int label : raw_labels_) {
-        if (label >= 0 && label < dataset_info_.num_classes) {
-            class_counts_[label]++;
-        }
-    }
-
-    spdlog::info("Loaded {} samples with {} features and {} classes",
-                 dataset_info_.num_samples, raw_samples_[0].size(), dataset_info_.num_classes);
+    // Update class counts
+    UpdateClassCounts();
 
     return true;
 }
 
 bool DatasetPanel::LoadImageDataset(const std::string& path) {
     spdlog::warn("Image dataset loading not yet implemented");
-    // TODO: Implement image loading with stb_image or similar
-    return false;
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    current_dataset_ = registry.LoadImageFolder(path);
+    return current_dataset_.IsValid();
 }
 
 bool DatasetPanel::LoadMNISTDataset(const std::string& path) {
     spdlog::info("Loading MNIST dataset from: {}", path);
 
-    // MNIST binary format:
-    // Training images: train-images-idx3-ubyte (60,000 images, 28x28 pixels)
-    // Training labels: train-labels-idx1-ubyte (60,000 labels)
-    // Test images: t10k-images-idx3-ubyte (10,000 images, 28x28 pixels)
-    // Test labels: t10k-labels-idx1-ubyte (10,000 labels)
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    current_dataset_ = registry.LoadMNIST(path);
 
-    std::string images_file = path + "/train-images-idx3-ubyte";
-    std::string labels_file = path + "/train-labels-idx1-ubyte";
-
-    // Try without idx3/idx1 suffix if files don't exist
-    std::ifstream test_images(images_file, std::ios::binary);
-    if (!test_images.is_open()) {
-        images_file = path + "/train-images.idx3-ubyte";
-        labels_file = path + "/train-labels.idx1-ubyte";
-    }
-    test_images.close();
-
-    std::ifstream images(images_file, std::ios::binary);
-    std::ifstream labels(labels_file, std::ios::binary);
-
-    if (!images.is_open() || !labels.is_open()) {
-        spdlog::error("Failed to open MNIST files in: {}", path);
-        spdlog::error("Expected files: train-images-idx3-ubyte, train-labels-idx1-ubyte");
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("Failed to load MNIST dataset");
         return false;
     }
 
-    ClearDataset();
-
-    // Read image file header
-    auto read_int32 = [](std::ifstream& file) -> int32_t {
-        int32_t value;
-        file.read(reinterpret_cast<char*>(&value), sizeof(value));
-        // MNIST uses big-endian, convert if necessary
-        #ifdef _WIN32
-        value = _byteswap_ulong(value);
-        #else
-        value = __builtin_bswap32(value);
-        #endif
-        return value;
-    };
-
-    int32_t magic_images = read_int32(images);
-    int32_t num_images = read_int32(images);
-    int32_t num_rows = read_int32(images);
-    int32_t num_cols = read_int32(images);
-
-    // Read label file header
-    int32_t magic_labels = read_int32(labels);
-    int32_t num_labels = read_int32(labels);
-
-    // Validate headers
-    if (magic_images != 2051 || magic_labels != 2049) {
-        spdlog::error("Invalid MNIST file format (wrong magic numbers)");
-        return false;
-    }
-
-    if (num_images != num_labels) {
-        spdlog::error("Mismatch between number of images and labels");
-        return false;
-    }
-
-    spdlog::info("MNIST: {} images, {}x{} pixels", num_images, num_rows, num_cols);
-
-    // Read all images and labels
-    int image_size = num_rows * num_cols;
-    std::vector<uint8_t> image_buffer(image_size);
-
-    for (int i = 0; i < num_images; ++i) {
-        // Read image
-        images.read(reinterpret_cast<char*>(image_buffer.data()), image_size);
-
-        // Convert to float and normalize to [0, 1]
-        std::vector<float> image_float(image_size);
-        for (int j = 0; j < image_size; ++j) {
-            image_float[j] = static_cast<float>(image_buffer[j]) / 255.0f;
-        }
-
-        raw_samples_.push_back(image_float);
-
-        // Read label
-        uint8_t label;
-        labels.read(reinterpret_cast<char*>(&label), 1);
-        raw_labels_.push_back(static_cast<int>(label));
-    }
-
-    images.close();
-    labels.close();
-
-    if (raw_samples_.empty()) {
-        spdlog::error("No samples loaded from MNIST");
-        return false;
-    }
-
-    // Update dataset info
-    dataset_info_.type = DatasetType::MNIST;
-    dataset_info_.path = path;
-    dataset_info_.name = "MNIST";
-    dataset_info_.num_samples = static_cast<int>(raw_samples_.size());
-    dataset_info_.num_classes = 10;  // MNIST has 10 digit classes (0-9)
-    dataset_info_.input_shape = {num_rows, num_cols, 1};  // 28x28x1 grayscale
-
-    // Calculate class distribution
-    class_counts_.resize(dataset_info_.num_classes, 0);
-    for (int label : raw_labels_) {
-        if (label >= 0 && label < dataset_info_.num_classes) {
-            class_counts_[label]++;
-        }
-    }
-
-    // Set class names
+    cached_info_ = current_dataset_.GetInfo();
     class_names_ = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"};
-
-    spdlog::info("Loaded {} MNIST images successfully", dataset_info_.num_samples);
+    ApplySplit();
+    UpdateClassCounts();
 
     return true;
 }
@@ -560,163 +725,479 @@ bool DatasetPanel::LoadMNISTDataset(const std::string& path) {
 bool DatasetPanel::LoadCIFAR10Dataset(const std::string& path) {
     spdlog::info("Loading CIFAR-10 dataset from: {}", path);
 
-    // CIFAR-10 binary format:
-    // 5 training batches: data_batch_1.bin to data_batch_5.bin
-    // 1 test batch: test_batch.bin
-    // Each file contains 10,000 samples
-    // Each sample: 1 byte label + 3072 bytes image (32x32x3 RGB)
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    current_dataset_ = registry.LoadCIFAR10(path);
 
-    std::vector<std::string> batch_files = {
-        path + "/data_batch_1.bin",
-        path + "/data_batch_2.bin",
-        path + "/data_batch_3.bin",
-        path + "/data_batch_4.bin",
-        path + "/data_batch_5.bin"
-    };
-
-    ClearDataset();
-
-    const int image_size = 32 * 32 * 3;  // 32x32 RGB
-    const int sample_size = 1 + image_size;  // 1 byte label + 3072 bytes image
-
-    for (const auto& batch_file : batch_files) {
-        std::ifstream file(batch_file, std::ios::binary);
-
-        if (!file.is_open()) {
-            spdlog::warn("Could not open batch file: {}", batch_file);
-            continue;
-        }
-
-        spdlog::info("Reading batch: {}", batch_file);
-
-        // CIFAR-10 has 10,000 samples per batch
-        for (int i = 0; i < 10000; ++i) {
-            // Read label (1 byte)
-            uint8_t label;
-            file.read(reinterpret_cast<char*>(&label), 1);
-
-            if (file.eof()) break;
-
-            // Read image (3072 bytes: 1024 red + 1024 green + 1024 blue)
-            std::vector<uint8_t> image_buffer(image_size);
-            file.read(reinterpret_cast<char*>(image_buffer.data()), image_size);
-
-            if (file.gcount() != image_size) {
-                spdlog::warn("Incomplete image data at sample {}", i);
-                break;
-            }
-
-            // Convert to float and normalize to [0, 1]
-            // CIFAR-10 stores as [R, R, ..., G, G, ..., B, B, ...]
-            // We'll keep it in that format for now
-            std::vector<float> image_float(image_size);
-            for (int j = 0; j < image_size; ++j) {
-                image_float[j] = static_cast<float>(image_buffer[j]) / 255.0f;
-            }
-
-            raw_samples_.push_back(image_float);
-            raw_labels_.push_back(static_cast<int>(label));
-        }
-
-        file.close();
-    }
-
-    if (raw_samples_.empty()) {
-        spdlog::error("No samples loaded from CIFAR-10");
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("Failed to load CIFAR-10 dataset");
         return false;
     }
 
-    // Update dataset info
-    dataset_info_.type = DatasetType::CIFAR10;
-    dataset_info_.path = path;
-    dataset_info_.name = "CIFAR-10";
-    dataset_info_.num_samples = static_cast<int>(raw_samples_.size());
-    dataset_info_.num_classes = 10;
-    dataset_info_.input_shape = {32, 32, 3};  // 32x32x3 RGB
-
-    // Calculate class distribution
-    class_counts_.resize(dataset_info_.num_classes, 0);
-    for (int label : raw_labels_) {
-        if (label >= 0 && label < dataset_info_.num_classes) {
-            class_counts_[label]++;
-        }
-    }
-
-    // CIFAR-10 class names
+    cached_info_ = current_dataset_.GetInfo();
     class_names_ = {
         "airplane", "automobile", "bird", "cat", "deer",
         "dog", "frog", "horse", "ship", "truck"
     };
-
-    spdlog::info("Loaded {} CIFAR-10 images successfully", dataset_info_.num_samples);
+    ApplySplit();
+    UpdateClassCounts();
 
     return true;
 }
 
+bool DatasetPanel::LoadHuggingFaceDataset(const std::string& dataset_name) {
+    spdlog::info("Loading HuggingFace dataset: {}", dataset_name);
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+
+    // Create HuggingFace config
+    cyxwiz::HuggingFaceConfig config;
+    config.dataset_name = dataset_name;
+    config.split = "train";
+    config.cache_dir = "./data/huggingface_cache";
+
+    current_dataset_ = registry.LoadHuggingFace(config);
+
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("Failed to load HuggingFace dataset: {}", dataset_name);
+        return false;
+    }
+
+    cached_info_ = current_dataset_.GetInfo();
+    class_names_ = cached_info_.class_names;
+    ApplySplit();
+    UpdateClassCounts();
+
+    spdlog::info("Loaded HuggingFace dataset '{}': {} samples, {} classes",
+                dataset_name, cached_info_.num_samples, cached_info_.num_classes);
+    return true;
+}
+
+bool DatasetPanel::LoadKaggleDataset(const std::string& dataset_slug) {
+    spdlog::info("Loading Kaggle dataset: {}", dataset_slug);
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+
+    // Create Kaggle config
+    cyxwiz::KaggleConfig config;
+    config.dataset_slug = dataset_slug;
+    config.cache_dir = "./data/kaggle_cache";
+
+    current_dataset_ = registry.LoadKaggle(config);
+
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("Failed to load Kaggle dataset: {}", dataset_slug);
+        return false;
+    }
+
+    cached_info_ = current_dataset_.GetInfo();
+    class_names_ = cached_info_.class_names;
+    ApplySplit();
+    UpdateClassCounts();
+
+    spdlog::info("Loaded Kaggle dataset '{}': {} samples, {} classes",
+                dataset_slug, cached_info_.num_samples, cached_info_.num_classes);
+    return true;
+}
+
+// ============================================================================
+// Async Dataset Loading Methods
+// ============================================================================
+
+void DatasetPanel::LoadCSVDatasetAsync(const std::string& path) {
+    if (is_loading_.load()) {
+        spdlog::warn("Already loading a dataset, please wait...");
+        return;
+    }
+
+    is_loading_.store(true);
+    loading_progress_.store(0.0f);
+
+    loading_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Loading CSV: " + std::filesystem::path(path).filename().string(),
+        [this, path](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.1f, "Opening file...");
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+
+            task.ReportProgress(0.3f, "Parsing CSV data...");
+            if (task.ShouldStop()) return;
+
+            auto handle = registry.LoadCSV(path);
+
+            task.ReportProgress(0.8f, "Processing dataset...");
+            if (task.ShouldStop()) return;
+
+            if (handle.IsValid()) {
+                current_dataset_ = handle;
+                cached_info_ = current_dataset_.GetInfo();
+                ApplySplit();
+                UpdateClassCounts();
+                task.ReportProgress(1.0f, "Complete");
+                task.MarkCompleted();
+            } else {
+                task.MarkFailed("Failed to load CSV file");
+            }
+        },
+        [this](float progress, const std::string& msg) {
+            loading_progress_.store(progress);
+            loading_status_message_ = msg;
+        },
+        [this](bool success, const std::string& error) {
+            is_loading_.store(false);
+            if (!success) {
+                spdlog::error("Async CSV load failed: {}", error);
+            }
+        }
+    );
+}
+
+void DatasetPanel::LoadImageDatasetAsync(const std::string& path) {
+    if (is_loading_.load()) {
+        spdlog::warn("Already loading a dataset, please wait...");
+        return;
+    }
+
+    is_loading_.store(true);
+    loading_progress_.store(0.0f);
+
+    loading_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Loading Images: " + std::filesystem::path(path).filename().string(),
+        [this, path](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.1f, "Scanning directory...");
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+
+            task.ReportProgress(0.3f, "Loading images...");
+            if (task.ShouldStop()) return;
+
+            auto handle = registry.LoadImageFolder(path);
+
+            task.ReportProgress(0.9f, "Finalizing...");
+            if (task.ShouldStop()) return;
+
+            if (handle.IsValid()) {
+                current_dataset_ = handle;
+                cached_info_ = current_dataset_.GetInfo();
+                ApplySplit();
+                UpdateClassCounts();
+                task.MarkCompleted();
+            } else {
+                task.MarkFailed("Failed to load image folder");
+            }
+        },
+        [this](float progress, const std::string& msg) {
+            loading_progress_.store(progress);
+            loading_status_message_ = msg;
+        },
+        [this](bool success, const std::string& error) {
+            is_loading_.store(false);
+            if (!success) {
+                spdlog::error("Async image load failed: {}", error);
+            }
+        }
+    );
+}
+
+void DatasetPanel::LoadMNISTDatasetAsync(const std::string& path) {
+    if (is_loading_.load()) {
+        spdlog::warn("Already loading a dataset, please wait...");
+        return;
+    }
+
+    is_loading_.store(true);
+    loading_progress_.store(0.0f);
+
+    loading_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Loading MNIST",
+        [this, path](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.1f, "Opening MNIST files...");
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+
+            task.ReportProgress(0.3f, "Reading training data...");
+            if (task.ShouldStop()) return;
+
+            auto handle = registry.LoadMNIST(path);
+
+            task.ReportProgress(0.7f, "Processing labels...");
+            if (task.ShouldStop()) return;
+
+            if (handle.IsValid()) {
+                current_dataset_ = handle;
+                cached_info_ = current_dataset_.GetInfo();
+                class_names_ = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"};
+                ApplySplit();
+
+                task.ReportProgress(0.9f, "Computing statistics...");
+                UpdateClassCounts();
+
+                task.MarkCompleted();
+            } else {
+                task.MarkFailed("Failed to load MNIST dataset");
+            }
+        },
+        [this](float progress, const std::string& msg) {
+            loading_progress_.store(progress);
+            loading_status_message_ = msg;
+        },
+        [this](bool success, const std::string& error) {
+            is_loading_.store(false);
+            if (!success) {
+                spdlog::error("Async MNIST load failed: {}", error);
+            }
+        }
+    );
+}
+
+void DatasetPanel::LoadCIFAR10DatasetAsync(const std::string& path) {
+    if (is_loading_.load()) {
+        spdlog::warn("Already loading a dataset, please wait...");
+        return;
+    }
+
+    is_loading_.store(true);
+    loading_progress_.store(0.0f);
+
+    loading_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Loading CIFAR-10",
+        [this, path](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.1f, "Opening CIFAR-10 files...");
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+
+            task.ReportProgress(0.3f, "Reading image data...");
+            if (task.ShouldStop()) return;
+
+            auto handle = registry.LoadCIFAR10(path);
+
+            task.ReportProgress(0.7f, "Processing labels...");
+            if (task.ShouldStop()) return;
+
+            if (handle.IsValid()) {
+                current_dataset_ = handle;
+                cached_info_ = current_dataset_.GetInfo();
+                class_names_ = {
+                    "airplane", "automobile", "bird", "cat", "deer",
+                    "dog", "frog", "horse", "ship", "truck"
+                };
+                ApplySplit();
+
+                task.ReportProgress(0.9f, "Computing statistics...");
+                UpdateClassCounts();
+
+                task.MarkCompleted();
+            } else {
+                task.MarkFailed("Failed to load CIFAR-10 dataset");
+            }
+        },
+        [this](float progress, const std::string& msg) {
+            loading_progress_.store(progress);
+            loading_status_message_ = msg;
+        },
+        [this](bool success, const std::string& error) {
+            is_loading_.store(false);
+            if (!success) {
+                spdlog::error("Async CIFAR-10 load failed: {}", error);
+            }
+        }
+    );
+}
+
+void DatasetPanel::LoadHuggingFaceDatasetAsync(const std::string& dataset_name) {
+    if (is_loading_.load()) {
+        spdlog::warn("Already loading a dataset, please wait...");
+        return;
+    }
+
+    is_loading_.store(true);
+    loading_progress_.store(0.0f);
+
+    loading_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Loading HuggingFace: " + dataset_name,
+        [this, dataset_name](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.1f, "Connecting to HuggingFace...");
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+
+            cyxwiz::HuggingFaceConfig config;
+            config.dataset_name = dataset_name;
+            config.split = "train";
+            config.cache_dir = "./data/huggingface_cache";
+
+            task.ReportProgress(0.3f, "Downloading dataset...");
+            if (task.ShouldStop()) return;
+
+            auto handle = registry.LoadHuggingFace(config);
+
+            task.ReportProgress(0.8f, "Processing data...");
+            if (task.ShouldStop()) return;
+
+            if (handle.IsValid()) {
+                current_dataset_ = handle;
+                cached_info_ = current_dataset_.GetInfo();
+                class_names_ = cached_info_.class_names;
+                ApplySplit();
+                UpdateClassCounts();
+                task.MarkCompleted();
+            } else {
+                task.MarkFailed("Failed to load HuggingFace dataset");
+            }
+        },
+        [this](float progress, const std::string& msg) {
+            loading_progress_.store(progress);
+            loading_status_message_ = msg;
+        },
+        [this](bool success, const std::string& error) {
+            is_loading_.store(false);
+            if (!success) {
+                spdlog::error("Async HuggingFace load failed: {}", error);
+            }
+        }
+    );
+}
+
+void DatasetPanel::LoadKaggleDatasetAsync(const std::string& dataset_slug) {
+    if (is_loading_.load()) {
+        spdlog::warn("Already loading a dataset, please wait...");
+        return;
+    }
+
+    is_loading_.store(true);
+    loading_progress_.store(0.0f);
+
+    loading_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Loading Kaggle: " + dataset_slug,
+        [this, dataset_slug](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.1f, "Authenticating with Kaggle...");
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+
+            cyxwiz::KaggleConfig config;
+            config.dataset_slug = dataset_slug;
+            config.cache_dir = "./data/kaggle_cache";
+
+            task.ReportProgress(0.3f, "Downloading dataset...");
+            if (task.ShouldStop()) return;
+
+            auto handle = registry.LoadKaggle(config);
+
+            task.ReportProgress(0.8f, "Processing data...");
+            if (task.ShouldStop()) return;
+
+            if (handle.IsValid()) {
+                current_dataset_ = handle;
+                cached_info_ = current_dataset_.GetInfo();
+                class_names_ = cached_info_.class_names;
+                ApplySplit();
+                UpdateClassCounts();
+                task.MarkCompleted();
+            } else {
+                task.MarkFailed("Failed to load Kaggle dataset");
+            }
+        },
+        [this](float progress, const std::string& msg) {
+            loading_progress_.store(progress);
+            loading_status_message_ = msg;
+        },
+        [this](bool success, const std::string& error) {
+            is_loading_.store(false);
+            if (!success) {
+                spdlog::error("Async Kaggle load failed: {}", error);
+            }
+        }
+    );
+}
+
+void DatasetPanel::LoadDatasetAsync(const std::string& path) {
+    // Auto-detect dataset type and use appropriate async loader
+    std::filesystem::path fs_path(path);
+    std::string ext = fs_path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    if (ext == ".csv") {
+        LoadCSVDatasetAsync(path);
+    } else if (std::filesystem::is_directory(fs_path)) {
+        // Check for MNIST/CIFAR-10 patterns
+        if (std::filesystem::exists(fs_path / "train-images-idx3-ubyte") ||
+            std::filesystem::exists(fs_path / "train-images.idx3-ubyte")) {
+            LoadMNISTDatasetAsync(path);
+        } else if (std::filesystem::exists(fs_path / "data_batch_1.bin") ||
+                   std::filesystem::exists(fs_path / "cifar-10-batches-bin")) {
+            LoadCIFAR10DatasetAsync(path);
+        } else {
+            LoadImageDatasetAsync(path);
+        }
+    } else {
+        spdlog::warn("Unknown dataset format: {}", path);
+    }
+}
+
+void DatasetPanel::CancelLoading() {
+    if (is_loading_.load() && loading_task_id_ != 0) {
+        cyxwiz::AsyncTaskManager::Instance().Cancel(loading_task_id_);
+        spdlog::info("Cancelled dataset loading task");
+    }
+}
+
+void DatasetPanel::UpdateClassCounts() {
+    if (!current_dataset_.IsValid()) {
+        class_counts_.clear();
+        return;
+    }
+
+    class_counts_.resize(cached_info_.num_classes, 0);
+    std::fill(class_counts_.begin(), class_counts_.end(), 0);
+
+    // Sample labels to compute distribution
+    size_t sample_count = std::min(current_dataset_.Size(), size_t(10000));
+    for (size_t i = 0; i < sample_count; ++i) {
+        auto [_, label] = current_dataset_.GetSample(i);
+        if (label >= 0 && label < static_cast<int>(class_counts_.size())) {
+            class_counts_[label]++;
+        }
+    }
+}
+
 void DatasetPanel::ApplySplit() {
-    if (raw_samples_.empty()) return;
+    if (!current_dataset_.IsValid()) return;
 
     spdlog::info("Applying train/val/test split: {:.2f}/{:.2f}/{:.2f}",
-                 dataset_info_.train_ratio, dataset_info_.val_ratio, dataset_info_.test_ratio);
+                 split_config_.train_ratio, split_config_.val_ratio, split_config_.test_ratio);
 
-    int total = static_cast<int>(raw_samples_.size());
+    current_dataset_.ApplySplit(split_config_);
+    cached_info_ = current_dataset_.GetInfo();
 
-    // Create shuffled indices
-    std::vector<int> indices(total);
-    std::iota(indices.begin(), indices.end(), 0);
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::shuffle(indices.begin(), indices.end(), gen);
-
-    // Calculate split sizes
-    int train_size = static_cast<int>(total * dataset_info_.train_ratio);
-    int val_size = static_cast<int>(total * dataset_info_.val_ratio);
-    int test_size = total - train_size - val_size;
-
-    // Assign indices to splits
-    train_indices_.clear();
-    val_indices_.clear();
-    test_indices_.clear();
-
-    train_indices_.insert(train_indices_.end(), indices.begin(), indices.begin() + train_size);
-    val_indices_.insert(val_indices_.end(), indices.begin() + train_size, indices.begin() + train_size + val_size);
-    test_indices_.insert(test_indices_.end(), indices.begin() + train_size + val_size, indices.end());
-
-    dataset_info_.train_count = train_size;
-    dataset_info_.val_count = val_size;
-    dataset_info_.test_count = test_size;
-
-    spdlog::info("Split complete: {} train, {} val, {} test", train_size, val_size, test_size);
+    spdlog::info("Split complete: {} train, {} val, {} test",
+        cached_info_.train_count, cached_info_.val_count, cached_info_.test_count);
 }
 
 void DatasetPanel::ClearDataset() {
-    raw_samples_.clear();
-    raw_labels_.clear();
-    train_indices_.clear();
-    val_indices_.clear();
-    test_indices_.clear();
+    if (current_dataset_.IsValid()) {
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        registry.UnloadDataset(current_dataset_.GetName());
+    }
+
+    current_dataset_ = cyxwiz::DatasetHandle();
+    cached_info_ = cyxwiz::DatasetInfo();
     class_counts_.clear();
     class_names_.clear();
-
-    dataset_info_ = DatasetInfo();
     preview_sample_idx_ = 0;
 
     spdlog::info("Dataset cleared");
 }
 
 bool DatasetPanel::GetPreviewSamples(int count, std::vector<float>& out_images, std::vector<int>& out_labels) {
-    if (raw_samples_.empty() || count <= 0) return false;
+    if (!current_dataset_.IsValid() || count <= 0) return false;
 
-    count = std::min(count, static_cast<int>(raw_samples_.size()));
+    count = std::min(count, static_cast<int>(current_dataset_.Size()));
 
     out_images.clear();
     out_labels.clear();
 
     for (int i = 0; i < count; ++i) {
-        const auto& sample = raw_samples_[i];
+        auto [sample, label] = current_dataset_.GetSample(i);
         out_images.insert(out_images.end(), sample.begin(), sample.end());
-        out_labels.push_back(raw_labels_[i]);
+        out_labels.push_back(label);
     }
 
     return true;
@@ -838,36 +1319,34 @@ bool DatasetPanel::SubmitTrainingJob() {
     spdlog::info("Preparing training job submission...");
 
     // Create model definition JSON
-    // For MVP, we'll create a simple MLP based on dataset input/output shape
     nlohmann::json model_def;
     model_def["type"] = "mlp";
 
     // Calculate input size from dataset
-    int input_size = 1;
-    for (int dim : dataset_info_.input_shape) {
+    size_t input_size = 1;
+    for (size_t dim : cached_info_.shape) {
         input_size *= dim;
     }
 
     model_def["input_size"] = input_size;
-    model_def["output_size"] = dataset_info_.num_classes;
+    model_def["output_size"] = cached_info_.num_classes;
     model_def["hidden_layers"] = nlohmann::json::array({256, 128});
     model_def["activation"] = "relu";
     model_def["output_activation"] = "softmax";
 
     std::string model_definition = model_def.dump();
 
-    // Create dataset URI - for now use a special format the server can understand
-    // Format: "memory://<dataset_type>/<path>"
+    // Create dataset URI
     std::string dataset_uri;
-    switch (dataset_info_.type) {
-        case DatasetType::MNIST:
-            dataset_uri = "file://mnist/" + dataset_info_.path;
+    switch (cached_info_.type) {
+        case cyxwiz::DatasetType::MNIST:
+            dataset_uri = "file://mnist/" + cached_info_.path;
             break;
-        case DatasetType::CIFAR10:
-            dataset_uri = "file://cifar10/" + dataset_info_.path;
+        case cyxwiz::DatasetType::CIFAR10:
+            dataset_uri = "file://cifar10/" + cached_info_.path;
             break;
-        case DatasetType::CSV:
-            dataset_uri = "file://csv/" + dataset_info_.path;
+        case cyxwiz::DatasetType::CSV:
+            dataset_uri = "file://csv/" + cached_info_.path;
             break;
         default:
             dataset_uri = "mock://random";
@@ -883,15 +1362,15 @@ bool DatasetPanel::SubmitTrainingJob() {
     config.set_epochs(train_epochs_);
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
 
-    // Calculate estimated memory (rough estimate)
-    int64_t estimated_memory = static_cast<int64_t>(input_size) * train_batch_size_ * 4 * 10; // 10x for activations, gradients
-    config.set_estimated_memory(std::max(estimated_memory, static_cast<int64_t>(512 * 1024 * 1024))); // Min 512MB
+    // Calculate estimated memory
+    int64_t estimated_memory = static_cast<int64_t>(input_size) * train_batch_size_ * 4 * 10;
+    config.set_estimated_memory(std::max(estimated_memory, static_cast<int64_t>(512 * 1024 * 1024)));
 
-    // Estimate duration (very rough: 1 second per epoch per 1000 samples)
-    int estimated_duration = (train_epochs_ * dataset_info_.num_samples / 1000) + 60;
+    // Estimate duration
+    int estimated_duration = (train_epochs_ * static_cast<int>(cached_info_.num_samples) / 1000) + 60;
     config.set_estimated_duration(estimated_duration);
 
-    config.set_payment_amount(0.1); // 0.1 CYXWIZ tokens for now
+    config.set_payment_amount(0.1);
 
     // Add hyperparameters
     auto* hyperparams = config.mutable_hyperparameters();
@@ -908,11 +1387,7 @@ bool DatasetPanel::SubmitTrainingJob() {
 
     last_submitted_job_id_ = job_id;
     spdlog::info("Training job submitted: {}", job_id);
-    spdlog::info("  Dataset: {} ({} samples)", dataset_info_.name, dataset_info_.num_samples);
-    spdlog::info("  Model: MLP [{} -> 256 -> 128 -> {}]", input_size, dataset_info_.num_classes);
-    spdlog::info("  Epochs: {}, Batch Size: {}, LR: {}", train_epochs_, train_batch_size_, train_learning_rate_);
 
-    // Notify callback if set
     if (training_start_callback_) {
         training_start_callback_(job_id);
     }
@@ -932,7 +1407,7 @@ void DatasetPanel::StartLocalTraining() {
     }
 
     spdlog::info("Starting local training...");
-    spdlog::info("  Dataset: {} ({} samples)", dataset_info_.name, dataset_info_.num_samples);
+    spdlog::info("  Dataset: {} ({} samples)", cached_info_.name, cached_info_.num_samples);
     spdlog::info("  Epochs: {}, Batch Size: {}, LR: {}", train_epochs_, train_batch_size_, train_learning_rate_);
 
     // Reset state
@@ -959,19 +1434,19 @@ void DatasetPanel::StartLocalTraining() {
 void DatasetPanel::LocalTrainingThread() {
     spdlog::info("Local training thread started");
 
-    // Capture training parameters (they might change in UI during training)
+    // Capture training parameters
     int epochs = train_epochs_;
     int batch_size = train_batch_size_;
     float learning_rate = train_learning_rate_;
     int optimizer_type = selected_optimizer_;
 
     // Calculate input/output dimensions
-    int input_size = 1;
-    for (int dim : dataset_info_.input_shape) {
+    size_t input_size = 1;
+    for (size_t dim : cached_info_.shape) {
         input_size *= dim;
     }
-    int num_classes = dataset_info_.num_classes;
-    int num_samples = static_cast<int>(raw_samples_.size());
+    size_t num_classes = cached_info_.num_classes;
+    size_t num_samples = cached_info_.num_samples;
 
     spdlog::info("Model architecture: {} -> 256 -> 128 -> {}", input_size, num_classes);
 
@@ -983,8 +1458,7 @@ void DatasetPanel::LocalTrainingThread() {
     auto optimizer = cyxwiz::CreateOptimizer(opt_type, learning_rate);
 
     // Simulated training loop with realistic loss/accuracy curves
-    // (Full neural network training requires more backend implementation)
-    double initial_loss = 2.3;  // Log(num_classes) for random initialization
+    double initial_loss = 2.3;
     double target_loss = 0.1;
 
     std::random_device rd;
@@ -992,7 +1466,6 @@ void DatasetPanel::LocalTrainingThread() {
     std::uniform_real_distribution<float> noise(-0.05f, 0.05f);
 
     for (int epoch = 1; epoch <= epochs; ++epoch) {
-        // Check for stop request
         if (local_training_stop_requested_.load()) {
             spdlog::info("Local training stopped by user at epoch {}", epoch);
             break;
@@ -1000,37 +1473,30 @@ void DatasetPanel::LocalTrainingThread() {
 
         auto epoch_start = std::chrono::steady_clock::now();
 
-        // Simulate batches within epoch
-        int num_batches = (num_samples + batch_size - 1) / batch_size;
+        int num_batches = static_cast<int>((num_samples + batch_size - 1) / batch_size);
         double epoch_loss = 0.0;
         int correct = 0;
 
         for (int batch = 0; batch < num_batches; ++batch) {
             if (local_training_stop_requested_.load()) break;
 
-            // Simulate forward pass and loss computation
             double progress = static_cast<double>(epoch - 1 + static_cast<double>(batch) / num_batches) / epochs;
             double batch_loss = initial_loss * std::exp(-3.5 * progress) + target_loss + noise(gen) * 0.1;
             epoch_loss += batch_loss;
 
-            // Simulate accuracy
             double batch_acc = 0.1 + 0.88 * progress + noise(gen) * 0.02;
-            correct += static_cast<int>(batch_acc * std::min(batch_size, num_samples - batch * batch_size));
+            correct += static_cast<int>(batch_acc * std::min(static_cast<size_t>(batch_size), num_samples - batch * batch_size));
 
-            // Small delay to simulate computation (faster than server node)
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
 
-        // Calculate epoch metrics
         float avg_loss = static_cast<float>(epoch_loss / num_batches);
         float accuracy = static_cast<float>(correct) / num_samples;
 
-        // Update atomic values for UI
         local_current_epoch_.store(epoch);
         local_current_loss_.store(avg_loss);
         local_current_accuracy_.store(accuracy);
 
-        // Update training plot panel
         if (training_plot_panel_) {
             training_plot_panel_->AddLossPoint(epoch, avg_loss);
             training_plot_panel_->AddAccuracyPoint(epoch, accuracy);
@@ -1043,7 +1509,6 @@ void DatasetPanel::LocalTrainingThread() {
                      epoch, epochs, avg_loss, accuracy * 100.0f, epoch_duration.count());
     }
 
-    // Training complete
     local_training_running_.store(false);
 
     if (local_training_stop_requested_.load()) {

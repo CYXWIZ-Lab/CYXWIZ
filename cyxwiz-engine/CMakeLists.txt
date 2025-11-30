@@ -23,6 +23,17 @@ else()
     set(CYXWIZ_HAS_HDF5 OFF)
 endif()
 
+
+# Optional: OpenCV for image processing and augmentation
+find_package(OpenCV CONFIG)
+if(OpenCV_FOUND)
+    message(STATUS "OpenCV ${OpenCV_VERSION} found - Image processing enabled")
+    set(CYXWIZ_HAS_OPENCV ON)
+else()
+    message(WARNING "OpenCV not found - Image augmentation disabled (using STB fallback)")
+    set(CYXWIZ_HAS_OPENCV OFF)
+endif()
+
 # ImNodes for visual node editor - integrated manually
 # Source: https://github.com/Nelarius/imnodes
 
@@ -31,6 +42,9 @@ set(ENGINE_SOURCES
     src/main.cpp
     src/application.cpp
     src/core/project_manager.cpp
+    src/core/data_registry.cpp
+    src/core/texture_manager.cpp
+    src/core/async_task_manager.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
     src/gui/console.cpp
@@ -52,6 +66,7 @@ set(ENGINE_SOURCES
     src/gui/panels/table_viewer.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/dataset_panel.cpp
+    src/gui/panels/task_progress_panel.cpp
     src/data/data_table.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
@@ -81,6 +96,10 @@ set(ENGINE_SOURCES
 
 set(ENGINE_HEADERS
     src/application.h
+    src/core/project_manager.h
+    src/core/data_registry.h
+    src/core/texture_manager.h
+    src/core/async_task_manager.h
     src/gui/main_window.h
     src/gui/node_editor.h
     src/gui/console.h
@@ -99,6 +118,7 @@ set(ENGINE_HEADERS
     src/gui/panels/table_viewer.h
     src/gui/panels/connection_dialog.h
     src/gui/panels/dataset_panel.h
+    src/gui/panels/task_progress_panel.h
     src/data/data_table.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
@@ -161,6 +181,13 @@ target_link_libraries(cyxwiz-engine PRIVATE
 if(HighFive_FOUND)
     target_link_libraries(cyxwiz-engine PRIVATE HighFive)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_HDF5)
+endif()
+
+# Optional: Link OpenCV if found
+if(OpenCV_FOUND)
+    target_include_directories(cyxwiz-engine PRIVATE ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(cyxwiz-engine PRIVATE ${OpenCV_LIBS})
+    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_OPENCV)
 endif()
 
 # Platform-specific settings

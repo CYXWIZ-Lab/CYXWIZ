@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../core/data_registry.h"
+#include "../../core/async_task_manager.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -20,33 +22,6 @@ namespace network {
 
 namespace gui {
 
-enum class DatasetType {
-    None,
-    CSV,
-    Images,
-    MNIST,
-    CIFAR10
-};
-
-struct DatasetInfo {
-    DatasetType type = DatasetType::None;
-    std::string path;
-    std::string name;
-    int num_samples = 0;
-    int num_classes = 0;
-    std::vector<int> input_shape;  // e.g., [28, 28, 1] for MNIST
-
-    // Split configuration
-    float train_ratio = 0.8f;
-    float val_ratio = 0.1f;
-    float test_ratio = 0.1f;
-
-    // Loaded data counts
-    int train_count = 0;
-    int val_count = 0;
-    int test_count = 0;
-};
-
 class DatasetPanel : public cyxwiz::Panel {
 public:
     DatasetPanel();
@@ -54,15 +29,34 @@ public:
 
     void Render() override;
 
-    // Dataset loading
+    // Dataset loading - now delegates to DataRegistry (blocking versions)
     bool LoadCSVDataset(const std::string& path);
     bool LoadImageDataset(const std::string& path);
     bool LoadMNISTDataset(const std::string& path);
     bool LoadCIFAR10Dataset(const std::string& path);
+    bool LoadHuggingFaceDataset(const std::string& dataset_name);
+    bool LoadKaggleDataset(const std::string& dataset_slug);
+
+    // Load from path with auto-detection
+    bool LoadDataset(const std::string& path);
+
+    // Async dataset loading (non-blocking versions)
+    void LoadCSVDatasetAsync(const std::string& path);
+    void LoadImageDatasetAsync(const std::string& path);
+    void LoadMNISTDatasetAsync(const std::string& path);
+    void LoadCIFAR10DatasetAsync(const std::string& path);
+    void LoadHuggingFaceDatasetAsync(const std::string& dataset_name);
+    void LoadKaggleDatasetAsync(const std::string& dataset_slug);
+    void LoadDatasetAsync(const std::string& path);
+
+    // Async loading state
+    bool IsLoading() const { return is_loading_.load(); }
+    void CancelLoading();
 
     // Dataset access
-    const DatasetInfo& GetDatasetInfo() const { return dataset_info_; }
-    bool IsDatasetLoaded() const { return dataset_info_.type != DatasetType::None; }
+    const cyxwiz::DatasetInfo& GetDatasetInfo() const;
+    bool IsDatasetLoaded() const { return current_dataset_.IsValid(); }
+    cyxwiz::DatasetHandle GetCurrentDataset() const { return current_dataset_; }
 
     // Get samples for preview
     bool GetPreviewSamples(int count, std::vector<float>& out_images, std::vector<int>& out_labels);
@@ -82,10 +76,8 @@ public:
     bool IsLocalTrainingRunning() const { return local_training_running_.load(); }
     void StopLocalTraining() { local_training_stop_requested_.store(true); }
 
-    // Get raw data for job submission
-    const std::vector<std::vector<float>>& GetRawSamples() const { return raw_samples_; }
-    const std::vector<int>& GetRawLabels() const { return raw_labels_; }
-    const std::vector<int>& GetTrainIndices() const { return train_indices_; }
+    // Get raw data for job submission (from DataRegistry)
+    const std::vector<size_t>& GetTrainIndices() const;
 
 private:
     void RenderDatasetSelection();
@@ -93,18 +85,17 @@ private:
     void RenderSplitConfiguration();
     void RenderDataPreview();
     void RenderStatistics();
+    void RenderLoadedDatasets();
 
     // File browser dialog
     void ShowFileBrowser();
 
     // Data preprocessing
     void ApplySplit();
-    void ShuffleData();
-    void NormalizeData();
+    void UpdateClassCounts();
 
     // Visualization
     void RenderImagePreview(const float* image_data, int width, int height, int channels);
-    void RenderClassDistribution();
 
     // Training
     void RenderTrainingSection();
@@ -112,7 +103,9 @@ private:
     void StartLocalTraining();     // Local training
     void LocalTrainingThread();    // Background thread for local training
 
-    DatasetInfo dataset_info_;
+    // Current active dataset (from DataRegistry)
+    cyxwiz::DatasetHandle current_dataset_;
+    cyxwiz::DatasetInfo cached_info_;  // Cached for quick access
 
     // Job manager for submitting training jobs
     network::JobManager* job_manager_ = nullptr;
@@ -137,26 +130,29 @@ private:
     std::atomic<float> local_current_loss_{0.0f};
     std::atomic<float> local_current_accuracy_{0.0f};
 
-    // Raw data storage (will be moved to proper data manager later)
-    std::vector<std::vector<float>> raw_samples_;  // All samples
-    std::vector<int> raw_labels_;                   // All labels
-
-    // Split indices
-    std::vector<int> train_indices_;
-    std::vector<int> val_indices_;
-    std::vector<int> test_indices_;
+    // Split configuration (for UI)
+    cyxwiz::SplitConfig split_config_;
 
     // UI state
     bool show_file_browser_ = false;
     char file_path_buffer_[512] = "";
-    DatasetType selected_type_ = DatasetType::None;
+    char hf_dataset_name_[256] = "mnist";  // HuggingFace dataset name
+    char kaggle_dataset_slug_[256] = "titanic";  // Kaggle dataset slug
+    cyxwiz::DatasetType selected_type_ = cyxwiz::DatasetType::None;
     int preview_sample_idx_ = 0;
+    int selected_dataset_index_ = -1;  // For dataset list
 
     // Class names (for visualization)
     std::vector<std::string> class_names_;
 
-    // Statistics
+    // Statistics cache
     std::vector<int> class_counts_;  // Per-class sample counts
+
+    // Async loading state
+    std::atomic<bool> is_loading_{false};
+    uint64_t loading_task_id_ = 0;
+    std::string loading_status_message_;
+    std::atomic<float> loading_progress_{0.0f};
 };
 
 } // namespace gui

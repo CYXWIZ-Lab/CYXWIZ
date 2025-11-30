@@ -1,11 +1,14 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../core/data_registry.h"
+#include "../../core/async_task_manager.h"
 #include <string>
 #include <vector>
 #include <memory>
 #include <functional>
 #include <set>
+#include <atomic>
 
 namespace cyxwiz {
 
@@ -67,12 +70,25 @@ public:
     void SetOnAssetDoubleClick(AssetCallback callback) { on_double_click_ = std::move(callback); }
     void SetOnAssetDeleted(AssetCallback callback) { on_deleted_ = std::move(callback); }
 
+    // Dataset callback - called when a dataset is double-clicked
+    using DatasetCallback = std::function<void(const std::string& path, DatasetHandle handle)>;
+    void SetOnDatasetLoaded(DatasetCallback callback) { on_dataset_loaded_ = std::move(callback); }
+
+    // Enable/disable dataset preview pane
+    void SetShowDatasetPreview(bool show) { show_dataset_preview_ = show; }
+
 private:
     // UI Rendering
     void RenderToolbar();
     void RenderDirectoryView();
     void RenderAssetNode(AssetItem& item, int depth = 0);
     void RenderStatusBar();
+    void RenderDatasetPreview();
+
+    // Dataset helpers
+    bool IsDatasetFile(const AssetItem& item) const;
+    void LoadDatasetFromItem(const AssetItem& item);
+    void LoadDatasetFromItemAsync(const AssetItem& item);
 
     // Dialogs
     void RenderNewScriptDialog();
@@ -150,6 +166,13 @@ private:
     // Callbacks
     AssetCallback on_double_click_;
     AssetCallback on_deleted_;
+    DatasetCallback on_dataset_loaded_;
+
+    // Dataset preview state
+    bool show_dataset_preview_ = true;
+    DatasetPreview current_preview_;
+    std::string preview_path_;
+    AssetItem* hovered_dataset_item_ = nullptr;
 
     // Clipboard state
     std::string clipboard_path_;      // Path of copied/cut file
@@ -164,6 +187,18 @@ private:
 
     // Force tree state update (for expand/collapse all)
     bool force_tree_state_ = false;
+
+    // Async loading state for datasets
+    std::atomic<bool> is_loading_dataset_{false};
+    uint64_t loading_task_id_ = 0;
+    std::string loading_dataset_path_;
+
+    // Async directory scanning state
+    std::atomic<bool> is_scanning_directory_{false};
+    uint64_t scanning_task_id_ = 0;
+    std::unique_ptr<AssetItem> pending_directory_root_;  // Built in background thread
+    std::mutex pending_tree_mutex_;  // Protects pending_directory_root_
+    std::atomic<bool> scan_completed_{false};  // Signal that scan is done
 };
 
 } // namespace cyxwiz
