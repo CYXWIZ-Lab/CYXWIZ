@@ -1,7 +1,10 @@
 #include "dataset_panel.h"
 #include "training_plot_panel.h"
+#include "../node_editor.h"
 #include "../../network/job_manager.h"
 #include "../../core/texture_manager.h"
+#include "../../core/training_manager.h"
+#include "../../core/graph_compiler.h"
 #include "job.pb.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -23,6 +26,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
+#include <shobjidl.h>  // For IFileDialog (folder browser)
 #endif
 
 namespace gui {
@@ -31,13 +35,7 @@ DatasetPanel::DatasetPanel() : cyxwiz::Panel("Dataset Manager", true) {
 }
 
 DatasetPanel::~DatasetPanel() {
-    // Stop any running local training
-    if (local_training_running_.load()) {
-        local_training_stop_requested_.store(true);
-        if (local_training_thread_ && local_training_thread_->joinable()) {
-            local_training_thread_->join();
-        }
-    }
+    // Training is now managed by TrainingManager singleton - no cleanup needed here
 }
 
 const cyxwiz::DatasetInfo& DatasetPanel::GetDatasetInfo() const {
@@ -48,6 +46,14 @@ const std::vector<size_t>& DatasetPanel::GetTrainIndices() const {
     static std::vector<size_t> empty;
     if (!current_dataset_.IsValid()) return empty;
     return current_dataset_.GetTrainIndices();
+}
+
+bool DatasetPanel::IsLocalTrainingRunning() const {
+    return cyxwiz::TrainingManager::Instance().IsTrainingActive();
+}
+
+void DatasetPanel::StopLocalTraining() {
+    cyxwiz::TrainingManager::Instance().StopTraining();
 }
 
 void DatasetPanel::Render() {
@@ -104,6 +110,11 @@ void DatasetPanel::Render() {
                 ImGui::EndTabItem();
             }
 
+            if (ImGui::BeginTabItem("Augmentation")) {
+                RenderAugmentationTab();
+                ImGui::EndTabItem();
+            }
+
             if (ImGui::BeginTabItem("Training")) {
                 if (IsDatasetLoaded()) {
                     RenderTrainingSection();
@@ -123,11 +134,11 @@ void DatasetPanel::RenderDatasetSelection() {
     ImGui::Text("Dataset Type");
     ImGui::Spacing();
 
-    // Dataset type selection
+    // Dataset type selection (merged Images + CSV into single "Images" option)
     const char* types[] = {"CSV", "Images", "MNIST", "CIFAR-10", "HuggingFace", "Kaggle", "Custom"};
     int current_type = 0;
     if (selected_type_ == cyxwiz::DatasetType::CSV) current_type = 0;
-    else if (selected_type_ == cyxwiz::DatasetType::ImageFolder) current_type = 1;
+    else if (selected_type_ == cyxwiz::DatasetType::ImageFolder || selected_type_ == cyxwiz::DatasetType::ImageCSV) current_type = 1;
     else if (selected_type_ == cyxwiz::DatasetType::MNIST) current_type = 2;
     else if (selected_type_ == cyxwiz::DatasetType::CIFAR10) current_type = 3;
     else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) current_type = 4;
@@ -137,7 +148,7 @@ void DatasetPanel::RenderDatasetSelection() {
     if (ImGui::Combo("##Type", &current_type, types, IM_ARRAYSIZE(types))) {
         switch (current_type) {
             case 0: selected_type_ = cyxwiz::DatasetType::CSV; break;
-            case 1: selected_type_ = cyxwiz::DatasetType::ImageFolder; break;
+            case 1: selected_type_ = cyxwiz::DatasetType::ImageCSV; break;  // Unified Images type
             case 2: selected_type_ = cyxwiz::DatasetType::MNIST; break;
             case 3: selected_type_ = cyxwiz::DatasetType::CIFAR10; break;
             case 4: selected_type_ = cyxwiz::DatasetType::HuggingFace; break;
@@ -246,6 +257,88 @@ void DatasetPanel::RenderDatasetSelection() {
                 }
             }
         }
+    } else if (selected_type_ == cyxwiz::DatasetType::ImageCSV || selected_type_ == cyxwiz::DatasetType::ImageFolder) {
+        // Unified image dataset UI
+        ImGui::Text("Image Folder");
+        ImGui::InputText("##ImageFolder", file_path_buffer_, sizeof(file_path_buffer_));
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...##ImgFolder")) {
+            ShowFolderBrowser(file_path_buffer_, sizeof(file_path_buffer_));
+        }
+
+        ImGui::Spacing();
+
+        ImGui::Text("Labels CSV (Optional)");
+        ImGui::InputText("##CSVPath", csv_path_buffer_, sizeof(csv_path_buffer_));
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...##CSV")) {
+            ShowCSVFileBrowser();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear##ClearCSV")) {
+            csv_path_buffer_[0] = '\0';
+        }
+
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            "Without CSV: uses subfolders as class names");
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            "With CSV: expects filename,label columns");
+
+        ImGui::Spacing();
+
+        // Image size and memory options
+        if (ImGui::CollapsingHeader("Image Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::InputInt("Target Width", &image_target_width_);
+            ImGui::InputInt("Target Height", &image_target_height_);
+            image_target_width_ = std::max(1, std::min(2048, image_target_width_));
+            image_target_height_ = std::max(1, std::min(2048, image_target_height_));
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Images will be resized to this size");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::Text("Memory Management (Lazy Loading)");
+            ImGui::InputInt("Cache Size (images)", &image_cache_size_);
+            image_cache_size_ = std::max(1, std::min(10000, image_cache_size_));
+
+            // Calculate estimated memory usage
+            int channels = 3;  // Assume RGB
+            size_t bytes_per_image = static_cast<size_t>(image_target_width_) *
+                                     static_cast<size_t>(image_target_height_) *
+                                     channels * sizeof(float);
+            size_t estimated_cache_mb = (bytes_per_image * image_cache_size_) / (1024 * 1024);
+
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                "Max memory: ~%zu MB (%d images in cache)", estimated_cache_mb, image_cache_size_);
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
+                "Images loaded on-demand, not all at once");
+        }
+
+        ImGui::Spacing();
+
+        // Load button
+        if (ImGui::Button("Load Image Dataset", ImVec2(-1, 0))) {
+            std::string img_folder = file_path_buffer_;
+            std::string csv_file = csv_path_buffer_;  // Can be empty
+            if (!img_folder.empty()) {
+                // Load with configurable cache size (CSV is optional)
+                auto& registry = cyxwiz::DataRegistry::Instance();
+                auto handle = registry.LoadImageCSV(img_folder, csv_file, "",
+                    image_target_width_, image_target_height_, image_cache_size_);
+                if (handle.IsValid()) {
+                    current_dataset_ = handle;
+                    cached_info_ = handle.GetInfo();
+                    if (csv_file.empty()) {
+                        spdlog::info("Loaded image dataset from folder: {} samples, {} classes (cache: {} images)",
+                            cached_info_.num_samples, cached_info_.num_classes, image_cache_size_);
+                    } else {
+                        spdlog::info("Loaded image dataset with CSV: {} samples, {} classes (cache: {} images)",
+                            cached_info_.num_samples, cached_info_.num_classes, image_cache_size_);
+                    }
+                }
+            }
+        }
     } else {
         // File path input for other types
         ImGui::Text("Dataset Path");
@@ -272,6 +365,106 @@ void DatasetPanel::RenderDatasetSelection() {
         ImGui::Spacing();
         if (ImGui::Button("Clear Dataset", ImVec2(-1, 0))) {
             ClearDataset();
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Config Export/Import section
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "Configuration");
+    ImGui::Spacing();
+
+    if (IsDatasetLoaded()) {
+        if (ImGui::Button("Export Config", ImVec2(-1, 0))) {
+            // Show save dialog
+            #ifdef _WIN32
+            OPENFILENAMEA ofn;
+            char filename[MAX_PATH] = "dataset_config.json";
+            ZeroMemory(&ofn, sizeof(ofn));
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = NULL;
+            ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
+            ofn.lpstrFile = filename;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrDefExt = "json";
+            ofn.Flags = OFN_OVERWRITEPROMPT;
+            if (GetSaveFileNameA(&ofn)) {
+                auto& registry = cyxwiz::DataRegistry::Instance();
+                // Pass the current split_config_ to export with user's modified ratios
+                if (registry.ExportConfig(cached_info_.name, filename, split_config_)) {
+                    spdlog::info("Exported config to: {}", filename);
+                }
+            }
+            #endif
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Export dataset configuration to JSON file");
+        }
+    }
+
+    if (ImGui::Button("Import Config", ImVec2(-1, 0))) {
+        // Show open dialog
+        #ifdef _WIN32
+        OPENFILENAMEA ofn;
+        char filename[MAX_PATH] = "";
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = NULL;
+        ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_FILEMUSTEXIST;
+        if (GetOpenFileNameA(&ofn)) {
+            auto& registry = cyxwiz::DataRegistry::Instance();
+            std::string loaded_name;
+            cyxwiz::SplitConfig imported_split;
+            if (registry.ImportConfig(filename, loaded_name, imported_split)) {
+                current_dataset_ = registry.GetDataset(loaded_name);
+                if (current_dataset_.IsValid()) {
+                    cached_info_ = current_dataset_.GetInfo();
+                    // Update split_config_ from the imported config so sliders reflect new values
+                    split_config_ = imported_split;
+                    // Update cached_info_ counts from the actual dataset
+                    cached_info_.train_count = current_dataset_.GetTrainIndices().size();
+                    cached_info_.val_count = current_dataset_.GetValIndices().size();
+                    cached_info_.test_count = current_dataset_.GetTestIndices().size();
+                    spdlog::info("Imported config and applied to dataset: {} (split: {:.0f}/{:.0f}/{:.0f})",
+                        loaded_name, split_config_.train_ratio * 100,
+                        split_config_.val_ratio * 100, split_config_.test_ratio * 100);
+                }
+            }
+        }
+        #endif
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Import dataset configuration from JSON file");
+    }
+
+    // Versioning
+    if (IsDatasetLoaded()) {
+        ImGui::Spacing();
+        if (ImGui::Button("Save Version", ImVec2(-1, 0))) {
+            auto& registry = cyxwiz::DataRegistry::Instance();
+            registry.SaveVersion(cached_info_.name, "Manual save");
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Save current dataset state as a version");
+        }
+
+        // Show version history if available
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        auto versions = registry.GetVersionHistory(cached_info_.name);
+        if (!versions.empty()) {
+            if (ImGui::TreeNode("Version History")) {
+                for (const auto& ver : versions) {
+                    ImGui::BulletText("%s - %s", ver.version_id.c_str(), ver.timestamp.c_str());
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "  %s (%zu samples)",
+                        ver.description.c_str(), ver.num_samples);
+                }
+                ImGui::TreePop();
+            }
         }
     }
 
@@ -337,53 +530,81 @@ void DatasetPanel::RenderDatasetSelection() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Enhanced memory usage display
+    // Memory usage section
     auto& registry = cyxwiz::DataRegistry::Instance();
     cyxwiz::MemoryStats stats = registry.GetMemoryStats();
 
-    // Add texture memory if available
+    // Add texture memory
     auto& texture_mgr = cyxwiz::TextureManager::Instance();
     stats.texture_memory = texture_mgr.GetMemoryUsage();
 
-    ImGui::Text("Memory Usage");
+    ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f), "Memory");
 
-    // Main memory progress bar with color coding
-    float memory_ratio = stats.GetUsagePercent() / 100.0f;
-    ImVec4 progress_color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green
-    if (memory_ratio > 0.75f) {
-        progress_color = ImVec4(1.0f, 0.5f, 0.0f, 1.0f);  // Orange
-    }
-    if (memory_ratio > 0.9f) {
-        progress_color = ImVec4(1.0f, 0.2f, 0.2f, 1.0f);  // Red
-    }
-
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, progress_color);
-    ImGui::ProgressBar(memory_ratio, ImVec2(-1, 0));
-    ImGui::PopStyleColor();
-
-    ImGui::Text("%s / %s (%.1f%%)",
+    // Progress bar with overlay text and color coding
+    float usage_percent = stats.GetUsagePercent();
+    ImVec4 bar_color = usage_percent > 90 ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f) :
+                       usage_percent > 75 ? ImVec4(1.0f, 0.6f, 0.2f, 1.0f) :
+                                            ImVec4(0.3f, 0.8f, 0.3f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, bar_color);
+    char overlay[64];
+    snprintf(overlay, sizeof(overlay), "%s / %s (%.0f%%)",
         stats.FormatBytes(stats.total_allocated).c_str(),
         stats.FormatBytes(stats.memory_limit).c_str(),
-        stats.GetUsagePercent());
+        usage_percent);
+    ImGui::ProgressBar(usage_percent / 100.0f, ImVec2(-1, 0), overlay);
+    ImGui::PopStyleColor();
 
-    // Collapsible section for detailed stats
-    if (ImGui::TreeNode("Details")) {
+    // Memory pressure warning
+    if (registry.IsMemoryPressure()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Memory pressure!");
+    }
+
+    // Collapsible details
+    if (ImGui::TreeNode("Details##Memory")) {
         ImGui::Text("Datasets: %zu", stats.datasets_count);
         ImGui::Text("Peak: %s", stats.FormatBytes(stats.peak_usage).c_str());
-        ImGui::Text("Cached: %s", stats.FormatBytes(stats.total_cached).c_str());
         ImGui::Text("Textures: %s", stats.FormatBytes(stats.texture_memory).c_str());
+        ImGui::Text("Cache Hit: %.1f%% (%zu evictions)", stats.GetCacheHitRate(), stats.cache_evictions);
 
         ImGui::Spacing();
-        ImGui::Text("Cache Stats:");
-        ImGui::Text("  Hits: %zu", stats.cache_hits);
-        ImGui::Text("  Misses: %zu", stats.cache_misses);
-        ImGui::Text("  Hit Rate: %.1f%%", stats.GetCacheHitRate());
-        ImGui::Text("  Evictions: %zu", stats.cache_evictions);
 
-        if (ImGui::Button("Reset Stats", ImVec2(-1, 0))) {
-            registry.ResetCacheStats();
+        // Disable button if no datasets to evict
+        bool can_trim = stats.datasets_count > 0;
+        if (!can_trim) {
+            ImGui::BeginDisabled();
         }
 
+        if (ImGui::Button("Trim Memory", ImVec2(100, 0))) {
+            size_t before = registry.GetTotalMemoryUsage();
+            registry.TrimMemory();
+            size_t after = registry.GetTotalMemoryUsage();
+
+            if (before > after) {
+                spdlog::info("Trim Memory: freed {} bytes ({} -> {})",
+                           before - after, stats.FormatBytes(before), stats.FormatBytes(after));
+            } else {
+                spdlog::info("Trim Memory: nothing evicted (usage {} is under limit {})",
+                           stats.FormatBytes(before), stats.FormatBytes(registry.GetMemoryLimit()));
+            }
+        }
+
+        if (!can_trim) {
+            ImGui::EndDisabled();
+        }
+
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (!can_trim) {
+                ImGui::SetTooltip("No datasets loaded to evict");
+            } else if (stats.total_allocated <= registry.GetMemoryLimit()) {
+                ImGui::SetTooltip("Memory under limit - nothing to evict.\nTrim only works when over the memory limit.");
+            } else {
+                ImGui::SetTooltip("Evict least-used datasets to free memory");
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Stats", ImVec2(100, 0))) {
+            registry.ResetCacheStats();
+        }
         ImGui::TreePop();
     }
 }
@@ -613,26 +834,96 @@ void DatasetPanel::RenderImagePreview(const float* image_data, int width, int he
 
 void DatasetPanel::ShowFileBrowser() {
 #ifdef _WIN32
+    // For ImageCSV and ImageFolder, show folder browser
+    if (selected_type_ == cyxwiz::DatasetType::ImageCSV ||
+        selected_type_ == cyxwiz::DatasetType::ImageFolder) {
+        ShowFolderBrowser(file_path_buffer_, sizeof(file_path_buffer_));
+    } else {
+        // Show file browser for other types
+        OPENFILENAMEA ofn;
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = NULL;
+        ofn.lpstrFile = file_path_buffer_;
+        ofn.nMaxFile = sizeof(file_path_buffer_);
+
+        if (selected_type_ == cyxwiz::DatasetType::CSV) {
+            ofn.lpstrFilter = "CSV Files\0*.csv\0All Files\0*.*\0";
+        } else {
+            ofn.lpstrFilter = "All Files\0*.*\0";
+        }
+
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+        if (GetOpenFileNameA(&ofn)) {
+            spdlog::info("Selected file: {}", file_path_buffer_);
+        }
+    }
+#else
+    spdlog::warn("File browser not implemented for this platform");
+#endif
+}
+
+void DatasetPanel::ShowFolderBrowser(char* buffer, size_t buffer_size) {
+#ifdef _WIN32
+    // Use IFileDialog for modern folder selection
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+    IFileDialog* pfd = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL,
+                                   IID_IFileDialog, reinterpret_cast<void**>(&pfd));
+
+    if (SUCCEEDED(hr)) {
+        // Set options to pick folders
+        DWORD dwOptions;
+        pfd->GetOptions(&dwOptions);
+        pfd->SetOptions(dwOptions | FOS_PICKFOLDERS);
+
+        // Set title
+        pfd->SetTitle(L"Select Image Folder");
+
+        // Show the dialog
+        hr = pfd->Show(NULL);
+        if (SUCCEEDED(hr)) {
+            IShellItem* psi = nullptr;
+            hr = pfd->GetResult(&psi);
+            if (SUCCEEDED(hr)) {
+                PWSTR pszPath = nullptr;
+                hr = psi->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
+                if (SUCCEEDED(hr)) {
+                    // Convert wide string to narrow
+                    size_t converted = 0;
+                    wcstombs_s(&converted, buffer, buffer_size, pszPath, _TRUNCATE);
+                    spdlog::info("Selected folder: {}", buffer);
+                    CoTaskMemFree(pszPath);
+                }
+                psi->Release();
+            }
+        }
+        pfd->Release();
+    }
+
+    CoUninitialize();
+#else
+    spdlog::warn("Folder browser not implemented for this platform");
+#endif
+}
+
+void DatasetPanel::ShowCSVFileBrowser() {
+#ifdef _WIN32
     OPENFILENAMEA ofn;
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = NULL;
-    ofn.lpstrFile = file_path_buffer_;
-    ofn.nMaxFile = sizeof(file_path_buffer_);
-
-    if (selected_type_ == cyxwiz::DatasetType::CSV) {
-        ofn.lpstrFilter = "CSV Files\0*.csv\0All Files\0*.*\0";
-    } else if (selected_type_ == cyxwiz::DatasetType::ImageFolder) {
-        ofn.lpstrFilter = "Image Files\0*.png;*.jpg;*.jpeg;*.bmp\0All Files\0*.*\0";
-    } else {
-        ofn.lpstrFilter = "All Files\0*.*\0";
-    }
-
+    ofn.lpstrFile = csv_path_buffer_;
+    ofn.nMaxFile = sizeof(csv_path_buffer_);
+    ofn.lpstrFilter = "CSV Files\0*.csv\0Text Files\0*.txt\0All Files\0*.*\0";
     ofn.nFilterIndex = 1;
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
     if (GetOpenFileNameA(&ofn)) {
-        spdlog::info("Selected file: {}", file_path_buffer_);
+        spdlog::info("Selected CSV file: {}", csv_path_buffer_);
     }
 #else
     spdlog::warn("File browser not implemented for this platform");
@@ -1208,11 +1499,26 @@ void DatasetPanel::RenderTrainingSection() {
     ImGui::Separator();
     ImGui::Spacing();
 
+    // Check training state from centralized TrainingManager
+    auto& training_mgr = cyxwiz::TrainingManager::Instance();
+    bool training_running = training_mgr.IsTrainingActive();
+
+    // Check if node editor is connected and graph is valid
+    bool has_valid_graph = node_editor_ && node_editor_->IsGraphValid();
+
+    // Show warning if no valid graph
+    if (!has_valid_graph) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+            "Node graph required for training");
+        ImGui::TextWrapped("Create a valid model in the Node Editor with: "
+            "DatasetInput -> Model layers -> Loss -> Optimizer");
+        ImGui::Spacing();
+    }
+
     // Training hyperparameters
     ImGui::Text("Hyperparameters:");
 
     // Disable hyperparameters if training is running
-    bool training_running = local_training_running_.load();
     if (training_running) {
         ImGui::BeginDisabled();
     }
@@ -1234,9 +1540,9 @@ void DatasetPanel::RenderTrainingSection() {
 
     // ============ LOCAL TRAINING ============
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Local Training");
-    ImGui::Text("Train on this machine using cyxwiz-backend");
+    ImGui::Text("Train on this machine using the Node Graph model");
 
-    bool can_train_local = IsDatasetLoaded() && !training_running;
+    bool can_train_local = IsDatasetLoaded() && has_valid_graph && !training_running;
 
     if (!can_train_local) {
         ImGui::BeginDisabled();
@@ -1250,16 +1556,16 @@ void DatasetPanel::RenderTrainingSection() {
         ImGui::EndDisabled();
     }
 
-    // Show local training progress
+    // Show training progress (both Dataset Panel and Node Editor now use same code path)
     if (training_running) {
         ImGui::Spacing();
-        int epoch = local_current_epoch_.load();
-        float loss = local_current_loss_.load();
-        float acc = local_current_accuracy_.load();
-        float progress = static_cast<float>(epoch) / train_epochs_;
+        auto metrics = training_mgr.GetCurrentMetrics();
+        float progress = static_cast<float>(metrics.current_epoch) / std::max(1, metrics.total_epochs);
 
         ImGui::ProgressBar(progress, ImVec2(-1, 0));
-        ImGui::Text("Epoch %d/%d | Loss: %.4f | Acc: %.2f%%", epoch, train_epochs_, loss, acc * 100.0f);
+        ImGui::Text("Epoch %d/%d | Loss: %.4f | Acc: %.2f%%",
+            metrics.current_epoch, metrics.total_epochs,
+            metrics.train_loss, metrics.train_accuracy * 100.0f);
 
         if (ImGui::Button("Stop Training", ImVec2(-1, 25))) {
             StopLocalTraining();
@@ -1274,7 +1580,8 @@ void DatasetPanel::RenderTrainingSection() {
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "P2P Network Training");
     ImGui::Text("Submit job to decentralized compute network");
 
-    bool can_train_p2p = job_manager_ != nullptr && job_manager_->IsConnected() && IsDatasetLoaded() && !training_running;
+    // P2P training doesn't conflict with local training (runs on remote nodes)
+    bool can_train_p2p = job_manager_ != nullptr && job_manager_->IsConnected() && IsDatasetLoaded();
 
     if (!job_manager_) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Not configured");
@@ -1396,127 +1703,510 @@ bool DatasetPanel::SubmitTrainingJob() {
 }
 
 void DatasetPanel::StartLocalTraining() {
-    if (local_training_running_.load()) {
-        spdlog::warn("Local training already running");
-        return;
-    }
-
     if (!IsDatasetLoaded()) {
         spdlog::error("Cannot start local training: no dataset loaded");
         return;
     }
 
-    spdlog::info("Starting local training...");
+    if (!node_editor_) {
+        spdlog::error("Cannot start local training: no node editor connected");
+        return;
+    }
+
+    // Check if the graph is valid for training
+    if (!node_editor_->IsGraphValid()) {
+        spdlog::error("Cannot start local training: node graph is not valid for training");
+        spdlog::error("Need: DatasetInput -> Model layers -> Loss -> Optimizer");
+        return;
+    }
+
+    spdlog::info("Starting local training via TrainingManager...");
     spdlog::info("  Dataset: {} ({} samples)", cached_info_.name, cached_info_.num_samples);
     spdlog::info("  Epochs: {}, Batch Size: {}, LR: {}", train_epochs_, train_batch_size_, train_learning_rate_);
 
-    // Reset state
-    local_training_stop_requested_.store(false);
-    local_training_running_.store(true);
-    local_current_epoch_.store(0);
-    local_current_loss_.store(0.0f);
-    local_current_accuracy_.store(0.0f);
+    // Compile the node graph to get the model architecture
+    cyxwiz::GraphCompiler compiler;
+    cyxwiz::TrainingConfiguration config = compiler.Compile(
+        node_editor_->GetNodes(),
+        node_editor_->GetLinks()
+    );
 
-    // Clear training plot panel if available
-    if (training_plot_panel_) {
-        training_plot_panel_->Clear();
+    if (!config.is_valid) {
+        spdlog::error("Graph compilation failed: {}", config.error_message);
+        return;
     }
 
-    // Wait for any previous thread to finish
-    if (local_training_thread_ && local_training_thread_->joinable()) {
-        local_training_thread_->join();
-    }
+    // Update config with dataset info
+    config.dataset_name = cached_info_.name;
 
-    // Start training in background thread
-    local_training_thread_ = std::make_unique<std::thread>(&DatasetPanel::LocalTrainingThread, this);
-}
-
-void DatasetPanel::LocalTrainingThread() {
-    spdlog::info("Local training thread started");
-
-    // Capture training parameters
-    int epochs = train_epochs_;
-    int batch_size = train_batch_size_;
-    float learning_rate = train_learning_rate_;
-    int optimizer_type = selected_optimizer_;
-
-    // Calculate input/output dimensions
+    // Calculate input size from shape (product of dimensions)
     size_t input_size = 1;
-    for (size_t dim : cached_info_.shape) {
+    for (auto dim : cached_info_.shape) {
         input_size *= dim;
     }
-    size_t num_classes = cached_info_.num_classes;
-    size_t num_samples = cached_info_.num_samples;
+    config.input_size = input_size;
+    config.output_size = cached_info_.num_classes;
 
-    spdlog::info("Model architecture: {} -> 256 -> 128 -> {}", input_size, num_classes);
-
-    // Create optimizer
-    cyxwiz::OptimizerType opt_type = cyxwiz::OptimizerType::Adam;
-    if (optimizer_type == 0) opt_type = cyxwiz::OptimizerType::SGD;
-    else if (optimizer_type == 2) opt_type = cyxwiz::OptimizerType::AdamW;
-
-    auto optimizer = cyxwiz::CreateOptimizer(opt_type, learning_rate);
-
-    // Simulated training loop with realistic loss/accuracy curves
-    double initial_loss = 2.3;
-    double target_loss = 0.1;
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> noise(-0.05f, 0.05f);
-
-    for (int epoch = 1; epoch <= epochs; ++epoch) {
-        if (local_training_stop_requested_.load()) {
-            spdlog::info("Local training stopped by user at epoch {}", epoch);
-            break;
-        }
-
-        auto epoch_start = std::chrono::steady_clock::now();
-
-        int num_batches = static_cast<int>((num_samples + batch_size - 1) / batch_size);
-        double epoch_loss = 0.0;
-        int correct = 0;
-
-        for (int batch = 0; batch < num_batches; ++batch) {
-            if (local_training_stop_requested_.load()) break;
-
-            double progress = static_cast<double>(epoch - 1 + static_cast<double>(batch) / num_batches) / epochs;
-            double batch_loss = initial_loss * std::exp(-3.5 * progress) + target_loss + noise(gen) * 0.1;
-            epoch_loss += batch_loss;
-
-            double batch_acc = 0.1 + 0.88 * progress + noise(gen) * 0.02;
-            correct += static_cast<int>(batch_acc * std::min(static_cast<size_t>(batch_size), num_samples - batch * batch_size));
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-
-        float avg_loss = static_cast<float>(epoch_loss / num_batches);
-        float accuracy = static_cast<float>(correct) / num_samples;
-
-        local_current_epoch_.store(epoch);
-        local_current_loss_.store(avg_loss);
-        local_current_accuracy_.store(accuracy);
-
-        if (training_plot_panel_) {
-            training_plot_panel_->AddLossPoint(epoch, avg_loss);
-            training_plot_panel_->AddAccuracyPoint(epoch, accuracy);
-        }
-
-        auto epoch_end = std::chrono::steady_clock::now();
-        auto epoch_duration = std::chrono::duration_cast<std::chrono::milliseconds>(epoch_end - epoch_start);
-
-        spdlog::info("Epoch {}/{}: Loss={:.4f}, Acc={:.2f}%, Time={}ms",
-                     epoch, epochs, avg_loss, accuracy * 100.0f, epoch_duration.count());
+    // Override with UI settings
+    config.learning_rate = train_learning_rate_;
+    if (selected_optimizer_ == 0) {
+        config.optimizer_type = gui::NodeType::SGD;
+    } else if (selected_optimizer_ == 1) {
+        config.optimizer_type = gui::NodeType::Adam;
+    } else {
+        config.optimizer_type = gui::NodeType::AdamW;
     }
 
-    local_training_running_.store(false);
+    spdlog::info("  Compiled graph: {} layers, optimizer={}",
+                 config.layers.size(), config.GetOptimizerName());
 
-    if (local_training_stop_requested_.load()) {
-        spdlog::info("Local training stopped");
+    // Create callback to update node editor training animation
+    auto node_editor_callback = [this](bool active) {
+        if (node_editor_) {
+            node_editor_->SetTrainingActive(active);
+        }
+    };
+
+    // Delegate to TrainingManager with compiled configuration
+    bool started = cyxwiz::TrainingManager::Instance().StartTraining(
+        std::move(config),
+        current_dataset_,
+        train_epochs_,
+        train_batch_size_,
+        training_plot_panel_,
+        node_editor_callback
+    );
+
+    if (!started) {
+        spdlog::warn("Could not start training - another training session may be in progress");
+    }
+}
+
+// ============================================================================
+// Augmentation Tab Implementation
+// ============================================================================
+
+void DatasetPanel::RenderAugmentationTab() {
+    using namespace cyxwiz::transforms;
+
+    ImGui::BeginChild("AugmentationPanel", ImVec2(0, 0), false);
+
+    // Two column layout: Pipeline on left, Preview on right
+    ImGui::Columns(2, "AugmentColumns", true);
+    ImGui::SetColumnWidth(0, 350);
+
+    // Left column: Pipeline configuration
+    RenderAugmentationPipeline();
+
+    ImGui::NextColumn();
+
+    // Right column: Preview
+    RenderAugmentationPreview();
+
+    ImGui::Columns(1);
+    ImGui::EndChild();
+}
+
+void DatasetPanel::RenderAugmentationPipeline() {
+    using namespace cyxwiz::transforms;
+
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Augmentation Pipeline");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Preset selection
+    ImGui::Text("Preset:");
+    ImGui::SameLine();
+    const char* presets[] = {"None", "ImageNet Train", "CIFAR-10 Train", "Medical Train", "Custom"};
+    if (ImGui::Combo("##AugPreset", &augmentation_preset_, presets, IM_ARRAYSIZE(presets))) {
+        // Apply preset
+        switch (augmentation_preset_) {
+            case 0:  // None
+                augmentation_pipeline_.reset();
+                break;
+            case 1:  // ImageNet
+                augmentation_pipeline_ = TransformFactory::createImageNetTrain(224);
+                break;
+            case 2:  // CIFAR-10
+                augmentation_pipeline_ = TransformFactory::createCIFAR10Train();
+                break;
+            case 3:  // Medical
+                augmentation_pipeline_ = TransformFactory::createMedicalTrain(224);
+                break;
+            case 4:  // Custom - start empty
+                augmentation_pipeline_ = std::make_unique<Compose>();
+                break;
+        }
+        preview_needs_update_ = true;
+
+        // Update UI state
+        if (augmentation_pipeline_) {
+            transform_ui_states_.resize(augmentation_pipeline_->size());
+            for (auto& state : transform_ui_states_) {
+                state.enabled = true;
+                state.expanded = false;
+            }
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Transform list
+    if (augmentation_pipeline_ && augmentation_pipeline_->size() > 0) {
+        ImGui::Text("Transforms (%zu):", augmentation_pipeline_->size());
+        ImGui::Spacing();
+
+        // Ensure UI state vector matches
+        while (transform_ui_states_.size() < augmentation_pipeline_->size()) {
+            transform_ui_states_.push_back({true, false});
+        }
+
+        for (size_t i = 0; i < augmentation_pipeline_->size(); ++i) {
+            auto* transform = augmentation_pipeline_->get(i);
+            if (!transform) continue;
+
+            ImGui::PushID(static_cast<int>(i));
+
+            // Enable/disable checkbox
+            bool enabled = transform->isEnabled();
+            if (ImGui::Checkbox("##Enabled", &enabled)) {
+                transform->setEnabled(enabled);
+                preview_needs_update_ = true;
+            }
+            ImGui::SameLine();
+
+            // Transform header
+            ImGui::Text("[%zu] %s", i + 1, transform->name().c_str());
+
+            // Category badge
+            ImGui::SameLine();
+            ImVec4 badge_color;
+            if (transform->category() == "Geometric") badge_color = ImVec4(0.2f, 0.6f, 0.8f, 1.0f);
+            else if (transform->category() == "Color") badge_color = ImVec4(0.8f, 0.4f, 0.2f, 1.0f);
+            else if (transform->category() == "Noise") badge_color = ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+            else badge_color = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);  // Advanced
+
+            ImGui::TextColored(badge_color, "(%s)", transform->category().c_str());
+
+            // Parameters (if expanded)
+            if (transform_ui_states_[i].expanded) {
+                ImGui::Indent();
+                auto params = transform->getParams();
+                for (const auto& [key, value] : params) {
+                    if (std::holds_alternative<float>(value)) {
+                        ImGui::Text("  %s: %.3f", key.c_str(), std::get<float>(value));
+                    } else if (std::holds_alternative<int>(value)) {
+                        ImGui::Text("  %s: %d", key.c_str(), std::get<int>(value));
+                    } else if (std::holds_alternative<bool>(value)) {
+                        ImGui::Text("  %s: %s", key.c_str(), std::get<bool>(value) ? "true" : "false");
+                    }
+                }
+                ImGui::Unindent();
+            }
+
+            ImGui::PopID();
+        }
+    } else if (augmentation_preset_ == 0) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No augmentation selected");
+        ImGui::Text("Choose a preset to get started");
     } else {
-        spdlog::info("Local training completed!");
-        spdlog::info("  Final Loss: {:.4f}", local_current_loss_.load());
-        spdlog::info("  Final Accuracy: {:.2f}%", local_current_accuracy_.load() * 100.0f);
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Pipeline is empty");
+    }
+
+    // Add transform button (for custom mode)
+    if (augmentation_preset_ == 4 && augmentation_pipeline_) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("+ Add Transform")) {
+            ImGui::OpenPopup("AddTransformPopup");
+        }
+
+        if (ImGui::BeginPopup("AddTransformPopup")) {
+            ImGui::Text("Geometric");
+            ImGui::Separator();
+            if (ImGui::Selectable("Random Horizontal Flip")) {
+                augmentation_pipeline_->add(std::make_unique<RandomHorizontalFlip>(0.5f));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+            if (ImGui::Selectable("Random Vertical Flip")) {
+                augmentation_pipeline_->add(std::make_unique<RandomVerticalFlip>(0.5f));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+            if (ImGui::Selectable("Random Rotation (15°)")) {
+                augmentation_pipeline_->add(std::make_unique<RandomRotation>(15.0f));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+            if (ImGui::Selectable("Random Resized Crop (224)")) {
+                augmentation_pipeline_->add(std::make_unique<RandomResizedCrop>(224));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+
+            ImGui::Spacing();
+            ImGui::Text("Color");
+            ImGui::Separator();
+            if (ImGui::Selectable("Color Jitter")) {
+                augmentation_pipeline_->add(std::make_unique<ColorJitter>(0.4f, 0.4f, 0.4f, 0.1f));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+            if (ImGui::Selectable("Random Grayscale")) {
+                augmentation_pipeline_->add(std::make_unique<RandomGrayscale>(0.1f));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+            if (ImGui::Selectable("Normalize (ImageNet)")) {
+                augmentation_pipeline_->add(std::make_unique<Normalize>(
+                    std::vector<float>{0.485f, 0.456f, 0.406f},
+                    std::vector<float>{0.229f, 0.224f, 0.225f}));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+
+            ImGui::Spacing();
+            ImGui::Text("Noise/Blur");
+            ImGui::Separator();
+            if (ImGui::Selectable("Gaussian Blur")) {
+                augmentation_pipeline_->add(std::make_unique<RandomGaussianBlur>());
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+            if (ImGui::Selectable("Random Erasing")) {
+                augmentation_pipeline_->add(std::make_unique<RandomErasing>(0.5f));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+            if (ImGui::Selectable("Cutout")) {
+                augmentation_pipeline_->add(std::make_unique<Cutout>(1, 16));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+
+            ImGui::Spacing();
+            ImGui::Text("Advanced");
+            ImGui::Separator();
+            if (ImGui::Selectable("RandAugment")) {
+                augmentation_pipeline_->add(std::make_unique<RandAugment>(2, 9));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+            if (ImGui::Selectable("AutoAugment (ImageNet)")) {
+                augmentation_pipeline_->add(std::make_unique<AutoAugment>(AutoAugmentPolicy::ImageNet));
+                transform_ui_states_.push_back({true, false});
+                preview_needs_update_ = true;
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+}
+
+void DatasetPanel::RenderAugmentationPreview() {
+    using namespace cyxwiz::transforms;
+
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Augmentation Preview");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (!IsDatasetLoaded()) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a dataset to preview augmentations");
+        return;
+    }
+
+    // Get sample from dataset
+    auto info = cached_info_;
+    if (info.num_samples == 0) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Dataset is empty");
+        return;
+    }
+
+    // Sample selector (using preview_sample_idx_ member)
+    int max_idx = static_cast<int>(info.num_samples) - 1;
+    ImGui::Text("Sample:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    if (ImGui::InputInt("##SampleIdx", &preview_sample_idx_)) {
+        preview_sample_idx_ = std::clamp(preview_sample_idx_, 0, max_idx);
+        preview_needs_update_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("<")) {
+        preview_sample_idx_ = std::max(0, preview_sample_idx_ - 1);
+        preview_needs_update_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(">")) {
+        preview_sample_idx_ = std::min(max_idx, preview_sample_idx_ + 1);
+        preview_needs_update_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Random")) {
+        preview_sample_idx_ = rand() % (max_idx + 1);
+        preview_needs_update_ = true;
+    }
+
+    ImGui::Spacing();
+
+    // Refresh button
+    if (ImGui::Button("Apply Augmentation")) {
+        preview_needs_update_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Auto-refresh", &show_augmented_preview_);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Load sample and apply augmentation
+    if (preview_needs_update_ || show_augmented_preview_) {
+        auto [sample_data, label] = current_dataset_.GetSample(preview_sample_idx_);
+
+        if (!sample_data.empty() && info.shape.size() >= 2) {
+            int width = static_cast<int>(info.shape[0]);
+            int height = static_cast<int>(info.shape[1]);
+            int channels = info.shape.size() >= 3 ? static_cast<int>(info.shape[2]) : 1;
+
+            // Create original image
+            preview_original_ = Image(sample_data, width, height, channels);
+
+            // Apply augmentation
+            if (augmentation_pipeline_) {
+                preview_augmented_ = augmentation_pipeline_->apply(preview_original_);
+            } else {
+                preview_augmented_ = preview_original_;
+            }
+        }
+
+        preview_needs_update_ = false;
+    }
+
+    // Display side by side
+    if (preview_original_.isValid()) {
+        float preview_size = 150.0f;
+
+        // Calculate aspect ratio preserved display size
+        float aspect = static_cast<float>(preview_original_.width) / static_cast<float>(preview_original_.height);
+        float display_w = preview_size;
+        float display_h = preview_size;
+        if (aspect > 1.0f) {
+            display_h = preview_size / aspect;
+        } else {
+            display_w = preview_size * aspect;
+        }
+
+        ImGui::Text("Original (%dx%d)", preview_original_.width, preview_original_.height);
+        ImGui::SameLine(preview_size + 30);
+        ImGui::Text("Augmented (%dx%d)", preview_augmented_.width, preview_augmented_.height);
+
+        // Create/update textures for preview
+        auto& tm = cyxwiz::TextureManager::Instance();
+
+        // Check if original texture needs recreation (size changed)
+        bool orig_size_changed = (preview_original_.width != preview_tex_orig_w_ ||
+                                   preview_original_.height != preview_tex_orig_h_ ||
+                                   preview_original_.channels != preview_tex_orig_c_);
+
+        if (preview_texture_original_ == 0 || orig_size_changed) {
+            if (preview_texture_original_ != 0) {
+                tm.DeleteTexture(preview_texture_original_);
+            }
+            preview_texture_original_ = tm.CreateTextureFromFloatData(
+                preview_original_.data.data(),
+                preview_original_.width,
+                preview_original_.height,
+                preview_original_.channels
+            );
+            preview_tex_orig_w_ = preview_original_.width;
+            preview_tex_orig_h_ = preview_original_.height;
+            preview_tex_orig_c_ = preview_original_.channels;
+        } else {
+            tm.UpdateTexture(preview_texture_original_,
+                preview_original_.data.data(),
+                preview_original_.width,
+                preview_original_.height,
+                preview_original_.channels
+            );
+        }
+
+        // Check if augmented texture needs recreation (size changed)
+        bool aug_size_changed = (preview_augmented_.width != preview_tex_aug_w_ ||
+                                  preview_augmented_.height != preview_tex_aug_h_ ||
+                                  preview_augmented_.channels != preview_tex_aug_c_);
+
+        if (preview_texture_augmented_ == 0 || aug_size_changed) {
+            if (preview_texture_augmented_ != 0) {
+                tm.DeleteTexture(preview_texture_augmented_);
+            }
+            preview_texture_augmented_ = tm.CreateTextureFromFloatData(
+                preview_augmented_.data.data(),
+                preview_augmented_.width,
+                preview_augmented_.height,
+                preview_augmented_.channels
+            );
+            preview_tex_aug_w_ = preview_augmented_.width;
+            preview_tex_aug_h_ = preview_augmented_.height;
+            preview_tex_aug_c_ = preview_augmented_.channels;
+        } else {
+            tm.UpdateTexture(preview_texture_augmented_,
+                preview_augmented_.data.data(),
+                preview_augmented_.width,
+                preview_augmented_.height,
+                preview_augmented_.channels
+            );
+        }
+
+        // Render original image
+        ImGui::BeginChild("OriginalPreview", ImVec2(preview_size + 10, preview_size + 10), true);
+        if (preview_texture_original_ != 0) {
+            ImGui::Image((ImTextureID)(intptr_t)preview_texture_original_, ImVec2(display_w, display_h));
+        } else {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(No texture)");
+        }
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // Render augmented image
+        ImGui::BeginChild("AugmentedPreview", ImVec2(preview_size + 10, preview_size + 10), true);
+        if (preview_texture_augmented_ != 0) {
+            // Augmented might have different size, recalculate
+            float aug_aspect = static_cast<float>(preview_augmented_.width) / static_cast<float>(preview_augmented_.height);
+            float aug_w = preview_size;
+            float aug_h = preview_size;
+            if (aug_aspect > 1.0f) {
+                aug_h = preview_size / aug_aspect;
+            } else {
+                aug_w = preview_size * aug_aspect;
+            }
+            ImGui::Image((ImTextureID)(intptr_t)preview_texture_augmented_, ImVec2(aug_w, aug_h));
+        } else {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(No texture)");
+        }
+        ImGui::EndChild();
+
+        // Show label
+        ImGui::Spacing();
+        auto [_, label] = current_dataset_.GetSample(preview_sample_idx_);
+        if (label >= 0 && label < static_cast<int>(info.class_names.size())) {
+            ImGui::Text("Label: %d (%s)", label, info.class_names[label].c_str());
+        } else {
+            ImGui::Text("Label: %d", label);
+        }
+
+        // Show pipeline info
+        if (augmentation_pipeline_ && augmentation_pipeline_->size() > 0) {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "Pipeline: %zu transforms active", augmentation_pipeline_->size());
+        } else {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No augmentation pipeline");
+        }
     }
 }
 

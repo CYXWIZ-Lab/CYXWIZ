@@ -74,6 +74,10 @@ public:
     using DatasetCallback = std::function<void(const std::string& path, DatasetHandle handle)>;
     void SetOnDatasetLoaded(DatasetCallback callback) { on_dataset_loaded_ = std::move(callback); }
 
+    // Table view callback - called when user selects "View in Table" from context menu
+    using TableViewCallback = std::function<void(const std::string& path)>;
+    void SetOnViewInTable(TableViewCallback callback) { on_view_in_table_ = std::move(callback); }
+
     // Enable/disable dataset preview pane
     void SetShowDatasetPreview(bool show) { show_dataset_preview_ = show; }
 
@@ -87,6 +91,7 @@ private:
 
     // Dataset helpers
     bool IsDatasetFile(const AssetItem& item) const;
+    bool IsTableViewableFile(const AssetItem& item) const;
     void LoadDatasetFromItem(const AssetItem& item);
     void LoadDatasetFromItemAsync(const AssetItem& item);
 
@@ -167,6 +172,7 @@ private:
     AssetCallback on_double_click_;
     AssetCallback on_deleted_;
     DatasetCallback on_dataset_loaded_;
+    TableViewCallback on_view_in_table_;
 
     // Dataset preview state
     bool show_dataset_preview_ = true;

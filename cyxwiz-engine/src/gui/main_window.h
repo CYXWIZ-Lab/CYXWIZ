@@ -17,6 +17,8 @@ class Viewport;
 class Properties;
 class DatasetPanel;
 class WalletPanel;
+struct MLNode;
+struct NodeLink;
 
 } // namespace gui
 
@@ -102,6 +104,9 @@ private:
     void RenderSidebar();
     void RenderStatusBar();
     void HandleGlobalShortcuts();
+
+    // Training from node graph
+    void StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
 
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;

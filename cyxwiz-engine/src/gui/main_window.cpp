@@ -24,6 +24,9 @@
 #include "../network/job_manager.h"
 #include "../core/project_manager.h"
 #include "../core/data_registry.h"
+#include "../core/graph_compiler.h"
+#include "../core/training_executor.h"
+#include "../core/training_manager.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -31,6 +34,7 @@
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 
 namespace gui {
 
@@ -82,6 +86,11 @@ MainWindow::MainWindow()
 
     // Connect Node Editor to Properties panel for node selection display
     node_editor_->SetPropertiesPanel(properties_.get());
+
+    // Set up training callback for Node Editor
+    node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+        this->StartTrainingFromGraph(nodes, links);
+    });
 
     // Set up callbacks in the toolbar
     toolbar_->SetResetLayoutCallback([this]() {
@@ -388,6 +397,52 @@ MainWindow::MainWindow()
             spdlog::info("Dataset loaded from Asset Browser: {}", path);
             // Show the dataset panel so user can see the loaded data
             dataset_panel_->SetVisible(true);
+
+            // Update node editor with dataset name
+            if (node_editor_) {
+                // Extract dataset name from path (e.g., "mnist.npz" -> "MNIST")
+                std::filesystem::path fs_path(path);
+                std::string dataset_name = fs_path.stem().string();
+                // Capitalize first letter
+                if (!dataset_name.empty()) {
+                    dataset_name[0] = std::toupper(dataset_name[0]);
+                }
+                node_editor_->UpdateDatasetNodeName(dataset_name);
+            }
+        }
+    });
+
+    // Set up asset browser callback for "View in Table" option
+    asset_browser_->SetOnViewInTable([this](const std::string& path) {
+        if (table_viewer_) {
+            std::filesystem::path fs_path(path);
+            std::string ext = fs_path.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+            bool loaded = false;
+
+            // Load based on file extension
+            if (ext == ".csv") {
+                loaded = table_viewer_->LoadCSV(path);
+            } else if (ext == ".tsv") {
+                loaded = table_viewer_->LoadTXT(path, '\t');
+            } else if (ext == ".txt") {
+                loaded = table_viewer_->LoadTXT(path);
+            } else if (ext == ".h5" || ext == ".hdf5") {
+                loaded = table_viewer_->LoadHDF5(path);
+            } else if (ext == ".xlsx" || ext == ".xls") {
+                loaded = table_viewer_->LoadExcel(path);
+            } else {
+                // Try to load as CSV by default
+                loaded = table_viewer_->LoadCSV(path);
+            }
+
+            if (loaded) {
+                table_viewer_->Show();
+                spdlog::info("Opened file in table viewer: {}", fs_path.filename().string());
+            } else {
+                spdlog::error("Failed to open file in table viewer: {}", path);
+            }
         }
     });
 
@@ -431,6 +486,9 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
 
         // Set TrainingPlotPanel for local training visualization
         dataset_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
+
+        // Connect NodeEditor so DatasetPanel can compile the graph for training
+        dataset_panel_->SetNodeEditor(node_editor_.get());
 
         // Set callback to start P2P monitoring when training starts
         dataset_panel_->SetTrainingStartCallback([this](const std::string& job_id) {
@@ -789,6 +847,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     if (dataset_panel_) {
         dock_style.RegisterPanel("Dataset", ICON_FA_DATABASE, dataset_panel_->GetVisiblePtr());
     }
+    if (table_viewer_) {
+        dock_style.RegisterPanel("Table Viewer", ICON_FA_TABLE, table_viewer_->GetVisiblePtr());
+    }
     if (job_status_panel_) {
         dock_style.RegisterPanel("Jobs", ICON_FA_LIST_CHECK, job_status_panel_->GetVisiblePtr());
     }
@@ -800,6 +861,81 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
 
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
+}
+
+void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
+
+    // Compile the graph
+    cyxwiz::GraphCompiler compiler;
+    cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
+
+    if (!config.is_valid) {
+        spdlog::error("Graph compilation failed: {}", config.error_message);
+        return;
+    }
+
+    spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
+                 config.layers.size(), config.input_size, config.output_size);
+
+    // Check if we have a dataset loaded
+    if (!dataset_panel_ || !dataset_panel_->IsDatasetLoaded()) {
+        spdlog::error("No dataset loaded. Please load a dataset first.");
+        return;
+    }
+
+    // Get the dataset handle from DatasetPanel
+    cyxwiz::DatasetHandle dataset = dataset_panel_->GetCurrentDataset();
+    if (!dataset.IsValid()) {
+        spdlog::error("Invalid dataset handle");
+        return;
+    }
+
+    // Update config with dataset info from the loaded dataset
+    const auto& dataset_info = dataset_panel_->GetDatasetInfo();
+    config.dataset_name = dataset_info.name;
+
+    // Calculate input size from shape (product of dimensions)
+    size_t input_size = 1;
+    for (auto dim : dataset_info.shape) {
+        input_size *= dim;
+    }
+    config.input_size = input_size;
+    config.output_size = dataset_info.num_classes;
+
+    // Log training start
+    spdlog::info("Starting training from node graph:");
+    spdlog::info("  Dataset: {} ({} samples, {} classes)",
+                 config.dataset_name, dataset_info.num_samples, config.output_size);
+    spdlog::info("  Optimizer: {} (lr={})", config.GetOptimizerName(), config.learning_rate);
+    spdlog::info("  Loss: {}", config.GetLossName());
+
+    // Get training parameters (could be from UI or config)
+    int epochs = 10;
+    int batch_size = 32;
+
+    // Create callback to update node editor training animation
+    auto node_editor_callback = [this](bool active) {
+        if (node_editor_) {
+            node_editor_->SetTrainingActive(active);
+        }
+    };
+
+    // Use TrainingManager to start training (ensures mutual exclusion)
+    bool started = cyxwiz::TrainingManager::Instance().StartTraining(
+        std::move(config),
+        dataset,
+        epochs,
+        batch_size,
+        training_plot_panel_.get(),
+        node_editor_callback
+    );
+
+    if (started) {
+        spdlog::info("Training started from node graph via TrainingManager");
+    } else {
+        spdlog::warn("Could not start training - another training session may be in progress");
+    }
 }
 
 void MainWindow::RenderSidebar() {

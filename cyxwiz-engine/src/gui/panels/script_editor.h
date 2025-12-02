@@ -1,12 +1,14 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../core/async_task_manager.h"
 #include <TextEditor.h>
 #include <string>
 #include <vector>
 #include <memory>
 #include <filesystem>
 #include <functional>
+#include <atomic>
 
 namespace scripting {
     class ScriptingEngine;
@@ -123,8 +125,18 @@ private:
         bool is_modified;            // Unsaved changes flag
         bool is_new;                 // New file (not saved yet)
 
+        // Async loading state
+        bool is_loading = false;         // True while loading file content
+        float load_progress = 0.0f;      // Loading progress (0-1)
+        std::string load_status;         // Status text during loading
+        std::string pending_content;     // Content loaded async, waiting to be set
+
         EditorTab() : is_modified(false), is_new(true) {}
     };
+
+    // Async loading helper
+    void OpenFileAsync(const std::string& filepath);
+    void FinalizeAsyncLoad(int tab_index);
 
     // Rendering functions
     void RenderTabBar();

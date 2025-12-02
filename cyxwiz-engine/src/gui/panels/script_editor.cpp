@@ -1,5 +1,6 @@
 #include "script_editor.h"
 #include "command_window.h"
+#include "../icons.h"
 #include "../../scripting/scripting_engine.h"
 #include <imgui.h>
 #include <fstream>
@@ -418,10 +419,15 @@ void ScriptEditorPanel::RenderTabBar() {
         for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
             auto& tab = tabs_[i];
 
-            // Add asterisk for modified files
-            std::string tab_label = tab->filename;
-            if (tab->is_modified) {
-                tab_label += "*";
+            // Build tab label with loading/modified indicators
+            std::string tab_label;
+            if (tab->is_loading) {
+                tab_label = ICON_FA_SPINNER " " + tab->filename;
+            } else {
+                tab_label = tab->filename;
+                if (tab->is_modified) {
+                    tab_label += "*";
+                }
             }
 
             // Use unique ID to avoid issues with duplicate filenames
@@ -438,8 +444,8 @@ void ScriptEditorPanel::RenderTabBar() {
                 ImGui::EndTabItem();
             }
 
-            // Handle tab close
-            if (!open) {
+            // Handle tab close (don't allow closing while loading)
+            if (!open && !tab->is_loading) {
                 close_tab_index_ = i;
             }
         }
@@ -458,6 +464,32 @@ void ScriptEditorPanel::RenderTabBar() {
 
 void ScriptEditorPanel::RenderEditor() {
     auto& tab = tabs_[active_tab_index_];
+
+    // Show loading indicator if tab is loading
+    if (tab->is_loading) {
+        ImGui::Spacing();
+        ImGui::Spacing();
+
+        // Center the loading indicator
+        float window_width = ImGui::GetWindowWidth();
+        float text_width = ImGui::CalcTextSize(tab->load_status.c_str()).x + 50;
+        ImGui::SetCursorPosX((window_width - text_width) * 0.5f);
+
+        // Animated spinner character
+        float time = static_cast<float>(ImGui::GetTime());
+        const char* spinner_chars = "|/-\\";
+        char spinner = spinner_chars[static_cast<int>(time * 10) % 4];
+
+        ImGui::Text("%c %s", spinner, tab->load_status.c_str());
+
+        ImGui::Spacing();
+
+        // Progress bar
+        ImGui::SetCursorPosX(window_width * 0.2f);
+        ImGui::ProgressBar(tab->load_progress, ImVec2(window_width * 0.6f, 0.0f));
+
+        return;
+    }
 
     // Apply font scale for editor
     if (font_scale_ != 1.0f) {
@@ -482,6 +514,14 @@ void ScriptEditorPanel::RenderEditor() {
 void ScriptEditorPanel::RenderStatusBar() {
     if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size())) {
         auto& tab = tabs_[active_tab_index_];
+
+        // Show loading status if loading
+        if (tab->is_loading) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), ICON_FA_SPINNER " Loading: %s (%.0f%%)",
+                tab->load_status.c_str(), tab->load_progress * 100.0f);
+            return;
+        }
+
         auto cursor_pos = tab->editor.GetCursorPosition();
 
         ImGui::Text("Line: %d | Column: %d | %s | %d lines",
@@ -633,56 +673,142 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         }
     }
 
-    // Load file content
-    std::string content;
-    if (!LoadFileContent(path, content)) {
-        spdlog::error("Failed to load file: {}", path);
-        return;
-    }
-
     // Check if we can replace an existing empty untitled tab
-    // Look through ALL tabs, not just the active one
     int empty_tab_index = -1;
     for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
         auto& tab = tabs_[i];
-        // Check if this is an empty, unmodified untitled tab
         std::string tab_text = tab->editor.GetText();
-        // Trim whitespace for comparison
         tab_text.erase(0, tab_text.find_first_not_of(" \t\n\r"));
         tab_text.erase(tab_text.find_last_not_of(" \t\n\r") + 1);
 
         if (tab->is_new && !tab->is_modified && tab_text.empty()) {
             empty_tab_index = i;
-            break;  // Found first empty untitled tab
+            break;
         }
     }
 
-    // Replace the empty untitled tab if found
+    // Use the empty tab or create a new one
+    int tab_index;
     if (empty_tab_index >= 0) {
-        auto& tab = tabs_[empty_tab_index];
+        tab_index = empty_tab_index;
+        auto& tab = tabs_[tab_index];
         tab->filename = std::filesystem::path(path).filename().string();
         tab->filepath = path;
         tab->is_new = false;
         tab->is_modified = false;
-        tab->editor.SetText(content);
-        active_tab_index_ = empty_tab_index;  // Switch to this tab
-        request_focus_ = true;
-        request_window_focus_ = true;  // Focus the Script Editor window
-        spdlog::info("Replaced empty untitled tab at index {} with file: {}", empty_tab_index, path);
+        tab->is_loading = true;
+        tab->load_progress = 0.0f;
+        tab->load_status = "Loading...";
+    } else {
+        // Create new tab with loading state
+        auto tab = std::make_unique<EditorTab>();
+        tab->filename = std::filesystem::path(path).filename().string();
+        tab->filepath = path;
+        tab->is_new = false;
+        tab->is_modified = false;
+        tab->is_loading = true;
+        tab->load_progress = 0.0f;
+        tab->load_status = "Loading...";
+        tabs_.push_back(std::move(tab));
+        tab_index = static_cast<int>(tabs_.size()) - 1;
+    }
+
+    active_tab_index_ = tab_index;
+    request_focus_ = true;
+    request_window_focus_ = true;
+
+    // Load file asynchronously
+    OpenFileAsync(path);
+}
+
+void ScriptEditorPanel::OpenFileAsync(const std::string& filepath) {
+    std::string path = filepath;
+    std::string filename = std::filesystem::path(path).filename().string();
+
+    // Find the tab that's loading this file
+    int tab_index = -1;
+    for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
+        if (tabs_[i]->filepath == path && tabs_[i]->is_loading) {
+            tab_index = i;
+            break;
+        }
+    }
+
+    if (tab_index < 0) {
+        spdlog::error("OpenFileAsync: Could not find loading tab for {}", path);
         return;
     }
 
-    // Create new tab
-    auto tab = std::make_unique<EditorTab>();
-    tab->filename = std::filesystem::path(path).filename().string();
-    tab->filepath = path;
-    tab->is_new = false;
-    tab->is_modified = false;
+    spdlog::info("Starting async load of script: {}", filename);
 
-    // Configure editor with C++ language def (works for Python too - similar syntax)
+    AsyncTaskManager::Instance().RunAsync(
+        "Loading: " + filename,
+        [this, tab_index, path](LambdaTask& task) {
+            task.ReportProgress(0.1f, "Opening file...");
+
+            // Read file content in background thread
+            std::ifstream file(path, std::ios::binary | std::ios::ate);
+            if (!file.is_open()) {
+                task.MarkFailed("Could not open file");
+                return;
+            }
+
+            task.ReportProgress(0.3f, "Reading content...");
+
+            std::streamsize size = file.tellg();
+            file.seekg(0, std::ios::beg);
+
+            std::string content;
+            content.resize(static_cast<size_t>(size));
+
+            if (!file.read(&content[0], size)) {
+                task.MarkFailed("Failed to read file content");
+                return;
+            }
+
+            task.ReportProgress(0.8f, "Finalizing...");
+
+            // Store content for main thread to finalize
+            if (tab_index < static_cast<int>(tabs_.size())) {
+                tabs_[tab_index]->pending_content = std::move(content);
+            }
+
+            task.ReportProgress(1.0f, "Complete");
+            task.MarkCompleted();
+        },
+        [this, tab_index](float progress, const std::string& status) {
+            // Progress callback - update tab
+            if (tab_index < static_cast<int>(tabs_.size())) {
+                tabs_[tab_index]->load_progress = progress;
+                tabs_[tab_index]->load_status = status;
+            }
+        },
+        [this, tab_index, path](bool success, const std::string& error) {
+            // Completion callback
+            if (tab_index < static_cast<int>(tabs_.size())) {
+                auto& tab = tabs_[tab_index];
+                if (success) {
+                    // Finalize on main thread
+                    FinalizeAsyncLoad(tab_index);
+                    spdlog::info("Async script load completed: {}", path);
+                } else {
+                    tab->is_loading = false;
+                    tab->load_status = "Failed: " + error;
+                    spdlog::error("Async script load failed: {} - {}", path, error);
+                }
+            }
+        }
+    );
+}
+
+void ScriptEditorPanel::FinalizeAsyncLoad(int tab_index) {
+    if (tab_index < 0 || tab_index >= static_cast<int>(tabs_.size())) return;
+
+    auto& tab = tabs_[tab_index];
+    if (!tab->is_loading) return;
+
+    // Configure editor with Python language definition
     auto lang = TextEditor::LanguageDefinition::CPlusPlus();
-
-    // Override for Python-specific keywords
     lang.mKeywords.clear();
     static const char* const py_keywords[] = {
         "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
@@ -699,24 +825,31 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     lang.mName = "Python";
 
     tab->editor.SetLanguageDefinition(lang);
+
     // Apply current theme
     switch (current_theme_) {
         case EditorTheme::Dark: tab->editor.SetPalette(TextEditor::GetDarkPalette()); break;
         case EditorTheme::Light: tab->editor.SetPalette(TextEditor::GetLightPalette()); break;
         case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
+        case EditorTheme::Monokai: tab->editor.SetPalette(GetMonokaiPalette()); break;
+        case EditorTheme::Dracula: tab->editor.SetPalette(GetDraculaPalette()); break;
+        case EditorTheme::OneDark: tab->editor.SetPalette(GetOneDarkPalette()); break;
+        case EditorTheme::GitHub: tab->editor.SetPalette(GetGitHubPalette()); break;
     }
+
     tab->editor.SetShowWhitespaces(show_whitespace_);
-    tab->editor.SetTabSize(4);
+    tab->editor.SetTabSize(tab_size_);
     tab->editor.SetImGuiChildIgnored(false);
     tab->editor.SetReadOnly(false);
-    tab->editor.SetText(content);
+    tab->editor.SetText(tab->pending_content);
 
-    tabs_.push_back(std::move(tab));
-    active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
+    // Clear loading state
+    tab->is_loading = false;
+    tab->load_progress = 1.0f;
+    tab->load_status.clear();
+    tab->pending_content.clear();
+
     request_focus_ = true;
-    request_window_focus_ = true;  // Focus the Script Editor window
-
-    spdlog::info("Opened file: {}", path);
 }
 
 void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::string& framework_name) {

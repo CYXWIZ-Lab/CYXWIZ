@@ -7,6 +7,7 @@
 #include <mutex>
 #include <functional>
 #include <optional>
+#include <chrono>
 
 namespace cyxwiz {
 
@@ -22,6 +23,7 @@ enum class DatasetType {
     CSV,
     TSV,
     ImageFolder,
+    ImageCSV,           // Images in folder + labels in CSV file
     MNIST,
     FashionMNIST,
     CIFAR10,
@@ -339,6 +341,9 @@ public:
     DatasetHandle LoadCIFAR10(const std::string& path, const std::string& name = "cifar10");
     DatasetHandle LoadCSV(const std::string& path, const std::string& name = "");
     DatasetHandle LoadImageFolder(const std::string& path, const std::string& name = "");
+    DatasetHandle LoadImageCSV(const std::string& image_folder, const std::string& csv_path,
+                                const std::string& name = "", int target_width = 224, int target_height = 224,
+                                size_t cache_size = 100);
     DatasetHandle LoadHuggingFace(const HuggingFaceConfig& config, const std::string& name = "");
     DatasetHandle LoadKaggle(const KaggleConfig& config, const std::string& name = "");
     DatasetHandle LoadCustom(const CustomConfig& config, const std::string& name = "");
@@ -370,12 +375,44 @@ public:
     MemoryStats GetMemoryStats() const;
     void ResetCacheStats();
 
+    // Memory optimization
+    void TrimMemory(size_t target_bytes = 0);  // Evict least-used datasets until under limit
+    void EvictOldest();                         // Evict the least recently used dataset
+    bool IsMemoryPressure() const;              // Check if approaching memory limit
+    void EnableAutoEviction(bool enable) { auto_eviction_enabled_ = enable; }
+    bool IsAutoEvictionEnabled() const { return auto_eviction_enabled_; }
+
+    // Memory pressure callback (called when over limit)
+    using MemoryPressureCallback = std::function<void(size_t current, size_t limit)>;
+    void SetOnMemoryPressure(MemoryPressureCallback callback) { on_memory_pressure_ = std::move(callback); }
+
     // Callbacks
     using DatasetLoadedCallback = std::function<void(const std::string& name, const DatasetInfo& info)>;
     using DatasetUnloadedCallback = std::function<void(const std::string& name)>;
+    using LoadProgressCallback = std::function<void(float progress, const std::string& status)>;
 
     void SetOnDatasetLoaded(DatasetLoadedCallback callback) { on_loaded_ = std::move(callback); }
     void SetOnDatasetUnloaded(DatasetUnloadedCallback callback) { on_unloaded_ = std::move(callback); }
+    void SetOnLoadProgress(LoadProgressCallback callback) { on_progress_ = std::move(callback); }
+
+    // Dataset configuration export/import
+    bool ExportConfig(const std::string& name, const std::string& filepath) const;
+    bool ExportConfig(const std::string& name, const std::string& filepath, const SplitConfig& split) const;
+    bool ImportConfig(const std::string& filepath, std::string& out_name);
+    bool ImportConfig(const std::string& filepath, std::string& out_name, SplitConfig& out_split);
+    static std::string SerializeConfig(const DatasetInfo& info, const SplitConfig& split);
+    static bool DeserializeConfig(const std::string& json_str, DatasetInfo& info, SplitConfig& split);
+
+    // Dataset versioning
+    struct DatasetVersion {
+        std::string version_id;
+        std::string timestamp;
+        std::string description;
+        size_t num_samples;
+        std::string checksum;
+    };
+    std::vector<DatasetVersion> GetVersionHistory(const std::string& name) const;
+    bool SaveVersion(const std::string& name, const std::string& description = "");
 
 private:
     DataRegistry() = default;
@@ -390,6 +427,11 @@ private:
     // Memory management
     size_t memory_limit_ = 4ULL * 1024 * 1024 * 1024;  // 4GB default
     mutable size_t peak_usage_ = 0;
+    bool auto_eviction_enabled_ = false;
+    float memory_pressure_threshold_ = 0.9f;  // 90% triggers pressure warning
+
+    // LRU tracking - maps dataset name to last access time
+    mutable std::map<std::string, std::chrono::steady_clock::time_point> last_access_times_;
 
     // Global cache statistics
     mutable size_t total_cache_hits_ = 0;
@@ -399,9 +441,14 @@ private:
     // Callbacks
     DatasetLoadedCallback on_loaded_;
     DatasetUnloadedCallback on_unloaded_;
+    LoadProgressCallback on_progress_;
+    MemoryPressureCallback on_memory_pressure_;
 
     // Name generation
     int name_counter_ = 0;
+
+    // Version history storage (in-memory, could be persisted)
+    std::map<std::string, std::vector<DatasetVersion>> version_history_;
 };
 
 } // namespace cyxwiz

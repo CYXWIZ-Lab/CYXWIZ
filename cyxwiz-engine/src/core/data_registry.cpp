@@ -11,6 +11,8 @@
 #include <optional>
 #include <unordered_map>
 #include <numeric>
+#include <chrono>
+#include <ctime>
 #include <nlohmann/json.hpp>
 
 // stb_image for image loading (implementation in stb_image_impl.cpp)
@@ -739,6 +741,518 @@ private:
     }
 
     std::string path_;
+    int target_width_;
+    int target_height_;
+    int channels_ = 3;
+    std::vector<std::string> image_paths_;
+    std::vector<int> labels_;
+    std::vector<std::string> class_names_;
+    mutable LRUCache<size_t, std::vector<float>> image_cache_;
+};
+
+/**
+ * ImageCSV Dataset Implementation
+ * Loads images from a folder with labels from a CSV file
+ * CSV format: filename,label (or filename,label_name)
+ * Supports both numeric labels and string class names
+ */
+class ImageCSVDataset : public Dataset {
+public:
+    ImageCSVDataset(const std::string& image_folder, const std::string& csv_path,
+                    int target_width = 224, int target_height = 224, size_t cache_size = 100,
+                    const std::string& filename_col = "", const std::string& label_col = "")
+        : image_folder_(image_folder), csv_path_(csv_path),
+          target_width_(target_width), target_height_(target_height),
+          filename_col_(filename_col), label_col_(label_col),
+          image_cache_(cache_size) {
+        LoadData();
+    }
+
+    size_t Size() const override { return image_paths_.size(); }
+
+    std::pair<std::vector<float>, int> GetItem(size_t index) const override {
+        if (index >= image_paths_.size()) return {{}, -1};
+
+        // Check cache first
+        auto cached = image_cache_.Get(index);
+        if (cached.has_value()) {
+            return {cached.value(), labels_[index]};
+        }
+
+        // Lazy load the image
+        std::vector<float> image = LoadImage(image_paths_[index]);
+
+        // Store in cache
+        image_cache_.Put(index, image);
+
+        return {std::move(image), labels_[index]};
+    }
+
+    DatasetInfo GetInfo() const override {
+        DatasetInfo info;
+        info.name = fs::path(image_folder_).filename().string() + (csv_path_.empty() ? " (Folder)" : " (CSV)");
+        info.path = image_folder_;
+        info.type = DatasetType::ImageCSV;
+        info.shape = {static_cast<size_t>(target_width_),
+                      static_cast<size_t>(target_height_),
+                      static_cast<size_t>(channels_)};
+        info.num_samples = image_paths_.size();
+        info.num_classes = class_names_.size();
+        info.class_names = class_names_;
+        info.train_count = train_indices_.size();
+        info.val_count = val_indices_.size();
+        info.test_count = test_indices_.size();
+
+        // Memory usage is the cache size, not total dataset size (lazy loading)
+        size_t image_bytes = target_width_ * target_height_ * channels_ * sizeof(float);
+        size_t cached_images = image_cache_.Size();
+        info.memory_usage = cached_images * image_bytes;  // Actual memory in use
+        info.cache_usage = cached_images * image_bytes;
+        info.is_loaded = !image_paths_.empty();
+        info.is_streaming = true;  // Mark as streaming/lazy loading
+
+        // Track cache stats
+        info.cache_hits = image_cache_.GetHits();
+        info.cache_misses = image_cache_.GetMisses();
+
+        return info;
+    }
+
+private:
+    void LoadData() {
+        // Validate image folder
+        if (!fs::exists(image_folder_) || !fs::is_directory(image_folder_)) {
+            spdlog::error("ImageDataset: Image folder does not exist: {}", image_folder_);
+            return;
+        }
+
+        // Valid image extensions
+        std::vector<std::string> valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tga", ".tiff", ".webp"};
+        auto is_image = [&](const std::string& ext) {
+            std::string lower_ext = ext;
+            std::transform(lower_ext.begin(), lower_ext.end(), lower_ext.begin(), ::tolower);
+            return std::find(valid_extensions.begin(), valid_extensions.end(), lower_ext) != valid_extensions.end();
+        };
+
+        // Check if CSV is provided and exists
+        bool use_csv = !csv_path_.empty() && fs::exists(csv_path_);
+
+        if (use_csv) {
+            // CSV mode: load images with labels from CSV file
+            LoadFromCSV(valid_extensions);
+        } else {
+            // Folder mode: scan subfolders, use subfolder names as class labels
+            LoadFromFolder(is_image);
+        }
+
+        if (image_paths_.empty()) {
+            spdlog::error("ImageDataset: No valid images found");
+            return;
+        }
+
+        // Detect channels from first image
+        int width, height, channels;
+        if (!stbi_info(image_paths_[0].c_str(), &width, &height, &channels)) {
+            spdlog::warn("ImageDataset: Could not get info for first image, defaulting to 3 channels");
+            channels_ = 3;
+        } else {
+            channels_ = channels;
+        }
+
+        if (use_csv) {
+            spdlog::info("ImageDataset: Loaded {} images, {} classes from {} + {}",
+                image_paths_.size(), class_names_.size(), image_folder_, csv_path_);
+        } else {
+            spdlog::info("ImageDataset: Loaded {} images, {} classes from folder {}",
+                image_paths_.size(), class_names_.size(), image_folder_);
+        }
+
+        // Apply default split
+        SetSplit(SplitConfig{});
+    }
+
+    void LoadFromCSV(const std::vector<std::string>& valid_extensions) {
+        std::ifstream file(csv_path_);
+        if (!file.is_open()) {
+            spdlog::error("ImageDataset: Failed to open CSV file: {}", csv_path_);
+            return;
+        }
+
+        std::string line;
+        std::vector<std::string> headers;
+        int filename_idx = 0;
+        int label_idx = 1;
+
+        // Read first line to detect headers
+        if (std::getline(file, line)) {
+            std::vector<std::string> first_row = ParseCSVLine(line);
+
+            // Check if first line looks like a header
+            // Use multiple heuristics: exact match, suffix match, substring match
+            bool likely_header = false;
+            for (const auto& cell : first_row) {
+                std::string lower = cell;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+                // Exact matches for common header names
+                if (lower == "filename" || lower == "file" || lower == "image" ||
+                    lower == "label" || lower == "class" || lower == "target" ||
+                    lower == "id" || lower == "name" || lower == "path" ||
+                    lower == "dx" || lower == "category" || lower == "diagnosis") {
+                    likely_header = true;
+                    break;
+                }
+
+                // Suffix matches (e.g., "image_id", "file_name", "class_name")
+                if (lower.length() > 3) {
+                    if (lower.substr(lower.length() - 3) == "_id" ||
+                        lower.substr(lower.length() - 5 > 0 ? lower.length() - 5 : 0) == "_name" ||
+                        lower.substr(lower.length() - 5 > 0 ? lower.length() - 5 : 0) == "_path" ||
+                        lower.substr(lower.length() - 5 > 0 ? lower.length() - 5 : 0) == "_file" ||
+                        lower.substr(lower.length() - 6 > 0 ? lower.length() - 6 : 0) == "_class" ||
+                        lower.substr(lower.length() - 6 > 0 ? lower.length() - 6 : 0) == "_label") {
+                        likely_header = true;
+                        break;
+                    }
+                }
+
+                // Substring matches for common header keywords
+                if (lower.find("image") != std::string::npos ||
+                    lower.find("file") != std::string::npos ||
+                    lower.find("label") != std::string::npos ||
+                    lower.find("class") != std::string::npos ||
+                    lower.find("name") != std::string::npos) {
+                    likely_header = true;
+                    break;
+                }
+
+                // Check if cell is non-numeric text (headers are usually text)
+                // If all cells look like text (not numbers or file paths), it's likely a header
+                bool is_numeric = !lower.empty();
+                for (char c : lower) {
+                    if (!std::isdigit(c) && c != '.' && c != '-' && c != '+' && c != 'e') {
+                        is_numeric = false;
+                        break;
+                    }
+                }
+                // If it's a short non-numeric string without path separators, likely a header
+                if (!is_numeric && lower.length() < 30 &&
+                    lower.find('/') == std::string::npos &&
+                    lower.find('\\') == std::string::npos &&
+                    lower.find('.') == std::string::npos) {
+                    // Check first row for typical header patterns (age, sex, etc.)
+                    if (lower == "age" || lower == "sex" || lower == "type" ||
+                        lower == "date" || lower == "time" || lower == "index" ||
+                        lower == "row" || lower == "col" || lower == "value") {
+                        likely_header = true;
+                        break;
+                    }
+                }
+            }
+
+            if (likely_header) {
+                headers = first_row;
+
+                // Find column indices
+                if (!filename_col_.empty()) {
+                    for (size_t i = 0; i < headers.size(); i++) {
+                        if (headers[i] == filename_col_) {
+                            filename_idx = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                } else {
+                    // Auto-detect filename column (prioritize image_id over other columns)
+                    // Priority list: image_id > filename > image > file > path > img
+                    std::vector<std::string> filename_priorities = {
+                        "image_id", "imageid", "image_name", "imagename",
+                        "filename", "file_name", "file", "image",
+                        "path", "image_path", "img", "photo", "picture"
+                    };
+                    for (const auto& prio : filename_priorities) {
+                        bool found = false;
+                        for (size_t i = 0; i < headers.size(); i++) {
+                            std::string lower = headers[i];
+                            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                            if (lower == prio) {
+                                filename_idx = static_cast<int>(i);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found) break;
+                    }
+                }
+
+                if (!label_col_.empty()) {
+                    for (size_t i = 0; i < headers.size(); i++) {
+                        if (headers[i] == label_col_) {
+                            label_idx = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                } else {
+                    // Auto-detect label column
+                    // Priority list for label column detection
+                    std::vector<std::string> label_priorities = {
+                        "label", "labels", "class", "class_name", "classname",
+                        "target", "category", "dx", "diagnosis", "y"
+                    };
+                    for (const auto& prio : label_priorities) {
+                        bool found = false;
+                        for (size_t i = 0; i < headers.size(); i++) {
+                            std::string lower = headers[i];
+                            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                            if (lower == prio) {
+                                label_idx = static_cast<int>(i);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found) break;
+                    }
+                }
+
+                spdlog::info("ImageDataset: Using column {} for filenames, column {} for labels",
+                    filename_idx < static_cast<int>(headers.size()) ? headers[filename_idx] : std::to_string(filename_idx),
+                    label_idx < static_cast<int>(headers.size()) ? headers[label_idx] : std::to_string(label_idx));
+            } else {
+                // No header, process first line as data
+                file.seekg(0);
+            }
+        }
+
+        // Build label mapping
+        std::map<std::string, int> label_map;
+        std::vector<std::pair<std::string, std::string>> raw_data;
+
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+
+            std::vector<std::string> row = ParseCSVLine(line);
+            if (row.size() <= static_cast<size_t>(std::max(filename_idx, label_idx))) {
+                continue;
+            }
+
+            std::string filename = row[filename_idx];
+            std::string label_str = row[label_idx];
+
+            // Trim whitespace
+            filename.erase(0, filename.find_first_not_of(" \t\r\n"));
+            filename.erase(filename.find_last_not_of(" \t\r\n") + 1);
+            label_str.erase(0, label_str.find_first_not_of(" \t\r\n"));
+            label_str.erase(label_str.find_last_not_of(" \t\r\n") + 1);
+
+            raw_data.emplace_back(filename, label_str);
+
+            if (label_map.find(label_str) == label_map.end()) {
+                label_map[label_str] = static_cast<int>(label_map.size());
+            }
+        }
+
+        file.close();
+
+        // Build class names
+        class_names_.resize(label_map.size());
+        for (const auto& [name, idx] : label_map) {
+            class_names_[idx] = name;
+        }
+
+        // Build a map of filename -> full path by scanning the folder (including subfolders)
+        // This handles cases where images are in nested folders
+        std::map<std::string, std::string> filename_to_path;
+        auto scan_dir = [&](const fs::path& dir, auto& self) -> void {
+            for (const auto& entry : fs::directory_iterator(dir)) {
+                if (entry.is_directory()) {
+                    self(entry.path(), self);  // Recurse into subdirectory
+                } else if (entry.is_regular_file()) {
+                    std::string ext = entry.path().extension().string();
+                    std::string lower_ext = ext;
+                    std::transform(lower_ext.begin(), lower_ext.end(), lower_ext.begin(), ::tolower);
+                    if (std::find(valid_extensions.begin(), valid_extensions.end(), lower_ext) != valid_extensions.end()) {
+                        // Store both with and without extension for matching
+                        std::string full_path = entry.path().string();
+                        std::string stem = entry.path().stem().string();
+                        std::string name_with_ext = entry.path().filename().string();
+
+                        filename_to_path[stem] = full_path;
+                        filename_to_path[name_with_ext] = full_path;
+                    }
+                }
+            }
+        };
+        scan_dir(image_folder_, scan_dir);
+
+        spdlog::info("ImageDataset: Scanned {} image files in folder tree", filename_to_path.size() / 2);
+
+        // Process each row
+        for (const auto& [filename, label_str] : raw_data) {
+            std::string resolved_path;
+
+            // First try direct lookup in our map
+            auto it = filename_to_path.find(filename);
+            if (it != filename_to_path.end()) {
+                resolved_path = it->second;
+            } else {
+                // Try with direct path construction
+                fs::path image_path = fs::path(image_folder_) / filename;
+                if (fs::exists(image_path)) {
+                    resolved_path = image_path.string();
+                } else {
+                    // Try adding extensions
+                    for (const auto& ext : valid_extensions) {
+                        fs::path test_path = fs::path(image_folder_) / (filename + ext);
+                        if (fs::exists(test_path)) {
+                            resolved_path = test_path.string();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (resolved_path.empty()) {
+                spdlog::warn("ImageDataset: Image not found: {}", filename);
+                continue;
+            }
+
+            image_paths_.push_back(resolved_path);
+            labels_.push_back(label_map[label_str]);
+        }
+    }
+
+    void LoadFromFolder(std::function<bool(const std::string&)> is_image) {
+        // Scan for subfolders (class folders) or direct images
+        std::map<std::string, int> label_map;
+        bool has_subfolders = false;
+
+        // First pass: check if we have class subfolders
+        for (const auto& entry : fs::directory_iterator(image_folder_)) {
+            if (entry.is_directory()) {
+                has_subfolders = true;
+                break;
+            }
+        }
+
+        if (has_subfolders) {
+            // Class subfolder mode: folder/class_name/images
+            for (const auto& class_dir : fs::directory_iterator(image_folder_)) {
+                if (!class_dir.is_directory()) continue;
+
+                std::string class_name = class_dir.path().filename().string();
+
+                // Skip hidden folders
+                if (class_name.empty() || class_name[0] == '.') continue;
+
+                // Assign class index
+                if (label_map.find(class_name) == label_map.end()) {
+                    label_map[class_name] = static_cast<int>(label_map.size());
+                }
+                int class_idx = label_map[class_name];
+
+                // Scan images in class folder
+                for (const auto& img_entry : fs::directory_iterator(class_dir.path())) {
+                    if (!img_entry.is_regular_file()) continue;
+
+                    std::string ext = img_entry.path().extension().string();
+                    if (!is_image(ext)) continue;
+
+                    image_paths_.push_back(img_entry.path().string());
+                    labels_.push_back(class_idx);
+                }
+            }
+
+            // Build class names
+            class_names_.resize(label_map.size());
+            for (const auto& [name, idx] : label_map) {
+                class_names_[idx] = name;
+            }
+
+            spdlog::info("ImageDataset: Found {} class subfolders", class_names_.size());
+        } else {
+            // Flat folder mode: all images in one folder, no labels (single class)
+            class_names_.push_back("default");
+
+            for (const auto& entry : fs::directory_iterator(image_folder_)) {
+                if (!entry.is_regular_file()) continue;
+
+                std::string ext = entry.path().extension().string();
+                if (!is_image(ext)) continue;
+
+                image_paths_.push_back(entry.path().string());
+                labels_.push_back(0);  // All same class
+            }
+
+            spdlog::info("ImageDataset: Flat folder mode, {} images with single class", image_paths_.size());
+        }
+    }
+
+    std::vector<std::string> ParseCSVLine(const std::string& line) {
+        std::vector<std::string> result;
+        std::string current;
+        bool in_quotes = false;
+
+        for (size_t i = 0; i < line.size(); i++) {
+            char c = line[i];
+
+            if (c == '"') {
+                if (in_quotes && i + 1 < line.size() && line[i + 1] == '"') {
+                    // Escaped quote
+                    current += '"';
+                    i++;
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            } else if (c == ',' && !in_quotes) {
+                result.push_back(current);
+                current.clear();
+            } else {
+                current += c;
+            }
+        }
+        result.push_back(current);
+
+        return result;
+    }
+
+    std::vector<float> LoadImage(const std::string& path) const {
+        int width, height, channels;
+        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, channels_);
+
+        if (!data) {
+            spdlog::warn("ImageCSV: Failed to load image: {}", path);
+            return std::vector<float>(target_width_ * target_height_ * channels_, 0.0f);
+        }
+
+        // Resize if needed (simple nearest-neighbor)
+        std::vector<float> result(target_width_ * target_height_ * channels_);
+
+        float x_ratio = static_cast<float>(width) / target_width_;
+        float y_ratio = static_cast<float>(height) / target_height_;
+
+        for (int y = 0; y < target_height_; y++) {
+            for (int x = 0; x < target_width_; x++) {
+                int src_x = static_cast<int>(x * x_ratio);
+                int src_y = static_cast<int>(y * y_ratio);
+
+                src_x = std::min(src_x, width - 1);
+                src_y = std::min(src_y, height - 1);
+
+                for (int c = 0; c < channels_; c++) {
+                    int src_idx = (src_y * width + src_x) * channels + c;
+                    int dst_idx = (y * target_width_ + x) * channels_ + c;
+                    result[dst_idx] = data[src_idx] / 255.0f;  // Normalize to [0, 1]
+                }
+            }
+        }
+
+        stbi_image_free(data);
+        return result;
+    }
+
+    std::string image_folder_;
+    std::string csv_path_;
+    std::string filename_col_;
+    std::string label_col_;
     int target_width_;
     int target_height_;
     int channels_ = 3;
@@ -1957,6 +2471,39 @@ DatasetHandle DataRegistry::LoadImageFolder(const std::string& path, const std::
     }
 }
 
+DatasetHandle DataRegistry::LoadImageCSV(const std::string& image_folder, const std::string& csv_path,
+                                          const std::string& name, int target_width, int target_height,
+                                          size_t cache_size) {
+    std::string base_name = name.empty() ? fs::path(image_folder).filename().string() : name;
+    std::string unique_name = GenerateUniqueName(base_name);
+
+    try {
+        auto dataset = std::make_shared<ImageCSVDataset>(image_folder, csv_path, target_width, target_height, cache_size);
+        if (dataset->Size() == 0) {
+            spdlog::warn("ImageCSV dataset loaded with 0 samples");
+            return DatasetHandle();
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            datasets_[unique_name] = dataset;
+        }
+
+        auto handle = DatasetHandle(dataset, unique_name);
+
+        if (on_loaded_) {
+            on_loaded_(unique_name, handle.GetInfo());
+        }
+
+        spdlog::info("Registered ImageCSV dataset as '{}' with {} samples", unique_name, dataset->Size());
+        return handle;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to load ImageCSV dataset: {}", e.what());
+        return DatasetHandle();
+    }
+}
+
 DatasetHandle DataRegistry::LoadHuggingFace(const HuggingFaceConfig& config, const std::string& name) {
     std::string base_name = name.empty() ? config.dataset_name : name;
     std::string unique_name = GenerateUniqueName(base_name);
@@ -2521,6 +3068,8 @@ DatasetHandle DataRegistry::GetDataset(const std::string& name) {
 
     auto it = datasets_.find(name);
     if (it != datasets_.end()) {
+        // Update LRU access time
+        last_access_times_[name] = std::chrono::steady_clock::now();
         return DatasetHandle(it->second, name);
     }
     return DatasetHandle();
@@ -2769,6 +3318,362 @@ void DataRegistry::ResetCacheStats() {
     total_cache_hits_ = 0;
     total_cache_misses_ = 0;
     total_cache_evictions_ = 0;
+}
+
+// =============================================================================
+// Memory Optimization
+// =============================================================================
+
+bool DataRegistry::IsMemoryPressure() const {
+    size_t current = GetTotalMemoryUsage();
+    return current >= static_cast<size_t>(memory_limit_ * memory_pressure_threshold_);
+}
+
+void DataRegistry::EvictOldest() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (datasets_.empty()) {
+        return;
+    }
+
+    // Find the least recently accessed dataset
+    std::string oldest_name;
+    auto oldest_time = std::chrono::steady_clock::time_point::max();
+
+    for (const auto& [name, _] : datasets_) {
+        auto it = last_access_times_.find(name);
+        auto access_time = (it != last_access_times_.end())
+            ? it->second
+            : std::chrono::steady_clock::time_point::min();  // Never accessed = oldest
+
+        if (access_time < oldest_time) {
+            oldest_time = access_time;
+            oldest_name = name;
+        }
+    }
+
+    if (!oldest_name.empty()) {
+        auto info = datasets_[oldest_name]->GetInfo();
+        spdlog::info("Memory eviction: unloading '{}' ({} bytes)", oldest_name, info.memory_usage);
+
+        datasets_.erase(oldest_name);
+        last_access_times_.erase(oldest_name);
+        total_cache_evictions_++;
+
+        if (on_unloaded_) {
+            on_unloaded_(oldest_name);
+        }
+    }
+}
+
+void DataRegistry::TrimMemory(size_t target_bytes) {
+    // If target is 0, use memory_limit_
+    size_t target = (target_bytes > 0) ? target_bytes : memory_limit_;
+
+    size_t current = GetTotalMemoryUsage();
+
+    // Notify about memory pressure if callback is set
+    if (current > memory_limit_ && on_memory_pressure_) {
+        on_memory_pressure_(current, memory_limit_);
+    }
+
+    // Keep evicting until we're under target
+    int eviction_count = 0;
+    while (current > target && !datasets_.empty()) {
+        EvictOldest();
+        current = GetTotalMemoryUsage();
+        eviction_count++;
+
+        // Safety limit to prevent infinite loop
+        if (eviction_count > 100) {
+            spdlog::warn("TrimMemory: Safety limit reached after {} evictions", eviction_count);
+            break;
+        }
+    }
+
+    if (eviction_count > 0) {
+        spdlog::info("TrimMemory: Evicted {} datasets, new usage: {} bytes", eviction_count, current);
+    }
+}
+
+// =============================================================================
+// Configuration Export/Import
+// =============================================================================
+
+std::string DataRegistry::SerializeConfig(const DatasetInfo& info, const SplitConfig& split) {
+    nlohmann::json j;
+
+    // Dataset info
+    j["name"] = info.name;
+    j["path"] = info.path;
+    j["type"] = TypeToString(info.type);
+    j["shape"] = info.shape;
+    j["num_samples"] = info.num_samples;
+    j["num_classes"] = info.num_classes;
+    j["class_names"] = info.class_names;
+
+    // Split config
+    j["split"]["train_ratio"] = split.train_ratio;
+    j["split"]["val_ratio"] = split.val_ratio;
+    j["split"]["test_ratio"] = split.test_ratio;
+    j["split"]["stratified"] = split.stratified;
+    j["split"]["shuffle"] = split.shuffle;
+    j["split"]["seed"] = split.seed;
+
+    // Metadata
+    j["version"] = "1.0";
+    j["exported_at"] = std::time(nullptr);
+
+    return j.dump(2);
+}
+
+bool DataRegistry::DeserializeConfig(const std::string& json_str, DatasetInfo& info, SplitConfig& split) {
+    try {
+        nlohmann::json j = nlohmann::json::parse(json_str);
+
+        // Dataset info
+        info.name = j.value("name", "");
+        info.path = j.value("path", "");
+
+        std::string type_str = j.value("type", "None");
+        if (type_str == "CSV") info.type = DatasetType::CSV;
+        else if (type_str == "TSV") info.type = DatasetType::TSV;
+        else if (type_str == "ImageFolder") info.type = DatasetType::ImageFolder;
+        else if (type_str == "ImageCSV") info.type = DatasetType::ImageCSV;
+        else if (type_str == "MNIST") info.type = DatasetType::MNIST;
+        else if (type_str == "FashionMNIST") info.type = DatasetType::FashionMNIST;
+        else if (type_str == "CIFAR10") info.type = DatasetType::CIFAR10;
+        else if (type_str == "CIFAR100") info.type = DatasetType::CIFAR100;
+        else if (type_str == "HuggingFace") info.type = DatasetType::HuggingFace;
+        else if (type_str == "Kaggle") info.type = DatasetType::Kaggle;
+        else if (type_str == "Custom") info.type = DatasetType::Custom;
+        else info.type = DatasetType::None;
+
+        if (j.contains("shape")) {
+            info.shape = j["shape"].get<std::vector<size_t>>();
+        }
+        info.num_samples = j.value("num_samples", size_t(0));
+        info.num_classes = j.value("num_classes", size_t(0));
+        if (j.contains("class_names")) {
+            info.class_names = j["class_names"].get<std::vector<std::string>>();
+        }
+
+        // Split config
+        if (j.contains("split")) {
+            auto& s = j["split"];
+            split.train_ratio = s.value("train_ratio", 0.8f);
+            split.val_ratio = s.value("val_ratio", 0.1f);
+            split.test_ratio = s.value("test_ratio", 0.1f);
+            split.stratified = s.value("stratified", true);
+            split.shuffle = s.value("shuffle", true);
+            split.seed = s.value("seed", 42);
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to deserialize dataset config: {}", e.what());
+        return false;
+    }
+}
+
+bool DataRegistry::ExportConfig(const std::string& name, const std::string& filepath) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = datasets_.find(name);
+    if (it == datasets_.end()) {
+        spdlog::error("Cannot export config: dataset '{}' not found", name);
+        return false;
+    }
+
+    DatasetInfo info = it->second->GetInfo();
+    SplitConfig split;
+    split.train_ratio = info.train_ratio;
+    split.val_ratio = info.val_ratio;
+    split.test_ratio = info.test_ratio;
+
+    std::string json_str = SerializeConfig(info, split);
+
+    std::ofstream file(filepath);
+    if (!file.is_open()) {
+        spdlog::error("Cannot open file for writing: {}", filepath);
+        return false;
+    }
+
+    file << json_str;
+    file.close();
+
+    spdlog::info("Exported dataset config '{}' to {}", name, filepath);
+    return true;
+}
+
+bool DataRegistry::ExportConfig(const std::string& name, const std::string& filepath, const SplitConfig& split) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = datasets_.find(name);
+    if (it == datasets_.end()) {
+        spdlog::error("Cannot export config: dataset '{}' not found", name);
+        return false;
+    }
+
+    DatasetInfo info = it->second->GetInfo();
+    std::string json_str = SerializeConfig(info, split);
+
+    std::ofstream file(filepath);
+    if (!file.is_open()) {
+        spdlog::error("Cannot open file for writing: {}", filepath);
+        return false;
+    }
+
+    file << json_str;
+    file.close();
+
+    spdlog::info("Exported dataset config '{}' to {} (custom split: {:.0f}/{:.0f}/{:.0f})",
+                 name, filepath, split.train_ratio * 100, split.val_ratio * 100, split.test_ratio * 100);
+    return true;
+}
+
+bool DataRegistry::ImportConfig(const std::string& filepath, std::string& out_name) {
+    SplitConfig ignored_split;
+    return ImportConfig(filepath, out_name, ignored_split);
+}
+
+bool DataRegistry::ImportConfig(const std::string& filepath, std::string& out_name, SplitConfig& out_split) {
+    std::ifstream file(filepath);
+    if (!file.is_open()) {
+        spdlog::error("Cannot open config file: {}", filepath);
+        return false;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    file.close();
+
+    DatasetInfo info;
+    SplitConfig split;
+
+    if (!DeserializeConfig(buffer.str(), info, split)) {
+        return false;
+    }
+
+    // Load the dataset using the config
+    if (info.path.empty()) {
+        spdlog::error("Config file does not specify a dataset path");
+        return false;
+    }
+
+    DatasetHandle handle;
+
+    // Check if dataset with same name or path is already loaded
+    bool already_loaded = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // First check by name
+        if (!info.name.empty()) {
+            auto it = datasets_.find(info.name);
+            if (it != datasets_.end()) {
+                handle = DatasetHandle(it->second, info.name);
+                already_loaded = true;
+                spdlog::info("Dataset '{}' already loaded, applying config only", info.name);
+            }
+        }
+
+        // If not found by name, check by path
+        if (!already_loaded) {
+            for (const auto& [name, dataset] : datasets_) {
+                DatasetInfo existing_info = dataset->GetInfo();
+                if (existing_info.path == info.path) {
+                    handle = DatasetHandle(dataset, name);
+                    already_loaded = true;
+                    spdlog::info("Dataset with path '{}' already loaded as '{}', applying config only",
+                                 info.path, name);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Only load if not already present
+    if (!already_loaded) {
+        // Report progress
+        if (on_progress_) {
+            on_progress_(0.0f, "Loading dataset from config...");
+        }
+
+        handle = LoadDataset(info.path, info.name);
+        if (!handle.IsValid()) {
+            spdlog::error("Failed to load dataset from path: {}", info.path);
+            return false;
+        }
+    }
+
+    // Apply split configuration
+    handle.ApplySplit(split);
+
+    out_name = handle.GetName();
+    out_split = split;  // Return the split config from the file
+
+    if (on_progress_) {
+        on_progress_(1.0f, already_loaded ? "Config applied" : "Dataset loaded successfully");
+    }
+
+    spdlog::info("Imported dataset config from {}, {} '{}' (split: {:.0f}/{:.0f}/{:.0f})", filepath,
+                 already_loaded ? "applied to existing" : "loaded as", out_name,
+                 split.train_ratio * 100, split.val_ratio * 100, split.test_ratio * 100);
+    return true;
+}
+
+// =============================================================================
+// Dataset Versioning
+// =============================================================================
+
+std::vector<DataRegistry::DatasetVersion> DataRegistry::GetVersionHistory(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = version_history_.find(name);
+    if (it != version_history_.end()) {
+        return it->second;
+    }
+    return {};
+}
+
+bool DataRegistry::SaveVersion(const std::string& name, const std::string& description) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = datasets_.find(name);
+    if (it == datasets_.end()) {
+        spdlog::error("Cannot save version: dataset '{}' not found", name);
+        return false;
+    }
+
+    DatasetInfo info = it->second->GetInfo();
+
+    // Create version entry
+    DatasetVersion version;
+
+    // Generate version ID (simple incrementing)
+    auto& history = version_history_[name];
+    version.version_id = "v" + std::to_string(history.size() + 1);
+
+    // Timestamp
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    char time_buf[32];
+    std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", std::localtime(&time_t_now));
+    version.timestamp = time_buf;
+
+    version.description = description.empty() ? "Auto-saved version" : description;
+    version.num_samples = info.num_samples;
+
+    // Simple checksum based on sample count and memory usage
+    std::stringstream ss;
+    ss << info.num_samples << "_" << info.memory_usage << "_" << info.num_classes;
+    version.checksum = ss.str();
+
+    history.push_back(version);
+
+    spdlog::info("Saved version {} for dataset '{}'", version.version_id, name);
+    return true;
 }
 
 } // namespace cyxwiz

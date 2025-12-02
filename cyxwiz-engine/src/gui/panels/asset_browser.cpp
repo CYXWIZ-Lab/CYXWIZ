@@ -643,6 +643,15 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
                     on_double_click_(item);
                 }
             }
+
+            // View in Table (for tabular data files only)
+            if (IsTableViewableFile(item)) {
+                if (ImGui::MenuItem(ICON_FA_TABLE " View in Table")) {
+                    if (on_view_in_table_) {
+                        on_view_in_table_(item.absolute_path);
+                    }
+                }
+            }
         }
 
         ImGui::Separator();
@@ -1523,6 +1532,19 @@ bool AssetBrowserPanel::HasMatchingChildren(const AssetItem& item, const std::st
 
 bool AssetBrowserPanel::IsDatasetFile(const AssetItem& item) const {
     return item.type == AssetType::Dataset;
+}
+
+bool AssetBrowserPanel::IsTableViewableFile(const AssetItem& item) const {
+    if (item.is_directory) return false;
+
+    std::string ext = fs::path(item.absolute_path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    // Tabular data files that can be viewed in TableViewer
+    return ext == ".csv" || ext == ".tsv" || ext == ".txt" ||
+           ext == ".h5" || ext == ".hdf5" ||
+           ext == ".xlsx" || ext == ".xls" ||
+           ext == ".json" || ext == ".parquet";
 }
 
 void AssetBrowserPanel::LoadDatasetFromItem(const AssetItem& item) {
