@@ -35,6 +35,9 @@
 #include "losses/mse.h"
 #include "losses/cross_entropy.h"
 
+// Sequential model for dynamic layer management
+#include "sequential.h"
+
 namespace cyxwiz {
 
 // Initialize the backend

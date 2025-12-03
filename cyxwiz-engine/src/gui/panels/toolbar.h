@@ -26,6 +26,7 @@ public:
     void SetSaveProjectSettingsCallback(std::function<void()> callback) { save_project_settings_callback_ = callback; }
     void SetTogglePlotTestControlCallback(std::function<void()> callback) { toggle_plot_test_control_callback_ = callback; }
     void SetConnectToServerCallback(std::function<void()> callback) { connect_to_server_callback_ = callback; }
+    void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
     void SetNewScriptCallback(std::function<void()> callback) { new_script_callback_ = callback; }
     void SetOpenScriptCallback(std::function<void()> callback) { open_script_callback_ = callback; }
     void SetOpenScriptInEditorCallback(std::function<void(const std::string&)> callback) { open_script_in_editor_callback_ = callback; }
@@ -146,6 +147,7 @@ private:
     std::function<void()> save_project_settings_callback_;
     std::function<void()> toggle_plot_test_control_callback_;
     std::function<void()> connect_to_server_callback_;
+    std::function<void()> import_dataset_callback_;
     std::function<void()> new_script_callback_;
     std::function<void()> open_script_callback_;
     std::function<void(const std::string&)> open_script_in_editor_callback_;

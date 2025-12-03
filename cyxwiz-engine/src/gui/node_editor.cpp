@@ -57,8 +57,8 @@ NodeEditor::NodeEditor()
     // ========== DATA PIPELINE (Left side - Cyan nodes) ==========
 
     // 1. Dataset Input - Source of all data (full dataset)
-    MLNode dataset_input = CreateNode(NodeType::DatasetInput, "MNIST Dataset");
-    dataset_input.parameters["dataset_name"] = "mnist";
+    MLNode dataset_input = CreateNode(NodeType::DatasetInput, "DataInput");
+    dataset_input.parameters["dataset_name"] = "";
     dataset_input.parameters["split"] = "full";  // Load full dataset for splitting
     nodes_.push_back(dataset_input);
     ImNodes::SetNodeGridSpacePos(dataset_input.id, ImVec2(50.0f, 150.0f));
@@ -842,13 +842,6 @@ void NodeEditor::RenderNodes() {
         // Display key parameter based on node type
         ImGui::Spacing();
         switch (node.type) {
-            case NodeType::Input: {
-                auto it = node.parameters.find("shape");
-                if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Shape: %s", it->second.c_str());
-                }
-                break;
-            }
             case NodeType::Dense: {
                 auto it = node.parameters.find("units");
                 if (it != node.parameters.end() && !it->second.empty()) {
@@ -1078,11 +1071,6 @@ void NodeEditor::ShowContextMenu() {
     ImGui::Text("Add Node:");
     ImGui::Separator();
 
-    if (ImGui::MenuItem("Input Layer")) {
-        AddNode(NodeType::Input, "Input");
-        ImGui::CloseCurrentPopup();
-    }
-
     if (ImGui::BeginMenu("Dense Layers")) {
         if (ImGui::MenuItem("Dense (64 units)")) {
             AddNode(NodeType::Dense, "Dense (64)");
@@ -1151,8 +1139,8 @@ void NodeEditor::ShowContextMenu() {
     ImGui::Separator();
 
     if (ImGui::BeginMenu("Data Pipeline")) {
-        if (ImGui::MenuItem("Dataset Input")) {
-            AddNode(NodeType::DatasetInput, "Dataset Input");
+        if (ImGui::MenuItem("DataInput")) {
+            AddNode(NodeType::DatasetInput, "DataInput");
             ImGui::CloseCurrentPopup();
         }
         if (ImGui::MenuItem("Data Loader")) {
@@ -1184,6 +1172,38 @@ void NodeEditor::ShowContextMenu() {
 
     ImGui::Separator();
 
+    // Loss Functions
+    if (ImGui::BeginMenu("Loss")) {
+        if (ImGui::MenuItem("Cross Entropy")) {
+            AddNode(NodeType::CrossEntropyLoss, "CrossEntropy Loss");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("MSE Loss")) {
+            AddNode(NodeType::MSELoss, "MSE Loss");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
+    // Optimizers
+    if (ImGui::BeginMenu("Optimizer")) {
+        if (ImGui::MenuItem("Adam")) {
+            AddNode(NodeType::Adam, "Adam Optimizer");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("AdamW")) {
+            AddNode(NodeType::AdamW, "AdamW Optimizer");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("SGD")) {
+            AddNode(NodeType::SGD, "SGD Optimizer");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
+    ImGui::Separator();
+
     if (ImGui::MenuItem("Output Layer")) {
         AddNode(NodeType::Output, "Output");
         ImGui::CloseCurrentPopup();
@@ -1205,19 +1225,6 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
     // Create pins based on node type
     switch (type) {
-        case NodeType::Input: {
-            // Input node has no input pins, only output
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["shape"] = "(None, 784)";
-            break;
-        }
-
         case NodeType::Dense: {
             // Dense layer has input and output
             NodePin input_pin;
@@ -1851,8 +1858,8 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip Input and Output nodes in __init__ (they don't have layers)
-        if (node->type == NodeType::Input || node->type == NodeType::Output) {
+        // Skip DatasetInput and Output nodes in __init__ (they don't have layers)
+        if (node->type == NodeType::DatasetInput || node->type == NodeType::Output) {
             continue;
         }
 
@@ -1873,8 +1880,8 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
         if (!node) continue;
 
         switch (node->type) {
-            case NodeType::Input:
-                code += "        # Input layer (x is already the input)\n";
+            case NodeType::DatasetInput:
+                code += "        # Dataset input layer (x is already the input)\n";
                 break;
 
             case NodeType::Dense:
@@ -1959,8 +1966,8 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip Input and Output nodes in __init__
-        if (node->type == NodeType::Input || node->type == NodeType::Output) {
+        // Skip DatasetInput and Output nodes in __init__
+        if (node->type == NodeType::DatasetInput || node->type == NodeType::Output) {
             continue;
         }
 
@@ -1981,8 +1988,8 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
         if (!node) continue;
 
         switch (node->type) {
-            case NodeType::Input:
-                code += "        # Input layer (x is already the input)\n";
+            case NodeType::DatasetInput:
+                code += "        # Dataset input layer (x is already the input)\n";
                 break;
 
             case NodeType::Dense:
@@ -2063,8 +2070,8 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip Input node
-        if (node->type == NodeType::Input) {
+        // Skip DatasetInput node
+        if (node->type == NodeType::DatasetInput) {
             continue;
         }
 
@@ -2123,8 +2130,8 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip Input and Output nodes in __init__
-        if (node->type == NodeType::Input || node->type == NodeType::Output) {
+        // Skip DatasetInput and Output nodes in __init__
+        if (node->type == NodeType::DatasetInput || node->type == NodeType::Output) {
             continue;
         }
 
@@ -2145,8 +2152,8 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
         if (!node) continue;
 
         switch (node->type) {
-            case NodeType::Input:
-                code += "        # Input layer (x is already the input tensor)\n";
+            case NodeType::DatasetInput:
+                code += "        # Dataset input layer (x is already the input tensor)\n";
                 break;
 
             case NodeType::Dense:
@@ -2471,9 +2478,7 @@ const MLNode* NodeEditor::FindNodeById(int node_id) const {
 // ========== Color-Coding Implementation ==========
 unsigned int NodeEditor::GetNodeColor(NodeType type) {
     switch (type) {
-        // Input/Output - Distinct Blue Gradient
-        case NodeType::Input:
-            return IM_COL32(41, 128, 185, 255);   // Strong Blue
+        // Output - Blue
         case NodeType::Output:
             return IM_COL32(52, 152, 219, 255);   // Lighter Blue
 
@@ -2601,7 +2606,12 @@ void NodeEditor::UpdateDatasetNodeName(const std::string& dataset_name) {
     // Find the first DatasetInput node and update its name
     for (auto& node : nodes_) {
         if (node.type == NodeType::DatasetInput) {
-            node.name = dataset_name + " Dataset";
+            // Use dataset name if provided, otherwise default to "DataInput"
+            if (dataset_name.empty()) {
+                node.name = "DataInput";
+            } else {
+                node.name = dataset_name;
+            }
             node.parameters["dataset_name"] = dataset_name;
             spdlog::info("Updated DatasetInput node name to: {}", node.name);
             break;
@@ -2661,10 +2671,10 @@ bool NodeEditor::HasCycle() {
 bool NodeEditor::AllNodesReachable() {
     if (nodes_.empty()) return true;
 
-    // Find all Input nodes
+    // Find all DatasetInput nodes
     std::vector<int> input_nodes;
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::Input) {
+        if (node.type == NodeType::DatasetInput) {
             input_nodes.push_back(node.id);
         }
     }
@@ -2720,8 +2730,8 @@ bool NodeEditor::AllNodesReachable() {
 
 bool NodeEditor::HasInputNode() {
     for (const auto& node : nodes_) {
-        // Both Input and DatasetInput are valid input sources for the graph
-        if (node.type == NodeType::Input || node.type == NodeType::DatasetInput) {
+        // DatasetInput is the valid input source for the graph
+        if (node.type == NodeType::DatasetInput) {
             return true;
         }
     }

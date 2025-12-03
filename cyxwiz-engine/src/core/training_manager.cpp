@@ -113,6 +113,14 @@ void TrainingManager::StopTraining() {
     spdlog::info("TrainingManager: Stopping training...");
     stop_requested_.store(true);
 
+    // Stop the executor - this is critical!
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (current_executor_) {
+            current_executor_->Stop();
+        }
+    }
+
     // Cancel the async task
     uint64_t task_id = current_task_id_.load();
     if (task_id != 0) {

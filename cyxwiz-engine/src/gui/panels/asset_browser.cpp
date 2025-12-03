@@ -607,9 +607,9 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
 
     // Handle double-click for files (directories are handled by TreeNode arrow)
     if (!item.is_directory && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-        // Special handling for dataset files - load into DataRegistry
+        // Special handling for dataset files - load into DataRegistry (async with loading indicator)
         if (IsDatasetFile(item)) {
-            LoadDatasetFromItem(item);
+            LoadDatasetFromItemAsync(item);
         }
         // Fire callback for file double-click
         if (on_double_click_) {
@@ -650,6 +650,13 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
                     if (on_view_in_table_) {
                         on_view_in_table_(item.absolute_path);
                     }
+                }
+            }
+
+            // Load Dataset (for dataset files only - async with loading indicator)
+            if (IsDatasetFile(item)) {
+                if (ImGui::MenuItem(ICON_FA_DATABASE " Load Dataset")) {
+                    LoadDatasetFromItemAsync(item);
                 }
             }
         }
@@ -1587,15 +1594,12 @@ void AssetBrowserPanel::LoadDatasetFromItemAsync(const AssetItem& item) {
             if (handle.IsValid()) {
                 spdlog::info("Dataset loaded successfully: {} ({} samples)",
                     handle.GetName(), handle.GetInfo().num_samples);
-
-                // Store for callback on main thread
-                // Note: callback will be fired via completion callback
                 task.MarkCompleted();
             } else {
                 task.MarkFailed("Failed to load dataset");
             }
         },
-        nullptr, // No progress callback needed
+        nullptr,  // No progress callback needed - indicator is shown via is_loading_dataset_
         [this, path, callback](bool success, const std::string& error) {
             is_loading_dataset_.store(false);
 
@@ -1671,9 +1675,26 @@ void AssetBrowserPanel::RenderDatasetPreview() {
 
     ImGui::Separator();
 
-    // Load button
-    if (ImGui::Button("Load Dataset", ImVec2(-1, 0))) {
-        LoadDatasetFromItem(*dataset_item);
+    // Show loading indicator or load button
+    if (is_loading_dataset_.load()) {
+        // Animated loading spinner
+        float time = static_cast<float>(ImGui::GetTime());
+        const char* spinner_chars[] = {"|", "/", "-", "\\"};
+        int spinner_idx = static_cast<int>(time * 8) % 4;
+
+        ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s Loading...", spinner_chars[spinner_idx]);
+
+        if (ImGui::Button("Cancel", ImVec2(-1, 0))) {
+            if (loading_task_id_ != 0) {
+                AsyncTaskManager::Instance().Cancel(loading_task_id_);
+                is_loading_dataset_.store(false);
+            }
+        }
+    } else {
+        // Load button
+        if (ImGui::Button("Load Dataset", ImVec2(-1, 0))) {
+            LoadDatasetFromItemAsync(*dataset_item);
+        }
     }
 
     ImGui::EndChild();

@@ -88,6 +88,9 @@ MainWindow::MainWindow()
     // Connect Node Editor to Properties panel for node selection display
     node_editor_->SetPropertiesPanel(properties_.get());
 
+    // Connect Properties panel to Node Editor for shape inference
+    properties_->SetNodeEditor(node_editor_.get());
+
     // Set up training callback for Node Editor
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
@@ -119,6 +122,14 @@ MainWindow::MainWindow()
     toolbar_->SetTogglePlotTestControlCallback([this]() {
         if (plot_test_control_) {
             plot_test_control_->Toggle();
+        }
+    });
+
+    // Set up Import Dataset callback - shows Dataset Manager panel
+    toolbar_->SetImportDatasetCallback([this]() {
+        if (dataset_panel_) {
+            dataset_panel_->Show();
+            spdlog::info("Opened Dataset Manager panel");
         }
     });
 

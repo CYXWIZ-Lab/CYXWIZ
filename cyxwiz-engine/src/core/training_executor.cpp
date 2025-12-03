@@ -6,117 +6,6 @@
 namespace cyxwiz {
 
 // ============================================================================
-// BackendModel Implementation - Using cyxwiz-backend layers
-// ============================================================================
-
-void TrainingExecutor::BackendModel::Initialize(size_t input, size_t hidden, size_t output) {
-    input_size = input;
-    hidden_size = hidden;
-    output_size = output;
-
-    // Create layers using cyxwiz-backend
-    fc1 = std::make_unique<LinearLayer>(input_size, hidden_size, true);
-    relu1 = std::make_unique<ReLU>();
-    fc2 = std::make_unique<LinearLayer>(hidden_size, output_size, true);
-
-    // Create loss function
-    loss_fn = std::make_unique<CrossEntropyLoss>();
-
-    spdlog::info("BackendModel: Initialized MLP {} -> {} -> {} using cyxwiz-backend layers",
-                 input_size, hidden_size, output_size);
-}
-
-Tensor TrainingExecutor::BackendModel::Forward(const Tensor& input) {
-    // Cache input for backward pass
-    input_cache = input.Clone();
-
-    // Forward through layers: input -> fc1 -> relu -> fc2
-    fc1_output = fc1->Forward(input);
-    relu_output = relu1->Forward(fc1_output);
-    fc2_output = fc2->Forward(relu_output);
-
-    return fc2_output;
-}
-
-float TrainingExecutor::BackendModel::ComputeLoss(const Tensor& predictions, const Tensor& targets) {
-    // Use CrossEntropyLoss from backend (includes softmax)
-    Tensor loss_tensor = loss_fn->Forward(predictions, targets);
-    const float* loss_data = loss_tensor.Data<float>();
-    return loss_data[0];
-}
-
-void TrainingExecutor::BackendModel::Backward(const Tensor& predictions, const Tensor& targets) {
-    // Compute loss gradient (softmax + cross-entropy combined)
-    Tensor grad = loss_fn->Backward(predictions, targets);
-
-    // Backprop through fc2
-    Tensor grad_fc2 = fc2->Backward(grad);
-
-    // Backprop through relu
-    Tensor grad_relu = relu1->Backward(grad_fc2, fc1_output);
-
-    // Backprop through fc1
-    Tensor grad_fc1 = fc1->Backward(grad_relu);
-}
-
-void TrainingExecutor::BackendModel::UpdateWeights(float learning_rate) {
-    // Get gradients from layers and update weights
-    auto fc1_grads = fc1->GetGradients();
-    auto fc2_grads = fc2->GetGradients();
-
-    auto fc1_params = fc1->GetParameters();
-    auto fc2_params = fc2->GetParameters();
-
-    // Update fc1 weights
-    if (fc1_grads.count("weight") && fc1_params.count("weight")) {
-        Tensor& weight = fc1_params["weight"];
-        const Tensor& grad = fc1_grads["weight"];
-        float* w_data = weight.Data<float>();
-        const float* g_data = grad.Data<float>();
-        size_t n = weight.NumElements();
-        for (size_t i = 0; i < n; ++i) {
-            w_data[i] -= learning_rate * g_data[i];
-        }
-    }
-    if (fc1_grads.count("bias") && fc1_params.count("bias")) {
-        Tensor& bias = fc1_params["bias"];
-        const Tensor& grad = fc1_grads["bias"];
-        float* b_data = bias.Data<float>();
-        const float* g_data = grad.Data<float>();
-        size_t n = bias.NumElements();
-        for (size_t i = 0; i < n; ++i) {
-            b_data[i] -= learning_rate * g_data[i];
-        }
-    }
-
-    // Update fc2 weights
-    if (fc2_grads.count("weight") && fc2_params.count("weight")) {
-        Tensor& weight = fc2_params["weight"];
-        const Tensor& grad = fc2_grads["weight"];
-        float* w_data = weight.Data<float>();
-        const float* g_data = grad.Data<float>();
-        size_t n = weight.NumElements();
-        for (size_t i = 0; i < n; ++i) {
-            w_data[i] -= learning_rate * g_data[i];
-        }
-    }
-    if (fc2_grads.count("bias") && fc2_params.count("bias")) {
-        Tensor& bias = fc2_params["bias"];
-        const Tensor& grad = fc2_grads["bias"];
-        float* b_data = bias.Data<float>();
-        const float* g_data = grad.Data<float>();
-        size_t n = bias.NumElements();
-        for (size_t i = 0; i < n; ++i) {
-            b_data[i] -= learning_rate * g_data[i];
-        }
-    }
-
-    // Set updated parameters back
-    fc1->SetParameters(fc1_params);
-    fc2->SetParameters(fc2_params);
-}
-
-// ============================================================================
 // TrainingExecutor Implementation
 // ============================================================================
 
@@ -132,26 +21,133 @@ TrainingExecutor::~TrainingExecutor() {
     Stop();
 }
 
-bool TrainingExecutor::Initialize(int batch_size) {
-    // Create backend model
-    model_ = std::make_unique<BackendModel>();
+bool TrainingExecutor::BuildModelFromConfig() {
+    model_ = std::make_unique<SequentialModel>();
 
-    // Determine hidden size from config (look for Dense layers)
-    size_t hidden_size = 128;  // default
-    for (const auto& layer : config_.layers) {
-        if (layer.type == gui::NodeType::Dense && layer.units > 0) {
-            // Use first Dense layer as hidden size (before output)
-            if (static_cast<size_t>(layer.units) != config_.output_size) {
-                hidden_size = layer.units;
+    spdlog::info("TrainingExecutor: Building model from {} layer configs", config_.layers.size());
+
+    // Track input size for each layer
+    size_t current_input_size = config_.input_size;
+
+    for (size_t i = 0; i < config_.layers.size(); ++i) {
+        const auto& layer_cfg = config_.layers[i];
+
+        switch (layer_cfg.type) {
+            case gui::NodeType::Dense: {
+                size_t out_features = layer_cfg.units > 0 ? layer_cfg.units : 64;
+                model_->Add<LinearModule>(current_input_size, out_features, true);
+                spdlog::info("  [{}] Linear({} -> {})", i, current_input_size, out_features);
+                current_input_size = out_features;
                 break;
             }
+
+            case gui::NodeType::ReLU: {
+                model_->Add<ReLUModule>();
+                spdlog::info("  [{}] ReLU", i);
+                break;
+            }
+
+            case gui::NodeType::Sigmoid: {
+                model_->Add<SigmoidModule>();
+                spdlog::info("  [{}] Sigmoid", i);
+                break;
+            }
+
+            case gui::NodeType::Tanh: {
+                model_->Add<TanhModule>();
+                spdlog::info("  [{}] Tanh", i);
+                break;
+            }
+
+            case gui::NodeType::Softmax: {
+                model_->Add<SoftmaxModule>();
+                spdlog::info("  [{}] Softmax", i);
+                break;
+            }
+
+            case gui::NodeType::Dropout: {
+                float p = layer_cfg.dropout_rate > 0 ? layer_cfg.dropout_rate : 0.5f;
+                model_->Add<DropoutModule>(p);
+                spdlog::info("  [{}] Dropout(p={})", i, p);
+                break;
+            }
+
+            case gui::NodeType::Flatten: {
+                model_->Add<FlattenModule>(1);
+                spdlog::info("  [{}] Flatten", i);
+                break;
+            }
+
+            case gui::NodeType::Output: {
+                // Output layer is a Dense layer to num_classes
+                size_t out_features = config_.output_size;
+                model_->Add<LinearModule>(current_input_size, out_features, true);
+                spdlog::info("  [{}] Output Linear({} -> {})", i, current_input_size, out_features);
+                current_input_size = out_features;
+                break;
+            }
+
+            // Skip non-layer nodes
+            case gui::NodeType::DatasetInput:
+            case gui::NodeType::DataLoader:
+            case gui::NodeType::Augmentation:
+            case gui::NodeType::DataSplit:
+            case gui::NodeType::TensorReshape:
+            case gui::NodeType::Normalize:
+            case gui::NodeType::OneHotEncode:
+            case gui::NodeType::MSELoss:
+            case gui::NodeType::CrossEntropyLoss:
+            case gui::NodeType::SGD:
+            case gui::NodeType::Adam:
+            case gui::NodeType::AdamW:
+                // These are not layers in the sequential model
+                break;
+
+            default:
+                spdlog::warn("  [{}] Unknown layer type: {}", i, static_cast<int>(layer_cfg.type));
+                break;
         }
     }
 
-    model_->Initialize(config_.input_size, hidden_size, config_.output_size);
+    if (model_->Size() == 0) {
+        spdlog::error("TrainingExecutor: No layers were added to the model!");
+        return false;
+    }
 
-    // Create optimizer (for future use with backend optimizer)
+    // Print model summary
+    model_->Summary();
+
+    return true;
+}
+
+bool TrainingExecutor::Initialize(int batch_size) {
+    // Build model from configuration
+    if (!BuildModelFromConfig()) {
+        spdlog::error("TrainingExecutor: Failed to build model from config");
+        return false;
+    }
+
+    // Create loss function based on config
+    switch (config_.loss_type) {
+        case gui::NodeType::CrossEntropyLoss:
+            cross_entropy_loss_ = std::make_unique<CrossEntropyLoss>();
+            spdlog::info("TrainingExecutor: Using CrossEntropy loss");
+            break;
+        case gui::NodeType::MSELoss:
+            mse_loss_ = std::make_unique<MSELoss>();
+            spdlog::info("TrainingExecutor: Using MSE loss");
+            break;
+        default:
+            cross_entropy_loss_ = std::make_unique<CrossEntropyLoss>();
+            spdlog::info("TrainingExecutor: Defaulting to CrossEntropy loss");
+            break;
+    }
+
+    // Create optimizer from backend
     optimizer_ = CreateOptimizer(config_.GetOptimizerType(), config_.learning_rate);
+
+    spdlog::info("TrainingExecutor: Using {} optimizer with lr={}",
+                 config_.GetOptimizerName(), config_.learning_rate);
 
     return true;
 }
@@ -213,8 +209,11 @@ void TrainingExecutor::Train(
     train_batcher.SetFlatten(true);
     val_batcher.SetFlatten(true);
 
-    spdlog::info("TrainingExecutor: Starting training with cyxwiz-backend for {} epochs, batch_size={}",
+    spdlog::info("TrainingExecutor: Starting training for {} epochs, batch_size={}",
                  epochs, batch_size);
+
+    // Set model to training mode
+    model_->SetTraining(true);
 
     // Training loop
     for (int epoch = 1; epoch <= epochs; ++epoch) {
@@ -233,8 +232,10 @@ void TrainingExecutor::Train(
 
         if (ShouldStop()) break;
 
-        // Run validation
+        // Run validation (eval mode)
+        model_->SetTraining(false);
         RunValidation(val_batcher);
+        model_->SetTraining(true);
 
         auto epoch_end = std::chrono::steady_clock::now();
         float epoch_time = std::chrono::duration<float>(epoch_end - epoch_start).count();
@@ -313,11 +314,11 @@ void TrainingExecutor::RunTrainingEpoch(
 
         batch_num++;
 
-        // Forward pass using backend model
-        Tensor predictions = model_->Forward(batch.data);
+        // Forward pass through model
+        Tensor predictions = Forward(batch.data);
 
         // Compute loss
-        float batch_loss = model_->ComputeLoss(predictions, batch.labels);
+        float batch_loss = ComputeLoss(predictions, batch.labels);
         epoch_loss += batch_loss;
 
         // Compute accuracy
@@ -344,10 +345,10 @@ void TrainingExecutor::RunTrainingEpoch(
         }
 
         // Backward pass
-        model_->Backward(predictions, batch.labels);
+        Backward(predictions, batch.labels);
 
-        // Update weights
-        model_->UpdateWeights(config_.learning_rate);
+        // Update weights using optimizer
+        model_->UpdateParameters(optimizer_.get());
 
         // Update metrics
         float current_loss = epoch_loss / batch_num;
@@ -392,10 +393,10 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
         batch_num++;
 
         // Forward pass only (no backprop)
-        Tensor predictions = model_->Forward(batch.data);
+        Tensor predictions = Forward(batch.data);
 
         // Compute loss
-        float batch_loss = model_->ComputeLoss(predictions, batch.labels);
+        float batch_loss = ComputeLoss(predictions, batch.labels);
         val_loss += batch_loss;
 
         // Compute accuracy
@@ -429,6 +430,85 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
         m.val_loss = final_loss;
         m.val_accuracy = final_acc;
     });
+}
+
+Tensor TrainingExecutor::Forward(const Tensor& input) {
+    if (!model_) {
+        spdlog::error("TrainingExecutor::Forward: Model not initialized");
+        return Tensor();
+    }
+
+    last_predictions_ = model_->Forward(input);
+    return last_predictions_;
+}
+
+float TrainingExecutor::ComputeLoss(const Tensor& predictions, const Tensor& targets) {
+    Tensor loss_tensor;
+
+    if (cross_entropy_loss_) {
+        loss_tensor = cross_entropy_loss_->Forward(predictions, targets);
+    } else if (mse_loss_) {
+        loss_tensor = mse_loss_->Forward(predictions, targets);
+    } else {
+        spdlog::error("TrainingExecutor::ComputeLoss: No loss function");
+        return 0.0f;
+    }
+
+    const float* loss_data = loss_tensor.Data<float>();
+    return loss_data[0];
+}
+
+float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor& targets) {
+    const auto& shape = predictions.Shape();
+    if (shape.size() != 2) return 0.0f;
+
+    size_t batch_size = shape[0];
+    size_t num_classes = shape[1];
+
+    const float* pred_data = predictions.Data<float>();
+    const float* target_data = targets.Data<float>();
+
+    int correct = 0;
+    for (size_t b = 0; b < batch_size; ++b) {
+        int pred_class = 0, true_class = 0;
+        float max_pred = pred_data[b * num_classes];
+        float max_target = target_data[b * num_classes];
+
+        for (size_t c = 1; c < num_classes; ++c) {
+            if (pred_data[b * num_classes + c] > max_pred) {
+                max_pred = pred_data[b * num_classes + c];
+                pred_class = static_cast<int>(c);
+            }
+            if (target_data[b * num_classes + c] > max_target) {
+                max_target = target_data[b * num_classes + c];
+                true_class = static_cast<int>(c);
+            }
+        }
+        if (pred_class == true_class) correct++;
+    }
+
+    return static_cast<float>(correct) / batch_size;
+}
+
+void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets) {
+    if (!model_) {
+        spdlog::error("TrainingExecutor::Backward: Model not initialized");
+        return;
+    }
+
+    // Compute loss gradient
+    Tensor grad;
+    if (cross_entropy_loss_) {
+        grad = cross_entropy_loss_->Backward(predictions, targets);
+    } else if (mse_loss_) {
+        grad = mse_loss_->Backward(predictions, targets);
+    } else {
+        spdlog::error("TrainingExecutor::Backward: No loss function");
+        return;
+    }
+
+    // Backward through model
+    model_->Backward(grad);
 }
 
 void TrainingExecutor::Stop() {
@@ -465,59 +545,6 @@ void TrainingExecutor::UpdateMetrics(const std::function<void(TrainingMetrics&)>
 void TrainingExecutor::WaitWhilePaused() {
     while (is_paused_.load() && !stop_requested_.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-}
-
-Tensor TrainingExecutor::Forward(const Tensor& input) {
-    if (model_) {
-        return model_->Forward(input);
-    }
-    return Tensor();
-}
-
-float TrainingExecutor::ComputeLoss(const Tensor& predictions, const Tensor& targets) {
-    if (model_) {
-        return model_->ComputeLoss(predictions, targets);
-    }
-    return 0.0f;
-}
-
-float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor& targets) {
-    // Compute accuracy from predictions and targets
-    const auto& shape = predictions.Shape();
-    if (shape.size() != 2) return 0.0f;
-
-    size_t batch_size = shape[0];
-    size_t num_classes = shape[1];
-
-    const float* pred_data = predictions.Data<float>();
-    const float* target_data = targets.Data<float>();
-
-    int correct = 0;
-    for (size_t b = 0; b < batch_size; ++b) {
-        int pred_class = 0, true_class = 0;
-        float max_pred = pred_data[b * num_classes];
-        float max_target = target_data[b * num_classes];
-
-        for (size_t c = 1; c < num_classes; ++c) {
-            if (pred_data[b * num_classes + c] > max_pred) {
-                max_pred = pred_data[b * num_classes + c];
-                pred_class = static_cast<int>(c);
-            }
-            if (target_data[b * num_classes + c] > max_target) {
-                max_target = target_data[b * num_classes + c];
-                true_class = static_cast<int>(c);
-            }
-        }
-        if (pred_class == true_class) correct++;
-    }
-
-    return static_cast<float>(correct) / batch_size;
-}
-
-void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets) {
-    if (model_) {
-        model_->Backward(predictions, targets);
     }
 }
 

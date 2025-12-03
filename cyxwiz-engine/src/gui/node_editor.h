@@ -20,7 +20,6 @@ class Properties;
 
 // Node types for ML model building
 enum class NodeType {
-    Input,
     Dense,
     Conv2D,
     MaxPool2D,

@@ -51,6 +51,7 @@ public:
     void LoadCIFAR10DatasetAsync(const std::string& path);
     void LoadHuggingFaceDatasetAsync(const std::string& dataset_name);
     void LoadKaggleDatasetAsync(const std::string& dataset_slug);
+    void LoadCustomDatasetAsync(const cyxwiz::CustomConfig& config);
     void LoadDatasetAsync(const std::string& path);
 
     // Async loading state
@@ -106,6 +107,9 @@ private:
 
     // Visualization
     void RenderImagePreview(const float* image_data, int width, int height, int channels);
+    void RenderSingleSamplePreview(size_t dataset_size, bool is_image_data);
+    void RenderGridPreview(size_t dataset_size, bool is_image_data);
+    void RenderTablePreview(size_t dataset_size);
 
     // Training
     void RenderTrainingSection();
@@ -124,8 +128,16 @@ private:
     int train_epochs_ = 10;
     int train_batch_size_ = 32;
     float train_learning_rate_ = 0.001f;
-    int selected_optimizer_ = 0;  // 0=SGD, 1=Adam, 2=AdamW
+    int selected_optimizer_ = 1;  // 0=SGD, 1=Adam, 2=AdamW, 3=RMSprop
     std::string last_submitted_job_id_;
+
+    // Advanced training options
+    float train_weight_decay_ = 0.0001f;
+    float train_grad_clip_ = 1.0f;
+    bool train_early_stopping_ = false;
+    int train_early_stopping_patience_ = 5;
+    bool train_lr_scheduler_ = false;
+    int train_scheduler_type_ = 0;  // 0=StepLR, 1=CosineAnnealing, 2=ReduceOnPlateau
 
     // Training plot panel (for progress visualization)
     cyxwiz::TrainingPlotPanel* training_plot_panel_ = nullptr;
@@ -148,6 +160,18 @@ private:
     int image_target_width_ = 224;     // Target image width for ImageCSV
     int image_target_height_ = 224;    // Target image height for ImageCSV
     int image_cache_size_ = 100;       // LRU cache size for lazy loading
+
+    // Popular datasets (unified HuggingFace/Kaggle)
+    int popular_dataset_source_ = 0;   // 0=HuggingFace, 1=Kaggle
+    int popular_dataset_index_ = 0;    // Selected dataset in dropdown
+    char dataset_search_buffer_[256] = "";  // Search query for external search
+
+    // Preview settings
+    int preview_view_mode_ = 0;        // 0=Single, 1=Grid, 2=Table
+    float preview_zoom_ = 1.0f;        // Image zoom level
+    int preview_grid_cols_ = 4;        // Grid columns
+    int preview_grid_rows_ = 4;        // Grid rows
+    int preview_table_rows_ = 20;      // Rows per page in table view
 
     // Class names (for visualization)
     std::vector<std::string> class_names_;
@@ -179,6 +203,11 @@ private:
         bool expanded = false;
     };
     std::vector<TransformUIState> transform_ui_states_;
+
+    // Notification state (for "Set as Active" feedback)
+    bool show_notification_ = false;
+    float notification_time_ = 0.0f;
+    std::string notification_message_;
 };
 
 } // namespace gui

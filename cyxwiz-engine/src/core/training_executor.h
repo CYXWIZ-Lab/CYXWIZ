@@ -5,9 +5,9 @@
 #include "data_registry.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/optimizer.h>
-#include <cyxwiz/layers/linear.h>
-#include <cyxwiz/activations/relu.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/losses/cross_entropy.h>
+#include <cyxwiz/losses/mse.h>
 #include <functional>
 #include <atomic>
 #include <mutex>
@@ -64,8 +64,8 @@ using TrainingCompleteCallback = std::function<void(const TrainingMetrics& final
  * TrainingExecutor - Executes ML training based on compiled graph configuration
  *
  * This class handles the actual training loop:
- * - Builds the model from TrainingConfiguration
- * - Creates optimizer
+ * - Builds the model DYNAMICALLY from TrainingConfiguration
+ * - Creates optimizer based on config
  * - Iterates over batches
  * - Performs forward/backward passes
  * - Updates weights
@@ -145,15 +145,24 @@ private:
     mutable std::mutex metrics_mutex_;
     TrainingMetrics metrics_;
 
-    // Training components
+    // Training components - DYNAMIC MODEL
+    std::unique_ptr<SequentialModel> model_;
     std::unique_ptr<Optimizer> optimizer_;
+    std::unique_ptr<CrossEntropyLoss> cross_entropy_loss_;
+    std::unique_ptr<MSELoss> mse_loss_;
 
     // Internal training methods
 
     /**
-     * Initialize the training components
+     * Initialize the training components by building model from config
      */
     bool Initialize(int batch_size);
+
+    /**
+     * Build the model dynamically from TrainingConfiguration
+     * Reads config.layers and creates corresponding modules
+     */
+    bool BuildModelFromConfig();
 
     /**
      * Run a single training epoch
@@ -187,7 +196,7 @@ private:
     float ComputeAccuracy(const Tensor& predictions, const Tensor& targets);
 
     /**
-     * Backward pass and parameter update
+     * Backward pass through the model
      */
     void Backward(const Tensor& predictions, const Tensor& targets);
 
@@ -211,34 +220,9 @@ private:
      */
     void WaitWhilePaused();
 
-    // MLP Model using cyxwiz-backend layers
-    struct BackendModel {
-        // Layers
-        std::unique_ptr<LinearLayer> fc1;  // Input -> Hidden
-        std::unique_ptr<ReLU> relu1;       // Activation
-        std::unique_ptr<LinearLayer> fc2;  // Hidden -> Output
-
-        // Loss function
-        std::unique_ptr<CrossEntropyLoss> loss_fn;
-
-        // Cached tensors for backward pass
-        Tensor input_cache;
-        Tensor fc1_output;
-        Tensor relu_output;
-        Tensor fc2_output;
-
-        size_t input_size = 0;
-        size_t hidden_size = 128;
-        size_t output_size = 0;
-
-        void Initialize(size_t input, size_t hidden, size_t output);
-        Tensor Forward(const Tensor& input);
-        float ComputeLoss(const Tensor& predictions, const Tensor& targets);
-        void Backward(const Tensor& predictions, const Tensor& targets);
-        void UpdateWeights(float learning_rate);
-    };
-
-    std::unique_ptr<BackendModel> model_;
+    // Cached tensors for backward pass
+    Tensor last_predictions_;
+    Tensor loss_gradient_;
 };
 
 } // namespace cyxwiz

@@ -275,11 +275,14 @@ src/
 - **Table Viewer**: Multi-tab data viewer for CSV/Excel/HDF5 files with async loading, pagination, filtering, and export
 - **Dataset Manager**: Dataset configuration with memory management (LRU eviction via TrimMemory), schema configuration for custom data formats
 - **Async Task System**: Background task execution with progress reporting via AsyncTaskManager
+- **Node Editor**: Visual ML pipeline builder with ImNodes, code generation (PyTorch, TensorFlow, Keras, PyCyxWiz), DataInput node shows loaded dataset name
+- **Data Augmentation**: 13 transform presets (ImageNet, CIFAR-10, Medical, Self-Supervised, etc.) with live preview
+- **Local Training**: TrainingExecutor with Sequential model support, real-time loss/accuracy plotting
+- **Properties Panel**: Dynamic shape inference for node connections, editable layer parameters
 
 **TODO Features** (marked in code):
-- ImNodes integration for visual node editor
 - Import/Export model formats (ONNX, PyTorch, TensorFlow)
-- Training controls (Start, Pause, Stop)
+- Training controls (Pause, Stop - Start implemented)
 - Server connection and job submission
 - Preferences/Settings dialog
 
@@ -609,18 +612,18 @@ cd vcpkg
 
 High-priority tasks marked with `// TODO:` throughout codebase:
 
-1. **ImNodes Integration** - Visual node editor in Engine (basic structure ready)
+1. ~~**ImNodes Integration**~~ - Visual node editor (DONE - full pipeline builder with code generation)
 2. ~~**ImPlot Integration**~~ - Real-time training plots (DONE - PlotWindow implemented)
-3. **btop Integration** - Server Node monitoring TUI
-4. **gRPC Services** - Full implementation of all services
-5. **Job Execution** - Complete job executor in Server Node
-6. **Blockchain Integration** - Solana payment processor
-7. **Authentication** - JWT tokens for gRPC (UI ready, API integration TODO)
-8. **Docker Support** - Containerized job execution
-9. **Model Marketplace** - NFT-based model sharing
-10. **Federated Learning** - Privacy-preserving training
-11. **Import/Export** - ONNX, PyTorch, TensorFlow model formats
-12. **Training Controls** - Start, Pause, Stop training with real-time feedback
+3. ~~**Training Controls**~~ - Start training with real-time feedback (DONE - Pause/Stop TODO)
+4. **btop Integration** - Server Node monitoring TUI
+5. **gRPC Services** - Full implementation of all services
+6. **Job Execution** - Complete job executor in Server Node
+7. **Blockchain Integration** - Solana payment processor
+8. **Authentication** - JWT tokens for gRPC (UI ready, API integration TODO)
+9. **Docker Support** - Containerized job execution
+10. **Model Marketplace** - NFT-based model sharing
+11. **Federated Learning** - Privacy-preserving training
+12. **Import/Export** - ONNX, PyTorch, TensorFlow model formats
 
 ## Quick Reference
 

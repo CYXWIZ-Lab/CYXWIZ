@@ -103,7 +103,9 @@ void ToolbarPanel::RenderTrainMenu() {
 void ToolbarPanel::RenderDatasetMenu() {
     if (ImGui::BeginMenu("Dataset")) {
         if (ImGui::MenuItem("Import Dataset...")) {
-            // TODO: Import dataset
+            if (import_dataset_callback_) {
+                import_dataset_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Create Custom Dataset...")) {

@@ -1,0 +1,321 @@
+#pragma once
+
+#include "api_export.h"
+#include "tensor.h"
+#include "layer.h"
+#include "activation.h"
+#include "optimizer.h"
+#include "layers/linear.h"
+#include "activations/relu.h"
+#include "activations/sigmoid.h"
+#include "activations/tanh.h"
+#include <vector>
+#include <memory>
+#include <string>
+#include <variant>
+#include <functional>
+
+namespace cyxwiz {
+
+/**
+ * @brief Module types that can be added to a SequentialModel
+ */
+enum class ModuleType {
+    Linear,
+    ReLU,
+    Sigmoid,
+    Tanh,
+    Softmax,
+    Dropout,
+    BatchNorm,
+    Flatten
+};
+
+/**
+ * @brief A wrapper for any layer or activation that provides a uniform interface
+ */
+class CYXWIZ_API Module {
+public:
+    virtual ~Module() = default;
+
+    /**
+     * @brief Forward pass
+     * @param input Input tensor
+     * @return Output tensor
+     */
+    virtual Tensor Forward(const Tensor& input) = 0;
+
+    /**
+     * @brief Backward pass
+     * @param grad_output Gradient from next layer
+     * @return Gradient w.r.t input
+     */
+    virtual Tensor Backward(const Tensor& grad_output) = 0;
+
+    /**
+     * @brief Get trainable parameters
+     * @return Map of parameter name -> tensor (empty if no parameters)
+     */
+    virtual std::map<std::string, Tensor> GetParameters() { return {}; }
+
+    /**
+     * @brief Set trainable parameters
+     * @param params Map of parameter name -> tensor
+     */
+    virtual void SetParameters(const std::map<std::string, Tensor>& params) {}
+
+    /**
+     * @brief Get parameter gradients
+     * @return Map of parameter name -> gradient tensor (empty if no parameters)
+     */
+    virtual std::map<std::string, Tensor> GetGradients() { return {}; }
+
+    /**
+     * @brief Check if module has trainable parameters
+     */
+    virtual bool HasParameters() const { return false; }
+
+    /**
+     * @brief Get module name for debugging
+     */
+    virtual std::string GetName() const = 0;
+
+    /**
+     * @brief Set training mode (affects Dropout, BatchNorm)
+     */
+    virtual void SetTraining(bool training) { is_training_ = training; }
+
+    bool IsTraining() const { return is_training_; }
+
+protected:
+    bool is_training_ = true;
+    Tensor input_cache_;  // Cached input for backward pass
+};
+
+/**
+ * @brief Wrapper for LinearLayer
+ */
+class CYXWIZ_API LinearModule : public Module {
+public:
+    LinearModule(size_t in_features, size_t out_features, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<LinearLayer> layer_;
+    size_t in_features_;
+    size_t out_features_;
+};
+
+/**
+ * @brief Wrapper for ReLU activation
+ */
+class CYXWIZ_API ReLUModule : public Module {
+public:
+    ReLUModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "ReLU"; }
+
+private:
+    std::unique_ptr<ReLU> activation_;
+};
+
+/**
+ * @brief Wrapper for Sigmoid activation
+ */
+class CYXWIZ_API SigmoidModule : public Module {
+public:
+    SigmoidModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Sigmoid"; }
+
+private:
+    std::unique_ptr<Sigmoid> activation_;
+};
+
+/**
+ * @brief Wrapper for Tanh activation
+ */
+class CYXWIZ_API TanhModule : public Module {
+public:
+    TanhModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Tanh"; }
+
+private:
+    std::unique_ptr<Tanh> activation_;
+};
+
+/**
+ * @brief Softmax activation module
+ */
+class CYXWIZ_API SoftmaxModule : public Module {
+public:
+    SoftmaxModule(int dim = -1);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Softmax"; }
+
+private:
+    int dim_;
+    Tensor output_cache_;  // Cache softmax output for backward
+};
+
+/**
+ * @brief Dropout module for regularization
+ */
+class CYXWIZ_API DropoutModule : public Module {
+public:
+    DropoutModule(float p = 0.5f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    float p_;  // Dropout probability
+    Tensor mask_;  // Dropout mask for backward
+};
+
+/**
+ * @brief Flatten module - reshapes input to [batch, features]
+ */
+class CYXWIZ_API FlattenModule : public Module {
+public:
+    FlattenModule(int start_dim = 1);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Flatten"; }
+
+private:
+    int start_dim_;
+    std::vector<size_t> original_shape_;  // For backward reshape
+};
+
+/**
+ * @brief Sequential model - a container for ordered layers
+ *
+ * Example:
+ *   SequentialModel model;
+ *   model.Add<LinearModule>(784, 128);
+ *   model.Add<ReLUModule>();
+ *   model.Add<LinearModule>(128, 10);
+ */
+class CYXWIZ_API SequentialModel {
+public:
+    SequentialModel() = default;
+    ~SequentialModel() = default;
+
+    // Non-copyable
+    SequentialModel(const SequentialModel&) = delete;
+    SequentialModel& operator=(const SequentialModel&) = delete;
+
+    // Movable
+    SequentialModel(SequentialModel&&) = default;
+    SequentialModel& operator=(SequentialModel&&) = default;
+
+    /**
+     * @brief Add a module to the sequence
+     * @tparam T Module type (LinearModule, ReLUModule, etc.)
+     * @tparam Args Constructor arguments for the module
+     */
+    template<typename T, typename... Args>
+    void Add(Args&&... args) {
+        modules_.push_back(std::make_unique<T>(std::forward<Args>(args)...));
+    }
+
+    /**
+     * @brief Add a pre-created module
+     */
+    void AddModule(std::unique_ptr<Module> module) {
+        modules_.push_back(std::move(module));
+    }
+
+    /**
+     * @brief Forward pass through all layers
+     * @param input Input tensor
+     * @return Output tensor
+     */
+    Tensor Forward(const Tensor& input);
+
+    /**
+     * @brief Backward pass through all layers (reverse order)
+     * @param grad_output Gradient from loss function
+     * @return Gradient w.r.t input (usually not needed)
+     */
+    Tensor Backward(const Tensor& grad_output);
+
+    /**
+     * @brief Get all trainable parameters
+     * @return Map of "layer_idx.param_name" -> tensor
+     */
+    std::map<std::string, Tensor> GetParameters();
+
+    /**
+     * @brief Set all trainable parameters
+     * @param params Map of "layer_idx.param_name" -> tensor
+     */
+    void SetParameters(const std::map<std::string, Tensor>& params);
+
+    /**
+     * @brief Get all parameter gradients
+     * @return Map of "layer_idx.param_name" -> gradient tensor
+     */
+    std::map<std::string, Tensor> GetGradients();
+
+    /**
+     * @brief Apply optimizer to all parameters
+     * @param optimizer Optimizer to use
+     */
+    void UpdateParameters(Optimizer* optimizer);
+
+    /**
+     * @brief Set training mode for all modules
+     */
+    void SetTraining(bool training);
+
+    /**
+     * @brief Get number of modules
+     */
+    size_t Size() const { return modules_.size(); }
+
+    /**
+     * @brief Get module at index
+     */
+    Module* GetModule(size_t index) {
+        return index < modules_.size() ? modules_[index].get() : nullptr;
+    }
+
+    /**
+     * @brief Print model summary
+     */
+    void Summary() const;
+
+private:
+    std::vector<std::unique_ptr<Module>> modules_;
+    std::vector<Tensor> intermediate_outputs_;  // Cached for backward pass
+};
+
+/**
+ * @brief Factory function to create a module from type enum
+ */
+CYXWIZ_API std::unique_ptr<Module> CreateModule(
+    ModuleType type,
+    const std::map<std::string, std::string>& params = {}
+);
+
+} // namespace cyxwiz
