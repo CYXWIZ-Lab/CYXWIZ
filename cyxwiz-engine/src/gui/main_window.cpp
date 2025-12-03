@@ -5,6 +5,7 @@
 #include "properties.h"
 #include "dock_style.h"
 #include "icons.h"
+#include "theme.h"
 #include "panels/dataset_panel.h"
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
@@ -105,11 +106,25 @@ MainWindow::MainWindow()
         this->SaveProjectSettings();
     });
 
+    // When app theme changes from View menu, save settings immediately
+    toolbar_->SetAppThemeChangedCallback([this](int theme_index) {
+        auto& pm = cyxwiz::ProjectManager::Instance();
+        if (pm.HasActiveProject()) {
+            pm.GetConfig().editor_settings.app_theme = theme_index;
+            pm.SaveProject();
+            spdlog::info("App theme saved to project: {}", theme_index);
+        }
+    });
+
     toolbar_->SetTogglePlotTestControlCallback([this]() {
         if (plot_test_control_) {
             plot_test_control_->Toggle();
         }
     });
+
+    // Set minimap visibility pointers for View -> Minimaps menu
+    toolbar_->SetNodeEditorMinimapPtr(node_editor_->GetShowMinimapPtr());
+    toolbar_->SetScriptEditorMinimapPtr(script_editor_->GetShowMinimapPtr());
 
     // Register callbacks with ProjectManager for project lifecycle events
     cyxwiz::ProjectManager::Instance().SetOnProjectOpened([this](const std::string& project_root) {
@@ -360,7 +375,7 @@ MainWindow::MainWindow()
         toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
 
         // Set up callback for when settings change in Script Editor (View menu)
-        // This syncs changes back to the Preferences dialog
+        // This syncs changes back to the Preferences dialog and saves to project
         script_editor_->SetOnSettingsChangedCallback([this]() {
             if (toolbar_ && script_editor_) {
                 toolbar_->SetEditorTheme(script_editor_->GetThemeIndex());
@@ -370,6 +385,8 @@ MainWindow::MainWindow()
                 toolbar_->SetEditorWordWrap(script_editor_->GetWordWrap());
                 toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
             }
+            // Save settings to project file immediately
+            SaveProjectSettings();
         });
     }
 
@@ -671,10 +688,13 @@ void MainWindow::RenderDockSpace() {
     static bool opt_padding = false;
     static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
 
-    // Always get viewport to fill the available space
+    // Status bar height constant - must match RenderStatusBar()
+    const float status_bar_height = 24.0f;
+
+    // Always get viewport to fill the available space, minus status bar
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, viewport->WorkSize.y - status_bar_height));
     ImGui::SetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
@@ -1079,6 +1099,10 @@ void MainWindow::SaveProjectSettings() {
         settings.show_whitespace = script_editor_->GetShowWhitespace();
     }
 
+    // Save application-wide settings
+    settings.app_theme = static_cast<int>(GetTheme().GetCurrentPreset());
+    settings.ui_scale = ImGui::GetIO().FontGlobalScale;
+
     // Save layout file
     SaveLayout();
 
@@ -1110,6 +1134,15 @@ void MainWindow::LoadProjectSettings() {
         toolbar_->SetEditorFontScale(settings.font_scale);
         toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
     }
+
+    // Apply application theme
+    if (settings.app_theme >= 0 && settings.app_theme < static_cast<int>(ThemePreset::COUNT)) {
+        GetTheme().ApplyPreset(static_cast<ThemePreset>(settings.app_theme));
+        spdlog::info("Loaded app theme from project: {}", settings.app_theme);
+    }
+
+    // Apply UI scale
+    ImGui::GetIO().FontGlobalScale = settings.ui_scale;
 
     // Load layout file
     LoadLayout();

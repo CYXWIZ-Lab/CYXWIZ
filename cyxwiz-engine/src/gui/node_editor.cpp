@@ -2,6 +2,7 @@
 #include "panels/script_editor.h"
 #include "properties.h"
 #include "../core/data_registry.h"
+#include "../core/training_manager.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -10,6 +11,7 @@
 #include <set>
 #include <queue>
 #include <functional>
+#include <cmath>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #ifdef _WIN32
@@ -199,6 +201,11 @@ NodeEditor::~NodeEditor() {
 void NodeEditor::Render() {
     if (!show_window_) return;
 
+    // Update training animation time
+    if (is_training_) {
+        training_animation_time_ += ImGui::GetIO().DeltaTime;
+    }
+
     // Set the editor context for this node editor instance
     ImNodes::EditorContextSet(editor_context_);
 
@@ -207,12 +214,26 @@ void NodeEditor::Render() {
 
         ImGui::Separator();
 
+        // Check if mouse is over minimap (using stored bounds from previous frame)
+        // This needs to be done before ImNodes::BeginNodeEditor to prevent canvas panning
+        ImVec2 mouse_pos = ImGui::GetMousePos();
+        bool mouse_in_minimap_bounds = show_minimap_ &&
+            mouse_pos.x >= minimap_screen_min_.x && mouse_pos.x <= minimap_screen_max_.x &&
+            mouse_pos.y >= minimap_screen_min_.y && mouse_pos.y <= minimap_screen_max_.y;
+
+        // If mouse is in minimap or minimap is being navigated, temporarily consume mouse input
+        // This prevents ImNodes from handling panning when we're working with the minimap
+        if (mouse_in_minimap_bounds || minimap_navigating_) {
+            // Mark mouse as captured so ImNodes doesn't process canvas panning
+            ImGui::GetIO().WantCaptureMouse = true;
+        }
+
         ImNodes::BeginNodeEditor();
 
         RenderNodes();
 
-        // Handle mouse wheel zoom
-        if (ImGui::IsWindowHovered()) {
+        // Handle mouse wheel zoom (skip if mouse is over minimap)
+        if (ImGui::IsWindowHovered() && !mouse_in_minimap_bounds) {
             float wheel = ImGui::GetIO().MouseWheel;
             if (wheel != 0.0f) {
                 // Zoom by adjusting the panning offset
@@ -226,17 +247,19 @@ void NodeEditor::Render() {
             }
         }
 
-        // Handle right-click context menu
-        if (ImNodes::IsEditorHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            // Store mouse position for node placement
-            // Convert from screen space to grid space manually
-            ImVec2 mouse_pos = ImGui::GetMousePos();
-            ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+        // Handle right-click context menu (skip if mouse is over minimap)
+        if (ImNodes::IsEditorHovered() && !mouse_in_minimap_bounds && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            // Store mouse position for node placement in grid space
+            // The editor origin is at the window content region start
+            ImVec2 editor_origin = ImGui::GetWindowPos();
+            editor_origin.y += ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 30.0f;  // Account for title bar and toolbar
+            editor_origin.x += ImGui::GetStyle().WindowPadding.x;
             ImVec2 panning = ImNodes::EditorContextGetPanning();
 
+            // Convert screen position to grid space
             context_menu_pos_ = ImVec2(
-                mouse_pos.x - canvas_pos.x - panning.x,
-                mouse_pos.y - canvas_pos.y - panning.y
+                mouse_pos.x - editor_origin.x - panning.x,
+                mouse_pos.y - editor_origin.y - panning.y
             );
 
             ImGui::OpenPopup("NodeContextMenu");
@@ -249,19 +272,26 @@ void NodeEditor::Render() {
 
         ImNodes::EndNodeEditor();
 
+        // Render minimap overlay in bottom-right corner
+        if (show_minimap_) {
+            RenderMinimap();
+        }
+
         // Process any pending node additions (deferred to avoid modifying nodes_ during ImNodes rendering)
         for (const auto& pending : pending_nodes_) {
             MLNode node = CreateNode(pending.type, pending.name);
-            spdlog::info("Creating deferred node: type={}, name={}, id={} at grid position x={} y={}",
-                        static_cast<int>(pending.type), pending.name, node.id,
-                        pending.position.x, pending.position.y);
 
             nodes_.push_back(node);
 
             // Set node position to where the context menu was opened
             ImNodes::SetNodeGridSpacePos(node.id, pending.position);
 
-            spdlog::info("Added node: {} (ID: {}) at position x={} y={}",
+            // Select the newly created node so it's highlighted
+            ImNodes::ClearNodeSelection();
+            ImNodes::SelectNode(node.id);
+            selected_node_id_ = node.id;
+
+            spdlog::info("Added node: {} (ID: {}) at position ({}, {})",
                         pending.name, node.id, pending.position.x, pending.position.y);
         }
         pending_nodes_.clear();
@@ -383,6 +413,408 @@ void NodeEditor::ShowToolbar() {
     if (ImGui::Button("Export Code")) {
         ShowExportDialog();
     }
+
+    // Training controls
+    ImGui::SameLine();
+    ImGui::Text("|");
+    ImGui::SameLine();
+
+    // Check training state from TrainingManager
+    auto& training_mgr = cyxwiz::TrainingManager::Instance();
+    bool training_active = training_mgr.IsTrainingActive();
+
+    if (training_active) {
+        // Show training progress and stop button
+        auto metrics = training_mgr.GetCurrentMetrics();
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Training... Epoch %d/%d",
+            metrics.current_epoch, metrics.total_epochs);
+        ImGui::SameLine();
+        if (ImGui::Button("Stop Training")) {
+            training_mgr.StopTraining();
+        }
+    } else {
+        // Train button - green when valid, disabled when invalid
+        bool can_train = IsGraphValid() && train_callback_;
+        if (!can_train) {
+            ImGui::BeginDisabled();
+        }
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
+        if (ImGui::Button("Train Model")) {
+            if (train_callback_) {
+                spdlog::info("NodeEditor: Starting training from graph");
+                train_callback_(nodes_, links_);
+            }
+        }
+        ImGui::PopStyleColor(3);
+
+        if (!can_train) {
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (!train_callback_) {
+                    ImGui::SetTooltip("Training callback not set (no dataset loaded?)");
+                } else {
+                    ImGui::SetTooltip("Graph is not valid for training. Need: DatasetInput -> Model layers -> Loss");
+                }
+            }
+        }
+    }
+}
+
+void NodeEditor::RenderMinimap() {
+    if (nodes_.empty()) return;
+
+    // Get parent window position and size for calculating minimap position
+    ImVec2 parent_window_pos = ImGui::GetWindowPos();
+    ImVec2 parent_window_size = ImGui::GetWindowSize();
+
+    // Get content region to properly account for toolbar/title bar
+    ImVec2 content_min = ImGui::GetWindowContentRegionMin();
+    ImVec2 content_max = ImGui::GetWindowContentRegionMax();
+    // Additional offset for the toolbar and separator rendered before the node canvas
+    float toolbar_offset = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 10.0f;
+    float content_top = parent_window_pos.y + content_min.y + toolbar_offset;
+    float content_bottom = parent_window_pos.y + content_max.y;
+    float content_left = parent_window_pos.x + content_min.x;
+    float content_right = parent_window_pos.x + content_max.x;
+
+    // Define corner positions
+    const float padding = 10.0f;
+
+    auto getCornerPos = [&](MinimapPosition pos) -> ImVec2 {
+        switch (pos) {
+            case MinimapPosition::TopLeft:
+                return ImVec2(content_left + padding, content_top + padding);
+            case MinimapPosition::TopRight:
+                return ImVec2(content_right - minimap_size_.x - padding, content_top + padding);
+            case MinimapPosition::BottomLeft:
+                return ImVec2(content_left + padding, content_bottom - minimap_size_.y - padding);
+            case MinimapPosition::BottomRight:
+            default:
+                return ImVec2(content_right - minimap_size_.x - padding, content_bottom - minimap_size_.y - padding);
+        }
+    };
+
+    // Calculate minimap position (always use fixed corner position)
+    ImVec2 minimap_pos = getCornerPos(minimap_position_);
+
+    // Set next window position and create a floating window for the minimap
+    ImGui::SetNextWindowPos(minimap_pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(minimap_size_, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.14f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.20f, 0.20f, 0.22f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.31f, 0.31f, 0.35f, 1.0f));
+
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
+                                    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
+                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                                    ImGuiWindowFlags_NoMove;  // We handle movement manually
+
+    
+    if (ImGui::Begin("##MinimapWindow", &show_minimap_, window_flags)) {
+        // Get the draw list for this window
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        ImVec2 window_pos = ImGui::GetWindowPos();
+        ImVec2 window_size = ImGui::GetWindowSize();
+
+        // Store screen-space bounds for input blocking in Render()
+        minimap_screen_min_ = window_pos;
+        minimap_screen_max_ = ImVec2(window_pos.x + window_size.x, window_pos.y + window_size.y);
+
+        // Check if mouse is over minimap window (for external use)
+        ImVec2 mouse_pos = ImGui::GetMousePos();
+        mouse_over_minimap_ = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+
+        // Add invisible button covering the entire window to capture all mouse input
+        // This prevents mouse events from passing through to the node editor canvas
+        ImGui::SetCursorPos(ImVec2(0, 0));
+        ImGui::InvisibleButton("##MinimapInputCapture", window_size);
+
+    // Calculate bounding box of all nodes in grid space
+    float min_x = FLT_MAX, min_y = FLT_MAX;
+    float max_x = -FLT_MAX, max_y = -FLT_MAX;
+
+    for (const auto& node : nodes_) {
+        ImVec2 node_pos = ImNodes::GetNodeGridSpacePos(node.id);
+        ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+
+        min_x = std::min(min_x, node_pos.x);
+        min_y = std::min(min_y, node_pos.y);
+        max_x = std::max(max_x, node_pos.x + node_dims.x);
+        max_y = std::max(max_y, node_pos.y + node_dims.y);
+    }
+
+    // Add padding to bounds
+    const float bounds_padding = 100.0f;
+    min_x -= bounds_padding;
+    min_y -= bounds_padding;
+    max_x += bounds_padding;
+    max_y += bounds_padding;
+
+    float graph_width = max_x - min_x;
+    float graph_height = max_y - min_y;
+
+    // Calculate scale to fit graph in minimap
+    float scale_x = (minimap_size_.x - 4.0f) / graph_width;
+    float scale_y = (minimap_size_.y - 4.0f) / graph_height;
+    float scale = std::min(scale_x, scale_y);
+
+    // Center the graph in minimap content area
+    float offset_x = (window_size.x - graph_width * scale) * 0.5f;
+    float offset_y = (window_size.y - graph_height * scale) * 0.5f;
+
+    // Lambda to convert grid space to minimap space
+    auto gridToMinimap = [&](ImVec2 grid_pos) -> ImVec2 {
+        return ImVec2(
+            window_pos.x + offset_x + (grid_pos.x - min_x) * scale,
+            window_pos.y + offset_y + (grid_pos.y - min_y) * scale
+        );
+    };
+
+    // Minimap content area rect (window already provides background)
+    ImVec2 minimap_content_min = window_pos;
+    ImVec2 minimap_content_max = ImVec2(window_pos.x + window_size.x, window_pos.y + window_size.y);
+
+    // Draw links first (underneath nodes)
+    for (const auto& link : links_) {
+        // Find source and destination nodes
+        const MLNode* from_node = nullptr;
+        const MLNode* to_node = nullptr;
+        ImVec2 from_pos, to_pos;
+
+        for (const auto& node : nodes_) {
+            // Check output pins for source
+            for (const auto& pin : node.outputs) {
+                if (pin.id == link.from_pin) {
+                    from_node = &node;
+                    ImVec2 node_pos = ImNodes::GetNodeGridSpacePos(node.id);
+                    ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+                    from_pos = ImVec2(node_pos.x + node_dims.x, node_pos.y + node_dims.y * 0.5f);
+                    break;
+                }
+            }
+            // Check input pins for destination
+            for (const auto& pin : node.inputs) {
+                if (pin.id == link.to_pin) {
+                    to_node = &node;
+                    ImVec2 node_pos = ImNodes::GetNodeGridSpacePos(node.id);
+                    ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+                    to_pos = ImVec2(node_pos.x, node_pos.y + node_dims.y * 0.5f);
+                    break;
+                }
+            }
+            if (from_node && to_node) break;
+        }
+
+        if (from_node && to_node) {
+            ImVec2 mm_from = gridToMinimap(from_pos);
+            ImVec2 mm_to = gridToMinimap(to_pos);
+            draw_list->AddLine(mm_from, mm_to, IM_COL32(150, 150, 150, 150), 1.0f);
+        }
+    }
+
+    // Draw nodes
+    for (const auto& node : nodes_) {
+        ImVec2 node_pos = ImNodes::GetNodeGridSpacePos(node.id);
+        ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+
+        ImVec2 mm_pos = gridToMinimap(node_pos);
+        ImVec2 mm_size = ImVec2(
+            std::max(4.0f, node_dims.x * scale),
+            std::max(3.0f, node_dims.y * scale)
+        );
+
+        // Get node color based on type
+        unsigned int color = GetNodeColor(node.type);
+        ImU32 fill_color = IM_COL32(
+            (color >> 0) & 0xFF,
+            (color >> 8) & 0xFF,
+            (color >> 16) & 0xFF,
+            200
+        );
+
+        // Check if node is selected
+        bool is_selected = (node.id == selected_node_id_);
+
+        draw_list->AddRectFilled(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), fill_color, 2.0f);
+
+        if (is_selected) {
+            draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), IM_COL32(255, 255, 100, 255), 2.0f, 0, 2.0f);
+        }
+    }
+
+    // Draw viewport rectangle
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    ImVec2 canvas_size = ImGui::GetContentRegionAvail();
+
+    // Viewport in grid space (note: panning is negated)
+    ImVec2 viewport_min_grid = ImVec2(-panning.x, -panning.y);
+    ImVec2 viewport_max_grid = ImVec2(-panning.x + canvas_size.x, -panning.y + canvas_size.y);
+
+    ImVec2 viewport_mm_min = gridToMinimap(viewport_min_grid);
+    ImVec2 viewport_mm_max = gridToMinimap(viewport_max_grid);
+
+    // Clamp viewport rect to minimap bounds
+    viewport_mm_min.x = std::max(viewport_mm_min.x, window_pos.x);
+    viewport_mm_min.y = std::max(viewport_mm_min.y, window_pos.y);
+    viewport_mm_max.x = std::min(viewport_mm_max.x, window_pos.x + window_size.x);
+    viewport_mm_max.y = std::min(viewport_mm_max.y, window_pos.y + window_size.y);
+
+    // Draw semi-transparent viewport indicator
+    draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, IM_COL32(100, 150, 255, 40));
+    draw_list->AddRect(viewport_mm_min, viewport_mm_max, IM_COL32(100, 150, 255, 200), 0.0f, 0, 1.5f);
+
+    // Handle mouse interaction with minimap using the window system
+    // mouse_pos already declared above, just refresh it
+    mouse_pos = ImGui::GetMousePos();
+    bool mouse_in_minimap = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+
+    // Handle ongoing navigation drag
+    if (minimap_navigating_) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            // Convert minimap position to grid position
+            float rel_x = (mouse_pos.x - window_pos.x - offset_x) / scale + min_x;
+            float rel_y = (mouse_pos.y - window_pos.y - offset_y) / scale + min_y;
+
+            // Center viewport on clicked position
+            ImVec2 new_panning = ImVec2(
+                -(rel_x - canvas_size.x * 0.5f),
+                -(rel_y - canvas_size.y * 0.5f)
+            );
+
+            ImNodes::EditorContextResetPanning(new_panning);
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        } else {
+            minimap_navigating_ = false;
+        }
+    }
+
+    // Handle interactions when mouse is in minimap window
+    if (mouse_in_minimap && !minimap_navigating_) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+
+        // Draw crosshair at mouse position
+        const float crosshair_size = 8.0f;
+        ImU32 crosshair_color = IM_COL32(255, 255, 255, 200);
+
+        draw_list->AddLine(
+            ImVec2(mouse_pos.x - crosshair_size, mouse_pos.y),
+            ImVec2(mouse_pos.x + crosshair_size, mouse_pos.y),
+            crosshair_color, 1.5f
+        );
+        draw_list->AddLine(
+            ImVec2(mouse_pos.x, mouse_pos.y - crosshair_size),
+            ImVec2(mouse_pos.x, mouse_pos.y + crosshair_size),
+            crosshair_color, 1.5f
+        );
+        draw_list->AddCircleFilled(mouse_pos, 2.0f, crosshair_color);
+
+        // Handle left-click for navigation
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            minimap_navigating_ = true;
+
+            // Convert minimap position to grid position
+            float rel_x = (mouse_pos.x - window_pos.x - offset_x) / scale + min_x;
+            float rel_y = (mouse_pos.y - window_pos.y - offset_y) / scale + min_y;
+
+            // Center viewport on clicked position
+            ImVec2 new_panning = ImVec2(
+                -(rel_x - canvas_size.x * 0.5f),
+                -(rel_y - canvas_size.y * 0.5f)
+            );
+
+            ImNodes::EditorContextResetPanning(new_panning);
+        }
+
+        // Show tooltip
+        if (!minimap_navigating_) {
+            ImGui::BeginTooltip();
+            ImGui::Text("Click to navigate | Right-click: options");
+            ImGui::EndTooltip();
+        }
+
+        // Right-click context menu
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            ImGui::OpenPopup("MinimapContextMenu");
+        }
+    }
+
+    // Render minimap context menu
+    if (ImGui::BeginPopup("MinimapContextMenu")) {
+        ImGui::Text("Minimap Position");
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Top Left", nullptr, minimap_position_ == MinimapPosition::TopLeft)) {
+            minimap_position_ = MinimapPosition::TopLeft;
+        }
+        if (ImGui::MenuItem("Top Right", nullptr, minimap_position_ == MinimapPosition::TopRight)) {
+            minimap_position_ = MinimapPosition::TopRight;
+        }
+        if (ImGui::MenuItem("Bottom Left", nullptr, minimap_position_ == MinimapPosition::BottomLeft)) {
+            minimap_position_ = MinimapPosition::BottomLeft;
+        }
+        if (ImGui::MenuItem("Bottom Right", nullptr, minimap_position_ == MinimapPosition::BottomRight)) {
+            minimap_position_ = MinimapPosition::BottomRight;
+        }
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Hide Minimap")) {
+            show_minimap_ = false;
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // Draw navigation arrows when not hovered (visual hint)
+    if (!mouse_in_minimap) {
+        const float arrow_size = 6.0f;
+        const float arrow_padding = 6.0f;
+        ImU32 arrow_color = IM_COL32(120, 120, 130, 150);
+
+        // Draw 4-way arrow icon at bottom right corner
+        ImVec2 icon_pos = ImVec2(
+            window_pos.x + window_size.x - arrow_padding - arrow_size,
+            window_pos.y + window_size.y - arrow_padding - arrow_size
+        );
+
+        // Up arrow
+        draw_list->AddTriangleFilled(
+            ImVec2(icon_pos.x, icon_pos.y - arrow_size),
+            ImVec2(icon_pos.x - 3.0f, icon_pos.y - 2.0f),
+            ImVec2(icon_pos.x + 3.0f, icon_pos.y - 2.0f),
+            arrow_color
+        );
+        // Down arrow
+        draw_list->AddTriangleFilled(
+            ImVec2(icon_pos.x, icon_pos.y + arrow_size),
+            ImVec2(icon_pos.x - 3.0f, icon_pos.y + 2.0f),
+            ImVec2(icon_pos.x + 3.0f, icon_pos.y + 2.0f),
+            arrow_color
+        );
+        // Left arrow
+        draw_list->AddTriangleFilled(
+            ImVec2(icon_pos.x - arrow_size, icon_pos.y),
+            ImVec2(icon_pos.x - 2.0f, icon_pos.y - 3.0f),
+            ImVec2(icon_pos.x - 2.0f, icon_pos.y + 3.0f),
+            arrow_color
+        );
+        // Right arrow
+        draw_list->AddTriangleFilled(
+            ImVec2(icon_pos.x + arrow_size, icon_pos.y),
+            ImVec2(icon_pos.x + 2.0f, icon_pos.y - 3.0f),
+            ImVec2(icon_pos.x + 2.0f, icon_pos.y + 3.0f),
+            arrow_color
+        );
+    }
+    }  // End ImGui::Begin("##MinimapWindow")
+    ImGui::End();
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(2);
 }
 
 void NodeEditor::RenderNodes() {
@@ -549,9 +981,34 @@ void NodeEditor::RenderNodes() {
         ImNodes::PopColorStyle();
     }
 
-    // Render all links
+    // Render all links with training animation if active
     for (const auto& link : links_) {
-        ImNodes::Link(link.id, link.from_pin, link.to_pin);
+        if (is_training_) {
+            // Create pulsing amber/green effect during training
+            // Pulse frequency: ~2 Hz (full cycle every 0.5 seconds)
+            float pulse = (std::sin(training_animation_time_ * 12.0f + link.id * 0.5f) + 1.0f) * 0.5f;
+
+            // Interpolate between amber (255, 191, 0) and green (0, 255, 100)
+            float r = 255.0f * (1.0f - pulse) + 0.0f * pulse;
+            float g = 191.0f * (1.0f - pulse) + 255.0f * pulse;
+            float b = 0.0f * (1.0f - pulse) + 100.0f * pulse;
+
+            ImU32 link_color = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 255);
+            ImU32 link_hovered = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 200);
+            ImU32 link_selected = IM_COL32(255, 255, 255, 255);
+
+            ImNodes::PushColorStyle(ImNodesCol_Link, link_color);
+            ImNodes::PushColorStyle(ImNodesCol_LinkHovered, link_hovered);
+            ImNodes::PushColorStyle(ImNodesCol_LinkSelected, link_selected);
+
+            ImNodes::Link(link.id, link.from_pin, link.to_pin);
+
+            ImNodes::PopColorStyle();
+            ImNodes::PopColorStyle();
+            ImNodes::PopColorStyle();
+        } else {
+            ImNodes::Link(link.id, link.from_pin, link.to_pin);
+        }
     }
 }
 
@@ -603,6 +1060,16 @@ void NodeEditor::HandleInteractions() {
         spdlog::info("Deleting {} selected nodes", num_selected_nodes);
         for (int node_id : selected_nodes) {
             DeleteNode(node_id);
+        }
+
+        // Clear selection after deletion to prevent stale node IDs
+        ImNodes::ClearNodeSelection();
+        ImNodes::ClearLinkSelection();
+        selected_node_id_ = -1;
+
+        // Also clear properties panel
+        if (properties_panel_) {
+            properties_panel_->ClearSelection();
         }
     }
 }
@@ -2111,6 +2578,37 @@ bool NodeEditor::ValidateGraph(std::string& error_message) {
     return true;
 }
 
+bool NodeEditor::IsGraphValid() const {
+    // Quick check for training readiness
+    // Need: DatasetInput node, at least one model layer, and a loss node
+    if (nodes_.empty()) return false;
+
+    bool has_dataset_input = false;
+    bool has_loss = false;
+    bool has_model_layer = false;
+
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::DatasetInput) has_dataset_input = true;
+        if (node.type == NodeType::CrossEntropyLoss || node.type == NodeType::MSELoss) has_loss = true;
+        if (node.type == NodeType::Dense || node.type == NodeType::Conv2D) has_model_layer = true;
+    }
+
+    // For training we need: dataset input, model layers, and loss
+    return has_dataset_input && has_model_layer && has_loss;
+}
+
+void NodeEditor::UpdateDatasetNodeName(const std::string& dataset_name) {
+    // Find the first DatasetInput node and update its name
+    for (auto& node : nodes_) {
+        if (node.type == NodeType::DatasetInput) {
+            node.name = dataset_name + " Dataset";
+            node.parameters["dataset_name"] = dataset_name;
+            spdlog::info("Updated DatasetInput node name to: {}", node.name);
+            break;
+        }
+    }
+}
+
 bool NodeEditor::HasCycle() {
     // Build adjacency list
     std::map<int, std::vector<int>> adj;
@@ -2222,7 +2720,8 @@ bool NodeEditor::AllNodesReachable() {
 
 bool NodeEditor::HasInputNode() {
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::Input) {
+        // Both Input and DatasetInput are valid input sources for the graph
+        if (node.type == NodeType::Input || node.type == NodeType::DatasetInput) {
             return true;
         }
     }
@@ -2395,7 +2894,7 @@ void NodeEditor::ShowSaveDialog() {
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "CyxWiz Graph Files\0*.cyxwiz\0All Files\0*.*\0";
+    ofn.lpstrFilter = "CyxWiz Graph Files\0*.cyxgraph\0All Files\0*.*\0";
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = sizeof(szFile);
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
@@ -2416,7 +2915,7 @@ void NodeEditor::ShowLoadDialog() {
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "CyxWiz Graph Files\0*.cyxwiz\0All Files\0*.*\0";
+    ofn.lpstrFilter = "CyxWiz Graph Files\0*.cyxgraph\0All Files\0*.*\0";
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = sizeof(szFile);
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
@@ -2561,11 +3060,11 @@ void NodeEditor::ShowExportDialog() {
 #else
 // For non-Windows platforms, implement later or use a cross-platform dialog library
 void NodeEditor::ShowSaveDialog() {
-    SaveGraph("model.cyxwiz");
+    SaveGraph("model.cyxgraph");
 }
 
 void NodeEditor::ShowLoadDialog() {
-    LoadGraph("model.cyxwiz");
+    LoadGraph("model.cyxgraph");
 }
 
 void NodeEditor::ShowExportDialog() {

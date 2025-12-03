@@ -2,6 +2,7 @@
 #include <imgui.h>
 #include <cstring>
 #include <algorithm>
+#include <sstream>
 
 namespace gui {
 
@@ -10,6 +11,8 @@ Console::Console()
     , show_window_(true)
     , auto_scroll_(true)
     , selected_tab_(0)
+    , show_copy_notification_(false)
+    , copy_notification_time_(0.0f)
 {
     memset(input_buf_, 0, sizeof(input_buf_));
     // Note: Cannot call AddInfo() here as ImGui::GetTime() requires an active ImGui frame
@@ -36,11 +39,28 @@ void Console::Render() {
             Clear();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Copy")) {
-            ImGui::LogToClipboard();
+        if (ImGui::Button("Copy All")) {
+            CopyAllLogs();
+            ShowCopyNotification();
         }
         ImGui::SameLine();
         ImGui::Checkbox("Auto-scroll", &auto_scroll_);
+        ImGui::SameLine();
+
+        // Status display: "Copied!" in green for 2 seconds, then "Ready"
+        if (show_copy_notification_) {
+            float elapsed = static_cast<float>(ImGui::GetTime()) - copy_notification_time_;
+            if (elapsed < 2.0f) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f)); // Green
+                ImGui::Text("Copied!");
+                ImGui::PopStyleColor();
+            } else {
+                show_copy_notification_ = false;
+                ImGui::TextDisabled("Ready");
+            }
+        } else {
+            ImGui::TextDisabled("Ready");
+        }
 
         ImGui::Separator();
 
@@ -104,14 +124,39 @@ void Console::RenderAllTab() {
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1));
 
-    for (const auto& entry : items_) {
+    for (size_t i = 0; i < items_.size(); i++) {
+        const auto& entry = items_[i];
         ImVec4 color = GetLevelColor(entry.level);
         ImGui::PushStyleColor(ImGuiCol_Text, color);
 
-        ImGui::Text("[%.2fs] %s %s",
+        // Use Selectable for right-click support
+        char buf[512];
+        snprintf(buf, sizeof(buf), "[%.2fs] %s %s",
             entry.timestamp,
             GetLevelPrefix(entry.level),
             entry.message.c_str());
+
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::Selectable(buf, false, ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::IsMouseDoubleClicked(0)) {
+                ImGui::SetClipboardText(entry.message.c_str());
+                ShowCopyNotification();
+            }
+        }
+
+        // Right-click context menu
+        if (ImGui::BeginPopupContextItem("LogContextMenu")) {
+            if (ImGui::MenuItem("Copy Message")) {
+                ImGui::SetClipboardText(entry.message.c_str());
+                ShowCopyNotification();
+            }
+            if (ImGui::MenuItem("Copy Full Line")) {
+                ImGui::SetClipboardText(buf);
+                ShowCopyNotification();
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
 
         ImGui::PopStyleColor();
     }
@@ -132,14 +177,38 @@ void Console::RenderLogTab(const char* name, LogLevel filter) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1));
 
     int count = 0;
-    for (const auto& entry : items_) {
+    int id_counter = 0;
+    for (size_t i = 0; i < items_.size(); i++) {
+        const auto& entry = items_[i];
         if (entry.level == filter) {
             ImVec4 color = GetLevelColor(entry.level);
             ImGui::PushStyleColor(ImGuiCol_Text, color);
 
-            ImGui::Text("[%.2fs] %s",
+            char buf[512];
+            snprintf(buf, sizeof(buf), "[%.2fs] %s",
                 entry.timestamp,
                 entry.message.c_str());
+
+            ImGui::PushID(id_counter++);
+            if (ImGui::Selectable(buf, false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                if (ImGui::IsMouseDoubleClicked(0)) {
+                    ImGui::SetClipboardText(entry.message.c_str());
+                    ShowCopyNotification();
+                }
+            }
+
+            if (ImGui::BeginPopupContextItem("LogContextMenu")) {
+                if (ImGui::MenuItem("Copy Message")) {
+                    ImGui::SetClipboardText(entry.message.c_str());
+                    ShowCopyNotification();
+                }
+                if (ImGui::MenuItem("Copy Full Line")) {
+                    ImGui::SetClipboardText(buf);
+                    ShowCopyNotification();
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
 
             ImGui::PopStyleColor();
             count++;
@@ -236,6 +305,23 @@ ImVec4 Console::GetLevelColor(LogLevel level) const {
         case LogLevel::Debug:   return ImVec4(0.6f, 0.6f, 1.0f, 1.0f); // Blue
         default:                return ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // White
     }
+}
+
+void Console::CopyAllLogs() {
+    std::ostringstream ss;
+    for (const auto& entry : items_) {
+        ss << "[" << std::fixed;
+        ss.precision(2);
+        ss << entry.timestamp << "s] "
+           << GetLevelPrefix(entry.level) << " "
+           << entry.message << "\n";
+    }
+    ImGui::SetClipboardText(ss.str().c_str());
+}
+
+void Console::ShowCopyNotification() {
+    show_copy_notification_ = true;
+    copy_notification_time_ = static_cast<float>(ImGui::GetTime());
 }
 
 } // namespace gui

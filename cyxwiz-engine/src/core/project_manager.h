@@ -13,6 +13,7 @@ namespace cyxwiz {
  * Editor settings stored in project file
  */
 struct EditorSettings {
+    // Script Editor settings
     int theme = 3;           // 0=Dark, 1=Light, 2=RetroBlu, 3=Monokai, 4=Dracula, 5=OneDark, 6=GitHub
     float font_scale = 1.6f; // 1.0=Small, 1.3=Medium, 1.6=Large, 2.0=Extra Large
     int tab_size = 4;        // 2, 4, or 8
@@ -21,6 +22,10 @@ struct EditorSettings {
     bool word_wrap = false;
     bool show_line_numbers = true;
     bool auto_indent = true;
+
+    // Application-wide settings
+    int app_theme = 0;       // 0=CyxWizDark, 1=CyxWizLight, 2=VSCodeDark, 3=UnrealEngine, 4=ModernDark, 5=HighContrast
+    float ui_scale = 1.0f;   // Global UI scale (0.8 to 2.0)
 
     // JSON serialization
     static EditorSettings FromJson(const nlohmann::json& j);

@@ -95,6 +95,10 @@ void ToolbarPanel::RenderViewMenu() {
                 if (ImGui::MenuItem(gui::Theme::GetPresetName(preset), nullptr, is_selected)) {
                     theme.ApplyPreset(preset);
                     spdlog::info("Theme changed to: {}", gui::Theme::GetPresetName(preset));
+                    // Notify callback to save the theme
+                    if (app_theme_changed_callback_) {
+                        app_theme_changed_callback_(static_cast<int>(preset));
+                    }
                 }
             }
 
@@ -117,6 +121,38 @@ void ToolbarPanel::RenderViewMenu() {
         }
         if (!has_project && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             ImGui::SetTooltip("Open a project first to save settings");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ========== Minimaps Section ==========
+        if (ImGui::BeginMenu(ICON_FA_EYE " Minimaps")) {
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
+
+            // Node Editor Minimap
+            if (node_editor_minimap_ptr_) {
+                bool node_minimap = *node_editor_minimap_ptr_;
+                if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Node Editor Minimap", nullptr, node_minimap)) {
+                    *node_editor_minimap_ptr_ = !node_minimap;
+                }
+            } else {
+                ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Node Editor Minimap", nullptr, false, false);
+            }
+
+            // Script Editor Minimap
+            if (script_editor_minimap_ptr_) {
+                bool script_minimap = *script_editor_minimap_ptr_;
+                if (ImGui::MenuItem(ICON_FA_CODE " Script Editor Minimap", nullptr, script_minimap)) {
+                    *script_editor_minimap_ptr_ = !script_minimap;
+                }
+            } else {
+                ImGui::MenuItem(ICON_FA_CODE " Script Editor Minimap", nullptr, false, false);
+            }
+
+            ImGui::PopStyleVar();
+            ImGui::EndMenu();
         }
 
         ImGui::Spacing();

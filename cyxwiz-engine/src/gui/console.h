@@ -41,6 +41,7 @@ private:
     void RenderLogTab(const char* name, LogLevel filter);
     void RenderAllTab();
     void ExecCommand(const char* command);
+    void CopyAllLogs();
     const char* GetLevelPrefix(LogLevel level) const;
     ImVec4 GetLevelColor(LogLevel level) const;
 
@@ -50,6 +51,11 @@ private:
     bool show_window_;
     bool auto_scroll_;
     int selected_tab_;
+
+    // Copy notification state
+    bool show_copy_notification_;
+    float copy_notification_time_;
+    void ShowCopyNotification();
 };
 
 } // namespace gui

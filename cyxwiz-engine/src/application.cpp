@@ -7,6 +7,7 @@
 #include "network/grpc_client.h"
 #include "network/job_manager.h"
 #include "core/async_task_manager.h"
+#include "core/data_registry.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -291,6 +292,11 @@ int CyxWizApp::Run() {
             else if (HasUnsavedWork()) {
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
                 show_unsaved_confirmation_ = true;
+            }
+            // Check for loaded data in memory
+            else if (HasLoadedData()) {
+                glfwSetWindowShouldClose(window_, GLFW_FALSE);
+                show_data_loaded_confirmation_ = true;
             } else {
                 // OK to close
                 break;
@@ -323,6 +329,12 @@ bool CyxWizApp::HasUnsavedWork() {
         return true;
     }
     return false;
+}
+
+bool CyxWizApp::HasLoadedData() {
+    // Check for loaded datasets in memory
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    return !registry.GetDatasetNames().empty();
 }
 
 void CyxWizApp::HandleCloseConfirmation() {
@@ -437,6 +449,60 @@ void CyxWizApp::HandleUnsavedConfirmation() {
     }
 }
 
+void CyxWizApp::HandleDataLoadedConfirmation() {
+    if (!show_data_loaded_confirmation_) return;
+
+    // Center the popup
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("Data Loaded###DataLoadedConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        auto dataset_names = registry.GetDatasetNames();
+        auto stats = registry.GetMemoryStats();
+
+        ImGui::Text("You have datasets loaded in memory:");
+        ImGui::Spacing();
+
+        // List loaded datasets
+        for (const auto& name : dataset_names) {
+            ImGui::BulletText("%s", name.c_str());
+        }
+
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Total memory usage: %s",
+                          stats.FormatBytes(stats.total_allocated).c_str());
+        ImGui::Spacing();
+        ImGui::Text("Closing will unload all data from memory.");
+        ImGui::Text("Make sure you've saved any work that depends on this data.");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Unload & Close", ImVec2(130, 0))) {
+            // Unload all datasets and close
+            registry.UnloadAll();
+            show_data_loaded_confirmation_ = false;
+            running_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+            show_data_loaded_confirmation_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // Open the popup if we need to show it
+    if (show_data_loaded_confirmation_ && !ImGui::IsPopupOpen("Data Loaded###DataLoadedConfirm")) {
+        ImGui::OpenPopup("Data Loaded###DataLoadedConfirm");
+    }
+}
+
 void CyxWizApp::HandleInput() {
     glfwPollEvents();
 }
@@ -471,6 +537,7 @@ void CyxWizApp::Render() {
     // Handle close confirmation dialogs
     HandleCloseConfirmation();
     HandleUnsavedConfirmation();
+    HandleDataLoadedConfirmation();
 
     // Rendering
     ImGui::Render();

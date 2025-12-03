@@ -109,6 +109,8 @@ if(CYXWIZ_BUILD_TESTS)
     add_executable(test_job_execution_service
         tests/test_job_execution_service.cpp
         src/job_execution_service.cpp
+        src/job_executor.cpp
+        src/node_client.cpp
     )
 
     target_include_directories(test_job_execution_service PRIVATE
@@ -168,6 +170,8 @@ if(CYXWIZ_BUILD_TESTS)
     add_executable(standalone_p2p_server
         tests/standalone_p2p_server.cpp
         src/job_execution_service.cpp
+        src/job_executor.cpp
+        src/node_client.cpp
     )
 
     target_include_directories(standalone_p2p_server PRIVATE
@@ -176,10 +180,12 @@ if(CYXWIZ_BUILD_TESTS)
     )
 
     target_link_libraries(standalone_p2p_server PRIVATE
+        cyxwiz-backend
         cyxwiz-protocol
         gRPC::grpc++
         protobuf::libprotobuf
         spdlog::spdlog
+        fmt::fmt
         Threads::Threads
     )
 

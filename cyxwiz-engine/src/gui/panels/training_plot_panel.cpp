@@ -33,7 +33,8 @@ TrainingPlotPanel::~TrainingPlotPanel() {
 void TrainingPlotPanel::Render() {
     if (!visible_) return;
 
-    ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
+    // Larger default size for better visibility
+    ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin(name_.c_str(), &visible_)) {
         ImGui::End();
@@ -241,12 +242,32 @@ void TrainingPlotPanel::ExportPlotImage(const std::string& filepath) {
 }
 
 void TrainingPlotPanel::RenderLossPlot() {
-    if (ImPlot::BeginPlot("Loss", ImVec2(-1, 250))) {
-        ImPlot::SetupAxes("Epoch", "Loss");
+    // Calculate plot height based on available space (at least 300px, or half available minus some padding)
+    float available_height = ImGui::GetContentRegionAvail().y;
+    float plot_height = std::max(300.0f, (available_height - 100.0f) / 2.0f);
 
+    if (ImPlot::BeginPlot("Loss", ImVec2(-1, plot_height))) {
+        // Enable zoom and pan on both axes (default behavior)
+        ImPlot::SetupAxes("Epoch", "Loss", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+
+        // Only auto-fit when checkbox is enabled
         if (auto_scale_ && !train_loss_.epochs.empty()) {
+            // Use AutoFit flags for smooth auto-scaling that still allows manual zoom
             ImPlot::SetupAxisLimits(ImAxis_X1, 0,
-                std::max(1, static_cast<int>(train_loss_.epochs.back())),
+                std::max(1, static_cast<int>(train_loss_.epochs.back())) + 1,
+                ImGuiCond_Always);
+            // Auto-fit Y axis based on data
+            double min_loss = CalculateMin(train_loss_.values);
+            double max_loss = CalculateMax(train_loss_.values);
+            if (!val_loss_.values.empty()) {
+                min_loss = std::min(min_loss, CalculateMin(val_loss_.values));
+                max_loss = std::max(max_loss, CalculateMax(val_loss_.values));
+            }
+            double padding = (max_loss - min_loss) * 0.1;
+            if (padding < 0.01) padding = 0.1;
+            ImPlot::SetupAxisLimits(ImAxis_Y1,
+                std::max(0.0, min_loss - padding),
+                max_loss + padding,
                 ImGuiCond_Always);
         }
 
@@ -273,14 +294,32 @@ void TrainingPlotPanel::RenderLossPlot() {
 }
 
 void TrainingPlotPanel::RenderAccuracyPlot() {
-    if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, 250))) {
-        ImPlot::SetupAxes("Epoch", "Accuracy (%)");
+    // Calculate plot height based on available space (at least 300px, or remaining available space)
+    float available_height = ImGui::GetContentRegionAvail().y;
+    float plot_height = std::max(300.0f, available_height - 80.0f);
 
+    if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, plot_height))) {
+        // Enable zoom and pan on both axes (default behavior)
+        ImPlot::SetupAxes("Epoch", "Accuracy (%)", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+
+        // Only auto-fit when checkbox is enabled
         if (auto_scale_ && !train_accuracy_.epochs.empty()) {
             ImPlot::SetupAxisLimits(ImAxis_X1, 0,
-                std::max(1, static_cast<int>(train_accuracy_.epochs.back())),
+                std::max(1, static_cast<int>(train_accuracy_.epochs.back())) + 1,
                 ImGuiCond_Always);
-            ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 100, ImGuiCond_Always);
+            // Auto-fit Y axis based on data with some padding
+            double min_acc = CalculateMin(train_accuracy_.values);
+            double max_acc = CalculateMax(train_accuracy_.values);
+            if (!val_accuracy_.values.empty()) {
+                min_acc = std::min(min_acc, CalculateMin(val_accuracy_.values));
+                max_acc = std::max(max_acc, CalculateMax(val_accuracy_.values));
+            }
+            double padding = (max_acc - min_acc) * 0.1;
+            if (padding < 1.0) padding = 5.0;
+            ImPlot::SetupAxisLimits(ImAxis_Y1,
+                std::max(0.0, min_acc - padding),
+                std::min(100.0, max_acc + padding),
+                ImGuiCond_Always);
         }
 
         // Plot training accuracy
@@ -307,7 +346,8 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
 
 void TrainingPlotPanel::RenderCustomMetricsPlot() {
     if (ImPlot::BeginPlot("Custom Metrics", ImVec2(-1, 250))) {
-        ImPlot::SetupAxes("Epoch", "Value");
+        // Enable zoom and pan on both axes
+        ImPlot::SetupAxes("Epoch", "Value", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
 
         for (const auto& metric : custom_metrics_) {
             if (!metric.values.empty()) {
@@ -335,6 +375,9 @@ void TrainingPlotPanel::RenderControls() {
     ImGui::SameLine();
 
     ImGui::Checkbox("Auto Scale", &auto_scale_);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("When enabled, axes auto-fit to data.\nDisable to manually zoom/pan.");
+    }
     ImGui::SameLine();
     ImGui::Checkbox("Show Loss", &show_loss_plot_);
     ImGui::SameLine();
@@ -343,6 +386,20 @@ void TrainingPlotPanel::RenderControls() {
     if (!custom_metrics_.empty()) {
         ImGui::SameLine();
         ImGui::Checkbox("Show Custom", &show_custom_metrics_);
+    }
+
+    // Show zoom/pan help
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::Text("Plot Controls:");
+        ImGui::BulletText("Scroll wheel: Zoom both axes");
+        ImGui::BulletText("Scroll on axis: Zoom that axis only");
+        ImGui::BulletText("Right-drag: Pan view");
+        ImGui::BulletText("Double-click: Reset zoom");
+        ImGui::BulletText("Disable 'Auto Scale' for manual control");
+        ImGui::EndTooltip();
     }
 }
 

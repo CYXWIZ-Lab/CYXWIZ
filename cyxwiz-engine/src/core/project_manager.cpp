@@ -14,6 +14,7 @@ namespace cyxwiz {
 // EditorSettings JSON serialization
 EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
     EditorSettings settings;
+    // Script Editor settings
     settings.theme = j.value("theme", 3);
     settings.font_scale = j.value("font_scale", 1.6f);
     settings.tab_size = j.value("tab_size", 4);
@@ -22,11 +23,15 @@ EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
     settings.word_wrap = j.value("word_wrap", false);
     settings.show_line_numbers = j.value("show_line_numbers", true);
     settings.auto_indent = j.value("auto_indent", true);
+    // Application-wide settings
+    settings.app_theme = j.value("app_theme", 0);
+    settings.ui_scale = j.value("ui_scale", 1.0f);
     return settings;
 }
 
 nlohmann::json EditorSettings::ToJson() const {
     nlohmann::json j;
+    // Script Editor settings
     j["theme"] = theme;
     j["font_scale"] = font_scale;
     j["tab_size"] = tab_size;
@@ -35,6 +40,9 @@ nlohmann::json EditorSettings::ToJson() const {
     j["word_wrap"] = word_wrap;
     j["show_line_numbers"] = show_line_numbers;
     j["auto_indent"] = auto_indent;
+    // Application-wide settings
+    j["app_theme"] = app_theme;
+    j["ui_scale"] = ui_scale;
     return j;
 }
 

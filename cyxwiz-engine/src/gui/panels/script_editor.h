@@ -106,12 +106,15 @@ public:
     void SetWordWrap(bool wrap);
     void SetAutoIndent(bool indent);
     void SetTheme(int theme_index);
+    void SetShowMinimap(bool show) { show_minimap_ = show; }
     float GetFontScale() const { return font_scale_; }
     int GetTabSize() const { return tab_size_; }
     bool GetShowWhitespace() const { return show_whitespace_; }
     bool GetWordWrap() const { return word_wrap_; }
     bool GetAutoIndent() const { return auto_indent_; }
     int GetThemeIndex() const { return static_cast<int>(current_theme_); }
+    bool GetShowMinimap() const { return show_minimap_; }
+    bool* GetShowMinimapPtr() { return &show_minimap_; }
 
     // Callbacks for settings changes (Script Editor -> Preferences sync)
     void SetOnSettingsChangedCallback(std::function<void()> callback) { on_settings_changed_callback_ = callback; }
@@ -142,6 +145,7 @@ private:
     void RenderTabBar();
     void RenderMenuBar();
     void RenderEditor();
+    void RenderMinimap();
     void RenderStatusBar();
     void HandleKeyboardShortcuts();
 
@@ -193,6 +197,8 @@ private:
     bool word_wrap_ = false;
     bool auto_indent_ = true;
     int tab_size_ = 4;  // 2, 4, or 8
+    bool show_minimap_ = true;  // Show code minimap on the right
+    float minimap_width_ = 100.0f;  // Width of minimap in pixels
 
     // Save/Close dialog state
     bool show_save_before_run_dialog_ = false;      // "Save before running?" dialog

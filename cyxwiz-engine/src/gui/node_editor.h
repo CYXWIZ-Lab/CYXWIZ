@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <functional>
 #include <imgui.h>
 
 // Forward declarations from ImNodes
@@ -115,9 +116,33 @@ public:
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
 
+    // Minimap visibility control
+    void SetShowMinimap(bool show) { show_minimap_ = show; }
+    bool GetShowMinimap() const { return show_minimap_; }
+    bool* GetShowMinimapPtr() { return &show_minimap_; }
+
+    // Access to graph data for compilation
+    const std::vector<MLNode>& GetNodes() const { return nodes_; }
+    const std::vector<NodeLink>& GetLinks() const { return links_; }
+
+    // Training callback - set by MainWindow to trigger training from node graph
+    using TrainCallback = std::function<void(const std::vector<MLNode>&, const std::vector<NodeLink>&)>;
+    void SetTrainCallback(TrainCallback callback) { train_callback_ = callback; }
+
+    // Check if graph is ready for training
+    bool IsGraphValid() const;
+
+    // Training state control
+    void SetTrainingActive(bool active) { is_training_ = active; }
+    bool IsTrainingActive() const { return is_training_; }
+
+    // Update DatasetInput node name based on loaded dataset
+    void UpdateDatasetNodeName(const std::string& dataset_name);
+
 private:
     void ShowToolbar();
     void RenderNodes();
+    void RenderMinimap();
     void HandleInteractions();
     void ShowContextMenu();
 
@@ -202,6 +227,25 @@ private:
     };
     std::vector<PendingNode> pending_nodes_;
     ImVec2 context_menu_pos_;  // Mouse position when context menu was opened (grid space)
+
+    // Training callback
+    TrainCallback train_callback_;
+
+    // Training animation state
+    bool is_training_ = false;
+    float training_animation_time_ = 0.0f;
+
+    // Minimap state
+    bool show_minimap_ = true;
+    ImVec2 minimap_size_ = ImVec2(180.0f, 140.0f);  // Size of minimap in pixels
+    bool minimap_navigating_ = false;  // Is user dragging to navigate within minimap
+    ImVec2 minimap_screen_min_;        // Screen-space bounds of minimap (for input blocking)
+    ImVec2 minimap_screen_max_;        // Screen-space bounds of minimap (for input blocking)
+    bool mouse_over_minimap_ = false;  // True when mouse is over minimap window
+
+    // Minimap position options
+    enum class MinimapPosition { TopLeft, TopRight, BottomLeft, BottomRight };
+    MinimapPosition minimap_position_ = MinimapPosition::BottomRight;
 };
 
 } // namespace gui

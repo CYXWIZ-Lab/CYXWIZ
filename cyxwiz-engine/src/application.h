@@ -50,13 +50,16 @@ private:
     // Close confirmation state
     bool show_close_confirmation_ = false;
     bool show_unsaved_confirmation_ = false;
+    bool show_data_loaded_confirmation_ = false;
     bool force_close_ = false;
 
     // Close confirmation handling
     void HandleCloseConfirmation();
     void HandleUnsavedConfirmation();
+    void HandleDataLoadedConfirmation();
     bool ShouldPreventClose();
     bool HasUnsavedWork();
+    bool HasLoadedData();
 
     // Fonts
     ImFont* font_regular_ = nullptr;

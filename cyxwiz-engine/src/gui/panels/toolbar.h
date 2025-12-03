@@ -86,6 +86,13 @@ public:
     void SetEditorWordWrapCallback(std::function<void(bool)> callback) { editor_word_wrap_callback_ = callback; }
     void SetEditorAutoIndentCallback(std::function<void(bool)> callback) { editor_auto_indent_callback_ = callback; }
 
+    // Application theme callback (called when View -> Theme changes)
+    void SetAppThemeChangedCallback(std::function<void(int)> callback) { app_theme_changed_callback_ = callback; }
+
+    // Minimap visibility pointers (for View -> Minimaps menu)
+    void SetNodeEditorMinimapPtr(bool* ptr) { node_editor_minimap_ptr_ = ptr; }
+    void SetScriptEditorMinimapPtr(bool* ptr) { script_editor_minimap_ptr_ = ptr; }
+
     // Initialize editor settings from script editor's current values
     void SetEditorTheme(int theme) { editor_theme_ = theme; }
     void SetEditorTabSize(int size) { editor_tab_size_ = size; }
@@ -266,6 +273,9 @@ private:
     std::function<void(bool)> editor_word_wrap_callback_;
     std::function<void(bool)> editor_auto_indent_callback_;
 
+    // Application theme callback
+    std::function<void(int)> app_theme_changed_callback_;
+
     // General preferences
     bool general_restore_last_session_ = true;
     bool general_check_updates_ = true;
@@ -276,6 +286,10 @@ private:
     float appearance_ui_scale_ = 1.0f;
     bool appearance_smooth_scrolling_ = true;
     int appearance_sidebar_position_ = 0;  // 0 = Left, 1 = Right
+
+    // Minimap visibility pointers
+    bool* node_editor_minimap_ptr_ = nullptr;
+    bool* script_editor_minimap_ptr_ = nullptr;
 
     // Files preferences
     int files_default_encoding_ = 0;  // 0 = UTF-8, 1 = UTF-16, 2 = ASCII

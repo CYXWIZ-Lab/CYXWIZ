@@ -45,6 +45,10 @@ set(ENGINE_SOURCES
     src/core/data_registry.cpp
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
+    src/core/graph_compiler.cpp
+    src/core/dataset_batcher.cpp
+    src/core/training_executor.cpp
+    src/core/training_manager.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
     src/gui/console.cpp
@@ -100,6 +104,10 @@ set(ENGINE_HEADERS
     src/core/data_registry.h
     src/core/texture_manager.h
     src/core/async_task_manager.h
+    src/core/graph_compiler.h
+    src/core/dataset_batcher.h
+    src/core/training_executor.h
+    src/core/training_manager.h
     src/gui/main_window.h
     src/gui/node_editor.h
     src/gui/console.h
@@ -144,6 +152,13 @@ set(ENGINE_HEADERS
     src/plotting/backends/plot_backend.h
     src/plotting/backends/implot_backend.h
     src/plotting/backends/matplotlib_backend.h
+    # Transform/Augmentation system
+    src/transforms/transform.h
+    src/transforms/geometric.h
+    src/transforms/color.h
+    src/transforms/noise.h
+    src/transforms/advanced.h
+    src/transforms/transforms.h
 )
 
 # Create executable

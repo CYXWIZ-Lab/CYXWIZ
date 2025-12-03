@@ -37,6 +37,7 @@
 #define ICON_FA_COMMENTS            "\xef\x82\x86"  // U+F086 - comments/block
 
 // View/Layout
+#define ICON_FA_TABLE               "\xef\x83\x8e"  // U+F0CE
 #define ICON_FA_TABLE_COLUMNS       "\xef\x83\x9b"  // U+F0DB
 #define ICON_FA_EXPAND              "\xef\x81\xa5"  // U+F065
 #define ICON_FA_COMPRESS            "\xef\x81\xa6"  // U+F066
