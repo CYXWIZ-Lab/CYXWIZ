@@ -1,0 +1,64 @@
+{
+  "id": "lstm_seq2seq",
+  "name": "LSTM Seq2Seq",
+  "description": "Encoder-decoder LSTM for sequence-to-sequence tasks like machine translation, text summarization, or time series prediction.",
+  "category": "RNN",
+  "tags": ["lstm", "seq2seq", "encoder-decoder", "translation", "sequence"],
+  "parameters": [
+    {
+      "name": "hidden_size",
+      "type": "int",
+      "default_value": "256",
+      "description": "Number of LSTM hidden units",
+      "min_value": "32",
+      "max_value": "2048"
+    },
+    {
+      "name": "embedding_dim",
+      "type": "int",
+      "default_value": "128",
+      "description": "Dimension of embedding vectors",
+      "min_value": "16",
+      "max_value": "1024"
+    },
+    {
+      "name": "vocab_size",
+      "type": "int",
+      "default_value": "10000",
+      "description": "Size of vocabulary",
+      "min_value": "100",
+      "max_value": "100000"
+    },
+    {
+      "name": "output_size",
+      "type": "int",
+      "default_value": "10000",
+      "description": "Output vocabulary size",
+      "min_value": "100",
+      "max_value": "100000"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Source Input", "pos": [0, 150]},
+      {"id": "embed_enc", "type": "Embedding", "name": "Encoder Embed", "pos": [200, 150], "params": {"vocab_size": "$vocab_size", "embedding_dim": "$embedding_dim"}},
+      {"id": "encoder", "type": "LSTM", "name": "Encoder LSTM", "pos": [400, 150], "params": {"units": "$hidden_size", "return_state": "true"}},
+      {"id": "target_input", "type": "DatasetInput", "name": "Target Input", "pos": [0, 350]},
+      {"id": "embed_dec", "type": "Embedding", "name": "Decoder Embed", "pos": [200, 350], "params": {"vocab_size": "$vocab_size", "embedding_dim": "$embedding_dim"}},
+      {"id": "decoder", "type": "LSTM", "name": "Decoder LSTM", "pos": [600, 350], "params": {"units": "$hidden_size", "return_sequences": "true"}},
+      {"id": "dense", "type": "Dense", "name": "Output Dense", "pos": [800, 350], "params": {"units": "$output_size"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [1000, 350]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1200, 350]}
+    ],
+    "links": [
+      {"from": "input", "to": "embed_enc"},
+      {"from": "embed_enc", "to": "encoder"},
+      {"from": "target_input", "to": "embed_dec"},
+      {"from": "embed_dec", "to": "decoder"},
+      {"from": "encoder", "to": "decoder"},
+      {"from": "decoder", "to": "dense"},
+      {"from": "dense", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}

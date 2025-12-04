@@ -1,0 +1,54 @@
+{
+  "id": "vae_decoder",
+  "name": "VAE Decoder",
+  "description": "Variational Autoencoder decoder block. Takes sampled latent vector and reconstructs the original input. Use with VAE Encoder for complete VAE.",
+  "category": "Generative",
+  "tags": ["vae", "variational", "decoder", "generative", "reconstruction"],
+  "parameters": [
+    {
+      "name": "output_size",
+      "type": "int",
+      "default_value": "784",
+      "description": "Output dimension (same as encoder input)",
+      "min_value": "16",
+      "max_value": "65536"
+    },
+    {
+      "name": "latent_dim",
+      "type": "int",
+      "default_value": "32",
+      "description": "Latent space dimension (must match encoder)",
+      "min_value": "2",
+      "max_value": "512"
+    },
+    {
+      "name": "hidden_size",
+      "type": "int",
+      "default_value": "256",
+      "description": "Hidden layer size",
+      "min_value": "32",
+      "max_value": "2048"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Latent Input", "pos": [0, 200]},
+      {"id": "dec1", "type": "Dense", "name": "Decoder Dense 1", "pos": [200, 200], "params": {"units": "128"}},
+      {"id": "act1", "type": "ReLU", "name": "ReLU 1", "pos": [400, 200]},
+      {"id": "dec2", "type": "Dense", "name": "Decoder Dense 2", "pos": [600, 200], "params": {"units": "$hidden_size"}},
+      {"id": "act2", "type": "ReLU", "name": "ReLU 2", "pos": [800, 200]},
+      {"id": "reconstruction", "type": "Dense", "name": "Reconstruction", "pos": [1000, 200], "params": {"units": "$output_size"}},
+      {"id": "output_act", "type": "Sigmoid", "name": "Sigmoid", "pos": [1200, 200]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1400, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "dec1"},
+      {"from": "dec1", "to": "act1"},
+      {"from": "act1", "to": "dec2"},
+      {"from": "dec2", "to": "act2"},
+      {"from": "act2", "to": "reconstruction"},
+      {"from": "reconstruction", "to": "output_act"},
+      {"from": "output_act", "to": "output"}
+    ]
+  }
+}

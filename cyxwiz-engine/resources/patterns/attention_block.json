@@ -1,0 +1,51 @@
+{
+  "id": "attention_block",
+  "name": "Multi-Head Attention Block",
+  "description": "Standalone multi-head attention block with residual connection and layer normalization. Can be used as a building block for custom architectures.",
+  "category": "BuildingBlocks",
+  "tags": ["attention", "multi-head", "transformer", "block", "building-block"],
+  "parameters": [
+    {
+      "name": "d_model",
+      "type": "int",
+      "default_value": "256",
+      "description": "Model dimension",
+      "min_value": "64",
+      "max_value": "2048"
+    },
+    {
+      "name": "num_heads",
+      "type": "int",
+      "default_value": "8",
+      "description": "Number of attention heads",
+      "min_value": "1",
+      "max_value": "32"
+    },
+    {
+      "name": "dropout_rate",
+      "type": "float",
+      "default_value": "0.1",
+      "description": "Dropout rate",
+      "min_value": "0.0",
+      "max_value": "0.5"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Input", "pos": [0, 200]},
+      {"id": "ln1", "type": "LayerNorm", "name": "Pre-LayerNorm", "pos": [200, 200]},
+      {"id": "mha", "type": "MultiHeadAttention", "name": "Multi-Head Attention", "pos": [400, 200], "params": {"d_model": "$d_model", "num_heads": "$num_heads"}},
+      {"id": "dropout1", "type": "Dropout", "name": "Dropout", "pos": [600, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "add1", "type": "Add", "name": "Residual Add", "pos": [800, 200]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1000, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "ln1"},
+      {"from": "ln1", "to": "mha"},
+      {"from": "mha", "to": "dropout1"},
+      {"from": "dropout1", "to": "add1"},
+      {"from": "input", "to": "add1"},
+      {"from": "add1", "to": "output"}
+    ]
+  }
+}

@@ -1277,47 +1277,14 @@ void ToolbarPanel::Render() {
 
     // ========== Preferences Dialog ==========
     if (show_preferences_dialog_) {
-        // Initialize default shortcuts if empty
-        if (shortcuts_.empty()) {
-            shortcuts_ = {
-                // File operations
-                {"New File", "Ctrl+N", "Create a new file", false},
-                {"Open File", "Ctrl+O", "Open an existing file", false},
-                {"Save", "Ctrl+S", "Save current file", false},
-                {"Save As", "Ctrl+Shift+S", "Save with new name", false},
-                {"Close File", "Ctrl+W", "Close current file", false},
-                // Edit operations
-                {"Undo", "Ctrl+Z", "Undo last action", false},
-                {"Redo", "Ctrl+Y", "Redo last action", false},
-                {"Cut", "Ctrl+X", "Cut selection", false},
-                {"Copy", "Ctrl+C", "Copy selection", false},
-                {"Paste", "Ctrl+V", "Paste from clipboard", false},
-                {"Select All", "Ctrl+A", "Select all text", false},
-                {"Find", "Ctrl+F", "Find text", false},
-                {"Replace", "Ctrl+H", "Find and replace", false},
-                {"Go to Line", "Ctrl+G", "Jump to line number", false},
-                // Code editing
-                {"Toggle Comment", "Ctrl+/", "Toggle line comment", false},
-                {"Block Comment", "Shift+Alt+A", "Toggle block comment", false},
-                {"Duplicate Line", "Ctrl+D", "Duplicate current line", true},
-                {"Move Line Up", "Alt+Up", "Move line up", true},
-                {"Move Line Down", "Alt+Down", "Move line down", true},
-                {"Indent", "Tab", "Increase indentation", false},
-                {"Outdent", "Shift+Tab", "Decrease indentation", false},
-                {"Join Lines", "Ctrl+J", "Join selected lines", true},
-                // Script execution
-                {"Run Script", "F5", "Execute current script", false},
-                {"Run Selection", "Ctrl+Enter", "Execute selection", false},
-                {"Stop Script", "Ctrl+Break", "Stop running script", false},
-            };
-        }
+        // Note: shortcuts_ is initialized in RenderEditMenu() when Preferences is clicked
 
         ImGui::OpenPopup("Preferences");
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(650, 500), ImGuiCond_Appearing);
 
-        if (ImGui::BeginPopupModal("Preferences", &show_preferences_dialog_, ImGuiWindowFlags_NoMove)) {
+        if (ImGui::BeginPopupModal("Preferences", &show_preferences_dialog_)) {
             // Tab bar for different preference sections
             if (ImGui::BeginTabBar("PreferenceTabs")) {
 
@@ -1583,20 +1550,44 @@ void ToolbarPanel::Render() {
                     ImGui::TextDisabled("Double-click a shortcut to edit. Some shortcuts are system-level and cannot be changed.");
                     ImGui::Spacing();
 
-                    // Table of shortcuts
-                    if (ImGui::BeginTable("ShortcutsTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 280))) {
+                    // Table of shortcuts with category grouping
+                    if (ImGui::BeginTable("ShortcutsTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 320))) {
                         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180);
                         ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthFixed, 150);
                         ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
                         ImGui::TableHeadersRow();
 
+                        std::string current_category = "";
                         for (int i = 0; i < static_cast<int>(shortcuts_.size()); ++i) {
                             auto& shortcut = shortcuts_[i];
+
+                            // Check if we're entering a new category
+                            if (shortcut.category != current_category) {
+                                current_category = shortcut.category;
+
+                                // Render category header row
+                                ImGui::TableNextRow();
+                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_TableHeaderBg));
+
+                                ImGui::TableNextColumn();
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                                ImGui::TextUnformatted(ICON_FA_FOLDER);
+                                ImGui::SameLine();
+                                ImGui::Text("%s", current_category.c_str());
+                                ImGui::PopStyleColor();
+
+                                ImGui::TableNextColumn();
+                                ImGui::TextDisabled("---");
+
+                                ImGui::TableNextColumn();
+                                ImGui::TextDisabled("---");
+                            }
+
                             ImGui::TableNextRow();
 
-                            // Action column
+                            // Action column (indented to show hierarchy)
                             ImGui::TableNextColumn();
-                            ImGui::Text("%s", shortcut.action.c_str());
+                            ImGui::Text("  %s", shortcut.action.c_str());
 
                             // Shortcut column
                             ImGui::TableNextColumn();

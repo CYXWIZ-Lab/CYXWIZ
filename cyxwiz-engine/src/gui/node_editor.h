@@ -20,33 +20,121 @@ class Properties;
 
 // Node types for ML model building
 enum class NodeType {
+    // ===== Core Layers =====
     Dense,
+
+    // Convolutional Layers
+    Conv1D,
     Conv2D,
+    Conv3D,
+    DepthwiseConv2D,
+
+    // Pooling Layers
     MaxPool2D,
-    Flatten,
-    Dropout,
+    AvgPool2D,
+    GlobalMaxPool,
+    GlobalAvgPool,
+    AdaptiveAvgPool,
+
+    // Normalization Layers
     BatchNorm,
-    // Activation functions
+    LayerNorm,
+    GroupNorm,
+    InstanceNorm,
+
+    // Regularization
+    Dropout,
+    Flatten,
+
+    // ===== Recurrent Layers =====
+    RNN,
+    LSTM,
+    GRU,
+    Bidirectional,
+    TimeDistributed,
+    Embedding,
+
+    // ===== Attention & Transformer =====
+    MultiHeadAttention,
+    SelfAttention,
+    CrossAttention,
+    LinearAttention,      // O(n) linear attention (Performer/Linear Transformer)
+    TransformerEncoder,
+    TransformerDecoder,
+    PositionalEncoding,
+
+    // ===== Activation Functions =====
     ReLU,
+    LeakyReLU,
+    PReLU,
+    ELU,
+    SELU,
+    GELU,
+    Swish,
+    Mish,
     Sigmoid,
     Tanh,
     Softmax,
-    LeakyReLU,
-    // Output
+
+    // ===== Shape Operations =====
+    Reshape,
+    Permute,
+    Squeeze,
+    Unsqueeze,
+    View,
+    Split,
+
+    // ===== Merge Operations =====
+    Concatenate,
+    Add,
+    Multiply,
+    Average,
+
+    // ===== Output =====
     Output,
-    // Loss functions
+
+    // ===== Loss Functions =====
     MSELoss,
     CrossEntropyLoss,
-    // Optimizers
+    BCELoss,
+    BCEWithLogits,
+    L1Loss,
+    SmoothL1Loss,
+    HuberLoss,
+    NLLLoss,
+
+    // ===== Optimizers =====
     SGD,
     Adam,
     AdamW,
-    // Data Pipeline Nodes
+    RMSprop,
+    Adagrad,
+    NAdam,
+
+    // ===== Learning Rate Schedulers =====
+    StepLR,
+    CosineAnnealing,
+    ReduceOnPlateau,
+    ExponentialLR,
+    WarmupScheduler,
+
+    // ===== Regularization Nodes =====
+    L1Regularization,
+    L2Regularization,
+    ElasticNet,
+
+    // ===== Utility Nodes =====
+    Lambda,
+    Identity,
+    Constant,
+    Parameter,
+
+    // ===== Data Pipeline Nodes =====
     DatasetInput,       // Load dataset from DataRegistry
     DataLoader,         // Batch iterator with shuffle/drop_last
     Augmentation,       // Transform pipeline for data augmentation
     DataSplit,          // Train/val/test splitter
-    TensorReshape,      // Reshape tensor dimensions
+    TensorReshape,      // Reshape tensor dimensions (legacy, use Reshape)
     Normalize,          // Normalize values (mean/std)
     OneHotEncode        // Label encoding
 };
@@ -80,6 +168,11 @@ struct MLNode {
 
     // Node-specific parameters (e.g., units for Dense layer)
     std::map<std::string, std::string> parameters;
+
+    // Position for pattern insertion (optional - set by InstantiatePattern)
+    float initial_pos_x = 0.0f;
+    float initial_pos_y = 0.0f;
+    bool has_initial_position = false;  // True if position should be applied when inserting
 };
 
 // Connection between nodes
@@ -89,6 +182,22 @@ struct NodeLink {
     int from_pin;
     int to_node;
     int to_pin;
+};
+
+// Graph snapshot for undo/redo
+struct GraphSnapshot {
+    std::vector<MLNode> nodes;
+    std::vector<NodeLink> links;
+    int next_node_id;
+    int next_pin_id;
+    int next_link_id;
+};
+
+// Clipboard data for copy/paste
+struct ClipboardData {
+    std::vector<MLNode> nodes;
+    std::vector<NodeLink> links;  // Internal links only
+    bool valid = false;
 };
 
 // Supported code generation frameworks
@@ -138,6 +247,14 @@ public:
     // Update DatasetInput node name based on loaded dataset
     void UpdateDatasetNodeName(const std::string& dataset_name);
 
+    // Pattern insertion - add multiple nodes and links from a pattern template
+    void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+
+    // ID getters for pattern library to generate unique IDs
+    int GetNextNodeId() const { return next_node_id_; }
+    int GetNextPinId() const { return next_pin_id_; }
+    int GetNextLinkId() const { return next_link_id_; }
+
 private:
     void ShowToolbar();
     void RenderNodes();
@@ -175,6 +292,30 @@ private:
     bool AllNodesReachable();
     bool HasInputNode();
     bool HasOutputNode();
+
+    // Undo/Redo system
+    void SaveUndoState();
+    void Undo();
+    void Redo();
+    bool CanUndo() const { return !undo_stack_.empty(); }
+    bool CanRedo() const { return !redo_stack_.empty(); }
+
+    // Clipboard operations
+    void SelectAll();
+    void ClearSelection();
+    void DeleteSelected();
+    void CopySelection();
+    void CutSelection();
+    void PasteClipboard();
+    void DuplicateSelection();
+
+    // Helper for finding empty position
+    ImVec2 FindEmptyPosition();
+
+    // Keyboard shortcuts
+    void HandleKeyboardShortcuts();
+    void FrameSelected();
+    void FrameAll();
 
     // Framework-specific generators
     std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
@@ -245,6 +386,34 @@ private:
     // Minimap position options
     enum class MinimapPosition { TopLeft, TopRight, BottomLeft, BottomRight };
     MinimapPosition minimap_position_ = MinimapPosition::BottomRight;
+
+    // Undo/Redo state
+    std::vector<GraphSnapshot> undo_stack_;
+    std::vector<GraphSnapshot> redo_stack_;
+    static constexpr size_t MAX_UNDO_LEVELS = 50;
+
+    // Clipboard state
+    ClipboardData clipboard_;
+    std::vector<int> selected_node_ids_;  // Multi-selection support
+    ImVec2 paste_offset_ = ImVec2(50.0f, 50.0f);  // Offset for pasted nodes
+
+    // Deferred position setting (for nodes created outside render context)
+    std::map<int, ImVec2> pending_positions_;  // node_id -> position
+
+    // Cached node positions (updated each frame inside BeginNodeEditor/EndNodeEditor scope)
+    // Used by FindEmptyPosition() which may be called outside the editor scope
+    std::map<int, ImVec2> cached_node_positions_;
+
+    // Save as Pattern dialog state
+    bool show_save_pattern_dialog_ = false;
+    char save_pattern_name_[256] = "";
+    char save_pattern_description_[1024] = "";
+
+    // Deferred clear flag (to call ImNodes clear inside BeginNodeEditor scope)
+    bool pending_clear_imnodes_ = false;
+
+    // Flag to recreate ImNodes editor context (full reset)
+    bool pending_context_reset_ = false;
 };
 
 } // namespace gui

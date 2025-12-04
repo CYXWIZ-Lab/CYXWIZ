@@ -1,0 +1,58 @@
+{
+  "id": "vae_encoder",
+  "name": "VAE Encoder",
+  "description": "Variational Autoencoder encoder block. Outputs mean and log-variance for the latent distribution. Use with VAE Decoder for complete VAE.",
+  "category": "Generative",
+  "tags": ["vae", "variational", "encoder", "generative", "latent"],
+  "parameters": [
+    {
+      "name": "input_size",
+      "type": "int",
+      "default_value": "784",
+      "description": "Input dimension",
+      "min_value": "16",
+      "max_value": "65536"
+    },
+    {
+      "name": "latent_dim",
+      "type": "int",
+      "default_value": "32",
+      "description": "Latent space dimension",
+      "min_value": "2",
+      "max_value": "512"
+    },
+    {
+      "name": "hidden_size",
+      "type": "int",
+      "default_value": "256",
+      "description": "Hidden layer size",
+      "min_value": "32",
+      "max_value": "2048"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Input", "pos": [0, 200]},
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [200, 200]},
+      {"id": "enc1", "type": "Dense", "name": "Encoder Dense 1", "pos": [400, 200], "params": {"units": "$hidden_size"}},
+      {"id": "act1", "type": "ReLU", "name": "ReLU 1", "pos": [600, 200]},
+      {"id": "enc2", "type": "Dense", "name": "Encoder Dense 2", "pos": [800, 200], "params": {"units": "128"}},
+      {"id": "act2", "type": "ReLU", "name": "ReLU 2", "pos": [1000, 200]},
+      {"id": "z_mean", "type": "Dense", "name": "Z Mean", "pos": [1200, 100], "params": {"units": "$latent_dim"}},
+      {"id": "z_log_var", "type": "Dense", "name": "Z Log Var", "pos": [1200, 300], "params": {"units": "$latent_dim"}},
+      {"id": "output_mean", "type": "Output", "name": "Mean Output", "pos": [1400, 100]},
+      {"id": "output_logvar", "type": "Output", "name": "Log Var Output", "pos": [1400, 300]}
+    ],
+    "links": [
+      {"from": "input", "to": "flatten"},
+      {"from": "flatten", "to": "enc1"},
+      {"from": "enc1", "to": "act1"},
+      {"from": "act1", "to": "enc2"},
+      {"from": "enc2", "to": "act2"},
+      {"from": "act2", "to": "z_mean"},
+      {"from": "act2", "to": "z_log_var"},
+      {"from": "z_mean", "to": "output_mean"},
+      {"from": "z_log_var", "to": "output_logvar"}
+    ]
+  }
+}

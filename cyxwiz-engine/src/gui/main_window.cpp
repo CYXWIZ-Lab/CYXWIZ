@@ -20,6 +20,7 @@
 #include "panels/p2p_training_panel.h"
 #include "panels/wallet_panel.h"
 #include "panels/task_progress_panel.h"
+#include "panels/pattern_browser.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
@@ -65,6 +66,14 @@ MainWindow::MainWindow()
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
     task_progress_panel_ = std::make_unique<cyxwiz::TaskProgressPanel>();
+    pattern_browser_ = std::make_unique<cyxwiz::PatternBrowserPanel>();
+
+    // Set pattern browser callback to insert patterns into node editor
+    pattern_browser_->SetInsertCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+        if (node_editor_) {
+            node_editor_->InsertPattern(nodes, links);
+        }
+    });
 
     // Set scripting engine for command window and script editor
     command_window_->SetScriptingEngine(scripting_engine_);
@@ -638,6 +647,7 @@ void MainWindow::Render() {
     if (p2p_training_panel_) p2p_training_panel_->Render();
     if (wallet_panel_) wallet_panel_->Render();
     if (task_progress_panel_) task_progress_panel_->Render();
+    if (pattern_browser_) pattern_browser_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
@@ -890,6 +900,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     if (task_progress_panel_) {
         dock_style.RegisterPanel("Tasks", ICON_FA_SPINNER, task_progress_panel_->GetVisiblePtr());
     }
+    if (pattern_browser_) {
+        dock_style.RegisterPanel("Patterns", ICON_FA_CUBES, pattern_browser_->GetVisiblePtr());
+    }
 
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
 }
@@ -1073,6 +1086,14 @@ void MainWindow::HandleGlobalShortcuts() {
         if (script_editor_) {
             script_editor_->JoinLines();
             spdlog::info("Joined lines via Ctrl+J");
+        }
+    }
+
+    // Pattern Browser (Ctrl+Shift+P)
+    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_P)) {
+        if (pattern_browser_) {
+            pattern_browser_->Toggle();
+            spdlog::info("Toggled Pattern Browser via Ctrl+Shift+P");
         }
     }
 }

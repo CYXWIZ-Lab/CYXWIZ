@@ -193,35 +193,46 @@ void ToolbarPanel::RenderEditMenu() {
             // Initialize shortcuts list if empty
             if (shortcuts_.empty()) {
                 shortcuts_ = {
-                    // File operations
-                    {"New File", "Ctrl+N", "Create new file", false},
-                    {"Open File", "Ctrl+O", "Open existing file", false},
-                    {"Save", "Ctrl+S", "Save current file", false},
-                    // Edit operations
-                    {"Undo", "Ctrl+Z", "Undo last action", false},
-                    {"Redo", "Ctrl+Y", "Redo last undone action", false},
-                    {"Cut", "Ctrl+X", "Cut selection to clipboard", false},
-                    {"Copy", "Ctrl+C", "Copy selection to clipboard", false},
-                    {"Paste", "Ctrl+V", "Paste from clipboard", false},
-                    {"Select All", "Ctrl+A", "Select all text", false},
-                    // Navigation
-                    {"Go to Line", "Ctrl+G", "Jump to line number", true},
-                    // Line operations
-                    {"Duplicate Line", "Ctrl+D", "Duplicate current line", true},
-                    {"Move Line Up", "Alt+Up", "Move line up", true},
-                    {"Move Line Down", "Alt+Down", "Move line down", true},
-                    {"Join Lines", "Ctrl+J", "Join selected lines", true},
-                    // Find/Replace
-                    {"Find", "Ctrl+F", "Open Find dialog", true},
-                    {"Replace", "Ctrl+H", "Open Replace dialog", true},
-                    {"Find in Files", "Ctrl+Shift+F", "Search across project files", true},
-                    {"Replace in Files", "Ctrl+Shift+H", "Replace across project files", true},
-                    // Comments
-                    {"Toggle Line Comment", "Ctrl+/", "Comment/uncomment current line", true},
-                    {"Toggle Block Comment", "Shift+Alt+A", "Add/remove block comment", true},
-                    // Script execution
-                    {"Run Script", "F5", "Execute current script", true},
-                    {"Stop Script", "Shift+F5", "Stop running script", true},
+                    // ===== General shortcuts =====
+                    {"General", "New File", "Ctrl+N", "Create new file", false},
+                    {"General", "Open File", "Ctrl+O", "Open existing file", false},
+                    {"General", "Save", "Ctrl+S", "Save current file", false},
+                    {"General", "Undo", "Ctrl+Z", "Undo last action", false},
+                    {"General", "Redo", "Ctrl+Y", "Redo last undone action", false},
+                    {"General", "Cut", "Ctrl+X", "Cut selection to clipboard", false},
+                    {"General", "Copy", "Ctrl+C", "Copy selection to clipboard", false},
+                    {"General", "Paste", "Ctrl+V", "Paste from clipboard", false},
+                    {"General", "Select All", "Ctrl+A", "Select all", false},
+
+                    // ===== Script Editor shortcuts =====
+                    {"Script Editor", "Go to Line", "Ctrl+G", "Jump to line number", true},
+                    {"Script Editor", "Duplicate Line", "Ctrl+D", "Duplicate current line", true},
+                    {"Script Editor", "Move Line Up", "Alt+Up", "Move line up", true},
+                    {"Script Editor", "Move Line Down", "Alt+Down", "Move line down", true},
+                    {"Script Editor", "Join Lines", "Ctrl+J", "Join selected lines", true},
+                    {"Script Editor", "Find", "Ctrl+F", "Open Find dialog", true},
+                    {"Script Editor", "Replace", "Ctrl+H", "Open Replace dialog", true},
+                    {"Script Editor", "Find in Files", "Ctrl+Shift+F", "Search across project files", true},
+                    {"Script Editor", "Replace in Files", "Ctrl+Shift+H", "Replace across project files", true},
+                    {"Script Editor", "Toggle Line Comment", "Ctrl+/", "Comment/uncomment current line", true},
+                    {"Script Editor", "Toggle Block Comment", "Shift+Alt+A", "Add/remove block comment", true},
+                    {"Script Editor", "Run Script", "F5", "Execute current script", true},
+                    {"Script Editor", "Stop Script", "Shift+F5", "Stop running script", true},
+
+                    // ===== Node Editor shortcuts =====
+                    {"Node Editor", "Undo", "Ctrl+Z", "Undo last node operation", false},
+                    {"Node Editor", "Redo", "Ctrl+Y", "Redo node operation", false},
+                    {"Node Editor", "Copy", "Ctrl+C", "Copy selected nodes", false},
+                    {"Node Editor", "Cut", "Ctrl+X", "Cut selected nodes", false},
+                    {"Node Editor", "Paste", "Ctrl+V", "Paste nodes from clipboard", false},
+                    {"Node Editor", "Duplicate", "Ctrl+D", "Duplicate selected nodes", false},
+                    {"Node Editor", "Select All", "Ctrl+A", "Select all nodes", false},
+                    {"Node Editor", "Delete", "Delete", "Delete selected nodes/links", false},
+                    {"Node Editor", "Clear Selection", "Escape", "Clear node selection", false},
+                    {"Node Editor", "Toggle Minimap", "M", "Show/hide the minimap", false},
+                    {"Node Editor", "Frame Selected", "F", "Frame selected nodes in view", false},
+                    {"Node Editor", "Frame All", "F", "Frame all nodes (when none selected)", false},
+                    {"Node Editor", "Pattern Browser", "Ctrl+Shift+P", "Open pattern library browser", false},
                 };
             }
         }

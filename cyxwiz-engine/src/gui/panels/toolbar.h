@@ -243,6 +243,7 @@ private:
 
     // Keyboard shortcuts (action name -> shortcut string)
     struct ShortcutEntry {
+        std::string category;     // Category name (e.g., "General", "Script Editor", "Node Editor")
         std::string action;
         std::string shortcut;
         std::string description;

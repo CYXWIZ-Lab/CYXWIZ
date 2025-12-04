@@ -1,0 +1,73 @@
+{
+  "id": "autoencoder",
+  "name": "Basic Autoencoder",
+  "description": "Symmetric autoencoder for unsupervised learning, dimensionality reduction, and feature learning. Compresses input to latent space and reconstructs it.",
+  "category": "Generative",
+  "tags": ["autoencoder", "unsupervised", "compression", "reconstruction", "generative"],
+  "parameters": [
+    {
+      "name": "input_size",
+      "type": "int",
+      "default_value": "784",
+      "description": "Input dimension (e.g., 784 for 28x28 images)",
+      "min_value": "16",
+      "max_value": "65536"
+    },
+    {
+      "name": "latent_dim",
+      "type": "int",
+      "default_value": "32",
+      "description": "Latent space dimension (bottleneck size)",
+      "min_value": "2",
+      "max_value": "1024"
+    },
+    {
+      "name": "hidden_size",
+      "type": "int",
+      "default_value": "256",
+      "description": "Hidden layer size",
+      "min_value": "32",
+      "max_value": "2048"
+    },
+    {
+      "name": "activation",
+      "type": "nodetype",
+      "default_value": "ReLU",
+      "description": "Activation function",
+      "options": ["ReLU", "LeakyReLU", "GELU", "Tanh", "Sigmoid"]
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Input", "pos": [0, 200]},
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [200, 200]},
+      {"id": "enc1", "type": "Dense", "name": "Encoder Dense 1", "pos": [400, 200], "params": {"units": "$hidden_size"}},
+      {"id": "enc_act1", "type": "$activation", "name": "Encoder Act 1", "pos": [600, 200]},
+      {"id": "enc2", "type": "Dense", "name": "Encoder Dense 2", "pos": [800, 200], "params": {"units": "128"}},
+      {"id": "enc_act2", "type": "$activation", "name": "Encoder Act 2", "pos": [1000, 200]},
+      {"id": "latent", "type": "Dense", "name": "Latent Layer", "pos": [1200, 200], "params": {"units": "$latent_dim"}},
+      {"id": "dec1", "type": "Dense", "name": "Decoder Dense 1", "pos": [1400, 200], "params": {"units": "128"}},
+      {"id": "dec_act1", "type": "$activation", "name": "Decoder Act 1", "pos": [1600, 200]},
+      {"id": "dec2", "type": "Dense", "name": "Decoder Dense 2", "pos": [1800, 200], "params": {"units": "$hidden_size"}},
+      {"id": "dec_act2", "type": "$activation", "name": "Decoder Act 2", "pos": [2000, 200]},
+      {"id": "reconstruction", "type": "Dense", "name": "Reconstruction", "pos": [2200, 200], "params": {"units": "$input_size"}},
+      {"id": "output_act", "type": "Sigmoid", "name": "Output Sigmoid", "pos": [2400, 200]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [2600, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "flatten"},
+      {"from": "flatten", "to": "enc1"},
+      {"from": "enc1", "to": "enc_act1"},
+      {"from": "enc_act1", "to": "enc2"},
+      {"from": "enc2", "to": "enc_act2"},
+      {"from": "enc_act2", "to": "latent"},
+      {"from": "latent", "to": "dec1"},
+      {"from": "dec1", "to": "dec_act1"},
+      {"from": "dec_act1", "to": "dec2"},
+      {"from": "dec2", "to": "dec_act2"},
+      {"from": "dec_act2", "to": "reconstruction"},
+      {"from": "reconstruction", "to": "output_act"},
+      {"from": "output_act", "to": "output"}
+    ]
+  }
+}

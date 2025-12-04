@@ -1,0 +1,78 @@
+{
+  "id": "gru_basic",
+  "name": "Basic GRU",
+  "description": "Gated Recurrent Unit network for sequence modeling. Simpler than LSTM with fewer parameters, often performs similarly well.",
+  "category": "RNN",
+  "tags": ["gru", "recurrent", "sequence", "nlp", "time-series"],
+  "parameters": [
+    {
+      "name": "hidden_size",
+      "type": "int",
+      "default_value": "128",
+      "description": "Number of GRU hidden units",
+      "min_value": "32",
+      "max_value": "1024"
+    },
+    {
+      "name": "embedding_dim",
+      "type": "int",
+      "default_value": "100",
+      "description": "Dimension of embedding vectors",
+      "min_value": "16",
+      "max_value": "512"
+    },
+    {
+      "name": "vocab_size",
+      "type": "int",
+      "default_value": "10000",
+      "description": "Size of vocabulary",
+      "min_value": "100",
+      "max_value": "100000"
+    },
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "2",
+      "description": "Number of output classes",
+      "min_value": "2",
+      "max_value": "10000"
+    },
+    {
+      "name": "dropout_rate",
+      "type": "float",
+      "default_value": "0.2",
+      "description": "Dropout rate",
+      "min_value": "0.0",
+      "max_value": "0.7"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Sequence Input", "pos": [0, 200]},
+      {"id": "embed", "type": "Embedding", "name": "Embedding", "pos": [200, 200], "params": {"vocab_size": "$vocab_size", "embedding_dim": "$embedding_dim"}},
+      {"id": "dropout1", "type": "Dropout", "name": "Dropout 1", "pos": [400, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "gru1", "type": "GRU", "name": "GRU Layer 1", "pos": [600, 200], "params": {"units": "$hidden_size", "return_sequences": "true"}},
+      {"id": "dropout2", "type": "Dropout", "name": "Dropout 2", "pos": [800, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "gru2", "type": "GRU", "name": "GRU Layer 2", "pos": [1000, 200], "params": {"units": "$hidden_size"}},
+      {"id": "dropout3", "type": "Dropout", "name": "Dropout 3", "pos": [1200, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "dense", "type": "Dense", "name": "Dense", "pos": [1400, 200], "params": {"units": "64"}},
+      {"id": "act", "type": "ReLU", "name": "ReLU", "pos": [1600, 200]},
+      {"id": "output_layer", "type": "Dense", "name": "Output", "pos": [1800, 200], "params": {"units": "$num_classes"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [2000, 200]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [2200, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "embed"},
+      {"from": "embed", "to": "dropout1"},
+      {"from": "dropout1", "to": "gru1"},
+      {"from": "gru1", "to": "dropout2"},
+      {"from": "dropout2", "to": "gru2"},
+      {"from": "gru2", "to": "dropout3"},
+      {"from": "dropout3", "to": "dense"},
+      {"from": "dense", "to": "act"},
+      {"from": "act", "to": "output_layer"},
+      {"from": "output_layer", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "id": "unet",
+  "name": "U-Net",
+  "description": "U-Net by Ronneberger et al. (2015). Encoder-decoder architecture with skip connections for image segmentation. Originally designed for biomedical image segmentation.",
+  "category": "CNN",
+  "tags": ["unet", "segmentation", "encoder-decoder", "biomedical", "skip-connections"],
+  "parameters": [
+    {
+      "name": "base_filters",
+      "type": "int",
+      "default_value": "64",
+      "description": "Base number of filters (doubles each level)",
+      "min_value": "16",
+      "max_value": "128"
+    },
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "2",
+      "description": "Number of segmentation classes",
+      "min_value": "1",
+      "max_value": "256"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Input Image", "pos": [0, 300]},
+
+      {"id": "enc1_conv1", "type": "Conv2D", "name": "Enc1 Conv1", "pos": [150, 300], "params": {"filters": "$base_filters", "kernel_size": "3", "padding": "same"}},
+      {"id": "enc1_act1", "type": "ReLU", "name": "ReLU", "pos": [300, 300]},
+      {"id": "enc1_conv2", "type": "Conv2D", "name": "Enc1 Conv2", "pos": [450, 300], "params": {"filters": "$base_filters", "kernel_size": "3", "padding": "same"}},
+      {"id": "enc1_act2", "type": "ReLU", "name": "ReLU", "pos": [600, 300]},
+      {"id": "pool1", "type": "MaxPool2D", "name": "MaxPool", "pos": [750, 300], "params": {"pool_size": "2"}},
+
+      {"id": "enc2_conv1", "type": "Conv2D", "name": "Enc2 Conv1", "pos": [150, 450], "params": {"filters": "128", "kernel_size": "3", "padding": "same"}},
+      {"id": "enc2_act1", "type": "ReLU", "name": "ReLU", "pos": [300, 450]},
+      {"id": "enc2_conv2", "type": "Conv2D", "name": "Enc2 Conv2", "pos": [450, 450], "params": {"filters": "128", "kernel_size": "3", "padding": "same"}},
+      {"id": "enc2_act2", "type": "ReLU", "name": "ReLU", "pos": [600, 450]},
+      {"id": "pool2", "type": "MaxPool2D", "name": "MaxPool", "pos": [750, 450], "params": {"pool_size": "2"}},
+
+      {"id": "bottleneck_conv1", "type": "Conv2D", "name": "Bottleneck Conv1", "pos": [150, 600], "params": {"filters": "256", "kernel_size": "3", "padding": "same"}},
+      {"id": "bottleneck_act1", "type": "ReLU", "name": "ReLU", "pos": [300, 600]},
+      {"id": "bottleneck_conv2", "type": "Conv2D", "name": "Bottleneck Conv2", "pos": [450, 600], "params": {"filters": "256", "kernel_size": "3", "padding": "same"}},
+      {"id": "bottleneck_act2", "type": "ReLU", "name": "ReLU", "pos": [600, 600]},
+
+      {"id": "up1", "type": "Conv2D", "name": "UpConv1", "pos": [750, 600], "params": {"filters": "128", "kernel_size": "2", "stride": "2", "transposed": "true"}},
+      {"id": "concat1", "type": "Concatenate", "name": "Skip Concat 1", "pos": [900, 450]},
+      {"id": "dec1_conv1", "type": "Conv2D", "name": "Dec1 Conv1", "pos": [1050, 450], "params": {"filters": "128", "kernel_size": "3", "padding": "same"}},
+      {"id": "dec1_act1", "type": "ReLU", "name": "ReLU", "pos": [1200, 450]},
+      {"id": "dec1_conv2", "type": "Conv2D", "name": "Dec1 Conv2", "pos": [1350, 450], "params": {"filters": "128", "kernel_size": "3", "padding": "same"}},
+      {"id": "dec1_act2", "type": "ReLU", "name": "ReLU", "pos": [1500, 450]},
+
+      {"id": "up2", "type": "Conv2D", "name": "UpConv2", "pos": [1650, 450], "params": {"filters": "$base_filters", "kernel_size": "2", "stride": "2", "transposed": "true"}},
+      {"id": "concat2", "type": "Concatenate", "name": "Skip Concat 2", "pos": [1800, 300]},
+      {"id": "dec2_conv1", "type": "Conv2D", "name": "Dec2 Conv1", "pos": [1950, 300], "params": {"filters": "$base_filters", "kernel_size": "3", "padding": "same"}},
+      {"id": "dec2_act1", "type": "ReLU", "name": "ReLU", "pos": [2100, 300]},
+      {"id": "dec2_conv2", "type": "Conv2D", "name": "Dec2 Conv2", "pos": [2250, 300], "params": {"filters": "$base_filters", "kernel_size": "3", "padding": "same"}},
+      {"id": "dec2_act2", "type": "ReLU", "name": "ReLU", "pos": [2400, 300]},
+
+      {"id": "output_conv", "type": "Conv2D", "name": "Output Conv 1x1", "pos": [2550, 300], "params": {"filters": "$num_classes", "kernel_size": "1"}},
+      {"id": "output", "type": "Output", "name": "Segmentation Output", "pos": [2700, 300]}
+    ],
+    "links": [
+      {"from": "input", "to": "enc1_conv1"},
+      {"from": "enc1_conv1", "to": "enc1_act1"},
+      {"from": "enc1_act1", "to": "enc1_conv2"},
+      {"from": "enc1_conv2", "to": "enc1_act2"},
+      {"from": "enc1_act2", "to": "pool1"},
+
+      {"from": "pool1", "to": "enc2_conv1"},
+      {"from": "enc2_conv1", "to": "enc2_act1"},
+      {"from": "enc2_act1", "to": "enc2_conv2"},
+      {"from": "enc2_conv2", "to": "enc2_act2"},
+      {"from": "enc2_act2", "to": "pool2"},
+
+      {"from": "pool2", "to": "bottleneck_conv1"},
+      {"from": "bottleneck_conv1", "to": "bottleneck_act1"},
+      {"from": "bottleneck_act1", "to": "bottleneck_conv2"},
+      {"from": "bottleneck_conv2", "to": "bottleneck_act2"},
+      {"from": "bottleneck_act2", "to": "up1"},
+
+      {"from": "up1", "to": "concat1"},
+      {"from": "enc2_act2", "to": "concat1"},
+      {"from": "concat1", "to": "dec1_conv1"},
+      {"from": "dec1_conv1", "to": "dec1_act1"},
+      {"from": "dec1_act1", "to": "dec1_conv2"},
+      {"from": "dec1_conv2", "to": "dec1_act2"},
+      {"from": "dec1_act2", "to": "up2"},
+
+      {"from": "up2", "to": "concat2"},
+      {"from": "enc1_act2", "to": "concat2"},
+      {"from": "concat2", "to": "dec2_conv1"},
+      {"from": "dec2_conv1", "to": "dec2_act1"},
+      {"from": "dec2_act1", "to": "dec2_conv2"},
+      {"from": "dec2_conv2", "to": "dec2_act2"},
+
+      {"from": "dec2_act2", "to": "output_conv"},
+      {"from": "output_conv", "to": "output"}
+    ]
+  }
+}

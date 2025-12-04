@@ -1,0 +1,122 @@
+{
+  "id": "mobilenet",
+  "name": "MobileNet v1",
+  "description": "MobileNet v1 by Howard et al. (2017). Efficient architecture using depthwise separable convolutions. Designed for mobile and embedded devices. ~4.2M parameters.",
+  "category": "CNN",
+  "tags": ["mobilenet", "efficient", "mobile", "edge", "lightweight", "depthwise"],
+  "parameters": [
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "1000",
+      "description": "Number of output classes",
+      "min_value": "2",
+      "max_value": "10000"
+    },
+    {
+      "name": "width_multiplier",
+      "type": "float",
+      "default_value": "1.0",
+      "description": "Width multiplier (0.25, 0.5, 0.75, 1.0)",
+      "min_value": "0.25",
+      "max_value": "1.0"
+    },
+    {
+      "name": "dropout_rate",
+      "type": "float",
+      "default_value": "0.001",
+      "description": "Dropout rate before final layer",
+      "min_value": "0.0",
+      "max_value": "0.5"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Input (224x224x3)", "pos": [0, 200]},
+      {"id": "conv1", "type": "Conv2D", "name": "Conv 3x3/2", "pos": [150, 200], "params": {"filters": "32", "kernel_size": "3", "stride": "2", "padding": "same"}},
+      {"id": "bn1", "type": "BatchNorm", "name": "BN", "pos": [300, 200]},
+      {"id": "act1", "type": "ReLU", "name": "ReLU", "pos": [450, 200]},
+
+      {"id": "dw1", "type": "DepthwiseConv2D", "name": "DW Conv 3x3", "pos": [600, 200], "params": {"kernel_size": "3", "padding": "same"}},
+      {"id": "bn2", "type": "BatchNorm", "name": "BN", "pos": [750, 200]},
+      {"id": "act2", "type": "ReLU", "name": "ReLU", "pos": [900, 200]},
+      {"id": "pw1", "type": "Conv2D", "name": "PW Conv 1x1", "pos": [1050, 200], "params": {"filters": "64", "kernel_size": "1"}},
+      {"id": "bn3", "type": "BatchNorm", "name": "BN", "pos": [1200, 200]},
+      {"id": "act3", "type": "ReLU", "name": "ReLU", "pos": [1350, 200]},
+
+      {"id": "dw2", "type": "DepthwiseConv2D", "name": "DW Conv 3x3/2", "pos": [1500, 200], "params": {"kernel_size": "3", "stride": "2", "padding": "same"}},
+      {"id": "bn4", "type": "BatchNorm", "name": "BN", "pos": [1650, 200]},
+      {"id": "act4", "type": "ReLU", "name": "ReLU", "pos": [1800, 200]},
+      {"id": "pw2", "type": "Conv2D", "name": "PW Conv 1x1", "pos": [1950, 200], "params": {"filters": "128", "kernel_size": "1"}},
+      {"id": "bn5", "type": "BatchNorm", "name": "BN", "pos": [2100, 200]},
+      {"id": "act5", "type": "ReLU", "name": "ReLU", "pos": [2250, 200]},
+
+      {"id": "dw3", "type": "DepthwiseConv2D", "name": "DW Conv 3x3", "pos": [0, 400], "params": {"kernel_size": "3", "padding": "same"}},
+      {"id": "bn6", "type": "BatchNorm", "name": "BN", "pos": [150, 400]},
+      {"id": "act6", "type": "ReLU", "name": "ReLU", "pos": [300, 400]},
+      {"id": "pw3", "type": "Conv2D", "name": "PW Conv 1x1", "pos": [450, 400], "params": {"filters": "128", "kernel_size": "1"}},
+      {"id": "bn7", "type": "BatchNorm", "name": "BN", "pos": [600, 400]},
+      {"id": "act7", "type": "ReLU", "name": "ReLU", "pos": [750, 400]},
+
+      {"id": "dw4", "type": "DepthwiseConv2D", "name": "DW Conv 3x3/2", "pos": [900, 400], "params": {"kernel_size": "3", "stride": "2", "padding": "same"}},
+      {"id": "bn8", "type": "BatchNorm", "name": "BN", "pos": [1050, 400]},
+      {"id": "act8", "type": "ReLU", "name": "ReLU", "pos": [1200, 400]},
+      {"id": "pw4", "type": "Conv2D", "name": "PW Conv 1x1", "pos": [1350, 400], "params": {"filters": "256", "kernel_size": "1"}},
+      {"id": "bn9", "type": "BatchNorm", "name": "BN", "pos": [1500, 400]},
+      {"id": "act9", "type": "ReLU", "name": "ReLU", "pos": [1650, 400]},
+
+      {"id": "dw5", "type": "DepthwiseConv2D", "name": "DW Conv 3x3/2", "pos": [1800, 400], "params": {"kernel_size": "3", "stride": "2", "padding": "same"}},
+      {"id": "bn10", "type": "BatchNorm", "name": "BN", "pos": [1950, 400]},
+      {"id": "act10", "type": "ReLU", "name": "ReLU", "pos": [2100, 400]},
+      {"id": "pw5", "type": "Conv2D", "name": "PW Conv 1x1", "pos": [2250, 400], "params": {"filters": "512", "kernel_size": "1"}},
+      {"id": "bn11", "type": "BatchNorm", "name": "BN", "pos": [2400, 400]},
+      {"id": "act11", "type": "ReLU", "name": "ReLU", "pos": [2550, 400]},
+
+      {"id": "gap", "type": "GlobalAvgPool", "name": "Global Avg Pool", "pos": [0, 600]},
+      {"id": "dropout", "type": "Dropout", "name": "Dropout", "pos": [150, 600], "params": {"rate": "$dropout_rate"}},
+      {"id": "fc", "type": "Dense", "name": "Output", "pos": [300, 600], "params": {"units": "$num_classes"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [450, 600]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [600, 600]}
+    ],
+    "links": [
+      {"from": "input", "to": "conv1"},
+      {"from": "conv1", "to": "bn1"},
+      {"from": "bn1", "to": "act1"},
+      {"from": "act1", "to": "dw1"},
+      {"from": "dw1", "to": "bn2"},
+      {"from": "bn2", "to": "act2"},
+      {"from": "act2", "to": "pw1"},
+      {"from": "pw1", "to": "bn3"},
+      {"from": "bn3", "to": "act3"},
+      {"from": "act3", "to": "dw2"},
+      {"from": "dw2", "to": "bn4"},
+      {"from": "bn4", "to": "act4"},
+      {"from": "act4", "to": "pw2"},
+      {"from": "pw2", "to": "bn5"},
+      {"from": "bn5", "to": "act5"},
+      {"from": "act5", "to": "dw3"},
+      {"from": "dw3", "to": "bn6"},
+      {"from": "bn6", "to": "act6"},
+      {"from": "act6", "to": "pw3"},
+      {"from": "pw3", "to": "bn7"},
+      {"from": "bn7", "to": "act7"},
+      {"from": "act7", "to": "dw4"},
+      {"from": "dw4", "to": "bn8"},
+      {"from": "bn8", "to": "act8"},
+      {"from": "act8", "to": "pw4"},
+      {"from": "pw4", "to": "bn9"},
+      {"from": "bn9", "to": "act9"},
+      {"from": "act9", "to": "dw5"},
+      {"from": "dw5", "to": "bn10"},
+      {"from": "bn10", "to": "act10"},
+      {"from": "act10", "to": "pw5"},
+      {"from": "pw5", "to": "bn11"},
+      {"from": "bn11", "to": "act11"},
+      {"from": "act11", "to": "gap"},
+      {"from": "gap", "to": "dropout"},
+      {"from": "dropout", "to": "fc"},
+      {"from": "fc", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}

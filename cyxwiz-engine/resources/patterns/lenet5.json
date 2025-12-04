@@ -1,0 +1,52 @@
+{
+  "id": "lenet5",
+  "name": "LeNet-5",
+  "description": "Classic LeNet-5 architecture by Yann LeCun (1998). The original CNN that proved deep learning works for image recognition. Designed for 32x32 grayscale images (MNIST).",
+  "category": "CNN",
+  "tags": ["lenet", "classic", "mnist", "digits", "cnn", "historical"],
+  "parameters": [
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "10",
+      "description": "Number of output classes",
+      "min_value": "2",
+      "max_value": "1000"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Input (32x32)", "pos": [0, 200]},
+      {"id": "conv1", "type": "Conv2D", "name": "C1: Conv 5x5", "pos": [200, 200], "params": {"filters": "6", "kernel_size": "5", "padding": "valid"}},
+      {"id": "act1", "type": "Tanh", "name": "Tanh 1", "pos": [400, 200]},
+      {"id": "pool1", "type": "AvgPool2D", "name": "S2: AvgPool 2x2", "pos": [600, 200], "params": {"pool_size": "2", "stride": "2"}},
+      {"id": "conv2", "type": "Conv2D", "name": "C3: Conv 5x5", "pos": [800, 200], "params": {"filters": "16", "kernel_size": "5", "padding": "valid"}},
+      {"id": "act2", "type": "Tanh", "name": "Tanh 2", "pos": [1000, 200]},
+      {"id": "pool2", "type": "AvgPool2D", "name": "S4: AvgPool 2x2", "pos": [1200, 200], "params": {"pool_size": "2", "stride": "2"}},
+      {"id": "conv3", "type": "Conv2D", "name": "C5: Conv 5x5", "pos": [1400, 200], "params": {"filters": "120", "kernel_size": "5", "padding": "valid"}},
+      {"id": "act3", "type": "Tanh", "name": "Tanh 3", "pos": [1600, 200]},
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [1800, 200]},
+      {"id": "fc1", "type": "Dense", "name": "F6: Dense 84", "pos": [2000, 200], "params": {"units": "84"}},
+      {"id": "act4", "type": "Tanh", "name": "Tanh 4", "pos": [2200, 200]},
+      {"id": "fc2", "type": "Dense", "name": "Output", "pos": [2400, 200], "params": {"units": "$num_classes"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [2600, 200]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [2800, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "conv1"},
+      {"from": "conv1", "to": "act1"},
+      {"from": "act1", "to": "pool1"},
+      {"from": "pool1", "to": "conv2"},
+      {"from": "conv2", "to": "act2"},
+      {"from": "act2", "to": "pool2"},
+      {"from": "pool2", "to": "conv3"},
+      {"from": "conv3", "to": "act3"},
+      {"from": "act3", "to": "flatten"},
+      {"from": "flatten", "to": "fc1"},
+      {"from": "fc1", "to": "act4"},
+      {"from": "act4", "to": "fc2"},
+      {"from": "fc2", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "id": "mlp_dropout",
+  "name": "MLP with Dropout",
+  "description": "Multi-layer perceptron with dropout regularization between layers. Helps prevent overfitting on small datasets.",
+  "category": "Basic",
+  "tags": ["mlp", "dense", "dropout", "regularization", "classification"],
+  "parameters": [
+    {
+      "name": "hidden_size",
+      "type": "int",
+      "default_value": "256",
+      "description": "Number of neurons in hidden layers",
+      "min_value": "16",
+      "max_value": "4096"
+    },
+    {
+      "name": "output_size",
+      "type": "int",
+      "default_value": "10",
+      "description": "Number of output classes/values",
+      "min_value": "1",
+      "max_value": "10000"
+    },
+    {
+      "name": "dropout_rate",
+      "type": "float",
+      "default_value": "0.5",
+      "description": "Dropout probability (0-1)",
+      "min_value": "0.0",
+      "max_value": "0.9"
+    },
+    {
+      "name": "activation",
+      "type": "nodetype",
+      "default_value": "ReLU",
+      "description": "Activation function between layers",
+      "options": ["ReLU", "LeakyReLU", "GELU", "Sigmoid", "Tanh", "Swish"]
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Dataset Input", "pos": [0, 200]},
+      {"id": "dense1", "type": "Dense", "name": "Hidden Layer 1", "pos": [200, 200], "params": {"units": "$hidden_size"}},
+      {"id": "act1", "type": "$activation", "name": "Activation 1", "pos": [400, 200]},
+      {"id": "dropout1", "type": "Dropout", "name": "Dropout 1", "pos": [600, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "dense2", "type": "Dense", "name": "Hidden Layer 2", "pos": [800, 200], "params": {"units": "$hidden_size"}},
+      {"id": "act2", "type": "$activation", "name": "Activation 2", "pos": [1000, 200]},
+      {"id": "dropout2", "type": "Dropout", "name": "Dropout 2", "pos": [1200, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "output_layer", "type": "Dense", "name": "Output Layer", "pos": [1400, 200], "params": {"units": "$output_size"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [1600, 200]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1800, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "dense1"},
+      {"from": "dense1", "to": "act1"},
+      {"from": "act1", "to": "dropout1"},
+      {"from": "dropout1", "to": "dense2"},
+      {"from": "dense2", "to": "act2"},
+      {"from": "act2", "to": "dropout2"},
+      {"from": "dropout2", "to": "output_layer"},
+      {"from": "output_layer", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}

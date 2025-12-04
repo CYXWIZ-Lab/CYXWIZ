@@ -71,6 +71,8 @@ set(ENGINE_SOURCES
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/dataset_panel.cpp
     src/gui/panels/task_progress_panel.cpp
+    src/gui/panels/pattern_browser.cpp
+    src/gui/patterns/pattern_library.cpp
     src/data/data_table.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
@@ -127,6 +129,9 @@ set(ENGINE_HEADERS
     src/gui/panels/connection_dialog.h
     src/gui/panels/dataset_panel.h
     src/gui/panels/task_progress_panel.h
+    src/gui/panels/pattern_browser.h
+    src/gui/patterns/pattern.h
+    src/gui/patterns/pattern_library.h
     src/data/data_table.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
@@ -216,6 +221,11 @@ if(WIN32)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.rc")
         target_sources(cyxwiz-engine PRIVATE resources/icon.rc)
     endif()
+    # Set Visual Studio debugger working directory to executable location
+    # This ensures resources (fonts, icons) are found when running from VS IDE
+    set_target_properties(cyxwiz-engine PROPERTIES
+        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:cyxwiz-engine>"
+    )
 endif()
 
 if(APPLE)

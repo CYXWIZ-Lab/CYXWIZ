@@ -1,0 +1,41 @@
+{
+  "id": "resnet_block",
+  "name": "Residual Block",
+  "description": "ResNet-style residual block with skip connection. The skip connection adds the input to the output, enabling deeper networks.",
+  "category": "BuildingBlocks",
+  "tags": ["resnet", "residual", "skip", "block", "deep"],
+  "parameters": [
+    {
+      "name": "filters",
+      "type": "int",
+      "default_value": "64",
+      "description": "Number of filters in conv layers",
+      "min_value": "16",
+      "max_value": "512"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Input", "pos": [0, 200]},
+      {"id": "conv1", "type": "Conv2D", "name": "Conv2D 1", "pos": [200, 100], "params": {"filters": "$filters", "kernel_size": "3", "padding": "same"}},
+      {"id": "bn1", "type": "BatchNorm", "name": "BatchNorm 1", "pos": [400, 100]},
+      {"id": "relu1", "type": "ReLU", "name": "ReLU 1", "pos": [600, 100]},
+      {"id": "conv2", "type": "Conv2D", "name": "Conv2D 2", "pos": [800, 100], "params": {"filters": "$filters", "kernel_size": "3", "padding": "same"}},
+      {"id": "bn2", "type": "BatchNorm", "name": "BatchNorm 2", "pos": [1000, 100]},
+      {"id": "add", "type": "Add", "name": "Add (Skip)", "pos": [1200, 200]},
+      {"id": "relu2", "type": "ReLU", "name": "ReLU 2", "pos": [1400, 200]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1600, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "conv1"},
+      {"from": "conv1", "to": "bn1"},
+      {"from": "bn1", "to": "relu1"},
+      {"from": "relu1", "to": "conv2"},
+      {"from": "conv2", "to": "bn2"},
+      {"from": "bn2", "to": "add", "to_pin": 0},
+      {"from": "input", "to": "add", "to_pin": 1},
+      {"from": "add", "to": "relu2"},
+      {"from": "relu2", "to": "output"}
+    ]
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "id": "lstm_basic",
+  "name": "Basic LSTM",
+  "description": "Long Short-Term Memory network for sequence modeling. Great for time series, NLP, and sequential data.",
+  "category": "RNN",
+  "tags": ["lstm", "rnn", "sequence", "time-series", "nlp"],
+  "parameters": [
+    {
+      "name": "hidden_size",
+      "type": "int",
+      "default_value": "128",
+      "description": "LSTM hidden state size",
+      "min_value": "16",
+      "max_value": "2048"
+    },
+    {
+      "name": "num_layers",
+      "type": "int",
+      "default_value": "2",
+      "description": "Number of stacked LSTM layers",
+      "min_value": "1",
+      "max_value": "8"
+    },
+    {
+      "name": "output_size",
+      "type": "int",
+      "default_value": "10",
+      "description": "Output dimension",
+      "min_value": "1",
+      "max_value": "10000"
+    },
+    {
+      "name": "dropout",
+      "type": "float",
+      "default_value": "0.2",
+      "description": "Dropout probability",
+      "min_value": "0.0",
+      "max_value": "0.9"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Sequence Input", "pos": [0, 200]},
+      {"id": "embedding", "type": "Embedding", "name": "Embedding", "pos": [200, 200]},
+      {"id": "lstm", "type": "LSTM", "name": "LSTM", "pos": [400, 200], "params": {"hidden_size": "$hidden_size", "num_layers": "$num_layers", "dropout": "$dropout"}},
+      {"id": "dropout", "type": "Dropout", "name": "Dropout", "pos": [600, 200], "params": {"rate": "$dropout"}},
+      {"id": "dense", "type": "Dense", "name": "Output Layer", "pos": [800, 200], "params": {"units": "$output_size"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1000, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "embedding"},
+      {"from": "embedding", "to": "lstm"},
+      {"from": "lstm", "to": "dropout"},
+      {"from": "dropout", "to": "dense"},
+      {"from": "dense", "to": "output"}
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "id": "dcgan",
+  "name": "DCGAN",
+  "description": "Deep Convolutional GAN with transposed convolutions in generator and strided convolutions in discriminator. Excellent for image generation tasks.",
+  "category": "Generative",
+  "tags": ["dcgan", "gan", "generative", "convolutional", "image-generation"],
+  "parameters": [
+    {
+      "name": "latent_dim",
+      "type": "int",
+      "default_value": "100",
+      "description": "Dimension of the noise vector (z)",
+      "min_value": "16",
+      "max_value": "512"
+    },
+    {
+      "name": "base_filters",
+      "type": "int",
+      "default_value": "64",
+      "description": "Base number of filters (multiplied in deeper layers)",
+      "min_value": "16",
+      "max_value": "256"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "noise_input", "type": "DatasetInput", "name": "Noise Input (z)", "pos": [0, 100]},
+      {"id": "g_dense", "type": "Dense", "name": "G Project", "pos": [200, 100], "params": {"units": "4096"}},
+      {"id": "g_reshape", "type": "Reshape", "name": "G Reshape", "pos": [400, 100], "params": {"shape": "[256, 4, 4]"}},
+      {"id": "g_bn1", "type": "BatchNorm", "name": "G BatchNorm 1", "pos": [600, 100]},
+      {"id": "g_act1", "type": "ReLU", "name": "G ReLU 1", "pos": [800, 100]},
+      {"id": "g_conv1", "type": "Conv2D", "name": "G ConvT 1", "pos": [1000, 100], "params": {"filters": "128", "kernel_size": "4", "stride": "2", "padding": "same", "transposed": "true"}},
+      {"id": "g_bn2", "type": "BatchNorm", "name": "G BatchNorm 2", "pos": [1200, 100]},
+      {"id": "g_act2", "type": "ReLU", "name": "G ReLU 2", "pos": [1400, 100]},
+      {"id": "g_conv2", "type": "Conv2D", "name": "G ConvT 2", "pos": [1600, 100], "params": {"filters": "$base_filters", "kernel_size": "4", "stride": "2", "padding": "same", "transposed": "true"}},
+      {"id": "g_bn3", "type": "BatchNorm", "name": "G BatchNorm 3", "pos": [1800, 100]},
+      {"id": "g_act3", "type": "ReLU", "name": "G ReLU 3", "pos": [2000, 100]},
+      {"id": "g_conv3", "type": "Conv2D", "name": "G ConvT 3", "pos": [2200, 100], "params": {"filters": "3", "kernel_size": "4", "stride": "2", "padding": "same", "transposed": "true"}},
+      {"id": "g_output", "type": "Tanh", "name": "G Tanh", "pos": [2400, 100]},
+      {"id": "gen_output", "type": "Output", "name": "Generated Image", "pos": [2600, 100]},
+
+      {"id": "image_input", "type": "DatasetInput", "name": "Image Input", "pos": [0, 400]},
+      {"id": "d_conv1", "type": "Conv2D", "name": "D Conv 1", "pos": [200, 400], "params": {"filters": "$base_filters", "kernel_size": "4", "stride": "2", "padding": "same"}},
+      {"id": "d_act1", "type": "LeakyReLU", "name": "D LeakyReLU 1", "pos": [400, 400]},
+      {"id": "d_conv2", "type": "Conv2D", "name": "D Conv 2", "pos": [600, 400], "params": {"filters": "128", "kernel_size": "4", "stride": "2", "padding": "same"}},
+      {"id": "d_bn1", "type": "BatchNorm", "name": "D BatchNorm 1", "pos": [800, 400]},
+      {"id": "d_act2", "type": "LeakyReLU", "name": "D LeakyReLU 2", "pos": [1000, 400]},
+      {"id": "d_conv3", "type": "Conv2D", "name": "D Conv 3", "pos": [1200, 400], "params": {"filters": "256", "kernel_size": "4", "stride": "2", "padding": "same"}},
+      {"id": "d_bn2", "type": "BatchNorm", "name": "D BatchNorm 2", "pos": [1400, 400]},
+      {"id": "d_act3", "type": "LeakyReLU", "name": "D LeakyReLU 3", "pos": [1600, 400]},
+      {"id": "d_flatten", "type": "Flatten", "name": "D Flatten", "pos": [1800, 400]},
+      {"id": "d_output", "type": "Dense", "name": "D Output", "pos": [2000, 400], "params": {"units": "1"}},
+      {"id": "d_sigmoid", "type": "Sigmoid", "name": "D Sigmoid", "pos": [2200, 400]},
+      {"id": "disc_output", "type": "Output", "name": "Discriminator Output", "pos": [2400, 400]}
+    ],
+    "links": [
+      {"from": "noise_input", "to": "g_dense"},
+      {"from": "g_dense", "to": "g_reshape"},
+      {"from": "g_reshape", "to": "g_bn1"},
+      {"from": "g_bn1", "to": "g_act1"},
+      {"from": "g_act1", "to": "g_conv1"},
+      {"from": "g_conv1", "to": "g_bn2"},
+      {"from": "g_bn2", "to": "g_act2"},
+      {"from": "g_act2", "to": "g_conv2"},
+      {"from": "g_conv2", "to": "g_bn3"},
+      {"from": "g_bn3", "to": "g_act3"},
+      {"from": "g_act3", "to": "g_conv3"},
+      {"from": "g_conv3", "to": "g_output"},
+      {"from": "g_output", "to": "gen_output"},
+
+      {"from": "image_input", "to": "d_conv1"},
+      {"from": "d_conv1", "to": "d_act1"},
+      {"from": "d_act1", "to": "d_conv2"},
+      {"from": "d_conv2", "to": "d_bn1"},
+      {"from": "d_bn1", "to": "d_act2"},
+      {"from": "d_act2", "to": "d_conv3"},
+      {"from": "d_conv3", "to": "d_bn2"},
+      {"from": "d_bn2", "to": "d_act3"},
+      {"from": "d_act3", "to": "d_flatten"},
+      {"from": "d_flatten", "to": "d_output"},
+      {"from": "d_output", "to": "d_sigmoid"},
+      {"from": "d_sigmoid", "to": "disc_output"}
+    ]
+  }
+}

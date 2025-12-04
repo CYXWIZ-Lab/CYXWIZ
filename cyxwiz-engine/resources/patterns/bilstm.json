@@ -1,0 +1,74 @@
+{
+  "id": "bilstm",
+  "name": "Bidirectional LSTM",
+  "description": "Bidirectional LSTM that processes sequences in both directions. Ideal for tasks where context from both past and future is important.",
+  "category": "RNN",
+  "tags": ["bilstm", "bidirectional", "lstm", "sequence", "nlp"],
+  "parameters": [
+    {
+      "name": "hidden_size",
+      "type": "int",
+      "default_value": "128",
+      "description": "Number of LSTM hidden units (per direction)",
+      "min_value": "32",
+      "max_value": "1024"
+    },
+    {
+      "name": "embedding_dim",
+      "type": "int",
+      "default_value": "100",
+      "description": "Dimension of embedding vectors",
+      "min_value": "16",
+      "max_value": "512"
+    },
+    {
+      "name": "vocab_size",
+      "type": "int",
+      "default_value": "10000",
+      "description": "Size of vocabulary",
+      "min_value": "100",
+      "max_value": "100000"
+    },
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "2",
+      "description": "Number of output classes",
+      "min_value": "2",
+      "max_value": "1000"
+    },
+    {
+      "name": "dropout_rate",
+      "type": "float",
+      "default_value": "0.3",
+      "description": "Dropout rate",
+      "min_value": "0.0",
+      "max_value": "0.7"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Sequence Input", "pos": [0, 200]},
+      {"id": "embed", "type": "Embedding", "name": "Embedding", "pos": [200, 200], "params": {"vocab_size": "$vocab_size", "embedding_dim": "$embedding_dim"}},
+      {"id": "dropout1", "type": "Dropout", "name": "Dropout 1", "pos": [400, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "bilstm", "type": "Bidirectional", "name": "BiLSTM", "pos": [600, 200], "params": {"units": "$hidden_size", "layer_type": "LSTM"}},
+      {"id": "dropout2", "type": "Dropout", "name": "Dropout 2", "pos": [800, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "dense1", "type": "Dense", "name": "Dense", "pos": [1000, 200], "params": {"units": "64"}},
+      {"id": "act1", "type": "ReLU", "name": "ReLU", "pos": [1200, 200]},
+      {"id": "output_layer", "type": "Dense", "name": "Output", "pos": [1400, 200], "params": {"units": "$num_classes"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [1600, 200]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1800, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "embed"},
+      {"from": "embed", "to": "dropout1"},
+      {"from": "dropout1", "to": "bilstm"},
+      {"from": "bilstm", "to": "dropout2"},
+      {"from": "dropout2", "to": "dense1"},
+      {"from": "dense1", "to": "act1"},
+      {"from": "act1", "to": "output_layer"},
+      {"from": "output_layer", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}

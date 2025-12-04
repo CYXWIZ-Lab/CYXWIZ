@@ -1,0 +1,82 @@
+{
+  "id": "cnn_classifier",
+  "name": "CNN Image Classifier",
+  "description": "Convolutional neural network for image classification with BatchNorm for stable training. Suitable for CIFAR, ImageNet-style datasets.",
+  "category": "CNN",
+  "tags": ["cnn", "conv2d", "batchnorm", "image", "classification", "computer-vision"],
+  "parameters": [
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "10",
+      "description": "Number of output classes",
+      "min_value": "2",
+      "max_value": "10000"
+    },
+    {
+      "name": "base_filters",
+      "type": "int",
+      "default_value": "32",
+      "description": "Number of filters in first conv layer (doubles in deeper layers)",
+      "min_value": "8",
+      "max_value": "256"
+    },
+    {
+      "name": "dropout_rate",
+      "type": "float",
+      "default_value": "0.25",
+      "description": "Dropout rate before fully connected layers",
+      "min_value": "0.0",
+      "max_value": "0.5"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Image Input", "pos": [0, 200]},
+      {"id": "conv1", "type": "Conv2D", "name": "Conv 3x3", "pos": [200, 200], "params": {"filters": "$base_filters", "kernel_size": "3", "padding": "same"}},
+      {"id": "bn1", "type": "BatchNorm", "name": "BatchNorm 1", "pos": [400, 200]},
+      {"id": "act1", "type": "ReLU", "name": "ReLU 1", "pos": [600, 200]},
+      {"id": "conv2", "type": "Conv2D", "name": "Conv 3x3", "pos": [800, 200], "params": {"filters": "$base_filters", "kernel_size": "3", "padding": "same"}},
+      {"id": "bn2", "type": "BatchNorm", "name": "BatchNorm 2", "pos": [1000, 200]},
+      {"id": "act2", "type": "ReLU", "name": "ReLU 2", "pos": [1200, 200]},
+      {"id": "pool1", "type": "MaxPool2D", "name": "MaxPool 2x2", "pos": [1400, 200], "params": {"pool_size": "2"}},
+      {"id": "conv3", "type": "Conv2D", "name": "Conv 3x3", "pos": [200, 400], "params": {"filters": "64", "kernel_size": "3", "padding": "same"}},
+      {"id": "bn3", "type": "BatchNorm", "name": "BatchNorm 3", "pos": [400, 400]},
+      {"id": "act3", "type": "ReLU", "name": "ReLU 3", "pos": [600, 400]},
+      {"id": "conv4", "type": "Conv2D", "name": "Conv 3x3", "pos": [800, 400], "params": {"filters": "64", "kernel_size": "3", "padding": "same"}},
+      {"id": "bn4", "type": "BatchNorm", "name": "BatchNorm 4", "pos": [1000, 400]},
+      {"id": "act4", "type": "ReLU", "name": "ReLU 4", "pos": [1200, 400]},
+      {"id": "pool2", "type": "MaxPool2D", "name": "MaxPool 2x2", "pos": [1400, 400], "params": {"pool_size": "2"}},
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [200, 600]},
+      {"id": "dropout", "type": "Dropout", "name": "Dropout", "pos": [400, 600], "params": {"rate": "$dropout_rate"}},
+      {"id": "dense1", "type": "Dense", "name": "Dense 256", "pos": [600, 600], "params": {"units": "256"}},
+      {"id": "act5", "type": "ReLU", "name": "ReLU 5", "pos": [800, 600]},
+      {"id": "output_layer", "type": "Dense", "name": "Output", "pos": [1000, 600], "params": {"units": "$num_classes"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [1200, 600]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1400, 600]}
+    ],
+    "links": [
+      {"from": "input", "to": "conv1"},
+      {"from": "conv1", "to": "bn1"},
+      {"from": "bn1", "to": "act1"},
+      {"from": "act1", "to": "conv2"},
+      {"from": "conv2", "to": "bn2"},
+      {"from": "bn2", "to": "act2"},
+      {"from": "act2", "to": "pool1"},
+      {"from": "pool1", "to": "conv3"},
+      {"from": "conv3", "to": "bn3"},
+      {"from": "bn3", "to": "act3"},
+      {"from": "act3", "to": "conv4"},
+      {"from": "conv4", "to": "bn4"},
+      {"from": "bn4", "to": "act4"},
+      {"from": "act4", "to": "pool2"},
+      {"from": "pool2", "to": "flatten"},
+      {"from": "flatten", "to": "dropout"},
+      {"from": "dropout", "to": "dense1"},
+      {"from": "dense1", "to": "act5"},
+      {"from": "act5", "to": "output_layer"},
+      {"from": "output_layer", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}

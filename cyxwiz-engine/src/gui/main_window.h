@@ -34,6 +34,7 @@ class TableViewerPanel;
 class ConnectionDialog;
 class JobStatusPanel;
 class P2PTrainingPanel;
+class PatternBrowserPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -129,6 +130,7 @@ private:
     std::unique_ptr<cyxwiz::P2PTrainingPanel> p2p_training_panel_;
     std::unique_ptr<gui::WalletPanel> wallet_panel_;
     std::unique_ptr<cyxwiz::TaskProgressPanel> task_progress_panel_;
+    std::unique_ptr<cyxwiz::PatternBrowserPanel> pattern_browser_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;

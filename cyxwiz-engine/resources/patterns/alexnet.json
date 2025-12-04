@@ -1,0 +1,78 @@
+{
+  "id": "alexnet",
+  "name": "AlexNet",
+  "description": "AlexNet by Krizhevsky et al. (2012). Won ImageNet and sparked the deep learning revolution. Uses ReLU, dropout, and local response normalization. Designed for 224x224 RGB images.",
+  "category": "CNN",
+  "tags": ["alexnet", "imagenet", "classic", "deep-learning", "cnn", "historical"],
+  "parameters": [
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "1000",
+      "description": "Number of output classes (1000 for ImageNet)",
+      "min_value": "2",
+      "max_value": "10000"
+    },
+    {
+      "name": "dropout_rate",
+      "type": "float",
+      "default_value": "0.5",
+      "description": "Dropout rate for FC layers",
+      "min_value": "0.0",
+      "max_value": "0.7"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Input (224x224x3)", "pos": [0, 200]},
+      {"id": "conv1", "type": "Conv2D", "name": "Conv1 11x11/4", "pos": [200, 200], "params": {"filters": "96", "kernel_size": "11", "stride": "4", "padding": "valid"}},
+      {"id": "act1", "type": "ReLU", "name": "ReLU 1", "pos": [400, 200]},
+      {"id": "pool1", "type": "MaxPool2D", "name": "MaxPool 3x3/2", "pos": [600, 200], "params": {"pool_size": "3", "stride": "2"}},
+      {"id": "conv2", "type": "Conv2D", "name": "Conv2 5x5", "pos": [800, 200], "params": {"filters": "256", "kernel_size": "5", "padding": "same"}},
+      {"id": "act2", "type": "ReLU", "name": "ReLU 2", "pos": [1000, 200]},
+      {"id": "pool2", "type": "MaxPool2D", "name": "MaxPool 3x3/2", "pos": [1200, 200], "params": {"pool_size": "3", "stride": "2"}},
+      {"id": "conv3", "type": "Conv2D", "name": "Conv3 3x3", "pos": [1400, 200], "params": {"filters": "384", "kernel_size": "3", "padding": "same"}},
+      {"id": "act3", "type": "ReLU", "name": "ReLU 3", "pos": [1600, 200]},
+      {"id": "conv4", "type": "Conv2D", "name": "Conv4 3x3", "pos": [1800, 200], "params": {"filters": "384", "kernel_size": "3", "padding": "same"}},
+      {"id": "act4", "type": "ReLU", "name": "ReLU 4", "pos": [2000, 200]},
+      {"id": "conv5", "type": "Conv2D", "name": "Conv5 3x3", "pos": [2200, 200], "params": {"filters": "256", "kernel_size": "3", "padding": "same"}},
+      {"id": "act5", "type": "ReLU", "name": "ReLU 5", "pos": [2400, 200]},
+      {"id": "pool3", "type": "MaxPool2D", "name": "MaxPool 3x3/2", "pos": [2600, 200], "params": {"pool_size": "3", "stride": "2"}},
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [0, 400]},
+      {"id": "fc1", "type": "Dense", "name": "FC1 4096", "pos": [200, 400], "params": {"units": "4096"}},
+      {"id": "act6", "type": "ReLU", "name": "ReLU 6", "pos": [400, 400]},
+      {"id": "dropout1", "type": "Dropout", "name": "Dropout 1", "pos": [600, 400], "params": {"rate": "$dropout_rate"}},
+      {"id": "fc2", "type": "Dense", "name": "FC2 4096", "pos": [800, 400], "params": {"units": "4096"}},
+      {"id": "act7", "type": "ReLU", "name": "ReLU 7", "pos": [1000, 400]},
+      {"id": "dropout2", "type": "Dropout", "name": "Dropout 2", "pos": [1200, 400], "params": {"rate": "$dropout_rate"}},
+      {"id": "fc3", "type": "Dense", "name": "FC3 Output", "pos": [1400, 400], "params": {"units": "$num_classes"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [1600, 400]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1800, 400]}
+    ],
+    "links": [
+      {"from": "input", "to": "conv1"},
+      {"from": "conv1", "to": "act1"},
+      {"from": "act1", "to": "pool1"},
+      {"from": "pool1", "to": "conv2"},
+      {"from": "conv2", "to": "act2"},
+      {"from": "act2", "to": "pool2"},
+      {"from": "pool2", "to": "conv3"},
+      {"from": "conv3", "to": "act3"},
+      {"from": "act3", "to": "conv4"},
+      {"from": "conv4", "to": "act4"},
+      {"from": "act4", "to": "conv5"},
+      {"from": "conv5", "to": "act5"},
+      {"from": "act5", "to": "pool3"},
+      {"from": "pool3", "to": "flatten"},
+      {"from": "flatten", "to": "fc1"},
+      {"from": "fc1", "to": "act6"},
+      {"from": "act6", "to": "dropout1"},
+      {"from": "dropout1", "to": "fc2"},
+      {"from": "fc2", "to": "act7"},
+      {"from": "act7", "to": "dropout2"},
+      {"from": "dropout2", "to": "fc3"},
+      {"from": "fc3", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}

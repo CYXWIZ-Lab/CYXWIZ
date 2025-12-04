@@ -1,0 +1,72 @@
+{
+  "id": "cnn_basic",
+  "name": "Basic CNN",
+  "description": "Simple convolutional neural network with two conv-pool blocks followed by dense layers. Ideal for image classification.",
+  "category": "CNN",
+  "tags": ["cnn", "convolution", "image", "classification", "vision"],
+  "parameters": [
+    {
+      "name": "filters1",
+      "type": "int",
+      "default_value": "32",
+      "description": "Filters in first conv layer",
+      "min_value": "8",
+      "max_value": "512"
+    },
+    {
+      "name": "filters2",
+      "type": "int",
+      "default_value": "64",
+      "description": "Filters in second conv layer",
+      "min_value": "8",
+      "max_value": "512"
+    },
+    {
+      "name": "dense_units",
+      "type": "int",
+      "default_value": "128",
+      "description": "Units in dense layer",
+      "min_value": "32",
+      "max_value": "2048"
+    },
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "10",
+      "description": "Number of output classes",
+      "min_value": "2",
+      "max_value": "10000"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Image Input", "pos": [0, 200]},
+      {"id": "conv1", "type": "Conv2D", "name": "Conv2D 1", "pos": [200, 200], "params": {"filters": "$filters1", "kernel_size": "3"}},
+      {"id": "relu1", "type": "ReLU", "name": "ReLU 1", "pos": [400, 200]},
+      {"id": "pool1", "type": "MaxPool2D", "name": "MaxPool 1", "pos": [600, 200]},
+      {"id": "conv2", "type": "Conv2D", "name": "Conv2D 2", "pos": [800, 200], "params": {"filters": "$filters2", "kernel_size": "3"}},
+      {"id": "relu2", "type": "ReLU", "name": "ReLU 2", "pos": [1000, 200]},
+      {"id": "pool2", "type": "MaxPool2D", "name": "MaxPool 2", "pos": [1200, 200]},
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [1400, 200]},
+      {"id": "dense1", "type": "Dense", "name": "Dense", "pos": [1600, 200], "params": {"units": "$dense_units"}},
+      {"id": "relu3", "type": "ReLU", "name": "ReLU 3", "pos": [1800, 200]},
+      {"id": "output_layer", "type": "Dense", "name": "Output", "pos": [2000, 200], "params": {"units": "$num_classes"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [2200, 200]},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [2400, 200]}
+    ],
+    "links": [
+      {"from": "input", "to": "conv1"},
+      {"from": "conv1", "to": "relu1"},
+      {"from": "relu1", "to": "pool1"},
+      {"from": "pool1", "to": "conv2"},
+      {"from": "conv2", "to": "relu2"},
+      {"from": "relu2", "to": "pool2"},
+      {"from": "pool2", "to": "flatten"},
+      {"from": "flatten", "to": "dense1"},
+      {"from": "dense1", "to": "relu3"},
+      {"from": "relu3", "to": "output_layer"},
+      {"from": "output_layer", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}
