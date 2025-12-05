@@ -51,7 +51,7 @@ void PatternLibrary::LoadBuiltinPatterns() {
         if (fs::exists(path) && fs::is_directory(path)) {
             spdlog::info("Loading builtin patterns from: {}", path);
             for (const auto& entry : fs::directory_iterator(path)) {
-                if (entry.path().extension() == ".json") {
+                if (entry.path().extension() == ".cyxgraph") {
                     LoadPatternFromFile(entry.path().string());
                 }
             }
@@ -75,7 +75,7 @@ void PatternLibrary::LoadUserPatterns(const std::string& directory) {
 
     spdlog::info("Loading user patterns from: {}", directory);
     for (const auto& entry : fs::directory_iterator(directory)) {
-        if (entry.path().extension() == ".json") {
+        if (entry.path().extension() == ".cyxgraph") {
             LoadPatternFromFile(entry.path().string());
         }
     }
@@ -555,6 +555,114 @@ bool PatternLibrary::InstantiatePattern(
     return true;
 }
 
+bool PatternLibrary::InstantiatePatternWithCreator(
+    const std::string& pattern_id,
+    const std::map<std::string, std::string>& params,
+    std::vector<MLNode>& out_nodes,
+    std::vector<NodeLink>& out_links,
+    int& next_node_id,
+    int& next_link_id,
+    ImVec2 base_position,
+    NodeCreatorCallback node_creator
+) {
+    const Pattern* pattern = GetPattern(pattern_id);
+    if (!pattern) {
+        spdlog::error("Pattern not found: {}", pattern_id);
+        return false;
+    }
+
+    if (!node_creator) {
+        spdlog::error("Node creator callback is null");
+        return false;
+    }
+
+    // Merge default parameters with provided parameters
+    std::map<std::string, std::string> merged_params;
+    for (const auto& param : pattern->parameters) {
+        merged_params[param.name] = param.default_value;
+    }
+    for (const auto& [key, value] : params) {
+        merged_params[key] = value;
+    }
+
+    // Map from pattern node ID to actual node ID
+    std::map<std::string, int> node_id_map;
+
+    // Create nodes using the callback (which creates proper pins)
+    for (const auto& pattern_node : pattern->template_data.nodes) {
+        // Substitute parameters in type (for dynamic types like $activation)
+        std::string resolved_type = SubstituteParams(pattern_node.type, merged_params);
+        NodeType node_type = StringToNodeType(resolved_type);
+        std::string resolved_name = SubstituteParams(pattern_node.name, merged_params);
+
+        // Use the callback to create the node with proper pins
+        MLNode node = node_creator(node_type, resolved_name);
+
+        // Override the ID with our tracked ID
+        node.id = next_node_id++;
+
+        // Store mapping
+        node_id_map[pattern_node.id] = node.id;
+
+        // Store position for later application by NodeEditor
+        node.initial_pos_x = base_position.x + pattern_node.pos_x;
+        node.initial_pos_y = base_position.y + pattern_node.pos_y;
+        node.has_initial_position = true;
+
+        // Copy parameters with substitution
+        for (const auto& [key, value] : pattern_node.params) {
+            node.parameters[key] = SubstituteParams(value, merged_params);
+        }
+
+        out_nodes.push_back(node);
+    }
+
+    // Create links
+    for (const auto& pattern_link : pattern->template_data.links) {
+        auto from_it = node_id_map.find(pattern_link.from_node);
+        auto to_it = node_id_map.find(pattern_link.to_node);
+
+        if (from_it == node_id_map.end() || to_it == node_id_map.end()) {
+            spdlog::warn("Invalid link in pattern: {} -> {}", pattern_link.from_node, pattern_link.to_node);
+            continue;
+        }
+
+        int from_node_id = from_it->second;
+        int to_node_id = to_it->second;
+
+        // Find the actual pin IDs from the properly created nodes
+        int from_pin_id = -1;
+        int to_pin_id = -1;
+
+        for (const auto& node : out_nodes) {
+            if (node.id == from_node_id && !node.outputs.empty()) {
+                int pin_idx = std::min(pattern_link.from_pin, (int)node.outputs.size() - 1);
+                from_pin_id = node.outputs[pin_idx].id;
+            }
+            if (node.id == to_node_id && !node.inputs.empty()) {
+                int pin_idx = std::min(pattern_link.to_pin, (int)node.inputs.size() - 1);
+                to_pin_id = node.inputs[pin_idx].id;
+            }
+        }
+
+        if (from_pin_id != -1 && to_pin_id != -1) {
+            NodeLink link;
+            link.id = next_link_id++;
+            link.from_node = from_node_id;
+            link.from_pin = from_pin_id;
+            link.to_node = to_node_id;
+            link.to_pin = to_pin_id;
+            link.type = LinkType::TensorFlow;  // Default type
+            out_links.push_back(link);
+        }
+    }
+
+    spdlog::info("Instantiated pattern '{}' with {} nodes and {} links (using node creator)",
+                 pattern->name, out_nodes.size(), out_links.size());
+
+    return true;
+}
+
 bool PatternLibrary::SavePatternFromSelection(
     const std::vector<MLNode>& nodes,
     const std::vector<NodeLink>& links,
@@ -635,7 +743,7 @@ bool PatternLibrary::SavePatternFromSelection(
     // Determine save path
     std::string filepath = save_path;
     if (filepath.empty()) {
-        filepath = user_patterns_dir_ + "/" + name + ".json";
+        filepath = user_patterns_dir_ + "/" + name + ".cyxgraph";
     }
 
     // Ensure directory exists

@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include "node_documentation.h"
 #include "panels/script_editor.h"
 #include "properties.h"
 #include "patterns/pattern_library.h"
@@ -320,6 +321,9 @@ void NodeEditor::Render() {
             pending_clear_imnodes_ = false;
         }
 
+        // Render group backgrounds before nodes so they appear behind
+        RenderGroups();
+
         RenderNodes();
 
         // Handle mouse wheel zoom (skip if mouse is over minimap)
@@ -408,6 +412,9 @@ void NodeEditor::Render() {
 
         // Handle keyboard shortcuts (Ctrl+Z, Ctrl+C, etc.)
         HandleKeyboardShortcuts();
+
+        // Show search bar if visible (Ctrl+F to toggle)
+        ShowSearchBar();
 
         // Update properties panel with selected node
         const int num_selected = ImNodes::NumSelectedNodes();
@@ -581,6 +588,36 @@ void NodeEditor::Render() {
 
         if (ImGui::Button("Cancel", ImVec2(140, 0))) {
             show_save_pattern_dialog_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // ===== Empty Graph Warning Popup =====
+    if (show_empty_graph_warning_) {
+        ImGui::OpenPopup("Empty Graph Warning");
+    }
+
+    if (ImGui::BeginPopupModal("Empty Graph Warning", &show_empty_graph_warning_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::SameLine();
+        ImGui::Text("Cannot Save Empty Graph");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::TextWrapped("The node graph is empty. Please add at least one node before saving.");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        float button_width = 120.0f;
+        float window_width = ImGui::GetWindowWidth();
+        ImGui::SetCursorPosX((window_width - button_width) * 0.5f);
+
+        if (ImGui::Button("OK", ImVec2(button_width, 0))) {
+            show_empty_graph_warning_ = false;
             ImGui::CloseCurrentPopup();
         }
 
@@ -1211,12 +1248,22 @@ void NodeEditor::RenderNodes() {
 
         ImNodes::EndNode();
 
+        // Check if this node is hovered for documentation tooltip
+        int hovered_node_id = -1;
+        if (ImNodes::IsNodeHovered(&hovered_node_id) && hovered_node_id == node.id) {
+            NodeDocumentationManager::Instance().RenderTooltip(node.type);
+        }
+
         // Apply any pending position AFTER the node has been created
         // (ImNodes needs the node to exist before SetNodeGridSpacePos works)
+        // Keep applying positions while pending_positions_frames_ > 0 to ensure they stick
         auto pos_it = pending_positions_.find(node.id);
         if (pos_it != pending_positions_.end()) {
             ImNodes::SetNodeGridSpacePos(node.id, pos_it->second);
-            pending_positions_.erase(pos_it);
+            // Only erase if we're done applying (frame counter reached 0)
+            if (pending_positions_frames_ <= 0) {
+                pending_positions_.erase(pos_it);
+            }
         }
 
         // Pop color styles
@@ -1225,8 +1272,10 @@ void NodeEditor::RenderNodes() {
         ImNodes::PopColorStyle();
     }
 
-    // Render all links with training animation if active
+    // Render all links with color based on link type (and training animation if active)
     for (const auto& link : links_) {
+        ImU32 link_color, link_hovered, link_selected;
+
         if (is_training_) {
             // Create pulsing amber/green effect during training
             // Pulse frequency: ~2 Hz (full cycle every 0.5 seconds)
@@ -1237,21 +1286,33 @@ void NodeEditor::RenderNodes() {
             float g = 191.0f * (1.0f - pulse) + 255.0f * pulse;
             float b = 0.0f * (1.0f - pulse) + 100.0f * pulse;
 
-            ImU32 link_color = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 255);
-            ImU32 link_hovered = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 200);
-            ImU32 link_selected = IM_COL32(255, 255, 255, 255);
-
-            ImNodes::PushColorStyle(ImNodesCol_Link, link_color);
-            ImNodes::PushColorStyle(ImNodesCol_LinkHovered, link_hovered);
-            ImNodes::PushColorStyle(ImNodesCol_LinkSelected, link_selected);
-
-            ImNodes::Link(link.id, link.from_pin, link.to_pin);
-
-            ImNodes::PopColorStyle();
-            ImNodes::PopColorStyle();
-            ImNodes::PopColorStyle();
+            link_color = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 255);
+            link_hovered = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 200);
+            link_selected = IM_COL32(255, 255, 255, 255);
         } else {
-            ImNodes::Link(link.id, link.from_pin, link.to_pin);
+            // Use link type colors when not training
+            link_color = GetLinkColor(link.type);
+            link_hovered = GetLinkHoverColor(link.type);
+            link_selected = IM_COL32(255, 255, 255, 255);
+        }
+
+        ImNodes::PushColorStyle(ImNodesCol_Link, link_color);
+        ImNodes::PushColorStyle(ImNodesCol_LinkHovered, link_hovered);
+        ImNodes::PushColorStyle(ImNodesCol_LinkSelected, link_selected);
+
+        ImNodes::Link(link.id, link.from_pin, link.to_pin);
+
+        ImNodes::PopColorStyle();
+        ImNodes::PopColorStyle();
+        ImNodes::PopColorStyle();
+    }
+
+    // Decrement pending positions frame counter after all nodes processed
+    if (pending_positions_frames_ > 0) {
+        pending_positions_frames_--;
+        // Clear positions when we're done applying them
+        if (pending_positions_frames_ == 0) {
+            pending_positions_.clear();
         }
     }
 }
@@ -1323,4033 +1384,800 @@ void NodeEditor::HandleInteractions() {
     }
 }
 
-void NodeEditor::ShowContextMenu() {
-    ImGui::Text("Add Node:");
-    ImGui::Separator();
+// ===== Search Functionality =====
 
-    // ===== LAYERS =====
-    if (ImGui::BeginMenu("Layers")) {
-        // Dense/Linear
-        if (ImGui::BeginMenu("Dense / Linear")) {
-            if (ImGui::MenuItem("Dense (64 units)")) {
-                AddNode(NodeType::Dense, "Dense (64)");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Dense (128 units)")) {
-                AddNode(NodeType::Dense, "Dense (128)");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Dense (256 units)")) {
-                AddNode(NodeType::Dense, "Dense (256)");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Dense (512 units)")) {
-                AddNode(NodeType::Dense, "Dense (512)");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
+void NodeEditor::ShowSearchBar() {
+    if (!search_state_.search_visible) return;
+
+    // Position the search bar at the top of the node editor window
+    ImVec2 window_pos = ImGui::GetWindowPos();
+    ImVec2 window_size = ImGui::GetWindowSize();
+    float bar_height = 40.0f;
+    float bar_width = 350.0f;
+
+    // Position at top-center of the window
+    ImVec2 bar_pos = ImVec2(
+        window_pos.x + (window_size.x - bar_width) * 0.5f,
+        window_pos.y + ImGui::GetFrameHeight() + 60.0f  // Below toolbar
+    );
+
+    ImGui::SetNextWindowPos(bar_pos);
+    ImGui::SetNextWindowSize(ImVec2(bar_width, bar_height));
+    ImGui::SetNextWindowBgAlpha(0.95f);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings;
+
+    if (ImGui::Begin("##NodeSearchBar", nullptr, flags)) {
+        // Search icon
+        ImGui::Text(ICON_FA_MAGNIFYING_GLASS);
+        ImGui::SameLine();
+
+        // Focus input if just opened
+        static bool was_visible = false;
+        if (!was_visible && search_state_.search_visible) {
+            ImGui::SetKeyboardFocusHere();
         }
+        was_visible = search_state_.search_visible;
 
-        // Convolutional
-        if (ImGui::BeginMenu("Convolutional")) {
-            if (ImGui::MenuItem("Conv1D")) {
-                AddNode(NodeType::Conv1D, "Conv1D");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Conv2D")) {
-                AddNode(NodeType::Conv2D, "Conv2D");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Conv3D")) {
-                AddNode(NodeType::Conv3D, "Conv3D");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("DepthwiseConv2D")) {
-                AddNode(NodeType::DepthwiseConv2D, "DepthwiseConv2D");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
-        }
-
-        // Pooling
-        if (ImGui::BeginMenu("Pooling")) {
-            if (ImGui::MenuItem("MaxPool2D")) {
-                AddNode(NodeType::MaxPool2D, "MaxPool2D");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("AvgPool2D")) {
-                AddNode(NodeType::AvgPool2D, "AvgPool2D");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("GlobalMaxPool")) {
-                AddNode(NodeType::GlobalMaxPool, "GlobalMaxPool");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("GlobalAvgPool")) {
-                AddNode(NodeType::GlobalAvgPool, "GlobalAvgPool");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("AdaptiveAvgPool")) {
-                AddNode(NodeType::AdaptiveAvgPool, "AdaptiveAvgPool");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
+        // Search input
+        ImGui::SetNextItemWidth(200.0f);
+        bool changed = ImGui::InputText("##SearchInput", search_state_.search_buffer,
+                                        sizeof(search_state_.search_buffer),
+                                        ImGuiInputTextFlags_AutoSelectAll);
+        if (changed) {
+            UpdateSearchResults();
         }
 
-        // Normalization
-        if (ImGui::BeginMenu("Normalization")) {
-            if (ImGui::MenuItem("BatchNorm")) {
-                AddNode(NodeType::BatchNorm, "BatchNorm");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("LayerNorm")) {
-                AddNode(NodeType::LayerNorm, "LayerNorm");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("GroupNorm")) {
-                AddNode(NodeType::GroupNorm, "GroupNorm");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("InstanceNorm")) {
-                AddNode(NodeType::InstanceNorm, "InstanceNorm");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
-        }
-
-        // Regularization
-        if (ImGui::BeginMenu("Regularization")) {
-            if (ImGui::MenuItem("Dropout (0.5)")) {
-                AddNode(NodeType::Dropout, "Dropout (0.5)");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Dropout (0.3)")) {
-                AddNode(NodeType::Dropout, "Dropout (0.3)");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Dropout (0.2)")) {
-                AddNode(NodeType::Dropout, "Dropout (0.2)");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::MenuItem("Flatten")) {
-            AddNode(NodeType::Flatten, "Flatten");
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndMenu();
-    }
-
-    // ===== ACTIVATIONS =====
-    if (ImGui::BeginMenu("Activations")) {
-        if (ImGui::MenuItem("ReLU")) {
-            AddNode(NodeType::ReLU, "ReLU");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("LeakyReLU")) {
-            AddNode(NodeType::LeakyReLU, "LeakyReLU");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("PReLU")) {
-            AddNode(NodeType::PReLU, "PReLU");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("ELU")) {
-            AddNode(NodeType::ELU, "ELU");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("SELU")) {
-            AddNode(NodeType::SELU, "SELU");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("GELU")) {
-            AddNode(NodeType::GELU, "GELU");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Swish / SiLU")) {
-            AddNode(NodeType::Swish, "Swish");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Mish")) {
-            AddNode(NodeType::Mish, "Mish");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Sigmoid")) {
-            AddNode(NodeType::Sigmoid, "Sigmoid");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Tanh")) {
-            AddNode(NodeType::Tanh, "Tanh");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Softmax")) {
-            AddNode(NodeType::Softmax, "Softmax");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndMenu();
-    }
-
-    // ===== RECURRENT & ATTENTION =====
-    if (ImGui::BeginMenu("Recurrent & Attention")) {
-        // Recurrent
-        if (ImGui::BeginMenu("Recurrent")) {
-            if (ImGui::MenuItem("RNN")) {
-                AddNode(NodeType::RNN, "RNN");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("LSTM")) {
-                AddNode(NodeType::LSTM, "LSTM");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("GRU")) {
-                AddNode(NodeType::GRU, "GRU");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Bidirectional")) {
-                AddNode(NodeType::Bidirectional, "Bidirectional");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("TimeDistributed")) {
-                AddNode(NodeType::TimeDistributed, "TimeDistributed");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::MenuItem("Embedding")) {
-            AddNode(NodeType::Embedding, "Embedding");
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::Separator();
-
-        // Attention & Transformer
-        if (ImGui::BeginMenu("Attention")) {
-            if (ImGui::MenuItem("MultiHeadAttention")) {
-                AddNode(NodeType::MultiHeadAttention, "MultiHeadAttention");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("SelfAttention")) {
-                AddNode(NodeType::SelfAttention, "SelfAttention");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("CrossAttention")) {
-                AddNode(NodeType::CrossAttention, "CrossAttention");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("LinearAttention")) {
-                AddNode(NodeType::LinearAttention, "LinearAttention");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Transformer")) {
-            if (ImGui::MenuItem("TransformerEncoder")) {
-                AddNode(NodeType::TransformerEncoder, "TransformerEncoder");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("TransformerDecoder")) {
-                AddNode(NodeType::TransformerDecoder, "TransformerDecoder");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("PositionalEncoding")) {
-                AddNode(NodeType::PositionalEncoding, "PositionalEncoding");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
-        }
-
-        ImGui::EndMenu();
-    }
-
-    // ===== SHAPE OPERATIONS =====
-    if (ImGui::BeginMenu("Shape Operations")) {
-        if (ImGui::MenuItem("Reshape")) {
-            AddNode(NodeType::Reshape, "Reshape");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Permute")) {
-            AddNode(NodeType::Permute, "Permute");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Squeeze")) {
-            AddNode(NodeType::Squeeze, "Squeeze");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Unsqueeze")) {
-            AddNode(NodeType::Unsqueeze, "Unsqueeze");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("View")) {
-            AddNode(NodeType::View, "View");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Split")) {
-            AddNode(NodeType::Split, "Split");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndMenu();
-    }
-
-    // ===== MERGE OPERATIONS =====
-    if (ImGui::BeginMenu("Merge Operations")) {
-        if (ImGui::MenuItem("Concatenate")) {
-            AddNode(NodeType::Concatenate, "Concatenate");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Add")) {
-            AddNode(NodeType::Add, "Add");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Multiply")) {
-            AddNode(NodeType::Multiply, "Multiply");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Average")) {
-            AddNode(NodeType::Average, "Average");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndMenu();
-    }
-
-    ImGui::Separator();
-
-    // ===== DATA PIPELINE =====
-    if (ImGui::BeginMenu("Data Pipeline")) {
-        if (ImGui::MenuItem("DatasetInput")) {
-            AddNode(NodeType::DatasetInput, "DatasetInput");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("DataLoader")) {
-            AddNode(NodeType::DataLoader, "DataLoader");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Augmentation")) {
-            AddNode(NodeType::Augmentation, "Augmentation");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("DataSplit")) {
-            AddNode(NodeType::DataSplit, "DataSplit");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("TensorReshape")) {
-            AddNode(NodeType::TensorReshape, "TensorReshape");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Normalize")) {
-            AddNode(NodeType::Normalize, "Normalize");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("OneHotEncode")) {
-            AddNode(NodeType::OneHotEncode, "OneHotEncode");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndMenu();
-    }
-
-    ImGui::Separator();
-
-    // ===== LOSS FUNCTIONS =====
-    if (ImGui::BeginMenu("Loss Functions")) {
-        if (ImGui::BeginMenu("Regression")) {
-            if (ImGui::MenuItem("MSE Loss")) {
-                AddNode(NodeType::MSELoss, "MSE Loss");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("L1 Loss (MAE)")) {
-                AddNode(NodeType::L1Loss, "L1 Loss");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Smooth L1 Loss")) {
-                AddNode(NodeType::SmoothL1Loss, "SmoothL1 Loss");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Huber Loss")) {
-                AddNode(NodeType::HuberLoss, "Huber Loss");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Classification")) {
-            if (ImGui::MenuItem("CrossEntropy Loss")) {
-                AddNode(NodeType::CrossEntropyLoss, "CrossEntropy Loss");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("BCE Loss")) {
-                AddNode(NodeType::BCELoss, "BCE Loss");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("BCE with Logits")) {
-                AddNode(NodeType::BCEWithLogits, "BCEWithLogits");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("NLL Loss")) {
-                AddNode(NodeType::NLLLoss, "NLL Loss");
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::EndMenu();
-    }
-
-    // ===== OPTIMIZERS =====
-    if (ImGui::BeginMenu("Optimizers")) {
-        if (ImGui::MenuItem("SGD")) {
-            AddNode(NodeType::SGD, "SGD");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Adam")) {
-            AddNode(NodeType::Adam, "Adam");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("AdamW")) {
-            AddNode(NodeType::AdamW, "AdamW");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("RMSprop")) {
-            AddNode(NodeType::RMSprop, "RMSprop");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Adagrad")) {
-            AddNode(NodeType::Adagrad, "Adagrad");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("NAdam")) {
-            AddNode(NodeType::NAdam, "NAdam");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndMenu();
-    }
-
-    // ===== LEARNING RATE SCHEDULERS =====
-    if (ImGui::BeginMenu("LR Schedulers")) {
-        if (ImGui::MenuItem("StepLR")) {
-            AddNode(NodeType::StepLR, "StepLR");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("CosineAnnealing")) {
-            AddNode(NodeType::CosineAnnealing, "CosineAnnealing");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("ReduceOnPlateau")) {
-            AddNode(NodeType::ReduceOnPlateau, "ReduceOnPlateau");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("ExponentialLR")) {
-            AddNode(NodeType::ExponentialLR, "ExponentialLR");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("WarmupScheduler")) {
-            AddNode(NodeType::WarmupScheduler, "WarmupScheduler");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndMenu();
-    }
-
-    // ===== REGULARIZATION NODES =====
-    if (ImGui::BeginMenu("Regularization")) {
-        if (ImGui::MenuItem("L1 Regularization")) {
-            AddNode(NodeType::L1Regularization, "L1 Regularization");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("L2 Regularization")) {
-            AddNode(NodeType::L2Regularization, "L2 Regularization");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("ElasticNet")) {
-            AddNode(NodeType::ElasticNet, "ElasticNet");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndMenu();
-    }
-
-    // ===== UTILITY NODES =====
-    if (ImGui::BeginMenu("Utility")) {
-        if (ImGui::MenuItem("Lambda")) {
-            AddNode(NodeType::Lambda, "Lambda");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Identity")) {
-            AddNode(NodeType::Identity, "Identity");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Constant")) {
-            AddNode(NodeType::Constant, "Constant");
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::MenuItem("Parameter")) {
-            AddNode(NodeType::Parameter, "Parameter");
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndMenu();
-    }
-
-    ImGui::Separator();
-
-    // ===== OUTPUT =====
-    if (ImGui::MenuItem("Output")) {
-        AddNode(NodeType::Output, "Output");
-        ImGui::CloseCurrentPopup();
-    }
-
-    // ===== SELECTION-BASED OPTIONS =====
-    if (!selected_node_ids_.empty()) {
-        ImGui::Separator();
-        ImGui::TextDisabled("Selection (%zu nodes)", selected_node_ids_.size());
-
-        auto& pm = cyxwiz::ProjectManager::Instance();
-        bool has_project = pm.HasActiveProject();
-
-        if (!has_project) {
-            ImGui::BeginDisabled();
-        }
-
-        if (ImGui::MenuItem(ICON_FA_BOOKMARK " Save as Pattern...")) {
-            // Open save pattern dialog
-            show_save_pattern_dialog_ = true;
-            std::memset(save_pattern_name_, 0, sizeof(save_pattern_name_));
-            std::memset(save_pattern_description_, 0, sizeof(save_pattern_description_));
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (!has_project) {
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Create or open a project first to save patterns");
-            }
-        }
-    }
-
-    ImGui::Separator();
-
-}
-
-void NodeEditor::AddNode(NodeType type, const std::string& name) {
-    // Queue the node for deferred addition (after ImNodes::EndNodeEditor())
-    pending_nodes_.push_back({type, name, context_menu_pos_});
-    spdlog::info("Queued node for addition: type={}, name={} at position x={} y={}",
-                 static_cast<int>(type), name, context_menu_pos_.x, context_menu_pos_.y);
-}
-
-MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
-    MLNode node;
-    node.id = next_node_id_++;
-    node.type = type;
-    node.name = name;
-
-    // Create pins based on node type
-    switch (type) {
-        case NodeType::Dense: {
-            // Dense layer has input and output
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Extract units from name (e.g., "Dense (128)")
-            size_t start = name.find('(');
-            size_t end = name.find(')');
-            if (start != std::string::npos && end != std::string::npos) {
-                node.parameters["units"] = name.substr(start + 1, end - start - 1);
+        // Handle Enter key to navigate to next match
+        if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            if (ImGui::GetIO().KeyShift) {
+                NavigateToMatch(-1);
             } else {
-                node.parameters["units"] = "128";
+                NavigateToMatch(1);
             }
-            break;
         }
 
-        case NodeType::ReLU:
-        case NodeType::Sigmoid:
-        case NodeType::Tanh:
-        case NodeType::Softmax:
-        case NodeType::LeakyReLU:
-        case NodeType::PReLU:
-        case NodeType::ELU:
-        case NodeType::SELU:
-        case NodeType::GELU:
-        case NodeType::Swish:
-        case NodeType::Mish: {
-            // Activation functions
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // PReLU and LeakyReLU have a negative slope parameter
-            if (node.type == NodeType::LeakyReLU) {
-                node.parameters["negative_slope"] = "0.01";
-            } else if (node.type == NodeType::PReLU) {
-                node.parameters["num_parameters"] = "1";
-                node.parameters["init"] = "0.25";
-            } else if (node.type == NodeType::ELU) {
-                node.parameters["alpha"] = "1.0";
-            }
-            break;
+        // Match count
+        ImGui::SameLine();
+        if (!search_state_.matching_node_ids.empty()) {
+            ImGui::Text("%d/%zu", search_state_.current_match_index + 1,
+                       search_state_.matching_node_ids.size());
+        } else if (strlen(search_state_.search_buffer) > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No matches");
         }
 
-        case NodeType::Output: {
-            // Output node - final layer that produces predictions
-            // Input: From previous layer
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            // Output: Predictions (goes to Loss function)
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Predictions";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["classes"] = "10";
-            break;
+        // Navigation buttons
+        ImGui::SameLine();
+        if (ImGui::SmallButton(ICON_FA_CHEVRON_UP)) {
+            NavigateToMatch(-1);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Previous (Shift+F3)");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton(ICON_FA_CHEVRON_DOWN)) {
+            NavigateToMatch(1);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Next (F3)");
         }
 
-        case NodeType::Conv1D:
-        case NodeType::Conv2D:
-        case NodeType::Conv3D:
-        case NodeType::DepthwiseConv2D: {
-            // Convolutional layers
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Initialize default parameters
-            node.parameters["filters"] = "32";
-            node.parameters["kernel_size"] = "3";
-            node.parameters["stride"] = "1";
-            node.parameters["padding"] = "same";
-            node.parameters["activation"] = "relu";
-            if (node.type == NodeType::DepthwiseConv2D) {
-                node.parameters["depth_multiplier"] = "1";
-            }
-            break;
+        // Close button
+        ImGui::SameLine();
+        if (ImGui::SmallButton(ICON_FA_XMARK)) {
+            search_state_.search_visible = false;
+            search_state_.matching_node_ids.clear();
+            search_state_.current_match_index = -1;
         }
-
-        case NodeType::MaxPool2D:
-        case NodeType::AvgPool2D: {
-            // Pooling layers with size parameters
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Initialize default parameters
-            node.parameters["pool_size"] = "2";
-            node.parameters["stride"] = "2";
-            break;
-        }
-
-        case NodeType::GlobalMaxPool:
-        case NodeType::GlobalAvgPool:
-        case NodeType::AdaptiveAvgPool: {
-            // Global pooling layers
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // AdaptiveAvgPool has output size parameter
-            if (node.type == NodeType::AdaptiveAvgPool) {
-                node.parameters["output_size"] = "1";
-            }
-            break;
-        }
-
-        case NodeType::Flatten: {
-            // Flatten layer
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-            break;
-        }
-
-        case NodeType::Dropout: {
-            // Dropout layer
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Initialize default parameters
-            node.parameters["rate"] = "0.5";
-            break;
-        }
-
-        case NodeType::BatchNorm:
-        case NodeType::LayerNorm:
-        case NodeType::GroupNorm:
-        case NodeType::InstanceNorm: {
-            // Normalization layers
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Initialize parameters based on norm type
-            node.parameters["epsilon"] = "1e-5";
-            if (node.type == NodeType::BatchNorm) {
-                node.parameters["momentum"] = "0.1";
-            } else if (node.type == NodeType::LayerNorm) {
-                node.parameters["normalized_shape"] = "256";
-            } else if (node.type == NodeType::GroupNorm) {
-                node.parameters["num_groups"] = "32";
-                node.parameters["num_channels"] = "256";
-            } else if (node.type == NodeType::InstanceNorm) {
-                node.parameters["num_features"] = "64";
-            }
-            break;
-        }
-
-        // ========== Data Pipeline Nodes ==========
-
-        case NodeType::DatasetInput: {
-            // DatasetInput node - loads from DataRegistry
-            // No input pins (this is a source node)
-
-            // Output: Data tensor
-            NodePin data_pin;
-            data_pin.id = next_pin_id_++;
-            data_pin.type = PinType::Tensor;
-            data_pin.name = "Data";
-            data_pin.is_input = false;
-            node.outputs.push_back(data_pin);
-
-            // Output: Labels tensor
-            NodePin labels_pin;
-            labels_pin.id = next_pin_id_++;
-            labels_pin.type = PinType::Labels;
-            labels_pin.name = "Labels";
-            labels_pin.is_input = false;
-            node.outputs.push_back(labels_pin);
-
-            // Note: Shape is metadata (displayed in properties panel), not a data flow output.
-            // In ML frameworks, shape is intrinsic to tensors (accessed via tensor.shape).
-
-            // Parameters
-            node.parameters["dataset_name"] = "";  // Name in DataRegistry
-            node.parameters["split"] = "train";    // train, val, test
-            break;
-        }
-
-        case NodeType::DataLoader: {
-            // DataLoader node - batch iterator
-            // Input: Dataset reference
-            NodePin dataset_pin;
-            dataset_pin.id = next_pin_id_++;
-            dataset_pin.type = PinType::Dataset;
-            dataset_pin.name = "Dataset";
-            dataset_pin.is_input = true;
-            node.inputs.push_back(dataset_pin);
-
-            // Output: Batched data
-            NodePin batch_pin;
-            batch_pin.id = next_pin_id_++;
-            batch_pin.type = PinType::Tensor;
-            batch_pin.name = "Batch";
-            batch_pin.is_input = false;
-            node.outputs.push_back(batch_pin);
-
-            // Output: Batched labels
-            NodePin labels_pin;
-            labels_pin.id = next_pin_id_++;
-            labels_pin.type = PinType::Labels;
-            labels_pin.name = "Labels";
-            labels_pin.is_input = false;
-            node.outputs.push_back(labels_pin);
-
-            // Parameters
-            node.parameters["batch_size"] = "32";
-            node.parameters["shuffle"] = "true";
-            node.parameters["drop_last"] = "false";
-            node.parameters["num_workers"] = "4";
-            break;
-        }
-
-        case NodeType::Augmentation: {
-            // Augmentation node - transform pipeline
-            // Input: Data tensor
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            // Output: Augmented data
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Parameters (transform pipeline)
-            node.parameters["transforms"] = "RandomFlip,Normalize";
-            node.parameters["flip_prob"] = "0.5";
-            node.parameters["normalize_mean"] = "0.0";
-            node.parameters["normalize_std"] = "1.0";
-            break;
-        }
-
-        case NodeType::DataSplit: {
-            // DataSplit node - train/val/test splitter
-            // Input: Data tensor
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Tensor;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            // Input: Labels tensor
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            // Output: Train Data
-            NodePin train_data;
-            train_data.id = next_pin_id_++;
-            train_data.type = PinType::Tensor;
-            train_data.name = "Train Data";
-            train_data.is_input = false;
-            node.outputs.push_back(train_data);
-
-            // Output: Train Labels
-            NodePin train_labels;
-            train_labels.id = next_pin_id_++;
-            train_labels.type = PinType::Labels;
-            train_labels.name = "Train Labels";
-            train_labels.is_input = false;
-            node.outputs.push_back(train_labels);
-
-            // Output: Val Data
-            NodePin val_data;
-            val_data.id = next_pin_id_++;
-            val_data.type = PinType::Tensor;
-            val_data.name = "Val Data";
-            val_data.is_input = false;
-            node.outputs.push_back(val_data);
-
-            // Output: Val Labels
-            NodePin val_labels;
-            val_labels.id = next_pin_id_++;
-            val_labels.type = PinType::Labels;
-            val_labels.name = "Val Labels";
-            val_labels.is_input = false;
-            node.outputs.push_back(val_labels);
-
-            // Output: Test Data
-            NodePin test_data;
-            test_data.id = next_pin_id_++;
-            test_data.type = PinType::Tensor;
-            test_data.name = "Test Data";
-            test_data.is_input = false;
-            node.outputs.push_back(test_data);
-
-            // Output: Test Labels
-            NodePin test_labels;
-            test_labels.id = next_pin_id_++;
-            test_labels.type = PinType::Labels;
-            test_labels.name = "Test Labels";
-            test_labels.is_input = false;
-            node.outputs.push_back(test_labels);
-
-            // Parameters
-            node.parameters["train_ratio"] = "0.8";
-            node.parameters["val_ratio"] = "0.1";
-            node.parameters["test_ratio"] = "0.1";
-            node.parameters["stratified"] = "true";
-            node.parameters["seed"] = "42";
-            break;
-        }
-
-        case NodeType::TensorReshape: {
-            // TensorReshape node
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["shape"] = "-1,28,28,1";
-            break;
-        }
-
-        case NodeType::Normalize: {
-            // Normalize node
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["mean"] = "0.0";
-            node.parameters["std"] = "1.0";
-            break;
-        }
-
-        case NodeType::OneHotEncode: {
-            // OneHotEncode node
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Labels;
-            input_pin.name = "Labels";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "OneHot";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["num_classes"] = "10";
-            break;
-        }
-
-        // ========== Loss Functions ==========
-
-        case NodeType::MSELoss:
-        case NodeType::CrossEntropyLoss: {
-            // Loss function: takes predictions and targets, outputs loss value
-            // Input 1: Predictions (from model output)
-            NodePin pred_pin;
-            pred_pin.id = next_pin_id_++;
-            pred_pin.type = PinType::Tensor;
-            pred_pin.name = "Predictions";
-            pred_pin.is_input = true;
-            node.inputs.push_back(pred_pin);
-
-            // Input 2: Targets (ground truth labels)
-            NodePin target_pin;
-            target_pin.id = next_pin_id_++;
-            target_pin.type = PinType::Tensor;
-            target_pin.name = "Targets";
-            target_pin.is_input = true;
-            node.inputs.push_back(target_pin);
-
-            // Output: Loss value
-            NodePin loss_pin;
-            loss_pin.id = next_pin_id_++;
-            loss_pin.type = PinType::Loss;
-            loss_pin.name = "Loss";
-            loss_pin.is_input = false;
-            node.outputs.push_back(loss_pin);
-
-            // Parameters
-            if (node.type == NodeType::CrossEntropyLoss) {
-                node.parameters["reduction"] = "mean";  // mean, sum, none
-            }
-            break;
-        }
-
-        // ========== Optimizers ==========
-
-        case NodeType::SGD:
-        case NodeType::Adam:
-        case NodeType::AdamW:
-        case NodeType::RMSprop:
-        case NodeType::Adagrad:
-        case NodeType::NAdam: {
-            // Optimizer: takes loss and updates model parameters
-            NodePin loss_pin;
-            loss_pin.id = next_pin_id_++;
-            loss_pin.type = PinType::Loss;
-            loss_pin.name = "Loss";
-            loss_pin.is_input = true;
-            node.inputs.push_back(loss_pin);
-
-            NodePin state_pin;
-            state_pin.id = next_pin_id_++;
-            state_pin.type = PinType::Optimizer;
-            state_pin.name = "State";
-            state_pin.is_input = false;
-            node.outputs.push_back(state_pin);
-
-            // Parameters based on optimizer type
-            node.parameters["learning_rate"] = "0.001";
-            if (node.type == NodeType::SGD) {
-                node.parameters["learning_rate"] = "0.01";
-                node.parameters["momentum"] = "0.9";
-                node.parameters["weight_decay"] = "0.0";
-            } else if (node.type == NodeType::Adam || node.type == NodeType::NAdam) {
-                node.parameters["beta1"] = "0.9";
-                node.parameters["beta2"] = "0.999";
-                node.parameters["epsilon"] = "1e-8";
-            } else if (node.type == NodeType::AdamW) {
-                node.parameters["beta1"] = "0.9";
-                node.parameters["beta2"] = "0.999";
-                node.parameters["weight_decay"] = "0.01";
-            } else if (node.type == NodeType::RMSprop) {
-                node.parameters["alpha"] = "0.99";
-                node.parameters["epsilon"] = "1e-8";
-                node.parameters["momentum"] = "0.0";
-            } else if (node.type == NodeType::Adagrad) {
-                node.parameters["lr_decay"] = "0.0";
-                node.parameters["epsilon"] = "1e-10";
-            }
-            break;
-        }
-
-        // ========== Recurrent Layers ==========
-
-        case NodeType::RNN:
-        case NodeType::LSTM:
-        case NodeType::GRU: {
-            // Recurrent layers
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            NodePin hidden_pin;
-            hidden_pin.id = next_pin_id_++;
-            hidden_pin.type = PinType::Tensor;
-            hidden_pin.name = "Hidden";
-            hidden_pin.is_input = false;
-            node.outputs.push_back(hidden_pin);
-
-            node.parameters["input_size"] = "256";
-            node.parameters["hidden_size"] = "256";
-            node.parameters["num_layers"] = "1";
-            node.parameters["bidirectional"] = "false";
-            node.parameters["dropout"] = "0.0";
-            break;
-        }
-
-        case NodeType::Bidirectional:
-        case NodeType::TimeDistributed: {
-            // Wrapper layers
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            if (node.type == NodeType::Bidirectional) {
-                node.parameters["merge_mode"] = "concat";
-            }
-            break;
-        }
-
-        case NodeType::Embedding: {
-            // Embedding layer
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Indices";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Embeddings";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["num_embeddings"] = "10000";
-            node.parameters["embedding_dim"] = "256";
-            node.parameters["padding_idx"] = "-1";
-            break;
-        }
-
-        // ========== Attention & Transformer ==========
-
-        case NodeType::MultiHeadAttention:
-        case NodeType::SelfAttention:
-        case NodeType::CrossAttention: {
-            // Attention layers
-            NodePin query_pin;
-            query_pin.id = next_pin_id_++;
-            query_pin.type = PinType::Tensor;
-            query_pin.name = "Query";
-            query_pin.is_input = true;
-            node.inputs.push_back(query_pin);
-
-            NodePin key_pin;
-            key_pin.id = next_pin_id_++;
-            key_pin.type = PinType::Tensor;
-            key_pin.name = "Key";
-            key_pin.is_input = true;
-            node.inputs.push_back(key_pin);
-
-            NodePin value_pin;
-            value_pin.id = next_pin_id_++;
-            value_pin.type = PinType::Tensor;
-            value_pin.name = "Value";
-            value_pin.is_input = true;
-            node.inputs.push_back(value_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["embed_dim"] = "512";
-            node.parameters["num_heads"] = "8";
-            node.parameters["dropout"] = "0.0";
-            break;
-        }
-
-        case NodeType::LinearAttention: {
-            // Linear attention (O(n) complexity) - Performer/Linear Transformer style
-            NodePin query_pin;
-            query_pin.id = next_pin_id_++;
-            query_pin.type = PinType::Tensor;
-            query_pin.name = "Query";
-            query_pin.is_input = true;
-            node.inputs.push_back(query_pin);
-
-            NodePin key_pin;
-            key_pin.id = next_pin_id_++;
-            key_pin.type = PinType::Tensor;
-            key_pin.name = "Key";
-            key_pin.is_input = true;
-            node.inputs.push_back(key_pin);
-
-            NodePin value_pin;
-            value_pin.id = next_pin_id_++;
-            value_pin.type = PinType::Tensor;
-            value_pin.name = "Value";
-            value_pin.is_input = true;
-            node.inputs.push_back(value_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["embed_dim"] = "512";
-            node.parameters["num_heads"] = "8";
-            node.parameters["feature_map"] = "elu";  // elu, relu, favor+
-            node.parameters["eps"] = "1e-6";
-            break;
-        }
-
-        case NodeType::TransformerEncoder:
-        case NodeType::TransformerDecoder: {
-            // Transformer blocks
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            if (node.type == NodeType::TransformerDecoder) {
-                NodePin memory_pin;
-                memory_pin.id = next_pin_id_++;
-                memory_pin.type = PinType::Tensor;
-                memory_pin.name = "Memory";
-                memory_pin.is_input = true;
-                node.inputs.push_back(memory_pin);
-            }
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["d_model"] = "512";
-            node.parameters["nhead"] = "8";
-            node.parameters["num_layers"] = "6";
-            node.parameters["dim_feedforward"] = "2048";
-            node.parameters["dropout"] = "0.1";
-            break;
-        }
-
-        case NodeType::PositionalEncoding: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["d_model"] = "512";
-            node.parameters["max_len"] = "5000";
-            node.parameters["dropout"] = "0.1";
-            break;
-        }
-
-        // ========== Shape Operations ==========
-
-        case NodeType::Reshape:
-        case NodeType::View: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["shape"] = "-1,256";
-            break;
-        }
-
-        case NodeType::Permute: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["dims"] = "0,2,1";
-            break;
-        }
-
-        case NodeType::Squeeze:
-        case NodeType::Unsqueeze: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["dim"] = "0";
-            break;
-        }
-
-        case NodeType::Split: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            // Multiple outputs for split
-            NodePin output1;
-            output1.id = next_pin_id_++;
-            output1.type = PinType::Tensor;
-            output1.name = "Output 1";
-            output1.is_input = false;
-            node.outputs.push_back(output1);
-
-            NodePin output2;
-            output2.id = next_pin_id_++;
-            output2.type = PinType::Tensor;
-            output2.name = "Output 2";
-            output2.is_input = false;
-            node.outputs.push_back(output2);
-
-            node.parameters["split_size"] = "2";
-            node.parameters["dim"] = "0";
-            break;
-        }
-
-        // ========== Merge Operations ==========
-
-        case NodeType::Concatenate:
-        case NodeType::Add:
-        case NodeType::Multiply:
-        case NodeType::Average: {
-            // Multi-input merge operations
-            NodePin input1;
-            input1.id = next_pin_id_++;
-            input1.type = PinType::Tensor;
-            input1.name = "Input 1";
-            input1.is_input = true;
-            node.inputs.push_back(input1);
-
-            NodePin input2;
-            input2.id = next_pin_id_++;
-            input2.type = PinType::Tensor;
-            input2.name = "Input 2";
-            input2.is_input = true;
-            node.inputs.push_back(input2);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            if (node.type == NodeType::Concatenate) {
-                node.parameters["dim"] = "1";
-            }
-            break;
-        }
-
-        // ========== Additional Loss Functions ==========
-
-        case NodeType::BCELoss:
-        case NodeType::BCEWithLogits:
-        case NodeType::L1Loss:
-        case NodeType::SmoothL1Loss:
-        case NodeType::HuberLoss:
-        case NodeType::NLLLoss: {
-            NodePin pred_pin;
-            pred_pin.id = next_pin_id_++;
-            pred_pin.type = PinType::Tensor;
-            pred_pin.name = "Predictions";
-            pred_pin.is_input = true;
-            node.inputs.push_back(pred_pin);
-
-            NodePin target_pin;
-            target_pin.id = next_pin_id_++;
-            target_pin.type = PinType::Tensor;
-            target_pin.name = "Targets";
-            target_pin.is_input = true;
-            node.inputs.push_back(target_pin);
-
-            NodePin loss_pin;
-            loss_pin.id = next_pin_id_++;
-            loss_pin.type = PinType::Loss;
-            loss_pin.name = "Loss";
-            loss_pin.is_input = false;
-            node.outputs.push_back(loss_pin);
-
-            node.parameters["reduction"] = "mean";
-            if (node.type == NodeType::SmoothL1Loss || node.type == NodeType::HuberLoss) {
-                node.parameters["beta"] = "1.0";
-            }
-            break;
-        }
-
-        // ========== Learning Rate Schedulers ==========
-
-        case NodeType::StepLR:
-        case NodeType::CosineAnnealing:
-        case NodeType::ReduceOnPlateau:
-        case NodeType::ExponentialLR:
-        case NodeType::WarmupScheduler: {
-            // Schedulers connect to optimizer
-            NodePin optim_pin;
-            optim_pin.id = next_pin_id_++;
-            optim_pin.type = PinType::Optimizer;
-            optim_pin.name = "Optimizer";
-            optim_pin.is_input = true;
-            node.inputs.push_back(optim_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Optimizer;
-            output_pin.name = "Scheduled";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            if (node.type == NodeType::StepLR) {
-                node.parameters["step_size"] = "10";
-                node.parameters["gamma"] = "0.1";
-            } else if (node.type == NodeType::CosineAnnealing) {
-                node.parameters["T_max"] = "100";
-                node.parameters["eta_min"] = "0.0";
-            } else if (node.type == NodeType::ReduceOnPlateau) {
-                node.parameters["mode"] = "min";
-                node.parameters["factor"] = "0.1";
-                node.parameters["patience"] = "10";
-            } else if (node.type == NodeType::ExponentialLR) {
-                node.parameters["gamma"] = "0.95";
-            } else if (node.type == NodeType::WarmupScheduler) {
-                node.parameters["warmup_steps"] = "1000";
-                node.parameters["warmup_ratio"] = "0.1";
-            }
-            break;
-        }
-
-        // ========== Regularization ==========
-
-        case NodeType::L1Regularization:
-        case NodeType::L2Regularization:
-        case NodeType::ElasticNet: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Parameters;
-            input_pin.name = "Parameters";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Loss;
-            output_pin.name = "Penalty";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["lambda"] = "0.01";
-            if (node.type == NodeType::ElasticNet) {
-                node.parameters["l1_ratio"] = "0.5";
-            }
-            break;
-        }
-
-        // ========== Utility Nodes ==========
-
-        case NodeType::Lambda: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["function"] = "lambda x: x";
-            break;
-        }
-
-        case NodeType::Identity: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-            break;
-        }
-
-        case NodeType::Constant: {
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Value";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["value"] = "1.0";
-            node.parameters["shape"] = "1";
-            break;
-        }
-
-        case NodeType::Parameter: {
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Parameter";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["shape"] = "256";
-            node.parameters["init"] = "xavier";
-            node.parameters["requires_grad"] = "true";
-            break;
-        }
-
-        default:
-            // Default: input and output pins
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-            break;
     }
-
-    return node;
+    ImGui::End();
 }
 
-void NodeEditor::DeleteNode(int node_id) {
-    // Delete node
-    auto node_it = std::find_if(nodes_.begin(), nodes_.end(),
-        [node_id](const MLNode& node) {
-            return node.id == node_id;
-        });
+void NodeEditor::UpdateSearchResults() {
+    search_state_.matching_node_ids.clear();
+    search_state_.current_match_index = -1;
 
-    if (node_it != nodes_.end()) {
-        spdlog::info("Deleting node: {} (ID: {})", node_it->name, node_id);
+    std::string query = search_state_.search_buffer;
+    if (query.empty()) return;
 
-        // Delete all links connected to this node
-        links_.erase(
-            std::remove_if(links_.begin(), links_.end(),
-                [node_id](const NodeLink& link) {
-                    return link.from_node == node_id || link.to_node == node_id;
-                }),
-            links_.end());
-
-        nodes_.erase(node_it);
-    }
-}
-
-void NodeEditor::ClearGraph() {
-    SaveUndoState();
-    nodes_.clear();
-    links_.clear();
-    next_node_id_ = 1;
-    next_pin_id_ = 1;
-    next_link_id_ = 1;
-
-    // Reset selection state
-    selected_node_id_ = -1;
-    selected_node_ids_.clear();
-
-    // Request a full ImNodes context reset - this fully clears ImNodes' internal state
-    // which prevents crashes from stale node references
-    pending_context_reset_ = true;
-
-    // Clear any pending positions
-    pending_positions_.clear();
-
-    spdlog::info("Cleared node graph");
-}
-
-void NodeEditor::InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-    if (nodes.empty()) {
-        spdlog::warn("InsertPattern called with empty nodes list");
-        return;
-    }
-
-    SaveUndoState();
-
-    // Add all nodes from the pattern
-    for (const auto& node : nodes) {
-        nodes_.push_back(node);
-
-        // Queue position for deferred setting (will be applied during render)
-        if (node.has_initial_position) {
-            pending_positions_[node.id] = ImVec2(node.initial_pos_x, node.initial_pos_y);
-        }
-
-        // Update next IDs to avoid collisions
-        if (node.id >= next_node_id_) {
-            next_node_id_ = node.id + 1;
-        }
-        for (const auto& pin : node.inputs) {
-            if (pin.id >= next_pin_id_) {
-                next_pin_id_ = pin.id + 1;
-            }
-        }
-        for (const auto& pin : node.outputs) {
-            if (pin.id >= next_pin_id_) {
-                next_pin_id_ = pin.id + 1;
-            }
-        }
-    }
-
-    // Add all links from the pattern
-    for (const auto& link : links) {
-        links_.push_back(link);
-
-        // Update next link ID
-        if (link.id >= next_link_id_) {
-            next_link_id_ = link.id + 1;
-        }
-    }
-
-    spdlog::info("Inserted pattern with {} nodes and {} links (positions queued: {})",
-                 nodes.size(), links.size(), pending_positions_.size());
-}
-
-// ===== Undo/Redo System =====
-
-void NodeEditor::SaveUndoState() {
-    // Create snapshot of current state
-    GraphSnapshot snapshot;
-    snapshot.nodes = nodes_;
-    snapshot.links = links_;
-    snapshot.next_node_id = next_node_id_;
-    snapshot.next_pin_id = next_pin_id_;
-    snapshot.next_link_id = next_link_id_;
-
-    // Push to undo stack
-    undo_stack_.push_back(snapshot);
-
-    // Limit stack size
-    if (undo_stack_.size() > MAX_UNDO_LEVELS) {
-        undo_stack_.erase(undo_stack_.begin());
-    }
-
-    // Clear redo stack when new action is performed
-    redo_stack_.clear();
-
-    spdlog::debug("Saved undo state (stack size: {})", undo_stack_.size());
-}
-
-void NodeEditor::Undo() {
-    if (!CanUndo()) {
-        spdlog::debug("Nothing to undo");
-        return;
-    }
-
-    // Save current state to redo stack
-    GraphSnapshot current;
-    current.nodes = nodes_;
-    current.links = links_;
-    current.next_node_id = next_node_id_;
-    current.next_pin_id = next_pin_id_;
-    current.next_link_id = next_link_id_;
-    redo_stack_.push_back(current);
-
-    // Restore previous state from undo stack
-    GraphSnapshot previous = undo_stack_.back();
-    undo_stack_.pop_back();
-
-    nodes_ = previous.nodes;
-    links_ = previous.links;
-    next_node_id_ = previous.next_node_id;
-    next_pin_id_ = previous.next_pin_id;
-    next_link_id_ = previous.next_link_id;
-
-    // Clear selection
-    ImNodes::ClearNodeSelection();
-    ImNodes::ClearLinkSelection();
-    selected_node_id_ = -1;
-
-    spdlog::info("Undo performed (undo stack: {}, redo stack: {})",
-                 undo_stack_.size(), redo_stack_.size());
-}
-
-void NodeEditor::Redo() {
-    if (!CanRedo()) {
-        spdlog::debug("Nothing to redo");
-        return;
-    }
-
-    // Save current state to undo stack
-    GraphSnapshot current;
-    current.nodes = nodes_;
-    current.links = links_;
-    current.next_node_id = next_node_id_;
-    current.next_pin_id = next_pin_id_;
-    current.next_link_id = next_link_id_;
-    undo_stack_.push_back(current);
-
-    // Restore next state from redo stack
-    GraphSnapshot next = redo_stack_.back();
-    redo_stack_.pop_back();
-
-    nodes_ = next.nodes;
-    links_ = next.links;
-    next_node_id_ = next.next_node_id;
-    next_pin_id_ = next.next_pin_id;
-    next_link_id_ = next.next_link_id;
-
-    // Clear selection
-    ImNodes::ClearNodeSelection();
-    ImNodes::ClearLinkSelection();
-    selected_node_id_ = -1;
-
-    spdlog::info("Redo performed (undo stack: {}, redo stack: {})",
-                 undo_stack_.size(), redo_stack_.size());
-}
-
-// ===== Clipboard Support =====
-
-void NodeEditor::SelectAll() {
-    ImNodes::ClearNodeSelection();
-    selected_node_ids_.clear();
+    // Convert query to lowercase for case-insensitive search
+    std::transform(query.begin(), query.end(), query.begin(), ::tolower);
 
     for (const auto& node : nodes_) {
-        ImNodes::SelectNode(node.id);
-        selected_node_ids_.push_back(node.id);
-    }
+        bool matches = false;
 
-    spdlog::info("Selected all {} nodes", nodes_.size());
-}
+        // Search node name
+        std::string name_lower = node.name;
+        std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+        if (name_lower.find(query) != std::string::npos) {
+            matches = true;
+        }
 
-void NodeEditor::ClearSelection() {
-    ImNodes::ClearNodeSelection();
-    ImNodes::ClearLinkSelection();
-    selected_node_ids_.clear();
-    selected_node_id_ = -1;
+        // Search node type name (category)
+        if (!matches) {
+            const char* category = NodeDocumentationManager::GetCategoryName(node.type);
+            std::string category_lower = category;
+            std::transform(category_lower.begin(), category_lower.end(), category_lower.begin(), ::tolower);
+            if (category_lower.find(query) != std::string::npos) {
+                matches = true;
+            }
+        }
 
-    if (properties_panel_) {
-        properties_panel_->ClearSelection();
-    }
+        // Search parameter values
+        if (!matches) {
+            for (const auto& [key, value] : node.parameters) {
+                std::string key_lower = key;
+                std::string value_lower = value;
+                std::transform(key_lower.begin(), key_lower.end(), key_lower.begin(), ::tolower);
+                std::transform(value_lower.begin(), value_lower.end(), value_lower.begin(), ::tolower);
 
-    spdlog::debug("Cleared selection");
-}
-
-void NodeEditor::DeleteSelected() {
-    // Delete selected nodes without copying to clipboard
-    const int num_selected = ImNodes::NumSelectedNodes();
-    if (num_selected == 0) {
-        spdlog::debug("No nodes selected to delete");
-        return;
-    }
-
-    SaveUndoState();
-
-    std::vector<int> selected_ids(num_selected);
-    ImNodes::GetSelectedNodes(selected_ids.data());
-
-    for (int node_id : selected_ids) {
-        DeleteNode(node_id);
-    }
-
-    ClearSelection();
-    spdlog::info("Deleted {} selected nodes", num_selected);
-}
-
-ImVec2 NodeEditor::FindEmptyPosition() {
-    // Find a position that doesn't overlap with existing nodes
-    // Start at a reasonable default position and search for empty space
-
-    const float NODE_WIDTH = 200.0f;
-    const float NODE_HEIGHT = 120.0f;
-    const float SPACING = 50.0f;
-
-    // Get current view panning to place node in visible area
-    ImVec2 panning = ImNodes::EditorContextGetPanning();
-
-    // Start position - relative to current view
-    float start_x = -panning.x + 100.0f;
-    float start_y = -panning.y + 100.0f;
-
-    // If no nodes exist, return a simple position
-    if (nodes_.empty()) {
-        return ImVec2(start_x, start_y);
-    }
-
-    // Collect all existing node positions
-    std::vector<ImVec2> node_positions;
-    for (const auto& node : nodes_) {
-        auto it = cached_node_positions_.find(node.id);
-        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-        node_positions.push_back(pos);
-    }
-
-    // Search for empty position using grid search
-    for (int row = 0; row < 20; ++row) {
-        for (int col = 0; col < 20; ++col) {
-            float test_x = start_x + col * (NODE_WIDTH + SPACING);
-            float test_y = start_y + row * (NODE_HEIGHT + SPACING);
-
-            bool overlaps = false;
-            for (const auto& pos : node_positions) {
-                // Check if rectangles overlap
-                if (test_x < pos.x + NODE_WIDTH + SPACING &&
-                    test_x + NODE_WIDTH + SPACING > pos.x &&
-                    test_y < pos.y + NODE_HEIGHT + SPACING &&
-                    test_y + NODE_HEIGHT + SPACING > pos.y) {
-                    overlaps = true;
+                if (key_lower.find(query) != std::string::npos ||
+                    value_lower.find(query) != std::string::npos) {
+                    matches = true;
                     break;
                 }
             }
+        }
 
-            if (!overlaps) {
-                return ImVec2(test_x, test_y);
-            }
+        if (matches) {
+            search_state_.matching_node_ids.push_back(node.id);
         }
     }
 
-    // Fallback: place below the lowest node
-    float max_y = 0.0f;
-    for (const auto& pos : node_positions) {
-        if (pos.y > max_y) {
-            max_y = pos.y;
-        }
+    // Select first match if any found
+    if (!search_state_.matching_node_ids.empty()) {
+        search_state_.current_match_index = 0;
+        NavigateToMatch(0);  // Navigate to current (first) match
     }
-    return ImVec2(start_x, max_y + NODE_HEIGHT + SPACING);
 }
 
-void NodeEditor::CopySelection() {
-    // Get selected nodes from ImNodes
-    const int num_selected = ImNodes::NumSelectedNodes();
-    if (num_selected == 0) {
-        spdlog::debug("No nodes selected to copy");
+void NodeEditor::NavigateToMatch(int direction) {
+    if (search_state_.matching_node_ids.empty()) return;
+
+    // Update index
+    if (direction != 0) {
+        search_state_.current_match_index += direction;
+
+        // Wrap around
+        if (search_state_.current_match_index < 0) {
+            search_state_.current_match_index = static_cast<int>(search_state_.matching_node_ids.size()) - 1;
+        } else if (search_state_.current_match_index >= static_cast<int>(search_state_.matching_node_ids.size())) {
+            search_state_.current_match_index = 0;
+        }
+    }
+
+    // Get the matched node ID
+    int node_id = search_state_.matching_node_ids[search_state_.current_match_index];
+
+    // Select the node
+    ImNodes::ClearNodeSelection();
+    ImNodes::SelectNode(node_id);
+    selected_node_id_ = node_id;
+
+    // Center viewport on the matched node
+    auto pos_it = cached_node_positions_.find(node_id);
+    if (pos_it != cached_node_positions_.end()) {
+        ImVec2 node_pos = pos_it->second;
+
+        // Get the visible area size (approximately)
+        ImVec2 window_size = ImGui::GetWindowSize();
+        ImVec2 center_offset = ImVec2(window_size.x * 0.5f - 100.0f, window_size.y * 0.5f - 50.0f);
+
+        // Pan to center the node
+        ImNodes::EditorContextResetPanning(ImVec2(-node_pos.x + center_offset.x, -node_pos.y + center_offset.y));
+    }
+
+    spdlog::debug("Navigated to match {}/{}: node {}",
+                  search_state_.current_match_index + 1,
+                  search_state_.matching_node_ids.size(),
+                  node_id);
+}
+
+void NodeEditor::HighlightMatchingNodes() {
+    // This function can be called from RenderNodes to add visual highlighting
+    // For now, selection highlighting is handled by ImNodes automatically
+    // TODO: Add custom overlay drawing for matching but not selected nodes
+}
+
+// ===== Alignment and Distribution Tools =====
+
+void NodeEditor::AlignSelectedNodes(AlignmentType type) {
+    if (selected_node_ids_.size() < 2) {
+        spdlog::warn("Need at least 2 selected nodes to align");
         return;
     }
 
-    std::vector<int> selected_ids(num_selected);
-    ImNodes::GetSelectedNodes(selected_ids.data());
+    SaveUndoState();  // Save before modification
 
-    // Build set for quick lookup
-    std::set<int> selected_set(selected_ids.begin(), selected_ids.end());
+    // Calculate the reference value based on alignment type
+    float reference = 0.0f;
+    bool first = true;
 
-    // Copy selected nodes
-    clipboard_.nodes.clear();
-    clipboard_.links.clear();
+    for (int node_id : selected_node_ids_) {
+        auto pos_it = cached_node_positions_.find(node_id);
+        if (pos_it == cached_node_positions_.end()) continue;
 
-    for (int node_id : selected_ids) {
-        auto it = std::find_if(nodes_.begin(), nodes_.end(),
-            [node_id](const MLNode& node) { return node.id == node_id; });
-        if (it != nodes_.end()) {
-            clipboard_.nodes.push_back(*it);
+        ImVec2 pos = pos_it->second;
+        // Approximate node dimensions (ImNodes doesn't expose actual size)
+        float node_width = 150.0f;
+        float node_height = 100.0f;
+
+        switch (type) {
+            case AlignmentType::Left:
+                if (first || pos.x < reference) reference = pos.x;
+                break;
+            case AlignmentType::Center:
+                if (first) reference = pos.x + node_width * 0.5f;
+                else reference = (reference + pos.x + node_width * 0.5f) / 2.0f;
+                break;
+            case AlignmentType::Right:
+                if (first || pos.x + node_width > reference) reference = pos.x + node_width;
+                break;
+            case AlignmentType::Top:
+                if (first || pos.y < reference) reference = pos.y;
+                break;
+            case AlignmentType::Middle:
+                if (first) reference = pos.y + node_height * 0.5f;
+                else reference = (reference + pos.y + node_height * 0.5f) / 2.0f;
+                break;
+            case AlignmentType::Bottom:
+                if (first || pos.y + node_height > reference) reference = pos.y + node_height;
+                break;
         }
+        first = false;
     }
 
-    // Copy internal links (links between selected nodes only)
-    for (const auto& link : links_) {
-        if (selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
-            clipboard_.links.push_back(link);
+    // Apply alignment to all selected nodes
+    for (int node_id : selected_node_ids_) {
+        auto pos_it = cached_node_positions_.find(node_id);
+        if (pos_it == cached_node_positions_.end()) continue;
+
+        ImVec2 pos = pos_it->second;
+        float node_width = 150.0f;
+        float node_height = 100.0f;
+
+        switch (type) {
+            case AlignmentType::Left:
+                pos.x = reference;
+                break;
+            case AlignmentType::Center:
+                pos.x = reference - node_width * 0.5f;
+                break;
+            case AlignmentType::Right:
+                pos.x = reference - node_width;
+                break;
+            case AlignmentType::Top:
+                pos.y = reference;
+                break;
+            case AlignmentType::Middle:
+                pos.y = reference - node_height * 0.5f;
+                break;
+            case AlignmentType::Bottom:
+                pos.y = reference - node_height;
+                break;
         }
+
+        // Apply the new position
+        pending_positions_[node_id] = pos;
+        cached_node_positions_[node_id] = pos;
     }
 
-    clipboard_.valid = true;
-    spdlog::info("Copied {} nodes and {} internal links to clipboard",
-                 clipboard_.nodes.size(), clipboard_.links.size());
+    pending_positions_frames_ = 3;  // Apply for a few frames to ensure it sticks
+    spdlog::info("Aligned {} nodes", selected_node_ids_.size());
 }
 
-void NodeEditor::CutSelection() {
-    CopySelection();
-
-    if (!clipboard_.valid) {
+void NodeEditor::DistributeSelectedNodes(DistributeType type) {
+    if (selected_node_ids_.size() < 3) {
+        spdlog::warn("Need at least 3 selected nodes to distribute");
         return;
     }
 
-    // Delete the selected nodes
-    const int num_selected = ImNodes::NumSelectedNodes();
-    if (num_selected > 0) {
-        SaveUndoState();
+    SaveUndoState();  // Save before modification
 
-        std::vector<int> selected_ids(num_selected);
-        ImNodes::GetSelectedNodes(selected_ids.data());
+    // Collect node positions and IDs, then sort by position
+    struct NodePos {
+        int id;
+        ImVec2 pos;
+    };
+    std::vector<NodePos> nodes;
 
-        for (int node_id : selected_ids) {
-            DeleteNode(node_id);
+    for (int node_id : selected_node_ids_) {
+        auto pos_it = cached_node_positions_.find(node_id);
+        if (pos_it != cached_node_positions_.end()) {
+            nodes.push_back({node_id, pos_it->second});
         }
-
-        ClearSelection();
-        spdlog::info("Cut {} nodes", num_selected);
     }
+
+    if (nodes.size() < 3) return;
+
+    // Sort nodes by the appropriate axis
+    if (type == DistributeType::Horizontal) {
+        std::sort(nodes.begin(), nodes.end(),
+                  [](const NodePos& a, const NodePos& b) { return a.pos.x < b.pos.x; });
+    } else {
+        std::sort(nodes.begin(), nodes.end(),
+                  [](const NodePos& a, const NodePos& b) { return a.pos.y < b.pos.y; });
+    }
+
+    // Calculate the total span and spacing
+    float first_pos = (type == DistributeType::Horizontal) ? nodes.front().pos.x : nodes.front().pos.y;
+    float last_pos = (type == DistributeType::Horizontal) ? nodes.back().pos.x : nodes.back().pos.y;
+    float total_span = last_pos - first_pos;
+    float spacing = total_span / (static_cast<float>(nodes.size()) - 1.0f);
+
+    // Apply evenly distributed positions (keep first and last in place)
+    for (size_t i = 1; i < nodes.size() - 1; ++i) {
+        ImVec2 new_pos = nodes[i].pos;
+        if (type == DistributeType::Horizontal) {
+            new_pos.x = first_pos + spacing * static_cast<float>(i);
+        } else {
+            new_pos.y = first_pos + spacing * static_cast<float>(i);
+        }
+        pending_positions_[nodes[i].id] = new_pos;
+        cached_node_positions_[nodes[i].id] = new_pos;
+    }
+
+    pending_positions_frames_ = 3;
+    spdlog::info("Distributed {} nodes {}", nodes.size(),
+                 type == DistributeType::Horizontal ? "horizontally" : "vertically");
 }
 
-void NodeEditor::PasteClipboard() {
-    if (!clipboard_.valid || clipboard_.nodes.empty()) {
-        spdlog::debug("Nothing to paste");
+void NodeEditor::AutoLayoutSelection() {
+    if (selected_node_ids_.empty()) {
+        spdlog::warn("No nodes selected for auto-layout");
+        return;
+    }
+
+    SaveUndoState();  // Save before modification
+
+    // Get bounding box of selected nodes
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = std::numeric_limits<float>::max();
+
+    for (int node_id : selected_node_ids_) {
+        auto pos_it = cached_node_positions_.find(node_id);
+        if (pos_it != cached_node_positions_.end()) {
+            min_x = std::min(min_x, pos_it->second.x);
+            min_y = std::min(min_y, pos_it->second.y);
+        }
+    }
+
+    // Calculate grid dimensions
+    size_t count = selected_node_ids_.size();
+    int cols = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(count))));
+    float spacing_x = 200.0f;
+    float spacing_y = 150.0f;
+
+    // Arrange nodes in a grid
+    int col = 0, row = 0;
+    for (int node_id : selected_node_ids_) {
+        ImVec2 new_pos = ImVec2(
+            min_x + static_cast<float>(col) * spacing_x,
+            min_y + static_cast<float>(row) * spacing_y
+        );
+
+        pending_positions_[node_id] = new_pos;
+        cached_node_positions_[node_id] = new_pos;
+
+        col++;
+        if (col >= cols) {
+            col = 0;
+            row++;
+        }
+    }
+
+    pending_positions_frames_ = 3;
+    spdlog::info("Auto-arranged {} nodes in grid", count);
+}
+
+// ===== Node Grouping =====
+
+void NodeEditor::CreateGroupFromSelection(const std::string& name) {
+    if (selected_node_ids_.empty()) {
+        spdlog::warn("No nodes selected to create group");
         return;
     }
 
     SaveUndoState();
 
-    // Map from old node IDs to new node IDs
-    std::map<int, int> node_id_map;
-    // Map from old pin IDs to new pin IDs
-    std::map<int, int> pin_id_map;
+    NodeGroup group;
+    group.id = next_group_id_++;
+    group.name = name.empty() ? "Group " + std::to_string(group.id) : name;
+    group.node_ids = selected_node_ids_;
+    group.color = ImVec4(create_group_color_[0], create_group_color_[1],
+                         create_group_color_[2], create_group_color_[3]);
+    group.collapsed = false;
+    group.padding = 20.0f;
 
-    // Clear selection before pasting
-    ImNodes::ClearNodeSelection();
-
-    // Create new nodes with new IDs
-    for (const auto& old_node : clipboard_.nodes) {
-        MLNode new_node = old_node;
-        int old_id = new_node.id;
-        new_node.id = next_node_id_++;
-
-        // Assign new pin IDs
-        for (auto& pin : new_node.inputs) {
-            int old_pin_id = pin.id;
-            pin.id = next_pin_id_++;
-            pin_id_map[old_pin_id] = pin.id;
-        }
-        for (auto& pin : new_node.outputs) {
-            int old_pin_id = pin.id;
-            pin.id = next_pin_id_++;
-            pin_id_map[old_pin_id] = pin.id;
-        }
-
-        node_id_map[old_id] = new_node.id;
-        nodes_.push_back(new_node);
-
-        // Position the new node with offset
-        ImVec2 old_pos = ImNodes::GetNodeGridSpacePos(old_id);
-        // If we can't get old position (node doesn't exist), use a default
-        ImVec2 new_pos(old_pos.x + paste_offset_.x, old_pos.y + paste_offset_.y);
-
-        // For pasted nodes, we need to set position after they're added
-        // ImNodes requires the node to exist first, so we'll set it in the next frame
-        // For now, use a simple offset from screen center
-        ImVec2 canvas_origin = ImNodes::GetNodeEditorSpacePos(0);
-        new_pos = ImVec2(paste_offset_.x + nodes_.size() * 10.0f,
-                         paste_offset_.y + nodes_.size() * 10.0f);
-
-        ImNodes::SetNodeGridSpacePos(new_node.id, new_pos);
-        ImNodes::SelectNode(new_node.id);
-    }
-
-    // Recreate internal links with new IDs
-    for (const auto& old_link : clipboard_.links) {
-        NodeLink new_link;
-        new_link.id = next_link_id_++;
-        new_link.from_node = node_id_map[old_link.from_node];
-        new_link.to_node = node_id_map[old_link.to_node];
-        new_link.from_pin = pin_id_map[old_link.from_pin];
-        new_link.to_pin = pin_id_map[old_link.to_pin];
-
-        links_.push_back(new_link);
-    }
-
-    // Increase paste offset for next paste
-    paste_offset_.x += 50.0f;
-    paste_offset_.y += 50.0f;
-
-    // Reset paste offset if it gets too large
-    if (paste_offset_.x > 300.0f) {
-        paste_offset_ = ImVec2(50.0f, 50.0f);
-    }
-
-    spdlog::info("Pasted {} nodes and {} links",
-                 clipboard_.nodes.size(), clipboard_.links.size());
+    groups_.push_back(group);
+    spdlog::info("Created group '{}' with {} nodes", group.name, group.node_ids.size());
 }
 
-void NodeEditor::DuplicateSelection() {
-    CopySelection();
-    PasteClipboard();
-}
-
-// ===== Keyboard Shortcuts =====
-
-void NodeEditor::HandleKeyboardShortcuts() {
-    // Only process shortcuts when node editor window is focused
-    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-        return;
-    }
-
-    const bool ctrl = ImGui::GetIO().KeyCtrl;
-    const bool shift = ImGui::GetIO().KeyShift;
-
-    // Ctrl+Z - Undo
-    if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-        Undo();
-    }
-
-    // Ctrl+Y or Ctrl+Shift+Z - Redo
-    if ((ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) ||
-        (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_Z))) {
-        Redo();
-    }
-
-    // Ctrl+C - Copy
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C)) {
-        CopySelection();
-    }
-
-    // Ctrl+X - Cut
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_X)) {
-        CutSelection();
-    }
-
-    // Ctrl+V - Paste
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
-        PasteClipboard();
-    }
-
-    // Ctrl+D - Duplicate
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D)) {
-        DuplicateSelection();
-    }
-
-    // Ctrl+A - Select All
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A)) {
-        SelectAll();
-    }
-
-    // Escape - Clear selection or close context menu
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        if (show_context_menu_) {
-            show_context_menu_ = false;
-        } else {
-            ClearSelection();
-        }
-    }
-
-    // M - Toggle minimap
-    if (ImGui::IsKeyPressed(ImGuiKey_M) && !ctrl) {
-        show_minimap_ = !show_minimap_;
-        spdlog::info("Minimap {}", show_minimap_ ? "enabled" : "disabled");
-    }
-
-    // F - Frame selected or frame all
-    if (ImGui::IsKeyPressed(ImGuiKey_F) && !ctrl) {
-        if (ImNodes::NumSelectedNodes() > 0) {
-            FrameSelected();
-        } else {
-            FrameAll();
-        }
+void NodeEditor::DeleteGroup(int group_id) {
+    auto it = std::find_if(groups_.begin(), groups_.end(),
+                           [group_id](const NodeGroup& g) { return g.id == group_id; });
+    if (it != groups_.end()) {
+        SaveUndoState();
+        spdlog::info("Deleted group '{}'", it->name);
+        groups_.erase(it);
     }
 }
 
-void NodeEditor::FrameSelected() {
-    // Get bounding box of selected nodes and center view on them
-    const int num_selected = ImNodes::NumSelectedNodes();
-    if (num_selected == 0) {
-        return;
+void NodeEditor::UngroupSelection() {
+    if (selected_node_ids_.empty()) return;
+
+    SaveUndoState();
+
+    // Find and remove groups containing any selected node
+    for (int node_id : selected_node_ids_) {
+        groups_.erase(
+            std::remove_if(groups_.begin(), groups_.end(),
+                [node_id](const NodeGroup& g) {
+                    return std::find(g.node_ids.begin(), g.node_ids.end(), node_id) != g.node_ids.end();
+                }),
+            groups_.end()
+        );
     }
 
-    std::vector<int> selected_ids(num_selected);
-    ImNodes::GetSelectedNodes(selected_ids.data());
-
-    // Calculate bounding box
-    float min_x = FLT_MAX, min_y = FLT_MAX;
-    float max_x = -FLT_MAX, max_y = -FLT_MAX;
-
-    for (int node_id : selected_ids) {
-        auto it = cached_node_positions_.find(node_id);
-        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-        ImVec2 dims = ImNodes::GetNodeDimensions(node_id);
-
-        min_x = std::min(min_x, pos.x);
-        min_y = std::min(min_y, pos.y);
-        max_x = std::max(max_x, pos.x + dims.x);
-        max_y = std::max(max_y, pos.y + dims.y);
-    }
-
-    // Calculate center and pan to it
-    ImVec2 center((min_x + max_x) / 2.0f, (min_y + max_y) / 2.0f);
-    ImNodes::EditorContextResetPanning(ImVec2(-center.x + 400.0f, -center.y + 300.0f));
-
-    spdlog::debug("Framed {} selected nodes", num_selected);
+    spdlog::info("Ungrouped selected nodes");
 }
 
-void NodeEditor::FrameAll() {
-    if (nodes_.empty()) {
-        return;
-    }
-
-    // Calculate bounding box of all nodes
-    float min_x = FLT_MAX, min_y = FLT_MAX;
-    float max_x = -FLT_MAX, max_y = -FLT_MAX;
-
-    for (const auto& node : nodes_) {
-        auto it = cached_node_positions_.find(node.id);
-        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-        ImVec2 dims = ImNodes::GetNodeDimensions(node.id);
-
-        min_x = std::min(min_x, pos.x);
-        min_y = std::min(min_y, pos.y);
-        max_x = std::max(max_x, pos.x + dims.x);
-        max_y = std::max(max_y, pos.y + dims.y);
-    }
-
-    // Calculate center and pan to it
-    ImVec2 center((min_x + max_x) / 2.0f, (min_y + max_y) / 2.0f);
-    ImNodes::EditorContextResetPanning(ImVec2(-center.x + 400.0f, -center.y + 300.0f));
-
-    spdlog::debug("Framed all {} nodes", nodes_.size());
-}
-
-void NodeEditor::CreateLink(int from_pin, int to_pin, int from_node, int to_node) {
-    NodeLink link;
-    link.id = next_link_id_++;
-    link.from_pin = from_pin;
-    link.to_pin = to_pin;
-    link.from_node = from_node;
-    link.to_node = to_node;
-    links_.push_back(link);
-}
-
-void NodeEditor::GeneratePythonCode() {
-    // Validate graph before generating code
-    std::string error_message;
-    if (!ValidateGraph(error_message)) {
-        spdlog::error("Graph validation failed: {}", error_message);
-        // TODO: Show error dialog to user
-        return;
-    }
-
-    GenerateCodeForFramework(selected_framework_);
-}
-
-void NodeEditor::GenerateCodeForFramework(CodeFramework framework) {
-    spdlog::info("Generating code from node graph (async)...");
-
-    if (nodes_.empty()) {
-        spdlog::warn("No nodes in graph - cannot generate code");
-        return;
-    }
-
-    // Get topologically sorted node order (do this synchronously for validation)
-    std::vector<int> sorted_ids = TopologicalSort();
-    if (sorted_ids.empty()) {
-        spdlog::error("Failed to perform topological sort - graph may have cycles");
-        return;
-    }
-
-    // Copy graph data for thread safety
-    std::vector<MLNode> nodes_copy = nodes_;
-    std::vector<NodeLink> links_copy = links_;
-    size_t total_nodes = sorted_ids.size();
-
-    // Determine framework name
-    std::string framework_name;
-    switch (framework) {
-        case CodeFramework::PyTorch: framework_name = "PyTorch"; break;
-        case CodeFramework::TensorFlow: framework_name = "TensorFlow"; break;
-        case CodeFramework::Keras: framework_name = "Keras"; break;
-        case CodeFramework::PyCyxWiz: framework_name = "PyCyxWiz"; break;
-        default: framework_name = "Unknown"; break;
-    }
-
-    // Store result for completion callback
-    auto result = std::make_shared<std::string>();
-    auto fw_name = std::make_shared<std::string>(framework_name);
-
-    // Capture script_editor_ for completion callback
-    auto script_editor = script_editor_;
-
-    // Run code generation async
-    cyxwiz::AsyncTaskManager::Instance().RunAsync(
-        "Generate " + framework_name + " Code",
-        [this, framework, sorted_ids, nodes_copy, total_nodes, result, fw_name](cyxwiz::LambdaTask& task) {
-            task.ReportProgress(0.0f, "Starting code generation...");
-
-            std::string code;
-
-            // Generate code based on selected framework
-            task.ReportProgress(0.1f, "Generating " + *fw_name + " code...");
-
-            switch (framework) {
-                case CodeFramework::PyTorch:
-                    code = GeneratePyTorchCode(sorted_ids);
-                    break;
-                case CodeFramework::TensorFlow:
-                    code = GenerateTensorFlowCode(sorted_ids);
-                    break;
-                case CodeFramework::Keras:
-                    code = GenerateKerasCode(sorted_ids);
-                    break;
-                case CodeFramework::PyCyxWiz:
-                    code = GeneratePyCyxWizCode(sorted_ids);
-                    break;
-                default:
-                    task.MarkFailed("Unknown framework selected");
-                    return;
-            }
-
-            if (task.ShouldStop()) {
-                task.MarkFailed("Code generation cancelled");
-                return;
-            }
-
-            task.ReportProgress(0.9f, "Finalizing...");
-
-            // Store result
-            *result = std::move(code);
-
-            task.ReportProgress(1.0f, "Complete!");
-            spdlog::info("Generated {} code ({} lines)", *fw_name, std::count(result->begin(), result->end(), '\n'));
-        },
-        // Progress callback (optional - can be used for detailed UI updates)
-        nullptr,
-        // Completion callback - runs on main thread
-        [script_editor, result, fw_name](bool success, const std::string& error) {
-            if (success && script_editor) {
-                script_editor->LoadGeneratedCode(*result, fw_name->c_str());
-                script_editor->SetVisible(true);
-                spdlog::info("Code sent to Script Editor panel");
-            } else if (!success) {
-                spdlog::error("Code generation failed: {}", error);
-            } else {
-                spdlog::warn("Script Editor panel not available");
-            }
-        }
-    );
-}
-
-std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) {
-    std::string code;
-
-    // Header
-    code += "# Auto-generated PyTorch model from CyxWiz Node Editor\n";
-    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
-    code += "import torch\n";
-    code += "import torch.nn as nn\n";
-    code += "import torch.nn.functional as F\n";
-    code += "import torch.optim as optim\n\n";
-
-    // Model class
-    code += "class GeneratedModel(nn.Module):\n";
-    code += "    def __init__(self):\n";
-    code += "        super(GeneratedModel, self).__init__()\n";
-
-    // Generate layer definitions
-    int layer_idx = 0;
-    for (int node_id : sorted_ids) {
-        const MLNode* node = FindNodeById(node_id);
-        if (!node) continue;
-
-        // Skip DatasetInput and Output nodes in __init__ (they don't have layers)
-        if (node->type == NodeType::DatasetInput || node->type == NodeType::Output) {
-            continue;
-        }
-
-        std::string layer_code = NodeTypeToPythonLayer(*node);
-        if (!layer_code.empty()) {
-            code += "        self.layer" + std::to_string(layer_idx) + " = " + layer_code + "\n";
-            layer_idx++;
-        }
-    }
-
-    code += "\n";
-
-    // Forward pass
-    code += "    def forward(self, x):\n";
-    layer_idx = 0;
-    for (int node_id : sorted_ids) {
-        const MLNode* node = FindNodeById(node_id);
-        if (!node) continue;
-
-        switch (node->type) {
-            case NodeType::DatasetInput:
-                code += "        # Dataset input layer (x is already the input)\n";
-                break;
-
-            case NodeType::Dense:
-                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
-                break;
-
-            case NodeType::ReLU:
-                code += "        x = F.relu(x)\n";
-                break;
-
-            case NodeType::Sigmoid:
-                code += "        x = torch.sigmoid(x)\n";
-                break;
-
-            case NodeType::Tanh:
-                code += "        x = torch.tanh(x)\n";
-                break;
-
-            case NodeType::Softmax:
-                code += "        x = F.softmax(x, dim=1)\n";
-                break;
-
-            case NodeType::Dropout:
-                code += "        x = F.dropout(x, p=0.5, training=self.training)\n";
-                break;
-
-            case NodeType::Flatten:
-                code += "        x = torch.flatten(x, 1)\n";
-                break;
-
-            case NodeType::Output:
-                code += "        # Output layer\n";
-                break;
-
-            default:
-                break;
-        }
-    }
-    code += "        return x\n\n";
-
-    // Training code
-    code += "# Training setup\n";
-    code += "if __name__ == '__main__':\n";
-    code += "    # Create model\n";
-    code += "    model = GeneratedModel()\n";
-    code += "    print(model)\n\n";
-
-    code += "    # Loss and optimizer\n";
-    code += "    criterion = nn.CrossEntropyLoss()\n";
-    code += "    optimizer = optim.Adam(model.parameters(), lr=0.001)\n\n";
-
-    code += "    # TODO: Add your training data here\n";
-    code += "    # Example training loop:\n";
-    code += "    # for epoch in range(num_epochs):\n";
-    code += "    #     for batch_idx, (data, target) in enumerate(train_loader):\n";
-    code += "    #         optimizer.zero_grad()\n";
-    code += "    #         output = model(data)\n";
-    code += "    #         loss = criterion(output, target)\n";
-    code += "    #         loss.backward()\n";
-    code += "    #         optimizer.step()\n";
-
-    return code;
-}
-
-std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_ids) {
-    std::string code;
-
-    // Header
-    code += "# Auto-generated TensorFlow model from CyxWiz Node Editor\n";
-    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
-    code += "import tensorflow as tf\n";
-    code += "from tensorflow.keras import layers, models, optimizers\n\n";
-
-    // Model class using tf.keras
-    code += "class GeneratedModel(tf.keras.Model):\n";
-    code += "    def __init__(self):\n";
-    code += "        super(GeneratedModel, self).__init__()\n";
-
-    // Generate layer definitions
-    int layer_idx = 0;
-    for (int node_id : sorted_ids) {
-        const MLNode* node = FindNodeById(node_id);
-        if (!node) continue;
-
-        // Skip DatasetInput and Output nodes in __init__
-        if (node->type == NodeType::DatasetInput || node->type == NodeType::Output) {
-            continue;
-        }
-
-        std::string layer_code = NodeTypeToTensorFlowLayer(*node, layer_idx);
-        if (!layer_code.empty()) {
-            code += "        self.layer" + std::to_string(layer_idx) + " = " + layer_code + "\n";
-            layer_idx++;
-        }
-    }
-
-    code += "\n";
-
-    // Call method (forward pass in TensorFlow)
-    code += "    def call(self, x, training=False):\n";
-    layer_idx = 0;
-    for (int node_id : sorted_ids) {
-        const MLNode* node = FindNodeById(node_id);
-        if (!node) continue;
-
-        switch (node->type) {
-            case NodeType::DatasetInput:
-                code += "        # Dataset input layer (x is already the input)\n";
-                break;
-
-            case NodeType::Dense:
-                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
-                break;
-
-            case NodeType::ReLU:
-                code += "        x = tf.nn.relu(x)\n";
-                break;
-
-            case NodeType::Sigmoid:
-                code += "        x = tf.nn.sigmoid(x)\n";
-                break;
-
-            case NodeType::Tanh:
-                code += "        x = tf.nn.tanh(x)\n";
-                break;
-
-            case NodeType::Softmax:
-                code += "        x = tf.nn.softmax(x)\n";
-                break;
-
-            case NodeType::Dropout:
-                code += "        x = tf.keras.layers.Dropout(0.5)(x, training=training)\n";
-                break;
-
-            case NodeType::Flatten:
-                code += "        x = tf.keras.layers.Flatten()(x)\n";
-                break;
-
-            case NodeType::Output:
-                code += "        # Output layer\n";
-                break;
-
-            default:
-                break;
-        }
-    }
-    code += "        return x\n\n";
-
-    // Training code
-    code += "# Training setup\n";
-    code += "if __name__ == '__main__':\n";
-    code += "    # Create model\n";
-    code += "    model = GeneratedModel()\n";
-    code += "    model.build(input_shape=(None, 784))  # Adjust input shape as needed\n";
-    code += "    model.summary()\n\n";
-
-    code += "    # Compile model\n";
-    code += "    model.compile(\n";
-    code += "        optimizer='adam',\n";
-    code += "        loss='sparse_categorical_crossentropy',\n";
-    code += "        metrics=['accuracy']\n";
-    code += "    )\n\n";
-
-    code += "    # TODO: Add your training data here\n";
-    code += "    # Example training:\n";
-    code += "    # model.fit(x_train, y_train, epochs=10, batch_size=32, validation_split=0.2)\n";
-
-    return code;
-}
-
-std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
-    std::string code;
-
-    // Header
-    code += "# Auto-generated Keras model from CyxWiz Node Editor\n";
-    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
-    code += "from tensorflow import keras\n";
-    code += "from tensorflow.keras import layers\n\n";
-
-    // Sequential model approach
-    code += "# Build model using Sequential API\n";
-    code += "model = keras.Sequential([\n";
-
-    bool first_layer = true;
-    for (int node_id : sorted_ids) {
-        const MLNode* node = FindNodeById(node_id);
-        if (!node) continue;
-
-        // Skip DatasetInput node
-        if (node->type == NodeType::DatasetInput) {
-            continue;
-        }
-
-        std::string layer_code = NodeTypeToKerasLayer(*node);
-        if (!layer_code.empty()) {
-            if (!first_layer) {
-                code += ",\n";
-            }
-            code += "    " + layer_code;
-            first_layer = false;
-        }
-    }
-
-    code += "\n])\n\n";
-
-    // Model summary and compilation
-    code += "# Model configuration\n";
-    code += "model.build(input_shape=(None, 784))  # Adjust input shape as needed\n";
-    code += "model.summary()\n\n";
-
-    code += "# Compile model\n";
-    code += "model.compile(\n";
-    code += "    optimizer='adam',\n";
-    code += "    loss='sparse_categorical_crossentropy',\n";
-    code += "    metrics=['accuracy']\n";
-    code += ")\n\n";
-
-    code += "# TODO: Add your training data here\n";
-    code += "# Example training:\n";
-    code += "# history = model.fit(\n";
-    code += "#     x_train, y_train,\n";
-    code += "#     epochs=10,\n";
-    code += "#     batch_size=32,\n";
-    code += "#     validation_split=0.2\n";
-    code += "# )\n";
-
-    return code;
-}
-
-std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids) {
-    std::string code;
-
-    // Header
-    code += "# Auto-generated PyCyxWiz model from CyxWiz Node Editor\n";
-    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
-    code += "import pycyxwiz as cx\n";
-    code += "import numpy as np\n\n";
-
-    // Model class using pycyxwiz
-    code += "class GeneratedModel:\n";
-    code += "    def __init__(self):\n";
-
-    // Generate layer definitions
-    int layer_idx = 0;
-    for (int node_id : sorted_ids) {
-        const MLNode* node = FindNodeById(node_id);
-        if (!node) continue;
-
-        // Skip DatasetInput and Output nodes in __init__
-        if (node->type == NodeType::DatasetInput || node->type == NodeType::Output) {
-            continue;
-        }
-
-        std::string layer_code = NodeTypeToPyCyxWizLayer(*node);
-        if (!layer_code.empty()) {
-            code += "        self.layer" + std::to_string(layer_idx) + " = " + layer_code + "\n";
-            layer_idx++;
-        }
-    }
-
-    code += "\n";
-
-    // Forward method
-    code += "    def forward(self, x):\n";
-    layer_idx = 0;
-    for (int node_id : sorted_ids) {
-        const MLNode* node = FindNodeById(node_id);
-        if (!node) continue;
-
-        switch (node->type) {
-            case NodeType::DatasetInput:
-                code += "        # Dataset input layer (x is already the input tensor)\n";
-                break;
-
-            case NodeType::Dense:
-                code += "        x = self.layer" + std::to_string(layer_idx++) + ".forward(x)\n";
-                break;
-
-            case NodeType::ReLU:
-                code += "        x = cx.relu(x)\n";
-                break;
-
-            case NodeType::Sigmoid:
-                code += "        x = cx.sigmoid(x)\n";
-                break;
-
-            case NodeType::Tanh:
-                code += "        x = cx.tanh(x)\n";
-                break;
-
-            case NodeType::Softmax:
-                code += "        x = cx.softmax(x)\n";
-                break;
-
-            case NodeType::Dropout:
-                code += "        x = cx.dropout(x, p=0.5)\n";
-                break;
-
-            case NodeType::Flatten:
-                code += "        x = cx.flatten(x)\n";
-                break;
-
-            case NodeType::Output:
-                code += "        # Output layer\n";
-                break;
-
-            default:
-                break;
-        }
-    }
-    code += "        return x\n\n";
-
-    code += "    def train(self, x_train, y_train, epochs=10, learning_rate=0.001):\n";
-    code += "        \"\"\"Training loop using CyxWiz backend\"\"\"\n";
-    code += "        optimizer = cx.Adam(learning_rate=learning_rate)\n";
-    code += "        loss_fn = cx.CrossEntropyLoss()\n\n";
-    code += "        for epoch in range(epochs):\n";
-    code += "            # Forward pass\n";
-    code += "            predictions = self.forward(x_train)\n";
-    code += "            loss = loss_fn(predictions, y_train)\n\n";
-    code += "            # Backward pass\n";
-    code += "            loss.backward()\n";
-    code += "            optimizer.step()\n";
-    code += "            optimizer.zero_grad()\n\n";
-    code += "            print(f'Epoch {epoch+1}/{epochs}, Loss: {loss.item():.4f}')\n\n";
-
-    // Training setup
-    code += "# Training setup\n";
-    code += "if __name__ == '__main__':\n";
-    code += "    # Initialize CyxWiz backend\n";
-    code += "    cx.initialize()\n\n";
-    code += "    # Select device (GPU if available)\n";
-    code += "    device = cx.get_device(cx.DeviceType.CUDA if cx.cuda_available() else cx.DeviceType.CPU)\n";
-    code += "    cx.set_device(device)\n";
-    code += "    print(f'Using device: {device.name()}')\n\n";
-
-    code += "    # Create model\n";
-    code += "    model = GeneratedModel()\n\n";
-
-    code += "    # TODO: Load your training data here\n";
-    code += "    # x_train = cx.Tensor(your_data)\n";
-    code += "    # y_train = cx.Tensor(your_labels)\n";
-    code += "    # model.train(x_train, y_train, epochs=10)\n";
-
-    return code;
-}
-
-std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
-    std::string code;
-
-    switch (node.type) {
-        case NodeType::Dense: {
-            std::string units = "128";
-            auto it = node.parameters.find("units");
-            if (it != node.parameters.end()) {
-                units = it->second;
-            }
-            // Note: input size needs to be determined from graph connections
-            code = "nn.Linear(in_features=AUTO, out_features=" + units + ")";
-            break;
-        }
-
-        case NodeType::Conv2D:
-            code = "nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3)";
-            break;
-
-        case NodeType::MaxPool2D:
-            code = "nn.MaxPool2d(kernel_size=2)";
-            break;
-
-        case NodeType::BatchNorm:
-            code = "nn.BatchNorm2d(num_features=AUTO)";
-            break;
-
-        case NodeType::Dropout: {
-            code = "nn.Dropout(p=0.5)";
-            break;
-        }
-
-        case NodeType::LinearAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            std::string feature_map = "elu";
-            std::string eps = "1e-6";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            it = node.parameters.find("feature_map");
-            if (it != node.parameters.end()) feature_map = it->second;
-            it = node.parameters.find("eps");
-            if (it != node.parameters.end()) eps = it->second;
-            // Linear attention with O(n) complexity (Performer-style)
-            // Requires: pip install performer-pytorch or custom implementation
-            code = "LinearAttention(dim=" + embed_dim + ", heads=" + num_heads +
-                   ", dim_head=" + embed_dim + "//" + num_heads +
-                   ", feature_map='" + feature_map + "', eps=" + eps + ")";
-            break;
-        }
-
-        case NodeType::MultiHeadAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            code = "nn.MultiheadAttention(embed_dim=" + embed_dim + ", num_heads=" + num_heads + ")";
-            break;
-        }
-
-        case NodeType::LayerNorm: {
-            std::string normalized_shape = "512";
-            auto it = node.parameters.find("normalized_shape");
-            if (it != node.parameters.end()) normalized_shape = it->second;
-            code = "nn.LayerNorm(" + normalized_shape + ")";
-            break;
-        }
-
-        case NodeType::Embedding: {
-            std::string num_embeddings = "10000";
-            std::string embedding_dim = "512";
-            auto it = node.parameters.find("num_embeddings");
-            if (it != node.parameters.end()) num_embeddings = it->second;
-            it = node.parameters.find("embedding_dim");
-            if (it != node.parameters.end()) embedding_dim = it->second;
-            code = "nn.Embedding(num_embeddings=" + num_embeddings + ", embedding_dim=" + embedding_dim + ")";
-            break;
-        }
-
-        case NodeType::GELU:
-            code = "nn.GELU()";
-            break;
-
-        case NodeType::ReLU:
-            code = "nn.ReLU()";
-            break;
-
-        default:
-            // Activation functions and others don't need layers in __init__
-            code = "";
-            break;
-    }
-
-    return code;
-}
-
-std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*layer_idx*/) {
-    std::string code;
-
-    switch (node.type) {
-        case NodeType::Dense: {
-            std::string units = "128";
-            auto it = node.parameters.find("units");
-            if (it != node.parameters.end()) {
-                units = it->second;
-            }
-            code = "layers.Dense(" + units + ")";
-            break;
-        }
-
-        case NodeType::Conv2D:
-            code = "layers.Conv2D(32, kernel_size=3)";
-            break;
-
-        case NodeType::MaxPool2D:
-            code = "layers.MaxPool2D(pool_size=2)";
-            break;
-
-        case NodeType::BatchNorm:
-            code = "layers.BatchNormalization()";
-            break;
-
-        case NodeType::Dropout:
-            code = "layers.Dropout(0.5)";
-            break;
-
-        case NodeType::LinearAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            // TensorFlow doesn't have native linear attention - use MultiHeadAttention or custom layer
-            // Comment indicates O(n) linear attention should be used
-            code = "# LinearAttention (O(n)) - requires tensorflow-addons or custom impl\n"
-                   "        layers.MultiHeadAttention(key_dim=" + embed_dim + "//" + num_heads +
-                   ", num_heads=" + num_heads + ")  # Replace with linear attention";
-            break;
-        }
-
-        case NodeType::MultiHeadAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            code = "layers.MultiHeadAttention(key_dim=" + embed_dim + "//" + num_heads +
-                   ", num_heads=" + num_heads + ")";
-            break;
-        }
-
-        case NodeType::LayerNorm: {
-            std::string normalized_shape = "512";
-            auto it = node.parameters.find("normalized_shape");
-            if (it != node.parameters.end()) normalized_shape = it->second;
-            code = "layers.LayerNormalization()";
-            break;
-        }
-
-        case NodeType::Embedding: {
-            std::string num_embeddings = "10000";
-            std::string embedding_dim = "512";
-            auto it = node.parameters.find("num_embeddings");
-            if (it != node.parameters.end()) num_embeddings = it->second;
-            it = node.parameters.find("embedding_dim");
-            if (it != node.parameters.end()) embedding_dim = it->second;
-            code = "layers.Embedding(input_dim=" + num_embeddings + ", output_dim=" + embedding_dim + ")";
-            break;
-        }
-
-        case NodeType::GELU:
-            code = "layers.Activation('gelu')";
-            break;
-
-        case NodeType::ReLU:
-            code = "layers.ReLU()";
-            break;
-
-        default:
-            // Activation functions and others don't need layers in __init__
-            code = "";
-            break;
-    }
-
-    return code;
-}
-
-std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
-    std::string code;
-
-    switch (node.type) {
-        case NodeType::Dense: {
-            std::string units = "128";
-            auto it = node.parameters.find("units");
-            if (it != node.parameters.end()) {
-                units = it->second;
-            }
-            code = "layers.Dense(" + units + ")";
-            break;
-        }
-
-        case NodeType::Conv2D:
-            code = "layers.Conv2D(32, kernel_size=3)";
-            break;
-
-        case NodeType::MaxPool2D:
-            code = "layers.MaxPool2D(pool_size=2)";
-            break;
-
-        case NodeType::Flatten:
-            code = "layers.Flatten()";
-            break;
-
-        case NodeType::Dropout:
-            code = "layers.Dropout(0.5)";
-            break;
-
-        case NodeType::BatchNorm:
-            code = "layers.BatchNormalization()";
-            break;
-
-        case NodeType::ReLU:
-            code = "layers.ReLU()";
-            break;
-
-        case NodeType::Sigmoid:
-            code = "layers.Activation('sigmoid')";
-            break;
-
-        case NodeType::Tanh:
-            code = "layers.Activation('tanh')";
-            break;
-
-        case NodeType::Softmax:
-            code = "layers.Activation('softmax')";
-            break;
-
-        case NodeType::Output: {
-            std::string units = "10";
-            auto it = node.parameters.find("units");
-            if (it != node.parameters.end()) {
-                units = it->second;
-            }
-            code = "layers.Dense(" + units + ", activation='softmax')";
-            break;
-        }
-
-        case NodeType::LinearAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            // Keras uses same MultiHeadAttention as TensorFlow
-            code = "# LinearAttention (O(n)) - requires custom implementation\n"
-                   "        layers.MultiHeadAttention(key_dim=" + embed_dim + "//" + num_heads +
-                   ", num_heads=" + num_heads + ")  # Replace with linear attention";
-            break;
-        }
-
-        case NodeType::MultiHeadAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            code = "layers.MultiHeadAttention(key_dim=" + embed_dim + "//" + num_heads +
-                   ", num_heads=" + num_heads + ")";
-            break;
-        }
-
-        case NodeType::LayerNorm:
-            code = "layers.LayerNormalization()";
-            break;
-
-        case NodeType::Embedding: {
-            std::string num_embeddings = "10000";
-            std::string embedding_dim = "512";
-            auto it = node.parameters.find("num_embeddings");
-            if (it != node.parameters.end()) num_embeddings = it->second;
-            it = node.parameters.find("embedding_dim");
-            if (it != node.parameters.end()) embedding_dim = it->second;
-            code = "layers.Embedding(input_dim=" + num_embeddings + ", output_dim=" + embedding_dim + ")";
-            break;
-        }
-
-        case NodeType::GELU:
-            code = "layers.Activation('gelu')";
-            break;
-
-        default:
-            code = "";
-            break;
-    }
-
-    return code;
-}
-
-std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
-    std::string code;
-
-    switch (node.type) {
-        case NodeType::Dense: {
-            std::string units = "128";
-            auto it = node.parameters.find("units");
-            if (it != node.parameters.end()) {
-                units = it->second;
-            }
-            // Note: pycyxwiz Dense layer requires input size determination from graph
-            code = "cx.Dense(in_features=AUTO, out_features=" + units + ")";
-            break;
-        }
-
-        case NodeType::Conv2D:
-            code = "cx.Conv2D(in_channels=1, out_channels=32, kernel_size=3)";
-            break;
-
-        case NodeType::MaxPool2D:
-            code = "cx.MaxPool2D(kernel_size=2)";
-            break;
-
-        case NodeType::BatchNorm:
-            code = "cx.BatchNorm()";
-            break;
-
-        case NodeType::Dropout:
-            code = "cx.Dropout(p=0.5)";
-            break;
-
-        // ===== Attention & Transformer Layers =====
-        case NodeType::LinearAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            code = "cx.LinearAttention(dim=" + embed_dim + ", heads=" + num_heads + ")";
-            break;
-        }
-
-        case NodeType::MultiHeadAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            code = "cx.MultiHeadAttention(embed_dim=" + embed_dim + ", num_heads=" + num_heads + ")";
-            break;
-        }
-
-        case NodeType::SelfAttention: {
-            std::string embed_dim = "512";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            code = "cx.SelfAttention(embed_dim=" + embed_dim + ")";
-            break;
-        }
-
-        case NodeType::CrossAttention: {
-            std::string embed_dim = "512";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            code = "cx.CrossAttention(embed_dim=" + embed_dim + ")";
-            break;
-        }
-
-        case NodeType::TransformerEncoder: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            std::string ff_dim = "2048";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            it = node.parameters.find("ff_dim");
-            if (it != node.parameters.end()) ff_dim = it->second;
-            code = "cx.TransformerEncoder(d_model=" + embed_dim + ", nhead=" + num_heads + ", dim_feedforward=" + ff_dim + ")";
-            break;
-        }
-
-        case NodeType::TransformerDecoder: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            std::string ff_dim = "2048";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            it = node.parameters.find("ff_dim");
-            if (it != node.parameters.end()) ff_dim = it->second;
-            code = "cx.TransformerDecoder(d_model=" + embed_dim + ", nhead=" + num_heads + ", dim_feedforward=" + ff_dim + ")";
-            break;
-        }
-
-        // ===== Normalization Layers =====
-        case NodeType::LayerNorm: {
-            std::string normalized_shape = "512";
-            auto it = node.parameters.find("normalized_shape");
-            if (it != node.parameters.end()) normalized_shape = it->second;
-            code = "cx.LayerNorm(normalized_shape=" + normalized_shape + ")";
-            break;
-        }
-
-        case NodeType::GroupNorm: {
-            std::string num_groups = "32";
-            std::string num_channels = "256";
-            auto it = node.parameters.find("num_groups");
-            if (it != node.parameters.end()) num_groups = it->second;
-            it = node.parameters.find("num_channels");
-            if (it != node.parameters.end()) num_channels = it->second;
-            code = "cx.GroupNorm(num_groups=" + num_groups + ", num_channels=" + num_channels + ")";
-            break;
-        }
-
-        case NodeType::InstanceNorm:
-            code = "cx.InstanceNorm()";
-            break;
-
-        // ===== Embedding Layer =====
-        case NodeType::Embedding: {
-            std::string num_embeddings = "10000";
-            std::string embedding_dim = "512";
-            auto it = node.parameters.find("num_embeddings");
-            if (it != node.parameters.end()) num_embeddings = it->second;
-            it = node.parameters.find("embedding_dim");
-            if (it != node.parameters.end()) embedding_dim = it->second;
-            code = "cx.Embedding(num_embeddings=" + num_embeddings + ", embedding_dim=" + embedding_dim + ")";
-            break;
-        }
-
-        case NodeType::PositionalEncoding: {
-            std::string max_len = "5000";
-            std::string d_model = "512";
-            auto it = node.parameters.find("max_len");
-            if (it != node.parameters.end()) max_len = it->second;
-            it = node.parameters.find("d_model");
-            if (it != node.parameters.end()) d_model = it->second;
-            code = "cx.PositionalEncoding(d_model=" + d_model + ", max_len=" + max_len + ")";
-            break;
-        }
-
-        // ===== Activation Functions =====
-        case NodeType::ReLU:
-            code = "cx.ReLU()";
-            break;
-
-        case NodeType::GELU:
-            code = "cx.GELU()";
-            break;
-
-        case NodeType::LeakyReLU: {
-            std::string negative_slope = "0.01";
-            auto it = node.parameters.find("negative_slope");
-            if (it != node.parameters.end()) negative_slope = it->second;
-            code = "cx.LeakyReLU(negative_slope=" + negative_slope + ")";
-            break;
-        }
-
-        case NodeType::Swish:
-            code = "cx.Swish()";
-            break;
-
-        case NodeType::Mish:
-            code = "cx.Mish()";
-            break;
-
-        case NodeType::Sigmoid:
-            code = "cx.Sigmoid()";
-            break;
-
-        case NodeType::Tanh:
-            code = "cx.Tanh()";
-            break;
-
-        case NodeType::Softmax: {
-            std::string dim = "-1";
-            auto it = node.parameters.find("dim");
-            if (it != node.parameters.end()) dim = it->second;
-            code = "cx.Softmax(dim=" + dim + ")";
-            break;
-        }
-
-        // ===== Recurrent Layers =====
-        case NodeType::LSTM: {
-            std::string input_size = "512";
-            std::string hidden_size = "256";
-            std::string num_layers = "1";
-            auto it = node.parameters.find("input_size");
-            if (it != node.parameters.end()) input_size = it->second;
-            it = node.parameters.find("hidden_size");
-            if (it != node.parameters.end()) hidden_size = it->second;
-            it = node.parameters.find("num_layers");
-            if (it != node.parameters.end()) num_layers = it->second;
-            code = "cx.LSTM(input_size=" + input_size + ", hidden_size=" + hidden_size + ", num_layers=" + num_layers + ")";
-            break;
-        }
-
-        case NodeType::GRU: {
-            std::string input_size = "512";
-            std::string hidden_size = "256";
-            std::string num_layers = "1";
-            auto it = node.parameters.find("input_size");
-            if (it != node.parameters.end()) input_size = it->second;
-            it = node.parameters.find("hidden_size");
-            if (it != node.parameters.end()) hidden_size = it->second;
-            it = node.parameters.find("num_layers");
-            if (it != node.parameters.end()) num_layers = it->second;
-            code = "cx.GRU(input_size=" + input_size + ", hidden_size=" + hidden_size + ", num_layers=" + num_layers + ")";
-            break;
-        }
-
-        // ===== Shape Operations =====
-        case NodeType::Flatten:
-            code = "cx.Flatten()";
-            break;
-
-        case NodeType::Reshape:
-            code = "cx.Reshape(shape=AUTO)";  // Shape determined from graph
-            break;
-
-        // ===== Merge Operations =====
-        case NodeType::Add:
-            code = "cx.Add()";
-            break;
-
-        case NodeType::Concatenate: {
-            std::string dim = "1";
-            auto it = node.parameters.find("dim");
-            if (it != node.parameters.end()) dim = it->second;
-            code = "cx.Concatenate(dim=" + dim + ")";
-            break;
-        }
-
-        default:
-            // Other node types handled in forward pass or not yet implemented
-            code = "";
-            break;
-    }
-
-    return code;
-}
-
-std::vector<int> NodeEditor::TopologicalSort() {
-    std::vector<int> result;
-    std::map<int, int> in_degree;
-    std::map<int, std::vector<int>> adj_list;
-
-    // Initialize in-degree for all nodes
-    for (const auto& node : nodes_) {
-        in_degree[node.id] = 0;
-        adj_list[node.id] = {};
-    }
-
-    // Build adjacency list and calculate in-degrees
-    for (const auto& link : links_) {
-        adj_list[link.from_node].push_back(link.to_node);
-        in_degree[link.to_node]++;
-    }
-
-    // Find all nodes with in-degree 0 (starting nodes)
-    std::vector<int> queue;
-    for (const auto& [node_id, degree] : in_degree) {
-        if (degree == 0) {
-            queue.push_back(node_id);
-        }
-    }
-
-    // Process nodes
-    while (!queue.empty()) {
-        int current = queue.front();
-        queue.erase(queue.begin());
-        result.push_back(current);
-
-        // Reduce in-degree for neighbors
-        for (int neighbor : adj_list[current]) {
-            in_degree[neighbor]--;
-            if (in_degree[neighbor] == 0) {
-                queue.push_back(neighbor);
-            }
-        }
-    }
-
-    // Check if all nodes were processed (no cycles)
-    if (result.size() != nodes_.size()) {
-        spdlog::error("Graph has cycles - cannot generate code");
-        return {};
-    }
-
-    return result;
-}
-
-const MLNode* NodeEditor::FindNodeById(int node_id) const {
-    for (const auto& node : nodes_) {
-        if (node.id == node_id) {
-            return &node;
+NodeGroup* NodeEditor::FindGroupContainingNode(int node_id) {
+    for (auto& group : groups_) {
+        if (std::find(group.node_ids.begin(), group.node_ids.end(), node_id) != group.node_ids.end()) {
+            return &group;
         }
     }
     return nullptr;
 }
 
-// ========== Color-Coding Implementation ==========
-unsigned int NodeEditor::GetNodeColor(NodeType type) {
-    switch (type) {
-        // ===== Output - Blue =====
-        case NodeType::Output:
-            return IM_COL32(52, 152, 219, 255);
+void NodeEditor::RenderGroups() {
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-        // ===== Core Layers - Green =====
-        case NodeType::Dense:
-            return IM_COL32(39, 174, 96, 255);
+    for (auto& group : groups_) {
+        if (group.node_ids.empty()) continue;
 
-        // ===== Convolutional Layers - Purple =====
-        case NodeType::Conv1D:
-        case NodeType::Conv2D:
-        case NodeType::Conv3D:
-        case NodeType::DepthwiseConv2D:
-            return IM_COL32(142, 68, 173, 255);
+        // Calculate bounding box of all nodes in the group
+        float min_x = std::numeric_limits<float>::max();
+        float min_y = std::numeric_limits<float>::max();
+        float max_x = std::numeric_limits<float>::lowest();
+        float max_y = std::numeric_limits<float>::lowest();
 
-        // ===== Pooling Layers - Light Purple =====
-        case NodeType::MaxPool2D:
-        case NodeType::AvgPool2D:
-        case NodeType::GlobalMaxPool:
-        case NodeType::GlobalAvgPool:
-        case NodeType::AdaptiveAvgPool:
-            return IM_COL32(155, 89, 182, 255);
+        bool any_valid = false;
+        for (int node_id : group.node_ids) {
+            auto pos_it = cached_node_positions_.find(node_id);
+            if (pos_it != cached_node_positions_.end()) {
+                ImVec2 pos = pos_it->second;
+                // Approximate node size
+                float node_w = 150.0f;
+                float node_h = 100.0f;
 
-        // ===== Normalization Layers - Pink/Coral =====
-        case NodeType::BatchNorm:
-        case NodeType::LayerNorm:
-        case NodeType::GroupNorm:
-        case NodeType::InstanceNorm:
-            return IM_COL32(236, 112, 99, 255);
-
-        // ===== Regularization - Red =====
-        case NodeType::Dropout:
-            return IM_COL32(231, 76, 60, 255);
-
-        // ===== Utility Layers - Teal =====
-        case NodeType::Flatten:
-            return IM_COL32(22, 160, 133, 255);
-
-        // ===== Recurrent Layers - Indigo =====
-        case NodeType::RNN:
-        case NodeType::LSTM:
-        case NodeType::GRU:
-        case NodeType::Bidirectional:
-        case NodeType::TimeDistributed:
-        case NodeType::Embedding:
-            return IM_COL32(63, 81, 181, 255);
-
-        // ===== Attention & Transformer - Deep Purple =====
-        case NodeType::MultiHeadAttention:
-        case NodeType::SelfAttention:
-        case NodeType::CrossAttention:
-        case NodeType::LinearAttention:
-        case NodeType::TransformerEncoder:
-        case NodeType::TransformerDecoder:
-        case NodeType::PositionalEncoding:
-            return IM_COL32(103, 58, 183, 255);
-
-        // ===== Activation Functions - Orange/Yellow =====
-        case NodeType::ReLU:
-            return IM_COL32(243, 156, 18, 255);
-        case NodeType::Sigmoid:
-            return IM_COL32(241, 196, 15, 255);
-        case NodeType::Tanh:
-            return IM_COL32(230, 126, 34, 255);
-        case NodeType::Softmax:
-            return IM_COL32(211, 84, 0, 255);
-        case NodeType::LeakyReLU:
-        case NodeType::PReLU:
-        case NodeType::ELU:
-        case NodeType::SELU:
-        case NodeType::GELU:
-        case NodeType::Swish:
-        case NodeType::Mish:
-            return IM_COL32(235, 152, 78, 255);
-
-        // ===== Shape Operations - Turquoise =====
-        case NodeType::Reshape:
-        case NodeType::Permute:
-        case NodeType::Squeeze:
-        case NodeType::Unsqueeze:
-        case NodeType::View:
-        case NodeType::Split:
-            return IM_COL32(26, 188, 156, 255);
-
-        // ===== Merge Operations - Lime Green =====
-        case NodeType::Concatenate:
-        case NodeType::Add:
-        case NodeType::Multiply:
-        case NodeType::Average:
-            return IM_COL32(139, 195, 74, 255);
-
-        // ===== Loss Functions - Dark Red =====
-        case NodeType::MSELoss:
-        case NodeType::CrossEntropyLoss:
-        case NodeType::BCELoss:
-        case NodeType::BCEWithLogits:
-        case NodeType::L1Loss:
-        case NodeType::SmoothL1Loss:
-        case NodeType::HuberLoss:
-        case NodeType::NLLLoss:
-            return IM_COL32(192, 57, 43, 255);
-
-        // ===== Optimizers - Dark Blue Gray =====
-        case NodeType::SGD:
-        case NodeType::Adam:
-        case NodeType::AdamW:
-        case NodeType::RMSprop:
-        case NodeType::Adagrad:
-        case NodeType::NAdam:
-            return IM_COL32(52, 73, 94, 255);
-
-        // ===== Learning Rate Schedulers - Steel Blue =====
-        case NodeType::StepLR:
-        case NodeType::CosineAnnealing:
-        case NodeType::ReduceOnPlateau:
-        case NodeType::ExponentialLR:
-        case NodeType::WarmupScheduler:
-            return IM_COL32(96, 125, 139, 255);
-
-        // ===== Regularization Nodes - Magenta/Pink =====
-        case NodeType::L1Regularization:
-        case NodeType::L2Regularization:
-        case NodeType::ElasticNet:
-            return IM_COL32(233, 30, 99, 255);
-
-        // ===== Utility Nodes - Gray =====
-        case NodeType::Lambda:
-        case NodeType::Identity:
-        case NodeType::Constant:
-        case NodeType::Parameter:
-            return IM_COL32(158, 158, 158, 255);
-
-        // ===== Data Pipeline - Cyan =====
-        case NodeType::DatasetInput:
-            return IM_COL32(0, 188, 212, 255);
-        case NodeType::DataLoader:
-            return IM_COL32(0, 172, 193, 255);
-        case NodeType::Augmentation:
-            return IM_COL32(0, 151, 167, 255);
-        case NodeType::DataSplit:
-            return IM_COL32(38, 198, 218, 255);
-        case NodeType::TensorReshape:
-            return IM_COL32(77, 208, 225, 255);
-        case NodeType::Normalize:
-            return IM_COL32(128, 222, 234, 255);
-        case NodeType::OneHotEncode:
-            return IM_COL32(0, 131, 143, 255);
-
-        default:
-            return IM_COL32(127, 140, 141, 255);
-    }
-}
-
-// ========== Graph Validation ==========
-bool NodeEditor::ValidateGraph(std::string& error_message) {
-    if (nodes_.empty()) {
-        error_message = "Graph is empty. Add nodes first.";
-        return false;
-    }
-
-    // Check for Input node
-    if (!HasInputNode()) {
-        error_message = "Graph must have at least one Input node.";
-        return false;
-    }
-
-    // Check for Output node
-    if (!HasOutputNode()) {
-        error_message = "Graph must have at least one Output node.";
-        return false;
-    }
-
-    // Check for cycles
-    if (HasCycle()) {
-        error_message = "Graph contains cycles. Neural networks must be acyclic (DAG).";
-        return false;
-    }
-
-    // Check that all nodes are reachable from input
-    if (!AllNodesReachable()) {
-        error_message = "Some nodes are not connected to the network. All nodes must be reachable from input nodes.";
-        return false;
-    }
-
-    return true;
-}
-
-bool NodeEditor::IsGraphValid() const {
-    // Quick check for training readiness
-    // Need: DatasetInput node, at least one model layer, and a loss node
-    if (nodes_.empty()) return false;
-
-    bool has_dataset_input = false;
-    bool has_loss = false;
-    bool has_model_layer = false;
-
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::DatasetInput) has_dataset_input = true;
-        if (node.type == NodeType::CrossEntropyLoss || node.type == NodeType::MSELoss) has_loss = true;
-        if (node.type == NodeType::Dense || node.type == NodeType::Conv2D) has_model_layer = true;
-    }
-
-    // For training we need: dataset input, model layers, and loss
-    return has_dataset_input && has_model_layer && has_loss;
-}
-
-void NodeEditor::UpdateDatasetNodeName(const std::string& dataset_name) {
-    // Find the first DatasetInput node and update its name
-    for (auto& node : nodes_) {
-        if (node.type == NodeType::DatasetInput) {
-            // Use dataset name if provided, otherwise default to "DataInput"
-            if (dataset_name.empty()) {
-                node.name = "DataInput";
-            } else {
-                node.name = dataset_name;
+                min_x = std::min(min_x, pos.x);
+                min_y = std::min(min_y, pos.y);
+                max_x = std::max(max_x, pos.x + node_w);
+                max_y = std::max(max_y, pos.y + node_h);
+                any_valid = true;
             }
-            node.parameters["dataset_name"] = dataset_name;
-            spdlog::info("Updated DatasetInput node name to: {}", node.name);
-            break;
+        }
+
+        if (!any_valid) continue;
+
+        // Add padding
+        min_x -= group.padding;
+        min_y -= group.padding;
+        max_x += group.padding;
+        max_y += group.padding;
+
+        // Convert to screen coordinates
+        ImVec2 panning = ImNodes::EditorContextGetPanning();
+        ImVec2 origin = ImGui::GetCursorScreenPos();
+
+        ImVec2 screen_min = ImVec2(origin.x + min_x + panning.x, origin.y + min_y + panning.y);
+        ImVec2 screen_max = ImVec2(origin.x + max_x + panning.x, origin.y + max_y + panning.y);
+
+        // Draw group background
+        ImU32 fill_color = ImGui::ColorConvertFloat4ToU32(group.color);
+        ImU32 border_color = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(group.color.x * 1.5f, group.color.y * 1.5f, group.color.z * 1.5f, 0.8f));
+
+        draw_list->AddRectFilled(screen_min, screen_max, fill_color, 8.0f);
+        draw_list->AddRect(screen_min, screen_max, border_color, 8.0f, 0, 2.0f);
+
+        // Draw group label
+        ImVec2 label_pos = ImVec2(screen_min.x + 8.0f, screen_min.y + 4.0f);
+        draw_list->AddText(label_pos, IM_COL32(255, 255, 255, 220), group.name.c_str());
+    }
+}
+
+// ===== Subgraph Encapsulation =====
+
+void NodeEditor::CreateSubgraphFromSelection(const std::string& name) {
+    if (selected_node_ids_.size() < 2) {
+        spdlog::warn("Need at least 2 selected nodes to create subgraph");
+        return;
+    }
+
+    SaveUndoState();
+
+    // Collect selected nodes and their internal links
+    std::vector<MLNode> internal_nodes;
+    std::vector<NodeLink> internal_links;
+    std::set<int> selected_set(selected_node_ids_.begin(), selected_node_ids_.end());
+
+    // Copy selected nodes to internal storage
+    for (const auto& node : nodes_) {
+        if (selected_set.count(node.id)) {
+            internal_nodes.push_back(node);
         }
     }
-}
 
-bool NodeEditor::HasCycle() {
-    // Build adjacency list
-    std::map<int, std::vector<int>> adj;
+    // Find internal links (both endpoints in selection)
     for (const auto& link : links_) {
-        adj[link.from_node].push_back(link.to_node);
+        if (selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
+            internal_links.push_back(link);
+        }
     }
 
-    // Track visited nodes and recursion stack for DFS
-    std::set<int> visited;
-    std::set<int> rec_stack;
+    // Find boundary pins - inputs are pins with external sources, outputs have external destinations
+    std::vector<std::pair<int, int>> input_pins;   // (node_id, pin_id) pairs
+    std::vector<std::pair<int, int>> output_pins;  // (node_id, pin_id) pairs
 
-    // DFS function to detect cycle
-    std::function<bool(int)> dfs = [&](int node_id) -> bool {
-        visited.insert(node_id);
-        rec_stack.insert(node_id);
+    for (const auto& link : links_) {
+        // Link from outside to inside -> input boundary
+        if (!selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
+            input_pins.push_back({link.to_node, link.to_pin});
+        }
+        // Link from inside to outside -> output boundary
+        if (selected_set.count(link.from_node) && !selected_set.count(link.to_node)) {
+            output_pins.push_back({link.from_node, link.from_pin});
+        }
+    }
 
-        // Visit all neighbors
-        if (adj.find(node_id) != adj.end()) {
-            for (int neighbor : adj[node_id]) {
-                if (!visited.count(neighbor)) {
-                    // Recursively visit unvisited neighbors
-                    if (dfs(neighbor)) {
-                        return true;  // Cycle found in subtree
-                    }
-                } else if (rec_stack.count(neighbor)) {
-                    // Found a back edge (cycle detected)
-                    spdlog::warn("Cycle detected: node {} -> node {}", node_id, neighbor);
-                    return true;
+    // Calculate center position of selected nodes
+    float center_x = 0, center_y = 0;
+    int count = 0;
+    for (int node_id : selected_node_ids_) {
+        auto pos_it = cached_node_positions_.find(node_id);
+        if (pos_it != cached_node_positions_.end()) {
+            center_x += pos_it->second.x;
+            center_y += pos_it->second.y;
+            count++;
+        }
+    }
+    if (count > 0) {
+        center_x /= count;
+        center_y /= count;
+    }
+
+    // Create the subgraph node
+    MLNode subgraph_node;
+    subgraph_node.id = next_node_id_++;
+    subgraph_node.type = NodeType::Subgraph;
+    subgraph_node.name = name.empty() ? "Subgraph" : name;
+    subgraph_node.parameters["node_count"] = std::to_string(internal_nodes.size());
+
+    // Create input pins for boundary inputs
+    for (size_t i = 0; i < input_pins.size(); ++i) {
+        NodePin pin;
+        pin.id = next_pin_id_++;
+        pin.type = PinType::Tensor;
+        pin.name = "In " + std::to_string(i + 1);
+        pin.is_input = true;
+        subgraph_node.inputs.push_back(pin);
+    }
+
+    // Create output pins for boundary outputs
+    for (size_t i = 0; i < output_pins.size(); ++i) {
+        NodePin pin;
+        pin.id = next_pin_id_++;
+        pin.type = PinType::Tensor;
+        pin.name = "Out " + std::to_string(i + 1);
+        pin.is_input = false;
+        subgraph_node.outputs.push_back(pin);
+    }
+
+    // Store subgraph data
+    SubgraphData data;
+    data.subgraph_node_id = subgraph_node.id;
+    data.internal_nodes = std::move(internal_nodes);
+    data.internal_links = std::move(internal_links);
+    data.expanded = false;
+
+    // Store pin mappings
+    for (const auto& [node_id, pin_id] : input_pins) {
+        data.input_pin_mappings.push_back(pin_id);
+    }
+    for (const auto& [node_id, pin_id] : output_pins) {
+        data.output_pin_mappings.push_back(pin_id);
+    }
+
+    subgraphs_.push_back(std::move(data));
+
+    // Rewire external connections to the subgraph node
+    std::vector<NodeLink> links_to_add;
+    std::vector<int> links_to_remove;
+
+    for (size_t i = 0; i < links_.size(); ++i) {
+        const auto& link = links_[i];
+
+        // Link from outside to inside -> connect to subgraph input
+        if (!selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
+            // Find which input pin this maps to
+            for (size_t j = 0; j < input_pins.size(); ++j) {
+                if (input_pins[j].second == link.to_pin) {
+                    NodeLink new_link;
+                    new_link.id = next_link_id_++;
+                    new_link.from_node = link.from_node;
+                    new_link.from_pin = link.from_pin;
+                    new_link.to_node = subgraph_node.id;
+                    new_link.to_pin = subgraph_node.inputs[j].id;
+                    new_link.type = link.type;
+                    links_to_add.push_back(new_link);
+                    break;
                 }
             }
+            links_to_remove.push_back(static_cast<int>(i));
         }
 
-        // Remove from recursion stack before returning
-        rec_stack.erase(node_id);
-        return false;
-    };
-
-    // Check each unvisited node (handles disconnected components)
-    for (const auto& node : nodes_) {
-        if (!visited.count(node.id)) {
-            if (dfs(node.id)) {
-                return true;  // Cycle found
-            }
-        }
-    }
-
-    return false;  // No cycles found
-}
-
-bool NodeEditor::AllNodesReachable() {
-    if (nodes_.empty()) return true;
-
-    // Find all DatasetInput nodes
-    std::vector<int> input_nodes;
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::DatasetInput) {
-            input_nodes.push_back(node.id);
-        }
-    }
-
-    if (input_nodes.empty()) return false;
-
-    // Build adjacency list
-    std::map<int, std::vector<int>> adj;
-    for (const auto& link : links_) {
-        adj[link.from_node].push_back(link.to_node);
-    }
-
-    // BFS from all input nodes to find reachable nodes
-    std::set<int> reachable;
-    std::queue<int> queue;
-
-    // Start from all input nodes
-    for (int input_id : input_nodes) {
-        queue.push(input_id);
-        reachable.insert(input_id);
-    }
-
-    // Perform BFS
-    while (!queue.empty()) {
-        int current = queue.front();
-        queue.pop();
-
-        // Visit all neighbors
-        if (adj.find(current) != adj.end()) {
-            for (int neighbor : adj[current]) {
-                if (!reachable.count(neighbor)) {
-                    reachable.insert(neighbor);
-                    queue.push(neighbor);
+        // Link from inside to outside -> connect from subgraph output
+        if (selected_set.count(link.from_node) && !selected_set.count(link.to_node)) {
+            // Find which output pin this maps to
+            for (size_t j = 0; j < output_pins.size(); ++j) {
+                if (output_pins[j].second == link.from_pin) {
+                    NodeLink new_link;
+                    new_link.id = next_link_id_++;
+                    new_link.from_node = subgraph_node.id;
+                    new_link.from_pin = subgraph_node.outputs[j].id;
+                    new_link.to_node = link.to_node;
+                    new_link.to_pin = link.to_pin;
+                    new_link.type = link.type;
+                    links_to_add.push_back(new_link);
+                    break;
                 }
             }
+            links_to_remove.push_back(static_cast<int>(i));
+        }
+
+        // Internal links are removed from main graph
+        if (selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
+            links_to_remove.push_back(static_cast<int>(i));
         }
     }
 
-    // Check if all nodes are reachable
-    bool all_reachable = (reachable.size() == nodes_.size());
-
-    if (!all_reachable) {
-        // Log which nodes are unreachable for debugging
-        for (const auto& node : nodes_) {
-            if (!reachable.count(node.id)) {
-                spdlog::warn("Node {} ('{}') is not reachable from input nodes", node.id, node.name);
-            }
-        }
+    // Remove old links (in reverse order to maintain indices)
+    std::sort(links_to_remove.begin(), links_to_remove.end(), std::greater<int>());
+    for (int idx : links_to_remove) {
+        links_.erase(links_.begin() + idx);
     }
 
-    return all_reachable;
+    // Add new links
+    for (auto& link : links_to_add) {
+        links_.push_back(link);
+    }
+
+    // Remove selected nodes from main graph
+    nodes_.erase(
+        std::remove_if(nodes_.begin(), nodes_.end(),
+            [&selected_set](const MLNode& n) { return selected_set.count(n.id); }),
+        nodes_.end()
+    );
+
+    // Add subgraph node
+    nodes_.push_back(subgraph_node);
+
+    // Position the subgraph node at the center of removed nodes
+    pending_positions_[subgraph_node.id] = ImVec2(center_x, center_y);
+    pending_positions_frames_ = 3;
+
+    // Clear selection and select the new subgraph
+    selected_node_ids_.clear();
+    selected_node_ids_.push_back(subgraph_node.id);
+
+    spdlog::info("Created subgraph '{}' with {} internal nodes",
+                 subgraph_node.name, subgraphs_.back().internal_nodes.size());
 }
 
-bool NodeEditor::HasInputNode() {
-    for (const auto& node : nodes_) {
-        // DatasetInput is the valid input source for the graph
-        if (node.type == NodeType::DatasetInput) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool NodeEditor::HasOutputNode() {
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::Output) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// ========== Save/Load Implementation ==========
-
-bool NodeEditor::SaveGraph(const std::string& filepath) {
-    using json = nlohmann::json;
-
-    try {
-        json j;
-        j["version"] = "1.0";
-        j["framework"] = static_cast<int>(selected_framework_);
-
-        // Serialize nodes
-        json nodes_array = json::array();
-        for (const auto& node : nodes_) {
-            json node_json;
-            node_json["id"] = node.id;
-            node_json["type"] = static_cast<int>(node.type);
-            node_json["name"] = node.name;
-            node_json["parameters"] = node.parameters;
-
-            // Save node position
-            auto it = cached_node_positions_.find(node.id);
-            ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-            node_json["pos_x"] = pos.x;
-            node_json["pos_y"] = pos.y;
-
-            nodes_array.push_back(node_json);
-        }
-        j["nodes"] = nodes_array;
-
-        // Serialize links
-        json links_array = json::array();
-        for (const auto& link : links_) {
-            json link_json;
-            link_json["id"] = link.id;
-            link_json["from_node"] = link.from_node;
-            link_json["from_pin"] = link.from_pin;
-            link_json["to_node"] = link.to_node;
-            link_json["to_pin"] = link.to_pin;
-            links_array.push_back(link_json);
-        }
-        j["links"] = links_array;
-
-        // Write to file
-        std::ofstream file(filepath);
-        if (!file.is_open()) {
-            spdlog::error("Failed to open file for writing: {}", filepath);
-            return false;
-        }
-
-        file << j.dump(4);  // Pretty print with 4-space indent
-        current_file_path_ = filepath;
-        spdlog::info("Graph saved to: {}", filepath);
-        return true;
-
-    } catch (const std::exception& e) {
-        spdlog::error("Error saving graph: {}", e.what());
-        return false;
-    }
-}
-
-bool NodeEditor::LoadGraph(const std::string& filepath) {
-    using json = nlohmann::json;
-
-    try {
-        std::ifstream file(filepath);
-        if (!file.is_open()) {
-            spdlog::error("Failed to open file for reading: {}", filepath);
-            return false;
-        }
-
-        json j;
-        file >> j;
-
-        // Clear existing graph
-        ClearGraph();
-
-        // Update next IDs to avoid conflicts
-        int max_node_id = 0;
-        int max_pin_id = 0;
-        int max_link_id = 0;
-
-        // Load framework
-        if (j.contains("framework")) {
-            selected_framework_ = static_cast<CodeFramework>(j["framework"].get<int>());
-        }
-
-        // Load nodes
-        for (const auto& node_json : j["nodes"]) {
-            MLNode node;
-            node.id = node_json["id"];
-            node.type = static_cast<NodeType>(node_json["type"].get<int>());
-            node.name = node_json["name"];
-
-            if (node_json.contains("parameters")) {
-                node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
-            }
-
-            // Recreate pins based on node type
-            MLNode template_node = CreateNode(node.type, node.name);
-            node.inputs = template_node.inputs;
-            node.outputs = template_node.outputs;
-
-            // Update max IDs
-            max_node_id = std::max(max_node_id, node.id);
-            for (const auto& pin : node.inputs) {
-                max_pin_id = std::max(max_pin_id, pin.id);
-            }
-            for (const auto& pin : node.outputs) {
-                max_pin_id = std::max(max_pin_id, pin.id);
-            }
-
-            nodes_.push_back(node);
-
-            // Restore node position
-            if (node_json.contains("pos_x") && node_json.contains("pos_y")) {
-                float pos_x = node_json["pos_x"];
-                float pos_y = node_json["pos_y"];
-                ImNodes::SetNodeGridSpacePos(node.id, ImVec2(pos_x, pos_y));
-            }
-        }
-
-        // Load links
-        for (const auto& link_json : j["links"]) {
-            NodeLink link;
-            link.id = link_json["id"];
-            link.from_node = link_json["from_node"];
-            link.from_pin = link_json["from_pin"];
-            link.to_node = link_json["to_node"];
-            link.to_pin = link_json["to_pin"];
-            links_.push_back(link);
-
-            max_link_id = std::max(max_link_id, link.id);
-        }
-
-        // Update next IDs
-        next_node_id_ = max_node_id + 1;
-        next_pin_id_ = max_pin_id + 1;
-        next_link_id_ = max_link_id + 1;
-
-        current_file_path_ = filepath;
-        spdlog::info("Graph loaded from: {} ({} nodes, {} links)",
-                     filepath, nodes_.size(), links_.size());
-        return true;
-
-    } catch (const std::exception& e) {
-        spdlog::error("Error loading graph: {}", e.what());
-        return false;
-    }
-}
-
-#ifdef _WIN32
-void NodeEditor::ShowSaveDialog() {
-    char szFile[260] = {0};
-
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "CyxWiz Graph Files\0*.cyxgraph\0All Files\0*.*\0";
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
-    ofn.lpstrDefExt = "cyxwiz";
-    ofn.lpstrTitle = "Save Neural Network Graph";
-
-    if (GetSaveFileNameA(&ofn)) {
-        if (SaveGraph(szFile)) {
-            spdlog::info("Graph successfully saved");
-        }
-    }
-}
-
-void NodeEditor::ShowLoadDialog() {
-    char szFile[260] = {0};
-
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "CyxWiz Graph Files\0*.cyxgraph\0All Files\0*.*\0";
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-    ofn.lpstrTitle = "Load Neural Network Graph";
-
-    if (GetOpenFileNameA(&ofn)) {
-        if (LoadGraph(szFile)) {
-            spdlog::info("Graph successfully loaded");
-        }
-    }
-}
-#endif // _WIN32
-
-// ========== Code Export Implementation ==========
-
-void NodeEditor::ExportCodeToFile() {
-    // Validate graph first
-    std::string error_message;
-    if (!ValidateGraph(error_message)) {
-        spdlog::error("Cannot export code: {}", error_message);
-        // TODO: Show error dialog to user
+void NodeEditor::ExpandSubgraph(int node_id) {
+    SubgraphData* data = GetSubgraphData(node_id);
+    if (!data) {
+        spdlog::warn("Node {} is not a subgraph", node_id);
         return;
     }
 
-    // Generate code
-    auto sorted_ids = TopologicalSort();
-    if (sorted_ids.empty()) {
-        spdlog::error("Failed to sort graph for code generation");
-        return;
+    if (data->expanded) return;
+
+    SaveUndoState();
+    data->expanded = true;
+
+    // Get position of subgraph node
+    ImVec2 base_pos = ImVec2(0, 0);
+    auto pos_it = cached_node_positions_.find(node_id);
+    if (pos_it != cached_node_positions_.end()) {
+        base_pos = pos_it->second;
     }
 
-    std::string code;
-    std::string extension = ".py";
-    std::string framework_name;
-
-    switch (selected_framework_) {
-        case CodeFramework::PyTorch:
-            code = GeneratePyTorchCode(sorted_ids);
-            framework_name = "PyTorch";
-            break;
-        case CodeFramework::TensorFlow:
-            code = GenerateTensorFlowCode(sorted_ids);
-            framework_name = "TensorFlow";
-            break;
-        case CodeFramework::Keras:
-            code = GenerateKerasCode(sorted_ids);
-            framework_name = "Keras";
-            break;
-        case CodeFramework::PyCyxWiz:
-            code = GeneratePyCyxWizCode(sorted_ids);
-            framework_name = "PyCyxWiz";
-            break;
-    }
-
-    // Build the code with header and footer
-    std::string header = "# Neural Network Model Generated by CyxWiz\n";
-    header += "# Framework: " + framework_name + "\n";
-    header += "# Generated on: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
-
-    std::string full_code = header + code;
-
-    // Save to file - will be called from ShowExportDialog
-    return;
-}
-
-#ifdef _WIN32
-void NodeEditor::ShowExportDialog() {
-    // Validate graph first
-    std::string error_message;
-    if (!ValidateGraph(error_message)) {
-        spdlog::error("Cannot export code: {}", error_message);
-        // TODO: Show error dialog to user
-        return;
-    }
-
-    // Generate code
-    auto sorted_ids = TopologicalSort();
-    if (sorted_ids.empty()) {
-        spdlog::error("Failed to sort graph for code generation");
-        return;
-    }
-
-    std::string code;
-    std::string framework_name;
-
-    switch (selected_framework_) {
-        case CodeFramework::PyTorch:
-            code = GeneratePyTorchCode(sorted_ids);
-            framework_name = "PyTorch";
-            break;
-        case CodeFramework::TensorFlow:
-            code = GenerateTensorFlowCode(sorted_ids);
-            framework_name = "TensorFlow";
-            break;
-        case CodeFramework::Keras:
-            code = GenerateKerasCode(sorted_ids);
-            framework_name = "Keras";
-            break;
-        case CodeFramework::PyCyxWiz:
-            code = GeneratePyCyxWizCode(sorted_ids);
-            framework_name = "PyCyxWiz";
-            break;
-    }
-
-    // Build the code with header
-    std::string header = "# Neural Network Model Generated by CyxWiz\n";
-    header += "# Framework: " + framework_name + "\n";
-    header += "# Generated on: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
-
-    std::string full_code = header + code;
-
-    // Show Windows file save dialog
-    char szFile[260] = {0};
-
-    // Suggest a default filename based on framework
-    std::string default_name = "model_" + framework_name + ".py";
-    strncpy(szFile, default_name.c_str(), sizeof(szFile) - 1);
-
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "Python Files\0*.py\0All Files\0*.*\0";
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
-    ofn.lpstrDefExt = "py";
-    ofn.lpstrTitle = "Export Neural Network Code";
-
-    if (GetSaveFileNameA(&ofn)) {
-        // Save code to file
-        std::ofstream file(szFile);
-        if (file.is_open()) {
-            file << full_code;
-            file.close();
-            spdlog::info("Code exported successfully to: {}", szFile);
-        } else {
-            spdlog::error("Failed to open file for writing: {}", szFile);
+    // Add internal nodes back to the main graph
+    float offset_x = 0, offset_y = 50;
+    for (auto& internal_node : data->internal_nodes) {
+        // Offset position relative to subgraph node
+        pending_positions_[internal_node.id] = ImVec2(base_pos.x + offset_x, base_pos.y + offset_y);
+        nodes_.push_back(internal_node);
+        offset_x += 180;
+        if (offset_x > 500) {
+            offset_x = 0;
+            offset_y += 120;
         }
     }
-}
-#else
-// For non-Windows platforms, implement later or use a cross-platform dialog library
-void NodeEditor::ShowSaveDialog() {
-    SaveGraph("model.cyxgraph");
-}
 
-void NodeEditor::ShowLoadDialog() {
-    LoadGraph("model.cyxgraph");
-}
-
-void NodeEditor::ShowExportDialog() {
-    // Export to default filename for now
-    std::string filename = "model_export.py";
-
-    // Generate and save code
-    ExportCodeToFile();
-
-    // Validate graph first
-    std::string error_message;
-    if (!ValidateGraph(error_message)) {
-        spdlog::error("Cannot export code: {}", error_message);
-        return;
+    // Add internal links back
+    for (const auto& link : data->internal_links) {
+        links_.push_back(link);
     }
 
-    auto sorted_ids = TopologicalSort();
-    if (sorted_ids.empty()) {
-        return;
+    pending_positions_frames_ = 3;
+    spdlog::info("Expanded subgraph {}", node_id);
+}
+
+void NodeEditor::CollapseSubgraph(int node_id) {
+    SubgraphData* data = GetSubgraphData(node_id);
+    if (!data) return;
+
+    if (!data->expanded) return;
+
+    SaveUndoState();
+    data->expanded = false;
+
+    // Remove internal nodes from main graph
+    std::set<int> internal_ids;
+    for (const auto& node : data->internal_nodes) {
+        internal_ids.insert(node.id);
     }
 
-    std::string code;
-    std::string framework_name;
+    nodes_.erase(
+        std::remove_if(nodes_.begin(), nodes_.end(),
+            [&internal_ids](const MLNode& n) { return internal_ids.count(n.id); }),
+        nodes_.end()
+    );
 
-    switch (selected_framework_) {
-        case CodeFramework::PyTorch:
-            code = GeneratePyTorchCode(sorted_ids);
-            framework_name = "PyTorch";
-            filename = "model_pytorch.py";
-            break;
-        case CodeFramework::TensorFlow:
-            code = GenerateTensorFlowCode(sorted_ids);
-            framework_name = "TensorFlow";
-            filename = "model_tensorflow.py";
-            break;
-        case CodeFramework::Keras:
-            code = GenerateKerasCode(sorted_ids);
-            framework_name = "Keras";
-            filename = "model_keras.py";
-            break;
-        case CodeFramework::PyCyxWiz:
-            code = GeneratePyCyxWizCode(sorted_ids);
-            framework_name = "PyCyxWiz";
-            filename = "model_pycyxwiz.py";
-            break;
-    }
+    // Remove internal links
+    links_.erase(
+        std::remove_if(links_.begin(), links_.end(),
+            [&internal_ids](const NodeLink& l) {
+                return internal_ids.count(l.from_node) && internal_ids.count(l.to_node);
+            }),
+        links_.end()
+    );
 
-    std::string header = "# Neural Network Model Generated by CyxWiz\n";
-    header += "# Framework: " + framework_name + "\n\n";
-    std::string full_code = header + code;
+    spdlog::info("Collapsed subgraph {}", node_id);
+}
 
-    std::ofstream file(filename);
-    if (file.is_open()) {
-        file << full_code;
-        file.close();
-        spdlog::info("Code exported to: {}", filename);
+void NodeEditor::ToggleSubgraphExpansion(int node_id) {
+    SubgraphData* data = GetSubgraphData(node_id);
+    if (!data) return;
+
+    if (data->expanded) {
+        CollapseSubgraph(node_id);
+    } else {
+        ExpandSubgraph(node_id);
     }
 }
-#endif
+
+bool NodeEditor::IsSubgraphNode(int node_id) const {
+    const MLNode* node = FindNodeById(node_id);
+    return node && node->type == NodeType::Subgraph;
+}
+
+SubgraphData* NodeEditor::GetSubgraphData(int node_id) {
+    for (auto& data : subgraphs_) {
+        if (data.subgraph_node_id == node_id) {
+            return &data;
+        }
+    }
+    return nullptr;
+}
 
 } // namespace gui

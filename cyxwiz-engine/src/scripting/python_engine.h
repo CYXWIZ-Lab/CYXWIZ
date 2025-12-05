@@ -21,7 +21,8 @@ public:
     void AcquireGIL();
 
 private:
-    bool initialized_;
+    bool initialized_ = false;
+    bool initialized_by_us_ = false;  // True if we called py::initialize_interpreter()
     PyThreadState* main_thread_state_ = nullptr;  // Saved when releasing GIL
 };
 

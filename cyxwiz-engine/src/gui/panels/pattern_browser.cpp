@@ -419,23 +419,46 @@ void PatternBrowserPanel::InsertPattern(const std::string& pattern_id) {
     // For now, use a starting ID that's likely to be unique
     static int base_id = 10000;
     int next_node_id = base_id;
-    int next_pin_id = base_id * 10;
     int next_link_id = base_id * 100;
 
     // Default position (center of canvas area)
     ImVec2 base_pos(200.0f, 200.0f);
 
-    // Instantiate the pattern
-    bool success = library.InstantiatePattern(
-        pattern_id,
-        param_values_,
-        nodes,
-        links,
-        next_node_id,
-        next_pin_id,
-        next_link_id,
-        base_pos
-    );
+    bool success = false;
+
+    // Use the new InstantiatePatternWithCreator if we have a node editor reference
+    // This creates nodes with proper pins (Q/K/V for attention, variadic for merge, etc.)
+    if (node_editor_) {
+        // Create a node creator callback that uses NodeEditor::CreateNode
+        ::gui::patterns::NodeCreatorCallback creator = [this](::gui::NodeType type, const std::string& name) {
+            return node_editor_->CreateNode(type, name);
+        };
+
+        success = library.InstantiatePatternWithCreator(
+            pattern_id,
+            param_values_,
+            nodes,
+            links,
+            next_node_id,
+            next_link_id,
+            base_pos,
+            creator
+        );
+    } else {
+        // Fallback to legacy method (creates simplified nodes with 1 input/1 output)
+        int next_pin_id = base_id * 10;
+        success = library.InstantiatePattern(
+            pattern_id,
+            param_values_,
+            nodes,
+            links,
+            next_node_id,
+            next_pin_id,
+            next_link_id,
+            base_pos
+        );
+        spdlog::warn("Pattern inserted without NodeEditor reference - nodes may have incorrect pins");
+    }
 
     if (success) {
         // Use callback if set

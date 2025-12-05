@@ -1,0 +1,174 @@
+{
+    "framework": 0,
+    "description": "Linear Attention Transformer - O(n) efficient attention for sequence processing",
+    "nodes": [
+        {
+            "id": 1,
+            "type": 77,
+            "name": "Sequence Data",
+            "parameters": {"dataset_name": "", "split": "train"},
+            "pos_x": 50,
+            "pos_y": 200
+        },
+        {
+            "id": 2,
+            "type": 21,
+            "name": "Token Embedding",
+            "parameters": {"num_embeddings": "30000", "embedding_dim": "512"},
+            "pos_x": 250,
+            "pos_y": 200
+        },
+        {
+            "id": 3,
+            "type": 28,
+            "name": "Positional Encoding",
+            "parameters": {"max_seq_len": "512", "embed_dim": "512"},
+            "pos_x": 450,
+            "pos_y": 200
+        },
+        {
+            "id": 4,
+            "type": 25,
+            "name": "Linear Attention",
+            "parameters": {"embed_dim": "512", "num_heads": "8", "feature_map": "elu", "eps": "1e-6"},
+            "pos_x": 700,
+            "pos_y": 200
+        },
+        {
+            "id": 5,
+            "type": 47,
+            "name": "Residual Add",
+            "parameters": {},
+            "pos_x": 950,
+            "pos_y": 200
+        },
+        {
+            "id": 6,
+            "type": 11,
+            "name": "LayerNorm",
+            "parameters": {"normalized_shape": "512", "eps": "1e-5"},
+            "pos_x": 1150,
+            "pos_y": 200
+        },
+        {
+            "id": 7,
+            "type": 0,
+            "name": "FFN Expand (2048)",
+            "parameters": {"units": "2048"},
+            "pos_x": 1350,
+            "pos_y": 100
+        },
+        {
+            "id": 8,
+            "type": 34,
+            "name": "GELU",
+            "parameters": {},
+            "pos_x": 1550,
+            "pos_y": 100
+        },
+        {
+            "id": 9,
+            "type": 0,
+            "name": "FFN Contract (512)",
+            "parameters": {"units": "512"},
+            "pos_x": 1750,
+            "pos_y": 100
+        },
+        {
+            "id": 10,
+            "type": 14,
+            "name": "Dropout",
+            "parameters": {"rate": "0.1"},
+            "pos_x": 1350,
+            "pos_y": 300
+        },
+        {
+            "id": 11,
+            "type": 47,
+            "name": "Residual Add",
+            "parameters": {},
+            "pos_x": 1550,
+            "pos_y": 300
+        },
+        {
+            "id": 12,
+            "type": 11,
+            "name": "LayerNorm",
+            "parameters": {"normalized_shape": "512"},
+            "pos_x": 1750,
+            "pos_y": 300
+        },
+        {
+            "id": 13,
+            "type": 0,
+            "name": "Output Dense",
+            "parameters": {"units": "10"},
+            "pos_x": 1950,
+            "pos_y": 200
+        },
+        {
+            "id": 14,
+            "type": 39,
+            "name": "Softmax",
+            "parameters": {},
+            "pos_x": 2150,
+            "pos_y": 200
+        },
+        {
+            "id": 15,
+            "type": 50,
+            "name": "Output",
+            "parameters": {"classes": "10"},
+            "pos_x": 2350,
+            "pos_y": 200
+        },
+        {
+            "id": 16,
+            "type": 83,
+            "name": "One-Hot Labels",
+            "parameters": {"num_classes": "10"},
+            "pos_x": 2150,
+            "pos_y": 450
+        },
+        {
+            "id": 17,
+            "type": 52,
+            "name": "CrossEntropy Loss",
+            "parameters": {},
+            "pos_x": 2350,
+            "pos_y": 350
+        },
+        {
+            "id": 18,
+            "type": 61,
+            "name": "AdamW Optimizer",
+            "parameters": {"learning_rate": "1e-4", "weight_decay": "0.01"},
+            "pos_x": 2550,
+            "pos_y": 350
+        }
+    ],
+    "links": [
+        {"id": 1, "from_node": 1, "from_pin": 0, "to_node": 2, "to_pin": 0},
+        {"id": 2, "from_node": 2, "from_pin": 0, "to_node": 3, "to_pin": 0},
+        {"id": 3, "from_node": 3, "from_pin": 0, "to_node": 4, "to_pin": 0},
+        {"id": 4, "from_node": 3, "from_pin": 0, "to_node": 4, "to_pin": 1},
+        {"id": 5, "from_node": 3, "from_pin": 0, "to_node": 4, "to_pin": 2},
+        {"id": 6, "from_node": 4, "from_pin": 0, "to_node": 5, "to_pin": 0},
+        {"id": 7, "from_node": 3, "from_pin": 0, "to_node": 5, "to_pin": 0},
+        {"id": 8, "from_node": 5, "from_pin": 0, "to_node": 6, "to_pin": 0},
+        {"id": 9, "from_node": 6, "from_pin": 0, "to_node": 7, "to_pin": 0},
+        {"id": 10, "from_node": 7, "from_pin": 0, "to_node": 8, "to_pin": 0},
+        {"id": 11, "from_node": 8, "from_pin": 0, "to_node": 9, "to_pin": 0},
+        {"id": 12, "from_node": 9, "from_pin": 0, "to_node": 10, "to_pin": 0},
+        {"id": 13, "from_node": 10, "from_pin": 0, "to_node": 11, "to_pin": 0},
+        {"id": 14, "from_node": 6, "from_pin": 0, "to_node": 11, "to_pin": 0},
+        {"id": 15, "from_node": 11, "from_pin": 0, "to_node": 12, "to_pin": 0},
+        {"id": 16, "from_node": 12, "from_pin": 0, "to_node": 13, "to_pin": 0},
+        {"id": 17, "from_node": 13, "from_pin": 0, "to_node": 14, "to_pin": 0},
+        {"id": 18, "from_node": 14, "from_pin": 0, "to_node": 15, "to_pin": 0},
+        {"id": 19, "from_node": 1, "from_pin": 1, "to_node": 16, "to_pin": 0},
+        {"id": 20, "from_node": 15, "from_pin": 0, "to_node": 17, "to_pin": 0},
+        {"id": 21, "from_node": 16, "from_pin": 0, "to_node": 17, "to_pin": 1},
+        {"id": 22, "from_node": 17, "from_pin": 0, "to_node": 18, "to_pin": 0}
+    ]
+}

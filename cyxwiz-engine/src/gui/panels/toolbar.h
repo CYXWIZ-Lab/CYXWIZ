@@ -27,6 +27,10 @@ public:
     void SetTogglePlotTestControlCallback(std::function<void()> callback) { toggle_plot_test_control_callback_ = callback; }
     void SetConnectToServerCallback(std::function<void()> callback) { connect_to_server_callback_ = callback; }
     void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
+    void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
+    void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
+    void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
+    void SetOpenMemoryMonitorCallback(std::function<void()> callback) { open_memory_monitor_callback_ = callback; }
     void SetNewScriptCallback(std::function<void()> callback) { new_script_callback_ = callback; }
     void SetOpenScriptCallback(std::function<void()> callback) { open_script_callback_ = callback; }
     void SetOpenScriptInEditorCallback(std::function<void(const std::string&)> callback) { open_script_in_editor_callback_ = callback; }
@@ -148,6 +152,10 @@ private:
     std::function<void()> toggle_plot_test_control_callback_;
     std::function<void()> connect_to_server_callback_;
     std::function<void()> import_dataset_callback_;
+    std::function<void()> open_custom_node_editor_callback_;
+    std::function<void()> open_theme_editor_callback_;
+    std::function<void()> open_profiler_callback_;
+    std::function<void()> open_memory_monitor_callback_;
     std::function<void()> new_script_callback_;
     std::function<void()> open_script_callback_;
     std::function<void(const std::string&)> open_script_in_editor_callback_;

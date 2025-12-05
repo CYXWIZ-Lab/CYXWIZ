@@ -1,6 +1,7 @@
 #include "toolbar.h"
 #include "plot_window.h"
 #include "../theme.h"
+#include "../tutorial/tutorial_system.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -60,6 +61,16 @@ void ToolbarPanel::RenderNodesMenu() {
 
         if (ImGui::MenuItem("Delete Selected", "Delete")) {
             // TODO: Delete selected nodes
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(ICON_FA_WAND_MAGIC_SPARKLES " Custom Node Editor...")) {
+            // Signal to open Custom Node Editor panel
+            // This is handled via callback in MainWindow
+            if (open_custom_node_editor_callback_) {
+                open_custom_node_editor_callback_();
+            }
         }
 
         ImGui::EndMenu();
@@ -307,31 +318,78 @@ void ToolbarPanel::RenderDeployMenu() {
 
 void ToolbarPanel::RenderHelpMenu() {
     if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("Documentation", "F1")) {
+        // ========== Interactive Tutorials ==========
+        // Push solid opaque style for better readability
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.12f, 0.12f, 0.18f, 1.0f));  // Fully opaque dark background
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));        // Bright white text
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));      // Blue border
+        ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 2.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 6.0f);
+
+        if (ImGui::BeginMenu(ICON_FA_LIGHTBULB " Interactive Tutorials")) {
+            auto& tutorial_system = TutorialSystem::Instance();
+            const auto& tutorials = tutorial_system.GetAvailableTutorials();
+
+            for (const auto& tutorial : tutorials) {
+                bool completed = tutorial_system.IsTutorialComplete(tutorial.id);
+                std::string label = tutorial.name;
+                if (completed) {
+                    label += " " ICON_FA_CHECK;
+                }
+
+                if (ImGui::MenuItem(label.c_str())) {
+                    tutorial_system.StartTutorial(tutorial.id);
+                    spdlog::info("Started tutorial: {}", tutorial.name);
+                }
+
+                if (ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.15f, 0.15f, 0.22f, 1.0f));
+                    ImGui::TextUnformatted(tutorial.description.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::EndTooltip();
+                }
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::MenuItem(ICON_FA_LIST_CHECK " Browse All Tutorials...")) {
+                tutorial_system.ShowTutorialBrowser();
+            }
+
+            ImGui::EndMenu();
+        }
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(ICON_FA_BOOKMARK " Documentation", "F1")) {
             // TODO: Open docs
         }
 
-        if (ImGui::MenuItem("Keyboard Shortcuts")) {
+        if (ImGui::MenuItem(ICON_FA_KEYBOARD " Keyboard Shortcuts")) {
             // TODO: Show shortcuts
         }
 
-        if (ImGui::MenuItem("API Reference")) {
+        if (ImGui::MenuItem(ICON_FA_CODE " API Reference")) {
             // TODO: Open API docs
         }
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Report Issue...")) {
+        if (ImGui::MenuItem(ICON_FA_BUG " Report Issue...")) {
             // TODO: Open issue tracker
         }
 
-        if (ImGui::MenuItem("Check for Updates...")) {
+        if (ImGui::MenuItem(ICON_FA_DOWNLOAD " Check for Updates...")) {
             // TODO: Check updates
         }
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("About CyxWiz")) {
+        if (ImGui::MenuItem(ICON_FA_CIRCLE_INFO " About CyxWiz")) {
             show_about_dialog_ = true;
         }
 

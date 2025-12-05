@@ -12,8 +12,7 @@
 // Backend includes for real training
 #include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/layers/linear.h>
-#include <cyxwiz/losses/cross_entropy.h>
-#include <cyxwiz/losses/mse.h>
+#include <cyxwiz/loss.h>
 
 namespace cyxwiz {
 namespace servernode {

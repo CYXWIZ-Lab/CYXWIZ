@@ -607,8 +607,14 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
 
     // Handle double-click for files (directories are handled by TreeNode arrow)
     if (!item.is_directory && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+        // Special handling for graph files - open in Node Editor
+        if (item.type == AssetType::Graph) {
+            if (on_open_in_node_editor_) {
+                on_open_in_node_editor_(item.absolute_path);
+            }
+        }
         // Special handling for dataset files - load into DataRegistry (async with loading indicator)
-        if (IsDatasetFile(item)) {
+        else if (IsDatasetFile(item)) {
             LoadDatasetFromItemAsync(item);
         }
         // Fire callback for file double-click
@@ -657,6 +663,15 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
             if (IsDatasetFile(item)) {
                 if (ImGui::MenuItem(ICON_FA_DATABASE " Load Dataset")) {
                     LoadDatasetFromItemAsync(item);
+                }
+            }
+
+            // Open in Node Editor (for .cyxgraph files only)
+            if (item.type == AssetType::Graph) {
+                if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Open in Node Editor")) {
+                    if (on_open_in_node_editor_) {
+                        on_open_in_node_editor_(item.absolute_path);
+                    }
                 }
             }
         }
@@ -1038,6 +1053,9 @@ AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::st
     if (ext == ".gguf" || ext == ".lora")
         return AssetType::Export;
 
+    // Graphs
+    if (ext == ".cyxgraph") return AssetType::Graph;
+
     // Plugins
     if (ext == ".dll" || ext == ".so" || ext == ".dylib")
         return AssetType::Plugin;
@@ -1053,6 +1071,7 @@ const char* AssetBrowserPanel::GetAssetIcon(AssetType type) const {
         case AssetType::Checkpoint:  return ICON_FA_FLOPPY_DISK;
         case AssetType::Export:      return ICON_FA_DOWNLOAD;
         case AssetType::Plugin:      return ICON_FA_PLUG;
+        case AssetType::Graph:       return ICON_FA_DIAGRAM_PROJECT;
         case AssetType::Folder:      return ICON_FA_FOLDER;
         case AssetType::Unknown:     return ICON_FA_FILE;
         default:                     return ICON_FA_FILE;
@@ -1701,3 +1720,4 @@ void AssetBrowserPanel::RenderDatasetPreview() {
 }
 
 } // namespace cyxwiz
+

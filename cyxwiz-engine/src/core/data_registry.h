@@ -22,6 +22,8 @@ enum class DatasetType {
     None,
     CSV,
     TSV,
+    JSON,               // JSON data files
+    TXT,                // Plain text files
     ImageFolder,
     ImageCSV,           // Images in folder + labels in CSV file
     MNIST,
@@ -340,6 +342,9 @@ public:
     DatasetHandle LoadMNIST(const std::string& path, const std::string& name = "mnist");
     DatasetHandle LoadCIFAR10(const std::string& path, const std::string& name = "cifar10");
     DatasetHandle LoadCSV(const std::string& path, const std::string& name = "");
+    DatasetHandle LoadTSV(const std::string& path, const std::string& name = "");
+    DatasetHandle LoadJSON(const std::string& path, const std::string& name = "");
+    DatasetHandle LoadTXT(const std::string& path, const std::string& name = "");
     DatasetHandle LoadImageFolder(const std::string& path, const std::string& name = "");
     DatasetHandle LoadImageCSV(const std::string& image_folder, const std::string& csv_path,
                                 const std::string& name = "", int target_width = 224, int target_height = 224,

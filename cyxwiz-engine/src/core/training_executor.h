@@ -6,8 +6,7 @@
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
-#include <cyxwiz/losses/cross_entropy.h>
-#include <cyxwiz/losses/mse.h>
+#include <cyxwiz/loss.h>
 #include <functional>
 #include <atomic>
 #include <mutex>
@@ -148,8 +147,7 @@ private:
     // Training components - DYNAMIC MODEL
     std::unique_ptr<SequentialModel> model_;
     std::unique_ptr<Optimizer> optimizer_;
-    std::unique_ptr<CrossEntropyLoss> cross_entropy_loss_;
-    std::unique_ptr<MSELoss> mse_loss_;
+    std::unique_ptr<Loss> loss_;  // Unified loss function (MSE, CrossEntropy, BCE, etc.)
 
     // Internal training methods
 

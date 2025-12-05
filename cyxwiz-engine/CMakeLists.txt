@@ -49,8 +49,18 @@ set(ENGINE_SOURCES
     src/core/dataset_batcher.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
+    src/core/checkpoint_manager.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
+    src/gui/node_editor_clipboard.cpp
+    src/gui/node_editor_codegen.cpp
+    src/gui/node_editor_connection.cpp
+    src/gui/node_editor_context_menu.cpp
+    src/gui/node_editor_io.cpp
+    src/gui/node_editor_nodes.cpp
+    src/gui/node_editor_validation.cpp
+    src/gui/node_editor_skip.cpp
+    src/gui/node_documentation.cpp
     src/gui/console.cpp
     src/gui/viewport.cpp
     src/gui/properties.cpp
@@ -71,8 +81,18 @@ set(ENGINE_SOURCES
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/dataset_panel.cpp
     src/gui/panels/task_progress_panel.cpp
+    src/gui/panels/custom_node_editor.cpp
+    src/gui/panels/theme_editor.cpp
+    src/gui/panels/profiling_panel.cpp
+    src/gui/panels/memory_panel.cpp
     src/gui/panels/pattern_browser.cpp
+    src/gui/tutorial/tutorial_system.cpp
+    src/gui/panels/query_console.cpp
     src/gui/patterns/pattern_library.cpp
+    src/gui/query/cyxql_types.cpp
+    src/gui/query/cyxql_lexer.cpp
+    src/gui/query/cyxql_parser.cpp
+    src/gui/query/cyxql_executor.cpp
     src/data/data_table.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
@@ -110,8 +130,10 @@ set(ENGINE_HEADERS
     src/core/dataset_batcher.h
     src/core/training_executor.h
     src/core/training_manager.h
+    src/core/checkpoint_manager.h
     src/gui/main_window.h
     src/gui/node_editor.h
+    src/gui/node_documentation.h
     src/gui/console.h
     src/gui/console_sink.h
     src/gui/viewport.h
@@ -129,9 +151,20 @@ set(ENGINE_HEADERS
     src/gui/panels/connection_dialog.h
     src/gui/panels/dataset_panel.h
     src/gui/panels/task_progress_panel.h
+    src/gui/panels/custom_node_editor.h
+    src/gui/panels/theme_editor.h
+    src/gui/panels/profiling_panel.h
+    src/gui/panels/memory_panel.h
     src/gui/panels/pattern_browser.h
+    src/gui/tutorial/tutorial_system.h
+    src/gui/panels/query_console.h
     src/gui/patterns/pattern.h
     src/gui/patterns/pattern_library.h
+    src/gui/query/cyxql.h
+    src/gui/query/cyxql_types.h
+    src/gui/query/cyxql_lexer.h
+    src/gui/query/cyxql_parser.h
+    src/gui/query/cyxql_executor.h
     src/data/data_table.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h

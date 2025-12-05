@@ -31,7 +31,8 @@
 #define ICON_FA_PENCIL              "\xef\x8c\x83"  // U+F303
 #define ICON_FA_ROTATE_LEFT         "\xef\x8b\xaa"  // U+F2EA
 #define ICON_FA_ROTATE_RIGHT        "\xef\x8b\xb9"  // U+F2F9
-#define ICON_FA_OBJECT_GROUP        "\xef\x89\x87"  // U+F247 - select all
+#define ICON_FA_OBJECT_GROUP        "\xef\x89\x87"  // U+F247 - group selection
+#define ICON_FA_OBJECT_UNGROUP      "\xef\x89\x88"  // U+F248 - ungroup
 #define ICON_FA_RIGHT_LEFT          "\xef\x8d\xa2"  // U+F362 - exchange/swap
 #define ICON_FA_COMMENT             "\xef\x81\xb5"  // U+F075 - comment
 #define ICON_FA_COMMENTS            "\xef\x82\x86"  // U+F086 - comments/block

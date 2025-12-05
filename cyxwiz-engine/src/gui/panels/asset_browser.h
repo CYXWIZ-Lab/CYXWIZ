@@ -26,6 +26,7 @@ public:
         Checkpoint,     // .ckpt, .pt, .checkpoint
         Export,         // .onnx, .gguf, .lora
         Plugin,         // .dll, .so, .dylib
+        Graph,          // .cyxgraph - Node editor graphs
         Folder,         // Directory
         Unknown         // Unrecognized file
     };
@@ -77,6 +78,10 @@ public:
     // Table view callback - called when user selects "View in Table" from context menu
     using TableViewCallback = std::function<void(const std::string& path)>;
     void SetOnViewInTable(TableViewCallback callback) { on_view_in_table_ = std::move(callback); }
+
+    // Graph file callback - called when user opens a .cyxgraph file
+    using GraphCallback = std::function<void(const std::string& path)>;
+    void SetOnOpenInNodeEditor(GraphCallback callback) { on_open_in_node_editor_ = std::move(callback); }
 
     // Enable/disable dataset preview pane
     void SetShowDatasetPreview(bool show) { show_dataset_preview_ = show; }
@@ -173,6 +178,7 @@ private:
     AssetCallback on_deleted_;
     DatasetCallback on_dataset_loaded_;
     TableViewCallback on_view_in_table_;
+    GraphCallback on_open_in_node_editor_;
 
     // Dataset preview state
     bool show_dataset_preview_ = true;
@@ -208,3 +214,4 @@ private:
 };
 
 } // namespace cyxwiz
+

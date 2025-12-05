@@ -2194,3 +2194,152 @@ struct alignas(64) Node {
 *Document Version: 1.0*
 *Last Updated: 2024*
 *Author: CyxWiz Team*
+
+
+for testing
+  Test Checklist:
+
+  1. Visual Link Colors (should see different colors now)
+  - Skip/residual connections should appear orange
+  - Dense skip connections should appear blue
+  - Standard connections remain gray
+
+  2. Context Menu - Skip Connections
+  - Right-click on canvas → "Skip Connections" submenu
+  - Try "Add Residual (Add node)" - should create an Add node
+  - Try "Add Dense Skip (Concat node)" - should create a Concatenate node
+
+  3. Variadic Merge Nodes
+  - Add an Add or Concatenate node
+  - Notice it now has 3 input pins: "Input 1", "Input 2", "Input 3+"
+  - The 3rd pin can accept unlimited connections
+
+  4. Attention Nodes with Q/K/V + Mask
+  - Add a MultiHeadAttention node
+  - Should have 4 inputs: Query, Key, Value, Mask (optional)
+  - Should have 2 outputs: Output, Attn Weights
+
+  5. Auto-Detect Skip Connections
+  - Right-click → Skip Connections → "Auto-Detect Skip Connections"
+  - Should find and color any existing skip connections in the graph
+
+  6. Wrap Selection with Residual (if you have nodes selected)
+  - Select multiple connected nodes
+  - Right-click → Skip Connections → "Wrap Selection with Residual"
+
+  phase 4
+    1. Open Query Console: Go to View menu → Query Console
+  2. Create some nodes first in the Node Editor:
+    - Right-click → Add nodes (Dense, Conv2D, etc.)
+    - Connect them with links
+  3. Try these example queries:
+  -- List all nodes
+  MATCH (n) RETURN n
+
+  -- List Dense layers
+  MATCH (n:Dense) RETURN n.name, n.units
+
+  -- Count nodes by type
+  MATCH (n) RETURN type(n) AS node_type, count(n) AS count
+
+  -- Find connections
+  MATCH (a)-[:TensorFlow]->(b) RETURN a.name, b.name
+
+  -- Find specific layer
+  MATCH (n) WHERE n.units > 128 RETURN n
+  4. The Query Console has an Examples dropdown with pre-built queries you can try.
+
+  Let me know what you observe or if there are any issues!
+
+  1. Quick Navigation & Search
+
+  -- Find all layers with specific config
+  MATCH (n:Dense) WHERE n.units > 512 RETURN n.name
+
+  -- Find all dropout layers (to adjust regularization)
+  MATCH (n:Dropout) RETURN n.name, n.rate
+
+  2. Architecture Analysis
+
+  -- Count layer types to understand model composition
+  MATCH (n) RETURN type(n) AS layer_type, count(n) AS count ORDER BY count DESC
+
+  -- Find bottleneck layers (smallest dimensions)
+  MATCH (n:Dense) RETURN n.name, n.units ORDER BY n.units ASC LIMIT 5
+
+  3. Find Patterns & Anti-patterns
+
+  -- Find Conv layers without BatchNorm (potential issue)
+  MATCH (conv:Conv2D)-[:TensorFlow]->(next)
+  WHERE NOT next:BatchNorm
+  RETURN conv.name, type(next)
+
+  -- Find consecutive Dense layers without activation
+  MATCH (d1:Dense)-[:TensorFlow]->(d2:Dense) RETURN d1.name, d2.name
+
+  4. Connection Tracing
+
+  -- Trace data flow from input to a specific layer
+  MATCH path = (:DatasetInput)-[*]->(target:Dense {name: "Dense (256)"})
+  RETURN path
+
+  -- Find all skip/residual connections
+  MATCH (a)-[:ResidualSkip]->(b) RETURN a.name, b.name
+
+  5. Batch Modifications (future)
+
+  -- Add dropout after every Dense layer
+  MATCH (d:Dense)-[:TensorFlow]->(next)
+  CREATE (dropout:Dropout {rate: 0.3})
+  -- Wire: d -> dropout -> next
+
+  -- Change all learning rates
+  MATCH (opt:Adam) SET opt.learning_rate = 0.0001
+
+  6. Model Comparison
+
+  -- Export model structure as query-able data
+  -- Compare against reference architectures
+
+  It's like having SQL for your neural network architecture - programmatic access to query, analyze, and eventually
+  modify complex graphs that would be tedious to inspect manually!
+
+    Backend:
+  - ArrayFire with OpenCL backend
+  - NVIDIA GeForce GTX 1050 Ti detected as GPU
+  - Intel UHD Graphics 630 also available
+
+  Engine Components:
+  - Pattern Library: 25 patterns loaded (including the new CNN patterns)
+  - Python interpreter initialized
+  - 15 panels registered with sidebar
+  - Docking layout system ready
+
+  The GUI window should now be open on your desktop. You can test:
+
+  1. Node Editor - Try adding the new activation nodes:
+    - LeakyReLU, ELU, GELU, Swish, Mish
+  2. New Loss Functions - In the node editor:
+    - BCE, BCEWithLogits, L1, SmoothL1, Huber, NLL
+  3. Training - Load a dataset and train to test:
+    - The new schedulers (StepLR, CosineAnnealing, etc.)
+    - Checkpoint save/load
+  4. Pattern Library - Check the Pattern Browser panel for new CNN patterns
+
+  phase 6
+    1. Help Menu → Interactive Tutorials - Shows a submenu with:
+    - Getting Started (10 steps)
+    - Your First Model (9 steps)
+    - Training Basics (8 steps)
+    - Browse All Tutorials...
+  2. Click any tutorial to start it - you should see:
+    - Darkened overlay over the screen
+    - Pulsing blue highlight around the target panel
+    - Tooltip with step instructions and Next/Skip buttons
+    - Progress bar at the bottom
+  3. Browse All Tutorials opens a dialog organized by category
+
+  Also available to test:
+  - View → Theme Editor - Live theme customization
+  - View → Performance Profiler - Per-layer timing visualization
+  - View → Memory Monitor - CPU/GPU memory charts

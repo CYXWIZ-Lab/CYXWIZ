@@ -41,10 +41,12 @@
     ],
     "links": [
       {"from": "input", "to": "ln1"},
-      {"from": "ln1", "to": "mha"},
+      {"from": "ln1", "to": "mha", "to_pin": 0},
+      {"from": "ln1", "to": "mha", "to_pin": 1},
+      {"from": "ln1", "to": "mha", "to_pin": 2},
       {"from": "mha", "to": "dropout1"},
-      {"from": "dropout1", "to": "add1"},
-      {"from": "input", "to": "add1"},
+      {"from": "dropout1", "to": "add1", "to_pin": 0},
+      {"from": "input", "to": "add1", "to_pin": 1},
       {"from": "add1", "to": "output"}
     ]
   }

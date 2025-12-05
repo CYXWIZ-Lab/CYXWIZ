@@ -134,6 +134,40 @@ void ScriptEditorPanel::Render() {
     // Render modal dialogs (outside the main window)
     RenderSaveBeforeRunDialog();
     RenderSaveBeforeCloseDialog();
+
+    // ===== Empty Script Warning Popup =====
+    if (show_empty_script_warning_) {
+        ImGui::OpenPopup("Empty Script Warning");
+    }
+
+    // Center the popup
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("Empty Script Warning", &show_empty_script_warning_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::SameLine();
+        ImGui::Text("Cannot Save Empty Script");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::TextWrapped("The script is empty. Please add some code before saving.");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        float button_width = 120.0f;
+        float window_width = ImGui::GetWindowWidth();
+        ImGui::SetCursorPosX((window_width - button_width) * 0.5f);
+
+        if (ImGui::Button("OK", ImVec2(button_width, 0))) {
+            show_empty_script_warning_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
 }
 
 void ScriptEditorPanel::RenderMenuBar() {
@@ -1150,6 +1184,17 @@ void ScriptEditorPanel::SaveFileAs() {
 
     auto& tab = tabs_[active_tab_index_];
 
+    // Check if script is empty before showing save dialog
+    std::string content = tab->editor.GetText();
+    // Trim whitespace to check if truly empty
+    bool is_empty = content.empty() ||
+                    content.find_first_not_of(" \t\n\r") == std::string::npos;
+    if (is_empty) {
+        show_empty_script_warning_ = true;
+        spdlog::warn("Cannot save empty script - no content present");
+        return;
+    }
+
     // Show save dialog
     std::string path = SaveFileDialog();
     if (path.empty()) return;  // User cancelled
@@ -1160,8 +1205,7 @@ void ScriptEditorPanel::SaveFileAs() {
         path += ".cyx";
     }
 
-    // Save content
-    std::string content = tab->editor.GetText();
+    // Save content (already have content from empty check above)
     if (SaveFileContent(path, content)) {
         tab->filepath = path;
         tab->filename = std::filesystem::path(path).filename().string();

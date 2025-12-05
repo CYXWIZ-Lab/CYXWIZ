@@ -36,9 +36,8 @@ set(BACKEND_SOURCES
     src/algorithms/activations/relu.cpp
     src/algorithms/activations/sigmoid.cpp
     src/algorithms/activations/tanh.cpp
-    src/algorithms/losses/mse.cpp
-    src/algorithms/losses/cross_entropy.cpp
     src/algorithms/sequential.cpp
+    src/algorithms/scheduler.cpp
 )
 
 # Header files
@@ -58,9 +57,8 @@ set(BACKEND_HEADERS
     include/cyxwiz/activations/relu.h
     include/cyxwiz/activations/sigmoid.h
     include/cyxwiz/activations/tanh.h
-    include/cyxwiz/losses/mse.h
-    include/cyxwiz/losses/cross_entropy.h
     include/cyxwiz/sequential.h
+    include/cyxwiz/scheduler.h
 )
 
 # Create shared library (DLL/SO)

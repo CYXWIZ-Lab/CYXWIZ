@@ -89,6 +89,48 @@ Tensor::Tensor(const std::vector<size_t>& shape, const void* data, DataType dtyp
     }
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+Tensor::Tensor(const af::array& arr)
+    : device_(nullptr), owns_data_(true), af_array_(nullptr)
+{
+    // Extract shape from ArrayFire dims
+    af::dim4 dims = arr.dims();
+    shape_.clear();
+    for (int i = 0; i < 4; i++) {
+        if (dims[i] > 1 || i == 0) {
+            shape_.push_back(static_cast<size_t>(dims[i]));
+        } else if (dims[i] == 1 && i > 0) {
+            // Stop at trailing 1s (but keep at least first dim)
+            bool has_larger = false;
+            for (int j = i + 1; j < 4; j++) {
+                if (dims[j] > 1) has_larger = true;
+            }
+            if (has_larger) shape_.push_back(1);
+            else break;
+        }
+    }
+
+    // Convert ArrayFire dtype to CyxWiz dtype
+    switch (arr.type()) {
+        case af::dtype::f32: dtype_ = DataType::Float32; break;
+        case af::dtype::f64: dtype_ = DataType::Float64; break;
+        case af::dtype::s32: dtype_ = DataType::Int32; break;
+        case af::dtype::s64: dtype_ = DataType::Int64; break;
+        case af::dtype::u8:  dtype_ = DataType::UInt8; break;
+        default: dtype_ = DataType::Float32; break;
+    }
+
+    // Allocate CPU memory and copy from GPU
+    size_t num_bytes = NumBytes();
+    if (num_bytes > 0) {
+        data_ = malloc(num_bytes);
+        arr.host(data_);
+    } else {
+        data_ = nullptr;
+    }
+}
+#endif
+
 Tensor::Tensor(const Tensor& other)
     : shape_(other.shape_), dtype_(other.dtype_), device_(other.device_), owns_data_(true)
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -195,6 +237,66 @@ Tensor Tensor::Clone() const {
     Tensor result(shape_, data_, dtype_);
     return result;
 }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+af::array Tensor::GetArray() const {
+    // Create ArrayFire array from CPU data
+    af::dim4 dims(1, 1, 1, 1);
+    for (size_t i = 0; i < shape_.size() && i < 4; i++) {
+        dims[static_cast<unsigned int>(i)] = static_cast<dim_t>(shape_[i]);
+    }
+
+    // Create array and copy data from host
+    af::array arr(dims, ToArrayFireType(dtype_));
+    if (data_) {
+        arr.write(data_, NumBytes(), afHost);
+    }
+
+    return arr;
+}
+
+void Tensor::SetFromArray(const af::array& arr) {
+    // Update shape from ArrayFire dims
+    af::dim4 dims = arr.dims();
+    shape_.clear();
+    for (int i = 0; i < 4; i++) {
+        if (dims[i] > 1 || i == 0) {
+            shape_.push_back(static_cast<size_t>(dims[i]));
+        } else if (dims[i] == 1 && i > 0) {
+            bool has_larger = false;
+            for (int j = i + 1; j < 4; j++) {
+                if (dims[j] > 1) has_larger = true;
+            }
+            if (has_larger) shape_.push_back(1);
+            else break;
+        }
+    }
+
+    // Update dtype
+    switch (arr.type()) {
+        case af::dtype::f32: dtype_ = DataType::Float32; break;
+        case af::dtype::f64: dtype_ = DataType::Float64; break;
+        case af::dtype::s32: dtype_ = DataType::Int32; break;
+        case af::dtype::s64: dtype_ = DataType::Int64; break;
+        case af::dtype::u8:  dtype_ = DataType::UInt8; break;
+        default: dtype_ = DataType::Float32; break;
+    }
+
+    // Reallocate CPU memory if needed
+    size_t new_bytes = NumBytes();
+    if (owns_data_ && data_) {
+        free(data_);
+    }
+    if (new_bytes > 0) {
+        data_ = malloc(new_bytes);
+        arr.host(data_);
+        owns_data_ = true;
+    } else {
+        data_ = nullptr;
+        owns_data_ = false;
+    }
+}
+#endif
 
 size_t Tensor::NumElements() const {
     size_t count = 1;

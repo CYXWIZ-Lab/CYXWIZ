@@ -206,6 +206,9 @@ private:
     int pending_close_tab_index_ = -1;              // Tab waiting to be closed after dialog
     bool run_after_save_ = false;                   // Flag to run script after saving
 
+    // Empty script warning popup state
+    bool show_empty_script_warning_ = false;
+
     // Dialog rendering helpers
     void RenderSaveBeforeRunDialog();
     void RenderSaveBeforeCloseDialog();

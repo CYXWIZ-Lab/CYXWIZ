@@ -17,6 +17,8 @@ class Viewport;
 class Properties;
 class DatasetPanel;
 class WalletPanel;
+class CustomNodeEditorPanel;
+class ThemeEditorPanel;
 struct MLNode;
 struct NodeLink;
 
@@ -35,6 +37,9 @@ class ConnectionDialog;
 class JobStatusPanel;
 class P2PTrainingPanel;
 class PatternBrowserPanel;
+class QueryConsolePanel;
+class ProfilingPanel;
+class MemoryPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -131,6 +136,11 @@ private:
     std::unique_ptr<gui::WalletPanel> wallet_panel_;
     std::unique_ptr<cyxwiz::TaskProgressPanel> task_progress_panel_;
     std::unique_ptr<cyxwiz::PatternBrowserPanel> pattern_browser_;
+    std::unique_ptr<cyxwiz::QueryConsolePanel> query_console_;
+    std::unique_ptr<gui::CustomNodeEditorPanel> custom_node_editor_;
+    std::unique_ptr<gui::ThemeEditorPanel> theme_editor_;
+    std::unique_ptr<cyxwiz::ProfilingPanel> profiling_panel_;
+    std::unique_ptr<cyxwiz::MemoryPanel> memory_panel_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;

@@ -278,7 +278,13 @@ const gui::MLNode* GraphCompiler::FindDatasetInputNode(const std::vector<gui::ML
 const gui::MLNode* GraphCompiler::FindLossNode(const std::vector<gui::MLNode>& nodes) const {
     for (const auto& node : nodes) {
         if (node.type == gui::NodeType::MSELoss ||
-            node.type == gui::NodeType::CrossEntropyLoss) {
+            node.type == gui::NodeType::CrossEntropyLoss ||
+            node.type == gui::NodeType::BCELoss ||
+            node.type == gui::NodeType::BCEWithLogits ||
+            node.type == gui::NodeType::L1Loss ||
+            node.type == gui::NodeType::SmoothL1Loss ||
+            node.type == gui::NodeType::HuberLoss ||
+            node.type == gui::NodeType::NLLLoss) {
             return &node;
         }
     }
@@ -310,6 +316,9 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Dense:
         case gui::NodeType::Conv2D:
         case gui::NodeType::MaxPool2D:
+        case gui::NodeType::AvgPool2D:
+        case gui::NodeType::GlobalMaxPool:
+        case gui::NodeType::GlobalAvgPool:
         case gui::NodeType::Flatten:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
@@ -322,10 +331,14 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
 bool GraphCompiler::IsActivation(gui::NodeType type) const {
     switch (type) {
         case gui::NodeType::ReLU:
+        case gui::NodeType::LeakyReLU:
+        case gui::NodeType::ELU:
+        case gui::NodeType::GELU:
+        case gui::NodeType::Swish:
+        case gui::NodeType::Mish:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:
-        case gui::NodeType::LeakyReLU:
             return true;
         default:
             return false;
@@ -365,6 +378,25 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
                 layer.filters = std::stoi(node.parameters.at("filters"));
             if (node.parameters.count("kernel_size"))
                 layer.kernel_size = std::stoi(node.parameters.at("kernel_size"));
+            if (node.parameters.count("stride"))
+                layer.stride = std::stoi(node.parameters.at("stride"));
+            if (node.parameters.count("padding"))
+                layer.padding = std::stoi(node.parameters.at("padding"));
+            break;
+
+        case gui::NodeType::MaxPool2D:
+        case gui::NodeType::AvgPool2D:
+            if (node.parameters.count("pool_size"))
+                layer.pool_size = std::stoi(node.parameters.at("pool_size"));
+            if (node.parameters.count("stride"))
+                layer.stride = std::stoi(node.parameters.at("stride"));
+            break;
+
+        case gui::NodeType::BatchNorm:
+            if (node.parameters.count("eps"))
+                layer.eps = std::stof(node.parameters.at("eps"));
+            if (node.parameters.count("momentum"))
+                layer.momentum = std::stof(node.parameters.at("momentum"));
             break;
 
         case gui::NodeType::Dropout:
@@ -375,6 +407,11 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
         case gui::NodeType::LeakyReLU:
             if (node.parameters.count("negative_slope"))
                 layer.negative_slope = std::stof(node.parameters.at("negative_slope"));
+            break;
+
+        case gui::NodeType::ELU:
+            if (node.parameters.count("alpha"))
+                layer.alpha = std::stof(node.parameters.at("alpha"));
             break;
 
         default:
@@ -441,17 +478,32 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
             break;
 
         case gui::NodeType::Conv2D:
-            // Conv2D: [H, W, C] -> [H', W', filters]
-            // Simplified: assume same padding
+            // Conv2D: [H, W, C] -> [(H + 2*padding - kernel_size) / stride + 1, W', filters]
             if (input_shape.size() >= 2) {
-                output_shape = {input_shape[0], input_shape[1], static_cast<size_t>(layer.filters)};
+                size_t out_h = (input_shape[0] + 2 * layer.padding - layer.kernel_size) / layer.stride + 1;
+                size_t out_w = (input_shape[1] + 2 * layer.padding - layer.kernel_size) / layer.stride + 1;
+                output_shape = {out_h, out_w, static_cast<size_t>(layer.filters)};
             }
             break;
 
         case gui::NodeType::MaxPool2D:
-            // MaxPool2D: [H, W, C] -> [H/2, W/2, C]
+        case gui::NodeType::AvgPool2D:
+            // Pool2D: [H, W, C] -> [H/pool_size, W/pool_size, C]
             if (input_shape.size() >= 3) {
-                output_shape = {input_shape[0] / 2, input_shape[1] / 2, input_shape[2]};
+                int stride = layer.stride > 0 ? layer.stride : layer.pool_size;
+                size_t out_h = (input_shape[0] - layer.pool_size) / stride + 1;
+                size_t out_w = (input_shape[1] - layer.pool_size) / stride + 1;
+                output_shape = {out_h, out_w, input_shape[2]};
+            }
+            break;
+
+        case gui::NodeType::GlobalMaxPool:
+        case gui::NodeType::GlobalAvgPool:
+            // Global pooling: [H, W, C] -> [C]
+            if (input_shape.size() >= 3) {
+                output_shape = {input_shape[2]};  // Just channels remain
+            } else if (!input_shape.empty()) {
+                output_shape = {input_shape.back()};
             }
             break;
 
@@ -464,14 +516,18 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
             }
             break;
 
+        // Layers/activations that don't change shape
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::ReLU:
+        case gui::NodeType::LeakyReLU:
+        case gui::NodeType::ELU:
+        case gui::NodeType::GELU:
+        case gui::NodeType::Swish:
+        case gui::NodeType::Mish:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:
-        case gui::NodeType::LeakyReLU:
-            // These don't change shape
             output_shape = input_shape;
             break;
 

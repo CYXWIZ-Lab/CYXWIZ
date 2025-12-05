@@ -21,12 +21,28 @@ struct CompiledLayer {
     std::string name;
     std::map<std::string, std::string> parameters;
 
-    // For model layers that need to be instantiated
+    // For Dense layer
     int units = 0;              // Dense layer units
+
+    // For Conv2D layer
     int filters = 0;            // Conv2D filters
     int kernel_size = 3;        // Conv2D kernel size
+    int stride = 1;             // Conv2D/Pool stride
+    int padding = 0;            // Conv2D padding
+
+    // For Pooling layers
+    int pool_size = 2;          // Pool window size
+
+    // For BatchNorm
+    float eps = 1e-5f;          // BatchNorm epsilon
+    float momentum = 0.1f;      // BatchNorm momentum
+
+    // For Dropout
     float dropout_rate = 0.0f;  // Dropout rate
+
+    // For Activations
     float negative_slope = 0.01f; // LeakyReLU slope
+    float alpha = 1.0f;         // ELU alpha
 
     // Computed shapes (after compilation)
     std::vector<size_t> input_shape;
@@ -99,6 +115,12 @@ struct TrainingConfiguration {
         switch (loss_type) {
             case gui::NodeType::MSELoss: return "MSE";
             case gui::NodeType::CrossEntropyLoss: return "CrossEntropy";
+            case gui::NodeType::BCELoss: return "BCE";
+            case gui::NodeType::BCEWithLogits: return "BCEWithLogits";
+            case gui::NodeType::L1Loss: return "L1";
+            case gui::NodeType::SmoothL1Loss: return "SmoothL1";
+            case gui::NodeType::HuberLoss: return "SmoothL1";  // HuberLoss is alias
+            case gui::NodeType::NLLLoss: return "NLL";
             default: return "CrossEntropy";
         }
     }

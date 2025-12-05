@@ -136,7 +136,10 @@ enum class NodeType {
     DataSplit,          // Train/val/test splitter
     TensorReshape,      // Reshape tensor dimensions (legacy, use Reshape)
     Normalize,          // Normalize values (mean/std)
-    OneHotEncode        // Label encoding
+    OneHotEncode,       // Label encoding
+
+    // ===== Composite Nodes =====
+    Subgraph            // Encapsulated subgraph (collapsible)
 };
 
 // Attribute for node pins (inputs/outputs)
@@ -150,12 +153,24 @@ enum class PinType {
     // Note: Shape is metadata (node parameter), not a data flow type
 };
 
+// Pin capacity constants for variadic connections
+constexpr int PIN_UNLIMITED = -1;  // No limit on connections
+constexpr int PIN_SINGLE = 1;      // Standard single connection
+
 // Node pin structure
 struct NodePin {
     int id;
     PinType type;
     std::string name;
     bool is_input;  // true = input pin, false = output pin
+
+    // Variadic pin support - enables multiple connections to a single pin
+    bool is_variadic = false;        // True for pins accepting multiple connections
+    int min_connections = 0;         // Minimum required connections (0 = optional)
+    int max_connections = PIN_SINGLE; // Maximum allowed (-1 = unlimited)
+
+    // Visual indicators
+    bool is_required = true;         // Visual indicator for required pins
 };
 
 // Visual node structure
@@ -175,6 +190,17 @@ struct MLNode {
     bool has_initial_position = false;  // True if position should be applied when inserting
 };
 
+// Connection/Link types for visual differentiation
+enum class LinkType {
+    TensorFlow,         // Standard data flow (default)
+    ResidualSkip,       // Residual/Skip connection (additive)
+    DenseSkip,          // DenseNet-style skip (concatenative)
+    AttentionFlow,      // Attention Q/K/V connections
+    GradientFlow,       // Gradient backprop (for visualization)
+    ParameterFlow,      // Parameter updates
+    LossFlow            // Loss to optimizer
+};
+
 // Connection between nodes
 struct NodeLink {
     int id;
@@ -182,6 +208,7 @@ struct NodeLink {
     int from_pin;
     int to_node;
     int to_pin;
+    LinkType type = LinkType::TensorFlow;  // Connection type for visual styling
 };
 
 // Graph snapshot for undo/redo
@@ -206,6 +233,38 @@ enum class CodeFramework {
     TensorFlow,
     Keras,
     PyCyxWiz
+};
+
+// Search state for node search/filter feature
+struct SearchState {
+    char search_buffer[256] = "";
+    std::vector<int> matching_node_ids;
+    int current_match_index = -1;
+    bool search_visible = false;
+};
+
+// Alignment types for arranging selected nodes
+enum class AlignmentType { Left, Center, Right, Top, Middle, Bottom };
+enum class DistributeType { Horizontal, Vertical };
+
+// Node group for visual organization
+struct NodeGroup {
+    int id;
+    std::string name;
+    std::vector<int> node_ids;
+    ImVec4 color;           // RGBA color for group box
+    bool collapsed = false;
+    float padding = 20.0f;  // Padding around contained nodes
+};
+
+// Subgraph data for encapsulated node groups
+struct SubgraphData {
+    int subgraph_node_id;                    // ID of the parent subgraph node
+    std::vector<MLNode> internal_nodes;      // Nodes inside the subgraph
+    std::vector<NodeLink> internal_links;    // Links between internal nodes
+    std::vector<int> input_pin_mappings;     // External input pin -> internal node pin
+    std::vector<int> output_pin_mappings;    // Internal node pin -> external output pin
+    bool expanded = false;                   // Whether subgraph is expanded (visible)
 };
 
 class NodeEditor {
@@ -255,6 +314,41 @@ public:
     int GetNextPinId() const { return next_pin_id_; }
     int GetNextLinkId() const { return next_link_id_; }
 
+    // Load graph from file (for Asset Browser integration)
+    bool LoadGraph(const std::string& filepath);
+
+    // Show the node editor window
+    void Show() { show_window_ = true; }
+
+    // ===== Skip/Residual Connection Helpers =====
+
+    // Add a residual (additive) skip connection between two nodes
+    // If target is not an Add node, automatically inserts one
+    // Returns the Add node ID (existing or newly created)
+    int AddResidualConnection(int from_node_id, int to_node_id);
+
+    // Add a dense (concatenative) skip connection between two nodes
+    // If target is not a Concatenate node, automatically inserts one
+    // Returns the Concatenate node ID (existing or newly created)
+    int AddDenseConnection(int from_node_id, int to_node_id);
+
+    // Wrap selected nodes with a residual block
+    // Creates Add node after selection and connects input to Add's second input
+    void WrapSelectionWithResidual();
+
+    // Get all skip connections in the graph
+    std::vector<NodeLink> GetSkipConnections() const;
+
+    // Check if a link is a skip connection (bypasses multiple layers)
+    bool IsSkipConnection(const NodeLink& link) const;
+
+    // Auto-detect and mark skip connections based on graph topology
+    void DetectSkipConnections();
+
+    // Node factory - creates a node with proper pins for the given type
+    // Made public so PatternBrowser can use it via callback
+    MLNode CreateNode(NodeType type, const std::string& name);
+
 private:
     void ShowToolbar();
     void RenderNodes();
@@ -267,16 +361,30 @@ private:
 
     // Node management
     void AddNode(NodeType type, const std::string& name);
-    MLNode CreateNode(NodeType type, const std::string& name);
     void DeleteNode(int node_id);
     void ClearGraph();
 
     // Link management
-    void CreateLink(int from_pin, int to_pin, int from_node, int to_node);
+    void CreateLink(int from_pin, int to_pin, int from_node, int to_node,
+                    LinkType type = LinkType::TensorFlow);
+
+    // Get visual color for a link based on its type
+    ImU32 GetLinkColor(LinkType type) const;
+    ImU32 GetLinkHoverColor(LinkType type) const;
+
+    // Connection tracking for variadic pins
+    int GetConnectionCount(int pin_id) const;
+    std::vector<int> GetConnectedPins(int pin_id) const;
+    bool IsPinFull(int pin_id) const;
+    bool IsPinConnected(int pin_id) const;
+    bool CanAcceptConnection(int pin_id) const;
+    std::vector<NodeLink> GetLinksToPin(int pin_id) const;
+    std::vector<NodeLink> GetLinksFromPin(int pin_id) const;
+    const NodePin* FindPinById(int pin_id) const;
+    bool ValidateLink(int from_pin, int to_pin, std::string& error) const;
 
     // File operations
     bool SaveGraph(const std::string& filepath);
-    bool LoadGraph(const std::string& filepath);
     void ShowSaveDialog();
     void ShowLoadDialog();
     void ExportCodeToFile();
@@ -317,6 +425,32 @@ private:
     void FrameSelected();
     void FrameAll();
 
+    // Search functionality
+    void ShowSearchBar();
+    void UpdateSearchResults();
+    void NavigateToMatch(int direction);  // +1 = next, -1 = previous
+    void HighlightMatchingNodes();
+
+    // Alignment and distribution tools
+    void AlignSelectedNodes(AlignmentType type);
+    void DistributeSelectedNodes(DistributeType type);
+    void AutoLayoutSelection();
+
+    // Node grouping
+    void CreateGroupFromSelection(const std::string& name);
+    void DeleteGroup(int group_id);
+    void UngroupSelection();
+    void RenderGroups();
+    NodeGroup* FindGroupContainingNode(int node_id);
+
+    // Subgraph encapsulation
+    void CreateSubgraphFromSelection(const std::string& name);
+    void ExpandSubgraph(int node_id);
+    void CollapseSubgraph(int node_id);
+    void ToggleSubgraphExpansion(int node_id);
+    bool IsSubgraphNode(int node_id) const;
+    SubgraphData* GetSubgraphData(int node_id);
+
     // Framework-specific generators
     std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
     std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
@@ -331,6 +465,11 @@ private:
 
     std::vector<int> TopologicalSort();
     const MLNode* FindNodeById(int node_id) const;
+
+    // Helper for code generation with variadic inputs
+    std::vector<int> GetInputNodeIds(int node_id) const;
+    bool IsMergeNode(NodeType type) const;
+    bool HasMergeNodes() const;
 
     bool show_window_;
 
@@ -399,6 +538,7 @@ private:
 
     // Deferred position setting (for nodes created outside render context)
     std::map<int, ImVec2> pending_positions_;  // node_id -> position
+    int pending_positions_frames_ = 0;  // Number of frames to keep applying positions (needed for ImNodes)
 
     // Cached node positions (updated each frame inside BeginNodeEditor/EndNodeEditor scope)
     // Used by FindEmptyPosition() which may be called outside the editor scope
@@ -414,6 +554,24 @@ private:
 
     // Flag to recreate ImNodes editor context (full reset)
     bool pending_context_reset_ = false;
+
+    // Empty graph warning popup state
+    bool show_empty_graph_warning_ = false;
+
+    // Search state
+    SearchState search_state_;
+
+    // Node groups
+    std::vector<NodeGroup> groups_;
+    int next_group_id_ = 1;
+
+    // Create group dialog state
+    bool show_create_group_dialog_ = false;
+    char create_group_name_[256] = "";
+    float create_group_color_[4] = {0.2f, 0.5f, 0.8f, 0.3f};
+
+    // Subgraph data storage
+    std::vector<SubgraphData> subgraphs_;
 };
 
 } // namespace gui

@@ -31,12 +31,13 @@
 #include "activations/sigmoid.h"
 #include "activations/tanh.h"
 
-// Concrete loss implementations
-#include "losses/mse.h"
-#include "losses/cross_entropy.h"
+// Loss functions are in loss.h (MSELoss, CrossEntropyLoss, BCELoss, etc.)
 
 // Sequential model for dynamic layer management
 #include "sequential.h"
+
+// Learning rate schedulers
+#include "scheduler.h"
 
 namespace cyxwiz {
 

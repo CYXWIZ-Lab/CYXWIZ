@@ -207,6 +207,83 @@ private:
 };
 
 /**
+ * @brief Wrapper for LeakyReLU activation
+ */
+class CYXWIZ_API LeakyReLUModule : public Module {
+public:
+    LeakyReLUModule(float negative_slope = 0.01f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<LeakyReLUActivation> activation_;
+    float negative_slope_;
+};
+
+/**
+ * @brief Wrapper for ELU activation
+ */
+class CYXWIZ_API ELUModule : public Module {
+public:
+    ELUModule(float alpha = 1.0f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<ELUActivation> activation_;
+    float alpha_;
+};
+
+/**
+ * @brief Wrapper for GELU activation
+ */
+class CYXWIZ_API GELUModule : public Module {
+public:
+    GELUModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "GELU"; }
+
+private:
+    std::unique_ptr<GELUActivation> activation_;
+};
+
+/**
+ * @brief Wrapper for Swish activation (SiLU)
+ */
+class CYXWIZ_API SwishModule : public Module {
+public:
+    SwishModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Swish"; }
+
+private:
+    std::unique_ptr<SwishActivation> activation_;
+};
+
+/**
+ * @brief Wrapper for Mish activation
+ */
+class CYXWIZ_API MishModule : public Module {
+public:
+    MishModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Mish"; }
+
+private:
+    std::unique_ptr<MishActivation> activation_;
+};
+
+/**
  * @brief Sequential model - a container for ordered layers
  *
  * Example:

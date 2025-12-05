@@ -59,6 +59,38 @@ bool TrainingExecutor::BuildModelFromConfig() {
                 break;
             }
 
+            case gui::NodeType::LeakyReLU: {
+                float slope = layer_cfg.negative_slope > 0 ? layer_cfg.negative_slope : 0.01f;
+                model_->Add<LeakyReLUModule>(slope);
+                spdlog::info("  [{}] LeakyReLU(slope={})", i, slope);
+                break;
+            }
+
+            case gui::NodeType::ELU: {
+                float alpha = layer_cfg.alpha > 0 ? layer_cfg.alpha : 1.0f;
+                model_->Add<ELUModule>(alpha);
+                spdlog::info("  [{}] ELU(alpha={})", i, alpha);
+                break;
+            }
+
+            case gui::NodeType::GELU: {
+                model_->Add<GELUModule>();
+                spdlog::info("  [{}] GELU", i);
+                break;
+            }
+
+            case gui::NodeType::Swish: {
+                model_->Add<SwishModule>();
+                spdlog::info("  [{}] Swish", i);
+                break;
+            }
+
+            case gui::NodeType::Mish: {
+                model_->Add<MishModule>();
+                spdlog::info("  [{}] Mish", i);
+                break;
+            }
+
             case gui::NodeType::Softmax: {
                 model_->Add<SoftmaxModule>();
                 spdlog::info("  [{}] Softmax", i);
@@ -87,7 +119,7 @@ bool TrainingExecutor::BuildModelFromConfig() {
                 break;
             }
 
-            // Skip non-layer nodes
+            // Skip non-layer nodes (preprocessing, loss functions, optimizers)
             case gui::NodeType::DatasetInput:
             case gui::NodeType::DataLoader:
             case gui::NodeType::Augmentation:
@@ -95,12 +127,31 @@ bool TrainingExecutor::BuildModelFromConfig() {
             case gui::NodeType::TensorReshape:
             case gui::NodeType::Normalize:
             case gui::NodeType::OneHotEncode:
+            // Loss functions
             case gui::NodeType::MSELoss:
             case gui::NodeType::CrossEntropyLoss:
+            case gui::NodeType::BCELoss:
+            case gui::NodeType::BCEWithLogits:
+            case gui::NodeType::L1Loss:
+            case gui::NodeType::SmoothL1Loss:
+            case gui::NodeType::HuberLoss:
+            case gui::NodeType::NLLLoss:
+            // Optimizers
             case gui::NodeType::SGD:
             case gui::NodeType::Adam:
             case gui::NodeType::AdamW:
                 // These are not layers in the sequential model
+                break;
+
+            // CNN layers (not yet supported in SequentialModel, need CNN module wrappers)
+            case gui::NodeType::Conv2D:
+            case gui::NodeType::MaxPool2D:
+            case gui::NodeType::AvgPool2D:
+            case gui::NodeType::GlobalMaxPool:
+            case gui::NodeType::GlobalAvgPool:
+            case gui::NodeType::BatchNorm:
+                spdlog::warn("  [{}] CNN layer {} not yet supported in SequentialModel",
+                             i, static_cast<int>(layer_cfg.type));
                 break;
 
             default:
@@ -130,15 +181,36 @@ bool TrainingExecutor::Initialize(int batch_size) {
     // Create loss function based on config
     switch (config_.loss_type) {
         case gui::NodeType::CrossEntropyLoss:
-            cross_entropy_loss_ = std::make_unique<CrossEntropyLoss>();
+            loss_ = CreateLoss(LossType::CrossEntropy);
             spdlog::info("TrainingExecutor: Using CrossEntropy loss");
             break;
         case gui::NodeType::MSELoss:
-            mse_loss_ = std::make_unique<MSELoss>();
+            loss_ = CreateLoss(LossType::MSE);
             spdlog::info("TrainingExecutor: Using MSE loss");
             break;
+        case gui::NodeType::BCELoss:
+            loss_ = CreateLoss(LossType::BinaryCrossEntropy);
+            spdlog::info("TrainingExecutor: Using BCE loss");
+            break;
+        case gui::NodeType::BCEWithLogits:
+            loss_ = CreateLoss(LossType::BCEWithLogits);
+            spdlog::info("TrainingExecutor: Using BCEWithLogits loss");
+            break;
+        case gui::NodeType::L1Loss:
+            loss_ = CreateLoss(LossType::L1);
+            spdlog::info("TrainingExecutor: Using L1 loss");
+            break;
+        case gui::NodeType::SmoothL1Loss:
+        case gui::NodeType::HuberLoss:
+            loss_ = CreateLoss(LossType::SmoothL1);
+            spdlog::info("TrainingExecutor: Using SmoothL1/Huber loss");
+            break;
+        case gui::NodeType::NLLLoss:
+            loss_ = CreateLoss(LossType::NLLLoss);
+            spdlog::info("TrainingExecutor: Using NLL loss");
+            break;
         default:
-            cross_entropy_loss_ = std::make_unique<CrossEntropyLoss>();
+            loss_ = CreateLoss(LossType::CrossEntropy);
             spdlog::info("TrainingExecutor: Defaulting to CrossEntropy loss");
             break;
     }
@@ -443,17 +515,12 @@ Tensor TrainingExecutor::Forward(const Tensor& input) {
 }
 
 float TrainingExecutor::ComputeLoss(const Tensor& predictions, const Tensor& targets) {
-    Tensor loss_tensor;
-
-    if (cross_entropy_loss_) {
-        loss_tensor = cross_entropy_loss_->Forward(predictions, targets);
-    } else if (mse_loss_) {
-        loss_tensor = mse_loss_->Forward(predictions, targets);
-    } else {
+    if (!loss_) {
         spdlog::error("TrainingExecutor::ComputeLoss: No loss function");
         return 0.0f;
     }
 
+    Tensor loss_tensor = loss_->Forward(predictions, targets);
     const float* loss_data = loss_tensor.Data<float>();
     return loss_data[0];
 }
@@ -496,16 +563,13 @@ void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets
         return;
     }
 
-    // Compute loss gradient
-    Tensor grad;
-    if (cross_entropy_loss_) {
-        grad = cross_entropy_loss_->Backward(predictions, targets);
-    } else if (mse_loss_) {
-        grad = mse_loss_->Backward(predictions, targets);
-    } else {
+    if (!loss_) {
         spdlog::error("TrainingExecutor::Backward: No loss function");
         return;
     }
+
+    // Compute loss gradient
+    Tensor grad = loss_->Backward(predictions, targets);
 
     // Backward through model
     model_->Backward(grad);

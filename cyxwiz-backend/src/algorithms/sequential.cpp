@@ -3,10 +3,15 @@
 #include <cyxwiz/activations/relu.h>
 #include <cyxwiz/activations/sigmoid.h>
 #include <cyxwiz/activations/tanh.h>
+#include <cyxwiz/activation.h>  // For LeakyReLUActivation, ELUActivation, GELUActivation, etc.
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <random>
 #include <algorithm>
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
 
 namespace cyxwiz {
 
@@ -98,7 +103,104 @@ Tensor TanhModule::Backward(const Tensor& grad_output) {
 }
 
 // ============================================================================
-// SoftmaxModule Implementation
+// LeakyReLUModule Implementation
+// ============================================================================
+
+LeakyReLUModule::LeakyReLUModule(float negative_slope)
+    : negative_slope_(negative_slope)
+{
+    activation_ = std::make_unique<LeakyReLUActivation>(negative_slope);
+}
+
+Tensor LeakyReLUModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor LeakyReLUModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
+std::string LeakyReLUModule::GetName() const {
+    return "LeakyReLU(slope=" + std::to_string(negative_slope_) + ")";
+}
+
+// ============================================================================
+// ELUModule Implementation
+// ============================================================================
+
+ELUModule::ELUModule(float alpha)
+    : alpha_(alpha)
+{
+    activation_ = std::make_unique<ELUActivation>(alpha);
+}
+
+Tensor ELUModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor ELUModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
+std::string ELUModule::GetName() const {
+    return "ELU(alpha=" + std::to_string(alpha_) + ")";
+}
+
+// ============================================================================
+// GELUModule Implementation
+// ============================================================================
+
+GELUModule::GELUModule() {
+    activation_ = std::make_unique<GELUActivation>();
+}
+
+Tensor GELUModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor GELUModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
+// ============================================================================
+// SwishModule Implementation
+// ============================================================================
+
+SwishModule::SwishModule() {
+    activation_ = std::make_unique<SwishActivation>();
+}
+
+Tensor SwishModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor SwishModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
+// ============================================================================
+// MishModule Implementation
+// ============================================================================
+
+MishModule::MishModule() {
+    activation_ = std::make_unique<MishActivation>();
+}
+
+Tensor MishModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor MishModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
+// ============================================================================
+// SoftmaxModule Implementation (ArrayFire)
 // ============================================================================
 
 SoftmaxModule::SoftmaxModule(int dim) : dim_(dim) {}
@@ -106,45 +208,67 @@ SoftmaxModule::SoftmaxModule(int dim) : dim_(dim) {}
 Tensor SoftmaxModule::Forward(const Tensor& input) {
     input_cache_ = input.Clone();
 
-    const auto& shape = input.Shape();
-    if (shape.size() != 2) {
-        spdlog::warn("SoftmaxModule: Expected 2D input, got {}D", shape.size());
-    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // ArrayFire implementation
+    af::array x = input.GetArray();
 
+    // Softmax: exp(x - max) / sum(exp(x - max))
+    // Compute along dim 1 (classes dimension) for [batch, classes] input
+    // Note: Use (af::max) to prevent Windows macro conflict
+    af::array max_vals = (af::max)(x, 1);  // [batch, 1]
+    af::array x_shifted = x - af::tile(max_vals, 1, static_cast<unsigned>(x.dims(1)));  // Subtract max for stability
+    af::array exp_x = af::exp(x_shifted);
+    af::array sum_exp = af::sum(exp_x, 1);  // [batch, 1]
+    af::array softmax = exp_x / af::tile(sum_exp, 1, static_cast<unsigned>(x.dims(1)));
+
+    Tensor output(softmax);
+    output_cache_ = output.Clone();
+    return output;
+#else
+    // CPU fallback
+    const auto& shape = input.Shape();
     size_t batch_size = shape[0];
     size_t num_classes = shape.size() > 1 ? shape[1] : shape[0];
 
-    // Compute softmax: exp(x - max) / sum(exp(x - max))
     Tensor output({batch_size, num_classes}, DataType::Float32);
     const float* in_data = input.Data<float>();
     float* out_data = output.Data<float>();
 
     for (size_t b = 0; b < batch_size; ++b) {
-        // Find max for numerical stability
         float max_val = in_data[b * num_classes];
         for (size_t c = 1; c < num_classes; ++c) {
             max_val = std::max(max_val, in_data[b * num_classes + c]);
         }
-
-        // Compute exp(x - max) and sum
         float sum = 0.0f;
         for (size_t c = 0; c < num_classes; ++c) {
             out_data[b * num_classes + c] = std::exp(in_data[b * num_classes + c] - max_val);
             sum += out_data[b * num_classes + c];
         }
-
-        // Normalize
         for (size_t c = 0; c < num_classes; ++c) {
             out_data[b * num_classes + c] /= sum;
         }
     }
-
     output_cache_ = output.Clone();
     return output;
+#endif
 }
 
 Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // ArrayFire implementation
     // Softmax backward: grad_input = softmax * (grad_output - sum(grad_output * softmax))
+    af::array grad = grad_output.GetArray();
+    af::array soft = output_cache_.GetArray();
+
+    // Compute dot product per sample: sum(grad * softmax) along classes dimension
+    af::array dot = af::sum(grad * soft, 1);  // [batch, 1]
+
+    // grad_input = softmax * (grad - dot)
+    af::array grad_input = soft * (grad - af::tile(dot, 1, static_cast<unsigned>(grad.dims(1))));
+
+    return Tensor(grad_input);
+#else
+    // CPU fallback
     const auto& shape = grad_output.Shape();
     size_t batch_size = shape[0];
     size_t num_classes = shape.size() > 1 ? shape[1] : shape[0];
@@ -155,24 +279,21 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
     float* out_data = grad_input.Data<float>();
 
     for (size_t b = 0; b < batch_size; ++b) {
-        // Compute sum(grad * softmax)
         float dot = 0.0f;
         for (size_t c = 0; c < num_classes; ++c) {
             dot += grad_data[b * num_classes + c] * soft_data[b * num_classes + c];
         }
-
-        // grad_input = softmax * (grad - dot)
         for (size_t c = 0; c < num_classes; ++c) {
             out_data[b * num_classes + c] = soft_data[b * num_classes + c] *
                 (grad_data[b * num_classes + c] - dot);
         }
     }
-
     return grad_input;
+#endif
 }
 
 // ============================================================================
-// DropoutModule Implementation
+// DropoutModule Implementation (ArrayFire)
 // ============================================================================
 
 DropoutModule::DropoutModule(float p) : p_(p) {
@@ -190,6 +311,24 @@ Tensor DropoutModule::Forward(const Tensor& input) {
         return input.Clone();
     }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // ArrayFire implementation
+    af::array x = input.GetArray();
+    float scale = 1.0f / (1.0f - p_);
+
+    // Generate random mask: values > p are kept (scaled), values <= p are dropped
+    af::array rand_vals = af::randu(x.dims());
+    af::array keep_mask = (rand_vals > p_).as(af::dtype::f32);  // 1 for keep, 0 for drop
+    af::array scaled_mask = keep_mask * scale;
+
+    // Store mask for backward pass
+    mask_ = Tensor(scaled_mask);
+
+    // Apply dropout
+    af::array output = x * scaled_mask;
+    return Tensor(output);
+#else
+    // CPU fallback
     const auto& shape = input.Shape();
     size_t total = input.NumElements();
 
@@ -200,12 +339,10 @@ Tensor DropoutModule::Forward(const Tensor& input) {
     float* out_data = output.Data<float>();
     float* mask_data = mask_.Data<float>();
 
-    // Generate dropout mask
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-
-    float scale = 1.0f / (1.0f - p_);  // Inverted dropout scaling
+    float scale = 1.0f / (1.0f - p_);
 
     for (size_t i = 0; i < total; ++i) {
         if (dist(gen) > p_) {
@@ -216,8 +353,8 @@ Tensor DropoutModule::Forward(const Tensor& input) {
             out_data[i] = 0.0f;
         }
     }
-
     return output;
+#endif
 }
 
 Tensor DropoutModule::Backward(const Tensor& grad_output) {
@@ -225,6 +362,16 @@ Tensor DropoutModule::Backward(const Tensor& grad_output) {
         return grad_output.Clone();
     }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // ArrayFire implementation
+    af::array grad = grad_output.GetArray();
+    af::array mask = mask_.GetArray();
+
+    // grad_input = grad * mask (mask already has scaling applied)
+    af::array grad_input = grad * mask;
+    return Tensor(grad_input);
+#else
+    // CPU fallback
     const auto& shape = grad_output.Shape();
     Tensor grad_input(shape, DataType::Float32);
 
@@ -236,8 +383,8 @@ Tensor DropoutModule::Backward(const Tensor& grad_output) {
     for (size_t i = 0; i < total; ++i) {
         out_data[i] = grad_data[i] * mask_data[i];
     }
-
     return grad_input;
+#endif
 }
 
 std::string DropoutModule::GetName() const {
@@ -245,7 +392,7 @@ std::string DropoutModule::GetName() const {
 }
 
 // ============================================================================
-// FlattenModule Implementation
+// FlattenModule Implementation (ArrayFire)
 // ============================================================================
 
 FlattenModule::FlattenModule(int start_dim) : start_dim_(start_dim) {}
@@ -265,19 +412,44 @@ Tensor FlattenModule::Forward(const Tensor& input) {
         }
     }
 
-    // Create output with shape [batch_size, flat_size]
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // ArrayFire implementation - use moddims for zero-copy reshape
+    af::array x = input.GetArray();
+
+    // Reshape to [flat_size, batch_size] (ArrayFire is column-major)
+    // Then we return as [batch_size, flat_size] for row-major semantics
+    af::array flattened = af::moddims(x, flat_size, batch_size);
+
+    return Tensor(flattened);
+#else
+    // CPU fallback
     Tensor output({batch_size, flat_size}, input.GetDataType());
 
-    // Copy data (same memory layout, just different shape interpretation)
     const float* in_data = input.Data<float>();
     float* out_data = output.Data<float>();
     std::copy(in_data, in_data + input.NumElements(), out_data);
 
     return output;
+#endif
 }
 
 Tensor FlattenModule::Backward(const Tensor& grad_output) {
-    // Reshape gradient back to original shape
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // ArrayFire implementation - reshape gradient back to original shape
+    af::array grad = grad_output.GetArray();
+
+    // Convert original_shape_ to af::dim4
+    af::dim4 dims(1, 1, 1, 1);
+    for (size_t i = 0; i < original_shape_.size() && i < 4; ++i) {
+        dims[i] = static_cast<dim_t>(original_shape_[i]);
+    }
+
+    // Reshape back to original dimensions
+    af::array grad_input = af::moddims(grad, dims);
+
+    return Tensor(grad_input);
+#else
+    // CPU fallback
     Tensor grad_input(original_shape_, grad_output.GetDataType());
 
     const float* grad_data = grad_output.Data<float>();
@@ -285,6 +457,7 @@ Tensor FlattenModule::Backward(const Tensor& grad_output) {
     std::copy(grad_data, grad_data + grad_output.NumElements(), out_data);
 
     return grad_input;
+#endif
 }
 
 // ============================================================================

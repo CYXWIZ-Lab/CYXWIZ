@@ -21,6 +21,12 @@
 #include "panels/wallet_panel.h"
 #include "panels/task_progress_panel.h"
 #include "panels/pattern_browser.h"
+#include "panels/query_console.h"
+#include "panels/custom_node_editor.h"
+#include "panels/theme_editor.h"
+#include "panels/profiling_panel.h"
+#include "panels/memory_panel.h"
+#include "tutorial/tutorial_system.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
@@ -67,6 +73,11 @@ MainWindow::MainWindow()
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
     task_progress_panel_ = std::make_unique<cyxwiz::TaskProgressPanel>();
     pattern_browser_ = std::make_unique<cyxwiz::PatternBrowserPanel>();
+    query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
+    custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();
+    theme_editor_ = std::make_unique<gui::ThemeEditorPanel>();
+    profiling_panel_ = std::make_unique<cyxwiz::ProfilingPanel>();
+    memory_panel_ = std::make_unique<cyxwiz::MemoryPanel>();
 
     // Set pattern browser callback to insert patterns into node editor
     pattern_browser_->SetInsertCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
@@ -99,6 +110,12 @@ MainWindow::MainWindow()
 
     // Connect Properties panel to Node Editor for shape inference
     properties_->SetNodeEditor(node_editor_.get());
+
+    // Connect Pattern Browser to Node Editor for proper node creation
+    pattern_browser_->SetNodeEditor(node_editor_.get());
+
+    // Connect Query Console to Node Editor for graph queries
+    query_console_->SetNodeEditor(node_editor_.get());
 
     // Set up training callback for Node Editor
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
@@ -139,6 +156,38 @@ MainWindow::MainWindow()
         if (dataset_panel_) {
             dataset_panel_->Show();
             spdlog::info("Opened Dataset Manager panel");
+        }
+    });
+
+    // Set up Custom Node Editor callback
+    toolbar_->SetOpenCustomNodeEditorCallback([this]() {
+        if (custom_node_editor_) {
+            custom_node_editor_->Show();
+            spdlog::info("Opened Custom Node Editor panel");
+        }
+    });
+
+    // Set up Theme Editor callback
+    toolbar_->SetOpenThemeEditorCallback([this]() {
+        if (theme_editor_) {
+            theme_editor_->Show();
+            spdlog::info("Opened Theme Editor panel");
+        }
+    });
+
+    // Set up Profiler callback
+    toolbar_->SetOpenProfilerCallback([this]() {
+        if (profiling_panel_) {
+            profiling_panel_->Show();
+            spdlog::info("Opened Performance Profiler panel");
+        }
+    });
+
+    // Set up Memory Monitor callback
+    toolbar_->SetOpenMemoryMonitorCallback([this]() {
+        if (memory_panel_) {
+            memory_panel_->Show();
+            spdlog::info("Opened Memory Monitor panel");
         }
     });
 
@@ -483,6 +532,18 @@ MainWindow::MainWindow()
         }
     });
 
+    // Set up asset browser callback for "Open in Node Editor" (.cyxgraph files)
+    asset_browser_->SetOnOpenInNodeEditor([this](const std::string& path) {
+        if (node_editor_) {
+            if (node_editor_->LoadGraph(path)) {
+                node_editor_->Show();
+                spdlog::info("Opened graph in Node Editor: {}", std::filesystem::path(path).filename().string());
+            } else {
+                spdlog::error("Failed to open graph file: {}", path);
+            }
+        }
+    });
+
     // Initialize startup script manager
     startup_script_manager_ = std::make_unique<scripting::StartupScriptManager>(scripting_engine_);
 
@@ -496,6 +557,25 @@ MainWindow::MainWindow()
 
     // Install custom dock node handler for Unreal-style tabs
     DockStyle::InstallCustomHandler();
+
+    // Initialize Tutorial System
+    auto& tutorial = cyxwiz::TutorialSystem::Instance();
+    tutorial.SetWindowRectCallback([](const std::string& window_name) -> ImRect {
+        ImGuiWindow* window = ImGui::FindWindowByName(window_name.c_str());
+        if (window) {
+            return ImRect(window->Pos, ImVec2(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y));
+        }
+        return ImRect();
+    });
+    tutorial.LoadProgress();
+
+    // Check for first-launch welcome
+    if (tutorial.ShouldShowWelcome()) {
+        tutorial.MarkWelcomeShown();
+        tutorial.SaveProgress();
+        // Optionally start the getting started tutorial automatically
+        // tutorial.StartTutorial("getting_started");
+    }
 
     // Register panels with sidebar for hide/unhide toggles
     RegisterPanelsWithSidebar();
@@ -648,6 +728,11 @@ void MainWindow::Render() {
     if (wallet_panel_) wallet_panel_->Render();
     if (task_progress_panel_) task_progress_panel_->Render();
     if (pattern_browser_) pattern_browser_->Render();
+    if (query_console_) query_console_->Render();
+    if (custom_node_editor_) custom_node_editor_->Render();
+    if (theme_editor_) theme_editor_->Render();
+    if (profiling_panel_) profiling_panel_->Render();
+    if (memory_panel_) memory_panel_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
@@ -663,6 +748,9 @@ void MainWindow::Render() {
     if (show_demo_window_) {
         ImGui::ShowDemoWindow(&show_demo_window_);
     }
+
+    // Render tutorial overlay (on top of all panels)
+    cyxwiz::TutorialSystem::Instance().Render();
 
     // Render status bar at the bottom of the screen
     RenderStatusBar();
@@ -902,6 +990,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (pattern_browser_) {
         dock_style.RegisterPanel("Patterns", ICON_FA_CUBES, pattern_browser_->GetVisiblePtr());
+    }
+    if (query_console_) {
+        dock_style.RegisterPanel("Query Console", ICON_FA_TERMINAL, query_console_->GetVisiblePtr());
     }
 
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());

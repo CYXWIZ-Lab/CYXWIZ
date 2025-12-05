@@ -12,11 +12,15 @@ namespace gui::patterns {
 // Forward declaration for instantiation callback
 class PatternLibrary;
 
-// Callback type for pattern instantiation
+// Callback type for pattern instantiation (legacy)
 using PatternInstantiateCallback = std::function<void(
     const std::vector<MLNode>& nodes,
     const std::vector<NodeLink>& links
 )>;
+
+// Callback type for node creation - creates a node with proper pins based on type
+// This allows PatternLibrary to delegate node creation to NodeEditor
+using NodeCreatorCallback = std::function<MLNode(NodeType type, const std::string& name)>;
 
 class PatternLibrary {
 public:
@@ -49,6 +53,7 @@ public:
     std::vector<PatternCategory> GetAvailableCategories() const;
 
     // Instantiate a pattern into nodes and links
+    // Legacy version - creates simplified nodes with only 1 input/1 output pin
     bool InstantiatePattern(
         const std::string& pattern_id,
         const std::map<std::string, std::string>& params,
@@ -58,6 +63,19 @@ public:
         int& next_pin_id,
         int& next_link_id,
         ImVec2 base_position = ImVec2(0, 0)
+    );
+
+    // New version with node creator callback - creates nodes with proper pins
+    // The callback should use NodeEditor::CreateNode() to create nodes
+    bool InstantiatePatternWithCreator(
+        const std::string& pattern_id,
+        const std::map<std::string, std::string>& params,
+        std::vector<MLNode>& out_nodes,
+        std::vector<NodeLink>& out_links,
+        int& next_node_id,
+        int& next_link_id,
+        ImVec2 base_position,
+        NodeCreatorCallback node_creator
     );
 
     // Save a selection of nodes as a custom pattern

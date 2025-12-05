@@ -31,6 +31,10 @@ public:
     Tensor();
     Tensor(const std::vector<size_t>& shape, DataType dtype = DataType::Float32);
     Tensor(const std::vector<size_t>& shape, const void* data, DataType dtype = DataType::Float32);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // Construct from ArrayFire array (takes ownership)
+    explicit Tensor(const af::array& arr);
+#endif
     ~Tensor();
 
     // Copy/Move
@@ -58,6 +62,13 @@ public:
     void ToDevice(Device* device);
     void ToCPU();
     Device* GetDevice() const { return device_; }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // ArrayFire array access (creates if needed, syncs from CPU data)
+    af::array GetArray() const;
+    // Set from ArrayFire array (copies data back to CPU)
+    void SetFromArray(const af::array& arr);
+#endif
 
     // Operations
     Tensor Clone() const;

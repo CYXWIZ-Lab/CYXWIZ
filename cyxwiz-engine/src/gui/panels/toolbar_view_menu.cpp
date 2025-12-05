@@ -106,6 +106,16 @@ void ToolbarPanel::RenderViewMenu() {
             ImGui::EndMenu();
         }
 
+        // Theme Editor (opens full panel for advanced customization)
+        if (ImGui::MenuItem(ICON_FA_BRUSH " Theme Editor...")) {
+            if (open_theme_editor_callback_) {
+                open_theme_editor_callback_();
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open advanced theme editor for customizing ImGui and ImNodes colors");
+        }
+
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -153,6 +163,29 @@ void ToolbarPanel::RenderViewMenu() {
 
             ImGui::PopStyleVar();
             ImGui::EndMenu();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ========== Developer Tools ==========
+        if (ImGui::MenuItem(ICON_FA_GAUGE_HIGH " Performance Profiler")) {
+            if (open_profiler_callback_) {
+                open_profiler_callback_();
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open per-layer timing profiler for training analysis");
+        }
+
+        if (ImGui::MenuItem(ICON_FA_MICROCHIP " Memory Monitor")) {
+            if (open_memory_monitor_callback_) {
+                open_memory_monitor_callback_();
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Monitor CPU and GPU memory usage in real-time");
         }
 
         ImGui::Spacing();

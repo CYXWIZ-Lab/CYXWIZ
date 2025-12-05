@@ -480,6 +480,362 @@ private:
 };
 
 /**
+ * TSV Dataset Implementation (Tab-Separated Values)
+ */
+class TSVDataset : public Dataset {
+public:
+    TSVDataset(const std::string& path) : path_(path) {
+        LoadData();
+    }
+
+    size_t Size() const override { return samples_.size(); }
+
+    std::pair<std::vector<float>, int> GetItem(size_t index) const override {
+        if (index >= samples_.size()) return {{}, -1};
+        return {samples_[index], labels_[index]};
+    }
+
+    DatasetInfo GetInfo() const override {
+        DatasetInfo info;
+        info.name = fs::path(path_).stem().string();
+        info.path = path_;
+        info.type = DatasetType::TSV;
+        info.shape = num_features_ > 0 ? std::vector<size_t>{static_cast<size_t>(num_features_)} : std::vector<size_t>{};
+        info.num_samples = samples_.size();
+        info.num_classes = num_classes_;
+        info.train_count = train_indices_.size();
+        info.val_count = val_indices_.size();
+        info.test_count = test_indices_.size();
+        info.memory_usage = samples_.size() * num_features_ * sizeof(float);
+        info.is_loaded = !samples_.empty();
+        return info;
+    }
+
+    const std::vector<std::string>& GetColumnNames() const { return column_names_; }
+
+private:
+    void LoadData() {
+        std::ifstream file(path_);
+        if (!file) {
+            spdlog::error("Failed to open TSV file: {}", path_);
+            return;
+        }
+
+        std::string line;
+        bool first_line = true;
+        std::set<int> unique_labels;
+
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+
+            std::vector<std::string> tokens;
+            std::stringstream ss(line);
+            std::string token;
+
+            while (std::getline(ss, token, '\t')) {
+                token.erase(0, token.find_first_not_of(" \r\n"));
+                token.erase(token.find_last_not_of(" \r\n") + 1);
+                tokens.push_back(token);
+            }
+
+            if (tokens.empty()) continue;
+
+            if (first_line) {
+                first_line = false;
+                try {
+                    std::stof(tokens[0]);
+                } catch (...) {
+                    column_names_ = tokens;
+                    continue;
+                }
+            }
+
+            std::vector<float> sample;
+            sample.reserve(tokens.size() - 1);
+
+            for (size_t i = 0; i < tokens.size() - 1; i++) {
+                try {
+                    sample.push_back(std::stof(tokens[i]));
+                } catch (...) {
+                    sample.push_back(0.0f);
+                }
+            }
+
+            int label = 0;
+            try {
+                label = std::stoi(tokens.back());
+            } catch (...) {
+                label = 0;
+            }
+
+            samples_.push_back(std::move(sample));
+            labels_.push_back(label);
+            unique_labels.insert(label);
+        }
+
+        num_features_ = samples_.empty() ? 0 : static_cast<int>(samples_[0].size());
+        num_classes_ = static_cast<int>(unique_labels.size());
+
+        if (!samples_.empty()) {
+            spdlog::info("Loaded TSV dataset: {} samples, {} features, {} classes",
+                samples_.size(), num_features_, num_classes_);
+            SetSplit(SplitConfig{});
+        }
+    }
+
+    std::string path_;
+    std::vector<std::vector<float>> samples_;
+    std::vector<int> labels_;
+    std::vector<std::string> column_names_;
+    int num_features_ = 0;
+    int num_classes_ = 0;
+};
+
+/**
+ * JSON Dataset Implementation
+ * Supports JSON files with data/labels arrays or line-delimited JSON
+ */
+class JSONDataset : public Dataset {
+public:
+    JSONDataset(const std::string& path) : path_(path) {
+        LoadData();
+    }
+
+    size_t Size() const override { return samples_.size(); }
+
+    std::pair<std::vector<float>, int> GetItem(size_t index) const override {
+        if (index >= samples_.size()) return {{}, -1};
+        return {samples_[index], labels_[index]};
+    }
+
+    DatasetInfo GetInfo() const override {
+        DatasetInfo info;
+        info.name = fs::path(path_).stem().string();
+        info.path = path_;
+        info.type = DatasetType::JSON;
+        info.shape = num_features_ > 0 ? std::vector<size_t>{static_cast<size_t>(num_features_)} : std::vector<size_t>{};
+        info.num_samples = samples_.size();
+        info.num_classes = num_classes_;
+        info.train_count = train_indices_.size();
+        info.val_count = val_indices_.size();
+        info.test_count = test_indices_.size();
+        info.memory_usage = samples_.size() * num_features_ * sizeof(float);
+        info.is_loaded = !samples_.empty();
+        return info;
+    }
+
+private:
+    void LoadData() {
+        std::ifstream file(path_);
+        if (!file) {
+            spdlog::error("Failed to open JSON file: {}", path_);
+            return;
+        }
+
+        try {
+            using json = nlohmann::json;
+            json j;
+            file >> j;
+
+            std::set<int> unique_labels;
+
+            // Try different JSON structures
+            // Structure 1: {"data": [[...], [...]], "labels": [0, 1, ...]}
+            if (j.contains("data") && j.contains("labels")) {
+                auto& data = j["data"];
+                auto& labels = j["labels"];
+
+                for (size_t i = 0; i < data.size() && i < labels.size(); i++) {
+                    std::vector<float> sample;
+                    for (const auto& val : data[i]) {
+                        if (val.is_number()) {
+                            sample.push_back(val.get<float>());
+                        }
+                    }
+                    int label = labels[i].is_number() ? labels[i].get<int>() : 0;
+                    samples_.push_back(std::move(sample));
+                    labels_.push_back(label);
+                    unique_labels.insert(label);
+                }
+            }
+            // Structure 2: [{"features": [...], "label": 0}, ...]
+            else if (j.is_array()) {
+                for (const auto& item : j) {
+                    std::vector<float> sample;
+                    int label = 0;
+
+                    if (item.contains("features")) {
+                        for (const auto& val : item["features"]) {
+                            if (val.is_number()) {
+                                sample.push_back(val.get<float>());
+                            }
+                        }
+                    } else if (item.contains("data")) {
+                        for (const auto& val : item["data"]) {
+                            if (val.is_number()) {
+                                sample.push_back(val.get<float>());
+                            }
+                        }
+                    }
+
+                    if (item.contains("label")) {
+                        label = item["label"].is_number() ? item["label"].get<int>() : 0;
+                    } else if (item.contains("target")) {
+                        label = item["target"].is_number() ? item["target"].get<int>() : 0;
+                    }
+
+                    if (!sample.empty()) {
+                        samples_.push_back(std::move(sample));
+                        labels_.push_back(label);
+                        unique_labels.insert(label);
+                    }
+                }
+            }
+
+            num_features_ = samples_.empty() ? 0 : static_cast<int>(samples_[0].size());
+            num_classes_ = static_cast<int>(unique_labels.size());
+
+            if (!samples_.empty()) {
+                spdlog::info("Loaded JSON dataset: {} samples, {} features, {} classes",
+                    samples_.size(), num_features_, num_classes_);
+                SetSplit(SplitConfig{});
+            } else {
+                spdlog::info("Loaded JSON file (configuration or metadata): {}", path_);
+            }
+
+        } catch (const std::exception& e) {
+            spdlog::error("Error parsing JSON file: {}", e.what());
+        }
+    }
+
+    std::string path_;
+    std::vector<std::vector<float>> samples_;
+    std::vector<int> labels_;
+    int num_features_ = 0;
+    int num_classes_ = 0;
+};
+
+/**
+ * TXT Dataset Implementation
+ * Loads plain text files with one sample per line (space/comma separated features, last value is label)
+ */
+class TXTDataset : public Dataset {
+public:
+    TXTDataset(const std::string& path) : path_(path) {
+        LoadData();
+    }
+
+    size_t Size() const override { return samples_.size(); }
+
+    std::pair<std::vector<float>, int> GetItem(size_t index) const override {
+        if (index >= samples_.size()) return {{}, -1};
+        return {samples_[index], labels_[index]};
+    }
+
+    DatasetInfo GetInfo() const override {
+        DatasetInfo info;
+        info.name = fs::path(path_).stem().string();
+        info.path = path_;
+        info.type = DatasetType::TXT;
+        info.shape = num_features_ > 0 ? std::vector<size_t>{static_cast<size_t>(num_features_)} : std::vector<size_t>{};
+        info.num_samples = samples_.size();
+        info.num_classes = num_classes_;
+        info.train_count = train_indices_.size();
+        info.val_count = val_indices_.size();
+        info.test_count = test_indices_.size();
+        info.memory_usage = samples_.size() * num_features_ * sizeof(float);
+        info.is_loaded = !samples_.empty();
+        return info;
+    }
+
+    // Get raw lines for non-numeric text files
+    const std::vector<std::string>& GetLines() const { return raw_lines_; }
+
+private:
+    void LoadData() {
+        std::ifstream file(path_);
+        if (!file) {
+            spdlog::error("Failed to open TXT file: {}", path_);
+            return;
+        }
+
+        std::string line;
+        std::set<int> unique_labels;
+        bool is_numeric = true;
+
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+
+            raw_lines_.push_back(line);
+
+            // Try to parse as numeric data (space or comma separated)
+            std::vector<std::string> tokens;
+            std::stringstream ss(line);
+            std::string token;
+
+            // Try space first, then comma
+            char delimiter = (line.find(',') != std::string::npos) ? ',' : ' ';
+            while (std::getline(ss, token, delimiter)) {
+                token.erase(0, token.find_first_not_of(" \t\r\n"));
+                token.erase(token.find_last_not_of(" \t\r\n") + 1);
+                if (!token.empty()) {
+                    tokens.push_back(token);
+                }
+            }
+
+            if (tokens.size() >= 2) {
+                std::vector<float> sample;
+                sample.reserve(tokens.size() - 1);
+                bool valid = true;
+
+                for (size_t i = 0; i < tokens.size() - 1; i++) {
+                    try {
+                        sample.push_back(std::stof(tokens[i]));
+                    } catch (...) {
+                        valid = false;
+                        is_numeric = false;
+                        break;
+                    }
+                }
+
+                if (valid) {
+                    int label = 0;
+                    try {
+                        label = std::stoi(tokens.back());
+                    } catch (...) {
+                        is_numeric = false;
+                    }
+
+                    if (is_numeric) {
+                        samples_.push_back(std::move(sample));
+                        labels_.push_back(label);
+                        unique_labels.insert(label);
+                    }
+                }
+            }
+        }
+
+        num_features_ = samples_.empty() ? 0 : static_cast<int>(samples_[0].size());
+        num_classes_ = static_cast<int>(unique_labels.size());
+
+        if (!samples_.empty()) {
+            spdlog::info("Loaded TXT dataset: {} samples, {} features, {} classes",
+                samples_.size(), num_features_, num_classes_);
+            SetSplit(SplitConfig{});
+        } else {
+            spdlog::info("Loaded TXT file as text: {} lines", raw_lines_.size());
+        }
+    }
+
+    std::string path_;
+    std::vector<std::vector<float>> samples_;
+    std::vector<int> labels_;
+    std::vector<std::string> raw_lines_;
+    int num_features_ = 0;
+    int num_classes_ = 0;
+};
+
+/**
  * LRU Cache for images
  * Thread-safe cache with configurable maximum size and statistics tracking
  */
@@ -2345,6 +2701,12 @@ DatasetHandle DataRegistry::LoadDataset(const std::string& path, const std::stri
             return LoadCIFAR10(path, name.empty() ? "cifar10" : name);
         case DatasetType::CSV:
             return LoadCSV(path, name);
+        case DatasetType::TSV:
+            return LoadTSV(path, name);
+        case DatasetType::JSON:
+            return LoadJSON(path, name);
+        case DatasetType::TXT:
+            return LoadTXT(path, name);
         case DatasetType::ImageFolder:
             return LoadImageFolder(path, name);
         default:
@@ -2437,6 +2799,87 @@ DatasetHandle DataRegistry::LoadCSV(const std::string& path, const std::string& 
 
     } catch (const std::exception& e) {
         spdlog::error("Failed to load CSV dataset: {}", e.what());
+        return DatasetHandle();
+    }
+}
+
+DatasetHandle DataRegistry::LoadTSV(const std::string& path, const std::string& name) {
+    std::string base_name = name.empty() ? fs::path(path).stem().string() : name;
+    std::string unique_name = GenerateUniqueName(base_name);
+
+    try {
+        auto dataset = std::make_shared<TSVDataset>(path);
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            datasets_[unique_name] = dataset;
+        }
+
+        auto handle = DatasetHandle(dataset, unique_name);
+
+        if (on_loaded_) {
+            on_loaded_(unique_name, handle.GetInfo());
+        }
+
+        spdlog::info("Registered TSV dataset as '{}'", unique_name);
+        return handle;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to load TSV dataset: {}", e.what());
+        return DatasetHandle();
+    }
+}
+
+DatasetHandle DataRegistry::LoadJSON(const std::string& path, const std::string& name) {
+    std::string base_name = name.empty() ? fs::path(path).stem().string() : name;
+    std::string unique_name = GenerateUniqueName(base_name);
+
+    try {
+        auto dataset = std::make_shared<JSONDataset>(path);
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            datasets_[unique_name] = dataset;
+        }
+
+        auto handle = DatasetHandle(dataset, unique_name);
+
+        if (on_loaded_) {
+            on_loaded_(unique_name, handle.GetInfo());
+        }
+
+        spdlog::info("Registered JSON dataset as '{}'", unique_name);
+        return handle;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to load JSON dataset: {}", e.what());
+        return DatasetHandle();
+    }
+}
+
+DatasetHandle DataRegistry::LoadTXT(const std::string& path, const std::string& name) {
+    std::string base_name = name.empty() ? fs::path(path).stem().string() : name;
+    std::string unique_name = GenerateUniqueName(base_name);
+
+    try {
+        auto dataset = std::make_shared<TXTDataset>(path);
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            datasets_[unique_name] = dataset;
+        }
+
+        auto handle = DatasetHandle(dataset, unique_name);
+
+        if (on_loaded_) {
+            on_loaded_(unique_name, handle.GetInfo());
+        }
+
+        spdlog::info("Registered TXT dataset as '{}'", unique_name);
+        return handle;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to load TXT dataset: {}", e.what());
         return DatasetHandle();
     }
 }
@@ -3246,6 +3689,8 @@ DatasetType DataRegistry::DetectType(const std::string& path) {
 
         if (ext == ".csv") return DatasetType::CSV;
         if (ext == ".tsv") return DatasetType::TSV;
+        if (ext == ".json") return DatasetType::JSON;
+        if (ext == ".txt") return DatasetType::TXT;
     }
 
     return DatasetType::None;
@@ -3256,7 +3701,10 @@ std::string DataRegistry::TypeToString(DatasetType type) {
         case DatasetType::None: return "None";
         case DatasetType::CSV: return "CSV";
         case DatasetType::TSV: return "TSV";
+        case DatasetType::JSON: return "JSON";
+        case DatasetType::TXT: return "TXT";
         case DatasetType::ImageFolder: return "ImageFolder";
+        case DatasetType::ImageCSV: return "ImageCSV";
         case DatasetType::MNIST: return "MNIST";
         case DatasetType::FashionMNIST: return "FashionMNIST";
         case DatasetType::CIFAR10: return "CIFAR-10";
