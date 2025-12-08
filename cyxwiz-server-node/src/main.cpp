@@ -11,6 +11,7 @@
 #include <thread>
 #include <csignal>
 #include <atomic>
+#include <cstring>
 #include <grpcpp/grpcpp.h>
 #include "deployment_handler.h"
 #include "deployment_manager.h"
@@ -19,6 +20,100 @@
 #include "job_executor.h"
 #include "node_service.h"
 #include "job_execution_service.h"
+#include "core/backend_manager.h"
+
+#ifdef CYXWIZ_HAS_GUI
+#include "gui/server_application.h"
+#endif
+
+#ifdef CYXWIZ_HAS_TUI
+#include "tui/tui_application.h"
+#endif
+
+// Interface mode selection
+enum class InterfaceMode {
+    Headless,  // No UI, background service
+    GUI,       // ImGui-based graphical interface
+    TUI        // FTXUI-based terminal interface
+};
+
+// Detect interface mode from command-line arguments
+InterfaceMode DetectMode(int argc, char** argv) {
+    // Check for explicit --mode argument
+    for (int i = 1; i < argc; ++i) {
+        if (std::strncmp(argv[i], "--mode=", 7) == 0) {
+            const char* mode = argv[i] + 7;
+            if (std::strcmp(mode, "gui") == 0) {
+#ifdef CYXWIZ_HAS_GUI
+                return InterfaceMode::GUI;
+#else
+                spdlog::warn("GUI mode requested but not compiled in, falling back to headless");
+                return InterfaceMode::Headless;
+#endif
+            } else if (std::strcmp(mode, "tui") == 0) {
+#ifdef CYXWIZ_HAS_TUI
+                return InterfaceMode::TUI;
+#else
+                spdlog::warn("TUI mode requested but not compiled in, falling back to headless");
+                return InterfaceMode::Headless;
+#endif
+            } else if (std::strcmp(mode, "headless") == 0) {
+                return InterfaceMode::Headless;
+            } else {
+                spdlog::warn("Unknown mode '{}', falling back to headless", mode);
+                return InterfaceMode::Headless;
+            }
+        }
+        // Short forms
+        if (std::strcmp(argv[i], "--gui") == 0) {
+#ifdef CYXWIZ_HAS_GUI
+            return InterfaceMode::GUI;
+#else
+            spdlog::warn("GUI mode requested but not compiled in, falling back to headless");
+            return InterfaceMode::Headless;
+#endif
+        }
+        if (std::strcmp(argv[i], "--tui") == 0) {
+#ifdef CYXWIZ_HAS_TUI
+            return InterfaceMode::TUI;
+#else
+            spdlog::warn("TUI mode requested but not compiled in, falling back to headless");
+            return InterfaceMode::Headless;
+#endif
+        }
+    }
+
+    // Auto-detect based on environment
+#ifdef _WIN32
+    // On Windows, default to GUI if available and not in a console-only environment
+    #ifdef CYXWIZ_HAS_GUI
+    // Check if running in Windows Terminal or PowerShell (prefer TUI) or double-clicked (prefer GUI)
+    // For now, default to TUI for better server experience
+    #ifdef CYXWIZ_HAS_TUI
+    return InterfaceMode::TUI;
+    #else
+    return InterfaceMode::GUI;
+    #endif
+    #endif
+#else
+    // On Linux/macOS, check for display
+    const char* display = std::getenv("DISPLAY");
+    const char* wayland = std::getenv("WAYLAND_DISPLAY");
+
+    if (display || wayland) {
+        // Display available
+        #ifdef CYXWIZ_HAS_TUI
+        // Default to TUI for server experience even with display
+        return InterfaceMode::TUI;
+        #elif defined(CYXWIZ_HAS_GUI)
+        return InterfaceMode::GUI;
+        #endif
+    }
+#endif
+
+    // Default to headless
+    return InterfaceMode::Headless;
+}
 
 // Global flag for shutdown
 std::atomic<bool> g_shutdown{false};
@@ -30,19 +125,67 @@ void SignalHandler(int signal) {
     }
 }
 
+// Forward declaration for headless mode
+int RunHeadlessMode(int argc, char** argv);
+
 int main(int argc, char** argv) {
     spdlog::info("CyxWiz Server Node v{}", cyxwiz::GetVersionString());
     spdlog::info("========================================");
 
-    // Install signal handlers
-    std::signal(SIGINT, SignalHandler);
-    std::signal(SIGTERM, SignalHandler);
+    // Detect interface mode
+    InterfaceMode mode = DetectMode(argc, argv);
+
+    // Print mode
+    const char* mode_name = (mode == InterfaceMode::GUI) ? "GUI" :
+                           (mode == InterfaceMode::TUI) ? "TUI" : "Headless";
+    spdlog::info("Interface mode: {}", mode_name);
 
     // Initialize backend
     if (!cyxwiz::Initialize()) {
         spdlog::error("Failed to initialize backend");
         return 1;
     }
+
+    // Initialize BackendManager for GUI/TUI modes
+    auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
+
+    // Run in selected mode
+    int result = 0;
+
+    switch (mode) {
+#ifdef CYXWIZ_HAS_GUI
+        case InterfaceMode::GUI: {
+            spdlog::info("Starting GUI mode...");
+            cyxwiz::servernode::gui::ServerApplication app(argc, argv);
+            app.Run();
+            break;
+        }
+#endif
+
+#ifdef CYXWIZ_HAS_TUI
+        case InterfaceMode::TUI: {
+            spdlog::info("Starting TUI mode...");
+            cyxwiz::servernode::tui::TUIApplication app(argc, argv);
+            app.Run();
+            break;
+        }
+#endif
+
+        case InterfaceMode::Headless:
+        default:
+            result = RunHeadlessMode(argc, argv);
+            break;
+    }
+
+    cyxwiz::Shutdown();
+    return result;
+}
+
+// Original headless mode implementation
+int RunHeadlessMode(int argc, char** argv) {
+    // Install signal handlers
+    std::signal(SIGINT, SignalHandler);
+    std::signal(SIGTERM, SignalHandler);
 
     // TODO: Parse command line arguments for node_id, listen addresses, etc.
     std::string node_id = "node_" + std::to_string(std::time(nullptr));
@@ -205,10 +348,8 @@ int main(int argc, char** argv) {
 
     } catch (const std::exception& e) {
         spdlog::error("Fatal error: {}", e.what());
-        cyxwiz::Shutdown();
         return 1;
     }
 
-    cyxwiz::Shutdown();
     return 0;
 }

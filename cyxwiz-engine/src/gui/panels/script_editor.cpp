@@ -1,7 +1,9 @@
 #include "script_editor.h"
 #include "command_window.h"
+#include "output_renderer.h"
 #include "../icons.h"
 #include "../../scripting/scripting_engine.h"
+#include "../../scripting/debugger.h"
 #include <imgui.h>
 #include <fstream>
 #include <sstream>
@@ -380,6 +382,23 @@ void ScriptEditorPanel::RenderMenuBar() {
                 if (on_settings_changed_callback_) on_settings_changed_callback_();
             }
 
+            // Minimap toggle
+            if (ImGui::MenuItem("Show Minimap", nullptr, &show_minimap_)) {
+                if (on_settings_changed_callback_) on_settings_changed_callback_();
+            }
+
+            ImGui::Separator();
+
+            // Cell Mode toggle (Jupyter-like notebook mode)
+            bool has_active_tab = active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size());
+            bool is_cell_mode = has_active_tab && tabs_[active_tab_index_]->cell_mode;
+            if (ImGui::MenuItem(ICON_FA_FILE_LINES "  Notebook Mode", "Ctrl+Shift+N", is_cell_mode, has_active_tab)) {
+                ToggleCellMode();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Switch between plain text and Jupyter-like cell mode");
+            }
+
             ImGui::Separator();
             ImGui::TextDisabled("Also in: Edit > Preferences > Editor");
 
@@ -525,6 +544,17 @@ void ScriptEditorPanel::RenderEditor() {
         return;
     }
 
+    // Cell-based mode (Jupyter-like notebook)
+    if (tab->cell_mode) {
+        RenderCellBasedEditor();
+        return;
+    }
+
+    // Show debug toolbar when debugging is active (traditional mode)
+    if (debug_mode_active_ && debugger_) {
+        RenderDebugToolbar();
+    }
+
     // Apply font scale for editor
     if (font_scale_ != 1.0f) {
         ImGui::SetWindowFontScale(font_scale_);
@@ -533,6 +563,7 @@ void ScriptEditorPanel::RenderEditor() {
     // Calculate editor size (leave room for status bar and minimap)
     float available_height = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
     float available_width = ImGui::GetContentRegionAvail().x;
+    float gutter_width = 20.0f;  // Breakpoint gutter width
 
     // Hide horizontal scrollbar by making it invisible
     ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0, 0, 0, 0));
@@ -540,11 +571,15 @@ void ScriptEditorPanel::RenderEditor() {
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, ImVec4(0, 0, 0, 0));
 
-    if (show_minimap_) {
-        // Layout: Editor | Minimap
-        float editor_width = available_width - minimap_width_ - 4.0f;  // 4px for separator
+    // Breakpoint gutter on the left
+    RenderScriptBreakpointGutter(available_height);
+    ImGui::SameLine();
 
-        // Editor on the left
+    if (show_minimap_) {
+        // Layout: Gutter | Editor | Minimap
+        float editor_width = available_width - minimap_width_ - gutter_width - 8.0f;  // 8px for separators
+
+        // Editor in the middle
         ImGui::BeginChild("##editor_region", ImVec2(editor_width, available_height), false,
                           ImGuiWindowFlags_NoScrollbar);
         tab->editor.Render("##editor", ImVec2(0, 0));
@@ -555,8 +590,9 @@ void ScriptEditorPanel::RenderEditor() {
         // Minimap on the right
         RenderMinimap();
     } else {
-        // No minimap - full width editor
-        ImVec2 editor_size = ImVec2(0, available_height);
+        // Layout: Gutter | Editor
+        float editor_width = available_width - gutter_width - 4.0f;
+        ImVec2 editor_size = ImVec2(editor_width, available_height);
         tab->editor.Render("##editor", editor_size);
     }
 
@@ -798,6 +834,9 @@ void ScriptEditorPanel::RenderStatusBar() {
 }
 
 void ScriptEditorPanel::HandleKeyboardShortcuts() {
+    // Handle debug shortcuts (F5, F9, F10, F11)
+    HandleDebugKeyboardShortcuts();
+
     ImGuiIO& io = ImGui::GetIO();
 
     bool ctrl = io.KeyCtrl;
@@ -819,6 +858,11 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     }
     if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_W) && active_tab_index_ >= 0) {
         close_tab_index_ = active_tab_index_;
+    }
+
+    // Toggle cell mode (Jupyter-like notebook mode)
+    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_N) && active_tab_index_ >= 0) {
+        ToggleCellMode();
     }
 
     // Edit operations (handled by TextEditor internally, but we can add extra handling)
@@ -1419,8 +1463,65 @@ void ScriptEditorPanel::RunCurrentSection() {
 }
 
 void ScriptEditorPanel::Debug() {
-    // TODO: Implement debugger integration
-    spdlog::info("Debug mode not yet implemented");
+    if (tabs_.empty() || active_tab_index_ < 0) {
+        spdlog::warn("No script to debug");
+        return;
+    }
+
+    auto& tab = tabs_[active_tab_index_];
+
+    // Initialize debugger if not already done
+    if (!debugger_) {
+        debugger_ = std::make_unique<scripting::DebuggerManager>();
+        if (scripting_engine_ && scripting_engine_->IsInitialized()) {
+            // Get the raw ScriptingEngine pointer from the shared_ptr
+            debugger_->Initialize(scripting_engine_.get());
+
+            // Set up callbacks
+            debugger_->SetBreakpointHitCallback([this](const std::string& cell_id, int line) {
+                debug_mode_active_ = true;
+                debug_current_cell_ = cell_id;
+                debug_current_line_ = line;
+                spdlog::info("Breakpoint hit at {}:{}", cell_id, line);
+            });
+
+            debugger_->SetStateChangedCallback([this](scripting::DebugState state) {
+                if (state == scripting::DebugState::Disconnected) {
+                    debug_mode_active_ = false;
+                    debug_current_line_ = -1;
+                    debug_current_cell_.clear();
+                } else if (state == scripting::DebugState::Running) {
+                    debug_mode_active_ = true;
+                }
+            });
+
+            spdlog::info("Debugger initialized");
+        } else {
+            spdlog::error("Cannot initialize debugger: scripting engine not ready");
+            debugger_.reset();
+            return;
+        }
+    }
+
+    // Get current cell content to debug
+    if (tab->cell_mode && tab->selected_cell >= 0 &&
+        tab->selected_cell < static_cast<int>(tab->cell_manager.GetCellCount())) {
+        Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
+        if (cell.type == CellType::Code) {
+            cell.SyncSourceFromEditor();
+
+            // Execute with debugging enabled
+            debugger_->ExecuteWithDebug(cell.source, cell.id);
+            debug_mode_active_ = true;
+            spdlog::info("Started debugging cell {}", cell.id);
+        }
+    } else {
+        // Debug whole script (traditional mode)
+        std::string script = tab->editor.GetText();
+        debugger_->ExecuteWithDebug(script, tab->filepath.empty() ? tab->filename : tab->filepath);
+        debug_mode_active_ = true;
+        spdlog::info("Started debugging script");
+    }
 }
 
 // Helper functions
@@ -2974,6 +3075,1007 @@ void ScriptEditorPanel::SetTheme(int theme_index) {
     if (theme_index >= 0 && theme_index <= 6) {
         current_theme_ = static_cast<EditorTheme>(theme_index);
         ApplyThemeToAllTabs();
+    }
+}
+
+// ==================== Cell-Based Editor (Jupyter-like) ====================
+
+void ScriptEditorPanel::ToggleCellMode() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& tab = tabs_[active_tab_index_];
+    tab->cell_mode = !tab->cell_mode;
+
+    if (tab->cell_mode) {
+        // Entering cell mode - parse the text into cells
+        std::string content = tab->editor.GetText();
+        tab->cell_manager.SetScriptingEngine(scripting_engine_);
+        tab->cell_manager.ParseFromCyx(content);
+
+        // If no cells were created, add an empty code cell
+        if (tab->cell_manager.GetCellCount() == 0) {
+            tab->cell_manager.AddCell(CellType::Code);
+        }
+
+        tab->selected_cell = 0;
+        tab->editing_cell = -1;  // Start in command mode
+        spdlog::info("Entered cell mode with {} cells", tab->cell_manager.GetCellCount());
+    } else {
+        // Exiting cell mode - serialize cells back to text
+        std::string content = tab->cell_manager.SerializeToCyx();
+        tab->editor.SetText(content);
+        tab->is_modified = true;
+        spdlog::info("Exited cell mode");
+    }
+}
+
+void ScriptEditorPanel::RenderCellBasedEditor() {
+    auto& tab = tabs_[active_tab_index_];
+
+    // Apply font scale
+    if (font_scale_ != 1.0f) {
+        ImGui::SetWindowFontScale(font_scale_);
+    }
+
+    // Handle keyboard shortcuts in cell mode
+    HandleCellKeyboardShortcuts();
+
+    // Calculate available size
+    float available_height = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
+    float available_width = ImGui::GetContentRegionAvail().x;
+
+    // Toolbar at top
+    ImGui::BeginChild("##cell_toolbar", ImVec2(available_width, 30), false);
+    {
+        // Add cell buttons
+        if (ImGui::Button(ICON_FA_PLUS " Code")) {
+            int pos = tab->selected_cell >= 0 ? tab->selected_cell + 1 : -1;
+            int new_idx = tab->cell_manager.AddCell(CellType::Code, pos);
+            tab->selected_cell = new_idx;
+            tab->editing_cell = new_idx;
+            tab->is_modified = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_PLUS " Markdown")) {
+            int pos = tab->selected_cell >= 0 ? tab->selected_cell + 1 : -1;
+            int new_idx = tab->cell_manager.AddCell(CellType::Markdown, pos);
+            tab->selected_cell = new_idx;
+            tab->editing_cell = new_idx;
+            tab->is_modified = true;
+        }
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+
+        // Run buttons
+        bool can_run = scripting_engine_ && !scripting_engine_->IsScriptRunning();
+        ImGui::BeginDisabled(!can_run || tab->selected_cell < 0);
+        if (ImGui::Button(ICON_FA_PLAY " Run Cell")) {
+            if (tab->selected_cell >= 0) {
+                tab->cell_manager.RunCell(tab->selected_cell);
+            }
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+
+        ImGui::BeginDisabled(!can_run);
+        if (ImGui::Button(ICON_FA_FORWARD " Run All")) {
+            tab->cell_manager.RunAllCells();
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+
+        // Clear outputs
+        if (ImGui::Button(ICON_FA_ERASER " Clear Outputs")) {
+            tab->cell_manager.ClearAllOutputs();
+        }
+
+        ImGui::SameLine();
+
+        // Cell count info
+        ImGui::TextDisabled("| %d cells", tab->cell_manager.GetCellCount());
+    }
+    ImGui::EndChild();
+
+    // Show debug toolbar when debugging is active
+    if (debug_mode_active_ && debugger_) {
+        RenderDebugToolbar();
+    }
+
+    // Cells container with scroll
+    ImGui::BeginChild("##cells_container", ImVec2(available_width, available_height - 35), false,
+                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    {
+        // Restore scroll position
+        if (tab->cell_scroll_y >= 0.0f) {
+            // Only restore scroll on first frame after mode switch
+            static bool first_render = true;
+            if (first_render) {
+                ImGui::SetScrollY(tab->cell_scroll_y);
+                first_render = false;
+            }
+        }
+
+        // Render each cell
+        for (int i = 0; i < static_cast<int>(tab->cell_manager.GetCellCount()); ++i) {
+            Cell& cell = tab->cell_manager.GetCell(i);
+            RenderCell(cell, i);
+        }
+
+        // Save scroll position
+        tab->cell_scroll_y = ImGui::GetScrollY();
+    }
+    ImGui::EndChild();
+
+    // Reset font scale
+    if (font_scale_ != 1.0f) {
+        ImGui::SetWindowFontScale(1.0f);
+    }
+}
+
+void ScriptEditorPanel::RenderCell(Cell& cell, int index) {
+    auto& tab = tabs_[active_tab_index_];
+    bool is_selected = (tab->selected_cell == index);
+    bool is_editing = (tab->editing_cell == index);
+
+    ImGui::PushID(index);
+
+    // Cell container
+    float available_width = ImGui::GetContentRegionAvail().x - 10;
+
+    // Calculate border color based on state
+    ImVec4 border_color = is_selected ? ImVec4(0.3f, 0.6f, 1.0f, 1.0f) : ImVec4(0.3f, 0.3f, 0.3f, 1.0f);
+    if (cell.state == CellState::Running) {
+        border_color = ImVec4(1.0f, 0.8f, 0.0f, 1.0f);  // Yellow while running
+    } else if (cell.state == CellState::Error) {
+        border_color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);  // Red on error
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_Border, border_color);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, is_selected ? 2.0f : 1.0f);
+
+    // Start cell region
+    ImGui::BeginChild(("##cell_" + std::to_string(index)).c_str(), ImVec2(available_width, 0),
+                      ImGuiChildFlags_Border | ImGuiChildFlags_AutoResizeY);
+
+    // Cell header with toolbar
+    RenderCellToolbar(index);
+
+    // Cell content (skip if collapsed)
+    if (!cell.collapsed) {
+        if (cell.type == CellType::Code) {
+            RenderCodeCell(cell, index);
+        } else if (cell.type == CellType::Markdown) {
+            RenderMarkdownCell(cell, index);
+        } else {
+            // Raw cell - just text
+            ImGui::TextWrapped("%s", cell.source.c_str());
+        }
+
+        // Cell outputs (only when not collapsed)
+        if (!cell.outputs.empty() && !cell.output_collapsed) {
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Output header with collapse toggle
+            const char* output_icon = cell.output_collapsed ? ICON_FA_CHEVRON_RIGHT : ICON_FA_CHEVRON_DOWN;
+            if (ImGui::SmallButton(output_icon)) {
+                cell.output_collapsed = !cell.output_collapsed;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Output (%zu items)", cell.outputs.size());
+
+            // Clear outputs button
+            ImGui::SameLine();
+            if (ImGui::SmallButton(ICON_FA_XMARK "##clear_output")) {
+                cell.ClearOutputs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Clear outputs");
+            }
+
+            ImGui::Spacing();
+
+            // Render outputs
+            for (const auto& output : cell.outputs) {
+                RenderCellOutput(output);
+            }
+        } else if (!cell.outputs.empty() && cell.output_collapsed) {
+            // Show collapsed output indicator
+            ImGui::Separator();
+            const char* output_icon = ICON_FA_CHEVRON_RIGHT;
+            if (ImGui::SmallButton(output_icon)) {
+                cell.output_collapsed = false;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Output collapsed (%zu items)", cell.outputs.size());
+        }
+    } else {
+        // Collapsed indicator
+        int line_count = 0;
+        for (char c : cell.source) {
+            if (c == '\n') line_count++;
+        }
+        line_count++;  // Count last line even without trailing newline
+
+        ImGui::TextDisabled("... (%d lines collapsed)", line_count);
+    }
+
+    ImGui::EndChild();
+
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+
+    // Handle cell selection
+    if (ImGui::IsItemClicked() && !is_selected) {
+        tab->selected_cell = index;
+        tab->editing_cell = -1;  // Exit edit mode when clicking another cell
+    }
+
+    // Double-click to edit
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+        tab->selected_cell = index;
+        tab->editing_cell = index;
+    }
+
+    ImGui::PopID();
+    ImGui::Spacing();
+}
+
+void ScriptEditorPanel::RenderCodeCell(Cell& cell, int index) {
+    auto& tab = tabs_[active_tab_index_];
+    bool is_editing = (tab->editing_cell == index);
+
+    // Breakpoint gutter (left side)
+    RenderBreakpointGutter(cell, index);
+    ImGui::SameLine();
+
+    // Execution count display
+    ImGui::BeginGroup();
+    {
+        std::string exec_label;
+        if (cell.state == CellState::Running) {
+            exec_label = "[*]:";
+        } else if (cell.execution_count > 0) {
+            exec_label = "[" + std::to_string(cell.execution_count) + "]:";
+        } else {
+            exec_label = "[ ]:";
+        }
+
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", exec_label.c_str());
+    }
+    ImGui::EndGroup();
+
+    ImGui::SameLine();
+
+    // Code content
+    float code_width = ImGui::GetContentRegionAvail().x;
+    float min_height = 60.0f;
+
+    if (is_editing) {
+        // Edit mode - show TextEditor
+        cell.SyncEditorFromSource();
+
+        // Calculate height based on content
+        int line_count = cell.editor.GetTotalLines();
+        float line_height = ImGui::GetTextLineHeightWithSpacing();
+        float content_height = std::max(min_height, (line_count + 1) * line_height);
+        content_height = std::min(content_height, 400.0f);  // Cap height
+
+        ImGui::PushID("code_editor");
+        cell.editor.Render("##code", ImVec2(code_width, content_height));
+
+        // Sync changes back
+        cell.SyncSourceFromEditor();
+
+        // Mark modified if text changed
+        if (cell.editor.IsTextChanged()) {
+            tab->is_modified = true;
+        }
+
+        ImGui::PopID();
+    } else {
+        // View mode - display syntax highlighted text
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
+        ImGui::BeginChild("##code_view", ImVec2(code_width, 0), ImGuiChildFlags_AutoResizeY);
+
+        // Simple syntax-highlighted code display
+        std::istringstream stream(cell.source);
+        std::string line;
+        int line_num = 1;
+        while (std::getline(stream, line)) {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%3d", line_num++);
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", line.c_str());
+        }
+
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
+}
+
+void ScriptEditorPanel::RenderMarkdownCell(Cell& cell, int index) {
+    auto& tab = tabs_[active_tab_index_];
+    bool is_editing = (tab->editing_cell == index);
+
+    if (is_editing) {
+        // Edit mode - simple text input
+        ImGui::PushItemWidth(-1);
+
+        // Use TextEditor for markdown editing too
+        cell.SyncEditorFromSource();
+
+        int line_count = cell.editor.GetTotalLines();
+        float line_height = ImGui::GetTextLineHeightWithSpacing();
+        float content_height = std::max(60.0f, (line_count + 1) * line_height);
+        content_height = std::min(content_height, 300.0f);
+
+        cell.editor.Render("##markdown_edit", ImVec2(-1, content_height));
+        cell.SyncSourceFromEditor();
+
+        if (cell.editor.IsTextChanged()) {
+            tab->is_modified = true;
+        }
+
+        ImGui::PopItemWidth();
+    } else {
+        // View mode - render markdown
+        OutputRenderer::RenderMarkdown(cell.source);
+    }
+}
+
+void ScriptEditorPanel::RenderCellOutput(const CellOutput& output) {
+    OutputRenderer::RenderCellOutput(output);
+}
+
+void ScriptEditorPanel::RenderCellToolbar(int index) {
+    auto& tab = tabs_[active_tab_index_];
+    if (index < 0 || index >= static_cast<int>(tab->cell_manager.GetCellCount())) return;
+    Cell& cell = tab->cell_manager.GetCell(index);
+
+    bool is_editing = (tab->editing_cell == index);
+
+    // Cell type indicator
+    const char* type_icon = (cell.type == CellType::Code) ? ICON_FA_CODE :
+                            (cell.type == CellType::Markdown) ? ICON_FA_PARAGRAPH : ICON_FA_FILE_LINES;
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", type_icon);
+
+    ImGui::SameLine();
+
+    // Run button (for code cells)
+    if (cell.type == CellType::Code) {
+        bool can_run = scripting_engine_ && !scripting_engine_->IsScriptRunning();
+        ImGui::BeginDisabled(!can_run);
+        if (ImGui::SmallButton(ICON_FA_PLAY)) {
+            tab->cell_manager.RunCell(index);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Run cell (Shift+Enter)");
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+    }
+
+    // Edit/View toggle
+    if (is_editing) {
+        if (ImGui::SmallButton(ICON_FA_CHECK)) {
+            tab->editing_cell = -1;  // Exit edit mode
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Finish editing (Escape)");
+        }
+    } else {
+        if (ImGui::SmallButton(ICON_FA_PEN)) {
+            tab->editing_cell = index;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Edit cell (Enter)");
+        }
+    }
+    ImGui::SameLine();
+
+    // Move up
+    ImGui::BeginDisabled(index == 0);
+    if (ImGui::SmallButton(ICON_FA_ARROW_UP)) {
+        if (tab->cell_manager.MoveCell(index, index - 1)) {
+            tab->selected_cell = index - 1;
+            tab->is_modified = true;
+        }
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+
+    // Move down
+    ImGui::BeginDisabled(index >= tab->cell_manager.GetCellCount() - 1);
+    if (ImGui::SmallButton(ICON_FA_ARROW_DOWN)) {
+        if (tab->cell_manager.MoveCell(index, index + 1)) {
+            tab->selected_cell = index + 1;
+            tab->is_modified = true;
+        }
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+
+    // Delete
+    if (ImGui::SmallButton(ICON_FA_TRASH)) {
+        if (tab->cell_manager.DeleteCell(index)) {
+            if (tab->selected_cell >= tab->cell_manager.GetCellCount()) {
+                tab->selected_cell = tab->cell_manager.GetCellCount() - 1;
+            }
+            tab->editing_cell = -1;
+            tab->is_modified = true;
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Delete cell");
+    }
+
+    // Clear outputs (for code cells)
+    if (cell.type == CellType::Code && !cell.outputs.empty()) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton(ICON_FA_ERASER)) {
+            cell.ClearOutputs();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Clear outputs");
+        }
+    }
+
+    // Collapse toggle
+    ImGui::SameLine();
+    const char* collapse_icon = cell.collapsed ? ICON_FA_CHEVRON_RIGHT : ICON_FA_CHEVRON_DOWN;
+    if (ImGui::SmallButton(collapse_icon)) {
+        cell.collapsed = !cell.collapsed;
+        tab->is_modified = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(cell.collapsed ? "Expand cell (C)" : "Collapse cell (C)");
+    }
+
+    ImGui::Separator();
+}
+
+void ScriptEditorPanel::HandleCellKeyboardShortcuts() {
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        return;
+    }
+
+    // Handle debug shortcuts first (F5, F9, F10, F11)
+    HandleDebugKeyboardShortcuts();
+
+    auto& tab = tabs_[active_tab_index_];
+    bool ctrl = ImGui::GetIO().KeyCtrl;
+    bool shift = ImGui::GetIO().KeyShift;
+    bool is_editing = (tab->editing_cell >= 0);
+
+    // Toggle cell mode: Ctrl+Shift+N
+    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_N)) {
+        ToggleCellMode();
+        return;
+    }
+
+    // Escape - exit edit mode
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) && is_editing) {
+        // Sync changes before exiting
+        if (tab->editing_cell >= 0 && tab->editing_cell < tab->cell_manager.GetCellCount()) {
+            Cell& cell = tab->cell_manager.GetCell(tab->editing_cell);
+            cell.SyncSourceFromEditor();
+        }
+        tab->editing_cell = -1;
+        return;
+    }
+
+    // Enter - enter edit mode (when not editing)
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !is_editing && tab->selected_cell >= 0 && !shift) {
+        tab->editing_cell = tab->selected_cell;
+        return;
+    }
+
+    // Shift+Enter - run cell and move to next
+    if (shift && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+        if (tab->selected_cell >= 0 && scripting_engine_ && !scripting_engine_->IsScriptRunning()) {
+            // Sync changes if editing
+            if (is_editing && tab->editing_cell >= 0 && tab->editing_cell < tab->cell_manager.GetCellCount()) {
+                Cell& cell = tab->cell_manager.GetCell(tab->editing_cell);
+                cell.SyncSourceFromEditor();
+            }
+            tab->cell_manager.RunCell(tab->selected_cell);
+
+            // Move to next cell or create new one
+            if (tab->selected_cell < tab->cell_manager.GetCellCount() - 1) {
+                tab->selected_cell++;
+            } else {
+                // Create new cell at end
+                int new_idx = tab->cell_manager.AddCell(CellType::Code);
+                tab->selected_cell = new_idx;
+                tab->is_modified = true;
+            }
+            tab->editing_cell = -1;  // Exit edit mode
+        }
+        return;
+    }
+
+    // Arrow keys for navigation (when not editing)
+    if (!is_editing) {
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+            if (tab->selected_cell > 0) {
+                tab->selected_cell--;
+            }
+            return;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            if (tab->selected_cell < tab->cell_manager.GetCellCount() - 1) {
+                tab->selected_cell++;
+            }
+            return;
+        }
+
+        // A - add cell above
+        if (ImGui::IsKeyPressed(ImGuiKey_A)) {
+            int pos = tab->selected_cell >= 0 ? tab->selected_cell : 0;
+            int new_idx = tab->cell_manager.AddCell(CellType::Code, pos);
+            tab->selected_cell = new_idx;
+            tab->editing_cell = new_idx;
+            tab->is_modified = true;
+            return;
+        }
+
+        // B - add cell below
+        if (ImGui::IsKeyPressed(ImGuiKey_B)) {
+            int pos = tab->selected_cell >= 0 ? tab->selected_cell + 1 : -1;
+            int new_idx = tab->cell_manager.AddCell(CellType::Code, pos);
+            tab->selected_cell = new_idx;
+            tab->editing_cell = new_idx;
+            tab->is_modified = true;
+            return;
+        }
+
+        // D,D - delete cell (double tap)
+        static float last_d_press = -10.0f;
+        if (ImGui::IsKeyPressed(ImGuiKey_D)) {
+            float current_time = static_cast<float>(ImGui::GetTime());
+            if (current_time - last_d_press < 0.3f) {
+                if (tab->selected_cell >= 0) {
+                    tab->cell_manager.DeleteCell(tab->selected_cell);
+                    if (tab->selected_cell >= tab->cell_manager.GetCellCount()) {
+                        tab->selected_cell = tab->cell_manager.GetCellCount() - 1;
+                    }
+                    tab->is_modified = true;
+                }
+                last_d_press = -10.0f;
+            } else {
+                last_d_press = current_time;
+            }
+            return;
+        }
+
+        // M - convert to markdown
+        if (ImGui::IsKeyPressed(ImGuiKey_M)) {
+            if (tab->selected_cell >= 0 && tab->selected_cell < tab->cell_manager.GetCellCount()) {
+                Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
+                if (cell.type == CellType::Code) {
+                    cell.type = CellType::Markdown;
+                    tab->is_modified = true;
+                }
+            }
+            return;
+        }
+
+        // Y - convert to code
+        if (ImGui::IsKeyPressed(ImGuiKey_Y)) {
+            if (tab->selected_cell >= 0 && tab->selected_cell < tab->cell_manager.GetCellCount()) {
+                Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
+                if (cell.type == CellType::Markdown) {
+                    cell.type = CellType::Code;
+                    cell.SetupCodeEditor();  // Restore Python syntax highlighting
+                    tab->is_modified = true;
+                }
+            }
+            return;
+        }
+
+        // C - toggle cell collapse
+        if (ImGui::IsKeyPressed(ImGuiKey_C)) {
+            if (tab->selected_cell >= 0 && tab->selected_cell < tab->cell_manager.GetCellCount()) {
+                Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
+                cell.collapsed = !cell.collapsed;
+                tab->is_modified = true;
+            }
+            return;
+        }
+
+        // O - toggle output collapse
+        if (ImGui::IsKeyPressed(ImGuiKey_O)) {
+            if (tab->selected_cell >= 0 && tab->selected_cell < tab->cell_manager.GetCellCount()) {
+                Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
+                if (!cell.outputs.empty()) {
+                    cell.output_collapsed = !cell.output_collapsed;
+                }
+            }
+            return;
+        }
+    }
+}
+
+// ============================================================================
+// Debugger UI Functions
+// ============================================================================
+
+void ScriptEditorPanel::RenderDebugToolbar() {
+    if (!debugger_) return;
+
+    auto state = debugger_->GetState();
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.2f, 1.0f));
+    ImGui::BeginChild("##debug_toolbar", ImVec2(0, 35), ImGuiChildFlags_Border);
+
+    // Debug status indicator
+    if (state == scripting::DebugState::Paused) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), ICON_FA_PAUSE " Paused at line %d", debug_current_line_);
+    } else if (state == scripting::DebugState::Running) {
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), ICON_FA_PLAY " Running...");
+    } else if (state == scripting::DebugState::Stepping) {
+        ImGui::TextColored(ImVec4(0.4f, 0.6f, 1.0f, 1.0f), ICON_FA_FORWARD_STEP " Stepping...");
+    } else {
+        ImGui::TextDisabled(ICON_FA_BUG " Debugger Disconnected");
+    }
+
+    ImGui::SameLine(ImGui::GetWindowWidth() - 280);
+
+    // Continue/Pause button
+    if (state == scripting::DebugState::Paused) {
+        if (ImGui::Button(ICON_FA_PLAY " Continue")) {
+            debugger_->Continue();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Continue execution (F5)");
+        }
+    } else if (state == scripting::DebugState::Running || state == scripting::DebugState::Stepping) {
+        if (ImGui::Button(ICON_FA_PAUSE " Pause")) {
+            debugger_->Pause();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Pause execution (F5)");
+        }
+    }
+
+    ImGui::SameLine();
+
+    // Step controls (only enabled when paused)
+    ImGui::BeginDisabled(state != scripting::DebugState::Paused);
+
+    if (ImGui::Button(ICON_FA_ARROW_DOWN " Over")) {
+        debugger_->StepOver();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Step Over (F10)");
+    }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button(ICON_FA_ARROW_RIGHT " Into")) {
+        debugger_->StepInto();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Step Into (F11)");
+    }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button(ICON_FA_ARROW_UP " Out")) {
+        debugger_->StepOut();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Step Out (Shift+F11)");
+    }
+
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+
+    // Stop button
+    if (ImGui::Button(ICON_FA_STOP " Stop")) {
+        debugger_->Stop();
+        debug_mode_active_ = false;
+        debug_current_line_ = -1;
+        debug_current_cell_.clear();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Stop debugging (Shift+F5)");
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+void ScriptEditorPanel::RenderBreakpointGutter(Cell& cell, int cell_index) {
+    if (cell.type != CellType::Code) return;
+
+    int line_count = cell.editor.GetTotalLines();
+    if (line_count == 0) line_count = 1;
+
+    float line_height = ImGui::GetTextLineHeightWithSpacing();
+    float gutter_width = 20.0f;
+
+    ImGui::BeginChild("##bp_gutter", ImVec2(gutter_width, line_count * line_height), ImGuiChildFlags_None);
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 cursor_start = ImGui::GetCursorScreenPos();
+
+    for (int line = 0; line < line_count; ++line) {
+        ImVec2 line_pos = ImVec2(cursor_start.x, cursor_start.y + line * line_height);
+        ImVec2 center = ImVec2(line_pos.x + gutter_width * 0.5f, line_pos.y + line_height * 0.5f);
+        float radius = 5.0f;
+
+        // Check if this line has a breakpoint
+        bool has_breakpoint = std::find(cell.breakpoints.begin(), cell.breakpoints.end(), line + 1) != cell.breakpoints.end();
+
+        // Check if this is the current debug line
+        bool is_current_line = debug_mode_active_ &&
+                               debug_current_cell_ == cell.id &&
+                               debug_current_line_ == line + 1;
+
+        // Draw hover indicator
+        ImGui::SetCursorScreenPos(line_pos);
+        ImGui::InvisibleButton(("##bp_line_" + std::to_string(line)).c_str(), ImVec2(gutter_width, line_height));
+
+        if (ImGui::IsItemHovered()) {
+            draw_list->AddCircle(center, radius, IM_COL32(150, 150, 150, 150), 12, 1.0f);
+
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                // Toggle breakpoint
+                if (has_breakpoint) {
+                    cell.breakpoints.erase(
+                        std::remove(cell.breakpoints.begin(), cell.breakpoints.end(), line + 1),
+                        cell.breakpoints.end()
+                    );
+
+                    // Notify debugger
+                    if (debugger_) {
+                        auto breakpoints = debugger_->GetBreakpointsForCell(cell.id);
+                        for (const auto& bp : breakpoints) {
+                            if (bp.line == line + 1) {
+                                debugger_->RemoveBreakpoint(bp.id);
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    cell.breakpoints.push_back(line + 1);
+
+                    // Notify debugger
+                    if (debugger_) {
+                        debugger_->AddBreakpoint(cell.id, line + 1);
+                    }
+                }
+            }
+        }
+
+        // Draw breakpoint indicator
+        if (has_breakpoint) {
+            draw_list->AddCircleFilled(center, radius, IM_COL32(200, 50, 50, 255), 12);
+        }
+
+        // Draw current line indicator (arrow)
+        if (is_current_line) {
+            ImVec2 arrow_points[3] = {
+                ImVec2(center.x - 4, center.y - 4),
+                ImVec2(center.x + 4, center.y),
+                ImVec2(center.x - 4, center.y + 4)
+            };
+            draw_list->AddTriangleFilled(arrow_points[0], arrow_points[1], arrow_points[2],
+                                         IM_COL32(255, 255, 0, 255));
+        }
+    }
+
+    ImGui::EndChild();
+}
+
+void ScriptEditorPanel::RenderScriptBreakpointGutter(float height) {
+    if (tabs_.empty() || active_tab_index_ < 0) return;
+
+    auto& tab = tabs_[active_tab_index_];
+    int line_count = tab->editor.GetTotalLines();
+    if (line_count == 0) line_count = 1;
+
+    float line_height = ImGui::GetTextLineHeightWithSpacing();
+    float gutter_width = 20.0f;
+
+    // Get editor scroll position to sync gutter scrolling
+    // Note: TextEditor doesn't expose scroll position directly, so we estimate
+    auto coords = tab->editor.GetCursorPosition();
+
+    ImGui::BeginChild("##script_bp_gutter", ImVec2(gutter_width, height), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar);
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 cursor_start = ImGui::GetCursorScreenPos();
+
+    // Calculate visible lines based on height
+    int visible_lines = static_cast<int>(height / line_height) + 1;
+    int start_line = 0;  // Would need TextEditor scroll position for accurate sync
+
+    for (int line = start_line; line < std::min(start_line + visible_lines + 5, line_count); ++line) {
+        ImVec2 line_pos = ImVec2(cursor_start.x, cursor_start.y + (line - start_line) * line_height);
+        ImVec2 center = ImVec2(line_pos.x + gutter_width * 0.5f, line_pos.y + line_height * 0.5f);
+        float radius = 5.0f;
+
+        int line_number = line + 1;  // 1-based line numbers
+
+        // Check if this line has a breakpoint
+        bool has_breakpoint = std::find(tab->breakpoints.begin(), tab->breakpoints.end(), line_number) != tab->breakpoints.end();
+
+        // Check if this is the current debug line
+        std::string file_id = tab->filepath.empty() ? tab->filename : tab->filepath;
+        bool is_current_line = debug_mode_active_ &&
+                               debug_current_cell_ == file_id &&
+                               debug_current_line_ == line_number;
+
+        // Draw hover indicator and handle clicks
+        ImGui::SetCursorScreenPos(line_pos);
+        ImGui::InvisibleButton(("##script_bp_line_" + std::to_string(line)).c_str(), ImVec2(gutter_width, line_height));
+
+        if (ImGui::IsItemHovered()) {
+            draw_list->AddCircle(center, radius, IM_COL32(150, 150, 150, 150), 12, 1.0f);
+
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                // Toggle breakpoint
+                if (has_breakpoint) {
+                    tab->breakpoints.erase(
+                        std::remove(tab->breakpoints.begin(), tab->breakpoints.end(), line_number),
+                        tab->breakpoints.end()
+                    );
+
+                    // Notify debugger
+                    if (debugger_) {
+                        auto breakpoints = debugger_->GetBreakpointsForCell(file_id);
+                        for (const auto& bp : breakpoints) {
+                            if (bp.line == line_number) {
+                                debugger_->RemoveBreakpoint(bp.id);
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    tab->breakpoints.push_back(line_number);
+
+                    // Notify debugger
+                    if (debugger_) {
+                        debugger_->AddBreakpoint(file_id, line_number);
+                    }
+                }
+            }
+        }
+
+        // Draw breakpoint indicator
+        if (has_breakpoint) {
+            draw_list->AddCircleFilled(center, radius, IM_COL32(200, 50, 50, 255), 12);
+        }
+
+        // Draw current line indicator (arrow)
+        if (is_current_line) {
+            ImVec2 arrow_points[3] = {
+                ImVec2(center.x - 4, center.y - 4),
+                ImVec2(center.x + 4, center.y),
+                ImVec2(center.x - 4, center.y + 4)
+            };
+            draw_list->AddTriangleFilled(arrow_points[0], arrow_points[1], arrow_points[2],
+                                         IM_COL32(255, 255, 0, 255));
+        }
+    }
+
+    ImGui::EndChild();
+}
+
+void ScriptEditorPanel::HandleDebugKeyboardShortcuts() {
+    if (!debugger_) return;
+
+    auto state = debugger_->GetState();
+
+    // F5 - Continue / Start Debug
+    if (ImGui::IsKeyPressed(ImGuiKey_F5)) {
+        if (ImGui::GetIO().KeyShift) {
+            // Shift+F5 - Stop debugging
+            debugger_->Stop();
+            debug_mode_active_ = false;
+            debug_current_line_ = -1;
+            debug_current_cell_.clear();
+        } else if (state == scripting::DebugState::Paused) {
+            debugger_->Continue();
+        } else if (state == scripting::DebugState::Disconnected) {
+            Debug(); // Start debugging
+        }
+    }
+
+    // F10 - Step Over
+    if (ImGui::IsKeyPressed(ImGuiKey_F10)) {
+        if (state == scripting::DebugState::Paused) {
+            debugger_->StepOver();
+        }
+    }
+
+    // F11 - Step Into / Shift+F11 - Step Out
+    if (ImGui::IsKeyPressed(ImGuiKey_F11)) {
+        if (state == scripting::DebugState::Paused) {
+            if (ImGui::GetIO().KeyShift) {
+                debugger_->StepOut();
+            } else {
+                debugger_->StepInto();
+            }
+        }
+    }
+
+    // F9 - Toggle breakpoint at current line
+    if (ImGui::IsKeyPressed(ImGuiKey_F9)) {
+        if (tabs_.empty() || active_tab_index_ < 0) return;
+
+        auto& tab = tabs_[active_tab_index_];
+
+        if (tab->cell_mode) {
+            // Cell mode - toggle breakpoint in selected cell
+            if (tab->selected_cell >= 0 &&
+                tab->selected_cell < static_cast<int>(tab->cell_manager.GetCellCount())) {
+                Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
+                if (cell.type == CellType::Code) {
+                    // Get current cursor line from editor
+                    auto coords = cell.editor.GetCursorPosition();
+                    int line = coords.mLine + 1; // 1-based
+
+                    // Toggle breakpoint
+                    auto it = std::find(cell.breakpoints.begin(), cell.breakpoints.end(), line);
+                    if (it != cell.breakpoints.end()) {
+                        cell.breakpoints.erase(it);
+                        if (debugger_) {
+                            auto breakpoints = debugger_->GetBreakpointsForCell(cell.id);
+                            for (const auto& bp : breakpoints) {
+                                if (bp.line == line) {
+                                    debugger_->RemoveBreakpoint(bp.id);
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        cell.breakpoints.push_back(line);
+                        if (debugger_) {
+                            debugger_->AddBreakpoint(cell.id, line);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Traditional mode - toggle breakpoint in script
+            auto coords = tab->editor.GetCursorPosition();
+            int line = coords.mLine + 1; // 1-based
+
+            std::string file_id = tab->filepath.empty() ? tab->filename : tab->filepath;
+
+            // Toggle breakpoint
+            auto it = std::find(tab->breakpoints.begin(), tab->breakpoints.end(), line);
+            if (it != tab->breakpoints.end()) {
+                tab->breakpoints.erase(it);
+                if (debugger_) {
+                    auto breakpoints = debugger_->GetBreakpointsForCell(file_id);
+                    for (const auto& bp : breakpoints) {
+                        if (bp.line == line) {
+                            debugger_->RemoveBreakpoint(bp.id);
+                            break;
+                        }
+                    }
+                }
+            } else {
+                tab->breakpoints.push_back(line);
+                if (debugger_) {
+                    debugger_->AddBreakpoint(file_id, line);
+                }
+            }
+        }
     }
 }
 

@@ -255,6 +255,204 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
     }
 }
 
+std::string NodeEditor::GetGraphJson() const {
+    using json = nlohmann::json;
+
+    try {
+        json j;
+        j["version"] = "1.0";
+        j["framework"] = static_cast<int>(selected_framework_);
+
+        // Serialize nodes
+        json nodes_array = json::array();
+        for (const auto& node : nodes_) {
+            json node_json;
+            node_json["id"] = node.id;
+            node_json["type"] = static_cast<int>(node.type);
+            node_json["name"] = node.name;
+            node_json["parameters"] = node.parameters;
+
+            // Save node position
+            auto it = cached_node_positions_.find(node.id);
+            ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
+            node_json["pos_x"] = pos.x;
+            node_json["pos_y"] = pos.y;
+
+            nodes_array.push_back(node_json);
+        }
+        j["nodes"] = nodes_array;
+
+        // Serialize links with pin indices for multi-pin support
+        json links_array = json::array();
+        for (const auto& link : links_) {
+            json link_json;
+            link_json["id"] = link.id;
+            link_json["from_node"] = link.from_node;
+            link_json["from_pin"] = link.from_pin;
+            link_json["to_node"] = link.to_node;
+            link_json["to_pin"] = link.to_pin;
+
+            // Save pin indices for proper multi-pin node support
+            const MLNode* from_node = FindNodeById(link.from_node);
+            const MLNode* to_node = FindNodeById(link.to_node);
+
+            int from_pin_index = 0;
+            if (from_node) {
+                for (size_t i = 0; i < from_node->outputs.size(); ++i) {
+                    if (from_node->outputs[i].id == link.from_pin) {
+                        from_pin_index = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+
+            int to_pin_index = 0;
+            if (to_node) {
+                for (size_t i = 0; i < to_node->inputs.size(); ++i) {
+                    if (to_node->inputs[i].id == link.to_pin) {
+                        to_pin_index = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+
+            link_json["from_pin_index"] = from_pin_index;
+            link_json["to_pin_index"] = to_pin_index;
+
+            // Save link type for skip connection visualization
+            link_json["link_type"] = static_cast<int>(link.type);
+
+            links_array.push_back(link_json);
+        }
+        j["links"] = links_array;
+
+        return j.dump(4);  // Pretty print with 4-space indent
+
+    } catch (const std::exception& e) {
+        spdlog::error("Error serializing graph: {}", e.what());
+        return "";
+    }
+}
+
+bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
+    using json = nlohmann::json;
+
+    if (json_string.empty()) {
+        spdlog::error("Cannot load graph from empty JSON string");
+        return false;
+    }
+
+    try {
+        json j = json::parse(json_string);
+
+        // Clear existing graph
+        ClearGraph();
+
+        // Update next IDs to avoid conflicts
+        int max_node_id = 0;
+        int max_link_id = 0;
+
+        // Load framework
+        if (j.contains("framework")) {
+            selected_framework_ = static_cast<CodeFramework>(j["framework"].get<int>());
+        }
+
+        // Load nodes
+        for (const auto& node_json : j["nodes"]) {
+            MLNode node;
+            node.id = node_json["id"];
+            node.type = static_cast<NodeType>(node_json["type"].get<int>());
+            node.name = node_json["name"];
+
+            if (node_json.contains("parameters")) {
+                node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+            }
+
+            // Recreate pins based on node type using fresh pin IDs
+            MLNode template_node = CreateNode(node.type, node.name);
+            node.inputs = template_node.inputs;
+            node.outputs = template_node.outputs;
+
+            // Update max IDs
+            max_node_id = std::max(max_node_id, node.id);
+
+            nodes_.push_back(node);
+
+            // Queue position restore for next render frame
+            if (node_json.contains("pos_x") && node_json.contains("pos_y")) {
+                float pos_x = node_json["pos_x"];
+                float pos_y = node_json["pos_y"];
+                pending_positions_[node.id] = ImVec2(pos_x, pos_y);
+            }
+        }
+
+        // Need to apply positions for multiple frames
+        pending_positions_frames_ = 3;
+
+        // Load links with pin index support
+        for (const auto& link_json : j["links"]) {
+            NodeLink link;
+            link.id = link_json["id"];
+            link.from_node = link_json["from_node"];
+            link.to_node = link_json["to_node"];
+
+            // Find actual pin IDs from loaded nodes using pin indices
+            const MLNode* from_node = FindNodeById(link.from_node);
+            const MLNode* to_node = FindNodeById(link.to_node);
+
+            // Use pin indices if available
+            int from_pin_index = 0;
+            int to_pin_index = 0;
+
+            if (link_json.contains("from_pin_index")) {
+                from_pin_index = link_json["from_pin_index"].get<int>();
+            }
+            if (link_json.contains("to_pin_index")) {
+                to_pin_index = link_json["to_pin_index"].get<int>();
+            }
+
+            // Get the actual pin ID using the index
+            if (from_node && from_pin_index < static_cast<int>(from_node->outputs.size())) {
+                link.from_pin = from_node->outputs[from_pin_index].id;
+            } else if (from_node && !from_node->outputs.empty()) {
+                link.from_pin = from_node->outputs[0].id;
+            } else {
+                link.from_pin = link_json["from_pin"];
+            }
+
+            if (to_node && to_pin_index < static_cast<int>(to_node->inputs.size())) {
+                link.to_pin = to_node->inputs[to_pin_index].id;
+            } else if (to_node && !to_node->inputs.empty()) {
+                link.to_pin = to_node->inputs[0].id;
+            } else {
+                link.to_pin = link_json["to_pin"];
+            }
+
+            // Load link type
+            if (link_json.contains("link_type")) {
+                link.type = static_cast<LinkType>(link_json["link_type"].get<int>());
+            } else {
+                link.type = LinkType::TensorFlow;
+            }
+
+            links_.push_back(link);
+            max_link_id = std::max(max_link_id, link.id);
+        }
+
+        // Update next IDs
+        next_node_id_ = max_node_id + 1;
+        next_link_id_ = max_link_id + 1;
+
+        spdlog::info("Graph loaded from JSON string ({} nodes, {} links)",
+                     nodes_.size(), links_.size());
+        return true;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Error loading graph from JSON string: {}", e.what());
+        return false;
+    }
+}
+
 // ========== Platform-Specific File Dialogs ==========
 
 #ifdef _WIN32

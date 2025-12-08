@@ -49,7 +49,13 @@ set(ENGINE_SOURCES
     src/core/dataset_batcher.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
+    src/core/test_executor.cpp
+    src/core/test_manager.cpp
     src/core/checkpoint_manager.cpp
+    src/core/model_exporter.cpp
+    src/core/model_importer.cpp
+    src/core/model_analyzer.cpp
+    src/core/formats/cyxmodel_format.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_clipboard.cpp
@@ -69,6 +75,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_edit_menu.cpp
     src/gui/panels/toolbar_view_menu.cpp
     src/gui/panels/toolbar_other_menus.cpp
+    src/gui/panels/toolbar_tools_menu.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
@@ -85,7 +92,76 @@ set(ENGINE_SOURCES
     src/gui/panels/theme_editor.cpp
     src/gui/panels/profiling_panel.cpp
     src/gui/panels/memory_panel.cpp
+    src/gui/panels/memory_monitor.cpp
     src/gui/panels/pattern_browser.cpp
+    src/gui/panels/variable_explorer.cpp
+    src/gui/panels/test_results_panel.cpp
+    src/gui/panels/export_dialog.cpp
+    src/gui/panels/import_dialog.cpp
+    src/gui/panels/model_summary_panel.cpp
+    src/gui/panels/architecture_diagram.cpp
+    src/gui/panels/lr_finder_panel.cpp
+    src/gui/panels/data_profiler_panel.cpp
+    src/gui/panels/correlation_matrix_panel.cpp
+    src/gui/panels/missing_value_panel.cpp
+    src/gui/panels/outlier_detection_panel.cpp
+    src/gui/panels/descriptive_stats_panel.cpp
+    src/gui/panels/hypothesis_test_panel.cpp
+    src/gui/panels/distribution_fitter_panel.cpp
+    src/gui/panels/regression_panel.cpp
+    src/gui/panels/dim_reduction_panel.cpp
+    src/gui/panels/gradcam_panel.cpp
+    src/gui/panels/feature_importance_panel.cpp
+    src/gui/panels/nas_panel.cpp
+    src/gui/panels/kmeans_panel.cpp
+    src/gui/panels/dbscan_panel.cpp
+    src/gui/panels/hierarchical_panel.cpp
+    src/gui/panels/gmm_panel.cpp
+    src/gui/panels/cluster_eval_panel.cpp
+    src/gui/panels/confusion_matrix_panel.cpp
+    src/gui/panels/roc_auc_panel.cpp
+    src/gui/panels/pr_curve_panel.cpp
+    src/gui/panels/cross_validation_panel.cpp
+    src/gui/panels/learning_curves_panel.cpp
+    src/gui/panels/normalization_panel.cpp
+    src/gui/panels/standardization_panel.cpp
+    src/gui/panels/log_transform_panel.cpp
+    src/gui/panels/boxcox_panel.cpp
+    src/gui/panels/feature_scaling_panel.cpp
+    src/gui/panels/matrix_calculator_panel.cpp
+    src/gui/panels/eigen_decomp_panel.cpp
+    src/gui/panels/svd_panel.cpp
+    src/gui/panels/qr_panel.cpp
+    src/gui/panels/cholesky_panel.cpp
+    src/gui/panels/fft_panel.cpp
+    src/gui/panels/spectrogram_panel.cpp
+    src/gui/panels/filter_designer_panel.cpp
+    src/gui/panels/convolution_panel.cpp
+    src/gui/panels/wavelet_panel.cpp
+    src/gui/panels/gradient_descent_panel.cpp
+    src/gui/panels/convexity_panel.cpp
+    src/gui/panels/lp_panel.cpp
+    src/gui/panels/qp_panel.cpp
+    src/gui/panels/differentiation_panel.cpp
+    src/gui/panels/integration_panel.cpp
+    src/gui/panels/decomposition_panel.cpp
+    src/gui/panels/acf_pacf_panel.cpp
+    src/gui/panels/stationarity_panel.cpp
+    src/gui/panels/seasonality_panel.cpp
+    src/gui/panels/forecasting_panel.cpp
+    src/gui/panels/tokenization_panel.cpp
+    src/gui/panels/word_frequency_panel.cpp
+    src/gui/panels/tfidf_panel.cpp
+    src/gui/panels/embeddings_panel.cpp
+    src/gui/panels/sentiment_panel.cpp
+    src/gui/panels/calculator_panel.cpp
+    src/gui/panels/unit_converter_panel.cpp
+    src/gui/panels/random_generator_panel.cpp
+    src/gui/panels/hash_generator_panel.cpp
+    src/gui/panels/json_viewer_panel.cpp
+    src/gui/panels/regex_tester_panel.cpp
+    src/core/nas_evaluator.cpp
+    src/core/data_analyzer.cpp
     src/gui/tutorial/tutorial_system.cpp
     src/gui/panels/query_console.cpp
     src/gui/patterns/pattern_library.cpp
@@ -98,7 +174,10 @@ set(ENGINE_SOURCES
     src/scripting/script_manager.cpp
     src/scripting/scripting_engine.cpp
     src/scripting/python_sandbox.cpp
+    src/scripting/debugger.cpp
     src/scripting/startup_script_manager.cpp
+    src/scripting/cell_manager.cpp
+    src/gui/panels/output_renderer.cpp
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.cpp
     # ImNodes (visual node editor)
@@ -130,7 +209,14 @@ set(ENGINE_HEADERS
     src/core/dataset_batcher.h
     src/core/training_executor.h
     src/core/training_manager.h
+    src/core/test_executor.h
+    src/core/test_manager.h
     src/core/checkpoint_manager.h
+    src/core/model_format.h
+    src/core/model_exporter.h
+    src/core/model_importer.h
+    src/core/model_analyzer.h
+    src/core/formats/cyxmodel_format.h
     src/gui/main_window.h
     src/gui/node_editor.h
     src/gui/node_documentation.h
@@ -155,7 +241,73 @@ set(ENGINE_HEADERS
     src/gui/panels/theme_editor.h
     src/gui/panels/profiling_panel.h
     src/gui/panels/memory_panel.h
+    src/gui/panels/memory_monitor.h
     src/gui/panels/pattern_browser.h
+    src/gui/panels/test_results_panel.h
+    src/gui/panels/export_dialog.h
+    src/gui/panels/import_dialog.h
+    src/gui/panels/model_summary_panel.h
+    src/gui/panels/architecture_diagram.h
+    src/gui/panels/lr_finder_panel.h
+    src/gui/panels/data_profiler_panel.h
+    src/gui/panels/correlation_matrix_panel.h
+    src/gui/panels/missing_value_panel.h
+    src/gui/panels/outlier_detection_panel.h
+    src/gui/panels/descriptive_stats_panel.h
+    src/gui/panels/hypothesis_test_panel.h
+    src/gui/panels/distribution_fitter_panel.h
+    src/gui/panels/regression_panel.h
+    src/gui/panels/dim_reduction_panel.h
+    src/gui/panels/gradcam_panel.h
+    src/gui/panels/feature_importance_panel.h
+    src/gui/panels/nas_panel.h
+    src/gui/panels/kmeans_panel.h
+    src/gui/panels/dbscan_panel.h
+    src/gui/panels/hierarchical_panel.h
+    src/gui/panels/gmm_panel.h
+    src/gui/panels/cluster_eval_panel.h
+    src/gui/panels/confusion_matrix_panel.h
+    src/gui/panels/roc_auc_panel.h
+    src/gui/panels/pr_curve_panel.h
+    src/gui/panels/cross_validation_panel.h
+    src/gui/panels/learning_curves_panel.h
+    src/gui/panels/normalization_panel.h
+    src/gui/panels/standardization_panel.h
+    src/gui/panels/log_transform_panel.h
+    src/gui/panels/boxcox_panel.h
+    src/gui/panels/feature_scaling_panel.h
+    src/gui/panels/matrix_calculator_panel.h
+    src/gui/panels/eigen_decomp_panel.h
+    src/gui/panels/svd_panel.h
+    src/gui/panels/qr_panel.h
+    src/gui/panels/cholesky_panel.h
+    src/gui/panels/fft_panel.h
+    src/gui/panels/spectrogram_panel.h
+    src/gui/panels/filter_designer_panel.h
+    src/gui/panels/convolution_panel.h
+    src/gui/panels/wavelet_panel.h
+    src/gui/panels/gradient_descent_panel.h
+    src/gui/panels/convexity_panel.h
+    src/gui/panels/lp_panel.h
+    src/gui/panels/qp_panel.h
+    src/gui/panels/differentiation_panel.h
+    src/gui/panels/integration_panel.h
+    src/gui/panels/decomposition_panel.h
+    src/gui/panels/acf_pacf_panel.h
+    src/gui/panels/stationarity_panel.h
+    src/gui/panels/seasonality_panel.h
+    src/gui/panels/forecasting_panel.h
+    src/gui/panels/tokenization_panel.h
+    src/gui/panels/word_frequency_panel.h
+    src/gui/panels/tfidf_panel.h
+    src/gui/panels/embeddings_panel.h
+    src/gui/panels/sentiment_panel.h
+    src/gui/panels/calculator_panel.h
+    src/gui/panels/unit_converter_panel.h
+    src/gui/panels/random_generator_panel.h
+    src/gui/panels/hash_generator_panel.h
+    src/gui/panels/json_viewer_panel.h
+    src/gui/panels/regex_tester_panel.h
     src/gui/tutorial/tutorial_system.h
     src/gui/panels/query_console.h
     src/gui/patterns/pattern.h
@@ -171,6 +323,9 @@ set(ENGINE_HEADERS
     src/scripting/scripting_engine.h
     src/scripting/python_sandbox.h
     src/scripting/startup_script_manager.h
+    src/scripting/cell.h
+    src/scripting/cell_manager.h
+    src/gui/panels/output_renderer.h
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.h
     src/network/grpc_client.h
@@ -300,6 +455,14 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     ${CMAKE_SOURCE_DIR}/test_data.csv
     $<TARGET_FILE_DIR:cyxwiz-engine>/test_data.csv
     COMMENT "Copying test data files..."
+)
+
+# Copy pycyxwiz Python module to engine directory (built by cyxwiz-backend)
+add_custom_command(TARGET cyxwiz-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:pycyxwiz>
+    $<TARGET_FILE_DIR:cyxwiz-engine>/pycyxwiz.pyd
+    COMMENT "Copying pycyxwiz Python module..."
 )
 
 # ===== Python Bindings Module =====

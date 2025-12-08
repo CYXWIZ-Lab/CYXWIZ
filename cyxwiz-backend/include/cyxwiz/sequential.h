@@ -87,8 +87,30 @@ public:
 
     bool IsTraining() const { return is_training_; }
 
+    /**
+     * @brief Set trainable state for transfer learning
+     * @param trainable If false, parameters won't be updated during training
+     */
+    void SetTrainable(bool trainable) { trainable_ = trainable; }
+
+    /**
+     * @brief Check if module is trainable
+     */
+    bool IsTrainable() const { return trainable_; }
+
+    /**
+     * @brief Freeze the module (disable parameter updates)
+     */
+    void Freeze() { trainable_ = false; }
+
+    /**
+     * @brief Unfreeze the module (enable parameter updates)
+     */
+    void Unfreeze() { trainable_ = true; }
+
 protected:
     bool is_training_ = true;
+    bool trainable_ = true;  // For transfer learning - frozen layers won't update
     Tensor input_cache_;  // Cached input for backward pass
 };
 
@@ -378,9 +400,48 @@ public:
     }
 
     /**
+     * @brief Get module at index (const version)
+     */
+    const Module* GetModule(size_t index) const {
+        return index < modules_.size() ? modules_[index].get() : nullptr;
+    }
+
+    /**
      * @brief Print model summary
      */
     void Summary() const;
+
+    // ==================== Transfer Learning ====================
+
+    /**
+     * @brief Freeze a specific layer by index
+     * @param layer_idx Index of the layer to freeze
+     */
+    void FreezeLayer(size_t layer_idx);
+
+    /**
+     * @brief Freeze all layers up to (but not including) the given index
+     * @param layer_idx First layer that remains trainable
+     */
+    void FreezeUpTo(size_t layer_idx);
+
+    /**
+     * @brief Freeze all layers except the last N layers
+     * @param n Number of layers to keep trainable at the end
+     */
+    void FreezeExceptLast(size_t n);
+
+    /**
+     * @brief Unfreeze all layers
+     */
+    void UnfreezeAll();
+
+    /**
+     * @brief Check if a layer is trainable
+     * @param layer_idx Index of the layer
+     * @return true if the layer is trainable, false if frozen
+     */
+    bool IsLayerTrainable(size_t layer_idx) const;
 
 private:
     std::vector<std::unique_ptr<Module>> modules_;

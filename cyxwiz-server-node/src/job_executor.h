@@ -8,12 +8,16 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <queue>
 
 // Protocol includes
 #include "job.pb.h"
 
 // Backend includes
 #include <cyxwiz/cyxwiz.h>
+
+// Core includes
+#include "core/device_pool.h"
 
 namespace cyxwiz {
 namespace servernode {
@@ -89,6 +93,7 @@ private:
         protocol::JobConfig config;
         TrainingMetrics current_metrics;
         std::chrono::steady_clock::time_point start_time;
+        int assigned_device_id = -1;  // Device from pool
     };
 
     // Execute job in worker thread (synchronous)
@@ -135,13 +140,24 @@ private:
                        std::vector<cyxwiz::Tensor>& train_data,
                        std::vector<cyxwiz::Tensor>& train_labels);
 
+    // Process pending jobs when a device becomes available
+    void ProcessPendingJobs();
+
     // Member variables
     std::string node_id_;
-    cyxwiz::Device* device_;
+    cyxwiz::Device* device_;  // Legacy single device (for backward compatibility)
+
+    // Device pool for multi-GPU management
+    std::unique_ptr<core::DevicePool> device_pool_;
+    bool use_device_pool_ = false;
 
     // Job management
     std::unordered_map<std::string, std::unique_ptr<JobState>> active_jobs_;
     mutable std::mutex jobs_mutex_;
+
+    // Pending jobs queue (when all devices are busy)
+    std::queue<protocol::JobConfig> pending_jobs_;
+    mutable std::mutex pending_mutex_;
 
     // Callbacks
     ProgressCallback progress_callback_;
@@ -153,6 +169,18 @@ private:
 
     // Progress reporting interval (milliseconds)
     int progress_interval_ms_ = 1000;
+
+public:
+    // Device pool access
+    core::DevicePool* GetDevicePool() { return device_pool_.get(); }
+    const core::DevicePool* GetDevicePool() const { return device_pool_.get(); }
+    bool IsUsingDevicePool() const { return use_device_pool_; }
+
+    // Get pending job count
+    size_t GetPendingJobCount() const {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        return pending_jobs_.size();
+    }
 };
 
 } // namespace servernode

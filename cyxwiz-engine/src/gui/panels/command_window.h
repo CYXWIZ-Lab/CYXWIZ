@@ -32,7 +32,7 @@ private:
     // Output entry (command or result)
     struct OutputEntry {
         enum class Type {
-            Command,    // User input (f:> ...)
+            Command,    // User input (fx:>> ...)
             Result,     // Execution result
             Error       // Error message
         };
@@ -71,7 +71,7 @@ private:
     std::string completion_prefix_;
 
     // UI state
-    char input_buffer_[1024];
+    char input_buffer_[4096];  // Larger buffer for multi-line input
     bool scroll_to_bottom_;
     bool focus_input_;
 };

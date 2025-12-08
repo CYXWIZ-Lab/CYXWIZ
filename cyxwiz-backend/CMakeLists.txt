@@ -38,6 +38,18 @@ set(BACKEND_SOURCES
     src/algorithms/activations/tanh.cpp
     src/algorithms/sequential.cpp
     src/algorithms/scheduler.cpp
+    src/algorithms/clustering.cpp
+    src/algorithms/data_transform.cpp
+    src/algorithms/model_evaluation.cpp
+    src/algorithms/dimensionality_reduction.cpp
+    src/algorithms/feature_importance.cpp
+    src/algorithms/model_interpretability.cpp
+    src/algorithms/linear_algebra.cpp
+    src/algorithms/signal_processing.cpp
+    src/algorithms/optimization.cpp
+    src/algorithms/time_series.cpp
+    src/algorithms/text_processing.cpp
+    src/algorithms/utilities.cpp
 )
 
 # Header files
@@ -59,6 +71,18 @@ set(BACKEND_HEADERS
     include/cyxwiz/activations/tanh.h
     include/cyxwiz/sequential.h
     include/cyxwiz/scheduler.h
+    include/cyxwiz/clustering.h
+    include/cyxwiz/data_transform.h
+    include/cyxwiz/model_evaluation.h
+    include/cyxwiz/dimensionality_reduction.h
+    include/cyxwiz/feature_importance.h
+    include/cyxwiz/model_interpretability.h
+    include/cyxwiz/linear_algebra.h
+    include/cyxwiz/signal_processing.h
+    include/cyxwiz/optimization.h
+    include/cyxwiz/time_series.h
+    include/cyxwiz/text_processing.h
+    include/cyxwiz/utilities.h
 )
 
 # Create shared library (DLL/SO)

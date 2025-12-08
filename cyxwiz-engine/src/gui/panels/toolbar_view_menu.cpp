@@ -189,6 +189,39 @@ void ToolbarPanel::RenderViewMenu() {
         }
 
         ImGui::Spacing();
+
+        // Debug logging toggles
+        if (idle_log_ptr_) {
+            bool idle_log = *idle_log_ptr_;
+            if (ImGui::MenuItem(ICON_FA_PAUSE " Log Idle Mode Transitions", nullptr, idle_log)) {
+                *idle_log_ptr_ = !idle_log;
+                if (*idle_log_ptr_) {
+                    spdlog::info("Idle mode logging ENABLED");
+                } else {
+                    spdlog::info("Idle mode logging DISABLED");
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Log when app enters/exits power-saving idle mode");
+            }
+        }
+
+        if (verbose_python_log_ptr_) {
+            bool verbose_log = *verbose_python_log_ptr_;
+            if (ImGui::MenuItem(ICON_FA_TERMINAL " Verbose Python Logging", nullptr, verbose_log)) {
+                *verbose_python_log_ptr_ = !verbose_log;
+                if (*verbose_python_log_ptr_) {
+                    spdlog::info("Verbose Python logging ENABLED (includes Variable Explorer)");
+                } else {
+                    spdlog::info("Verbose Python logging DISABLED");
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Log all Python commands including internal Variable Explorer queries");
+            }
+        }
+
+        ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 

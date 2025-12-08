@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "../../core/async_task_manager.h"
+#include "../../scripting/cell_manager.h"
 #include <TextEditor.h>
 #include <string>
 #include <vector>
@@ -12,6 +13,8 @@
 
 namespace scripting {
     class ScriptingEngine;
+    class DebuggerManager;
+    enum class DebugState;
 }
 
 namespace cyxwiz {
@@ -134,6 +137,16 @@ private:
         std::string load_status;         // Status text during loading
         std::string pending_content;     // Content loaded async, waiting to be set
 
+        // Cell-based mode (Jupyter-like)
+        bool cell_mode = false;          // True for cell-based editing
+        CellManager cell_manager;        // Cell management
+        int selected_cell = -1;          // Currently selected cell
+        int editing_cell = -1;           // Cell being edited (-1 = command mode)
+        float cell_scroll_y = 0.0f;      // Scroll position in cell view
+
+        // Breakpoints for traditional script mode (1-based line numbers)
+        std::vector<int> breakpoints;
+
         EditorTab() : is_modified(false), is_new(true) {}
     };
 
@@ -148,6 +161,22 @@ private:
     void RenderMinimap();
     void RenderStatusBar();
     void HandleKeyboardShortcuts();
+
+    // Cell-based editor rendering
+    void RenderCellBasedEditor();
+    void RenderCell(Cell& cell, int index);
+    void RenderCodeCell(Cell& cell, int index);
+    void RenderMarkdownCell(Cell& cell, int index);
+    void RenderCellOutput(const CellOutput& output);
+    void RenderCellToolbar(int index);
+    void HandleCellKeyboardShortcuts();
+    void ToggleCellMode();
+
+    // Debugger UI rendering
+    void RenderDebugToolbar();
+    void RenderBreakpointGutter(Cell& cell, int cell_index);
+    void RenderScriptBreakpointGutter(float height);  // For traditional script mode
+    void HandleDebugKeyboardShortcuts();
 
     // File operations helpers
     bool LoadFileContent(const std::string& filepath, std::string& content);
@@ -171,7 +200,13 @@ private:
     std::vector<std::unique_ptr<EditorTab>> tabs_;
     int active_tab_index_;
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
+    std::unique_ptr<scripting::DebuggerManager> debugger_;
     CommandWindowPanel* command_window_;  // For output display
+
+    // Debugger state
+    bool debug_mode_active_ = false;      // True when debugging is active
+    int debug_current_line_ = -1;         // Current line being debugged (-1 = none)
+    std::string debug_current_cell_;      // Current cell ID being debugged
 
     // UI state
     bool show_editor_menu_;

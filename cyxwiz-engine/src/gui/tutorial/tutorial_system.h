@@ -69,6 +69,8 @@ public:
 
     // Show tutorial selection dialog
     void ShowTutorialBrowser();
+    void OpenTutorialBrowser() { show_browser_ = true; }
+    void CloseTutorialBrowser() { show_browser_ = false; }
 
     // First-launch detection
     bool ShouldShowWelcome() const { return !has_shown_welcome_; }

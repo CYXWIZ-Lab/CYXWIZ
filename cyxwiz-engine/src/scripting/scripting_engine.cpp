@@ -82,6 +82,11 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         return result;
     }
 
+    // Initialize MATLAB-style aliases on first command
+    if (!matlab_aliases_initialized_) {
+        InitializeMatlabAliases();
+    }
+
     try {
         // Acquire GIL for this execution
         py::gil_scoped_acquire acquire;
@@ -105,6 +110,12 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         // Execute the command
         py::object py_result;
         bool has_result = false;
+
+        // Debug: log commands (optionally skip internal Variable Explorer commands)
+        bool is_internal = command.find("_cyxwiz_") != std::string::npos;
+        if (verbose_logging_ || !is_internal) {
+            spdlog::info("Executing command: [{}] (length={})", command, command.length());
+        }
 
         try {
             // Try exec first (for statements)
@@ -335,6 +346,18 @@ void ScriptingEngine::QueueOutput(const std::string& output) {
     output_queue_.push(output);
 }
 
+void ScriptingEngine::QueuePlot(const CapturedPlot& plot) {
+    std::lock_guard<std::mutex> lock(plot_mutex_);
+    plot_queue_.push_back(plot);
+}
+
+std::vector<CapturedPlot> ScriptingEngine::GetPendingPlots() {
+    std::lock_guard<std::mutex> lock(plot_mutex_);
+    std::vector<CapturedPlot> plots;
+    std::swap(plots, plot_queue_);
+    return plots;
+}
+
 void ScriptingEngine::ScriptWorker(const std::string& script) {
     spdlog::debug("Script worker thread started");
 
@@ -379,6 +402,12 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script)
     // Reset the cancellation flag at start
     shared_cancel_flag_.store(0);
     python_thread_id_.store(0);
+
+    // Clear any pending plots from previous execution
+    {
+        std::lock_guard<std::mutex> lock(plot_mutex_);
+        plot_queue_.clear();
+    }
 
     try {
         // Acquire GIL for this thread
@@ -451,12 +480,25 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script)
             }
         };
 
+        // Create plot capture callback wrapper
+        auto plot_capture_func = [this](py::bytes png_data, int width, int height, const std::string& label) {
+            CapturedPlot plot;
+            std::string data_str = png_data;  // Convert py::bytes to std::string
+            plot.png_data = std::vector<unsigned char>(data_str.begin(), data_str.end());
+            plot.width = width;
+            plot.height = height;
+            plot.label = label;
+            QueuePlot(plot);
+            spdlog::debug("Captured plot: {}x{}, {} bytes, label: {}", width, height, plot.png_data.size(), label);
+        };
+
         // Get the address of our atomic flag
         void* flag_addr = (void*)&shared_cancel_flag_;
         uintptr_t flag_addr_int = reinterpret_cast<uintptr_t>(flag_addr);
 
         // Create setup code that uses ctypes to read the flag directly from memory
         // This doesn't need the GIL for reading!
+        // Also includes matplotlib capture setup
         std::string setup_code = R"(
 import sys
 import ctypes
@@ -507,8 +549,155 @@ def _cyxwiz_trace(frame, event, arg):
     if _cyxwiz_is_cancelled():
         raise KeyboardInterrupt("Script cancelled by user")
     return _cyxwiz_trace
+
+# Matplotlib capture setup
+_cyxwiz_plot_capture_callback = None
+_cyxwiz_captured_plots = []
+
+def _cyxwiz_setup_matplotlib_capture(capture_callback):
+    """Setup matplotlib to capture plots instead of showing windows"""
+    global _cyxwiz_plot_capture_callback
+    _cyxwiz_plot_capture_callback = capture_callback
+
+    try:
+        import matplotlib
+        # Use non-interactive backend
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        # Store original show function
+        _original_show = plt.show
+
+        def _cyxwiz_show(*args, **kwargs):
+            """Capture all figures and send to C++"""
+            global _cyxwiz_plot_capture_callback, _cyxwiz_captured_plots
+            import io
+
+            # Get all figure numbers
+            fig_nums = plt.get_fignums()
+
+            for fig_num in fig_nums:
+                fig = plt.figure(fig_num)
+
+                # Get figure size in pixels
+                dpi = fig.dpi
+                width = int(fig.get_figwidth() * dpi)
+                height = int(fig.get_figheight() * dpi)
+
+                # Get title if available
+                title = ""
+                if fig._suptitle:
+                    title = fig._suptitle.get_text()
+                elif len(fig.axes) > 0 and fig.axes[0].get_title():
+                    title = fig.axes[0].get_title()
+
+                # Render to PNG bytes
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
+                buf.seek(0)
+                png_data = buf.read()
+                buf.close()
+
+                # Send to C++ callback
+                if _cyxwiz_plot_capture_callback is not None:
+                    _cyxwiz_plot_capture_callback(png_data, width, height, title)
+                else:
+                    # Store locally if no callback
+                    _cyxwiz_captured_plots.append({
+                        'data': png_data,
+                        'width': width,
+                        'height': height,
+                        'label': title
+                    })
+
+            # Close all figures after capturing
+            plt.close('all')
+
+        # Replace plt.show with our capture function
+        plt.show = _cyxwiz_show
+
+    except ImportError:
+        # matplotlib not installed, silently skip
+        pass
+
+# ============================================================================
+# MATLAB-Style Command Window Functions (Flat Namespace)
+# ============================================================================
+# Import pycyxwiz and create convenient aliases
+try:
+    import pycyxwiz
+    cyx = pycyxwiz  # Short alias for grouped namespace
+
+    # Linear Algebra - Flat namespace aliases
+    svd = pycyxwiz.linalg.svd
+    eig = pycyxwiz.linalg.eig
+    qr = pycyxwiz.linalg.qr
+    chol = pycyxwiz.linalg.chol
+    lu = pycyxwiz.linalg.lu
+    det = pycyxwiz.linalg.det
+    rank = pycyxwiz.linalg.rank
+    trace = pycyxwiz.linalg.trace
+    norm = pycyxwiz.linalg.norm
+    cond = pycyxwiz.linalg.cond
+    inv = pycyxwiz.linalg.inv
+    transpose = pycyxwiz.linalg.transpose
+    solve = pycyxwiz.linalg.solve
+    lstsq = pycyxwiz.linalg.lstsq
+    matmul = pycyxwiz.linalg.matmul
+    eye = pycyxwiz.linalg.eye
+    zeros = pycyxwiz.linalg.zeros
+    ones = pycyxwiz.linalg.ones
+
+    # Signal Processing - Flat namespace aliases
+    fft = pycyxwiz.signal.fft
+    ifft = pycyxwiz.signal.ifft
+    conv = pycyxwiz.signal.conv
+    conv2 = pycyxwiz.signal.conv2
+    spectrogram = pycyxwiz.signal.spectrogram
+    lowpass = pycyxwiz.signal.lowpass
+    highpass = pycyxwiz.signal.highpass
+    bandpass = pycyxwiz.signal.bandpass
+    filter = pycyxwiz.signal.filter
+    findpeaks = pycyxwiz.signal.findpeaks
+    sine = pycyxwiz.signal.sine
+    square = pycyxwiz.signal.square
+    noise = pycyxwiz.signal.noise
+
+    # Statistics/Clustering - Flat namespace aliases
+    kmeans = pycyxwiz.stats.kmeans
+    dbscan = pycyxwiz.stats.dbscan
+    gmm = pycyxwiz.stats.gmm
+    pca = pycyxwiz.stats.pca
+    tsne = pycyxwiz.stats.tsne
+    silhouette = pycyxwiz.stats.silhouette
+    confusion_matrix = pycyxwiz.stats.confusion_matrix
+    roc = pycyxwiz.stats.roc
+
+    # Time Series - Flat namespace aliases
+    acf = pycyxwiz.timeseries.acf
+    pacf = pycyxwiz.timeseries.pacf
+    decompose = pycyxwiz.timeseries.decompose
+    stationarity = pycyxwiz.timeseries.stationarity
+    arima = pycyxwiz.timeseries.arima
+    diff = pycyxwiz.timeseries.diff
+    rolling_mean = pycyxwiz.timeseries.rolling_mean
+    rolling_std = pycyxwiz.timeseries.rolling_std
+
+except ImportError as e:
+    # pycyxwiz not available, skip MATLAB-style functions
+    print(f"[CyxWiz] pycyxwiz not found: {e}")
+except AttributeError as e:
+    # submodule not found (linalg, signal, etc.)
+    print(f"[CyxWiz] MATLAB functions error: {e}")
+except Exception as e:
+    # Any other error
+    print(f"[CyxWiz] Error loading MATLAB functions: {e}")
 )";
         py::exec(setup_code);
+
+        // Setup matplotlib capture with our callback
+        py::object setup_matplotlib = py::eval("_cyxwiz_setup_matplotlib_capture");
+        setup_matplotlib(py::cpp_function(plot_capture_func));
 
         // Create output object
         py::object output_class = py::eval("_CyxWizOutput");
@@ -574,7 +763,162 @@ def _cyxwiz_trace(frame, event, arg):
     // Clear the thread ID when done
     python_thread_id_.store(0);
 
+    // Collect any captured plots
+    {
+        std::lock_guard<std::mutex> lock(plot_mutex_);
+        result.plots = std::move(plot_queue_);
+        plot_queue_.clear();
+    }
+
+    if (!result.plots.empty()) {
+        spdlog::info("Script execution captured {} plot(s)", result.plots.size());
+    }
+
     return result;
+}
+
+void ScriptingEngine::InitializeMatlabAliases() {
+    if (matlab_aliases_initialized_) return;
+
+    spdlog::info("Initializing MATLAB-style aliases...");
+
+    try {
+        py::gil_scoped_acquire acquire;
+
+        // MATLAB-style aliases setup code
+        std::string matlab_setup = R"(
+# ============================================================================
+# MATLAB-Style Command Window Functions (Flat Namespace)
+# ============================================================================
+# Import pycyxwiz and create convenient aliases
+try:
+    import pycyxwiz
+    cyx = pycyxwiz  # Short alias for grouped namespace
+
+    # Linear Algebra - Flat namespace aliases
+    svd = pycyxwiz.linalg.svd
+    eig = pycyxwiz.linalg.eig
+    qr = pycyxwiz.linalg.qr
+    chol = pycyxwiz.linalg.chol
+    lu = pycyxwiz.linalg.lu
+    det = pycyxwiz.linalg.det
+    rank = pycyxwiz.linalg.rank
+    trace = pycyxwiz.linalg.trace
+    norm = pycyxwiz.linalg.norm
+    cond = pycyxwiz.linalg.cond
+    inv = pycyxwiz.linalg.inv
+    transpose = pycyxwiz.linalg.transpose
+    solve = pycyxwiz.linalg.solve
+    lstsq = pycyxwiz.linalg.lstsq
+    matmul = pycyxwiz.linalg.matmul
+    eye = pycyxwiz.linalg.eye
+    zeros = pycyxwiz.linalg.zeros
+    ones = pycyxwiz.linalg.ones
+
+    # Signal Processing - Flat namespace aliases
+    fft = pycyxwiz.signal.fft
+    ifft = pycyxwiz.signal.ifft
+    conv = pycyxwiz.signal.conv
+    conv2 = pycyxwiz.signal.conv2
+    spectrogram = pycyxwiz.signal.spectrogram
+    lowpass = pycyxwiz.signal.lowpass
+    highpass = pycyxwiz.signal.highpass
+    bandpass = pycyxwiz.signal.bandpass
+    filter = pycyxwiz.signal.filter
+    findpeaks = pycyxwiz.signal.findpeaks
+    sine = pycyxwiz.signal.sine
+    square = pycyxwiz.signal.square
+    noise = pycyxwiz.signal.noise
+
+    # Statistics/Clustering - Flat namespace aliases
+    kmeans = pycyxwiz.stats.kmeans
+    dbscan = pycyxwiz.stats.dbscan
+    gmm = pycyxwiz.stats.gmm
+    pca = pycyxwiz.stats.pca
+    tsne = pycyxwiz.stats.tsne
+    silhouette = pycyxwiz.stats.silhouette
+    confusion_matrix = pycyxwiz.stats.confusion_matrix
+    roc = pycyxwiz.stats.roc
+
+    # Time Series - Flat namespace aliases
+    acf = pycyxwiz.timeseries.acf
+    pacf = pycyxwiz.timeseries.pacf
+    decompose = pycyxwiz.timeseries.decompose
+    stationarity = pycyxwiz.timeseries.stationarity
+    arima = pycyxwiz.timeseries.arima
+    diff = pycyxwiz.timeseries.diff
+    rolling_mean = pycyxwiz.timeseries.rolling_mean
+    rolling_std = pycyxwiz.timeseries.rolling_std
+
+    # Matrix printing helper
+    def printmat(matrix, precision=4, suppress_small=True):
+        """Print a matrix in MATLAB-style format.
+
+        Args:
+            matrix: 2D list or nested list
+            precision: Number of decimal places (default 4)
+            suppress_small: Replace very small values with 0 (default True)
+        """
+        if not matrix:
+            print("[]")
+            return
+
+        # Handle 1D arrays
+        if not isinstance(matrix[0], (list, tuple)):
+            matrix = [matrix]
+
+        # Find the maximum width needed for formatting
+        threshold = 10 ** (-precision) if suppress_small else 0
+        formatted = []
+        max_width = 0
+
+        for row in matrix:
+            row_formatted = []
+            for val in row:
+                if isinstance(val, (int, float)):
+                    if suppress_small and abs(val) < threshold:
+                        val = 0.0
+                    if isinstance(val, float):
+                        s = f"{val:.{precision}f}".rstrip('0').rstrip('.')
+                        if '.' not in s:
+                            s = f"{val:.1f}"
+                    else:
+                        s = str(val)
+                else:
+                    s = str(val)
+                row_formatted.append(s)
+                max_width = max(max_width, len(s))
+            formatted.append(row_formatted)
+
+        # Print with alignment
+        for row in formatted:
+            print("  " + "  ".join(s.rjust(max_width) for s in row))
+
+    # Short alias
+    pm = printmat
+
+    print("[CyxWiz] MATLAB-style functions loaded successfully")
+
+except ImportError as e:
+    # pycyxwiz not available, skip MATLAB-style functions
+    print(f"[CyxWiz] pycyxwiz not found: {e}")
+except AttributeError as e:
+    # submodule not found (linalg, signal, etc.)
+    print(f"[CyxWiz] MATLAB functions error: {e}")
+except Exception as e:
+    # Any other error
+    print(f"[CyxWiz] Error loading MATLAB functions: {e}")
+)";
+
+        py::exec(matlab_setup);
+        matlab_aliases_initialized_ = true;
+        spdlog::info("MATLAB-style aliases initialized");
+
+    } catch (const py::error_already_set& e) {
+        spdlog::error("Failed to initialize MATLAB aliases: {}", e.what());
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to initialize MATLAB aliases: {}", e.what());
+    }
 }
 
 } // namespace scripting

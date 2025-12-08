@@ -67,4 +67,13 @@ private:
     ImFont* font_bold_ = nullptr;
     ImFont* font_mono_ = nullptr;
     ImFont* font_mono_bold_ = nullptr;
+
+    // Idle detection for GPU power saving
+    double last_activity_time_ = 0.0;
+    bool is_idle_ = false;
+    static constexpr double IDLE_TIMEOUT = 1.0;  // Seconds before entering idle mode
+    static constexpr double IDLE_FRAME_TIME = 0.1;  // 10 FPS when idle
+
+    // Debug logging flags (can be toggled via console commands)
+    bool log_idle_transitions_ = false;  // Log idle mode enter/exit
 };

@@ -494,7 +494,8 @@ std::map<std::string, Tensor> SequentialModel::GetParameters() {
     std::map<std::string, Tensor> all_params;
 
     for (size_t i = 0; i < modules_.size(); ++i) {
-        if (modules_[i]->HasParameters()) {
+        // Skip frozen layers - their parameters won't be updated
+        if (modules_[i]->HasParameters() && modules_[i]->IsTrainable()) {
             auto params = modules_[i]->GetParameters();
             for (auto& [key, tensor] : params) {
                 all_params["layer" + std::to_string(i) + "." + key] = tensor;
@@ -533,7 +534,8 @@ std::map<std::string, Tensor> SequentialModel::GetGradients() {
     std::map<std::string, Tensor> all_grads;
 
     for (size_t i = 0; i < modules_.size(); ++i) {
-        if (modules_[i]->HasParameters()) {
+        // Skip frozen layers - don't need their gradients
+        if (modules_[i]->HasParameters() && modules_[i]->IsTrainable()) {
             auto grads = modules_[i]->GetGradients();
             for (auto& [key, tensor] : grads) {
                 all_grads["layer" + std::to_string(i) + "." + key] = tensor;
@@ -568,9 +570,52 @@ void SequentialModel::Summary() const {
     spdlog::info("SequentialModel Summary:");
     spdlog::info("========================");
     for (size_t i = 0; i < modules_.size(); ++i) {
-        spdlog::info("  [{}] {}", i, modules_[i]->GetName());
+        std::string frozen_marker = modules_[i]->IsTrainable() ? "" : " [FROZEN]";
+        spdlog::info("  [{}] {}{}", i, modules_[i]->GetName(), frozen_marker);
     }
     spdlog::info("========================");
+}
+
+// ============================================================================
+// Transfer Learning Methods
+// ============================================================================
+
+void SequentialModel::FreezeLayer(size_t layer_idx) {
+    if (layer_idx < modules_.size()) {
+        modules_[layer_idx]->Freeze();
+        spdlog::debug("SequentialModel: Froze layer {} ({})", layer_idx, modules_[layer_idx]->GetName());
+    }
+}
+
+void SequentialModel::FreezeUpTo(size_t layer_idx) {
+    size_t limit = layer_idx < modules_.size() ? layer_idx : modules_.size();
+    for (size_t i = 0; i < limit; ++i) {
+        modules_[i]->Freeze();
+    }
+    if (layer_idx > 0) {
+        spdlog::debug("SequentialModel: Froze layers 0 to {}", layer_idx - 1);
+    }
+}
+
+void SequentialModel::FreezeExceptLast(size_t n) {
+    if (modules_.size() > n) {
+        FreezeUpTo(modules_.size() - n);
+        spdlog::debug("SequentialModel: Froze all except last {} layers", n);
+    }
+}
+
+void SequentialModel::UnfreezeAll() {
+    for (auto& module : modules_) {
+        module->Unfreeze();
+    }
+    spdlog::debug("SequentialModel: Unfroze all layers");
+}
+
+bool SequentialModel::IsLayerTrainable(size_t layer_idx) const {
+    if (layer_idx < modules_.size()) {
+        return modules_[layer_idx]->IsTrainable();
+    }
+    return false;
 }
 
 // ============================================================================

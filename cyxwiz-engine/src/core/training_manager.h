@@ -84,6 +84,32 @@ public:
     void SetOnTrainingEnd(TrainingEndCallback callback) { on_training_end_ = callback; }
     void SetOnProgress(ProgressCallback callback) { on_progress_ = callback; }
 
+    /**
+     * Get the last trained model (preserved after training completes)
+     * @return Pointer to the trained model, or nullptr if no training has completed
+     */
+    SequentialModel* GetLastTrainedModel() { return last_trained_model_.get(); }
+
+    /**
+     * Get the last optimizer (preserved after training completes)
+     */
+    Optimizer* GetLastOptimizer() { return last_optimizer_.get(); }
+
+    /**
+     * Get the final training metrics from the last completed training
+     */
+    const TrainingMetrics& GetLastMetrics() const { return last_metrics_; }
+
+    /**
+     * Check if there is a trained model available
+     */
+    bool HasTrainedModel() const { return last_trained_model_ != nullptr; }
+
+    /**
+     * Clear the preserved model (e.g., when starting a new project)
+     */
+    void ClearTrainedModel();
+
 private:
     TrainingManager() = default;
     ~TrainingManager();
@@ -115,6 +141,11 @@ private:
     TrainingStartCallback on_training_start_;
     TrainingEndCallback on_training_end_;
     ProgressCallback on_progress_;
+
+    // Preserved model after training (for export)
+    std::unique_ptr<SequentialModel> last_trained_model_;
+    std::unique_ptr<Optimizer> last_optimizer_;
+    TrainingMetrics last_metrics_;
 };
 
 } // namespace cyxwiz

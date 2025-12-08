@@ -254,9 +254,16 @@ void TrainingManager::TrainingThreadFunc(
         on_training_end_(success, final_metrics);
     }
 
-    // Clear current executor
+    // Preserve trained model for export before clearing executor
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (current_executor_ && success) {
+            // Transfer ownership of model and optimizer for later export
+            last_trained_model_ = current_executor_->ReleaseModel();
+            last_optimizer_ = current_executor_->ReleaseOptimizer();
+            last_metrics_ = final_metrics;
+            spdlog::info("TrainingManager: Preserved trained model for export");
+        }
         current_executor_.reset();
     }
 
@@ -266,6 +273,14 @@ void TrainingManager::TrainingThreadFunc(
     } else {
         spdlog::info("TrainingManager: Training stopped");
     }
+}
+
+void TrainingManager::ClearTrainedModel() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    last_trained_model_.reset();
+    last_optimizer_.reset();
+    last_metrics_ = TrainingMetrics();
+    spdlog::info("TrainingManager: Cleared preserved trained model");
 }
 
 } // namespace cyxwiz

@@ -94,9 +94,118 @@ public:
     // Application theme callback (called when View -> Theme changes)
     void SetAppThemeChangedCallback(std::function<void(int)> callback) { app_theme_changed_callback_ = callback; }
 
+    // Testing callbacks
+    void SetRunTestCallback(std::function<void()> callback) { run_test_callback_ = callback; }
+    void SetViewTestResultsCallback(std::function<void()> callback) { view_test_results_callback_ = callback; }
+
+    // Tools menu callbacks
+    void SetResumeCheckpointCallback(std::function<void()> cb) { resume_checkpoint_callback_ = cb; }
+    void SetSaveCheckpointCallback(std::function<void()> cb) { save_checkpoint_callback_ = cb; }
+    void SetRunQuickTestCallback(std::function<void()> cb) { run_quick_test_callback_ = cb; }
+    void SetCompareTestResultsCallback(std::function<void()> cb) { compare_test_results_callback_ = cb; }
+    void SetExportTestReportCallback(std::function<void()> cb) { export_test_report_callback_ = cb; }
+    void SetClearCacheCallback(std::function<void()> cb) { clear_cache_callback_ = cb; }
+    void SetRunGCCallback(std::function<void()> cb) { run_gc_callback_ = cb; }
+
+    // Model Analysis callbacks (Phase 2)
+    void SetOpenModelSummaryCallback(std::function<void()> cb) { open_model_summary_callback_ = cb; }
+    void SetOpenArchitectureDiagramCallback(std::function<void()> cb) { open_architecture_diagram_callback_ = cb; }
+    void SetOpenLRFinderCallback(std::function<void()> cb) { open_lr_finder_callback_ = cb; }
+
+    // Data Science callbacks (Phase 3)
+    void SetOpenDataProfilerCallback(std::function<void()> cb) { open_data_profiler_callback_ = cb; }
+    void SetOpenCorrelationMatrixCallback(std::function<void()> cb) { open_correlation_matrix_callback_ = cb; }
+    void SetOpenMissingValuePanelCallback(std::function<void()> cb) { open_missing_value_callback_ = cb; }
+    void SetOpenOutlierDetectionCallback(std::function<void()> cb) { open_outlier_detection_callback_ = cb; }
+
+    // Statistics callbacks (Phase 4)
+    void SetOpenDescriptiveStatsCallback(std::function<void()> cb) { open_descriptive_stats_callback_ = cb; }
+    void SetOpenHypothesisTestCallback(std::function<void()> cb) { open_hypothesis_test_callback_ = cb; }
+    void SetOpenDistributionFitterCallback(std::function<void()> cb) { open_distribution_fitter_callback_ = cb; }
+    void SetOpenRegressionCallback(std::function<void()> cb) { open_regression_callback_ = cb; }
+
+    // Advanced Tools callbacks (Phase 5)
+    void SetOpenDimReductionCallback(std::function<void()> cb) { open_dim_reduction_callback_ = cb; }
+    void SetOpenGradCAMCallback(std::function<void()> cb) { open_gradcam_callback_ = cb; }
+    void SetOpenFeatureImportanceCallback(std::function<void()> cb) { open_feature_importance_callback_ = cb; }
+    void SetOpenNASCallback(std::function<void()> cb) { open_nas_callback_ = cb; }
+
+    // Clustering callbacks (Phase 6A)
+    void SetOpenKMeansCallback(std::function<void()> cb) { open_kmeans_callback_ = cb; }
+    void SetOpenDBSCANCallback(std::function<void()> cb) { open_dbscan_callback_ = cb; }
+    void SetOpenHierarchicalCallback(std::function<void()> cb) { open_hierarchical_callback_ = cb; }
+    void SetOpenGMMCallback(std::function<void()> cb) { open_gmm_callback_ = cb; }
+    void SetOpenClusterEvalCallback(std::function<void()> cb) { open_cluster_eval_callback_ = cb; }
+
+    // Model Evaluation callbacks (Phase 6B)
+    void SetOpenConfusionMatrixCallback(std::function<void()> cb) { open_confusion_matrix_callback_ = cb; }
+    void SetOpenROCAUCCallback(std::function<void()> cb) { open_roc_auc_callback_ = cb; }
+    void SetOpenPRCurveCallback(std::function<void()> cb) { open_pr_curve_callback_ = cb; }
+    void SetOpenCrossValidationCallback(std::function<void()> cb) { open_cross_validation_callback_ = cb; }
+    void SetOpenLearningCurvesCallback(std::function<void()> cb) { open_learning_curves_callback_ = cb; }
+
+    // Data Transformation callbacks (Phase 6C)
+    void SetOpenNormalizationCallback(std::function<void()> cb) { open_normalization_callback_ = cb; }
+    void SetOpenStandardizationCallback(std::function<void()> cb) { open_standardization_callback_ = cb; }
+    void SetOpenLogTransformCallback(std::function<void()> cb) { open_log_transform_callback_ = cb; }
+    void SetOpenBoxCoxCallback(std::function<void()> cb) { open_boxcox_callback_ = cb; }
+    void SetOpenFeatureScalingCallback(std::function<void()> cb) { open_feature_scaling_callback_ = cb; }
+
+    // Linear Algebra callbacks (Phase 7)
+    void SetOpenMatrixCalculatorCallback(std::function<void()> cb) { open_matrix_calculator_callback_ = cb; }
+    void SetOpenEigenDecompCallback(std::function<void()> cb) { open_eigen_decomp_callback_ = cb; }
+    void SetOpenSVDCallback(std::function<void()> cb) { open_svd_callback_ = cb; }
+    void SetOpenQRCallback(std::function<void()> cb) { open_qr_callback_ = cb; }
+    void SetOpenCholeskyCallback(std::function<void()> cb) { open_cholesky_callback_ = cb; }
+
+    // Signal Processing callbacks (Phase 8)
+    void SetOpenFFTCallback(std::function<void()> cb) { open_fft_callback_ = cb; }
+    void SetOpenSpectrogramCallback(std::function<void()> cb) { open_spectrogram_callback_ = cb; }
+    void SetOpenFilterDesignerCallback(std::function<void()> cb) { open_filter_designer_callback_ = cb; }
+    void SetOpenConvolutionCallback(std::function<void()> cb) { open_convolution_callback_ = cb; }
+    void SetOpenWaveletCallback(std::function<void()> cb) { open_wavelet_callback_ = cb; }
+
+    // Optimization & Calculus callbacks (Phase 9)
+    void SetOpenGradientDescentCallback(std::function<void()> cb) { open_gradient_descent_callback_ = cb; }
+    void SetOpenConvexityCallback(std::function<void()> cb) { open_convexity_callback_ = cb; }
+    void SetOpenLPCallback(std::function<void()> cb) { open_lp_callback_ = cb; }
+    void SetOpenQPCallback(std::function<void()> cb) { open_qp_callback_ = cb; }
+    void SetOpenDifferentiationCallback(std::function<void()> cb) { open_differentiation_callback_ = cb; }
+    void SetOpenIntegrationCallback(std::function<void()> cb) { open_integration_callback_ = cb; }
+
+    // Time Series Analysis callbacks (Phase 10)
+    void SetOpenDecompositionCallback(std::function<void()> cb) { open_decomposition_callback_ = cb; }
+    void SetOpenACFPACFCallback(std::function<void()> cb) { open_acf_pacf_callback_ = cb; }
+    void SetOpenStationarityCallback(std::function<void()> cb) { open_stationarity_callback_ = cb; }
+    void SetOpenSeasonalityCallback(std::function<void()> cb) { open_seasonality_callback_ = cb; }
+    void SetOpenForecastingCallback(std::function<void()> cb) { open_forecasting_callback_ = cb; }
+
+    // Text Processing callbacks (Phase 11)
+    void SetOpenTokenizationCallback(std::function<void()> cb) { open_tokenization_callback_ = cb; }
+    void SetOpenWordFrequencyCallback(std::function<void()> cb) { open_word_frequency_callback_ = cb; }
+    void SetOpenTFIDFCallback(std::function<void()> cb) { open_tfidf_callback_ = cb; }
+    void SetOpenEmbeddingsCallback(std::function<void()> cb) { open_embeddings_callback_ = cb; }
+    void SetOpenSentimentCallback(std::function<void()> cb) { open_sentiment_callback_ = cb; }
+
+    // Utilities callbacks (Phase 12)
+    void SetOpenCalculatorCallback(std::function<void()> cb) { open_calculator_callback_ = cb; }
+    void SetOpenUnitConverterCallback(std::function<void()> cb) { open_unit_converter_callback_ = cb; }
+    void SetOpenRandomGeneratorCallback(std::function<void()> cb) { open_random_generator_callback_ = cb; }
+    void SetOpenHashGeneratorCallback(std::function<void()> cb) { open_hash_generator_callback_ = cb; }
+    void SetOpenJSONViewerCallback(std::function<void()> cb) { open_json_viewer_callback_ = cb; }
+    void SetOpenRegexTesterCallback(std::function<void()> cb) { open_regex_tester_callback_ = cb; }
+
+    // Export/Import callbacks
+    void SetExportModelCallback(std::function<void(int)> callback) { export_model_callback_ = callback; }  // int = format index
+    void SetImportModelCallback(std::function<void()> callback) { import_model_callback_ = callback; }
+
     // Minimap visibility pointers (for View -> Minimaps menu)
     void SetNodeEditorMinimapPtr(bool* ptr) { node_editor_minimap_ptr_ = ptr; }
     void SetScriptEditorMinimapPtr(bool* ptr) { script_editor_minimap_ptr_ = ptr; }
+
+    // Debug logging pointers (for View -> Developer Tools)
+    void SetIdleLogPtr(bool* ptr) { idle_log_ptr_ = ptr; }
+    void SetVerbosePythonLogPtr(bool* ptr) { verbose_python_log_ptr_ = ptr; }
 
     // Initialize editor settings from script editor's current values
     void SetEditorTheme(int theme) { editor_theme_ = theme; }
@@ -119,6 +228,7 @@ private:
     void RenderScriptMenu();
     void RenderPlotsMenu();
     void RenderDeployMenu();
+    void RenderToolsMenu();
 
     // File search functionality
     void SearchInFiles(const std::string& search_text, const std::string& search_path,
@@ -287,6 +397,111 @@ private:
     // Application theme callback
     std::function<void(int)> app_theme_changed_callback_;
 
+    // Testing callbacks
+    std::function<void()> run_test_callback_;
+    std::function<void()> view_test_results_callback_;
+
+    // Tools menu callbacks
+    std::function<void()> resume_checkpoint_callback_;
+    std::function<void()> save_checkpoint_callback_;
+    std::function<void()> run_quick_test_callback_;
+    std::function<void()> compare_test_results_callback_;
+    std::function<void()> export_test_report_callback_;
+    std::function<void()> clear_cache_callback_;
+    std::function<void()> run_gc_callback_;
+
+    // Model Analysis callbacks (Phase 2)
+    std::function<void()> open_model_summary_callback_;
+    std::function<void()> open_architecture_diagram_callback_;
+    std::function<void()> open_lr_finder_callback_;
+
+    // Data Science callbacks (Phase 3)
+    std::function<void()> open_data_profiler_callback_;
+    std::function<void()> open_correlation_matrix_callback_;
+    std::function<void()> open_missing_value_callback_;
+    std::function<void()> open_outlier_detection_callback_;
+
+    // Statistics callbacks (Phase 4)
+    std::function<void()> open_descriptive_stats_callback_;
+    std::function<void()> open_hypothesis_test_callback_;
+    std::function<void()> open_distribution_fitter_callback_;
+    std::function<void()> open_regression_callback_;
+
+    // Advanced Tools callbacks (Phase 5)
+    std::function<void()> open_dim_reduction_callback_;
+    std::function<void()> open_gradcam_callback_;
+    std::function<void()> open_feature_importance_callback_;
+    std::function<void()> open_nas_callback_;
+
+    // Clustering callbacks (Phase 6A)
+    std::function<void()> open_kmeans_callback_;
+    std::function<void()> open_dbscan_callback_;
+    std::function<void()> open_hierarchical_callback_;
+    std::function<void()> open_gmm_callback_;
+    std::function<void()> open_cluster_eval_callback_;
+
+    // Model Evaluation callbacks (Phase 6B)
+    std::function<void()> open_confusion_matrix_callback_;
+    std::function<void()> open_roc_auc_callback_;
+    std::function<void()> open_pr_curve_callback_;
+    std::function<void()> open_cross_validation_callback_;
+    std::function<void()> open_learning_curves_callback_;
+
+    // Data Transformation callbacks (Phase 6C)
+    std::function<void()> open_normalization_callback_;
+    std::function<void()> open_standardization_callback_;
+    std::function<void()> open_log_transform_callback_;
+    std::function<void()> open_boxcox_callback_;
+    std::function<void()> open_feature_scaling_callback_;
+
+    // Linear Algebra callbacks (Phase 7)
+    std::function<void()> open_matrix_calculator_callback_;
+    std::function<void()> open_eigen_decomp_callback_;
+    std::function<void()> open_svd_callback_;
+    std::function<void()> open_qr_callback_;
+    std::function<void()> open_cholesky_callback_;
+
+    // Signal Processing callbacks (Phase 8)
+    std::function<void()> open_fft_callback_;
+    std::function<void()> open_spectrogram_callback_;
+    std::function<void()> open_filter_designer_callback_;
+    std::function<void()> open_convolution_callback_;
+    std::function<void()> open_wavelet_callback_;
+
+    // Optimization & Calculus callbacks (Phase 9)
+    std::function<void()> open_gradient_descent_callback_;
+    std::function<void()> open_convexity_callback_;
+    std::function<void()> open_lp_callback_;
+    std::function<void()> open_qp_callback_;
+    std::function<void()> open_differentiation_callback_;
+    std::function<void()> open_integration_callback_;
+
+    // Time Series Analysis callbacks (Phase 10)
+    std::function<void()> open_decomposition_callback_;
+    std::function<void()> open_acf_pacf_callback_;
+    std::function<void()> open_stationarity_callback_;
+    std::function<void()> open_seasonality_callback_;
+    std::function<void()> open_forecasting_callback_;
+
+    // Text Processing callbacks (Phase 11)
+    std::function<void()> open_tokenization_callback_;
+    std::function<void()> open_word_frequency_callback_;
+    std::function<void()> open_tfidf_callback_;
+    std::function<void()> open_embeddings_callback_;
+    std::function<void()> open_sentiment_callback_;
+
+    // Utilities callbacks (Phase 12)
+    std::function<void()> open_calculator_callback_;
+    std::function<void()> open_unit_converter_callback_;
+    std::function<void()> open_random_generator_callback_;
+    std::function<void()> open_hash_generator_callback_;
+    std::function<void()> open_json_viewer_callback_;
+    std::function<void()> open_regex_tester_callback_;
+
+    // Export/Import callbacks
+    std::function<void(int)> export_model_callback_;  // int = format index (0=CyxModel, 1=Safetensors, 2=ONNX, 3=GGUF)
+    std::function<void()> import_model_callback_;
+
     // General preferences
     bool general_restore_last_session_ = true;
     bool general_check_updates_ = true;
@@ -301,6 +516,10 @@ private:
     // Minimap visibility pointers
     bool* node_editor_minimap_ptr_ = nullptr;
     bool* script_editor_minimap_ptr_ = nullptr;
+
+    // Debug logging pointers
+    bool* idle_log_ptr_ = nullptr;
+    bool* verbose_python_log_ptr_ = nullptr;
 
     // Files preferences
     int files_default_encoding_ = 0;  // 0 = UTF-8, 1 = UTF-16, 2 = ASCII

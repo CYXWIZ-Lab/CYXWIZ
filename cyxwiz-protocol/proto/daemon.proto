@@ -1,0 +1,586 @@
+// daemon.proto - Server Node daemon management service (IPC)
+// Used for communication between cyxwiz-server-daemon and cyxwiz-server-gui
+
+syntax = "proto3";
+
+package cyxwiz.daemon;
+
+option cc_enable_arenas = true;
+
+// ============================================================================
+// Daemon Management Service - Local/Remote management of server node daemon
+// ============================================================================
+
+service DaemonService {
+    // Connection & Status
+    rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+    rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse);
+    rpc StreamMetrics(StreamMetricsRequest) returns (stream MetricsUpdate);
+
+    // Job Management
+    rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+    rpc GetJob(GetJobRequest) returns (GetJobResponse);
+    rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+    rpc StreamJobUpdates(StreamJobUpdatesRequest) returns (stream JobUpdate);
+
+    // Deployment Management
+    rpc ListDeployments(ListDeploymentsRequest) returns (ListDeploymentsResponse);
+    rpc DeployModel(DeployModelRequest) returns (DeployModelResponse);
+    rpc UndeployModel(UndeployModelRequest) returns (UndeployModelResponse);
+    rpc GetDeploymentStatus(GetDeploymentStatusRequest) returns (GetDeploymentStatusResponse);
+
+    // Model Management
+    rpc ListLocalModels(ListLocalModelsRequest) returns (ListLocalModelsResponse);
+    rpc ScanModels(ScanModelsRequest) returns (ScanModelsResponse);
+    rpc DeleteModel(DeleteModelRequest) returns (DeleteModelResponse);
+
+    // API Key Management
+    rpc ListAPIKeys(ListAPIKeysRequest) returns (ListAPIKeysResponse);
+    rpc CreateAPIKey(CreateAPIKeyRequest) returns (CreateAPIKeyResponse);
+    rpc RevokeAPIKey(RevokeAPIKeyRequest) returns (RevokeAPIKeyResponse);
+
+    // Configuration
+    rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+    rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
+
+    // Earnings & Wallet
+    rpc GetEarnings(GetEarningsRequest) returns (GetEarningsResponse);
+    rpc GetWalletInfo(GetWalletInfoRequest) returns (GetWalletInfoResponse);
+    rpc SetWalletAddress(SetWalletAddressRequest) returns (SetWalletAddressResponse);
+
+    // Logs
+    rpc GetLogs(GetLogsRequest) returns (GetLogsResponse);
+    rpc StreamLogs(StreamLogsRequest) returns (stream LogEntry);
+
+    // Pool Mining
+    rpc GetPoolStatus(GetPoolStatusRequest) returns (GetPoolStatusResponse);
+    rpc JoinPool(JoinPoolRequest) returns (JoinPoolResponse);
+    rpc LeavePool(LeavePoolRequest) returns (LeavePoolResponse);
+    rpc SetMiningIntensity(SetMiningIntensityRequest) returns (SetMiningIntensityResponse);
+    rpc StartMining(StartMiningRequest) returns (StartMiningResponse);
+    rpc StopMining(StopMiningRequest) returns (StopMiningResponse);
+
+    // Marketplace
+    rpc ListMarketplaceModels(ListMarketplaceModelsRequest) returns (ListMarketplaceModelsResponse);
+    rpc GetMarketplaceModel(GetMarketplaceModelRequest) returns (GetMarketplaceModelResponse);
+    rpc DownloadMarketplaceModel(DownloadMarketplaceModelRequest) returns (stream DownloadProgress);
+    rpc CancelMarketplaceDownload(CancelMarketplaceDownloadRequest) returns (CancelMarketplaceDownloadResponse);
+
+    // Daemon Control
+    rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+    rpc Restart(RestartRequest) returns (RestartResponse);
+}
+
+// ============================================================================
+// Common Types
+// ============================================================================
+
+enum ConnectionStatus {
+    CONNECTION_STATUS_UNSPECIFIED = 0;
+    CONNECTION_STATUS_DISCONNECTED = 1;
+    CONNECTION_STATUS_CONNECTING = 2;
+    CONNECTION_STATUS_CONNECTED = 3;
+}
+
+enum JobStatus {
+    JOB_STATUS_UNSPECIFIED = 0;
+    JOB_STATUS_PENDING = 1;
+    JOB_STATUS_RUNNING = 2;
+    JOB_STATUS_PAUSED = 3;
+    JOB_STATUS_COMPLETED = 4;
+    JOB_STATUS_FAILED = 5;
+    JOB_STATUS_CANCELLED = 6;
+}
+
+enum DeploymentStatus {
+    DEPLOYMENT_STATUS_UNSPECIFIED = 0;
+    DEPLOYMENT_STATUS_LOADING = 1;
+    DEPLOYMENT_STATUS_RUNNING = 2;
+    DEPLOYMENT_STATUS_STOPPED = 3;
+    DEPLOYMENT_STATUS_ERROR = 4;
+}
+
+message SystemMetrics {
+    float cpu_usage = 1;           // 0.0 - 1.0
+    float gpu_usage = 2;           // 0.0 - 1.0
+    float ram_usage = 3;           // 0.0 - 1.0
+    float vram_usage = 4;          // 0.0 - 1.0
+    uint64 ram_total_bytes = 5;
+    uint64 ram_used_bytes = 6;
+    uint64 vram_total_bytes = 7;
+    uint64 vram_used_bytes = 8;
+    float network_rx_mbps = 9;
+    float network_tx_mbps = 10;
+    float gpu_temp_celsius = 11;
+    float cpu_temp_celsius = 12;
+}
+
+message JobInfo {
+    string id = 1;
+    string type = 2;               // "training", "inference", "fine-tuning"
+    JobStatus status = 3;
+    float progress = 4;            // 0.0 - 1.0
+    int32 current_epoch = 5;
+    int32 total_epochs = 6;
+    float loss = 7;
+    float accuracy = 8;
+    int64 started_at = 9;          // Unix timestamp
+    int64 estimated_completion = 10;
+    string model_name = 11;
+    string submitter_id = 12;
+    double earnings = 13;          // CYXWIZ earned for this job
+}
+
+message DeploymentInfo {
+    string id = 1;
+    string model_name = 2;
+    string model_path = 3;
+    string format = 4;             // "GGUF", "ONNX", "SafeTensors"
+    DeploymentStatus status = 5;
+    int32 port = 6;
+    int32 gpu_layers = 7;
+    int32 context_size = 8;
+    int64 request_count = 9;
+    int64 tokens_generated = 10;
+    double earnings = 11;
+    int64 deployed_at = 12;
+}
+
+message ModelInfo {
+    string name = 1;
+    string path = 2;
+    string format = 3;
+    int64 size_bytes = 4;
+    int64 modified_at = 5;
+    bool is_deployed = 6;
+    string architecture = 7;       // "llama", "mistral", etc.
+    int64 parameter_count = 8;
+}
+
+message APIKeyInfo {
+    string id = 1;
+    string name = 2;
+    string key_prefix = 3;         // First 8 chars for identification
+    int64 created_at = 4;
+    int64 last_used_at = 5;
+    int64 request_count = 6;
+    int32 rate_limit_rpm = 7;      // Requests per minute
+    bool is_active = 8;
+}
+
+message LogEntry {
+    int64 timestamp = 1;
+    string level = 2;              // "DEBUG", "INFO", "WARN", "ERROR"
+    string message = 3;
+    string source = 4;
+}
+
+message EarningsInfo {
+    double today = 1;
+    double this_week = 2;
+    double this_month = 3;
+    double all_time = 4;
+    double pending_payout = 5;
+    int64 jobs_completed = 6;
+    int64 tokens_served = 7;
+}
+
+message PoolInfo {
+    string pool_id = 1;
+    string pool_name = 2;
+    string pool_address = 3;
+    bool is_joined = 4;
+    float mining_intensity = 5;    // 0.0 - 1.0
+    double pool_earnings = 6;
+    int32 active_miners = 7;
+    float pool_hashrate = 8;
+}
+
+message MiningStats {
+    float hashrate_mhs = 1;           // MH/s
+    int64 shares_submitted = 2;
+    int64 shares_accepted = 3;
+    int64 shares_rejected = 4;
+    double estimated_daily = 5;       // CYXWIZ tokens
+    double estimated_monthly = 6;
+    int64 mining_uptime_seconds = 7;
+}
+
+// ============================================================================
+// Request/Response Messages
+// ============================================================================
+
+// Status
+message GetStatusRequest {}
+
+message GetStatusResponse {
+    string node_id = 1;
+    string version = 2;
+    ConnectionStatus central_server_status = 3;
+    int64 uptime_seconds = 4;
+    int32 active_jobs = 5;
+    int32 active_deployments = 6;
+    SystemMetrics metrics = 7;
+    string gpu_name = 8;
+    int32 gpu_count = 9;
+}
+
+// Metrics
+message GetMetricsRequest {}
+
+message GetMetricsResponse {
+    SystemMetrics metrics = 1;
+    repeated float cpu_history = 2;    // Last N samples
+    repeated float gpu_history = 3;
+    repeated float ram_history = 4;
+    repeated float vram_history = 5;
+}
+
+message StreamMetricsRequest {
+    int32 interval_ms = 1;         // Update interval (default 1000)
+}
+
+message MetricsUpdate {
+    SystemMetrics metrics = 1;
+    int64 timestamp = 2;
+}
+
+// Jobs
+message ListJobsRequest {
+    bool include_completed = 1;
+    int32 limit = 2;
+}
+
+message ListJobsResponse {
+    repeated JobInfo jobs = 1;
+}
+
+message GetJobRequest {
+    string job_id = 1;
+}
+
+message GetJobResponse {
+    JobInfo job = 1;
+}
+
+message CancelJobRequest {
+    string job_id = 1;
+}
+
+message CancelJobResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message StreamJobUpdatesRequest {}
+
+message JobUpdate {
+    string job_id = 1;
+    JobInfo job = 2;
+    string update_type = 3;        // "started", "progress", "completed", "failed"
+}
+
+// Deployments
+message ListDeploymentsRequest {}
+
+message ListDeploymentsResponse {
+    repeated DeploymentInfo deployments = 1;
+}
+
+message DeployModelRequest {
+    string model_path = 1;
+    int32 port = 2;
+    int32 gpu_layers = 3;
+    int32 context_size = 4;
+    string api_key_id = 5;         // Optional: restrict to specific key
+}
+
+message DeployModelResponse {
+    bool success = 1;
+    string deployment_id = 2;
+    string error_message = 3;
+}
+
+message UndeployModelRequest {
+    string deployment_id = 1;
+}
+
+message UndeployModelResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message GetDeploymentStatusRequest {
+    string deployment_id = 1;
+}
+
+message GetDeploymentStatusResponse {
+    DeploymentInfo deployment = 1;
+}
+
+// Models
+message ListLocalModelsRequest {
+    string directory = 1;          // Optional: specific directory to scan
+}
+
+message ListLocalModelsResponse {
+    repeated ModelInfo models = 1;
+}
+
+message ScanModelsRequest {
+    repeated string directories = 1;
+}
+
+message ScanModelsResponse {
+    int32 models_found = 1;
+    repeated ModelInfo new_models = 2;
+}
+
+message DeleteModelRequest {
+    string model_path = 1;
+}
+
+message DeleteModelResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// API Keys
+message ListAPIKeysRequest {}
+
+message ListAPIKeysResponse {
+    repeated APIKeyInfo keys = 1;
+}
+
+message CreateAPIKeyRequest {
+    string name = 1;
+    int32 rate_limit_rpm = 2;
+}
+
+message CreateAPIKeyResponse {
+    bool success = 1;
+    string key = 2;                // Full key (only shown once)
+    APIKeyInfo key_info = 3;
+    string error_message = 4;
+}
+
+message RevokeAPIKeyRequest {
+    string key_id = 1;
+}
+
+message RevokeAPIKeyResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// Configuration
+message GetConfigRequest {}
+
+message GetConfigResponse {
+    string node_name = 1;
+    string central_server_address = 2;
+    repeated string model_directories = 3;
+    int32 max_concurrent_jobs = 4;
+    int32 default_gpu_layers = 5;
+    int32 default_context_size = 6;
+    bool auto_start_deployments = 7;
+    string log_level = 8;
+}
+
+message SetConfigRequest {
+    string node_name = 1;
+    string central_server_address = 2;
+    repeated string model_directories = 3;
+    int32 max_concurrent_jobs = 4;
+    int32 default_gpu_layers = 5;
+    int32 default_context_size = 6;
+    bool auto_start_deployments = 7;
+    string log_level = 8;
+}
+
+message SetConfigResponse {
+    bool success = 1;
+    string error_message = 2;
+    bool restart_required = 3;
+}
+
+// Earnings & Wallet
+message GetEarningsRequest {
+    int64 since_timestamp = 1;     // Optional: filter by time
+}
+
+message GetEarningsResponse {
+    EarningsInfo earnings = 1;
+}
+
+message GetWalletInfoRequest {}
+
+message GetWalletInfoResponse {
+    string wallet_address = 1;
+    double balance = 2;
+    double pending_earnings = 3;
+    bool is_connected = 4;
+}
+
+message SetWalletAddressRequest {
+    string wallet_address = 1;
+}
+
+message SetWalletAddressResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// Logs
+message GetLogsRequest {
+    int32 limit = 1;               // Max entries to return
+    string level_filter = 2;       // Optional: "ERROR", "WARN", etc.
+    int64 since_timestamp = 3;
+}
+
+message GetLogsResponse {
+    repeated LogEntry entries = 1;
+}
+
+message StreamLogsRequest {
+    string level_filter = 1;
+}
+
+// Pool Mining
+message GetPoolStatusRequest {}
+
+message GetPoolStatusResponse {
+    PoolInfo pool = 1;
+    bool is_mining = 2;
+    float current_intensity = 3;
+    MiningStats stats = 4;
+}
+
+message JoinPoolRequest {
+    string pool_address = 1;
+}
+
+message JoinPoolResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message LeavePoolRequest {}
+
+message LeavePoolResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message SetMiningIntensityRequest {
+    float intensity = 1;           // 0.0 - 1.0
+}
+
+message SetMiningIntensityResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message StartMiningRequest {}
+
+message StartMiningResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message StopMiningRequest {}
+
+message StopMiningResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// Marketplace
+enum ModelCategory {
+    MODEL_CATEGORY_ALL = 0;
+    MODEL_CATEGORY_LLM = 1;
+    MODEL_CATEGORY_VISION = 2;
+    MODEL_CATEGORY_AUDIO = 3;
+    MODEL_CATEGORY_EMBEDDING = 4;
+    MODEL_CATEGORY_MULTIMODAL = 5;
+}
+
+message MarketplaceListing {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    string format = 4;              // "GGUF", "ONNX", etc.
+    int64 size_bytes = 5;
+    double price_per_request = 6;   // CYXWIZ tokens
+    float rating = 7;               // 0.0 - 5.0
+    int64 download_count = 8;
+    string owner_id = 9;
+    repeated string tags = 10;
+    ModelCategory category = 11;
+    string architecture = 12;
+    int64 parameter_count = 13;
+    string thumbnail_url = 14;
+    int64 created_at = 15;
+}
+
+message ListMarketplaceModelsRequest {
+    string query = 1;               // Search text
+    ModelCategory category = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+    string sort_by = 5;             // "rating", "downloads", "newest"
+}
+
+message ListMarketplaceModelsResponse {
+    repeated MarketplaceListing listings = 1;
+    int32 total_count = 2;
+}
+
+message GetMarketplaceModelRequest {
+    string model_id = 1;
+}
+
+message GetMarketplaceModelResponse {
+    MarketplaceListing listing = 1;
+}
+
+message DownloadMarketplaceModelRequest {
+    string model_id = 1;
+    string target_directory = 2;
+}
+
+message DownloadProgress {
+    string model_id = 1;
+    int64 bytes_downloaded = 2;
+    int64 total_bytes = 3;
+    float progress = 4;             // 0.0 - 1.0
+    bool completed = 5;
+    string error_message = 6;
+    string local_path = 7;          // Set when completed
+}
+
+message CancelMarketplaceDownloadRequest {
+    string model_id = 1;
+}
+
+message CancelMarketplaceDownloadResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// Daemon Control
+message ShutdownRequest {
+    bool graceful = 1;             // Wait for jobs to complete
+}
+
+message ShutdownResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message RestartRequest {}
+
+message RestartResponse {
+    bool success = 1;
+    string error_message = 2;
+}

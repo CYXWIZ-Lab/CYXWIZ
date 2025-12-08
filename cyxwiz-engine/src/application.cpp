@@ -8,6 +8,7 @@
 #include "network/job_manager.h"
 #include "core/async_task_manager.h"
 #include "core/data_registry.h"
+#include "core/training_manager.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -208,6 +209,9 @@ bool CyxWizApp::Initialize() {
 
     // Connect network components to main window
     main_window_->SetNetworkComponents(grpc_client_.get(), job_manager_.get());
+
+    // Connect debug logging flags to main window (for View menu toggles)
+    main_window_->SetIdleLogPtr(&log_idle_transitions_);
 
     // Set exit request callback (triggered by File > Exit menu)
     main_window_->SetExitRequestCallback([this]() {
@@ -504,7 +508,61 @@ void CyxWizApp::HandleDataLoadedConfirmation() {
 }
 
 void CyxWizApp::HandleInput() {
-    glfwPollEvents();
+    double current_time = glfwGetTime();
+
+    // Check for ACTUAL user activity (not just "ImGui wants input")
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Check for real mouse movement (not just hovering)
+    bool mouse_moved = io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f;
+    bool mouse_clicked = io.MouseClicked[0] || io.MouseClicked[1] || io.MouseClicked[2];
+    bool mouse_scrolled = io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f;
+
+    // Check for any key/text input (ImGui 1.91+ compatible)
+    bool key_pressed = !io.InputQueueCharacters.empty() ||
+                       io.KeyCtrl || io.KeyShift || io.KeyAlt || io.KeySuper;
+
+    bool has_activity = mouse_moved || mouse_clicked || mouse_scrolled || key_pressed;
+
+    // Check if training is active (need full frame rate)
+    bool training_active = cyxwiz::TrainingManager::Instance().IsTrainingActive();
+
+    if (has_activity || training_active) {
+        last_activity_time_ = current_time;
+        is_idle_ = false;
+    } else if (current_time - last_activity_time_ > IDLE_TIMEOUT) {
+        is_idle_ = true;
+    }
+
+    // Track state transitions for debugging
+    static bool was_idle = false;
+    static int idle_frame_count = 0;
+    static int active_frame_count = 0;
+
+    if (is_idle_ && !training_active) {
+        // Use wait with timeout for reduced CPU/GPU usage when idle
+        glfwWaitEventsTimeout(IDLE_FRAME_TIME);
+
+        idle_frame_count++;
+        if (!was_idle) {
+            if (log_idle_transitions_) {
+                spdlog::info("Entering IDLE mode (reduced GPU usage)");
+            }
+            was_idle = true;
+            active_frame_count = 0;
+        }
+    } else {
+        glfwPollEvents();
+
+        active_frame_count++;
+        if (was_idle) {
+            if (log_idle_transitions_) {
+                spdlog::info("Exiting IDLE mode (full frame rate)");
+            }
+            was_idle = false;
+            idle_frame_count = 0;
+        }
+    }
 }
 
 void CyxWizApp::Update(float delta_time) {

@@ -26,6 +26,74 @@
 #include "panels/theme_editor.h"
 #include "panels/profiling_panel.h"
 #include "panels/memory_panel.h"
+#include "panels/memory_monitor.h"
+#include "panels/variable_explorer.h"
+#include "panels/test_results_panel.h"
+#include "panels/export_dialog.h"
+#include "panels/import_dialog.h"
+#include "panels/model_summary_panel.h"
+#include "panels/architecture_diagram.h"
+#include "panels/lr_finder_panel.h"
+#include "panels/data_profiler_panel.h"
+#include "panels/correlation_matrix_panel.h"
+#include "panels/missing_value_panel.h"
+#include "panels/outlier_detection_panel.h"
+#include "panels/descriptive_stats_panel.h"
+#include "panels/hypothesis_test_panel.h"
+#include "panels/distribution_fitter_panel.h"
+#include "panels/regression_panel.h"
+#include "panels/dim_reduction_panel.h"
+#include "panels/gradcam_panel.h"
+#include "panels/feature_importance_panel.h"
+#include "panels/nas_panel.h"
+#include "panels/kmeans_panel.h"
+#include "panels/dbscan_panel.h"
+#include "panels/hierarchical_panel.h"
+#include "panels/gmm_panel.h"
+#include "panels/cluster_eval_panel.h"
+#include "panels/confusion_matrix_panel.h"
+#include "panels/roc_auc_panel.h"
+#include "panels/pr_curve_panel.h"
+#include "panels/cross_validation_panel.h"
+#include "panels/learning_curves_panel.h"
+#include "panels/normalization_panel.h"
+#include "panels/standardization_panel.h"
+#include "panels/log_transform_panel.h"
+#include "panels/boxcox_panel.h"
+#include "panels/feature_scaling_panel.h"
+#include "panels/matrix_calculator_panel.h"
+#include "panels/eigen_decomp_panel.h"
+#include "panels/svd_panel.h"
+#include "panels/qr_panel.h"
+#include "panels/cholesky_panel.h"
+#include "panels/fft_panel.h"
+#include "panels/spectrogram_panel.h"
+#include "panels/filter_designer_panel.h"
+#include "panels/convolution_panel.h"
+#include "panels/wavelet_panel.h"
+#include "panels/gradient_descent_panel.h"
+#include "panels/convexity_panel.h"
+#include "panels/lp_panel.h"
+#include "panels/qp_panel.h"
+#include "panels/differentiation_panel.h"
+#include "panels/integration_panel.h"
+#include "panels/decomposition_panel.h"
+#include "panels/acf_pacf_panel.h"
+#include "panels/stationarity_panel.h"
+#include "panels/seasonality_panel.h"
+#include "panels/forecasting_panel.h"
+#include "panels/tokenization_panel.h"
+#include "panels/word_frequency_panel.h"
+#include "panels/tfidf_panel.h"
+#include "panels/embeddings_panel.h"
+#include "panels/sentiment_panel.h"
+// Utilities panels (Phase 12)
+#include "panels/calculator_panel.h"
+#include "panels/unit_converter_panel.h"
+#include "panels/random_generator_panel.h"
+#include "panels/hash_generator_panel.h"
+#include "panels/json_viewer_panel.h"
+#include "panels/regex_tester_panel.h"
 #include "tutorial/tutorial_system.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
@@ -35,6 +103,7 @@
 #include "../core/graph_compiler.h"
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
+#include "../core/test_manager.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -78,6 +147,123 @@ MainWindow::MainWindow()
     theme_editor_ = std::make_unique<gui::ThemeEditorPanel>();
     profiling_panel_ = std::make_unique<cyxwiz::ProfilingPanel>();
     memory_panel_ = std::make_unique<cyxwiz::MemoryPanel>();
+    memory_monitor_ = std::make_unique<cyxwiz::MemoryMonitor>();
+    variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
+    variable_explorer_->SetScriptingEngine(scripting_engine_);
+
+    // Test results panel
+    test_results_panel_ = std::make_unique<cyxwiz::TestResultsPanel>();
+
+    // Export/Import dialogs
+    export_dialog_ = std::make_unique<cyxwiz::ExportDialog>();
+    import_dialog_ = std::make_unique<cyxwiz::ImportDialog>();
+
+    // Model Analysis panels (Phase 2)
+    model_summary_panel_ = std::make_unique<cyxwiz::ModelSummaryPanel>();
+    model_summary_panel_->SetNodeEditor(node_editor_.get());
+
+    architecture_diagram_ = std::make_unique<cyxwiz::ArchitectureDiagram>();
+    architecture_diagram_->SetNodeEditor(node_editor_.get());
+
+    lr_finder_panel_ = std::make_unique<cyxwiz::LRFinderPanel>();
+    lr_finder_panel_->SetNodeEditor(node_editor_.get());
+
+    // Data Science panels (Phase 3)
+    data_profiler_panel_ = std::make_unique<cyxwiz::DataProfilerPanel>();
+    correlation_matrix_panel_ = std::make_unique<cyxwiz::CorrelationMatrixPanel>();
+    missing_value_panel_ = std::make_unique<cyxwiz::MissingValuePanel>();
+    outlier_detection_panel_ = std::make_unique<cyxwiz::OutlierDetectionPanel>();
+
+    // Statistics panels (Phase 4)
+    descriptive_stats_panel_ = std::make_unique<cyxwiz::DescriptiveStatsPanel>();
+    hypothesis_test_panel_ = std::make_unique<cyxwiz::HypothesisTestPanel>();
+    distribution_fitter_panel_ = std::make_unique<cyxwiz::DistributionFitterPanel>();
+    regression_panel_ = std::make_unique<cyxwiz::RegressionPanel>();
+
+    // Advanced Tools panels (Phase 5)
+    dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
+    gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
+    feature_importance_panel_ = std::make_unique<cyxwiz::FeatureImportancePanel>();
+    nas_panel_ = std::make_unique<cyxwiz::NASPanel>();
+
+    // Clustering panels (Phase 6A)
+    kmeans_panel_ = std::make_unique<cyxwiz::KMeansPanel>();
+    dbscan_panel_ = std::make_unique<cyxwiz::DBSCANPanel>();
+    hierarchical_panel_ = std::make_unique<cyxwiz::HierarchicalPanel>();
+    gmm_panel_ = std::make_unique<cyxwiz::GMMPanel>();
+    cluster_eval_panel_ = std::make_unique<cyxwiz::ClusterEvalPanel>();
+
+    // Model Evaluation panels (Phase 6B)
+    confusion_matrix_panel_ = std::make_unique<cyxwiz::ConfusionMatrixPanel>();
+    roc_auc_panel_ = std::make_unique<cyxwiz::ROCAUCPanel>();
+    pr_curve_panel_ = std::make_unique<cyxwiz::PRCurvePanel>();
+    cross_validation_panel_ = std::make_unique<cyxwiz::CrossValidationPanel>();
+    learning_curves_panel_ = std::make_unique<cyxwiz::LearningCurvesPanel>();
+
+    // Data Transformation panels (Phase 6C)
+    normalization_panel_ = std::make_unique<cyxwiz::NormalizationPanel>();
+    standardization_panel_ = std::make_unique<cyxwiz::StandardizationPanel>();
+    log_transform_panel_ = std::make_unique<cyxwiz::LogTransformPanel>();
+    boxcox_panel_ = std::make_unique<cyxwiz::BoxCoxPanel>();
+    feature_scaling_panel_ = std::make_unique<cyxwiz::FeatureScalingPanel>();
+
+    // Linear Algebra panels (Phase 7)
+    matrix_calculator_panel_ = std::make_unique<cyxwiz::MatrixCalculatorPanel>();
+    eigen_decomp_panel_ = std::make_unique<cyxwiz::EigenDecompPanel>();
+    svd_panel_ = std::make_unique<cyxwiz::SVDPanel>();
+    qr_panel_ = std::make_unique<cyxwiz::QRPanel>();
+    cholesky_panel_ = std::make_unique<cyxwiz::CholeskyPanel>();
+
+    // Signal Processing panels (Phase 8)
+    fft_panel_ = std::make_unique<cyxwiz::FFTPanel>();
+    spectrogram_panel_ = std::make_unique<cyxwiz::SpectrogramPanel>();
+    filter_designer_panel_ = std::make_unique<cyxwiz::FilterDesignerPanel>();
+    convolution_panel_ = std::make_unique<cyxwiz::ConvolutionPanel>();
+    wavelet_panel_ = std::make_unique<cyxwiz::WaveletPanel>();
+
+    // Optimization & Calculus panels (Phase 9)
+    gradient_descent_panel_ = std::make_unique<cyxwiz::GradientDescentPanel>();
+    convexity_panel_ = std::make_unique<cyxwiz::ConvexityPanel>();
+    lp_panel_ = std::make_unique<cyxwiz::LPPanel>();
+    qp_panel_ = std::make_unique<cyxwiz::QPPanel>();
+    differentiation_panel_ = std::make_unique<cyxwiz::DifferentiationPanel>();
+    integration_panel_ = std::make_unique<cyxwiz::IntegrationPanel>();
+
+    // Time Series Analysis panels (Phase 10)
+    decomposition_panel_ = std::make_unique<cyxwiz::DecompositionPanel>();
+    acf_pacf_panel_ = std::make_unique<cyxwiz::ACFPACFPanel>();
+    stationarity_panel_ = std::make_unique<cyxwiz::StationarityPanel>();
+    seasonality_panel_ = std::make_unique<cyxwiz::SeasonalityPanel>();
+    forecasting_panel_ = std::make_unique<cyxwiz::ForecastingPanel>();
+
+    // Text Processing panels (Phase 11)
+    tokenization_panel_ = std::make_unique<cyxwiz::TokenizationPanel>();
+    word_frequency_panel_ = std::make_unique<cyxwiz::WordFrequencyPanel>();
+    tfidf_panel_ = std::make_unique<cyxwiz::TFIDFPanel>();
+    embeddings_panel_ = std::make_unique<cyxwiz::EmbeddingsPanel>();
+    sentiment_panel_ = std::make_unique<cyxwiz::SentimentPanel>();
+
+    // Utilities panels (Phase 12)
+    calculator_panel_ = std::make_unique<cyxwiz::CalculatorPanel>();
+    unit_converter_panel_ = std::make_unique<cyxwiz::UnitConverterPanel>();
+    random_generator_panel_ = std::make_unique<cyxwiz::RandomGeneratorPanel>();
+    hash_generator_panel_ = std::make_unique<cyxwiz::HashGeneratorPanel>();
+    json_viewer_panel_ = std::make_unique<cyxwiz::JSONViewerPanel>();
+    regex_tester_panel_ = std::make_unique<cyxwiz::RegexTesterPanel>();
+
+    // Set NAS panel callbacks for node editor integration
+    nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
+        if (node_editor_) {
+            return {node_editor_->GetNodes(), node_editor_->GetLinks()};
+        }
+        return {{}, {}};
+    });
+
+    nas_panel_->SetApplyArchitectureCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+        if (node_editor_) {
+            node_editor_->InsertPattern(nodes, links);
+        }
+    });
 
     // Set pattern browser callback to insert patterns into node editor
     pattern_browser_->SetInsertCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
@@ -159,6 +345,80 @@ MainWindow::MainWindow()
         }
     });
 
+    // Set up Run Test callback
+    toolbar_->SetRunTestCallback([this]() {
+        if (node_editor_) {
+            auto nodes = node_editor_->GetNodes();
+            auto links = node_editor_->GetLinks();
+            StartTestingFromGraph(nodes, links);
+        }
+    });
+
+    // Set up View Test Results callback
+    toolbar_->SetViewTestResultsCallback([this]() {
+        if (test_results_panel_) {
+            test_results_panel_->Show();
+            spdlog::info("Opened Test Results panel");
+        }
+    });
+
+    // Set up Export Model callback
+    toolbar_->SetExportModelCallback([this](int format_index) {
+        if (export_dialog_) {
+            // Get trained model from TrainingManager
+            auto& tm = cyxwiz::TrainingManager::Instance();
+            if (tm.HasTrainedModel()) {
+                auto* model = tm.GetLastTrainedModel();
+                auto* optimizer = tm.GetLastOptimizer();
+                auto& metrics = tm.GetLastMetrics();
+
+                // Get current graph JSON from node editor
+                std::string graph_json;
+                if (node_editor_) {
+                    graph_json = node_editor_->GetGraphJson();
+                }
+
+                export_dialog_->SetModelData(model, optimizer, &metrics, graph_json);
+                spdlog::info("Loaded trained model into Export dialog");
+            } else {
+                spdlog::warn("No trained model available for export");
+            }
+
+            export_dialog_->Open();
+            spdlog::info("Opened Export Model dialog (format index: {})", format_index);
+        }
+    });
+
+    // Set up Import Model callback
+    toolbar_->SetImportModelCallback([this]() {
+        if (import_dialog_) {
+            import_dialog_->Open();
+            spdlog::info("Opened Import Model dialog");
+        }
+    });
+
+    // Set up Import Complete callback - load graph into node editor
+    import_dialog_->SetImportCompleteCallback(
+        [this](const cyxwiz::ImportResult& result, const std::string& graph_json) {
+            if (result.success) {
+                spdlog::info("Model imported successfully: {} ({} layers, {} params)",
+                             result.model_name, result.num_layers, result.num_parameters);
+
+                // Load graph into node editor if available
+                if (!graph_json.empty() && node_editor_) {
+                    if (node_editor_->LoadGraphFromString(graph_json)) {
+                        node_editor_->Show();
+                        spdlog::info("Loaded imported model graph into Node Editor");
+                    } else {
+                        spdlog::warn("Failed to load imported graph into Node Editor");
+                    }
+                }
+            } else {
+                spdlog::error("Model import failed: {}", result.error_message);
+            }
+        }
+    );
+
     // Set up Custom Node Editor callback
     toolbar_->SetOpenCustomNodeEditorCallback([this]() {
         if (custom_node_editor_) {
@@ -183,11 +443,447 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Memory Monitor callback
+    // Set up Memory Monitor callback (from Tools menu)
     toolbar_->SetOpenMemoryMonitorCallback([this]() {
-        if (memory_panel_) {
-            memory_panel_->Show();
-            spdlog::info("Opened Memory Monitor panel");
+        if (memory_monitor_) {
+            memory_monitor_->Toggle();
+            spdlog::info("Toggled Memory Monitor");
+        }
+    });
+
+    // Set up Verbose Python Logging pointer (View menu - Developer Tools)
+    if (scripting_engine_) {
+        toolbar_->SetVerbosePythonLogPtr(scripting_engine_->GetVerboseLoggingPtr());
+    }
+
+    // Set up Model Analysis callbacks (Tools menu - Phase 2)
+    toolbar_->SetOpenModelSummaryCallback([this]() {
+        if (model_summary_panel_) {
+            model_summary_panel_->Toggle();
+            if (model_summary_panel_->IsVisible()) {
+                model_summary_panel_->RefreshAnalysis();
+            }
+            spdlog::info("Toggled Model Summary panel");
+        }
+    });
+
+    toolbar_->SetOpenArchitectureDiagramCallback([this]() {
+        if (architecture_diagram_) {
+            architecture_diagram_->Toggle();
+            if (architecture_diagram_->IsVisible()) {
+                architecture_diagram_->RefreshDiagram();
+            }
+            spdlog::info("Toggled Architecture Diagram panel");
+        }
+    });
+
+    toolbar_->SetOpenLRFinderCallback([this]() {
+        if (lr_finder_panel_) {
+            lr_finder_panel_->Toggle();
+            spdlog::info("Toggled Learning Rate Finder panel");
+        }
+    });
+
+    // Set up Data Science callbacks (Tools menu - Phase 3)
+    toolbar_->SetOpenDataProfilerCallback([this]() {
+        if (data_profiler_panel_) {
+            data_profiler_panel_->Toggle();
+            spdlog::info("Toggled Data Profiler panel");
+        }
+    });
+
+    toolbar_->SetOpenCorrelationMatrixCallback([this]() {
+        if (correlation_matrix_panel_) {
+            correlation_matrix_panel_->Toggle();
+            spdlog::info("Toggled Correlation Matrix panel");
+        }
+    });
+
+    toolbar_->SetOpenMissingValuePanelCallback([this]() {
+        if (missing_value_panel_) {
+            missing_value_panel_->Toggle();
+            spdlog::info("Toggled Missing Value panel");
+        }
+    });
+
+    toolbar_->SetOpenOutlierDetectionCallback([this]() {
+        if (outlier_detection_panel_) {
+            outlier_detection_panel_->Toggle();
+            spdlog::info("Toggled Outlier Detection panel");
+        }
+    });
+
+    // Set up Statistics callbacks (Tools menu - Phase 4)
+    toolbar_->SetOpenDescriptiveStatsCallback([this]() {
+        if (descriptive_stats_panel_) {
+            descriptive_stats_panel_->Toggle();
+            spdlog::info("Toggled Descriptive Statistics panel");
+        }
+    });
+
+    toolbar_->SetOpenHypothesisTestCallback([this]() {
+        if (hypothesis_test_panel_) {
+            hypothesis_test_panel_->Toggle();
+            spdlog::info("Toggled Hypothesis Testing panel");
+        }
+    });
+
+    toolbar_->SetOpenDistributionFitterCallback([this]() {
+        if (distribution_fitter_panel_) {
+            distribution_fitter_panel_->Toggle();
+            spdlog::info("Toggled Distribution Fitter panel");
+        }
+    });
+
+    toolbar_->SetOpenRegressionCallback([this]() {
+        if (regression_panel_) {
+            regression_panel_->Toggle();
+            spdlog::info("Toggled Regression Analysis panel");
+        }
+    });
+
+    // Advanced Tools callbacks (Phase 5)
+    toolbar_->SetOpenDimReductionCallback([this]() {
+        if (dim_reduction_panel_) {
+            dim_reduction_panel_->Toggle();
+            spdlog::info("Toggled Dimensionality Reduction panel");
+        }
+    });
+
+    toolbar_->SetOpenGradCAMCallback([this]() {
+        if (gradcam_panel_) {
+            gradcam_panel_->Toggle();
+            spdlog::info("Toggled Grad-CAM panel");
+        }
+    });
+
+    toolbar_->SetOpenFeatureImportanceCallback([this]() {
+        if (feature_importance_panel_) {
+            feature_importance_panel_->Toggle();
+            spdlog::info("Toggled Feature Importance panel");
+        }
+    });
+
+    toolbar_->SetOpenNASCallback([this]() {
+        if (nas_panel_) {
+            nas_panel_->Toggle();
+            spdlog::info("Toggled Neural Architecture Search panel");
+        }
+    });
+
+    // Clustering callbacks (Phase 6A)
+    toolbar_->SetOpenKMeansCallback([this]() {
+        if (kmeans_panel_) {
+            kmeans_panel_->Toggle();
+            spdlog::info("Toggled K-Means Clustering panel");
+        }
+    });
+
+    toolbar_->SetOpenDBSCANCallback([this]() {
+        if (dbscan_panel_) {
+            dbscan_panel_->Toggle();
+            spdlog::info("Toggled DBSCAN panel");
+        }
+    });
+
+    toolbar_->SetOpenHierarchicalCallback([this]() {
+        if (hierarchical_panel_) {
+            hierarchical_panel_->Toggle();
+            spdlog::info("Toggled Hierarchical Clustering panel");
+        }
+    });
+
+    toolbar_->SetOpenGMMCallback([this]() {
+        if (gmm_panel_) {
+            gmm_panel_->Toggle();
+            spdlog::info("Toggled GMM panel");
+        }
+    });
+
+    toolbar_->SetOpenClusterEvalCallback([this]() {
+        if (cluster_eval_panel_) {
+            cluster_eval_panel_->Toggle();
+            spdlog::info("Toggled Cluster Evaluation panel");
+        }
+    });
+
+    // Model Evaluation callbacks (Phase 6B)
+    toolbar_->SetOpenConfusionMatrixCallback([this]() {
+        if (confusion_matrix_panel_) {
+            confusion_matrix_panel_->Toggle();
+            spdlog::info("Toggled Confusion Matrix panel");
+        }
+    });
+
+    toolbar_->SetOpenROCAUCCallback([this]() {
+        if (roc_auc_panel_) {
+            roc_auc_panel_->Toggle();
+            spdlog::info("Toggled ROC/AUC panel");
+        }
+    });
+
+    toolbar_->SetOpenPRCurveCallback([this]() {
+        if (pr_curve_panel_) {
+            pr_curve_panel_->Toggle();
+            spdlog::info("Toggled PR Curve panel");
+        }
+    });
+
+    toolbar_->SetOpenCrossValidationCallback([this]() {
+        if (cross_validation_panel_) {
+            cross_validation_panel_->Toggle();
+            spdlog::info("Toggled Cross-Validation panel");
+        }
+    });
+
+    toolbar_->SetOpenLearningCurvesCallback([this]() {
+        if (learning_curves_panel_) {
+            learning_curves_panel_->Toggle();
+            spdlog::info("Toggled Learning Curves panel");
+        }
+    });
+
+    // Data Transformation callbacks (Phase 6C)
+    toolbar_->SetOpenNormalizationCallback([this]() {
+        if (normalization_panel_) {
+            normalization_panel_->Toggle();
+            spdlog::info("Toggled Normalization panel");
+        }
+    });
+
+    toolbar_->SetOpenStandardizationCallback([this]() {
+        if (standardization_panel_) {
+            standardization_panel_->Toggle();
+            spdlog::info("Toggled Standardization panel");
+        }
+    });
+
+    toolbar_->SetOpenLogTransformCallback([this]() {
+        if (log_transform_panel_) {
+            log_transform_panel_->Toggle();
+            spdlog::info("Toggled Log Transform panel");
+        }
+    });
+
+    toolbar_->SetOpenBoxCoxCallback([this]() {
+        if (boxcox_panel_) {
+            boxcox_panel_->Toggle();
+            spdlog::info("Toggled Box-Cox panel");
+        }
+    });
+
+    toolbar_->SetOpenFeatureScalingCallback([this]() {
+        if (feature_scaling_panel_) {
+            feature_scaling_panel_->Toggle();
+            spdlog::info("Toggled Feature Scaling panel");
+        }
+    });
+
+    // Linear Algebra callbacks (Phase 7)
+    toolbar_->SetOpenMatrixCalculatorCallback([this]() {
+        if (matrix_calculator_panel_) {
+            matrix_calculator_panel_->Toggle();
+            spdlog::info("Toggled Matrix Calculator panel");
+        }
+    });
+
+    toolbar_->SetOpenEigenDecompCallback([this]() {
+        if (eigen_decomp_panel_) {
+            eigen_decomp_panel_->Toggle();
+            spdlog::info("Toggled Eigen Decomposition panel");
+        }
+    });
+
+    toolbar_->SetOpenSVDCallback([this]() {
+        if (svd_panel_) {
+            svd_panel_->Toggle();
+            spdlog::info("Toggled SVD panel");
+        }
+    });
+
+    toolbar_->SetOpenQRCallback([this]() {
+        if (qr_panel_) {
+            qr_panel_->Toggle();
+            spdlog::info("Toggled QR Decomposition panel");
+        }
+    });
+
+    toolbar_->SetOpenCholeskyCallback([this]() {
+        if (cholesky_panel_) {
+            cholesky_panel_->Toggle();
+            spdlog::info("Toggled Cholesky Decomposition panel");
+        }
+    });
+
+    // Signal Processing callbacks (Phase 8)
+    toolbar_->SetOpenFFTCallback([this]() {
+        if (fft_panel_) {
+            fft_panel_->Toggle();
+            spdlog::info("Toggled FFT panel");
+        }
+    });
+    toolbar_->SetOpenSpectrogramCallback([this]() {
+        if (spectrogram_panel_) {
+            spectrogram_panel_->Toggle();
+            spdlog::info("Toggled Spectrogram panel");
+        }
+    });
+    toolbar_->SetOpenFilterDesignerCallback([this]() {
+        if (filter_designer_panel_) {
+            filter_designer_panel_->Toggle();
+            spdlog::info("Toggled Filter Designer panel");
+        }
+    });
+    toolbar_->SetOpenConvolutionCallback([this]() {
+        if (convolution_panel_) {
+            convolution_panel_->Toggle();
+            spdlog::info("Toggled Convolution panel");
+        }
+    });
+    toolbar_->SetOpenWaveletCallback([this]() {
+        if (wavelet_panel_) {
+            wavelet_panel_->Toggle();
+            spdlog::info("Toggled Wavelet Transform panel");
+        }
+    });
+
+    // Optimization & Calculus callbacks (Phase 9)
+    toolbar_->SetOpenGradientDescentCallback([this]() {
+        if (gradient_descent_panel_) {
+            gradient_descent_panel_->Toggle();
+            spdlog::info("Toggled Gradient Descent panel");
+        }
+    });
+    toolbar_->SetOpenConvexityCallback([this]() {
+        if (convexity_panel_) {
+            convexity_panel_->Toggle();
+            spdlog::info("Toggled Convexity Analyzer panel");
+        }
+    });
+    toolbar_->SetOpenLPCallback([this]() {
+        if (lp_panel_) {
+            lp_panel_->Toggle();
+            spdlog::info("Toggled Linear Programming panel");
+        }
+    });
+    toolbar_->SetOpenQPCallback([this]() {
+        if (qp_panel_) {
+            qp_panel_->Toggle();
+            spdlog::info("Toggled Quadratic Programming panel");
+        }
+    });
+    toolbar_->SetOpenDifferentiationCallback([this]() {
+        if (differentiation_panel_) {
+            differentiation_panel_->Toggle();
+            spdlog::info("Toggled Numerical Differentiation panel");
+        }
+    });
+    toolbar_->SetOpenIntegrationCallback([this]() {
+        if (integration_panel_) {
+            integration_panel_->Toggle();
+            spdlog::info("Toggled Numerical Integration panel");
+        }
+    });
+
+    // Time Series Analysis callbacks (Phase 10)
+    toolbar_->SetOpenDecompositionCallback([this]() {
+        if (decomposition_panel_) {
+            decomposition_panel_->Toggle();
+            spdlog::info("Toggled Time Series Decomposition panel");
+        }
+    });
+    toolbar_->SetOpenACFPACFCallback([this]() {
+        if (acf_pacf_panel_) {
+            acf_pacf_panel_->Toggle();
+            spdlog::info("Toggled ACF/PACF panel");
+        }
+    });
+    toolbar_->SetOpenStationarityCallback([this]() {
+        if (stationarity_panel_) {
+            stationarity_panel_->Toggle();
+            spdlog::info("Toggled Stationarity Testing panel");
+        }
+    });
+    toolbar_->SetOpenSeasonalityCallback([this]() {
+        if (seasonality_panel_) {
+            seasonality_panel_->Toggle();
+            spdlog::info("Toggled Seasonality Detection panel");
+        }
+    });
+    toolbar_->SetOpenForecastingCallback([this]() {
+        if (forecasting_panel_) {
+            forecasting_panel_->Toggle();
+            spdlog::info("Toggled Forecasting panel");
+        }
+    });
+
+    // Text Processing callbacks (Phase 11)
+    toolbar_->SetOpenTokenizationCallback([this]() {
+        if (tokenization_panel_) {
+            tokenization_panel_->SetVisible(true);
+            spdlog::info("Opened Tokenization panel");
+        }
+    });
+    toolbar_->SetOpenWordFrequencyCallback([this]() {
+        if (word_frequency_panel_) {
+            word_frequency_panel_->SetVisible(true);
+            spdlog::info("Opened Word Frequency panel");
+        }
+    });
+    toolbar_->SetOpenTFIDFCallback([this]() {
+        if (tfidf_panel_) {
+            tfidf_panel_->SetVisible(true);
+            spdlog::info("Opened TF-IDF panel");
+        }
+    });
+    toolbar_->SetOpenEmbeddingsCallback([this]() {
+        if (embeddings_panel_) {
+            embeddings_panel_->SetVisible(true);
+            spdlog::info("Opened Embeddings panel");
+        }
+    });
+    toolbar_->SetOpenSentimentCallback([this]() {
+        if (sentiment_panel_) {
+            sentiment_panel_->SetVisible(true);
+            spdlog::info("Opened Sentiment Analysis panel");
+        }
+    });
+
+    // Utilities panel callbacks (Phase 12)
+    toolbar_->SetOpenCalculatorCallback([this]() {
+        if (calculator_panel_) {
+            calculator_panel_->SetVisible(true);
+            spdlog::info("Opened Calculator panel");
+        }
+    });
+    toolbar_->SetOpenUnitConverterCallback([this]() {
+        if (unit_converter_panel_) {
+            unit_converter_panel_->SetVisible(true);
+            spdlog::info("Opened Unit Converter panel");
+        }
+    });
+    toolbar_->SetOpenRandomGeneratorCallback([this]() {
+        if (random_generator_panel_) {
+            random_generator_panel_->SetVisible(true);
+            spdlog::info("Opened Random Generator panel");
+        }
+    });
+    toolbar_->SetOpenHashGeneratorCallback([this]() {
+        if (hash_generator_panel_) {
+            hash_generator_panel_->SetVisible(true);
+            spdlog::info("Opened Hash Generator panel");
+        }
+    });
+    toolbar_->SetOpenJSONViewerCallback([this]() {
+        if (json_viewer_panel_) {
+            json_viewer_panel_->SetVisible(true);
+            spdlog::info("Opened JSON Viewer panel");
+        }
+    });
+    toolbar_->SetOpenRegexTesterCallback([this]() {
+        if (regex_tester_panel_) {
+            regex_tester_panel_->SetVisible(true);
+            spdlog::info("Opened Regex Tester panel");
         }
     });
 
@@ -585,6 +1281,12 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow() = default;
 
+void MainWindow::SetIdleLogPtr(bool* ptr) {
+    if (toolbar_) {
+        toolbar_->SetIdleLogPtr(ptr);
+    }
+}
+
 void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager) {
     // Store job manager reference
     job_manager_ = job_manager;
@@ -733,6 +1435,99 @@ void MainWindow::Render() {
     if (theme_editor_) theme_editor_->Render();
     if (profiling_panel_) profiling_panel_->Render();
     if (memory_panel_) memory_panel_->Render();
+    if (memory_monitor_) memory_monitor_->Render();
+    if (variable_explorer_) variable_explorer_->Render();
+    if (test_results_panel_) test_results_panel_->Render();
+    if (export_dialog_) export_dialog_->Render();
+    if (import_dialog_) import_dialog_->Render();
+
+    // Render Model Analysis panels (Phase 2)
+    if (model_summary_panel_) model_summary_panel_->Render();
+    if (architecture_diagram_) architecture_diagram_->Render();
+    if (lr_finder_panel_) lr_finder_panel_->Render();
+
+    // Render Data Science panels (Phase 3)
+    if (data_profiler_panel_) data_profiler_panel_->Render();
+    if (correlation_matrix_panel_) correlation_matrix_panel_->Render();
+    if (missing_value_panel_) missing_value_panel_->Render();
+    if (outlier_detection_panel_) outlier_detection_panel_->Render();
+
+    // Render Statistics panels (Phase 4)
+    if (descriptive_stats_panel_) descriptive_stats_panel_->Render();
+    if (hypothesis_test_panel_) hypothesis_test_panel_->Render();
+    if (distribution_fitter_panel_) distribution_fitter_panel_->Render();
+    if (regression_panel_) regression_panel_->Render();
+
+    // Render Advanced Tools panels (Phase 5)
+    if (dim_reduction_panel_) dim_reduction_panel_->Render();
+    if (gradcam_panel_) gradcam_panel_->Render();
+    if (feature_importance_panel_) feature_importance_panel_->Render();
+    if (nas_panel_) nas_panel_->Render();
+
+    // Render Clustering panels (Phase 6A)
+    if (kmeans_panel_) kmeans_panel_->Render();
+    if (dbscan_panel_) dbscan_panel_->Render();
+    if (hierarchical_panel_) hierarchical_panel_->Render();
+    if (gmm_panel_) gmm_panel_->Render();
+    if (cluster_eval_panel_) cluster_eval_panel_->Render();
+
+    // Render Model Evaluation panels (Phase 6B)
+    if (confusion_matrix_panel_) confusion_matrix_panel_->Render();
+    if (roc_auc_panel_) roc_auc_panel_->Render();
+    if (pr_curve_panel_) pr_curve_panel_->Render();
+    if (cross_validation_panel_) cross_validation_panel_->Render();
+    if (learning_curves_panel_) learning_curves_panel_->Render();
+
+    // Render Data Transformation panels (Phase 6C)
+    if (normalization_panel_) normalization_panel_->Render();
+    if (standardization_panel_) standardization_panel_->Render();
+    if (log_transform_panel_) log_transform_panel_->Render();
+    if (boxcox_panel_) boxcox_panel_->Render();
+    if (feature_scaling_panel_) feature_scaling_panel_->Render();
+
+    // Linear Algebra panels (Phase 7)
+    if (matrix_calculator_panel_) matrix_calculator_panel_->Render();
+    if (eigen_decomp_panel_) eigen_decomp_panel_->Render();
+    if (svd_panel_) svd_panel_->Render();
+    if (qr_panel_) qr_panel_->Render();
+    if (cholesky_panel_) cholesky_panel_->Render();
+
+    // Signal Processing panels (Phase 8)
+    if (fft_panel_) fft_panel_->Render();
+    if (spectrogram_panel_) spectrogram_panel_->Render();
+    if (filter_designer_panel_) filter_designer_panel_->Render();
+    if (convolution_panel_) convolution_panel_->Render();
+    if (wavelet_panel_) wavelet_panel_->Render();
+
+    // Optimization & Calculus panels (Phase 9)
+    if (gradient_descent_panel_) gradient_descent_panel_->Render();
+    if (convexity_panel_) convexity_panel_->Render();
+    if (lp_panel_) lp_panel_->Render();
+    if (qp_panel_) qp_panel_->Render();
+    if (differentiation_panel_) differentiation_panel_->Render();
+    if (integration_panel_) integration_panel_->Render();
+
+    // Time Series Analysis panels (Phase 10)
+    if (decomposition_panel_) decomposition_panel_->Render();
+    if (acf_pacf_panel_) acf_pacf_panel_->Render();
+    if (stationarity_panel_) stationarity_panel_->Render();
+    if (seasonality_panel_) seasonality_panel_->Render();
+    if (forecasting_panel_) forecasting_panel_->Render();
+
+    // Text Processing panels (Phase 11)
+    if (tokenization_panel_) tokenization_panel_->Render();
+    if (word_frequency_panel_) word_frequency_panel_->Render();
+    if (tfidf_panel_) tfidf_panel_->Render();
+    if (embeddings_panel_) embeddings_panel_->Render();
+    if (sentiment_panel_) sentiment_panel_->Render();
+
+    // Render Utilities panels (Phase 12)
+    if (calculator_panel_) calculator_panel_->Render();
+    if (unit_converter_panel_) unit_converter_panel_->Render();
+    if (random_generator_panel_) random_generator_panel_->Render();
+    if (hash_generator_panel_) hash_generator_panel_->Render();
+    if (json_viewer_panel_) json_viewer_panel_->Render();
+    if (regex_tester_panel_) regex_tester_panel_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
@@ -994,6 +1789,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     if (query_console_) {
         dock_style.RegisterPanel("Query Console", ICON_FA_TERMINAL, query_console_->GetVisiblePtr());
     }
+    if (variable_explorer_) {
+        dock_style.RegisterPanel("Variable Explorer", ICON_FA_LIST_UL, variable_explorer_->GetVisiblePtr());
+    }
 
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
 }
@@ -1070,6 +1868,76 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         spdlog::info("Training started from node graph via TrainingManager");
     } else {
         spdlog::warn("Could not start training - another training session may be in progress");
+    }
+}
+
+void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    spdlog::info("StartTestingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
+
+    // Compile the graph (same as training)
+    cyxwiz::GraphCompiler compiler;
+    cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
+
+    if (!config.is_valid) {
+        spdlog::error("Graph compilation failed: {}", config.error_message);
+        return;
+    }
+
+    spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
+                 config.layers.size(), config.input_size, config.output_size);
+
+    // Check if we have a dataset loaded
+    if (!dataset_panel_ || !dataset_panel_->IsDatasetLoaded()) {
+        spdlog::error("No dataset loaded. Please load a dataset first.");
+        return;
+    }
+
+    // Get the dataset handle from DatasetPanel
+    cyxwiz::DatasetHandle dataset = dataset_panel_->GetCurrentDataset();
+    if (!dataset.IsValid()) {
+        spdlog::error("Invalid dataset handle");
+        return;
+    }
+
+    // Update config with dataset info
+    const auto& dataset_info = dataset_panel_->GetDatasetInfo();
+    config.dataset_name = dataset_info.name;
+
+    size_t input_size = 1;
+    for (auto dim : dataset_info.shape) {
+        input_size *= dim;
+    }
+    config.input_size = input_size;
+    config.output_size = dataset_info.num_classes;
+
+    spdlog::info("Starting testing from node graph:");
+    spdlog::info("  Dataset: {} ({} samples, {} classes)",
+                 config.dataset_name, dataset_info.num_samples, config.output_size);
+
+    int batch_size = 32;
+
+    // Get callback to update test results panel
+    auto complete_callback = [this](const cyxwiz::TestingMetrics& results) {
+        if (test_results_panel_) {
+            test_results_panel_->SetResults(results);
+            test_results_panel_->Show();
+        }
+        spdlog::info("Testing complete! Accuracy: {:.2f}%", results.test_accuracy * 100);
+    };
+
+    // Use TestManager to start testing
+    bool started = cyxwiz::TestManager::Instance().StartTesting(
+        std::move(config),
+        dataset,
+        batch_size,
+        nullptr,  // Will build model from config
+        complete_callback
+    );
+
+    if (started) {
+        spdlog::info("Testing started from node graph via TestManager");
+    } else {
+        spdlog::warn("Could not start testing - another testing session may be in progress");
     }
 }
 

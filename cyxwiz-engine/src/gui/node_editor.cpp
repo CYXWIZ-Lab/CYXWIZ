@@ -308,6 +308,14 @@ void NodeEditor::Render() {
             ImGui::GetIO().WantCaptureMouse = true;
         }
 
+        // Apply zoom to ImNodes style
+        ImNodes::PushStyleVar(ImNodesStyleVar_GridSpacing, 32.0f * zoom_);
+        ImNodes::PushStyleVar(ImNodesStyleVar_NodePadding, ImVec2(8.0f * zoom_, 8.0f * zoom_));
+        ImNodes::PushStyleVar(ImNodesStyleVar_PinCircleRadius, 4.0f * zoom_);
+        ImNodes::PushStyleVar(ImNodesStyleVar_LinkThickness, 3.0f * zoom_);
+        ImNodes::PushStyleVar(ImNodesStyleVar_PinLineThickness, 1.0f * zoom_);
+        ImGui::SetWindowFontScale(zoom_);
+
         ImNodes::BeginNodeEditor();
 
         // Handle deferred ImNodes clear (must be inside BeginNodeEditor scope)
@@ -330,14 +338,28 @@ void NodeEditor::Render() {
         if (ImGui::IsWindowHovered() && !mouse_in_minimap_bounds) {
             float wheel = ImGui::GetIO().MouseWheel;
             if (wheel != 0.0f) {
-                // Zoom by adjusting the panning offset
-                ImVec2 panning = ImNodes::EditorContextGetPanning();
-                float zoom_delta = wheel * 50.0f;  // Zoom speed
+                // Real zoom implementation - adjust zoom factor
+                float old_zoom = zoom_;
+                zoom_ = std::clamp(zoom_ + wheel * 0.1f, ZOOM_MIN, ZOOM_MAX);
 
-                ImNodes::EditorContextResetPanning(ImVec2(
-                    panning.x + zoom_delta,
-                    panning.y + zoom_delta
-                ));
+                // Zoom toward mouse position by adjusting panning
+                if (zoom_ != old_zoom) {
+                    ImVec2 panning = ImNodes::EditorContextGetPanning();
+                    ImVec2 editor_origin = ImGui::GetWindowPos();
+                    editor_origin.y += ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 30.0f;
+                    editor_origin.x += ImGui::GetStyle().WindowPadding.x;
+
+                    ImVec2 mouse_rel = ImVec2(
+                        mouse_pos.x - editor_origin.x - panning.x,
+                        mouse_pos.y - editor_origin.y - panning.y
+                    );
+
+                    float zoom_factor = zoom_ / old_zoom;
+                    ImNodes::EditorContextResetPanning(ImVec2(
+                        panning.x - mouse_rel.x * (zoom_factor - 1.0f),
+                        panning.y - mouse_rel.y * (zoom_factor - 1.0f)
+                    ));
+                }
             }
         }
 
@@ -372,6 +394,10 @@ void NodeEditor::Render() {
         }
 
         ImNodes::EndNodeEditor();
+
+        // Pop zoom style variables
+        ImNodes::PopStyleVar(5);
+        ImGui::SetWindowFontScale(1.0f);
 
         // Render minimap overlay in bottom-right corner
         if (show_minimap_) {
@@ -741,6 +767,27 @@ void NodeEditor::ShowToolbar() {
             }
         }
     }
+
+    // Zoom controls
+    ImGui::SameLine();
+    ImGui::Text("|");
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_PLUS)) {
+        zoom_ = std::min(zoom_ * 1.2f, ZOOM_MAX);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom In");
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_MINUS)) {
+        zoom_ = std::max(zoom_ / 1.2f, ZOOM_MIN);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom Out");
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_EXPAND)) {
+        zoom_ = 1.0f;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Zoom (100%)");
+    ImGui::SameLine();
+    ImGui::Text("%.0f%%", zoom_ * 100.0f);
 }
 
 void NodeEditor::RenderMinimap() {

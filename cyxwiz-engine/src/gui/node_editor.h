@@ -317,6 +317,12 @@ public:
     // Load graph from file (for Asset Browser integration)
     bool LoadGraph(const std::string& filepath);
 
+    // Load graph from JSON string (for import from .cyxmodel)
+    bool LoadGraphFromString(const std::string& json_string);
+
+    // Get current graph as JSON string (for export to .cyxmodel)
+    std::string GetGraphJson() const;
+
     // Show the node editor window
     void Show() { show_window_ = true; }
 
@@ -513,6 +519,11 @@ private:
     // Training animation state
     bool is_training_ = false;
     float training_animation_time_ = 0.0f;
+
+    // Zoom state
+    float zoom_ = 1.0f;
+    static constexpr float ZOOM_MIN = 0.5f;
+    static constexpr float ZOOM_MAX = 2.0f;
 
     // Minimap state
     bool show_minimap_ = true;

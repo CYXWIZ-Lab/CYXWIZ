@@ -23,6 +23,29 @@ JobExecutor::JobExecutor(const std::string& node_id, cyxwiz::Device* device)
     , node_client_(nullptr)
 {
     spdlog::info("JobExecutor initialized for node: {}", node_id_);
+
+    // Initialize device pool for multi-GPU support
+    core::DevicePoolConfig pool_config;
+    pool_config.include_cpu = false;  // GPU-only for training
+    pool_config.include_cuda = true;
+    pool_config.include_opencl = true;
+    pool_config.strategy = core::DeviceSelectionStrategy::LeastUtilized;
+
+    device_pool_ = std::make_unique<core::DevicePool>(pool_config);
+    if (device_pool_->Initialize()) {
+        use_device_pool_ = true;
+        spdlog::info("DevicePool initialized with {} devices", device_pool_->GetDeviceCount());
+
+        // Log device info
+        for (const auto& dev : device_pool_->GetAllDeviceStates()) {
+            spdlog::info("  Device {}: {} ({} MB)",
+                         dev.device_id, dev.name,
+                         dev.total_memory / (1024 * 1024));
+        }
+    } else {
+        spdlog::warn("DevicePool initialization failed, falling back to single device mode");
+        use_device_pool_ = false;
+    }
 }
 
 JobExecutor::~JobExecutor() {
@@ -68,12 +91,34 @@ bool JobExecutor::ExecuteJobAsync(const protocol::JobConfig& job_config) {
         }
     }
 
+    // Try to acquire a device from the pool
+    int device_id = -1;
+    if (use_device_pool_ && device_pool_) {
+        // TODO: Parse memory requirement from job config
+        size_t required_memory_mb = 0;  // 0 = use pool's minimum threshold
+
+        device_id = device_pool_->AcquireDevice(job_id, required_memory_mb);
+
+        if (device_id < 0) {
+            // No device available, queue the job
+            spdlog::info("No device available for job {}, adding to pending queue", job_id);
+            {
+                std::lock_guard<std::mutex> lock(pending_mutex_);
+                pending_jobs_.push(job_config);
+            }
+            return true;  // Job accepted but queued
+        }
+
+        spdlog::info("Acquired device {} for job {}", device_id, job_id);
+    }
+
     // Create job state
     auto job_state = std::make_unique<JobState>();
     job_state->config = job_config;
     job_state->is_running = true;
     job_state->should_cancel = false;
     job_state->start_time = std::chrono::steady_clock::now();
+    job_state->assigned_device_id = device_id;
 
     // Store job state
     {
@@ -88,7 +133,7 @@ bool JobExecutor::ExecuteJobAsync(const protocol::JobConfig& job_config) {
         state->worker_thread = std::thread(&JobExecutor::ExecuteJob, this, job_id);
     }
 
-    spdlog::info("Job {} started successfully", job_id);
+    spdlog::info("Job {} started on device {}", job_id, device_id);
     return true;
 }
 
@@ -146,6 +191,7 @@ void JobExecutor::ExecuteJob(const std::string& job_id) {
     spdlog::info("Worker thread started for job: {}", job_id);
 
     JobState* state = nullptr;
+    int device_id = -1;
     {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
         auto it = active_jobs_.find(job_id);
@@ -154,20 +200,34 @@ void JobExecutor::ExecuteJob(const std::string& job_id) {
             return;
         }
         state = it->second.get();
+        device_id = state->assigned_device_id;
     }
 
     bool success = false;
     std::string error_msg;
 
     try {
-        // Run the training
-        success = RunTraining(job_id, state);
+        // Set up device context if using device pool
+        std::unique_ptr<core::ScopedDeviceContext> device_context;
+        if (use_device_pool_ && device_id >= 0) {
+            device_context = std::make_unique<core::ScopedDeviceContext>(device_id);
+            if (!device_context->IsValid()) {
+                spdlog::error("Failed to set device context for device {}", device_id);
+                error_msg = "Failed to set device context";
+                success = false;
+            }
+        }
 
-        if (!success && !state->should_cancel) {
-            error_msg = "Training failed";
-        } else if (state->should_cancel) {
-            error_msg = "Job cancelled by user";
-            success = false;
+        if (error_msg.empty()) {
+            // Run the training
+            success = RunTraining(job_id, state);
+
+            if (!success && !state->should_cancel) {
+                error_msg = "Training failed";
+            } else if (state->should_cancel) {
+                error_msg = "Job cancelled by user";
+                success = false;
+            }
         }
 
     } catch (const std::exception& e) {
@@ -178,6 +238,15 @@ void JobExecutor::ExecuteJob(const std::string& job_id) {
 
     // Mark as not running
     state->is_running = false;
+
+    // Release the device back to the pool
+    if (use_device_pool_ && device_pool_ && device_id >= 0) {
+        device_pool_->ReleaseDevice(device_id, success);
+        spdlog::info("Released device {} for job {} (success: {})", device_id, job_id, success);
+
+        // Try to process any pending jobs
+        ProcessPendingJobs();
+    }
 
     // Report final result to Central Server
     if (node_client_ && node_client_->IsRegistered()) {
@@ -748,6 +817,67 @@ std::unique_ptr<cyxwiz::Optimizer> JobExecutor::CreateOptimizer(
     // Create and return optimizer
     spdlog::info("Creating optimizer with learning_rate: {}", learning_rate);
     return cyxwiz::CreateOptimizer(opt_type, learning_rate);
+}
+
+void JobExecutor::ProcessPendingJobs() {
+    // Try to start any pending jobs when a device becomes available
+    if (!use_device_pool_ || !device_pool_) {
+        return;
+    }
+
+    while (true) {
+        protocol::JobConfig next_job;
+
+        // Get next pending job
+        {
+            std::lock_guard<std::mutex> lock(pending_mutex_);
+            if (pending_jobs_.empty()) {
+                return;  // No more pending jobs
+            }
+
+            // Check if a device is available before dequeuing
+            if (device_pool_->GetAvailableDeviceCount() == 0) {
+                return;  // No device available
+            }
+
+            next_job = pending_jobs_.front();
+            pending_jobs_.pop();
+        }
+
+        std::string job_id = next_job.job_id();
+        spdlog::info("Processing pending job: {}", job_id);
+
+        // Try to acquire device and start the job
+        size_t required_memory_mb = 0;  // TODO: Parse from job config
+        int device_id = device_pool_->AcquireDevice(job_id, required_memory_mb);
+
+        if (device_id < 0) {
+            // Device became unavailable, put job back in queue
+            spdlog::warn("Device became unavailable for pending job {}, re-queueing", job_id);
+            std::lock_guard<std::mutex> lock(pending_mutex_);
+            pending_jobs_.push(next_job);
+            return;
+        }
+
+        spdlog::info("Acquired device {} for pending job {}", device_id, job_id);
+
+        // Create job state
+        auto job_state = std::make_unique<JobState>();
+        job_state->config = next_job;
+        job_state->is_running = true;
+        job_state->should_cancel = false;
+        job_state->start_time = std::chrono::steady_clock::now();
+        job_state->assigned_device_id = device_id;
+
+        // Store and launch
+        {
+            std::lock_guard<std::mutex> lock(jobs_mutex_);
+            active_jobs_[job_id] = std::move(job_state);
+            active_jobs_[job_id]->worker_thread = std::thread(&JobExecutor::ExecuteJob, this, job_id);
+        }
+
+        spdlog::info("Pending job {} started on device {}", job_id, device_id);
+    }
 }
 
 } // namespace servernode

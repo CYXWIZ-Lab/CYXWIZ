@@ -101,12 +101,6 @@ void ToolbarPanel::RenderTrainMenu() {
             // TODO: Open optimizer settings
         }
 
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Resume from Checkpoint...")) {
-            // TODO: Resume training
-        }
-
         ImGui::EndMenu();
     }
 }
@@ -272,17 +266,25 @@ void ToolbarPanel::RenderDeployMenu() {
         ImGui::Separator();
 
         if (ImGui::BeginMenu("Export Model")) {
-            if (ImGui::MenuItem("ONNX Format")) {
-                // TODO: Export ONNX
+            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " CyxWiz Model (.cyxmodel)")) {
+                if (export_model_callback_) {
+                    export_model_callback_(0);  // 0 = CyxModel
+                }
             }
-            if (ImGui::MenuItem("GGUF Format")) {
-                // TODO: Export GGUF
+            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Safetensors (.safetensors)")) {
+                if (export_model_callback_) {
+                    export_model_callback_(1);  // 1 = Safetensors
+                }
             }
-            if (ImGui::MenuItem("LoRA Adapter")) {
-                // TODO: Export LoRA
+            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " ONNX Format (.onnx)")) {
+                if (export_model_callback_) {
+                    export_model_callback_(2);  // 2 = ONNX
+                }
             }
-            if (ImGui::MenuItem("Safetensors")) {
-                // TODO: Export safetensors
+            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " GGUF Format (.gguf)")) {
+                if (export_model_callback_) {
+                    export_model_callback_(3);  // 3 = GGUF
+                }
             }
             ImGui::EndMenu();
         }
@@ -354,7 +356,7 @@ void ToolbarPanel::RenderHelpMenu() {
             ImGui::Separator();
 
             if (ImGui::MenuItem(ICON_FA_LIST_CHECK " Browse All Tutorials...")) {
-                tutorial_system.ShowTutorialBrowser();
+                tutorial_system.OpenTutorialBrowser();
             }
 
             ImGui::EndMenu();

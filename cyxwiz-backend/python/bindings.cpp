@@ -1,7 +1,10 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
+#include <pybind11/complex.h>
 #include "cyxwiz/cyxwiz.h"
+
+using namespace pybind11::literals;  // For _a suffix
 
 namespace py = pybind11;
 
@@ -366,4 +369,360 @@ PYBIND11_MODULE(pycyxwiz, m) {
              py::arg("predictions"),
              py::arg("targets"),
              "Backward: gradient w.r.t logits");
+
+    // ============================================================================
+    // LINEAR ALGEBRA SUBMODULE
+    // ============================================================================
+    auto linalg = m.def_submodule("linalg", "Linear algebra functions (MATLAB-style)");
+
+    // Matrix creation
+    linalg.def("eye", [](int n) {
+        auto result = cyxwiz::LinearAlgebra::Identity(n);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Create identity matrix", py::arg("n"));
+
+    linalg.def("zeros", [](int rows, int cols) {
+        auto result = cyxwiz::LinearAlgebra::Zeros(rows, cols);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Create zero matrix", py::arg("rows"), py::arg("cols"));
+
+    linalg.def("ones", [](int rows, int cols) {
+        auto result = cyxwiz::LinearAlgebra::Ones(rows, cols);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Create ones matrix", py::arg("rows"), py::arg("cols"));
+
+    linalg.def("diag", [](const std::vector<double>& d) {
+        auto result = cyxwiz::LinearAlgebra::Diagonal(d);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Create diagonal matrix from vector", py::arg("d"));
+
+    // Decompositions
+    linalg.def("svd", [](const std::vector<std::vector<double>>& A, bool full_matrices) {
+        auto result = cyxwiz::LinearAlgebra::SVD(A, full_matrices);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::make_tuple(result.U, result.S, result.Vt);
+    }, "Singular Value Decomposition: U, S, Vt = svd(A)", py::arg("A"), py::arg("full_matrices") = false);
+
+    linalg.def("eig", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::Eigen(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::make_tuple(result.eigenvalues, result.eigenvectors);
+    }, "Eigenvalue decomposition: eigenvalues, eigenvectors = eig(A)");
+
+    linalg.def("qr", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::QR(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::make_tuple(result.Q, result.R);
+    }, "QR decomposition: Q, R = qr(A)");
+
+    linalg.def("chol", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::Cholesky(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.L;
+    }, "Cholesky decomposition: L = chol(A) where A = L @ L.T");
+
+    linalg.def("lu", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::LU(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::make_tuple(result.L, result.U, result.P);
+    }, "LU decomposition: L, U, P = lu(A)");
+
+    // Matrix properties
+    linalg.def("det", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::Determinant(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.value;
+    }, "Compute determinant");
+
+    linalg.def("rank", [](const std::vector<std::vector<double>>& A, double tol) {
+        auto result = cyxwiz::LinearAlgebra::Rank(A, tol);
+        return static_cast<int>(result.value);
+    }, "Compute matrix rank", py::arg("A"), py::arg("tol") = 1e-10);
+
+    linalg.def("trace", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::Trace(A);
+        return result.value;
+    }, "Compute trace (sum of diagonal)");
+
+    linalg.def("norm", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::FrobeniusNorm(A);
+        return result.value;
+    }, "Frobenius norm");
+
+    linalg.def("cond", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::ConditionNumber(A);
+        return result.value;
+    }, "Condition number");
+
+    // Matrix operations
+    linalg.def("inv", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::Inverse(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Matrix inverse");
+
+    linalg.def("transpose", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::Transpose(A);
+        return result.matrix;
+    }, "Matrix transpose");
+
+    linalg.def("solve", [](const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& b) {
+        auto result = cyxwiz::LinearAlgebra::Solve(A, b);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Solve Ax = b");
+
+    linalg.def("lstsq", [](const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& b) {
+        auto result = cyxwiz::LinearAlgebra::LeastSquares(A, b);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Least squares solution");
+
+    linalg.def("matmul", [](const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& B) {
+        auto result = cyxwiz::LinearAlgebra::Multiply(A, B);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Matrix multiplication");
+
+    // ============================================================================
+    // SIGNAL PROCESSING SUBMODULE
+    // ============================================================================
+    auto signal = m.def_submodule("signal", "Signal processing functions (MATLAB-style)");
+
+    signal.def("fft", [](const std::vector<double>& x, double sample_rate) {
+        auto result = cyxwiz::SignalProcessing::FFT(x, sample_rate);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict(
+            "magnitude"_a = result.magnitude,
+            "phase"_a = result.phase,
+            "frequencies"_a = result.frequencies,
+            "complex"_a = result.complex_output
+        );
+    }, "Fast Fourier Transform", py::arg("x"), py::arg("sample_rate") = 1.0);
+
+    signal.def("ifft", [](const std::vector<std::complex<double>>& X) {
+        return cyxwiz::SignalProcessing::IFFT(X);
+    }, "Inverse FFT");
+
+    signal.def("conv", [](const std::vector<double>& x, const std::vector<double>& h, const std::string& mode) {
+        auto result = cyxwiz::SignalProcessing::Convolve1D(x, h, mode);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.output;
+    }, "1D Convolution", py::arg("x"), py::arg("h"), py::arg("mode") = "same");
+
+    signal.def("conv2", [](const std::vector<std::vector<double>>& x, const std::vector<std::vector<double>>& h, const std::string& mode) {
+        auto result = cyxwiz::SignalProcessing::Convolve2D(x, h, mode);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.output;
+    }, "2D Convolution", py::arg("x"), py::arg("h"), py::arg("mode") = "same");
+
+    signal.def("spectrogram", [](const std::vector<double>& x, int window_size, int hop_size, double sample_rate, const std::string& window) {
+        auto result = cyxwiz::SignalProcessing::ComputeSpectrogram(x, window_size, hop_size, sample_rate, window);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict(
+            "S"_a = result.spectrogram,
+            "frequencies"_a = result.frequencies,
+            "times"_a = result.times
+        );
+    }, "Compute spectrogram (STFT)", py::arg("x"), py::arg("window_size") = 256, py::arg("hop_size") = 128, py::arg("sample_rate") = 1.0, py::arg("window") = "hann");
+
+    signal.def("lowpass", [](double cutoff, double fs, int order) {
+        auto result = cyxwiz::SignalProcessing::DesignLowpass(cutoff, fs, order);
+        return py::dict("b"_a = result.b, "a"_a = result.a);
+    }, "Design lowpass filter", py::arg("cutoff"), py::arg("fs"), py::arg("order") = 4);
+
+    signal.def("highpass", [](double cutoff, double fs, int order) {
+        auto result = cyxwiz::SignalProcessing::DesignHighpass(cutoff, fs, order);
+        return py::dict("b"_a = result.b, "a"_a = result.a);
+    }, "Design highpass filter", py::arg("cutoff"), py::arg("fs"), py::arg("order") = 4);
+
+    signal.def("bandpass", [](double low, double high, double fs, int order) {
+        auto result = cyxwiz::SignalProcessing::DesignBandpass(low, high, fs, order);
+        return py::dict("b"_a = result.b, "a"_a = result.a);
+    }, "Design bandpass filter", py::arg("low"), py::arg("high"), py::arg("fs"), py::arg("order") = 4);
+
+    signal.def("filter", [](const std::vector<double>& x, const std::vector<double>& b, const std::vector<double>& a) {
+        cyxwiz::FilterCoefficients coeffs;
+        coeffs.b = b;
+        coeffs.a = a;
+        return cyxwiz::SignalProcessing::ApplyFilter(x, coeffs);
+    }, "Apply filter to signal", py::arg("x"), py::arg("b"), py::arg("a"));
+
+    signal.def("findpeaks", [](const std::vector<double>& x, double min_height, int min_distance) {
+        auto peaks = cyxwiz::SignalProcessing::FindPeaks(x, min_height, min_distance);
+        std::vector<int> indices;
+        std::vector<double> values;
+        for (const auto& p : peaks) {
+            indices.push_back(p.index);
+            values.push_back(p.value);
+        }
+        return py::dict("indices"_a = indices, "values"_a = values);
+    }, "Find peaks in signal", py::arg("x"), py::arg("min_height") = 0.0, py::arg("min_distance") = 1);
+
+    // Signal generation
+    signal.def("sine", [](double freq, double fs, int n, double amp, double phase) {
+        return cyxwiz::SignalProcessing::GenerateSineWave(freq, fs, n, amp, phase);
+    }, "Generate sine wave", py::arg("freq"), py::arg("fs"), py::arg("n"), py::arg("amp") = 1.0, py::arg("phase") = 0.0);
+
+    signal.def("square", [](double freq, double fs, int n, double amp) {
+        return cyxwiz::SignalProcessing::GenerateSquareWave(freq, fs, n, amp);
+    }, "Generate square wave", py::arg("freq"), py::arg("fs"), py::arg("n"), py::arg("amp") = 1.0);
+
+    signal.def("noise", [](int n, double amp) {
+        return cyxwiz::SignalProcessing::GenerateWhiteNoise(n, amp);
+    }, "Generate white noise", py::arg("n"), py::arg("amp") = 1.0);
+
+    // ============================================================================
+    // STATISTICS/CLUSTERING SUBMODULE
+    // ============================================================================
+    auto stats = m.def_submodule("stats", "Statistics and clustering functions");
+
+    // Clustering
+    stats.def("kmeans", [](const std::vector<std::vector<double>>& data, int k, int max_iter, const std::string& init) {
+        auto result = cyxwiz::Clustering::KMeans(data, k, max_iter, init);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict(
+            "labels"_a = result.labels,
+            "centroids"_a = result.centroids,
+            "inertia"_a = result.inertia,
+            "n_iterations"_a = result.n_iterations,
+            "converged"_a = result.converged
+        );
+    }, "K-Means clustering", py::arg("data"), py::arg("k"), py::arg("max_iter") = 300, py::arg("init") = "kmeans++");
+
+    stats.def("dbscan", [](const std::vector<std::vector<double>>& data, double eps, int min_samples) {
+        auto result = cyxwiz::Clustering::DBSCAN(data, eps, min_samples);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict(
+            "labels"_a = result.labels,
+            "n_clusters"_a = result.n_clusters,
+            "n_noise"_a = result.n_noise_points
+        );
+    }, "DBSCAN clustering", py::arg("data"), py::arg("eps"), py::arg("min_samples") = 5);
+
+    stats.def("gmm", [](const std::vector<std::vector<double>>& data, int n_components, const std::string& cov_type) {
+        auto result = cyxwiz::Clustering::GMM(data, n_components, cov_type);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict(
+            "labels"_a = result.labels,
+            "means"_a = result.means,
+            "weights"_a = result.weights,
+            "aic"_a = result.aic,
+            "bic"_a = result.bic
+        );
+    }, "Gaussian Mixture Model", py::arg("data"), py::arg("n_components"), py::arg("cov_type") = "full");
+
+    // Dimensionality reduction
+    stats.def("pca", [](const std::vector<std::vector<double>>& data, int n_components) {
+        auto result = cyxwiz::DimensionalityReduction::ComputePCA(data, n_components);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict(
+            "transformed"_a = result.transformed,
+            "components"_a = result.components,
+            "explained_variance"_a = result.explained_variance_ratio
+        );
+    }, "Principal Component Analysis", py::arg("data"), py::arg("n_components") = 2);
+
+    stats.def("tsne", [](const std::vector<std::vector<double>>& data, int n_dims, int perplexity) {
+        auto result = cyxwiz::DimensionalityReduction::ComputetSNE(data, n_dims, perplexity);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.embeddings;
+    }, "t-SNE embedding", py::arg("data"), py::arg("n_dims") = 2, py::arg("perplexity") = 30);
+
+    // Evaluation metrics
+    stats.def("silhouette", [](const std::vector<std::vector<double>>& data, const std::vector<int>& labels) {
+        return cyxwiz::Clustering::ComputeSilhouetteScore(data, labels);
+    }, "Silhouette score");
+
+    stats.def("confusion_matrix", [](const std::vector<int>& y_true, const std::vector<int>& y_pred) {
+        auto result = cyxwiz::ModelEvaluation::ComputeConfusionMatrix(y_true, y_pred);
+        return py::dict(
+            "matrix"_a = result.matrix,
+            "accuracy"_a = result.accuracy,
+            "precision"_a = result.precision,
+            "recall"_a = result.recall,
+            "f1"_a = result.f1_scores
+        );
+    }, "Compute confusion matrix");
+
+    stats.def("roc", [](const std::vector<int>& y_true, const std::vector<double>& y_scores) {
+        auto result = cyxwiz::ModelEvaluation::ComputeROC(y_true, y_scores);
+        return py::dict(
+            "fpr"_a = result.fpr,
+            "tpr"_a = result.tpr,
+            "auc"_a = result.auc
+        );
+    }, "ROC curve and AUC");
+
+    // ============================================================================
+    // TIME SERIES SUBMODULE
+    // ============================================================================
+    auto timeseries = m.def_submodule("timeseries", "Time series analysis functions");
+
+    timeseries.def("acf", [](const std::vector<double>& data, int max_lag) {
+        auto result = cyxwiz::TimeSeries::ComputeACF(data, max_lag);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict(
+            "acf"_a = result.acf,
+            "lags"_a = result.lags,
+            "confidence_upper"_a = result.confidence_upper,
+            "confidence_lower"_a = result.confidence_lower
+        );
+    }, "Autocorrelation function", py::arg("data"), py::arg("max_lag") = -1);
+
+    timeseries.def("pacf", [](const std::vector<double>& data, int max_lag) {
+        auto result = cyxwiz::TimeSeries::ComputePACF(data, max_lag);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.pacf;
+    }, "Partial autocorrelation function", py::arg("data"), py::arg("max_lag") = -1);
+
+    timeseries.def("decompose", [](const std::vector<double>& data, int period, const std::string& method) {
+        auto result = cyxwiz::TimeSeries::Decompose(data, period, method);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict(
+            "trend"_a = result.trend,
+            "seasonal"_a = result.seasonal,
+            "residual"_a = result.residual
+        );
+    }, "Time series decomposition", py::arg("data"), py::arg("period"), py::arg("method") = "additive");
+
+    timeseries.def("stationarity", [](const std::vector<double>& data) {
+        auto result = cyxwiz::TimeSeries::TestStationarity(data);
+        return py::dict(
+            "is_stationary"_a = result.is_stationary,
+            "adf_statistic"_a = result.adf_statistic,
+            "adf_pvalue"_a = result.adf_pvalue,
+            "kpss_statistic"_a = result.kpss_statistic,
+            "kpss_pvalue"_a = result.kpss_pvalue,
+            "suggested_differencing"_a = result.suggested_differencing
+        );
+    }, "Test for stationarity (ADF + KPSS)");
+
+    timeseries.def("arima", [](const std::vector<double>& data, int horizon, int p, int d, int q) {
+        auto result = cyxwiz::TimeSeries::ARIMA(data, horizon, p, d, q);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict(
+            "forecast"_a = result.forecast,
+            "lower"_a = result.lower_bound,
+            "upper"_a = result.upper_bound,
+            "mse"_a = result.mse,
+            "aic"_a = result.aic
+        );
+    }, "ARIMA forecasting", py::arg("data"), py::arg("horizon"), py::arg("p") = -1, py::arg("d") = -1, py::arg("q") = -1);
+
+    timeseries.def("diff", [](const std::vector<double>& data, int order) {
+        return cyxwiz::TimeSeries::Difference(data, order);
+    }, "Difference series", py::arg("data"), py::arg("order") = 1);
+
+    timeseries.def("rolling_mean", [](const std::vector<double>& data, int window) {
+        return cyxwiz::TimeSeries::RollingMean(data, window);
+    }, "Rolling mean", py::arg("data"), py::arg("window"));
+
+    timeseries.def("rolling_std", [](const std::vector<double>& data, int window) {
+        return cyxwiz::TimeSeries::RollingStd(data, window);
+    }, "Rolling standard deviation", py::arg("data"), py::arg("window"));
 }

@@ -111,11 +111,9 @@ bool TrainingExecutor::BuildModelFromConfig() {
             }
 
             case gui::NodeType::Output: {
-                // Output layer is a Dense layer to num_classes
-                size_t out_features = config_.output_size;
-                model_->Add<LinearModule>(current_input_size, out_features, true);
-                spdlog::info("  [{}] Output Linear({} -> {})", i, current_input_size, out_features);
-                current_input_size = out_features;
+                // Output node is just a marker, not an actual layer
+                // The actual output transformation is done by the preceding Dense layer
+                spdlog::info("  [{}] Output (marker, no layer added)", i);
                 break;
             }
 

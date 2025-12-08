@@ -3,6 +3,7 @@
 #include "python_engine.h"
 #include "python_sandbox.h"
 #include <string>
+#include <vector>
 #include <memory>
 #include <functional>
 #include <thread>
@@ -17,6 +18,16 @@ namespace cyxwiz {
 }
 
 namespace scripting {
+
+/**
+ * Captured plot/image from matplotlib or other plotting libraries
+ */
+struct CapturedPlot {
+    std::vector<unsigned char> png_data;  // PNG image data
+    int width = 0;
+    int height = 0;
+    std::string label;  // Optional label (e.g., figure title)
+};
 
 /**
  * Execution result from ScriptingEngine
@@ -34,6 +45,9 @@ struct ExecutionResult {
 
     // Async execution info
     bool was_cancelled{false};
+
+    // Captured matplotlib/plotting figures
+    std::vector<CapturedPlot> plots;
 };
 
 /**
@@ -90,6 +104,11 @@ public:
     void SetSandboxConfig(const PythonSandbox::Config& config);
     PythonSandbox::Config GetSandboxConfig() const;
 
+    // Verbose logging (includes internal Variable Explorer commands)
+    void SetVerboseLogging(bool enable) { verbose_logging_ = enable; }
+    bool IsVerboseLogging() const { return verbose_logging_; }
+    bool* GetVerboseLoggingPtr() { return &verbose_logging_; }
+
     // Check if engine is initialized
     bool IsInitialized() const;
 
@@ -102,6 +121,7 @@ private:
     OutputCallback output_callback_;
     CompletionCallback completion_callback_;
     bool sandbox_enabled_;
+    bool verbose_logging_{false};  // Log all commands including internal ones
 
     // ========== Async execution state ==========
     std::unique_ptr<std::thread> script_thread_;
@@ -111,6 +131,10 @@ private:
     // Thread-safe output queue
     std::mutex output_mutex_;
     std::queue<std::string> output_queue_;
+
+    // Thread-safe plot queue
+    std::mutex plot_mutex_;
+    std::vector<CapturedPlot> plot_queue_;
 
     // Result storage
     std::mutex result_mutex_;
@@ -128,11 +152,22 @@ private:
     // Queue output for async retrieval
     void QueueOutput(const std::string& output);
 
+    // Queue plot for async retrieval
+    void QueuePlot(const CapturedPlot& plot);
+
+    // Get pending plots and clear queue
+    std::vector<CapturedPlot> GetPendingPlots();
+
     // Shared cancellation flag - accessible from Python without GIL
     static std::atomic<int> shared_cancel_flag_;
 
     // Python thread ID for async exception injection
     std::atomic<unsigned long> python_thread_id_{0};
+
+    // MATLAB-style aliases initialization
+    bool matlab_aliases_initialized_{false};
+    void InitializeMatlabAliases();
+
 public:
     // Static method for Python to check cancellation (no GIL needed)
     static int GetCancelFlag() { return shared_cancel_flag_.load(); }

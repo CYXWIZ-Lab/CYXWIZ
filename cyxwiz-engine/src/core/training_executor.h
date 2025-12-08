@@ -132,6 +132,26 @@ public:
      */
     const TrainingConfiguration& GetConfig() const { return config_; }
 
+    /**
+     * Get the trained model (for export)
+     */
+    SequentialModel* GetModel() { return model_.get(); }
+
+    /**
+     * Get the optimizer (for export)
+     */
+    Optimizer* GetOptimizer() { return optimizer_.get(); }
+
+    /**
+     * Release ownership of the model (transfers ownership to caller)
+     */
+    std::unique_ptr<SequentialModel> ReleaseModel() { return std::move(model_); }
+
+    /**
+     * Release ownership of the optimizer (transfers ownership to caller)
+     */
+    std::unique_ptr<Optimizer> ReleaseOptimizer() { return std::move(optimizer_); }
+
 private:
     TrainingConfiguration config_;
     DatasetHandle dataset_;

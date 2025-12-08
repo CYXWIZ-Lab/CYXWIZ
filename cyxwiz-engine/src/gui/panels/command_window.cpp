@@ -20,8 +20,9 @@ CommandWindowPanel::CommandWindowPanel()
     // Welcome message
     OutputEntry welcome;
     welcome.type = OutputEntry::Type::Result;
-    welcome.text = "CyxWiz Python Command Window\nType 'help()' for help, 'clear' to clear output\n"
-                   "Press Tab for auto-completion\n";
+    welcome.text = "CyxWiz Python Command Window\n"
+                   "Type 'help()' for help, 'clear' to clear output\n"
+                   "Enter: execute | Shift/Ctrl+Enter: new line | Tab: autocomplete\n";
     output_.push_back(welcome);
 }
 
@@ -50,7 +51,12 @@ void CommandWindowPanel::Render() {
 
 void CommandWindowPanel::RenderOutputArea() {
     // Child window for scrollable output
-    const float footer_height = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
+    // Reserve space for: separator + prompt + 3-line input + hint line
+    float line_height = ImGui::GetTextLineHeight();
+    const float footer_height = ImGui::GetStyle().ItemSpacing.y * 3
+                              + line_height  // prompt line
+                              + 3.0f * line_height + ImGui::GetStyle().FramePadding.y * 2  // multiline input (min 3 lines)
+                              + line_height; // hint line
     ImGui::BeginChild("OutputRegion", ImVec2(0, -footer_height), false, ImGuiWindowFlags_HorizontalScrollbar);
 
     // Render each output entry
@@ -84,22 +90,38 @@ void CommandWindowPanel::RenderOutputArea() {
 }
 
 void CommandWindowPanel::RenderInputArea() {
-    // Prompt label
-    ImGui::Text("f:>");
+    // Prompt label (italic-style light blue)
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.9f, 1.0f, 1.0f));
+    ImGui::TextUnformatted("fx:>>");
+    ImGui::PopStyleColor();
     ImGui::SameLine();
 
-    // Input field
-    ImGui::PushItemWidth(-1.0f);
+    // Multi-line input field
+    // CtrlEnterForNewLine: Enter submits, Ctrl+Enter inserts newline
+    // EnterReturnsTrue: Return true when Enter is pressed
+    // We also handle Shift+Enter to insert newline via callback
+    ImGuiInputTextFlags flags = ImGuiInputTextFlags_CallbackHistory
+                              | ImGuiInputTextFlags_CallbackCompletion
+                              | ImGuiInputTextFlags_CallbackAlways
+                              | ImGuiInputTextFlags_EnterReturnsTrue
+                              | ImGuiInputTextFlags_CtrlEnterForNewLine;
 
-    ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue
-                              | ImGuiInputTextFlags_CallbackHistory
-                              | ImGuiInputTextFlags_CallbackCompletion;
+    // Track if we should insert newline (Shift+Enter)
+    static bool insert_newline = false;
 
-    // Handle history navigation and auto-completion
+    // Handle history navigation, auto-completion, and Shift+Enter for newline
     auto callback = [](ImGuiInputTextCallbackData* data) -> int {
         CommandWindowPanel* panel = (CommandWindowPanel*)data->UserData;
 
-        if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
+        if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
+            // Handle Shift+Enter to insert newline
+            ImGuiIO& io = ImGui::GetIO();
+            bool enter_pressed = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+            if (enter_pressed && io.KeyShift) {
+                data->InsertChars(data->CursorPos, "\n");
+                insert_newline = true;  // Signal that we handled it
+            }
+        } else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
             if (data->EventKey == ImGuiKey_UpArrow) {
                 if (panel->show_completion_popup_) {
                     // Navigate up in completion list
@@ -155,8 +177,28 @@ void CommandWindowPanel::RenderInputArea() {
         focus_input_ = false;
     }
 
-    if (ImGui::InputText("##input", input_buffer_, sizeof(input_buffer_), flags, callback, this)) {
+    // Calculate input height (3 lines minimum, grows with content)
+    float line_height = ImGui::GetTextLineHeight();
+    int num_lines = 1;
+    for (const char* p = input_buffer_; *p; p++) {
+        if (*p == '\n') num_lines++;
+    }
+    float input_height = std::max(3.0f, static_cast<float>(num_lines + 1)) * line_height + ImGui::GetStyle().FramePadding.y * 2;
+    input_height = std::min(input_height, 8.0f * line_height); // Max 8 lines
+
+    // Multi-line input text
+    // EnterReturnsTrue makes it return true when Enter is pressed
+    bool enter_pressed = ImGui::InputTextMultiline("##input", input_buffer_, sizeof(input_buffer_),
+                                                    ImVec2(-1.0f, input_height), flags, callback, this);
+
+    // Execute on Enter (but not if Shift+Enter was used to insert newline)
+    if (enter_pressed && !insert_newline) {
         std::string command(input_buffer_);
+
+        // Remove trailing newline/whitespace
+        while (!command.empty() && (command.back() == '\n' || command.back() == '\r' || command.back() == ' ')) {
+            command.pop_back();
+        }
 
         if (!command.empty()) {
             ExecuteCommand(command);
@@ -166,20 +208,26 @@ void CommandWindowPanel::RenderInputArea() {
         show_completion_popup_ = false; // Hide completion on Enter
     }
 
+    // Reset the newline flag
+    insert_newline = false;
+
+    // Show hint below input
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+    ImGui::TextUnformatted("Enter: execute | Shift/Ctrl+Enter: new line | Tab: autocomplete");
+    ImGui::PopStyleColor();
+
     // Hide completion popup if user types (changes input)
     std::string current_input(input_buffer_);
     if (show_completion_popup_ && current_input != completion_prefix_) {
         show_completion_popup_ = false;
     }
-
-    ImGui::PopItemWidth();
 }
 
 void CommandWindowPanel::ExecuteCommand(const std::string& command) {
     // Add command to output
     OutputEntry cmd_entry;
     cmd_entry.type = OutputEntry::Type::Command;
-    cmd_entry.text = "f:> " + command;
+    cmd_entry.text = "fx:>> " + command;
     output_.push_back(cmd_entry);
 
     // Add to history
@@ -195,11 +243,42 @@ void CommandWindowPanel::ExecuteCommand(const std::string& command) {
     if (command == "help" || command == "help()") {
         OutputEntry help;
         help.type = OutputEntry::Type::Result;
-        help.text = "Available commands:\n"
-                   "  clear       - Clear output window\n"
-                   "  help()      - Show this help message\n"
-                   "  import pycyxwiz - Import CyxWiz Python module\n"
-                   "\nYou can execute any Python code here.\n";
+        help.text = R"(CyxWiz Command Window Help
+==========================
+
+COMMANDS:
+  clear       - Clear output window
+  help()      - Show this help message
+
+MATLAB-STYLE FUNCTIONS (auto-loaded):
+  Linear Algebra:  eye, zeros, ones, svd, eig, qr, chol, lu, det,
+                   rank, trace, norm, cond, inv, transpose, solve, lstsq, matmul
+  Signal:          fft, ifft, conv, conv2, spectrogram, lowpass, highpass,
+                   bandpass, filter, findpeaks, sine, square, noise
+  Statistics:      kmeans, dbscan, gmm, pca, tsne, silhouette,
+                   confusion_matrix, roc
+  Time Series:     acf, pacf, decompose, stationarity, arima, diff,
+                   rolling_mean, rolling_std
+
+UTILITY FUNCTIONS:
+  printmat(A)      - Print matrix in aligned format (alias: pm)
+  pm(A, precision=4) - Print with custom decimal precision
+
+EXAMPLES:
+  I = eye(3)              # Create 3x3 identity matrix
+  pm(I)                   # Print matrix nicely
+  A = [[1,2],[3,4]]
+  U, S, V = svd(A)        # Singular value decomposition
+  spectrum = fft([1,2,3,4])  # FFT of signal
+
+GROUPED NAMESPACE (alternative):
+  cyx.linalg.svd(A)       # Same as svd(A)
+  cyx.signal.fft(x)       # Same as fft(x)
+  cyx.stats.kmeans(data, k=3)
+  cyx.timeseries.arima(data, horizon=5)
+
+Type any Python code to execute.
+)";
         output_.push_back(help);
         scroll_to_bottom_ = true;
         return;

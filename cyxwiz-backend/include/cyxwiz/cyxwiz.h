@@ -39,6 +39,42 @@
 // Learning rate schedulers
 #include "scheduler.h"
 
+// Clustering algorithms (GPU-accelerated)
+#include "clustering.h"
+
+// Data transformation (GPU-accelerated)
+#include "data_transform.h"
+
+// Model evaluation metrics (GPU-accelerated)
+#include "model_evaluation.h"
+
+// Dimensionality reduction (PCA, t-SNE, UMAP)
+#include "dimensionality_reduction.h"
+
+// Feature importance analysis
+#include "feature_importance.h"
+
+// Model interpretability (Grad-CAM, Saliency Maps)
+#include "model_interpretability.h"
+
+// Linear algebra operations (GPU-accelerated)
+#include "linear_algebra.h"
+
+// Signal processing (FFT, Convolution, Filters, Wavelets)
+#include "signal_processing.h"
+
+// Optimization & Calculus (Gradient Descent, LP, QP, Numerical Methods)
+#include "optimization.h"
+
+// Time Series Analysis (Decomposition, ACF, Stationarity, Forecasting)
+#include "time_series.h"
+
+// Text Processing (Tokenization, Word Frequency, TF-IDF, Embeddings, Sentiment)
+#include "text_processing.h"
+
+// Utilities (Calculator, Unit Converter, Random Generator, Hash, JSON, Regex)
+#include "utilities.h"
+
 namespace cyxwiz {
 
 // Initialize the backend

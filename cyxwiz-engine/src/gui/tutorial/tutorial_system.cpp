@@ -123,36 +123,15 @@ void TutorialSystem::RenderOverlay() {
         }
     }
 
-    // Draw darkened overlay with cutout for highlighted area
+    // No dark overlay - keep everything visible!
+    // Just highlight the focus area with a bright border/glow
     ImGuiIO& io = ImGui::GetIO();
-    ImDrawList* draw_list = ImGui::GetForegroundDrawList();
-
-    // Draw full-screen overlay
-    ImU32 overlay_col = ImGui::ColorConvertFloat4ToU32(overlay_color_);
 
     if (has_target) {
-        // Draw overlay with cutout (4 rectangles around the target)
-        ImVec2 screen_min(0, 0);
-        ImVec2 screen_max = io.DisplaySize;
-
-        // Top
-        draw_list->AddRectFilled(screen_min, ImVec2(screen_max.x, target_rect.Min.y), overlay_col);
-        // Bottom
-        draw_list->AddRectFilled(ImVec2(screen_min.x, target_rect.Max.y), screen_max, overlay_col);
-        // Left
-        draw_list->AddRectFilled(ImVec2(screen_min.x, target_rect.Min.y),
-            ImVec2(target_rect.Min.x, target_rect.Max.y), overlay_col);
-        // Right
-        draw_list->AddRectFilled(ImVec2(target_rect.Max.x, target_rect.Min.y),
-            ImVec2(screen_max.x, target_rect.Max.y), overlay_col);
-
-        // Draw highlight border
+        // Draw highlight border around the target area (no darkening)
         RenderHighlight(target_rect);
-    } else {
-        // Just draw semi-transparent overlay
-        draw_list->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
-            ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, 0.5f)));
     }
+    // If no target, just show the tooltip without any overlay
 
     // Render step tooltip
     RenderStepTooltip(step, has_target ? target_rect : ImRect(io.DisplaySize.x * 0.3f,
@@ -178,14 +157,14 @@ void TutorialSystem::RenderOverlay() {
 void TutorialSystem::RenderHighlight(const ImRect& target_rect) {
     ImDrawList* draw_list = ImGui::GetForegroundDrawList();
 
-    // Pulsing glow effect
-    float pulse_alpha = 0.5f + 0.3f * sinf(highlight_pulse_);
-    float pulse_size = 2.0f + 3.0f * sinf(highlight_pulse_);
+    // Pulsing glow effect - more pronounced since no dark overlay
+    float pulse_alpha = 0.7f + 0.3f * sinf(highlight_pulse_);
+    float pulse_size = 3.0f + 5.0f * sinf(highlight_pulse_);
 
-    // Outer glow
-    for (int i = 3; i >= 0; i--) {
-        float expand = pulse_size + i * 2.0f;
-        float alpha = pulse_alpha * (1.0f - i * 0.25f);
+    // Bright outer glow - more visible layers
+    for (int i = 5; i >= 0; i--) {
+        float expand = pulse_size + i * 3.0f;
+        float alpha = pulse_alpha * (1.0f - i * 0.15f);
         ImVec4 glow_color = highlight_color_;
         glow_color.w = alpha;
 
@@ -193,87 +172,99 @@ void TutorialSystem::RenderHighlight(const ImRect& target_rect) {
             ImVec2(target_rect.Min.x - expand, target_rect.Min.y - expand),
             ImVec2(target_rect.Max.x + expand, target_rect.Max.y + expand),
             ImGui::ColorConvertFloat4ToU32(glow_color),
-            4.0f, 0, 2.0f);
+            6.0f, 0, 2.5f);
     }
 
-    // Inner border
+    // Solid inner border - thicker and brighter
     draw_list->AddRect(target_rect.Min, target_rect.Max,
-        ImGui::ColorConvertFloat4ToU32(highlight_color_), 4.0f, 0, 3.0f);
+        IM_COL32(0, 220, 255, 255), 6.0f, 0, 4.0f);
+
+    // Add a subtle filled highlight behind the target area
+    draw_list->AddRectFilled(
+        ImVec2(target_rect.Min.x - 2, target_rect.Min.y - 2),
+        ImVec2(target_rect.Max.x + 2, target_rect.Max.y + 2),
+        IM_COL32(0, 180, 220, 30),  // Very subtle cyan tint
+        6.0f);
 }
 
 void TutorialSystem::RenderStepTooltip(const TutorialStep& step, const ImRect& target_rect) {
     ImGuiIO& io = ImGui::GetIO();
 
-    // Calculate tooltip position (below or above target)
-    const float tooltip_width = 350.0f;
-    const float tooltip_padding = 15.0f;
-    const float tooltip_margin = 20.0f;
+    // Calculate tooltip dimensions
+    const float tooltip_width = 380.0f;
+    const float tooltip_padding = 20.0f;
+    const float tooltip_margin = 25.0f;
 
+    // Calculate position
     ImVec2 tooltip_pos;
     float space_below = io.DisplaySize.y - target_rect.Max.y;
     float space_above = target_rect.Min.y;
 
-    // Calculate tooltip height based on content
-    float text_height = ImGui::CalcTextSize(step.description.c_str(), nullptr, false, tooltip_width - 2 * tooltip_padding).y;
-    float tooltip_height = tooltip_padding * 2 + text_height + 120; // Extra for title, buttons, etc.
+    // Estimate height
+    ImVec2 desc_size = ImGui::CalcTextSize(step.description.c_str(), nullptr, false, tooltip_width - 2 * tooltip_padding);
+    float estimated_height = tooltip_padding * 2 + desc_size.y + 180.0f;
 
-    if (space_below > tooltip_height + tooltip_margin) {
+    if (space_below > estimated_height + tooltip_margin) {
         tooltip_pos = ImVec2(target_rect.GetCenter().x - tooltip_width / 2, target_rect.Max.y + tooltip_margin);
-    } else if (space_above > tooltip_height + tooltip_margin) {
-        tooltip_pos = ImVec2(target_rect.GetCenter().x - tooltip_width / 2, target_rect.Min.y - tooltip_height - tooltip_margin);
+    } else if (space_above > estimated_height + tooltip_margin) {
+        tooltip_pos = ImVec2(target_rect.GetCenter().x - tooltip_width / 2, target_rect.Min.y - estimated_height - tooltip_margin);
     } else {
-        // Center on screen
-        tooltip_pos = ImVec2(io.DisplaySize.x / 2 - tooltip_width / 2, io.DisplaySize.y / 2 - tooltip_height / 2);
+        tooltip_pos = ImVec2(io.DisplaySize.x / 2 - tooltip_width / 2, io.DisplaySize.y / 2 - estimated_height / 2);
     }
 
     // Clamp to screen
     tooltip_pos.x = std::max(10.0f, std::min(tooltip_pos.x, io.DisplaySize.x - tooltip_width - 10));
-    tooltip_pos.y = std::max(10.0f, std::min(tooltip_pos.y, io.DisplaySize.y - tooltip_height - 10));
+    tooltip_pos.y = std::max(10.0f, std::min(tooltip_pos.y, io.DisplaySize.y - estimated_height - 10));
 
-    // Set up a window for interactive elements with solid visible background
+    // Create a real ImGui window with full styling - this handles input properly
     ImGui::SetNextWindowPos(tooltip_pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(tooltip_width, tooltip_height), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(1.0f);  // Force fully opaque background
-    ImGui::SetNextWindowFocus();  // Bring to front
+    ImGui::SetNextWindowSize(ImVec2(tooltip_width, 0), ImGuiCond_Always);  // Auto height
+    ImGui::SetNextWindowBgAlpha(1.0f);
 
-    // Force completely opaque background - solid dark color for maximum contrast
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.08f, 1.0f));  // Very dark, fully opaque
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.8f, 1.0f, 1.0f));  // Bright cyan border
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));  // Pure white text
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.05f, 0.05f, 0.08f, 1.0f));  // Child background
-    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.3f, 0.3f, 0.4f, 1.0f));  // Visible separator
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));  // Blue buttons
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.9f, 1.0f));  // Hover state
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.3f, 0.7f, 1.0f));  // Active state
+    // Push bright, opaque styling - solid dark background for readability
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.14f, 1.0f));  // Solid dark background
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.86f, 1.0f, 1.0f));  // Bright cyan
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.47f, 0.86f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.27f, 0.59f, 0.98f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.35f, 0.7f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.3f, 0.3f, 0.4f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(tooltip_padding, tooltip_padding));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 3.0f);  // Thicker border
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);  // Force full opacity
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 3.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 6));
 
-    if (ImGui::Begin("Tutorial Step", nullptr,
-        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse)) {
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize;
 
-        // Step counter - bright cyan (matching border)
+    if (ImGui::Begin("##TutorialTooltip", nullptr, window_flags)) {
+        // Step counter - bright cyan
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "Step %d of %d",
             current_step_index_ + 1, static_cast<int>(current_tutorial_->steps.size()));
 
         ImGui::Spacing();
 
-        // Title - pure white, bold appearance
+        // Title - pure white, larger
+        ImGui::PushFont(ImGui::GetFont());  // Could use a bold font here
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", step.title.c_str());
+        ImGui::PopFont();
 
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        // Description - pure white for maximum readability
-        ImGui::TextWrapped("%s", step.description.c_str());
+        // Description - white, wrapped
+        ImGui::PushTextWrapPos(tooltip_width - tooltip_padding * 2);
+        ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.95f, 1.0f), "%s", step.description.c_str());
+        ImGui::PopTextWrapPos();
 
-        // Action hint - bright yellow/gold for visibility
+        // Action hint - bright yellow
         if (!step.action_hint.empty()) {
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.3f, 1.0f), ICON_FA_CIRCLE_INFO " %s", step.action_hint.c_str());
+            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.3f, 1.0f), "%s %s",
+                ICON_FA_CIRCLE_INFO, step.action_hint.c_str());
         }
 
         ImGui::Spacing();
@@ -282,36 +273,76 @@ void TutorialSystem::RenderStepTooltip(const TutorialStep& step, const ImRect& t
         ImGui::Spacing();
 
         // Navigation buttons
+        float button_width = 90.0f;
+
         if (current_step_index_ > 0) {
-            if (ImGui::Button(ICON_FA_ARROW_LEFT " Previous")) {
+            if (ImGui::Button(ICON_FA_ARROW_LEFT " Previous", ImVec2(button_width, 0))) {
                 PreviousStep();
             }
             ImGui::SameLine();
         }
 
-        // Next/Complete button (only show if step doesn't have auto-completion)
         if (!step.completion_condition) {
             if (current_step_index_ < static_cast<int>(current_tutorial_->steps.size()) - 1) {
-                if (ImGui::Button("Next " ICON_FA_ARROW_RIGHT)) {
+                if (ImGui::Button("Next " ICON_FA_ARROW_RIGHT, ImVec2(button_width, 0))) {
                     NextStep();
                 }
             } else {
-                if (ImGui::Button(ICON_FA_CHECK " Complete")) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
+                if (ImGui::Button(ICON_FA_CHECK " Complete", ImVec2(button_width, 0))) {
                     NextStep();
                 }
+                ImGui::PopStyleColor(2);
             }
             ImGui::SameLine();
         }
 
-        ImGui::SameLine(tooltip_width - 100);
-        if (ImGui::Button(ICON_FA_XMARK " Skip")) {
+        // Skip button - right aligned
+        float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > button_width) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - button_width);
+        }
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+        if (ImGui::Button(ICON_FA_XMARK " Skip", ImVec2(button_width, 0))) {
             SkipTutorial();
         }
+        ImGui::PopStyleColor(2);
     }
     ImGui::End();
 
-    ImGui::PopStyleVar(4);   // WindowPadding, WindowRounding, WindowBorderSize, Alpha
-    ImGui::PopStyleColor(8); // WindowBg, Border, Text, ChildBg, Separator, Button, ButtonHovered, ButtonActive
+    ImGui::PopStyleVar(5);
+    ImGui::PopStyleColor(7);
+
+    // Get the actual window position and size after rendering
+    ImGuiWindow* tooltip_window = ImGui::FindWindowByName("##TutorialTooltip");
+    if (tooltip_window) {
+        ImVec2 win_pos = tooltip_window->Pos;
+        ImVec2 win_size = tooltip_window->Size;
+        ImVec2 win_max(win_pos.x + win_size.x, win_pos.y + win_size.y);
+
+        // Draw solid backing rectangle behind the window to prevent bleed-through
+        // Use the background draw list so it's behind everything
+        ImDrawList* bg_draw = ImGui::GetBackgroundDrawList();
+        bg_draw->AddRectFilled(
+            ImVec2(win_pos.x - 2, win_pos.y - 2),
+            ImVec2(win_max.x + 2, win_max.y + 2),
+            IM_COL32(20, 20, 28, 255),  // Solid dark background
+            14.0f);  // Rounded corners
+
+        // Draw bright cyan glow border on foreground
+        ImDrawList* fg_draw = ImGui::GetForegroundDrawList();
+        for (int i = 2; i >= 0; i--) {
+            float expand = i * 2.0f;
+            float alpha = 0.8f - i * 0.2f;
+            fg_draw->AddRect(
+                ImVec2(win_pos.x - expand, win_pos.y - expand),
+                ImVec2(win_max.x + expand, win_max.y + expand),
+                IM_COL32(0, 220, 255, (int)(alpha * 255)),
+                12.0f + expand, 0, 2.0f);
+        }
+    }
 }
 
 void TutorialSystem::RenderProgressBar() {
@@ -361,13 +392,25 @@ void TutorialSystem::RenderProgressBar() {
 
 void TutorialSystem::ShowTutorialBrowser() {
     ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
+
+    // Push explicit styling for visibility
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.16f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
+
     if (!ImGui::Begin("Interactive Tutorials", &show_browser_)) {
         ImGui::End();
+        ImGui::PopStyleColor(6);
         return;
     }
 
-    ImGui::Text(ICON_FA_BOOK " Available Tutorials");
+    // Header with icon
+    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), ICON_FA_BOOK " Available Tutorials");
     ImGui::Separator();
+    ImGui::Spacing();
 
     // Group tutorials by category
     std::map<std::string, std::vector<Tutorial*>> by_category;
@@ -375,8 +418,19 @@ void TutorialSystem::ShowTutorialBrowser() {
         by_category[tutorial.category].push_back(&tutorial);
     }
 
+    // Show count for debugging
+    if (tutorials_.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "No tutorials registered!");
+    }
+
     for (auto& [category, tuts] : by_category) {
-        if (ImGui::CollapsingHeader(category.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Category header
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.9f, 0.5f, 1.0f));
+        bool open = ImGui::CollapsingHeader(category.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        ImGui::PopStyleColor();
+
+        if (open) {
+            ImGui::Indent(10.0f);
             for (auto* tutorial : tuts) {
                 ImGui::PushID(tutorial->id.c_str());
 
@@ -385,20 +439,20 @@ void TutorialSystem::ShowTutorialBrowser() {
 
                 // Status icon
                 if (is_completed) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), ICON_FA_CIRCLE_CHECK);
+                    ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), ICON_FA_CIRCLE_CHECK);
                 } else {
-                    ImGui::TextDisabled(ICON_FA_CIRCLE);
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ICON_FA_CIRCLE);
                 }
                 ImGui::SameLine();
 
-                // Tutorial name
-                ImGui::Text("%s", tutorial->name.c_str());
+                // Tutorial name - bright white
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", tutorial->name.c_str());
                 ImGui::SameLine();
-                ImGui::TextDisabled("(%zu steps)", tutorial->steps.size());
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.7f, 1.0f), "(%zu steps)", tutorial->steps.size());
 
                 // Start button
-                ImGui::SameLine(ImGui::GetWindowWidth() - 80);
-                if (ImGui::Button("Start")) {
+                ImGui::SameLine(ImGui::GetWindowWidth() - 90);
+                if (ImGui::Button("Start", ImVec2(70, 0))) {
                     StartTutorial(tutorial->id);
                 }
 
@@ -409,10 +463,13 @@ void TutorialSystem::ShowTutorialBrowser() {
 
                 ImGui::PopID();
             }
+            ImGui::Unindent(10.0f);
+            ImGui::Spacing();
         }
     }
 
     ImGui::End();
+    ImGui::PopStyleColor(6);
 }
 
 bool TutorialSystem::IsTutorialComplete(const std::string& tutorial_id) const {

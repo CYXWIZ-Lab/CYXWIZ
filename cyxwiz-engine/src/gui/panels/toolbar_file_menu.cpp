@@ -111,34 +111,16 @@ void ToolbarPanel::RenderFileMenu() {
         ImGui::Spacing();
 
         // ========== Import/Export Section ==========
-        if (ImGui::BeginMenu(ICON_FA_DOWNLOAD " Import")) {
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
-            if (ImGui::MenuItem("ONNX Model...")) {
-                // TODO: Import ONNX
+        if (ImGui::MenuItem(ICON_FA_FILE_IMPORT " Import Model...", "Ctrl+I")) {
+            if (import_model_callback_) {
+                import_model_callback_();
             }
-            if (ImGui::MenuItem("PyTorch Model...")) {
-                // TODO: Import PyTorch
-            }
-            if (ImGui::MenuItem("TensorFlow Model...")) {
-                // TODO: Import TF
-            }
-            ImGui::PopStyleVar();
-            ImGui::EndMenu();
         }
 
-        if (ImGui::BeginMenu(ICON_FA_DOWNLOAD " Export")) {
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
-            if (ImGui::MenuItem("ONNX...")) {
-                // TODO: Export ONNX
+        if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export Model...", "Ctrl+E")) {
+            if (export_model_callback_) {
+                export_model_callback_(0);  // 0 = default format (CyxModel)
             }
-            if (ImGui::MenuItem("GGUF...")) {
-                // TODO: Export GGUF
-            }
-            if (ImGui::MenuItem("LoRA Adapter...")) {
-                // TODO: Export LoRA
-            }
-            ImGui::PopStyleVar();
-            ImGui::EndMenu();
         }
 
         ImGui::Spacing();
