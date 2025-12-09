@@ -319,19 +319,14 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        // Register with Central Server
-        spdlog::info("Connecting to Central Server at {}...", daemon_config.central_server);
+        // Create NodeClient for Central Server communication (but don't auto-connect)
+        // Connection happens when user applies allocations via GUI
         auto node_client = std::make_unique<cyxwiz::servernode::NodeClient>(
             daemon_config.central_server,
             node_id
         );
-
-        if (!node_client->Register()) {
-            spdlog::warn("Failed to register with Central Server - running in standalone mode");
-        } else {
-            spdlog::info("Successfully registered with Central Server");
-            node_client->StartHeartbeat(10);
-        }
+        spdlog::info("Central Server configured at {} (not connected - waiting for user allocation)",
+                     daemon_config.central_server);
 
         // Create and start IPC daemon service (for GUI connections)
         auto daemon_service = std::make_unique<cyxwiz::servernode::ipc::DaemonServiceImpl>(

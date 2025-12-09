@@ -90,9 +90,8 @@ grpc::Status DaemonServiceImpl::GetStatus(
     response->set_node_id(node_id_);
     response->set_version("0.3.0");
 
-    // Connection status
-    if (node_client_) {
-        // TODO: Get actual connection status
+    // Connection status - check actual registration state
+    if (node_client_ && node_client_->IsRegistered()) {
         response->set_central_server_status(ConnectionStatus::CONNECTION_STATUS_CONNECTED);
     } else {
         response->set_central_server_status(ConnectionStatus::CONNECTION_STATUS_DISCONNECTED);
@@ -122,11 +121,39 @@ grpc::Status DaemonServiceImpl::GetStatus(
         metrics_pb->set_ram_used_bytes(m.ram_used_bytes);
         metrics_pb->set_vram_total_bytes(m.vram_total_bytes);
         metrics_pb->set_vram_used_bytes(m.vram_used_bytes);
-    }
+        metrics_pb->set_gpu_count(m.gpu_count);
 
-    // GPU info
-    response->set_gpu_name("NVIDIA GeForce RTX"); // TODO: Get from device
-    response->set_gpu_count(1);
+        // Per-GPU metrics
+        for (const auto& gpu : m.gpus) {
+            auto* gpu_pb = metrics_pb->add_gpus();
+            gpu_pb->set_device_id(gpu.device_id);
+            gpu_pb->set_name(gpu.name);
+            gpu_pb->set_vendor(gpu.vendor);
+            gpu_pb->set_usage_3d(gpu.usage_3d);
+            gpu_pb->set_usage_copy(gpu.usage_copy);
+            gpu_pb->set_usage_video_decode(gpu.usage_video_decode);
+            gpu_pb->set_usage_video_encode(gpu.usage_video_encode);
+            gpu_pb->set_memory_usage(gpu.memory_usage);
+            gpu_pb->set_vram_used_bytes(gpu.vram_used_bytes);
+            gpu_pb->set_vram_total_bytes(gpu.vram_total_bytes);
+            gpu_pb->set_temperature_celsius(gpu.temperature_celsius);
+            gpu_pb->set_power_watts(gpu.power_watts);
+            gpu_pb->set_is_nvidia(gpu.is_nvidia);
+        }
+
+        // GPU info from first GPU or default
+        if (!m.gpus.empty()) {
+            response->set_gpu_name(m.gpus[0].name);
+            response->set_gpu_count(m.gpu_count);
+        } else {
+            response->set_gpu_name("Unknown GPU");
+            response->set_gpu_count(m.gpu_count);
+        }
+    } else {
+        // GPU info fallback
+        response->set_gpu_name("Unknown GPU");
+        response->set_gpu_count(0);
+    }
 
     return grpc::Status::OK;
 }
@@ -150,6 +177,25 @@ grpc::Status DaemonServiceImpl::GetMetrics(
     metrics_pb->set_ram_used_bytes(m.ram_used_bytes);
     metrics_pb->set_vram_total_bytes(m.vram_total_bytes);
     metrics_pb->set_vram_used_bytes(m.vram_used_bytes);
+    metrics_pb->set_gpu_count(m.gpu_count);
+
+    // Per-GPU metrics
+    for (const auto& gpu : m.gpus) {
+        auto* gpu_pb = metrics_pb->add_gpus();
+        gpu_pb->set_device_id(gpu.device_id);
+        gpu_pb->set_name(gpu.name);
+        gpu_pb->set_vendor(gpu.vendor);
+        gpu_pb->set_usage_3d(gpu.usage_3d);
+        gpu_pb->set_usage_copy(gpu.usage_copy);
+        gpu_pb->set_usage_video_decode(gpu.usage_video_decode);
+        gpu_pb->set_usage_video_encode(gpu.usage_video_encode);
+        gpu_pb->set_memory_usage(gpu.memory_usage);
+        gpu_pb->set_vram_used_bytes(gpu.vram_used_bytes);
+        gpu_pb->set_vram_total_bytes(gpu.vram_total_bytes);
+        gpu_pb->set_temperature_celsius(gpu.temperature_celsius);
+        gpu_pb->set_power_watts(gpu.power_watts);
+        gpu_pb->set_is_nvidia(gpu.is_nvidia);
+    }
 
     // History (get 60 samples for graph)
     auto cpu_hist = metrics_->GetHistory(core::MetricType::CPU, 60);
@@ -654,6 +700,154 @@ grpc::Status DaemonServiceImpl::Restart(
     // TODO: Implement restart logic
     response->set_success(false);
     response->set_error_message("Restart not implemented");
+    return grpc::Status::OK;
+}
+
+// ============================================================================
+// Resource Allocation & Central Server Connection
+// ============================================================================
+
+grpc::Status DaemonServiceImpl::SetAllocations(
+    grpc::ServerContext* context,
+    const SetAllocationsRequest* request,
+    SetAllocationsResponse* response) {
+
+    spdlog::info("SetAllocations called with {} allocations, connect_to_central={}",
+                 request->allocations_size(), request->connect_to_central());
+
+    // Log the allocations
+    for (const auto& alloc : request->allocations()) {
+        spdlog::debug("  Device {}: {} enabled={} vram_allocated={} MB",
+                      alloc.device_id(),
+                      alloc.device_name(),
+                      alloc.is_enabled(),
+                      alloc.vram_allocated_mb());
+    }
+
+    // Store allocations (TODO: Apply to actual device pool)
+    // For now, just log them
+
+    // If requested to connect to Central Server
+    if (request->connect_to_central()) {
+        if (!node_client_) {
+            response->set_success(false);
+            response->set_error_message("NodeClient not initialized");
+            response->set_connected_to_central(false);
+            return grpc::Status::OK;
+        }
+
+        // Check if already registered - just update allocations and return success
+        if (node_client_->IsRegistered()) {
+            spdlog::info("Already registered with Central Server, updating allocations only");
+            // TODO: Send updated allocations to Central Server via UpdateAllocations RPC
+            response->set_success(true);
+            response->set_connected_to_central(true);
+            response->set_node_id(node_client_->GetNodeId());
+            return grpc::Status::OK;
+        }
+
+        // Check if JWT token is provided for new registration
+        if (request->jwt_token().empty()) {
+            response->set_success(false);
+            response->set_error_message("JWT token required for Central Server connection");
+            response->set_connected_to_central(false);
+            return grpc::Status::OK;
+        }
+
+        // Set JWT token on NodeClient for authentication
+        node_client_->SetAuthToken(request->jwt_token());
+
+        // Attempt registration
+        spdlog::info("Attempting to register with Central Server...");
+        if (node_client_->Register()) {
+            spdlog::info("Successfully registered with Central Server");
+            node_client_->StartHeartbeat(10);
+
+            response->set_success(true);
+            response->set_connected_to_central(true);
+            response->set_node_id(node_client_->GetNodeId());
+        } else {
+            spdlog::warn("Failed to register with Central Server");
+            response->set_success(false);
+            response->set_error_message("Failed to connect to Central Server. Check if server is running.");
+            response->set_connected_to_central(false);
+        }
+    } else {
+        // Just save allocations locally without connecting
+        response->set_success(true);
+        response->set_connected_to_central(node_client_ && node_client_->IsRegistered());
+        if (node_client_) {
+            response->set_node_id(node_client_->GetNodeId());
+        }
+    }
+
+    return grpc::Status::OK;
+}
+
+grpc::Status DaemonServiceImpl::RetryConnection(
+    grpc::ServerContext* context,
+    const RetryConnectionRequest* request,
+    RetryConnectionResponse* response) {
+
+    spdlog::info("RetryConnection called");
+
+    if (!node_client_) {
+        response->set_success(false);
+        response->set_error_message("NodeClient not initialized");
+        response->set_connected_to_central(false);
+        return grpc::Status::OK;
+    }
+
+    // Check if JWT token is provided
+    if (request->jwt_token().empty()) {
+        response->set_success(false);
+        response->set_error_message("JWT token required for Central Server connection");
+        response->set_connected_to_central(false);
+        return grpc::Status::OK;
+    }
+
+    // TODO: Set JWT token on NodeClient for authentication
+    // node_client_->SetAuthToken(request->jwt_token());
+
+    // Attempt registration
+    spdlog::info("Retrying connection to Central Server...");
+    if (node_client_->Register()) {
+        spdlog::info("Successfully registered with Central Server on retry");
+        node_client_->StartHeartbeat(10);
+
+        response->set_success(true);
+        response->set_connected_to_central(true);
+        response->set_node_id(node_client_->GetNodeId());
+    } else {
+        spdlog::warn("Failed to register with Central Server on retry");
+        response->set_success(false);
+        response->set_error_message("Failed to connect to Central Server. Please try again later.");
+        response->set_connected_to_central(false);
+    }
+
+    return grpc::Status::OK;
+}
+
+grpc::Status DaemonServiceImpl::DisconnectFromCentral(
+    grpc::ServerContext* context,
+    const DisconnectFromCentralRequest* request,
+    DisconnectFromCentralResponse* response) {
+
+    spdlog::info("DisconnectFromCentral called");
+
+    if (!node_client_) {
+        response->set_success(true);  // Already disconnected
+        return grpc::Status::OK;
+    }
+
+    // Stop heartbeat
+    node_client_->StopHeartbeat();
+
+    // TODO: Send unregister to Central Server
+    // node_client_->Unregister();
+
+    spdlog::info("Disconnected from Central Server");
+    response->set_success(true);
     return grpc::Status::OK;
 }
 

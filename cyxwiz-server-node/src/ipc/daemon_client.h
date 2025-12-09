@@ -12,6 +12,23 @@
 
 namespace cyxwiz::servernode::ipc {
 
+// Per-GPU metrics matching GPUMetrics proto message
+struct GPUInfo {
+    int device_id = 0;
+    std::string name;
+    std::string vendor;  // "NVIDIA", "Intel", "AMD"
+    float usage_3d = 0.0f;
+    float usage_copy = 0.0f;
+    float usage_video_decode = 0.0f;
+    float usage_video_encode = 0.0f;
+    float memory_usage = 0.0f;
+    uint64_t vram_used = 0;
+    uint64_t vram_total = 0;
+    float temperature = 0.0f;
+    float power_watts = 0.0f;
+    bool is_nvidia = false;
+};
+
 // Data structures matching daemon.proto (avoids exposing protobuf in headers)
 struct SystemMetrics {
     float cpu_usage = 0.0f;
@@ -24,6 +41,8 @@ struct SystemMetrics {
     uint64_t vram_used = 0;
     float network_rx_mbps = 0.0f;
     float network_tx_mbps = 0.0f;
+    std::vector<GPUInfo> gpus;  // Per-GPU metrics
+    int gpu_count = 0;
 };
 
 struct DaemonStatus {
@@ -174,6 +193,46 @@ struct DownloadProgress {
     std::string local_path;
 };
 
+// Device Allocation for Central Server connection
+enum class AllocDeviceType {
+    Gpu = 0,
+    Cpu = 1
+};
+
+enum class AllocPriority {
+    Low = 0,
+    Medium = 1,
+    High = 2
+};
+
+struct DeviceAllocationInfo {
+    AllocDeviceType device_type = AllocDeviceType::Gpu;
+    int device_id = 0;
+    bool is_enabled = true;
+    int vram_allocation_mb = 0;      // For GPU
+    int cpu_cores_allocation = 0;    // For CPU
+    AllocPriority priority = AllocPriority::Medium;
+};
+
+struct SetAllocationsResult {
+    bool success = false;
+    std::string message;
+    bool connected_to_central = false;
+    std::string node_id;
+};
+
+struct RetryConnectionResult {
+    bool success = false;
+    std::string message;
+    bool connected = false;
+    std::string node_id;
+};
+
+struct DisconnectResult {
+    bool success = false;
+    std::string message;
+};
+
 // Callbacks for streaming updates
 using MetricsCallback = std::function<void(const SystemMetrics&)>;
 using JobUpdateCallback = std::function<void(const std::string& job_id, const JobInfo& job, const std::string& update_type)>;
@@ -284,6 +343,13 @@ public:
     // Daemon Control
     bool Shutdown(bool graceful, std::string& error);
     bool Restart(std::string& error);
+
+    // Resource Allocation & Central Server Connection
+    SetAllocationsResult SetAllocations(const std::vector<DeviceAllocationInfo>& allocations,
+                                         const std::string& jwt_token,
+                                         bool connect_to_central);
+    RetryConnectionResult RetryConnection();
+    DisconnectResult DisconnectFromCentral();
 
 private:
     std::shared_ptr<grpc::Channel> channel_;

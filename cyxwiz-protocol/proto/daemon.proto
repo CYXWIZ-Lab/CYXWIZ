@@ -69,6 +69,11 @@ service DaemonService {
     // Daemon Control
     rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
     rpc Restart(RestartRequest) returns (RestartResponse);
+
+    // Resource Allocation & Central Server Connection
+    rpc SetAllocations(SetAllocationsRequest) returns (SetAllocationsResponse);
+    rpc RetryConnection(RetryConnectionRequest) returns (RetryConnectionResponse);
+    rpc DisconnectFromCentral(DisconnectFromCentralRequest) returns (DisconnectFromCentralResponse);
 }
 
 // ============================================================================
@@ -100,19 +105,38 @@ enum DeploymentStatus {
     DEPLOYMENT_STATUS_ERROR = 4;
 }
 
+// Per-GPU metrics for multi-GPU support
+message GPUMetrics {
+    int32 device_id = 1;
+    string name = 2;
+    string vendor = 3;             // "NVIDIA", "Intel", "AMD"
+    float usage_3d = 4;            // 3D/Compute engine utilization (0-1)
+    float usage_copy = 5;          // Copy engine utilization (0-1)
+    float usage_video_decode = 6;  // Video decode engine (0-1)
+    float usage_video_encode = 7;  // Video encode engine (0-1)
+    float memory_usage = 8;        // VRAM usage (0-1)
+    uint64 vram_used_bytes = 9;
+    uint64 vram_total_bytes = 10;
+    float temperature_celsius = 11;
+    float power_watts = 12;
+    bool is_nvidia = 13;           // NVML available
+}
+
 message SystemMetrics {
     float cpu_usage = 1;           // 0.0 - 1.0
-    float gpu_usage = 2;           // 0.0 - 1.0
+    float gpu_usage = 2;           // 0.0 - 1.0 (primary GPU for backward compat)
     float ram_usage = 3;           // 0.0 - 1.0
-    float vram_usage = 4;          // 0.0 - 1.0
+    float vram_usage = 4;          // 0.0 - 1.0 (primary GPU for backward compat)
     uint64 ram_total_bytes = 5;
     uint64 ram_used_bytes = 6;
-    uint64 vram_total_bytes = 7;
-    uint64 vram_used_bytes = 8;
+    uint64 vram_total_bytes = 7;   // Primary GPU VRAM
+    uint64 vram_used_bytes = 8;    // Primary GPU VRAM
     float network_rx_mbps = 9;
     float network_tx_mbps = 10;
-    float gpu_temp_celsius = 11;
+    float gpu_temp_celsius = 11;   // Primary GPU temperature
     float cpu_temp_celsius = 12;
+    repeated GPUMetrics gpus = 13; // Per-GPU metrics
+    int32 gpu_count = 14;          // Total GPU count
 }
 
 message JobInfo {
@@ -581,6 +605,75 @@ message ShutdownResponse {
 message RestartRequest {}
 
 message RestartResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// ============================================================================
+// Resource Allocation & Central Server Connection
+// ============================================================================
+
+enum DeviceType {
+    DEVICE_TYPE_UNSPECIFIED = 0;
+    DEVICE_TYPE_GPU = 1;
+    DEVICE_TYPE_CPU = 2;
+}
+
+enum AllocationPriority {
+    ALLOCATION_PRIORITY_LOW = 0;
+    ALLOCATION_PRIORITY_NORMAL = 1;
+    ALLOCATION_PRIORITY_HIGH = 2;
+}
+
+// Resource allocation for a single device
+message DeviceAllocation {
+    DeviceType device_type = 1;
+    int32 device_id = 2;
+    string device_name = 3;
+    bool is_enabled = 4;              // Share this device?
+
+    // GPU-specific (in MB)
+    uint64 vram_total_mb = 5;
+    uint64 vram_allocated_mb = 6;
+    uint64 vram_reserved_mb = 7;      // Keep reserved for system
+
+    // CPU-specific
+    int32 cores_total = 8;
+    int32 cores_allocated = 9;
+    int32 cores_reserved = 10;        // Keep reserved for system
+
+    // Common settings
+    AllocationPriority priority = 11;
+    int32 max_power_percent = 12;     // 0-100
+}
+
+message SetAllocationsRequest {
+    repeated DeviceAllocation allocations = 1;
+    string jwt_token = 2;             // User's JWT token for authentication
+    bool connect_to_central = 3;      // Attempt to connect to Central Server
+}
+
+message SetAllocationsResponse {
+    bool success = 1;
+    string error_message = 2;
+    bool connected_to_central = 3;    // Whether connection to Central succeeded
+    string node_id = 4;               // Assigned node ID from Central Server
+}
+
+message RetryConnectionRequest {
+    string jwt_token = 1;             // User's JWT token for authentication
+}
+
+message RetryConnectionResponse {
+    bool success = 1;
+    string error_message = 2;
+    bool connected_to_central = 3;
+    string node_id = 4;
+}
+
+message DisconnectFromCentralRequest {}
+
+message DisconnectFromCentralResponse {
     bool success = 1;
     string error_message = 2;
 }

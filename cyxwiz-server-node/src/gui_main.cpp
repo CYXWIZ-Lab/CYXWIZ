@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "ipc/daemon_client.h"
+#include "core/backend_manager.h"
 
 #ifdef CYXWIZ_HAS_GUI
 #include "gui/server_application.h"
@@ -99,6 +100,11 @@ int main(int argc, char** argv) {
     const char* mode_name = (config.mode == InterfaceMode::GUI) ? "GUI" : "TUI";
     spdlog::info("Interface mode: {}", mode_name);
     spdlog::info("Connecting to daemon at: {}", config.daemon_address);
+
+    // Initialize BackendManager for local metrics collection
+    cyxwiz::servernode::core::NodeConfig node_config;
+    node_config.node_id = "gui-client";
+    cyxwiz::servernode::core::BackendManager::Instance().Initialize(node_config);
 
     // Create daemon client
     auto daemon_client = std::make_shared<cyxwiz::servernode::ipc::DaemonClient>();

@@ -26,6 +26,8 @@ class AnalyticsPanel;
 class FineTuningPanel;
 class LoginPanel;
 class AccountSettingsPanel;
+class HardwarePanel;
+class AllocationPanel;
 
 class ServerMainWindow : public core::StateObserver {
 public:
@@ -51,6 +53,8 @@ private:
     // Sidebar items
     enum class SidebarItem {
         Dashboard = 0,
+        Hardware,
+        Allocation,
         Analytics,
         Jobs,
         Models,
@@ -78,6 +82,8 @@ private:
     // Panels
     std::unique_ptr<LoginPanel> login_;
     std::unique_ptr<DashboardPanel> dashboard_;
+    std::unique_ptr<HardwarePanel> hardware_;
+    std::unique_ptr<AllocationPanel> allocation_;
     std::unique_ptr<AnalyticsPanel> analytics_;
     std::unique_ptr<JobMonitorPanel> job_monitor_;
     std::unique_ptr<ModelBrowserPanel> model_browser_;

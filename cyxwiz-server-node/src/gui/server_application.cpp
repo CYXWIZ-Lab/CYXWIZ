@@ -13,6 +13,8 @@
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 #include <filesystem>
 
@@ -23,6 +25,47 @@
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
 #endif
+
+// Load window icon from resources
+static bool load_window_icon(GLFWwindow* window) {
+    std::vector<std::string> icon_paths = {
+        "./cyxwiz-server-node/resources/servernode.png",
+        "./resources/servernode.png",
+        "../../../cyxwiz-server-node/resources/servernode.png",
+        "../../cyxwiz-server-node/resources/servernode.png",
+        "../cyxwiz-server-node/resources/servernode.png"
+    };
+
+    std::string icon_path;
+    for (const auto& path : icon_paths) {
+        if (std::filesystem::exists(path)) {
+            icon_path = path;
+            break;
+        }
+    }
+
+    if (icon_path.empty()) {
+        spdlog::warn("Window icon not found in any search path");
+        return false;
+    }
+
+    int width, height, channels;
+    unsigned char* pixels = stbi_load(icon_path.c_str(), &width, &height, &channels, 4);
+    if (!pixels) {
+        spdlog::warn("Failed to load window icon: {}", stbi_failure_reason());
+        return false;
+    }
+
+    GLFWimage image;
+    image.width = width;
+    image.height = height;
+    image.pixels = pixels;
+    glfwSetWindowIcon(window, 1, &image);
+    stbi_image_free(pixels);
+
+    spdlog::info("Window icon loaded from: {}", icon_path);
+    return true;
+}
 
 namespace cyxwiz::servernode::gui {
 
@@ -116,6 +159,9 @@ bool ServerApplication::InitializeGLFW() {
         DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));  // DWMWA_USE_IMMERSIVE_DARK_MODE
     }
 #endif
+
+    // Load window icon
+    load_window_icon(window_);
 
     spdlog::info("GLFW initialized with OpenGL {}", (const char*)glGetString(GL_VERSION));
     return true;

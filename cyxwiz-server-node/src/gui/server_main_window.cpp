@@ -16,6 +16,8 @@
 #include "gui/panels/fine_tuning_panel.h"
 #include "gui/panels/login_panel.h"
 #include "gui/panels/account_settings_panel.h"
+#include "gui/panels/hardware_panel.h"
+#include "gui/panels/allocation_panel.h"
 #include "auth/auth_manager.h"
 #include "core/backend_manager.h"
 #include "ipc/daemon_client.h"
@@ -28,6 +30,8 @@ namespace cyxwiz::servernode::gui {
 
 const ServerMainWindow::SidebarEntry ServerMainWindow::sidebar_entries_[] = {
     { SidebarItem::Dashboard,   ICON_FA_GAUGE_HIGH,       "Dashboard",    "System overview" },
+    { SidebarItem::Hardware,    ICON_FA_MICROCHIP,        "Hardware",     "Detected hardware & resources" },
+    { SidebarItem::Allocation,  ICON_FA_SLIDERS,          "Allocation",   "Resource allocation for sharing" },
     { SidebarItem::Analytics,   ICON_FA_CHART_LINE,       "Analytics",    "Historical metrics & trends" },
     { SidebarItem::Jobs,        ICON_FA_BARS_PROGRESS,    "Jobs",         "Active training jobs" },
     { SidebarItem::Models,      ICON_FA_CUBE,             "Models",       "Browse and manage models" },
@@ -50,6 +54,8 @@ ServerMainWindow::ServerMainWindow(ipc::DaemonClient* daemon_client)
     // Create panels
     login_ = std::make_unique<LoginPanel>();
     dashboard_ = std::make_unique<DashboardPanel>();
+    hardware_ = std::make_unique<HardwarePanel>();
+    allocation_ = std::make_unique<AllocationPanel>();
     analytics_ = std::make_unique<AnalyticsPanel>();
     job_monitor_ = std::make_unique<JobMonitorPanel>();
     model_browser_ = std::make_unique<ModelBrowserPanel>();
@@ -66,6 +72,8 @@ ServerMainWindow::ServerMainWindow(ipc::DaemonClient* daemon_client)
     // Set daemon client on all panels
     if (daemon_client_) {
         dashboard_->SetDaemonClient(daemon_client_);
+        hardware_->SetDaemonClient(daemon_client_);
+        allocation_->SetDaemonClient(daemon_client_);
         analytics_->SetDaemonClient(daemon_client_);
         job_monitor_->SetDaemonClient(daemon_client_);
         model_browser_->SetDaemonClient(daemon_client_);
@@ -289,6 +297,12 @@ void ServerMainWindow::RenderCurrentPanel() {
         switch (selected_item_) {
             case SidebarItem::Dashboard:
                 if (dashboard_) dashboard_->Render();
+                break;
+            case SidebarItem::Hardware:
+                if (hardware_) hardware_->Render();
+                break;
+            case SidebarItem::Allocation:
+                if (allocation_) allocation_->Render();
                 break;
             case SidebarItem::Analytics:
                 if (analytics_) analytics_->Render();

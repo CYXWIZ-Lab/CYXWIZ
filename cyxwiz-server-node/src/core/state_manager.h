@@ -47,20 +47,41 @@ struct DeploymentState {
     std::chrono::system_clock::time_point started_at;
 };
 
+// Per-GPU metrics
+struct GPUMetrics {
+    int device_id = 0;
+    std::string name;
+    std::string vendor;  // "NVIDIA", "Intel", "AMD"
+    float usage_3d = 0.0f;      // 3D/Compute engine utilization (0-1)
+    float usage_copy = 0.0f;    // Copy engine utilization (0-1)
+    float usage_video_decode = 0.0f;  // Video decode engine (0-1)
+    float usage_video_encode = 0.0f;  // Video encode engine (0-1)
+    float memory_usage = 0.0f;  // VRAM usage (0-1)
+    size_t vram_used_bytes = 0;
+    size_t vram_total_bytes = 0;
+    float temperature_celsius = 0.0f;
+    float power_watts = 0.0f;
+    bool is_nvidia = false;  // NVML available
+};
+
 // System metrics for UI display
 struct SystemMetrics {
     float cpu_usage = 0.0f;
-    float gpu_usage = 0.0f;
+    float gpu_usage = 0.0f;         // Primary GPU usage (for backward compat)
     float ram_usage = 0.0f;
-    float vram_usage = 0.0f;
+    float vram_usage = 0.0f;        // Primary GPU VRAM (for backward compat)
     float network_in_mbps = 0.0f;
     float network_out_mbps = 0.0f;
-    float temperature_celsius = 0.0f;
-    float power_watts = 0.0f;
+    float temperature_celsius = 0.0f;  // Primary GPU temp
+    float power_watts = 0.0f;          // Primary GPU power
     size_t ram_used_bytes = 0;
     size_t ram_total_bytes = 0;
-    size_t vram_used_bytes = 0;
-    size_t vram_total_bytes = 0;
+    size_t vram_used_bytes = 0;        // Primary GPU VRAM
+    size_t vram_total_bytes = 0;       // Primary GPU VRAM
+
+    // Per-GPU metrics
+    std::vector<GPUMetrics> gpus;
+    int gpu_count = 0;
 };
 
 // Earnings info

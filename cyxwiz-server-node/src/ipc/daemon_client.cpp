@@ -257,6 +257,27 @@ bool DaemonClient::GetStatus(DaemonStatus& status) {
         status.metrics.ram_used = m.ram_used_bytes();
         status.metrics.vram_total = m.vram_total_bytes();
         status.metrics.vram_used = m.vram_used_bytes();
+
+        // Parse per-GPU metrics
+        status.metrics.gpus.clear();
+        for (const auto& gpu_pb : m.gpus()) {
+            GPUInfo gpu;
+            gpu.device_id = gpu_pb.device_id();
+            gpu.name = gpu_pb.name();
+            gpu.vendor = gpu_pb.vendor();
+            gpu.usage_3d = gpu_pb.usage_3d();
+            gpu.usage_copy = gpu_pb.usage_copy();
+            gpu.usage_video_decode = gpu_pb.usage_video_decode();
+            gpu.usage_video_encode = gpu_pb.usage_video_encode();
+            gpu.memory_usage = gpu_pb.memory_usage();
+            gpu.vram_used = gpu_pb.vram_used_bytes();
+            gpu.vram_total = gpu_pb.vram_total_bytes();
+            gpu.temperature = gpu_pb.temperature_celsius();
+            gpu.power_watts = gpu_pb.power_watts();
+            gpu.is_nvidia = gpu_pb.is_nvidia();
+            status.metrics.gpus.push_back(gpu);
+        }
+        status.metrics.gpu_count = m.gpu_count();
     }
 
     return true;
@@ -291,6 +312,27 @@ bool DaemonClient::GetMetrics(SystemMetrics& metrics,
         metrics.ram_used = m.ram_used_bytes();
         metrics.vram_total = m.vram_total_bytes();
         metrics.vram_used = m.vram_used_bytes();
+
+        // Parse per-GPU metrics
+        metrics.gpus.clear();
+        for (const auto& gpu_pb : m.gpus()) {
+            GPUInfo gpu;
+            gpu.device_id = gpu_pb.device_id();
+            gpu.name = gpu_pb.name();
+            gpu.vendor = gpu_pb.vendor();
+            gpu.usage_3d = gpu_pb.usage_3d();
+            gpu.usage_copy = gpu_pb.usage_copy();
+            gpu.usage_video_decode = gpu_pb.usage_video_decode();
+            gpu.usage_video_encode = gpu_pb.usage_video_encode();
+            gpu.memory_usage = gpu_pb.memory_usage();
+            gpu.vram_used = gpu_pb.vram_used_bytes();
+            gpu.vram_total = gpu_pb.vram_total_bytes();
+            gpu.temperature = gpu_pb.temperature_celsius();
+            gpu.power_watts = gpu_pb.power_watts();
+            gpu.is_nvidia = gpu_pb.is_nvidia();
+            metrics.gpus.push_back(gpu);
+        }
+        metrics.gpu_count = m.gpu_count();
     }
 
     cpu_history.assign(response.cpu_history().begin(), response.cpu_history().end());
@@ -323,6 +365,26 @@ void DaemonClient::StartMetricsStream(MetricsCallback callback, int interval_ms)
                 metrics.gpu_usage = m.gpu_usage();
                 metrics.ram_usage = m.ram_usage();
                 metrics.vram_usage = m.vram_usage();
+
+                // Parse per-GPU metrics
+                for (const auto& gpu_pb : m.gpus()) {
+                    GPUInfo gpu;
+                    gpu.device_id = gpu_pb.device_id();
+                    gpu.name = gpu_pb.name();
+                    gpu.vendor = gpu_pb.vendor();
+                    gpu.usage_3d = gpu_pb.usage_3d();
+                    gpu.usage_copy = gpu_pb.usage_copy();
+                    gpu.usage_video_decode = gpu_pb.usage_video_decode();
+                    gpu.usage_video_encode = gpu_pb.usage_video_encode();
+                    gpu.memory_usage = gpu_pb.memory_usage();
+                    gpu.vram_used = gpu_pb.vram_used_bytes();
+                    gpu.vram_total = gpu_pb.vram_total_bytes();
+                    gpu.temperature = gpu_pb.temperature_celsius();
+                    gpu.power_watts = gpu_pb.power_watts();
+                    gpu.is_nvidia = gpu_pb.is_nvidia();
+                    metrics.gpus.push_back(gpu);
+                }
+                metrics.gpu_count = m.gpu_count();
             }
             callback(metrics);
         }
@@ -1377,6 +1439,133 @@ bool DaemonClient::Restart(std::string& error) {
     }
 
     return true;
+}
+
+// ============================================================================
+// Resource Allocation & Central Server Connection
+// ============================================================================
+
+SetAllocationsResult DaemonClient::SetAllocations(
+    const std::vector<DeviceAllocationInfo>& allocations,
+    const std::string& jwt_token,
+    bool connect_to_central) {
+
+    SetAllocationsResult result;
+
+    if (!connected_.load() || !stub_) {
+        result.message = "Not connected to daemon";
+        return result;
+    }
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
+
+    SetAllocationsRequest request;
+
+    // Convert allocations to proto format
+    for (const auto& alloc : allocations) {
+        auto* proto_alloc = request.add_allocations();
+        proto_alloc->set_device_type(static_cast<DeviceType>(alloc.device_type));
+        proto_alloc->set_device_id(alloc.device_id);
+        proto_alloc->set_is_enabled(alloc.is_enabled);
+        proto_alloc->set_vram_allocated_mb(alloc.vram_allocation_mb);
+        proto_alloc->set_cores_allocated(alloc.cpu_cores_allocation);
+        proto_alloc->set_priority(static_cast<AllocationPriority>(alloc.priority));
+    }
+
+    request.set_jwt_token(jwt_token);
+    request.set_connect_to_central(connect_to_central);
+
+    SetAllocationsResponse response;
+
+    auto status = stub_->stub->SetAllocations(&context, request, &response);
+    if (!status.ok()) {
+        result.message = "RPC failed: " + status.error_message();
+        spdlog::error("SetAllocations RPC failed: {}", status.error_message());
+        return result;
+    }
+
+    result.success = response.success();
+    result.message = response.error_message();
+    result.connected_to_central = response.connected_to_central();
+    result.node_id = response.node_id();
+
+    if (result.success) {
+        spdlog::info("SetAllocations succeeded: connected={}, node_id={}",
+                     result.connected_to_central, result.node_id);
+    } else {
+        spdlog::warn("SetAllocations failed: {}", result.message);
+    }
+
+    return result;
+}
+
+RetryConnectionResult DaemonClient::RetryConnection() {
+    RetryConnectionResult result;
+
+    if (!connected_.load() || !stub_) {
+        result.message = "Not connected to daemon";
+        return result;
+    }
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
+
+    RetryConnectionRequest request;
+    RetryConnectionResponse response;
+
+    auto status = stub_->stub->RetryConnection(&context, request, &response);
+    if (!status.ok()) {
+        result.message = "RPC failed: " + status.error_message();
+        spdlog::error("RetryConnection RPC failed: {}", status.error_message());
+        return result;
+    }
+
+    result.success = response.success();
+    result.message = response.error_message();
+    result.connected = response.connected_to_central();
+    result.node_id = response.node_id();
+
+    if (result.success) {
+        spdlog::info("RetryConnection succeeded: connected={}", result.connected);
+    } else {
+        spdlog::warn("RetryConnection failed: {}", result.message);
+    }
+
+    return result;
+}
+
+DisconnectResult DaemonClient::DisconnectFromCentral() {
+    DisconnectResult result;
+
+    if (!connected_.load() || !stub_) {
+        result.message = "Not connected to daemon";
+        return result;
+    }
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+
+    DisconnectFromCentralRequest request;
+    DisconnectFromCentralResponse response;
+
+    auto status = stub_->stub->DisconnectFromCentral(&context, request, &response);
+    if (!status.ok()) {
+        result.message = "RPC failed: " + status.error_message();
+        spdlog::error("DisconnectFromCentral RPC failed: {}", status.error_message());
+        return result;
+    }
+
+    result.success = response.success();
+    result.message = response.error_message();
+
+    if (result.success) {
+        spdlog::info("DisconnectFromCentral succeeded");
+    } else {
+        spdlog::warn("DisconnectFromCentral failed: {}", result.message);
+    }
+
+    return result;
 }
 
 } // namespace cyxwiz::servernode::ipc

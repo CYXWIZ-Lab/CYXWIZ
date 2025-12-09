@@ -52,6 +52,9 @@ public:
     // Check if successfully registered
     bool IsRegistered() const { return is_registered_; }
 
+    // Set authentication token (JWT from user login)
+    void SetAuthToken(const std::string& token) { auth_token_ = token; }
+
     // ========================================================================
     // Job Status Reporting (Server Node → Central Server)
     // ========================================================================
@@ -84,6 +87,7 @@ private:
     std::string central_server_address_;
     std::string node_id_;
     std::string session_token_;
+    std::string auth_token_;  // JWT token for authentication
     bool is_registered_;
 
     std::unique_ptr<protocol::NodeService::Stub> stub_;

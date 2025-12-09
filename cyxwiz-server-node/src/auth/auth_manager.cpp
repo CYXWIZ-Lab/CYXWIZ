@@ -18,6 +18,9 @@
 // Device detection from cyxwiz-backend
 #include <cyxwiz/device.h>
 
+// MetricsCollector for detailed hardware detection (DXGI + NVML/ADL)
+#include "core/metrics_collector.h"
+
 #ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
@@ -733,6 +736,105 @@ HardwareSpecs AuthManager::DetectHardware() {
     return specs;
 }
 
+DetectedHardware AuthManager::DetectDetailedHardware() {
+    DetectedHardware hw;
+
+    // Use MetricsCollector for accurate hardware detection (DXGI + NVML/ADL/D3DKMT)
+    core::MetricsCollector collector;
+    collector.StartCollection(100);  // Start briefly to collect data
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));  // Wait for initial collection
+    auto metrics = collector.GetCurrentMetrics();
+    collector.StopCollection();
+
+    // Populate GPUs from MetricsCollector (uses DXGI enumeration)
+    for (const auto& gpu : metrics.gpus) {
+        GpuInfo info;
+        info.device_id = static_cast<uint32_t>(gpu.device_id);
+        info.name = gpu.name;
+        info.vendor = gpu.vendor;
+        info.vram_mb = gpu.vram_total_bytes / (1024 * 1024);
+        info.cuda_version = "";  // TODO: Get from NVML if available
+        info.driver_version = "";
+        hw.gpus.push_back(info);
+
+        spdlog::info("Detected GPU {}: {} ({}) - {} MB VRAM",
+                     info.device_id, info.name, info.vendor, info.vram_mb);
+    }
+
+    // RAM from metrics
+    hw.ram_total_mb = metrics.ram_total_bytes / (1024 * 1024);
+
+    // CPU detection
+    CpuInfo cpu;
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo;
+    GetSystemInfo(&sysInfo);
+    cpu.cores = sysInfo.dwNumberOfProcessors / 2;  // Physical cores estimate
+    if (cpu.cores < 1) cpu.cores = 1;
+    cpu.threads = sysInfo.dwNumberOfProcessors;
+
+    // Get CPU name from registry
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+                      "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+                      0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        char cpuName[256] = {0};
+        DWORD bufSize = sizeof(cpuName);
+        if (RegQueryValueExA(hKey, "ProcessorNameString", nullptr, nullptr,
+                            (LPBYTE)cpuName, &bufSize) == ERROR_SUCCESS) {
+            cpu.name = cpuName;
+            // Trim whitespace
+            size_t start = cpu.name.find_first_not_of(" ");
+            size_t end = cpu.name.find_last_not_of(" ");
+            if (start != std::string::npos) {
+                cpu.name = cpu.name.substr(start, end - start + 1);
+            }
+        }
+
+        DWORD mhz = 0;
+        bufSize = sizeof(mhz);
+        if (RegQueryValueExA(hKey, "~MHz", nullptr, nullptr,
+                            (LPBYTE)&mhz, &bufSize) == ERROR_SUCCESS) {
+            cpu.frequency_mhz = mhz;
+        }
+        RegCloseKey(hKey);
+    }
+
+    // OS info
+    hw.os = "Windows";
+
+    // Hostname
+    char hostname[256] = {0};
+    DWORD size = sizeof(hostname);
+    GetComputerNameA(hostname, &size);
+    hw.hostname = hostname;
+#else
+    cpu.cores = static_cast<uint32_t>(sysconf(_SC_NPROCESSORS_ONLN)) / 2;
+    if (cpu.cores < 1) cpu.cores = 1;
+    cpu.threads = static_cast<uint32_t>(sysconf(_SC_NPROCESSORS_ONLN));
+    cpu.name = "Unknown CPU";
+    cpu.frequency_mhz = 0;
+    hw.os = "Linux";
+
+    char hostname[256] = {0};
+    gethostname(hostname, sizeof(hostname));
+    hw.hostname = hostname;
+#endif
+
+    hw.cpus.push_back(cpu);
+    spdlog::info("Detected CPU: {} ({} cores / {} threads)",
+                 cpu.name, cpu.cores, cpu.threads);
+
+    // IP address (reuse from legacy detection)
+    auto legacy = DetectHardware();
+    hw.ip_address = legacy.ip_address;
+
+    spdlog::info("Detected RAM: {} MB, OS: {}, Hostname: {}",
+                 hw.ram_total_mb, hw.os, hw.hostname);
+
+    return hw;
+}
+
 std::future<NodeRegistrationResult> AuthManager::RegisterNodeWithApi(
     const std::string& node_name,
     const std::string& node_type)
@@ -757,8 +859,8 @@ std::future<NodeRegistrationResult> AuthManager::RegisterNodeWithApi(
 
         SetState(AuthState::Registering);
 
-        // Detect hardware specs
-        auto specs = DetectHardware();
+        // Detect detailed hardware (uses MetricsCollector for accurate GPU enumeration)
+        auto hw = DetectDetailedHardware();
 
         try {
             // Parse URL
@@ -789,20 +891,63 @@ std::future<NodeRegistrationResult> AuthManager::RegisterNodeWithApi(
                 host = host.substr(0, colon_pos);
             }
 
-            // Build request JSON
+            // Build structured hardware JSON
+            json gpus_json = json::array();
+            for (const auto& gpu : hw.gpus) {
+                gpus_json.push_back({
+                    {"device_id", gpu.device_id},
+                    {"name", gpu.name},
+                    {"vendor", gpu.vendor},
+                    {"vram_mb", gpu.vram_mb}
+                });
+            }
+
+            json cpus_json = json::array();
+            for (const auto& cpu : hw.cpus) {
+                cpus_json.push_back({
+                    {"name", cpu.name},
+                    {"cores", cpu.cores},
+                    {"threads", cpu.threads},
+                    {"frequency_mhz", cpu.frequency_mhz}
+                });
+            }
+
+            // Build request JSON with structured hardware data
             json body;
-            body["name"] = node_name;
-            body["node_type"] = node_type;
             body["owner_id"] = owner_id;
-            body["specs"] = {
-                {"cpu", specs.cpu},
-                {"gpu", specs.gpu},
-                {"ram", specs.ram},
-                {"storage", specs.storage}
+            body["hostname"] = hw.hostname;
+            body["os"] = hw.os;
+            body["ip_address"] = hw.ip_address;
+            body["hardware"] = {
+                {"gpus", gpus_json},
+                {"cpus", cpus_json},
+                {"ram_total_mb", hw.ram_total_mb}
             };
 
-            std::string full_path = base_path + "/nodes/register";
-            spdlog::info("Registering node '{}' at {}", node_name, full_path);
+            // Include legacy specs for backward compatibility
+            std::string gpu_summary;
+            for (size_t i = 0; i < hw.gpus.size(); i++) {
+                if (i > 0) gpu_summary += " + ";
+                gpu_summary += hw.gpus[i].name;
+            }
+            if (gpu_summary.empty()) gpu_summary = "None";
+
+            std::string cpu_summary;
+            if (!hw.cpus.empty()) {
+                cpu_summary = hw.cpus[0].name;
+            }
+
+            body["specs"] = {
+                {"cpu", cpu_summary},
+                {"gpu", gpu_summary},
+                {"ram", std::to_string(hw.ram_total_mb / 1024) + " GB"},
+                {"storage", "Unknown"}
+            };
+
+            std::string full_path = base_path + "/machines/register";
+            spdlog::info("Registering machine '{}' at {}", hw.hostname, full_path);
+            spdlog::info("Hardware: {} GPUs, {} CPUs, {} MB RAM",
+                         hw.gpus.size(), hw.cpus.size(), hw.ram_total_mb);
 
             httplib::Result res;
 
@@ -922,16 +1067,24 @@ bool AuthManager::SendHeartbeatToApi() {
             host = host.substr(0, colon_pos);
         }
 
+        // Detect hardware specs (including GPU)
+        auto specs = DetectHardware();
+
         // Build request
         json body;
         body["api_key"] = api_key;
         body["current_load"] = 0;  // TODO: Get actual CPU load
-
-        // Get current IP
-        auto specs = DetectHardware();
         body["ip_address"] = specs.ip_address;
 
-        std::string full_path = base_path + "/nodes/" + node_id + "/heartbeat";
+        // Include specs in heartbeat so GPU info gets updated
+        body["specs"] = {
+            {"cpu", specs.cpu},
+            {"gpu", specs.gpu},
+            {"ram", specs.ram},
+            {"storage", specs.storage}
+        };
+
+        std::string full_path = base_path + "/machines/" + node_id_ + "/heartbeat";
 
         httplib::Result res;
 

@@ -6,6 +6,8 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <vector>
+#include <cstdint>
 
 namespace cyxwiz::servernode::auth {
 
@@ -44,12 +46,40 @@ struct NodeRegistrationResult {
     std::string error;
 };
 
-// Hardware specifications for node registration
+// Hardware specifications for node registration (legacy format)
 struct HardwareSpecs {
     std::string cpu;
     std::string gpu;
     std::string ram;
     std::string storage;
+    std::string ip_address;
+};
+
+// Detailed GPU information for structured hardware data
+struct GpuInfo {
+    uint32_t device_id;
+    std::string name;
+    std::string vendor;  // "NVIDIA", "AMD", "Intel"
+    uint64_t vram_mb;
+    std::string cuda_version;
+    std::string driver_version;
+};
+
+// Detailed CPU information
+struct CpuInfo {
+    std::string name;
+    uint32_t cores;
+    uint32_t threads;
+    uint32_t frequency_mhz;
+};
+
+// Structured hardware data for proper API registration
+struct DetectedHardware {
+    std::vector<CpuInfo> cpus;
+    std::vector<GpuInfo> gpus;
+    uint64_t ram_total_mb;
+    std::string os;
+    std::string hostname;
     std::string ip_address;
 };
 
@@ -97,7 +127,8 @@ public:
     bool IsNodeRegistered() const;
 
     // Hardware detection
-    static HardwareSpecs DetectHardware();
+    static HardwareSpecs DetectHardware();  // Legacy simple format
+    static DetectedHardware DetectDetailedHardware();  // New structured format
 
     // Persistence
     bool LoadSavedSession();

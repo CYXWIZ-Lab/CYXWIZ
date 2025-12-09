@@ -113,6 +113,8 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/theme.cpp
         src/gui/dock_style.cpp
         src/gui/panels/dashboard_panel.cpp
+        src/gui/panels/hardware_panel.cpp
+        src/gui/panels/allocation_panel.cpp
         src/gui/panels/job_monitor_panel.cpp
         src/gui/panels/model_browser_panel.cpp
         src/gui/panels/deployment_panel.cpp
@@ -176,7 +178,7 @@ if(CYXWIZ_BUILD_DAEMON)
 
     # Platform-specific libraries for daemon
     if(WIN32)
-        target_link_libraries(cyxwiz-server-daemon PRIVATE ws2_32 pdh)
+        target_link_libraries(cyxwiz-server-daemon PRIVATE ws2_32 pdh iphlpapi)
         target_compile_definitions(cyxwiz-server-daemon PRIVATE
             NOMINMAX
             WIN32_LEAN_AND_MEAN
@@ -271,7 +273,7 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
 
     # Platform-specific libraries for GUI client
     if(WIN32)
-        target_link_libraries(cyxwiz-server-gui PRIVATE ws2_32 pdh)
+        target_link_libraries(cyxwiz-server-gui PRIVATE ws2_32 pdh iphlpapi)
         target_compile_definitions(cyxwiz-server-gui PRIVATE
             NOMINMAX
             WIN32_LEAN_AND_MEAN

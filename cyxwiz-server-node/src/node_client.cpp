@@ -297,7 +297,7 @@ bool NodeClient::Register() {
     // Create registration request
     protocol::RegisterNodeRequest request;
     *request.mutable_info() = node_info;
-    request.set_authentication_token("");  // TODO: Implement authentication
+    request.set_authentication_token(auth_token_);  // JWT from user login
     request.set_public_key("");            // TODO: Implement crypto
 
     // Send registration request

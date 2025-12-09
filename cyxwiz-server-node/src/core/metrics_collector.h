@@ -43,8 +43,13 @@ public:
     // Get max history size
     static constexpr int MAX_HISTORY_SIZE = 300;  // 5 minutes at 1 second intervals
 
+    // Multi-GPU support
+    int GetGPUCount() const { return nvml_device_count_; }
+    std::vector<GPUMetrics> GetPerGPUMetrics();
+
 private:
     void CollectionLoop();
+    void CollectAllGPUMetrics(SystemMetrics& metrics);
 
     // Platform-specific collection
     float CollectCPUUsage();
@@ -87,6 +92,17 @@ private:
     long last_cpu_idle_ = 0;
     long last_cpu_total_ = 0;
 #endif
+
+    // NVML for GPU metrics (NVIDIA only)
+    bool nvml_initialized_ = false;
+    std::vector<void*> nvml_devices_;  // nvmlDevice_t handles for all NVIDIA GPUs
+    std::vector<std::string> nvml_device_names_;  // Device names
+    int nvml_device_count_ = 0;
+    int nvidia_gpu_count_ = 0;  // Number of NVIDIA GPUs
+
+    // ADL for GPU metrics (AMD only)
+    bool adl_initialized_ = false;
+    int amd_gpu_count_ = 0;  // Number of AMD GPUs
 };
 
 } // namespace cyxwiz::servernode::core

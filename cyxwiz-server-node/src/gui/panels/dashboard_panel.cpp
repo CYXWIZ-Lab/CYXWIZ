@@ -36,10 +36,22 @@ namespace Colors {
     const ImVec4 Hover = ImVec4(0.12f, 0.25f, 0.35f, 1.0f);
     const ImVec4 TextPrimary = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     const ImVec4 TextSecondary = ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
-    const ImVec4 CPUColor = ImVec4(0.40f, 0.75f, 0.90f, 1.0f);
-    const ImVec4 MemoryColor = ImVec4(0.55f, 0.45f, 0.75f, 1.0f);
-    const ImVec4 GPUColor = ImVec4(0.45f, 0.80f, 0.45f, 1.0f);
-    const ImVec4 NetworkColor = ImVec4(0.85f, 0.65f, 0.35f, 1.0f);
+    const ImVec4 CPUColor = ImVec4(0.40f, 0.75f, 0.90f, 1.0f);    // Cyan/teal
+    const ImVec4 MemoryColor = ImVec4(0.55f, 0.45f, 0.75f, 1.0f); // Purple
+    const ImVec4 GPUColor = ImVec4(0.45f, 0.80f, 0.45f, 1.0f);    // Green (default/NVIDIA)
+    const ImVec4 NetworkColor = ImVec4(0.85f, 0.65f, 0.35f, 1.0f); // Orange
+    // Vendor-specific GPU colors (matching Task Manager)
+    const ImVec4 GPU_Intel = ImVec4(0.85f, 0.45f, 0.75f, 1.0f);   // Magenta/pink
+    const ImVec4 GPU_NVIDIA = ImVec4(0.45f, 0.80f, 0.45f, 1.0f);  // Green
+    const ImVec4 GPU_AMD = ImVec4(0.90f, 0.35f, 0.35f, 1.0f);     // Red
+
+    // Helper to get GPU color by vendor
+    inline ImVec4 GetGPUColor(const std::string& vendor, bool is_nvidia) {
+        if (is_nvidia || vendor == "NVIDIA") return GPU_NVIDIA;
+        if (vendor == "Intel") return GPU_Intel;
+        if (vendor == "AMD") return GPU_AMD;
+        return GPUColor;
+    }
 }
 
 DashboardPanel::DashboardPanel() : ServerPanel("Dashboard") {
@@ -144,9 +156,10 @@ void DashboardPanel::Render() {
 
 void DashboardPanel::RenderResourceSidebar() {
     // CPU
-    std::string cpu_subtitle = fmt::format("{:.0f}%", cpu_usage_ * 100);
+    std::string cpu_subtitle = fmt::format("{:.0f}% {:.2f} GHz", cpu_usage_ * 100, cpu_speed_ghz_);
     RenderResourceItem(ResourceType::CPU, ICON_FA_MICROCHIP " CPU", cpu_subtitle.c_str(),
-                       cpu_usage_, cpu_history_, selected_resource_ == ResourceType::CPU);
+                       cpu_usage_, cpu_history_, selected_resource_ == ResourceType::CPU,
+                       Colors::CPUColor);
 
     // Memory
     double ram_used_gb = ram_used_ / (1024.0 * 1024.0 * 1024.0);
@@ -154,23 +167,44 @@ void DashboardPanel::RenderResourceSidebar() {
     std::string mem_subtitle = fmt::format("{:.1f}/{:.1f} GB ({:.0f}%)",
                                            ram_used_gb, ram_total_gb, ram_usage_ * 100);
     RenderResourceItem(ResourceType::Memory, ICON_FA_MEMORY " Memory", mem_subtitle.c_str(),
-                       ram_usage_, ram_history_, selected_resource_ == ResourceType::Memory);
+                       ram_usage_, ram_history_, selected_resource_ == ResourceType::Memory,
+                       Colors::MemoryColor);
 
-    // GPU
-    std::string gpu_subtitle = fmt::format("{:.0f}%", gpu_usage_ * 100);
-    if (!gpu_name_.empty() && gpu_name_ != "Unknown GPU") {
-        std::string short_name = gpu_name_.length() > 20 ? gpu_name_.substr(0, 17) + "..." : gpu_name_;
-        gpu_subtitle = short_name + "\n" + gpu_subtitle;
+    // GPUs - show each GPU separately with vendor-specific colors
+    for (int i = 0; i < static_cast<int>(gpus_.size()); ++i) {
+        const auto& gpu = gpus_[i];
+        std::string gpu_name = fmt::format(ICON_FA_DESKTOP " GPU {}", i);
+        std::string short_model = gpu.name.length() > 18 ? gpu.name.substr(0, 15) + "..." : gpu.name;
+
+        // Include temperature if available (for NVIDIA)
+        std::string gpu_subtitle;
+        if (gpu.temperature > 0) {
+            gpu_subtitle = fmt::format("{}\n{:.0f}% ({:.0f} C)", short_model, gpu.usage_3d * 100, gpu.temperature);
+        } else {
+            gpu_subtitle = fmt::format("{}\n{:.0f}%", short_model, gpu.usage_3d * 100);
+        }
+
+        bool is_selected = (selected_resource_ == ResourceType::GPU && selected_gpu_ == i);
+        ImVec4 gpu_color = Colors::GetGPUColor(gpu.vendor, gpu.is_nvidia);
+
+        // Create unique ID for each GPU button
+        ImGui::PushID(fmt::format("gpu_{}", i).c_str());
+        RenderResourceItemClickable(gpu_name.c_str(), gpu_subtitle.c_str(),
+                                    gpu.usage_3d, gpu.history, is_selected, gpu_color,
+                                    [this, i]() {
+                                        selected_resource_ = ResourceType::GPU;
+                                        selected_gpu_ = i;
+                                    });
+        ImGui::PopID();
     }
-    RenderResourceItem(ResourceType::GPU, ICON_FA_DESKTOP " GPU", gpu_subtitle.c_str(),
-                       gpu_usage_, gpu_history_, selected_resource_ == ResourceType::GPU);
 
     // Network
     std::string net_subtitle = fmt::format("In: {:.1f} Mbps\nOut: {:.1f} Mbps",
                                            net_in_mbps_, net_out_mbps_);
     float net_usage = std::min(1.0f, (net_in_mbps_ + net_out_mbps_) / 100.0f);
     RenderResourceItem(ResourceType::Network, ICON_FA_NETWORK_WIRED " Network", net_subtitle.c_str(),
-                       net_usage, net_in_history_, selected_resource_ == ResourceType::Network);
+                       net_usage, net_in_history_, selected_resource_ == ResourceType::Network,
+                       Colors::NetworkColor);
 
     // Spacer
     ImGui::Spacing();
@@ -183,10 +217,51 @@ void DashboardPanel::RenderResourceSidebar() {
     ImGui::Spacing();
     ImGui::TextColored(Colors::TextSecondary, ICON_FA_ROCKET " Deployed Models");
     ImGui::TextColored(Colors::TextPrimary, "  %d", active_deployments_);
+
+    // Spacer
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Central Server connection status
+    ImGui::TextColored(Colors::TextSecondary, ICON_FA_SERVER " Central Server");
+    if (connected_to_central_) {
+        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "  " ICON_FA_CIRCLE_CHECK " Connected");
+        if (!central_node_id_.empty()) {
+            // Show shortened node ID
+            std::string short_id = central_node_id_.length() > 12
+                ? central_node_id_.substr(0, 12) + "..."
+                : central_node_id_;
+            ImGui::TextColored(Colors::TextSecondary, "  Node: %s", short_id.c_str());
+            if (ImGui::IsItemHovered() && central_node_id_.length() > 12) {
+                ImGui::SetTooltip("%s", central_node_id_.c_str());
+            }
+        }
+    } else {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "  " ICON_FA_CIRCLE_XMARK " Not Connected");
+        ImGui::Spacing();
+        if (ImGui::SmallButton(ICON_FA_SLIDERS " Configure")) {
+            if (switch_to_allocation_callback_) {
+                switch_to_allocation_callback_();
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open Allocation panel to configure resources and connect");
+        }
+    }
 }
 
 void DashboardPanel::RenderResourceItem(ResourceType type, const char* name, const char* subtitle,
-                                         float usage, const std::vector<float>& history, bool selected) {
+                                         float usage, const std::vector<float>& history, bool selected,
+                                         ImVec4 color) {
+    RenderResourceItemClickable(name, subtitle, usage, history, selected, color,
+                                [this, type]() { selected_resource_ = type; });
+}
+
+void DashboardPanel::RenderResourceItemClickable(const char* name, const char* subtitle,
+                                                  float usage, const std::vector<float>& history,
+                                                  bool selected, ImVec4 color,
+                                                  std::function<void()> on_click) {
     ImVec2 item_size(ImGui::GetContentRegionAvail().x, 70.0f);
     ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
 
@@ -195,7 +270,7 @@ void DashboardPanel::RenderResourceItem(ResourceType type, const char* name, con
     ImVec4 bg_color = selected ? Colors::Selected : ImVec4(0, 0, 0, 0);
 
     if (ImGui::InvisibleButton(name, item_size)) {
-        selected_resource_ = type;
+        if (on_click) on_click();
     }
     if (ImGui::IsItemHovered()) {
         bg_color = selected ? Colors::Selected : Colors::Hover;
@@ -217,15 +292,6 @@ void DashboardPanel::RenderResourceItem(ResourceType type, const char* name, con
 
     // Draw sparkline
     if (!history.empty()) {
-        ImVec4 color;
-        switch (type) {
-            case ResourceType::CPU: color = Colors::CPUColor; break;
-            case ResourceType::Memory: color = Colors::MemoryColor; break;
-            case ResourceType::GPU: color = Colors::GPUColor; break;
-            case ResourceType::Network: color = Colors::NetworkColor; break;
-            default: color = Colors::GraphLine; break;
-        }
-
         std::vector<ImVec2> points;
         int sample_count = std::min(static_cast<int>(history.size()), 30);
         int start_idx = static_cast<int>(history.size()) - sample_count;
@@ -293,8 +359,16 @@ void DashboardPanel::RenderMainGraphArea() {
         case ResourceType::GPU:
             title = "GPU";
             icon = ICON_FA_DESKTOP;
-            color = Colors::GPUColor;
-            history = &gpu_history_;
+            // Use the selected GPU's data
+            if (!gpus_.empty() && selected_gpu_ < static_cast<int>(gpus_.size())) {
+                const auto& gpu = gpus_[selected_gpu_];
+                color = Colors::GetGPUColor(gpu.vendor, gpu.is_nvidia);
+                history = &gpu.history;
+            } else {
+                color = Colors::GPUColor;
+                history = &gpu_history_;
+            }
+            show_core_grid = false;  // Always show single GPU chart, not grid
             break;
         case ResourceType::Network:
             title = "Network";
@@ -326,9 +400,11 @@ void DashboardPanel::RenderMainGraphArea() {
     ImGui::TextColored(Colors::TextSecondary, "%s", subtitle);
     ImGui::Spacing();
 
-    // Show per-core grid for CPU, otherwise large chart
+    // Show per-core grid for CPU, per-GPU grid for GPU, otherwise large chart
     if (show_core_grid && selected_resource_ == ResourceType::CPU) {
         RenderCoreGraphGrid();
+    } else if (show_core_grid && selected_resource_ == ResourceType::GPU) {
+        RenderGPUGraphGrid();
     } else if (history) {
         RenderLargeAreaChart(title, subtitle, *history, color);
     }
@@ -388,6 +464,91 @@ void DashboardPanel::RenderCoreGraphGrid() {
             }
             ImPlot::EndPlot();
         }
+        ImGui::EndGroup();
+    }
+
+    ImPlot::PopStyleColor(5);
+}
+
+void DashboardPanel::RenderGPUGraphGrid() {
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    int num_gpus = static_cast<int>(gpus_.size());
+    if (num_gpus == 0) return;
+
+    // Calculate grid layout - GPUs typically fewer than cores
+    int cols = std::min(2, num_gpus);
+    int rows = (num_gpus + cols - 1) / cols;
+    float cell_width = avail.x / cols - 8;
+    float cell_height = avail.y / rows - 8;
+    if (cell_height > 120) cell_height = 120;
+
+    ImPlot::PushStyleColor(ImPlotCol_FrameBg, Colors::GraphBg);
+    ImPlot::PushStyleColor(ImPlotCol_PlotBg, Colors::GraphBg);
+    ImPlot::PushStyleColor(ImPlotCol_PlotBorder, ImVec4(0.2f, 0.3f, 0.4f, 0.3f));
+    ImPlot::PushStyleColor(ImPlotCol_Line, Colors::GPUColor);
+    ImVec4 fill = Colors::GPUColor;
+    fill.w = 0.3f;
+    ImPlot::PushStyleColor(ImPlotCol_Fill, fill);
+
+    for (int i = 0; i < num_gpus; ++i) {
+        int col = i % cols;
+
+        if (col > 0) ImGui::SameLine();
+
+        ImGui::BeginGroup();
+
+        // GPU name and vendor indicator
+        const auto& gpu = gpus_[i];
+        std::string short_name = gpu.name.length() > 25 ? gpu.name.substr(0, 22) + "..." : gpu.name;
+        ImVec4 name_color = gpu.is_nvidia ? Colors::GPUColor :
+            (gpu.vendor == "Intel" ? Colors::CPUColor : Colors::NetworkColor);
+        ImGui::TextColored(name_color, "GPU %d: %s", i, short_name.c_str());
+
+        // Usage percentage
+        ImGui::SameLine(cell_width - 50);
+        ImGui::TextColored(Colors::GPUColor, "%2.0f%%", gpu.usage_3d * 100);
+
+        // Click to select this GPU for details
+        std::string btn_id = fmt::format("##SelectGPU{}", i);
+        ImGui::PushID(btn_id.c_str());
+        if (ImGui::InvisibleButton("##sel", ImVec2(cell_width, 20))) {
+            selected_gpu_ = i;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Click to view GPU %d details", i);
+        }
+        ImGui::PopID();
+
+        std::string plot_id = fmt::format("##GPU{}", i);
+        ImPlotFlags flags = ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMenus |
+                           ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText;
+        ImPlotAxisFlags axis_flags = ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickLabels |
+                                     ImPlotAxisFlags_NoTickMarks | ImPlotAxisFlags_NoGridLines;
+
+        if (ImPlot::BeginPlot(plot_id.c_str(), ImVec2(cell_width, cell_height - 40), flags)) {
+            ImPlot::SetupAxes(nullptr, nullptr, axis_flags, axis_flags);
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0, HISTORY_SIZE, ImGuiCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1, ImGuiCond_Always);
+
+            if (!gpu.history.empty()) {
+                ImPlot::PlotShaded("##area", gpu.history.data(),
+                                   static_cast<int>(gpu.history.size()), 0.0);
+                ImPlot::PlotLine("##line", gpu.history.data(),
+                                static_cast<int>(gpu.history.size()));
+            }
+            ImPlot::EndPlot();
+        }
+
+        // Additional info below graph
+        if (gpu.temperature > 0) {
+            ImGui::TextColored(Colors::TextSecondary, "Temp: %.0f C", gpu.temperature);
+            ImGui::SameLine();
+        }
+        if (gpu.vram_total > 0) {
+            ImGui::TextColored(Colors::TextSecondary, "VRAM: %.0f%%",
+                gpu.memory_usage * 100);
+        }
+
         ImGui::EndGroup();
     }
 
@@ -504,28 +665,78 @@ void DashboardPanel::RenderStatsSection() {
         }
 
         case ResourceType::GPU: {
+            // GPU selector for multiple GPUs
+            if (gpus_.size() > 1) {
+                ImGui::Text(ICON_FA_DESKTOP " Select GPU:");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(250);
+                if (ImGui::BeginCombo("##GPUSelector",
+                        gpus_[selected_gpu_].name.c_str())) {
+                    for (int i = 0; i < static_cast<int>(gpus_.size()); ++i) {
+                        bool is_selected = (selected_gpu_ == i);
+                        std::string label = fmt::format("GPU {}: {}", i, gpus_[i].name);
+                        if (ImGui::Selectable(label.c_str(), is_selected)) {
+                            selected_gpu_ = i;
+                        }
+                        if (is_selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::Spacing();
+            }
+
+            // Get GPU data - use selected GPU if available, otherwise fallback to legacy
+            float display_usage = gpu_usage_;
+            float display_3d = gpu_3d_usage_;
+            float display_copy = gpu_copy_usage_;
+            float display_vdec = gpu_video_decode_;
+            float display_venc = gpu_video_encode_;
+            float display_temp = gpu_temp_;
+            size_t display_vram = vram_used_;
+            size_t display_vram_total = vram_total_;
+            std::string display_name = gpu_name_;
+
+            if (!gpus_.empty() && selected_gpu_ < static_cast<int>(gpus_.size())) {
+                const auto& gpu = gpus_[selected_gpu_];
+                display_usage = gpu.usage_3d;
+                display_3d = gpu.usage_3d;
+                display_copy = gpu.usage_copy;
+                display_vdec = gpu.usage_video_decode;
+                display_venc = gpu.usage_video_encode;
+                display_temp = gpu.temperature;
+                display_vram = gpu.vram_used;
+                display_vram_total = gpu.vram_total;
+                display_name = gpu.name;
+            }
+
             ImGui::Columns(4, nullptr, false);
 
             // Column 1: GPU Usage
-            RenderStatItemLarge(ICON_FA_GAUGE_HIGH " GPU", fmt::format("{:.0f}%", gpu_usage_ * 100).c_str());
+            RenderStatItemLarge(ICON_FA_GAUGE_HIGH " GPU", fmt::format("{:.0f}%", display_usage * 100).c_str());
             ImGui::NextColumn();
 
             // Column 2: VRAM
-            RenderStatItem(ICON_FA_MEMORY " Dedicated GPU memory", FormatBytes(vram_used_).c_str());
-            RenderStatItem(ICON_FA_DATABASE " Shared GPU memory", FormatBytes(gpu_shared_mem_).c_str());
+            RenderStatItem(ICON_FA_MEMORY " Dedicated GPU memory", FormatBytes(display_vram).c_str());
+            if (display_vram_total > 0) {
+                RenderStatItem(ICON_FA_DATABASE " Total VRAM", FormatBytes(display_vram_total).c_str());
+            } else {
+                RenderStatItem(ICON_FA_DATABASE " Shared GPU memory", FormatBytes(gpu_shared_mem_).c_str());
+            }
             ImGui::NextColumn();
 
             // Column 3: Usage details
-            RenderStatItem(ICON_FA_CUBE " 3D", fmt::format("{:.0f}%", gpu_3d_usage_ * 100).c_str());
-            RenderStatItem(ICON_FA_COPY " Copy", fmt::format("{:.0f}%", gpu_copy_usage_ * 100).c_str());
+            RenderStatItem(ICON_FA_CUBE " 3D", fmt::format("{:.0f}%", display_3d * 100).c_str());
+            RenderStatItem(ICON_FA_COPY " Copy", fmt::format("{:.0f}%", display_copy * 100).c_str());
             ImGui::NextColumn();
 
             // Column 4: Temperature and video
-            if (gpu_temp_ > 0) {
-                RenderStatItem(ICON_FA_TEMPERATURE_HIGH " Temperature", fmt::format("{:.0f} °C", gpu_temp_).c_str());
+            if (display_temp > 0) {
+                RenderStatItem(ICON_FA_TEMPERATURE_HIGH " Temperature", fmt::format("{:.0f} C", display_temp).c_str());
             }
-            RenderStatItem(ICON_FA_VIDEO " Video Decode", fmt::format("{:.0f}%", gpu_video_decode_ * 100).c_str());
-            RenderStatItem(ICON_FA_FILM " Video Encode", fmt::format("{:.0f}%", gpu_video_encode_ * 100).c_str());
+            RenderStatItem(ICON_FA_VIDEO " Video Decode", fmt::format("{:.0f}%", display_vdec * 100).c_str());
+            RenderStatItem(ICON_FA_FILM " Video Encode", fmt::format("{:.0f}%", display_venc * 100).c_str());
             ImGui::NextColumn();
             break;
         }
@@ -617,6 +828,54 @@ void DashboardPanel::UpdateMetrics() {
             uptime_seconds_ = status.uptime_seconds;
             active_jobs_ = status.active_jobs;
             active_deployments_ = status.active_deployments;
+
+            // Central Server connection status
+            connected_to_central_ = status.connected_to_central;
+            central_node_id_ = status.node_id;
+
+            // Process per-GPU data from daemon
+            if (!status.metrics.gpus.empty()) {
+                // Initialize GPU data structures if needed
+                if (gpus_.size() != status.metrics.gpus.size()) {
+                    gpus_.resize(status.metrics.gpus.size());
+                    for (auto& gpu : gpus_) {
+                        gpu.history.resize(HISTORY_SIZE, 0.0f);
+                    }
+                }
+
+                // Update each GPU
+                for (size_t i = 0; i < status.metrics.gpus.size(); ++i) {
+                    const auto& src = status.metrics.gpus[i];
+                    auto& dst = gpus_[i];
+
+                    dst.name = src.name;
+                    dst.vendor = src.vendor;
+                    dst.usage_3d = src.usage_3d;
+                    dst.usage_copy = src.usage_copy;
+                    dst.usage_video_decode = src.usage_video_decode;
+                    dst.usage_video_encode = src.usage_video_encode;
+                    dst.memory_usage = src.memory_usage;
+                    dst.vram_used = src.vram_used;
+                    dst.vram_total = src.vram_total;
+                    dst.temperature = src.temperature;
+                    dst.power_watts = src.power_watts;
+                    dst.is_nvidia = src.is_nvidia;
+
+                    // Update GPU history
+                    dst.history.erase(dst.history.begin());
+                    dst.history.push_back(dst.usage_3d);
+                }
+
+                // Use first GPU's data for legacy fields
+                if (!gpus_.empty()) {
+                    gpu_name_ = gpus_[0].name;
+                    gpu_3d_usage_ = gpus_[0].usage_3d;
+                    gpu_copy_usage_ = gpus_[0].usage_copy;
+                    gpu_video_decode_ = gpus_[0].usage_video_decode;
+                    gpu_video_encode_ = gpus_[0].usage_video_encode;
+                    gpu_temp_ = gpus_[0].temperature;
+                }
+            }
         }
 
         // Get history
@@ -629,6 +888,10 @@ void DashboardPanel::UpdateMetrics() {
             if (!vram_hist.empty()) vram_history_ = vram_hist;
         }
     } else {
+        // Local mode - not connected to daemon, so no Central Server connection
+        connected_to_central_ = false;
+        central_node_id_.clear();
+
         // Local mode - get from backend
         auto* metrics_collector = GetBackend().GetMetricsCollector();
         if (metrics_collector) {
@@ -643,6 +906,51 @@ void DashboardPanel::UpdateMetrics() {
             vram_total_ = m.vram_total_bytes;
             net_in_mbps_ = m.network_in_mbps;
             net_out_mbps_ = m.network_out_mbps;
+
+            // Update per-GPU data from SystemMetrics
+            gpu_count_ = m.gpu_count;
+            if (!m.gpus.empty()) {
+                // Initialize GPU data structures if needed
+                if (gpus_.size() != m.gpus.size()) {
+                    gpus_.resize(m.gpus.size());
+                    for (auto& gpu : gpus_) {
+                        gpu.history.resize(HISTORY_SIZE, 0.0f);
+                    }
+                }
+
+                // Update each GPU
+                for (size_t i = 0; i < m.gpus.size(); ++i) {
+                    const auto& src = m.gpus[i];
+                    auto& dst = gpus_[i];
+
+                    dst.name = src.name;
+                    dst.vendor = src.vendor;
+                    dst.usage_3d = src.usage_3d;
+                    dst.usage_copy = src.usage_copy;
+                    dst.usage_video_decode = src.usage_video_decode;
+                    dst.usage_video_encode = src.usage_video_encode;
+                    dst.memory_usage = src.memory_usage;
+                    dst.vram_used = src.vram_used_bytes;
+                    dst.vram_total = src.vram_total_bytes;
+                    dst.temperature = src.temperature_celsius;
+                    dst.power_watts = src.power_watts;
+                    dst.is_nvidia = src.is_nvidia;
+
+                    // Update GPU history
+                    dst.history.erase(dst.history.begin());
+                    dst.history.push_back(dst.usage_3d);
+                }
+
+                // Use first GPU's data for legacy fields
+                if (!gpus_.empty()) {
+                    gpu_name_ = gpus_[0].name;
+                    gpu_3d_usage_ = gpus_[0].usage_3d;
+                    gpu_copy_usage_ = gpus_[0].usage_copy;
+                    gpu_video_decode_ = gpus_[0].usage_video_decode;
+                    gpu_video_encode_ = gpus_[0].usage_video_encode;
+                    gpu_temp_ = gpus_[0].temperature;
+                }
+            }
 
             // Update history
             cpu_history_.erase(cpu_history_.begin());

@@ -179,6 +179,19 @@ public:
         const cyxwiz::daemon::RestartRequest* request,
         cyxwiz::daemon::RestartResponse* response) override;
 
+    // Resource Allocation & Central Server Connection
+    grpc::Status SetAllocations(grpc::ServerContext* context,
+        const cyxwiz::daemon::SetAllocationsRequest* request,
+        cyxwiz::daemon::SetAllocationsResponse* response) override;
+
+    grpc::Status RetryConnection(grpc::ServerContext* context,
+        const cyxwiz::daemon::RetryConnectionRequest* request,
+        cyxwiz::daemon::RetryConnectionResponse* response) override;
+
+    grpc::Status DisconnectFromCentral(grpc::ServerContext* context,
+        const cyxwiz::daemon::DisconnectFromCentralRequest* request,
+        cyxwiz::daemon::DisconnectFromCentralResponse* response) override;
+
 private:
     std::string node_id_;
     JobExecutor* job_executor_;

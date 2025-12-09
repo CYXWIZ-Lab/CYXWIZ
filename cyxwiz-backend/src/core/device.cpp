@@ -75,7 +75,8 @@ DeviceInfo Device::GetInfo() const {
             }
 #else
             // CUDA not available, fall back to zero
-            spdlog::warn("CYXWIZ_ENABLE_CUDA not defined, can't query CUDA memory");
+            // This is expected in GUI mode - GPU metrics come from daemon
+            spdlog::debug("CYXWIZ_ENABLE_CUDA not defined, GPU memory info unavailable locally");
             info.memory_total = 0;
             info.memory_available = 0;
 #endif
