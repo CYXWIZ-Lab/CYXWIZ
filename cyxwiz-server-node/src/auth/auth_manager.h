@@ -126,6 +126,9 @@ public:
     std::string GetNodeApiKey() const;
     bool IsNodeRegistered() const;
 
+    // Sync node ID from Central Server to Web API
+    bool SyncNodeIdWithWebApi(const std::string& node_id);
+
     // Hardware detection
     static HardwareSpecs DetectHardware();  // Legacy simple format
     static DetectedHardware DetectDetailedHardware();  // New structured format

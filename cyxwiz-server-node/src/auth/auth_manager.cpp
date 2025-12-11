@@ -924,6 +924,17 @@ std::future<NodeRegistrationResult> AuthManager::RegisterNodeWithApi(
                 {"ram_total_mb", hw.ram_total_mb}
             };
 
+            // Include node_id if we have one from Central Server
+            // This allows Web API to use the same ID as Central Server
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (!node_id_.empty()) {
+                    body["node_id"] = node_id_;
+                    spdlog::info("Including existing node_id from Central Server: {}", node_id_);
+                }
+            
+            }
+
             // Include legacy specs for backward compatibility
             std::string gpu_summary;
             for (size_t i = 0; i < hw.gpus.size(); i++) {
@@ -1127,6 +1138,118 @@ std::string AuthManager::GetNodeApiKey() const {
 bool AuthManager::IsNodeRegistered() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return node_registered_;
+}
+
+
+bool AuthManager::SyncNodeIdWithWebApi(const std::string& central_server_node_id) {
+    // If the node_id is the same as what we already have, no need to sync
+    std::string current_node_id;
+    std::string api_key;
+    std::string base_url;
+    
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        current_node_id = node_id_;
+        api_key = node_api_key_;
+        base_url = api_base_url_;
+    }
+    
+    if (central_server_node_id.empty()) {
+        spdlog::warn("SyncNodeIdWithWebApi: No Central Server node_id provided");
+        return false;
+    }
+    
+    if (current_node_id == central_server_node_id) {
+        spdlog::info("SyncNodeIdWithWebApi: node_id already matches Central Server");
+        return true;
+    }
+    
+    if (api_key.empty()) {
+        spdlog::error("SyncNodeIdWithWebApi: No API key available");
+        return false;
+    }
+    
+    spdlog::info("SyncNodeIdWithWebApi: Updating node_id from {} to {}", 
+                 current_node_id, central_server_node_id);
+    
+    try {
+        // Parse the base URL to get host and port
+        std::string host;
+        int port = 80;
+        std::string protocol = "http";
+        
+        std::string url = base_url;
+        if (url.find("https://") == 0) {
+            protocol = "https";
+            url = url.substr(8);
+            port = 443;
+        } else if (url.find("http://") == 0) {
+            url = url.substr(7);
+        }
+        
+        // Remove /api suffix if present
+        if (url.find("/api") != std::string::npos) {
+            url = url.substr(0, url.find("/api"));
+        }
+        
+        // Parse host:port
+        size_t colon_pos = url.find(':');
+        if (colon_pos != std::string::npos) {
+            host = url.substr(0, colon_pos);
+            port = std::stoi(url.substr(colon_pos + 1));
+        } else {
+            host = url;
+        }
+        
+        // Create HTTP client
+        std::unique_ptr<httplib::Client> cli;
+        if (protocol == "https") {
+            cli = std::make_unique<httplib::Client>(host, port);
+            cli->enable_server_certificate_verification(false);
+        } else {
+            cli = std::make_unique<httplib::Client>(host, port);
+        }
+        cli->set_connection_timeout(10);
+        cli->set_read_timeout(10);
+        
+        // Build the endpoint: PUT /api/machines/{old_node_id}/node-id
+        std::string endpoint = "/api/machines/" + current_node_id + "/node-id";
+        
+        // Build request body
+        json body;
+        body["api_key"] = api_key;
+        body["new_node_id"] = central_server_node_id;
+        
+        auto res = cli->Put(endpoint.c_str(), body.dump(), "application/json");
+        
+        if (!res) {
+            spdlog::error("SyncNodeIdWithWebApi: Request failed (no response)");
+            return false;
+        }
+        
+        if (res->status == 200) {
+            // Update local node_id
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                node_id_ = central_server_node_id;
+            }
+            
+            // Save updated session
+            SaveSession();
+            
+            spdlog::info("SyncNodeIdWithWebApi: Successfully synced node_id to {}", 
+                         central_server_node_id);
+            return true;
+        } else {
+            spdlog::error("SyncNodeIdWithWebApi: Failed with status {} - {}", 
+                         res->status, res->body);
+            return false;
+        }
+        
+    } catch (const std::exception& e) {
+        spdlog::error("SyncNodeIdWithWebApi exception: {}", e.what());
+        return false;
+    }
 }
 
 } // namespace cyxwiz::servernode::auth

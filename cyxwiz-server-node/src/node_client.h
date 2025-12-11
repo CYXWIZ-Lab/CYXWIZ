@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 #include <thread>
 #include <atomic>
 #include <grpcpp/grpcpp.h>
@@ -11,6 +12,20 @@
 
 namespace cyxwiz {
 namespace servernode {
+
+// Device allocation information from GUI
+// Used to specify which devices the user wants to share and their resource limits
+struct DeviceAllocation {
+    int device_type;           // 0=CPU, 1=CUDA, 2=OpenCL (matches protocol::DeviceType)
+    int device_id;             // Device index (0, 1, 2, etc.)
+    std::string device_name;   // Human-readable name (e.g., "NVIDIA RTX 3080")
+    bool is_enabled;           // Whether user enabled this device for sharing
+    uint64_t vram_total_mb;    // Total VRAM in MB (GPU only)
+    uint64_t vram_allocated_mb; // VRAM allocated for sharing in MB
+    int cores_allocated;       // CPU cores allocated (CPU only)
+    uint64_t memory_total;     // Total memory in bytes
+    int compute_units;         // Compute units (GPU cores)
+};
 
 // Hardware information collector
 class HardwareDetector {
@@ -31,8 +46,12 @@ public:
     NodeClient(const std::string& central_server_address, const std::string& node_id);
     ~NodeClient();
 
-    // Register this node with Central Server
+    // Register this node with Central Server (auto-detects hardware)
     bool Register();
+
+    // Register this node with specific device allocations from GUI
+    // Only enabled devices from allocations will be sent to Central Server
+    bool RegisterWithAllocations(const std::vector<DeviceAllocation>& allocations);
 
     // Start heartbeat loop (background thread)
     bool StartHeartbeat(int interval_seconds = 10);

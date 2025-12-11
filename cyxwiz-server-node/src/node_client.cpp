@@ -332,6 +332,109 @@ bool NodeClient::Register() {
     }
 }
 
+bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& allocations) {
+    spdlog::info("Registering node {} with {} device allocations...", node_id_, allocations.size());
+
+    // Count enabled devices
+    int enabled_count = 0;
+    for (const auto& alloc : allocations) {
+        if (alloc.is_enabled) enabled_count++;
+    }
+    spdlog::info("  Enabled devices: {}", enabled_count);
+
+    // Detect basic hardware capabilities (without device detection)
+    auto node_info = HardwareDetector::DetectHardwareInfo(node_id_);
+
+    // Clear any default devices and add only user-enabled devices from allocations
+    node_info.clear_devices();
+
+    // Add device information from allocations
+    // Workaround for protobuf arena allocation issue: use mutable_devices()->Add()
+    // and copy the message instead of using add_devices() return value
+    for (const auto& alloc : allocations) {
+        if (!alloc.is_enabled) {
+            spdlog::debug("  Skipping disabled device: {} (id={})", alloc.device_name, alloc.device_id);
+            continue;
+        }
+
+        spdlog::info("  Adding device: {} (type={}, vram_alloc={}MB, cores={})",
+                     alloc.device_name, alloc.device_type, alloc.vram_allocated_mb, alloc.cores_allocated);
+
+        // Create device capability locally to avoid arena allocation issues
+        protocol::DeviceCapabilities device;
+
+        // Map device type (0=CPU, 1=CUDA, 2=OpenCL in DeviceAllocation)
+        // Protocol uses: DEVICE_CPU=0, DEVICE_CUDA=1, DEVICE_OPENCL=2
+        switch (alloc.device_type) {
+            case 0: device.set_device_type(protocol::DEVICE_CPU); break;
+            case 1: device.set_device_type(protocol::DEVICE_CUDA); break;
+            case 2: device.set_device_type(protocol::DEVICE_OPENCL); break;
+            default: device.set_device_type(protocol::DEVICE_UNKNOWN); break;
+        }
+
+        device.set_device_name(alloc.device_name);
+        device.set_memory_total(static_cast<int64_t>(alloc.memory_total));
+        // Use allocated VRAM as "available" since that's what the user wants to share
+        device.set_memory_available(static_cast<int64_t>(alloc.vram_allocated_mb) * 1024 * 1024);
+        device.set_compute_units(alloc.compute_units);
+
+        // For GPU devices, set GPU-specific fields
+        if (alloc.device_type == 1 || alloc.device_type == 2) {
+            device.set_gpu_model(alloc.device_name);
+            device.set_vram_total(static_cast<int64_t>(alloc.vram_total_mb) * 1024 * 1024);
+            device.set_vram_available(static_cast<int64_t>(alloc.vram_allocated_mb) * 1024 * 1024);
+        }
+
+        // For CPU devices, store cores in compute_units
+        if (alloc.device_type == 0) {
+            device.set_compute_units(alloc.cores_allocated);
+        }
+
+        // Copy device to repeated field using mutable pointer
+        // This approach avoids direct arena allocation that caused linker errors
+        *node_info.mutable_devices()->Add() = std::move(device);
+    }
+
+    spdlog::info("  Total devices in registration: {}", node_info.devices_size());
+
+    // Create registration request
+    protocol::RegisterNodeRequest request;
+    *request.mutable_info() = node_info;
+    request.set_authentication_token(auth_token_);  // JWT from user login
+    request.set_public_key("");            // TODO: Implement crypto
+
+    // Send registration request
+    protocol::RegisterNodeResponse response;
+    grpc::ClientContext context;
+
+    // Set timeout
+    auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
+    context.set_deadline(deadline);
+
+    grpc::Status status = stub_->RegisterNode(&context, request, &response);
+
+    if (status.ok()) {
+        if (response.status() == protocol::STATUS_SUCCESS) {
+            node_id_ = response.node_id();
+            session_token_ = response.session_token();
+            is_registered_ = true;
+
+            spdlog::info("Node registered successfully with device allocations!");
+            spdlog::info("  Node ID: {}", node_id_);
+            spdlog::info("  Session Token: {}", session_token_);
+            return true;
+        } else {
+            spdlog::error("Registration with allocations failed: {}",
+                         response.has_error() ? response.error().message() : "Unknown error");
+            return false;
+        }
+    } else {
+        spdlog::error("gRPC error during registration with allocations: {} (code: {})",
+                     status.error_message(), static_cast<int>(status.error_code()));
+        return false;
+    }
+}
+
 bool NodeClient::StartHeartbeat(int interval_seconds) {
     if (!is_registered_) {
         spdlog::error("Cannot start heartbeat: node not registered");

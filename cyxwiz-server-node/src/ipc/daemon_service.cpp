@@ -757,9 +757,31 @@ grpc::Status DaemonServiceImpl::SetAllocations(
         // Set JWT token on NodeClient for authentication
         node_client_->SetAuthToken(request->jwt_token());
 
-        // Attempt registration
-        spdlog::info("Attempting to register with Central Server...");
-        if (node_client_->Register()) {
+        // Convert protocol allocations to C++ DeviceAllocation structs
+        std::vector<cyxwiz::servernode::DeviceAllocation> device_allocations;
+        for (const auto& alloc : request->allocations()) {
+            cyxwiz::servernode::DeviceAllocation da;
+            // Map daemon DeviceType to our int: CPU=0, CUDA=1, OPENCL=2
+            switch (alloc.device_type()) {
+                case daemon::DEVICE_TYPE_CPU: da.device_type = 0; break;
+                case daemon::DEVICE_TYPE_GPU: da.device_type = 1; break;  // Treat GPU as CUDA
+                default: da.device_type = -1; break;
+            }
+            da.device_id = alloc.device_id();
+            da.device_name = alloc.device_name();
+            da.is_enabled = alloc.is_enabled();
+            da.vram_total_mb = alloc.vram_total_mb();
+            da.vram_allocated_mb = alloc.vram_allocated_mb();
+            da.cores_allocated = alloc.cores_allocated();
+            da.memory_total = alloc.vram_total_mb() * 1024 * 1024;  // Convert MB to bytes
+            da.compute_units = 0;  // Not provided by daemon proto
+            device_allocations.push_back(da);
+        }
+
+        // Attempt registration with device allocations
+        spdlog::info("Attempting to register with Central Server with {} allocations...",
+                     device_allocations.size());
+        if (node_client_->RegisterWithAllocations(device_allocations)) {
             spdlog::info("Successfully registered with Central Server");
             node_client_->StartHeartbeat(10);
 

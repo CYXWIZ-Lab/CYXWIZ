@@ -9,6 +9,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <fmt/format.h>
+#include <spdlog/spdlog.h>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
@@ -665,6 +666,16 @@ void AllocationPanel::ApplyAllocations() {
             status_message_ = "Connected to Central Server! Node ID: " + result.node_id;
             show_retry_button_ = false;
             connection_failed_ = false;
+            
+            // Sync node_id with Web API so website shows Central Server ID
+            if (!result.node_id.empty()) {
+                bool synced = auth.SyncNodeIdWithWebApi(result.node_id);
+                if (synced) {
+                    spdlog::info("Node ID synced with Web API: {}", result.node_id);
+                } else {
+                    spdlog::warn("Failed to sync node_id with Web API");
+                }
+            }
         } else {
             status_message_ = "Allocations saved (offline mode)";
         }
@@ -689,6 +700,17 @@ void AllocationPanel::RetryConnection() {
         status_message_ = "Connected to Central Server! Node ID: " + result.node_id;
         show_retry_button_ = false;
         connection_failed_ = false;
+        
+        // Sync node_id with Web API so website shows Central Server ID
+        if (!result.node_id.empty()) {
+            auto& auth = auth::AuthManager::Instance();
+            bool synced = auth.SyncNodeIdWithWebApi(result.node_id);
+            if (synced) {
+                spdlog::info("Node ID synced with Web API: {}", result.node_id);
+            } else {
+                spdlog::warn("Failed to sync node_id with Web API");
+            }
+        }
     } else {
         status_message_ = "Retry failed: " + result.message;
         show_retry_button_ = true;
