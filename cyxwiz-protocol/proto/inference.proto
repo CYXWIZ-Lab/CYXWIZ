@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+import "common.proto";
+
+// Tensor data for inference (contains actual data bytes)
+message TensorData {
+    string name = 1;
+    repeated int64 shape = 2;
+    DataType dtype = 3;
+    bytes data = 4;  // Raw bytes (float32 = 4 bytes per element, row-major order)
+}
+
+// Inference request
+message InferRequest {
+    string deployment_id = 1;
+    repeated TensorData inputs = 2;
+}
+
+// Inference response
+message InferResponse {
+    StatusCode status = 1;
+    repeated TensorData outputs = 2;
+    double latency_ms = 3;
+    Error error = 4;
+}
+
+// Get model info request
+message GetModelInfoRequest {
+    string deployment_id = 1;
+}
+
+// Get model info response
+message GetModelInfoResponse {
+    StatusCode status = 1;
+    repeated TensorInfo input_specs = 2;
+    repeated TensorInfo output_specs = 3;
+    Error error = 4;
+}
+
+// Inference service for running model predictions
+service InferenceService {
+    // Run inference on a deployed model
+    rpc Infer(InferRequest) returns (InferResponse);
+
+    // Get input/output specifications for a deployed model
+    rpc GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse);
+}

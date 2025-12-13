@@ -39,11 +39,22 @@ static af::dtype ToAfType(DataType dtype) {
 }
 
 // Helper: Create ArrayFire array from Tensor
+// Note: CyxWiz Tensor uses row-major (C-style), ArrayFire uses column-major (Fortran-style)
+// For 2D arrays [rows, cols], we need to transpose after loading row-major data
 static af::array TensorToAf(const Tensor& t) {
     const auto& shape = t.Shape();
     af::dim4 dims(1, 1, 1, 1);
     for (size_t i = 0; i < shape.size() && i < 4; i++) {
         dims[static_cast<unsigned int>(i)] = static_cast<dim_t>(shape[i]);
+    }
+
+    // For 2D arrays, swap dimensions to account for row-major input
+    // We load as [cols, rows] then transpose to get [rows, cols] in column-major
+    if (shape.size() == 2) {
+        af::dim4 swapped_dims(dims[1], dims[0], 1, 1);
+        af::array arr(swapped_dims, ToAfType(t.GetDataType()));
+        arr.write(t.Data(), arr.bytes(), afHost);
+        return af::transpose(arr);  // Now [rows, cols] in column-major
     }
 
     af::array arr(dims, ToAfType(t.GetDataType()));
@@ -52,26 +63,15 @@ static af::array TensorToAf(const Tensor& t) {
 }
 
 // Helper: Create Tensor from ArrayFire array
+// Note: Transpose 2D arrays back to row-major for CyxWiz Tensor
 static Tensor AfToTensor(const af::array& arr) {
-    std::vector<size_t> shape;
+    // Count significant dimensions
+    int ndims = 0;
     for (unsigned int i = 0; i < 4; i++) {
-        if (arr.dims(i) > 1 || i == 0) {
-            shape.push_back(static_cast<size_t>(arr.dims(i)));
-        } else if (i > 0 && arr.dims(i) == 1) {
-            // Check if remaining dimensions are all 1
-            bool all_ones = true;
-            for (unsigned int j = i; j < 4; j++) {
-                if (arr.dims(j) != 1) {
-                    all_ones = false;
-                    break;
-                }
-            }
-            if (all_ones) break;
-            shape.push_back(static_cast<size_t>(arr.dims(i)));
-        }
+        if (arr.dims(i) > 1) ndims = i + 1;
+        else if (i == 0) ndims = 1;
     }
 
-    // Determine data type
     DataType dtype = DataType::Float32;
     switch (arr.type()) {
         case af::dtype::f32: dtype = DataType::Float32; break;
@@ -81,6 +81,25 @@ static Tensor AfToTensor(const af::array& arr) {
         case af::dtype::u8: dtype = DataType::UInt8; break;
         default: dtype = DataType::Float32;
     }
+
+    // For 2D arrays, transpose to row-major before copying to Tensor
+    if (ndims == 2) {
+        af::array transposed = af::transpose(arr);
+        std::vector<size_t> shape = {
+            static_cast<size_t>(arr.dims(0)),
+            static_cast<size_t>(arr.dims(1))
+        };
+        Tensor result(shape, dtype);
+        transposed.host(result.Data());
+        return result;
+    }
+
+    // For other dimensions, copy directly
+    std::vector<size_t> shape;
+    for (int i = 0; i < ndims; i++) {
+        shape.push_back(static_cast<size_t>(arr.dims(i)));
+    }
+    if (shape.empty()) shape.push_back(1);
 
     Tensor result(shape, dtype);
     arr.host(result.Data());

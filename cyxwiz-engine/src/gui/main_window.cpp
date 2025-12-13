@@ -31,6 +31,7 @@
 #include "panels/test_results_panel.h"
 #include "panels/export_dialog.h"
 #include "panels/import_dialog.h"
+#include "panels/deployment_dialog.h"
 #include "panels/model_summary_panel.h"
 #include "panels/architecture_diagram.h"
 #include "panels/lr_finder_panel.h"
@@ -113,6 +114,12 @@
 #include <fstream>
 #include <thread>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+#include <shlobj.h>
+#endif
+
 namespace gui {
 
 MainWindow::MainWindow()
@@ -157,6 +164,7 @@ MainWindow::MainWindow()
     // Export/Import dialogs
     export_dialog_ = std::make_unique<cyxwiz::ExportDialog>();
     import_dialog_ = std::make_unique<cyxwiz::ImportDialog>();
+    deployment_dialog_ = std::make_unique<cyxwiz::DeploymentDialog>();
 
     // Model Analysis panels (Phase 2)
     model_summary_panel_ = std::make_unique<cyxwiz::ModelSummaryPanel>();
@@ -362,6 +370,56 @@ MainWindow::MainWindow()
         }
     });
 
+    // Set up Save Model callback (native CyxWiz format)
+    toolbar_->SetSaveModelCallback([this]() {
+        auto& tm = cyxwiz::TrainingManager::Instance();
+        if (!tm.HasTrainedModel()) {
+            spdlog::warn("No trained model available to save");
+            return;
+        }
+
+        // Show save file dialog
+#ifdef _WIN32
+        OPENFILENAMEA ofn;
+        char szFile[260] = { 0 };
+
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = nullptr;
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = sizeof(szFile);
+        ofn.lpstrFilter = "CyxWiz Model (*.cyxmodel)\0*.cyxmodel\0All Files (*.*)\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrFileTitle = nullptr;
+        ofn.nMaxFileTitle = 0;
+        ofn.lpstrInitialDir = nullptr;
+        ofn.lpstrTitle = "Save Trained Model";
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+        ofn.lpstrDefExt = "cyxmodel";
+
+        if (GetSaveFileNameA(&ofn)) {
+            std::string path = szFile;
+            // Remove extension if present (our save adds .json and .bin)
+            if (path.size() > 9 && path.substr(path.size() - 9) == ".cyxmodel") {
+                path = path.substr(0, path.size() - 9);
+            }
+
+            // Get model name from filename
+            std::filesystem::path file_path(path);
+            std::string model_name = file_path.stem().string();
+            std::string model_desc = "Model trained with CyxWiz Engine";
+
+            if (tm.SaveModel(path, model_name, model_desc)) {
+                spdlog::info("Model saved successfully to: {}", path);
+            } else {
+                spdlog::error("Failed to save model to: {}", path);
+            }
+        }
+#else
+        spdlog::warn("Save dialog not implemented for this platform. Use API directly.");
+#endif
+    });
+
     // Set up Export Model callback
     toolbar_->SetExportModelCallback([this](int format_index) {
         if (export_dialog_) {
@@ -418,6 +476,14 @@ MainWindow::MainWindow()
             }
         }
     );
+
+    // Set up Deploy to Server callback
+    toolbar_->SetDeployToServerCallback([this]() {
+        if (deployment_dialog_) {
+            deployment_dialog_->Open();
+            spdlog::info("Opened Deployment dialog");
+        }
+    });
 
     // Set up Custom Node Editor callback
     toolbar_->SetOpenCustomNodeEditorCallback([this]() {
@@ -1273,6 +1339,9 @@ MainWindow::MainWindow()
         // tutorial.StartTutorial("getting_started");
     }
 
+    // Set default panel visibility (hides tool panels on first launch)
+    SetDefaultPanelVisibility();
+
     // Register panels with sidebar for hide/unhide toggles
     RegisterPanelsWithSidebar();
 
@@ -1440,6 +1509,7 @@ void MainWindow::Render() {
     if (test_results_panel_) test_results_panel_->Render();
     if (export_dialog_) export_dialog_->Render();
     if (import_dialog_) import_dialog_->Render();
+    if (deployment_dialog_) deployment_dialog_->Render();
 
     // Render Model Analysis panels (Phase 2)
     if (model_summary_panel_) model_summary_panel_->Render();
@@ -1796,6 +1866,136 @@ void MainWindow::RegisterPanelsWithSidebar() {
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
 }
 
+void MainWindow::SetDefaultPanelVisibility() {
+    // Only set defaults on first launch (no imgui.ini exists)
+    if (!first_time_layout_) {
+        return;
+    }
+
+    spdlog::info("Setting default panel visibility (first launch)");
+
+    // === CORE PANELS ===
+    // Original panels (node_editor_, console_, properties_, viewport_) don't have SetVisible
+    // They use ImGui window visibility directly. We leave them alone.
+    // New-style panels that should be visible:
+    if (asset_browser_) asset_browser_->SetVisible(true);
+    if (training_dashboard_) training_dashboard_->SetVisible(true);
+
+    // === HIDE ALL OTHER PANELS ===
+    // Users can enable these via View menu when needed
+
+    // Main panels - hide by default
+    if (dataset_panel_) dataset_panel_->SetVisible(false);
+    if (training_plot_panel_) training_plot_panel_->SetVisible(false);
+    if (plot_test_control_) plot_test_control_->SetVisible(false);
+    if (command_window_) command_window_->SetVisible(false);
+    if (script_editor_) script_editor_->SetVisible(false);
+    if (table_viewer_) table_viewer_->SetVisible(false);
+    if (job_status_panel_) job_status_panel_->SetVisible(false);
+    if (p2p_training_panel_) p2p_training_panel_->SetVisible(false);
+    if (wallet_panel_) wallet_panel_->SetVisible(false);
+    if (task_progress_panel_) task_progress_panel_->SetVisible(false);
+    if (pattern_browser_) pattern_browser_->SetVisible(false);
+    if (query_console_) query_console_->SetVisible(false);
+    if (custom_node_editor_) custom_node_editor_->SetVisible(false);
+    if (theme_editor_) theme_editor_->SetVisible(false);
+    if (profiling_panel_) profiling_panel_->SetVisible(false);
+    if (memory_panel_) memory_panel_->SetVisible(false);
+    if (memory_monitor_) memory_monitor_->SetVisible(false);
+    if (variable_explorer_) variable_explorer_->SetVisible(false);
+    if (test_results_panel_) test_results_panel_->SetVisible(false);
+
+    // Model Analysis panels (Phase 2)
+    if (model_summary_panel_) model_summary_panel_->SetVisible(false);
+    if (architecture_diagram_) architecture_diagram_->SetVisible(false);
+    if (lr_finder_panel_) lr_finder_panel_->SetVisible(false);
+
+    // Data Science panels (Phase 3)
+    if (data_profiler_panel_) data_profiler_panel_->SetVisible(false);
+    if (correlation_matrix_panel_) correlation_matrix_panel_->SetVisible(false);
+    if (missing_value_panel_) missing_value_panel_->SetVisible(false);
+    if (outlier_detection_panel_) outlier_detection_panel_->SetVisible(false);
+
+    // Statistics panels (Phase 4)
+    if (descriptive_stats_panel_) descriptive_stats_panel_->SetVisible(false);
+    if (hypothesis_test_panel_) hypothesis_test_panel_->SetVisible(false);
+    if (distribution_fitter_panel_) distribution_fitter_panel_->SetVisible(false);
+    if (regression_panel_) regression_panel_->SetVisible(false);
+
+    // Advanced Tools panels (Phase 5)
+    if (dim_reduction_panel_) dim_reduction_panel_->SetVisible(false);
+    if (gradcam_panel_) gradcam_panel_->SetVisible(false);
+    if (feature_importance_panel_) feature_importance_panel_->SetVisible(false);
+    if (nas_panel_) nas_panel_->SetVisible(false);
+
+    // Clustering panels (Phase 6A)
+    if (kmeans_panel_) kmeans_panel_->SetVisible(false);
+    if (dbscan_panel_) dbscan_panel_->SetVisible(false);
+    if (hierarchical_panel_) hierarchical_panel_->SetVisible(false);
+    if (gmm_panel_) gmm_panel_->SetVisible(false);
+    if (cluster_eval_panel_) cluster_eval_panel_->SetVisible(false);
+
+    // Model Evaluation panels (Phase 6B)
+    if (confusion_matrix_panel_) confusion_matrix_panel_->SetVisible(false);
+    if (roc_auc_panel_) roc_auc_panel_->SetVisible(false);
+    if (pr_curve_panel_) pr_curve_panel_->SetVisible(false);
+    if (cross_validation_panel_) cross_validation_panel_->SetVisible(false);
+    if (learning_curves_panel_) learning_curves_panel_->SetVisible(false);
+
+    // Data Transformation panels (Phase 6C)
+    if (normalization_panel_) normalization_panel_->SetVisible(false);
+    if (standardization_panel_) standardization_panel_->SetVisible(false);
+    if (log_transform_panel_) log_transform_panel_->SetVisible(false);
+    if (boxcox_panel_) boxcox_panel_->SetVisible(false);
+    if (feature_scaling_panel_) feature_scaling_panel_->SetVisible(false);
+
+    // Linear Algebra panels (Phase 7)
+    if (matrix_calculator_panel_) matrix_calculator_panel_->SetVisible(false);
+    if (eigen_decomp_panel_) eigen_decomp_panel_->SetVisible(false);
+    if (svd_panel_) svd_panel_->SetVisible(false);
+    if (qr_panel_) qr_panel_->SetVisible(false);
+    if (cholesky_panel_) cholesky_panel_->SetVisible(false);
+
+    // Signal Processing panels (Phase 8)
+    if (fft_panel_) fft_panel_->SetVisible(false);
+    if (spectrogram_panel_) spectrogram_panel_->SetVisible(false);
+    if (filter_designer_panel_) filter_designer_panel_->SetVisible(false);
+    if (convolution_panel_) convolution_panel_->SetVisible(false);
+    if (wavelet_panel_) wavelet_panel_->SetVisible(false);
+
+    // Optimization & Calculus panels (Phase 9)
+    if (gradient_descent_panel_) gradient_descent_panel_->SetVisible(false);
+    if (convexity_panel_) convexity_panel_->SetVisible(false);
+    if (lp_panel_) lp_panel_->SetVisible(false);
+    if (qp_panel_) qp_panel_->SetVisible(false);
+    if (differentiation_panel_) differentiation_panel_->SetVisible(false);
+    if (integration_panel_) integration_panel_->SetVisible(false);
+
+    // Time Series Analysis panels (Phase 10)
+    if (decomposition_panel_) decomposition_panel_->SetVisible(false);
+    if (acf_pacf_panel_) acf_pacf_panel_->SetVisible(false);
+    if (stationarity_panel_) stationarity_panel_->SetVisible(false);
+    if (seasonality_panel_) seasonality_panel_->SetVisible(false);
+    if (forecasting_panel_) forecasting_panel_->SetVisible(false);
+
+    // Text Processing panels (Phase 11)
+    if (tokenization_panel_) tokenization_panel_->SetVisible(false);
+    if (word_frequency_panel_) word_frequency_panel_->SetVisible(false);
+    if (tfidf_panel_) tfidf_panel_->SetVisible(false);
+    if (embeddings_panel_) embeddings_panel_->SetVisible(false);
+    if (sentiment_panel_) sentiment_panel_->SetVisible(false);
+
+    // Utilities panels (Phase 12)
+    if (calculator_panel_) calculator_panel_->SetVisible(false);
+    if (unit_converter_panel_) unit_converter_panel_->SetVisible(false);
+    if (random_generator_panel_) random_generator_panel_->SetVisible(false);
+    if (hash_generator_panel_) hash_generator_panel_->SetVisible(false);
+    if (json_viewer_panel_) json_viewer_panel_->SetVisible(false);
+    if (regex_tester_panel_) regex_tester_panel_->SetVisible(false);
+
+    spdlog::info("Default panel visibility set - showing only core panels");
+}
+
 void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
     spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
 
@@ -1957,8 +2157,17 @@ void MainWindow::HandleGlobalShortcuts() {
     // Don't capture shortcuts if a dialog is already open
     if (toolbar_) {
         if (toolbar_->IsFindDialogOpen() || toolbar_->IsReplaceDialogOpen() ||
-            toolbar_->IsFindInFilesDialogOpen() || toolbar_->IsReplaceInFilesDialogOpen()) {
+            toolbar_->IsFindInFilesDialogOpen() || toolbar_->IsReplaceInFilesDialogOpen() ||
+            toolbar_->IsCommandPaletteOpen()) {
             return;
+        }
+    }
+
+    // Command Palette (Ctrl+P)
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_P)) {
+        if (toolbar_) {
+            toolbar_->OpenCommandPalette();
+            spdlog::info("Opened Command Palette via Ctrl+P");
         }
     }
 

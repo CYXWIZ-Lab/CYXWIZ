@@ -71,6 +71,9 @@ TrainingConfiguration GraphCompiler::Compile(
     // Get topologically sorted node IDs
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
 
+    // Check if we're using CrossEntropyLoss (which applies softmax internally)
+    bool using_cross_entropy = (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss);
+
     // Extract model layers and preprocessing in execution order
     std::vector<size_t> current_shape = config.input_shape;
 
@@ -80,7 +83,19 @@ TrainingConfiguration GraphCompiler::Compile(
 
         // Handle preprocessing nodes
         if (IsPreprocessing(node->type)) {
+            spdlog::info("GraphCompiler: Found preprocessing node '{}' (type={})", node->name, static_cast<int>(node->type));
             ExtractPreprocessing(*node, config.preprocessing);
+            if (node->type == gui::NodeType::Normalize) {
+                spdlog::info("GraphCompiler: Normalization enabled - mean={}, std={}",
+                             config.preprocessing.norm_mean, config.preprocessing.norm_std);
+            }
+            continue;
+        }
+
+        // Skip Softmax when using CrossEntropyLoss (it applies softmax internally)
+        // This prevents double-softmax which kills gradients
+        if (node->type == gui::NodeType::Softmax && using_cross_entropy) {
+            spdlog::debug("GraphCompiler: Skipping Softmax (CrossEntropyLoss applies it internally)");
             continue;
         }
 

@@ -4,6 +4,6 @@
 
 namespace cyxwiz {
 
-// TODO: Implement model training and inference
+// Model implementation is minimal - SequentialModel with serialization is in sequential.h/cpp
 
 } // namespace cyxwiz

@@ -29,6 +29,9 @@ ToolbarPanel::ToolbarPanel()
 {
     memset(project_name_buffer_, 0, sizeof(project_name_buffer_));
     memset(project_path_buffer_, 0, sizeof(project_path_buffer_));
+
+    // Initialize tool entries for command palette
+    InitializeToolEntries();
 }
 
 void ToolbarPanel::SetEditorFontScale(float scale) {
@@ -1691,6 +1694,9 @@ void ToolbarPanel::Render() {
             ImGui::EndPopup();
         }
     }
+
+    // Render command palette overlay
+    RenderCommandPalette();
 }
 
 std::string ToolbarPanel::OpenFolderDialog() {
@@ -1746,6 +1752,321 @@ std::string ToolbarPanel::OpenFileDialog(const char* filter, const char* title) 
     spdlog::warn("File dialog not implemented for this platform");
     return "";
 #endif
+}
+
+// ============================================================================
+// Command Palette Implementation
+// ============================================================================
+
+void ToolbarPanel::InitializeToolEntries() {
+    // Clear any existing entries
+    all_tools_.clear();
+
+    // Model Analysis (Phase 2)
+    all_tools_.push_back({"Model Summary", "Model Analysis", "model summary architecture layers parameters", ICON_FA_CUBES, "", [this]() { if (open_model_summary_callback_) open_model_summary_callback_(); }});
+    all_tools_.push_back({"Architecture Diagram", "Model Analysis", "architecture diagram visual graph", ICON_FA_DIAGRAM_PROJECT, "", [this]() { if (open_architecture_diagram_callback_) open_architecture_diagram_callback_(); }});
+    all_tools_.push_back({"LR Finder", "Model Analysis", "learning rate finder lr range test", ICON_FA_CHART_LINE, "", [this]() { if (open_lr_finder_callback_) open_lr_finder_callback_(); }});
+
+    // Data Science (Phase 3)
+    all_tools_.push_back({"Data Profiler", "Data Science", "data profile statistics overview", ICON_FA_MAGNIFYING_GLASS_CHART, "", [this]() { if (open_data_profiler_callback_) open_data_profiler_callback_(); }});
+    all_tools_.push_back({"Correlation Matrix", "Data Science", "correlation heatmap features", ICON_FA_TABLE_CELLS, "", [this]() { if (open_correlation_matrix_callback_) open_correlation_matrix_callback_(); }});
+    all_tools_.push_back({"Missing Values", "Data Science", "missing null nan values imputation", ICON_FA_QUESTION, "", [this]() { if (open_missing_value_callback_) open_missing_value_callback_(); }});
+    all_tools_.push_back({"Outlier Detection", "Data Science", "outlier anomaly detection zscore iqr", ICON_FA_TRIANGLE_EXCLAMATION, "", [this]() { if (open_outlier_detection_callback_) open_outlier_detection_callback_(); }});
+
+    // Statistics (Phase 4)
+    all_tools_.push_back({"Descriptive Statistics", "Statistics", "mean median std variance descriptive stats", ICON_FA_CALCULATOR, "", [this]() { if (open_descriptive_stats_callback_) open_descriptive_stats_callback_(); }});
+    all_tools_.push_back({"Hypothesis Test", "Statistics", "hypothesis test ttest anova chi square", ICON_FA_SCALE_BALANCED, "", [this]() { if (open_hypothesis_test_callback_) open_hypothesis_test_callback_(); }});
+    all_tools_.push_back({"Distribution Fitter", "Statistics", "distribution fit normal gaussian poisson", ICON_FA_CHART_AREA, "", [this]() { if (open_distribution_fitter_callback_) open_distribution_fitter_callback_(); }});
+    all_tools_.push_back({"Regression Analysis", "Statistics", "regression linear polynomial fit", ICON_FA_ARROW_TREND_UP, "", [this]() { if (open_regression_callback_) open_regression_callback_(); }});
+
+    // Advanced Tools (Phase 5)
+    all_tools_.push_back({"Dimensionality Reduction", "Advanced", "pca tsne umap dimensionality reduction", ICON_FA_COMPRESS, "", [this]() { if (open_dim_reduction_callback_) open_dim_reduction_callback_(); }});
+    all_tools_.push_back({"GradCAM", "Advanced", "gradcam visualization explainability heatmap", ICON_FA_EYE, "", [this]() { if (open_gradcam_callback_) open_gradcam_callback_(); }});
+    all_tools_.push_back({"Feature Importance", "Advanced", "feature importance shap permutation", ICON_FA_RANKING_STAR, "", [this]() { if (open_feature_importance_callback_) open_feature_importance_callback_(); }});
+    all_tools_.push_back({"Neural Architecture Search", "Advanced", "nas automl neural architecture search", ICON_FA_MICROCHIP, "", [this]() { if (open_nas_callback_) open_nas_callback_(); }});
+
+    // Clustering (Phase 6A)
+    all_tools_.push_back({"K-Means Clustering", "Clustering", "kmeans clustering centroid", ICON_FA_OBJECT_GROUP, "", [this]() { if (open_kmeans_callback_) open_kmeans_callback_(); }});
+    all_tools_.push_back({"DBSCAN", "Clustering", "dbscan density clustering", ICON_FA_CIRCLE_NODES, "", [this]() { if (open_dbscan_callback_) open_dbscan_callback_(); }});
+    all_tools_.push_back({"Hierarchical Clustering", "Clustering", "hierarchical dendrogram agglomerative", ICON_FA_SITEMAP, "", [this]() { if (open_hierarchical_callback_) open_hierarchical_callback_(); }});
+    all_tools_.push_back({"GMM", "Clustering", "gmm gaussian mixture model", ICON_FA_CHART_PIE, "", [this]() { if (open_gmm_callback_) open_gmm_callback_(); }});
+    all_tools_.push_back({"Cluster Evaluation", "Clustering", "silhouette elbow clustering evaluation", ICON_FA_CHART_SIMPLE, "", [this]() { if (open_cluster_eval_callback_) open_cluster_eval_callback_(); }});
+
+    // Model Evaluation (Phase 6B)
+    all_tools_.push_back({"Confusion Matrix", "Evaluation", "confusion matrix classification accuracy", ICON_FA_TABLE, "", [this]() { if (open_confusion_matrix_callback_) open_confusion_matrix_callback_(); }});
+    all_tools_.push_back({"ROC AUC", "Evaluation", "roc auc curve receiver operating", ICON_FA_CHART_LINE, "", [this]() { if (open_roc_auc_callback_) open_roc_auc_callback_(); }});
+    all_tools_.push_back({"PR Curve", "Evaluation", "precision recall curve pr", ICON_FA_CHART_AREA, "", [this]() { if (open_pr_curve_callback_) open_pr_curve_callback_(); }});
+    all_tools_.push_back({"Cross Validation", "Evaluation", "cross validation kfold cv", ICON_FA_REPEAT, "", [this]() { if (open_cross_validation_callback_) open_cross_validation_callback_(); }});
+    all_tools_.push_back({"Learning Curves", "Evaluation", "learning curve bias variance", ICON_FA_GRADUATION_CAP, "", [this]() { if (open_learning_curves_callback_) open_learning_curves_callback_(); }});
+
+    // Data Transformation (Phase 6C)
+    all_tools_.push_back({"Normalization", "Transform", "normalize min max scaling", ICON_FA_CROSSHAIRS, "", [this]() { if (open_normalization_callback_) open_normalization_callback_(); }});
+    all_tools_.push_back({"Standardization", "Transform", "standardize zscore standard", ICON_FA_ARROWS_LEFT_RIGHT, "", [this]() { if (open_standardization_callback_) open_standardization_callback_(); }});
+    all_tools_.push_back({"Log Transform", "Transform", "log logarithm transform", ICON_FA_SUPERSCRIPT, "", [this]() { if (open_log_transform_callback_) open_log_transform_callback_(); }});
+    all_tools_.push_back({"Box-Cox Transform", "Transform", "boxcox transform power", ICON_FA_WAND_MAGIC_SPARKLES, "", [this]() { if (open_boxcox_callback_) open_boxcox_callback_(); }});
+    all_tools_.push_back({"Feature Scaling", "Transform", "feature scaling robust scaler", ICON_FA_MAXIMIZE, "", [this]() { if (open_feature_scaling_callback_) open_feature_scaling_callback_(); }});
+
+    // Linear Algebra (Phase 7)
+    all_tools_.push_back({"Matrix Calculator", "Linear Algebra", "matrix calculator multiply inverse transpose", ICON_FA_TABLE, "", [this]() { if (open_matrix_calculator_callback_) open_matrix_calculator_callback_(); }});
+    all_tools_.push_back({"Eigendecomposition", "Linear Algebra", "eigen eigenvalue eigenvector decomposition", ICON_FA_SQUARE, "", [this]() { if (open_eigen_decomp_callback_) open_eigen_decomp_callback_(); }});
+    all_tools_.push_back({"SVD", "Linear Algebra", "svd singular value decomposition", ICON_FA_LAYER_GROUP, "", [this]() { if (open_svd_callback_) open_svd_callback_(); }});
+    all_tools_.push_back({"QR Decomposition", "Linear Algebra", "qr decomposition orthogonal", ICON_FA_SQUARE_ROOT_VARIABLE, "", [this]() { if (open_qr_callback_) open_qr_callback_(); }});
+    all_tools_.push_back({"Cholesky Decomposition", "Linear Algebra", "cholesky decomposition positive definite", ICON_FA_BORDER_ALL, "", [this]() { if (open_cholesky_callback_) open_cholesky_callback_(); }});
+
+    // Signal Processing (Phase 8)
+    all_tools_.push_back({"FFT", "Signal Processing", "fft fourier transform frequency", ICON_FA_WAVE_SQUARE, "", [this]() { if (open_fft_callback_) open_fft_callback_(); }});
+    all_tools_.push_back({"Spectrogram", "Signal Processing", "spectrogram time frequency stft", ICON_FA_CHART_COLUMN, "", [this]() { if (open_spectrogram_callback_) open_spectrogram_callback_(); }});
+    all_tools_.push_back({"Filter Designer", "Signal Processing", "filter design lowpass highpass bandpass", ICON_FA_FILTER, "", [this]() { if (open_filter_designer_callback_) open_filter_designer_callback_(); }});
+    all_tools_.push_back({"Convolution", "Signal Processing", "convolution convolve signal", ICON_FA_ARROWS_LEFT_RIGHT, "", [this]() { if (open_convolution_callback_) open_convolution_callback_(); }});
+    all_tools_.push_back({"Wavelet Transform", "Signal Processing", "wavelet transform dwt cwt", ICON_FA_WATER, "", [this]() { if (open_wavelet_callback_) open_wavelet_callback_(); }});
+
+    // Optimization & Calculus (Phase 9)
+    all_tools_.push_back({"Gradient Descent", "Optimization", "gradient descent optimizer sgd adam", ICON_FA_ARROW_DOWN_LONG, "", [this]() { if (open_gradient_descent_callback_) open_gradient_descent_callback_(); }});
+    all_tools_.push_back({"Convexity Analysis", "Optimization", "convex convexity optimization", ICON_FA_ROUTE, "", [this]() { if (open_convexity_callback_) open_convexity_callback_(); }});
+    all_tools_.push_back({"Linear Programming", "Optimization", "linear programming lp simplex", ICON_FA_MAXIMIZE, "", [this]() { if (open_lp_callback_) open_lp_callback_(); }});
+    all_tools_.push_back({"Quadratic Programming", "Optimization", "quadratic programming qp", ICON_FA_SQUARE, "", [this]() { if (open_qp_callback_) open_qp_callback_(); }});
+    all_tools_.push_back({"Differentiation", "Calculus", "derivative differentiation gradient jacobian", ICON_FA_INFINITY, "", [this]() { if (open_differentiation_callback_) open_differentiation_callback_(); }});
+    all_tools_.push_back({"Integration", "Calculus", "integral integration numerical", ICON_FA_INTEGRAL, "", [this]() { if (open_integration_callback_) open_integration_callback_(); }});
+
+    // Time Series (Phase 10)
+    all_tools_.push_back({"Decomposition", "Time Series", "decomposition trend seasonality residual", ICON_FA_CHART_LINE, "", [this]() { if (open_decomposition_callback_) open_decomposition_callback_(); }});
+    all_tools_.push_back({"ACF/PACF", "Time Series", "acf pacf autocorrelation", ICON_FA_CHART_BAR, "", [this]() { if (open_acf_pacf_callback_) open_acf_pacf_callback_(); }});
+    all_tools_.push_back({"Stationarity Test", "Time Series", "stationarity adf kpss test", ICON_FA_FLASK, "", [this]() { if (open_stationarity_callback_) open_stationarity_callback_(); }});
+    all_tools_.push_back({"Seasonality Detection", "Time Series", "seasonality periodic pattern", ICON_FA_CALENDAR, "", [this]() { if (open_seasonality_callback_) open_seasonality_callback_(); }});
+    all_tools_.push_back({"Forecasting", "Time Series", "forecast prediction arima lstm", ICON_FA_FORWARD, "", [this]() { if (open_forecasting_callback_) open_forecasting_callback_(); }});
+
+    // Text Processing (Phase 11)
+    all_tools_.push_back({"Tokenization", "Text", "tokenize tokenization nlp words", ICON_FA_SCISSORS, "", [this]() { if (open_tokenization_callback_) open_tokenization_callback_(); }});
+    all_tools_.push_back({"Word Frequency", "Text", "word frequency count terms", ICON_FA_HASHTAG, "", [this]() { if (open_word_frequency_callback_) open_word_frequency_callback_(); }});
+    all_tools_.push_back({"TF-IDF", "Text", "tfidf term frequency inverse document", ICON_FA_FILE_LINES, "", [this]() { if (open_tfidf_callback_) open_tfidf_callback_(); }});
+    all_tools_.push_back({"Embeddings", "Text", "embeddings word2vec bert transformer", ICON_FA_CUBE, "", [this]() { if (open_embeddings_callback_) open_embeddings_callback_(); }});
+    all_tools_.push_back({"Sentiment Analysis", "Text", "sentiment analysis positive negative", ICON_FA_FACE_SMILE, "", [this]() { if (open_sentiment_callback_) open_sentiment_callback_(); }});
+
+    // Utilities (Phase 12)
+    all_tools_.push_back({"Calculator", "Utilities", "calculator math compute", ICON_FA_CALCULATOR, "", [this]() { if (open_calculator_callback_) open_calculator_callback_(); }});
+    all_tools_.push_back({"Unit Converter", "Utilities", "unit convert conversion", ICON_FA_RIGHT_LEFT, "", [this]() { if (open_unit_converter_callback_) open_unit_converter_callback_(); }});
+    all_tools_.push_back({"Random Generator", "Utilities", "random number generator", ICON_FA_DICE, "", [this]() { if (open_random_generator_callback_) open_random_generator_callback_(); }});
+    all_tools_.push_back({"Hash Generator", "Utilities", "hash md5 sha256 checksum", ICON_FA_FINGERPRINT, "", [this]() { if (open_hash_generator_callback_) open_hash_generator_callback_(); }});
+    all_tools_.push_back({"JSON Viewer", "Utilities", "json viewer formatter", ICON_FA_CODE, "", [this]() { if (open_json_viewer_callback_) open_json_viewer_callback_(); }});
+    all_tools_.push_back({"Regex Tester", "Utilities", "regex regular expression test", ICON_FA_ASTERISK, "", [this]() { if (open_regex_tester_callback_) open_regex_tester_callback_(); }});
+
+    // Development tools
+    all_tools_.push_back({"Profiler", "Developer", "profiler performance timing", ICON_FA_GAUGE_HIGH, "", [this]() { if (open_profiler_callback_) open_profiler_callback_(); }});
+    all_tools_.push_back({"Memory Monitor", "Developer", "memory monitor ram usage", ICON_FA_MEMORY, "", [this]() { if (open_memory_monitor_callback_) open_memory_monitor_callback_(); }});
+    all_tools_.push_back({"Theme Editor", "Developer", "theme editor colors style", ICON_FA_PALETTE, "", [this]() { if (open_theme_editor_callback_) open_theme_editor_callback_(); }});
+    all_tools_.push_back({"Custom Node Editor", "Developer", "custom node create define", ICON_FA_GEARS, "", [this]() { if (open_custom_node_editor_callback_) open_custom_node_editor_callback_(); }});
+
+    spdlog::debug("Initialized {} tool entries for command palette", all_tools_.size());
+}
+
+void ToolbarPanel::OpenCommandPalette() {
+    show_command_palette_ = true;
+    focus_search_input_ = true;
+    selected_index_ = 0;
+    memset(search_buffer_, 0, sizeof(search_buffer_));
+
+    // Initially show all tools
+    filtered_tools_.clear();
+    for (const auto& tool : all_tools_) {
+        filtered_tools_.push_back(&tool);
+    }
+}
+
+void ToolbarPanel::HandleGlobalShortcuts() {
+    // Ctrl+P for command palette
+    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P)) {
+        OpenCommandPalette();
+    }
+}
+
+std::string ToolbarPanel::ToLowerCase(const std::string& str) const {
+    std::string result = str;
+    std::transform(result.begin(), result.end(), result.begin(), ::tolower);
+    return result;
+}
+
+int ToolbarPanel::FuzzyMatch(const std::string& pattern, const std::string& text) const {
+    if (pattern.empty()) return 100;  // Empty pattern matches everything
+
+    std::string lowerPattern = ToLowerCase(pattern);
+    std::string lowerText = ToLowerCase(text);
+
+    // Exact substring match gets highest score
+    if (lowerText.find(lowerPattern) != std::string::npos) {
+        return 100;
+    }
+
+    // Check if pattern starts text (prefix match)
+    if (lowerText.find(lowerPattern) == 0) {
+        return 90;
+    }
+
+    // Fuzzy character matching
+    int score = 0;
+    size_t patternIdx = 0;
+    size_t lastMatchIdx = 0;
+    bool consecutive = true;
+
+    for (size_t i = 0; i < lowerText.size() && patternIdx < lowerPattern.size(); ++i) {
+        if (lowerText[i] == lowerPattern[patternIdx]) {
+            score += 10;
+            // Bonus for consecutive matches
+            if (consecutive && i == lastMatchIdx + 1) {
+                score += 5;
+            } else {
+                consecutive = false;
+            }
+            // Bonus for matching at word boundaries
+            if (i == 0 || lowerText[i - 1] == ' ' || lowerText[i - 1] == '_' || lowerText[i - 1] == '-') {
+                score += 3;
+            }
+            lastMatchIdx = i;
+            ++patternIdx;
+        }
+    }
+
+    // Only match if all pattern characters were found
+    if (patternIdx != lowerPattern.size()) {
+        return 0;
+    }
+
+    return score;
+}
+
+void ToolbarPanel::UpdateSearchResults(const std::string& query) {
+    filtered_tools_.clear();
+
+    if (query.empty()) {
+        // Show all tools when query is empty
+        for (const auto& tool : all_tools_) {
+            tool.match_score = 100;
+            filtered_tools_.push_back(&tool);
+        }
+        return;
+    }
+
+    // Score all tools against the query
+    for (const auto& tool : all_tools_) {
+        int nameScore = FuzzyMatch(query, tool.name);
+        int categoryScore = FuzzyMatch(query, tool.category) / 2;  // Lower weight for category
+        int keywordScore = FuzzyMatch(query, tool.keywords) / 2;   // Lower weight for keywords
+
+        tool.match_score = std::max({nameScore, categoryScore, keywordScore});
+
+        if (tool.match_score > 0) {
+            filtered_tools_.push_back(&tool);
+        }
+    }
+
+    // Sort by score (descending)
+    std::sort(filtered_tools_.begin(), filtered_tools_.end(),
+              [](const ToolEntry* a, const ToolEntry* b) {
+                  return a->match_score > b->match_score;
+              });
+
+    // Reset selection when results change
+    selected_index_ = 0;
+}
+
+void ToolbarPanel::RenderCommandPalette() {
+    if (!show_command_palette_) return;
+
+    // Center the modal
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.3f));
+    ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_Appearing);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
+
+    if (ImGui::Begin("##CommandPalette", &show_command_palette_, flags)) {
+        // Search input
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
+        ImGui::PushItemWidth(-1);
+
+        if (focus_search_input_) {
+            ImGui::SetKeyboardFocusHere();
+            focus_search_input_ = false;
+        }
+
+        bool textChanged = ImGui::InputTextWithHint("##SearchInput", "Type to search tools...",
+                                                     search_buffer_, sizeof(search_buffer_));
+        ImGui::PopItemWidth();
+        ImGui::PopStyleVar();
+
+        if (textChanged) {
+            UpdateSearchResults(search_buffer_);
+        }
+
+        ImGui::Separator();
+
+        // Handle keyboard navigation
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            selected_index_ = std::min(selected_index_ + 1, static_cast<int>(filtered_tools_.size()) - 1);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+            selected_index_ = std::max(selected_index_ - 1, 0);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !filtered_tools_.empty()) {
+            if (selected_index_ >= 0 && selected_index_ < static_cast<int>(filtered_tools_.size())) {
+                auto callback = filtered_tools_[selected_index_]->callback;
+                show_command_palette_ = false;
+                if (callback) callback();
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            show_command_palette_ = false;
+        }
+
+        // Results list
+        ImGui::BeginChild("##ResultsList", ImVec2(0, 0), false);
+
+        for (int i = 0; i < static_cast<int>(filtered_tools_.size()); ++i) {
+            const auto* tool = filtered_tools_[i];
+
+            ImGui::PushID(i);
+
+            bool isSelected = (i == selected_index_);
+            if (isSelected) {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
+            }
+
+            // Selectable row
+            if (ImGui::Selectable("##ToolRow", isSelected, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, 32))) {
+                show_command_palette_ = false;
+                if (tool->callback) tool->callback();
+            }
+
+            if (isSelected) {
+                ImGui::PopStyleColor();
+                // Ensure selected item is visible
+                ImGui::SetScrollHereY();
+            }
+
+            // Draw content on top of selectable
+            ImGui::SameLine(10);
+
+            // Icon
+            ImGui::Text("%s", tool->icon.c_str());
+            ImGui::SameLine(40);
+
+            // Tool name
+            ImGui::Text("%s", tool->name.c_str());
+
+            // Category badge (right-aligned)
+            ImGui::SameLine(ImGui::GetWindowWidth() - 120);
+            ImGui::TextDisabled("[%s]", tool->category.c_str());
+
+            ImGui::PopID();
+        }
+
+        if (filtered_tools_.empty()) {
+            ImGui::TextDisabled("No matching tools found");
+        }
+
+        ImGui::EndChild();
+    }
+    ImGui::End();
 }
 
 } // namespace cyxwiz

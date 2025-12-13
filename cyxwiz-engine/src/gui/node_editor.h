@@ -5,6 +5,7 @@
 #include <map>
 #include <functional>
 #include <imgui.h>
+#include <nlohmann/json_fwd.hpp>
 
 // Forward declarations from ImNodes
 struct ImNodesEditorContext;
@@ -235,12 +236,29 @@ enum class CodeFramework {
     PyCyxWiz
 };
 
-// Search state for node search/filter feature
+// Search state for node search/filter feature (Ctrl+F to find existing nodes)
 struct SearchState {
     char search_buffer[256] = "";
     std::vector<int> matching_node_ids;
     int current_match_index = -1;
     bool search_visible = false;
+};
+
+// Search state for adding nodes via search box (top-right of canvas)
+struct NodeAddSearchState {
+    char search_buffer[256] = "";
+    bool is_active = false;           // Is the search box focused
+    bool show_results = false;        // Show dropdown results
+    int selected_index = 0;           // Currently selected result (keyboard navigation)
+    bool just_activated = false;      // Set focus on next frame
+};
+
+// Entry for searchable node
+struct SearchableNode {
+    NodeType type;
+    std::string name;      // Display name (e.g., "Dense (512 units)")
+    std::string category;  // Category (e.g., "Layers > Dense / Linear")
+    std::string keywords;  // Additional keywords for search
 };
 
 // Alignment types for arranging selected nodes
@@ -315,10 +333,14 @@ public:
     int GetNextLinkId() const { return next_link_id_; }
 
     // Load graph from file (for Asset Browser integration)
+    // Supports both regular graph format and pattern template format
     bool LoadGraph(const std::string& filepath);
 
     // Load graph from JSON string (for import from .cyxmodel)
     bool LoadGraphFromString(const std::string& json_string);
+
+    // Load pattern template format as graph (converts string IDs to int, resolves parameters)
+    bool LoadPatternAsGraph(const nlohmann::json& j);
 
     // Get current graph as JSON string (for export to .cyxmodel)
     std::string GetGraphJson() const;
@@ -436,6 +458,12 @@ private:
     void UpdateSearchResults();
     void NavigateToMatch(int direction);  // +1 = next, -1 = previous
     void HighlightMatchingNodes();
+
+    // Node add search (top-right search box for quick node creation)
+    void ShowNodeAddSearch();
+    void InitializeSearchableNodes();
+    void UpdateNodeAddSearchResults();
+    static int FuzzyMatch(const std::string& pattern, const std::string& str);  // Returns match score (0 = no match)
 
     // Alignment and distribution tools
     void AlignSelectedNodes(AlignmentType type);
@@ -569,8 +597,14 @@ private:
     // Empty graph warning popup state
     bool show_empty_graph_warning_ = false;
 
-    // Search state
+    // Search state (Ctrl+F for existing nodes)
     SearchState search_state_;
+
+    // Node add search state (top-right search box)
+    NodeAddSearchState node_add_search_;
+    std::vector<SearchableNode> all_searchable_nodes_;       // All available nodes for search
+    std::vector<std::pair<int, SearchableNode*>> filtered_nodes_;  // Filtered results with scores
+    bool searchable_nodes_initialized_ = false;
 
     // Node groups
     std::vector<NodeGroup> groups_;

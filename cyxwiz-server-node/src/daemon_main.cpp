@@ -31,6 +31,8 @@
 #include "ipc/daemon_service.h"
 #include "security/tls_config.h"
 #include "security/audit_logger.h"
+#include "http/openai_api_server.h"
+#include "inference_handler.h"
 
 // Global flag for shutdown
 std::atomic<bool> g_shutdown{false};
@@ -47,6 +49,8 @@ void PrintUsage(const char* program) {
               << "\nOptions:\n"
               << "  --ipc-address=ADDR   IPC address for GUI connection (default: localhost:50054)\n"
               << "  --central-server=ADDR Central server address (default: localhost:50051)\n"
+              << "  --http-port=PORT     HTTP REST API port (default: 8080)\n"
+              << "  --inference-addr=ADDR gRPC InferenceService address (default: 0.0.0.0:50057)\n"
               << "  --config=PATH        Path to config file (default: ~/.cyxwiz/daemon.yaml)\n"
               << "  --tls                Enable TLS for gRPC servers\n"
               << "  --tls-cert=PATH      Path to TLS certificate file\n"
@@ -58,6 +62,7 @@ void PrintUsage(const char* program) {
               << "  - gRPC IPC service for GUI/TUI client connections\n"
               << "  - P2P service for Engine connections\n"
               << "  - Model deployment with OpenAI-compatible API\n"
+              << "  - HTTP REST API for inference at http://localhost:8080/v1/predict\n"
               << "  - Job execution for distributed training\n"
               << std::endl;
 }
@@ -68,8 +73,10 @@ struct DaemonConfig {
     std::string terminal_address = "0.0.0.0:50053";
     std::string node_service_address = "0.0.0.0:50055";
     std::string deployment_address = "0.0.0.0:50056";
+    std::string inference_address = "0.0.0.0:50057";
     std::string central_server = "localhost:50051";
     std::string config_path;
+    int http_port = 8080;  // HTTP REST API port
 
     // TLS settings
     bool enable_tls = false;
@@ -87,6 +94,10 @@ DaemonConfig ParseArgs(int argc, char** argv) {
             config.ipc_address = argv[i] + 14;
         } else if (std::strncmp(argv[i], "--central-server=", 17) == 0) {
             config.central_server = argv[i] + 17;
+        } else if (std::strncmp(argv[i], "--http-port=", 12) == 0) {
+            config.http_port = std::atoi(argv[i] + 12);
+        } else if (std::strncmp(argv[i], "--inference-addr=", 17) == 0) {
+            config.inference_address = argv[i] + 17;
         } else if (std::strncmp(argv[i], "--config=", 9) == 0) {
             config.config_path = argv[i] + 9;
         } else if (std::strcmp(argv[i], "--tls") == 0) {
@@ -319,6 +330,39 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        // Create and start HTTP REST API server
+        auto http_server = std::make_unique<cyxwiz::servernode::OpenAIAPIServer>(
+            daemon_config.http_port,
+            deployment_manager.get()
+        );
+
+        if (!http_server->Start()) {
+            spdlog::error("Failed to start HTTP REST API server");
+            terminal_handler.Stop();
+            deployment_handler.Stop();
+            p2p_service->StopServer();
+            node_grpc_server->Shutdown();
+            cyxwiz::Shutdown();
+            return 1;
+        }
+
+        // Create and start gRPC InferenceService
+        auto inference_server = std::make_unique<cyxwiz::servernode::InferenceServer>(
+            daemon_config.inference_address,
+            deployment_manager.get()
+        );
+
+        if (!inference_server->Start()) {
+            spdlog::error("Failed to start InferenceService");
+            http_server->Stop();
+            terminal_handler.Stop();
+            deployment_handler.Stop();
+            p2p_service->StopServer();
+            node_grpc_server->Shutdown();
+            cyxwiz::Shutdown();
+            return 1;
+        }
+
         // Create NodeClient for Central Server communication (but don't auto-connect)
         // Connection happens when user applies allocations via GUI
         auto node_client = std::make_unique<cyxwiz::servernode::NodeClient>(
@@ -362,6 +406,8 @@ int main(int argc, char** argv) {
         spdlog::info("  Node service:         {}", daemon_config.node_service_address);
         spdlog::info("  Deployment endpoint:  {}", daemon_config.deployment_address);
         spdlog::info("  Terminal endpoint:    {}", daemon_config.terminal_address);
+        spdlog::info("  HTTP REST API:        http://0.0.0.0:{}", daemon_config.http_port);
+        spdlog::info("  Inference gRPC:       {}", daemon_config.inference_address);
         spdlog::info("  TLS encryption:       {}", tls_manager.IsEnabled() ? "ENABLED" : "DISABLED");
         spdlog::info("========================================");
         spdlog::info("Press Ctrl+C to shutdown");
@@ -376,6 +422,12 @@ int main(int argc, char** argv) {
         // Stop services in reverse order
         spdlog::info("Stopping IPC daemon service...");
         daemon_service->Stop();
+
+        spdlog::info("Stopping HTTP REST API server...");
+        http_server->Stop();
+
+        spdlog::info("Stopping InferenceService...");
+        inference_server->Stop();
 
         spdlog::info("Stopping metrics collector...");
         metrics_collector->StopCollection();

@@ -15,6 +15,7 @@ set(PROTO_FILES
     proto/deployment.proto
     proto/execution.proto
     proto/daemon.proto
+    proto/inference.proto
 )
 
 # Generate C++ code from proto files

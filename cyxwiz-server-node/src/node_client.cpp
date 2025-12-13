@@ -361,7 +361,7 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
                      alloc.device_name, alloc.device_type, alloc.vram_allocated_mb, alloc.cores_allocated);
 
         // Create device capability locally to avoid arena allocation issues
-        protocol::DeviceCapabilities device;
+        protocol::DeviceCaps device;
 
         // Map device type (0=CPU, 1=CUDA, 2=OpenCL in DeviceAllocation)
         // Protocol uses: DEVICE_CPU=0, DEVICE_CUDA=1, DEVICE_OPENCL=2

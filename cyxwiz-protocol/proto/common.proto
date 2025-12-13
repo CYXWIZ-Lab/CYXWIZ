@@ -49,7 +49,8 @@ message TensorInfo {
 }
 
 // Device capabilities
-message DeviceCapabilities {
+// Note: Named DeviceCaps to avoid Windows API macro conflict with DeviceCapabilities
+message DeviceCaps {
   DeviceType device_type = 1;
   string device_name = 2;
   int64 memory_total = 3;      // bytes

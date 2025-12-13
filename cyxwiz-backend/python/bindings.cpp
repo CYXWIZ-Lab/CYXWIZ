@@ -298,6 +298,135 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_property_readonly("has_bias", &cyxwiz::LinearLayer::HasBias,
                               "Whether layer has bias term");
 
+    // Dense alias for LinearLayer (code generator uses cx.Dense)
+    m.attr("Dense") = m.attr("LinearLayer");
+
+    // Conv2D Layer
+    py::class_<cyxwiz::Conv2DLayer, cyxwiz::Layer>(m, "Conv2D")
+        .def(py::init<int, int, int, int, int, bool>(),
+             py::arg("in_channels"),
+             py::arg("out_channels"),
+             py::arg("kernel_size"),
+             py::arg("stride") = 1,
+             py::arg("padding") = 0,
+             py::arg("use_bias") = true,
+             "Create a 2D Convolutional layer")
+        .def("forward", &cyxwiz::Conv2DLayer::Forward,
+             py::arg("input"),
+             "Forward pass: apply 2D convolution")
+        .def("backward", &cyxwiz::Conv2DLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::Conv2DLayer::GetParameters,
+             "Get parameters {'weight': Tensor, 'bias': Tensor}")
+        .def("set_parameters", &cyxwiz::Conv2DLayer::SetParameters,
+             py::arg("params"),
+             "Set parameters from dict")
+        .def_property_readonly("in_channels", &cyxwiz::Conv2DLayer::GetInChannels)
+        .def_property_readonly("out_channels", &cyxwiz::Conv2DLayer::GetOutChannels)
+        .def_property_readonly("kernel_size", &cyxwiz::Conv2DLayer::GetKernelSize)
+        .def_property_readonly("stride", &cyxwiz::Conv2DLayer::GetStride)
+        .def_property_readonly("padding", &cyxwiz::Conv2DLayer::GetPadding);
+
+    // MaxPool2D Layer
+    py::class_<cyxwiz::MaxPool2DLayer, cyxwiz::Layer>(m, "MaxPool2D")
+        .def(py::init<int, int, int>(),
+             py::arg("pool_size"),
+             py::arg("stride") = -1,
+             py::arg("padding") = 0,
+             "Create a 2D Max Pooling layer (stride defaults to pool_size)")
+        .def("forward", &cyxwiz::MaxPool2DLayer::Forward,
+             py::arg("input"),
+             "Forward pass: apply max pooling")
+        .def("backward", &cyxwiz::MaxPool2DLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::MaxPool2DLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::MaxPool2DLayer::SetParameters,
+             py::arg("params"));
+
+    // AvgPool2D Layer
+    py::class_<cyxwiz::AvgPool2DLayer, cyxwiz::Layer>(m, "AvgPool2D")
+        .def(py::init<int, int, int>(),
+             py::arg("pool_size"),
+             py::arg("stride") = -1,
+             py::arg("padding") = 0,
+             "Create a 2D Average Pooling layer")
+        .def("forward", &cyxwiz::AvgPool2DLayer::Forward,
+             py::arg("input"),
+             "Forward pass: apply average pooling")
+        .def("backward", &cyxwiz::AvgPool2DLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::AvgPool2DLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::AvgPool2DLayer::SetParameters,
+             py::arg("params"));
+
+    // GlobalAvgPool2D Layer
+    py::class_<cyxwiz::GlobalAvgPool2DLayer, cyxwiz::Layer>(m, "GlobalAvgPool2D")
+        .def(py::init<>(),
+             "Create a Global Average Pooling layer")
+        .def("forward", &cyxwiz::GlobalAvgPool2DLayer::Forward,
+             py::arg("input"),
+             "Forward pass: reduce spatial dims to single value per channel")
+        .def("backward", &cyxwiz::GlobalAvgPool2DLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::GlobalAvgPool2DLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::GlobalAvgPool2DLayer::SetParameters,
+             py::arg("params"));
+
+    // BatchNorm2D Layer
+    py::class_<cyxwiz::BatchNorm2DLayer, cyxwiz::Layer>(m, "BatchNorm2D")
+        .def(py::init<int, float, float>(),
+             py::arg("num_features"),
+             py::arg("eps") = 1e-5f,
+             py::arg("momentum") = 0.1f,
+             "Create a 2D Batch Normalization layer")
+        .def("forward", &cyxwiz::BatchNorm2DLayer::Forward,
+             py::arg("input"),
+             "Forward pass: normalize batch")
+        .def("backward", &cyxwiz::BatchNorm2DLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::BatchNorm2DLayer::GetParameters,
+             "Get parameters {'gamma': Tensor, 'beta': Tensor}")
+        .def("set_parameters", &cyxwiz::BatchNorm2DLayer::SetParameters,
+             py::arg("params"),
+             "Set parameters from dict");
+
+    // BatchNorm alias (code generator uses cx.BatchNorm)
+    m.attr("BatchNorm") = m.attr("BatchNorm2D");
+
+    // Flatten Layer
+    py::class_<cyxwiz::FlattenLayer, cyxwiz::Layer>(m, "Flatten")
+        .def(py::init<>(),
+             "Create a Flatten layer")
+        .def("forward", &cyxwiz::FlattenLayer::Forward,
+             py::arg("input"),
+             "Forward pass: flatten spatial dimensions")
+        .def("backward", &cyxwiz::FlattenLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: restore original shape")
+        .def("get_parameters", &cyxwiz::FlattenLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::FlattenLayer::SetParameters,
+             py::arg("params"));
+
+    // Dropout Layer
+    py::class_<cyxwiz::DropoutLayer, cyxwiz::Layer>(m, "Dropout")
+        .def(py::init<float>(),
+             py::arg("p") = 0.5f,
+             "Create a Dropout layer (p = probability of dropping)")
+        .def("forward", &cyxwiz::DropoutLayer::Forward,
+             py::arg("input"),
+             "Forward pass: randomly drop units during training")
+        .def("backward", &cyxwiz::DropoutLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::DropoutLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::DropoutLayer::SetParameters,
+             py::arg("params"));
+
     // Activation base class
     py::class_<cyxwiz::Activation>(m, "Activation")
         .def("forward", &cyxwiz::Activation::Forward,
@@ -344,6 +473,100 @@ PYBIND11_MODULE(pycyxwiz, m) {
              py::arg("input"),
              "Backward: f'(x) = 1 - tanh(x)^2");
 
+    // GELU activation
+    py::class_<cyxwiz::GELUActivation, cyxwiz::Activation>(m, "GELU")
+        .def(py::init<>(),
+             "Create GELU activation: Gaussian Error Linear Unit")
+        .def("forward", &cyxwiz::GELUActivation::Forward,
+             py::arg("input"),
+             "Forward: GELU(x)")
+        .def("backward", &cyxwiz::GELUActivation::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: compute gradients");
+
+    // LeakyReLU activation
+    py::class_<cyxwiz::LeakyReLUActivation, cyxwiz::Activation>(m, "LeakyReLU")
+        .def(py::init<float>(),
+             py::arg("negative_slope") = 0.01f,
+             "Create LeakyReLU activation: f(x) = x if x > 0 else negative_slope * x")
+        .def("forward", &cyxwiz::LeakyReLUActivation::Forward,
+             py::arg("input"),
+             "Forward: LeakyReLU(x)")
+        .def("backward", &cyxwiz::LeakyReLUActivation::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: compute gradients")
+        .def_property_readonly("alpha", &cyxwiz::LeakyReLUActivation::GetAlpha,
+                              "Negative slope value");
+
+    // ELU activation
+    py::class_<cyxwiz::ELUActivation, cyxwiz::Activation>(m, "ELU")
+        .def(py::init<float>(),
+             py::arg("alpha") = 1.0f,
+             "Create ELU activation: Exponential Linear Unit")
+        .def("forward", &cyxwiz::ELUActivation::Forward,
+             py::arg("input"),
+             "Forward: ELU(x)")
+        .def("backward", &cyxwiz::ELUActivation::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: compute gradients")
+        .def_property_readonly("alpha", &cyxwiz::ELUActivation::GetAlpha,
+                              "Alpha value");
+
+    // Swish activation
+    py::class_<cyxwiz::SwishActivation, cyxwiz::Activation>(m, "Swish")
+        .def(py::init<>(),
+             "Create Swish activation: f(x) = x * sigmoid(x)")
+        .def("forward", &cyxwiz::SwishActivation::Forward,
+             py::arg("input"),
+             "Forward: Swish(x)")
+        .def("backward", &cyxwiz::SwishActivation::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: compute gradients");
+
+    // SiLU alias for Swish (PyTorch naming)
+    m.attr("SiLU") = m.attr("Swish");
+
+    // Mish activation
+    py::class_<cyxwiz::MishActivation, cyxwiz::Activation>(m, "Mish")
+        .def(py::init<>(),
+             "Create Mish activation: f(x) = x * tanh(softplus(x))")
+        .def("forward", &cyxwiz::MishActivation::Forward,
+             py::arg("input"),
+             "Forward: Mish(x)")
+        .def("backward", &cyxwiz::MishActivation::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: compute gradients");
+
+    // Hardswish activation
+    py::class_<cyxwiz::HardswishActivation, cyxwiz::Activation>(m, "Hardswish")
+        .def(py::init<>(),
+             "Create Hardswish activation: efficient approximation of Swish")
+        .def("forward", &cyxwiz::HardswishActivation::Forward,
+             py::arg("input"),
+             "Forward: Hardswish(x)")
+        .def("backward", &cyxwiz::HardswishActivation::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: compute gradients");
+
+    // Softmax activation
+    py::class_<cyxwiz::SoftmaxActivation, cyxwiz::Activation>(m, "Softmax")
+        .def(py::init<int>(),
+             py::arg("dim") = -1,
+             "Create Softmax activation: normalizes to probability distribution")
+        .def("forward", &cyxwiz::SoftmaxActivation::Forward,
+             py::arg("input"),
+             "Forward: Softmax(x)")
+        .def("backward", &cyxwiz::SoftmaxActivation::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Backward: compute gradients");
+
     // MSE Loss (concrete implementation)
     py::class_<cyxwiz::MSELoss>(m, "MSELoss")
         .def(py::init<>(),
@@ -371,6 +594,161 @@ PYBIND11_MODULE(pycyxwiz, m) {
              "Backward: gradient w.r.t logits");
 
     // ============================================================================
+    // DIRECT OPTIMIZER CLASSES
+    // ============================================================================
+
+    // SGD Optimizer
+    py::class_<cyxwiz::SGDOptimizer, cyxwiz::Optimizer>(m, "SGD")
+        .def(py::init<double, double>(),
+             py::arg("learning_rate") = 0.01,
+             py::arg("momentum") = 0.0,
+             "SGD optimizer with optional momentum")
+        .def("step", &cyxwiz::SGDOptimizer::Step,
+             py::arg("parameters"),
+             py::arg("gradients"),
+             "Update parameters using gradients")
+        .def("zero_grad", &cyxwiz::SGDOptimizer::ZeroGrad,
+             "Clear optimizer state");
+
+    // Adam Optimizer
+    py::class_<cyxwiz::AdamOptimizer, cyxwiz::Optimizer>(m, "Adam")
+        .def(py::init<double, double, double, double>(),
+             py::arg("learning_rate") = 0.001,
+             py::arg("beta1") = 0.9,
+             py::arg("beta2") = 0.999,
+             py::arg("epsilon") = 1e-8,
+             "Adam optimizer")
+        .def("step", &cyxwiz::AdamOptimizer::Step,
+             py::arg("parameters"),
+             py::arg("gradients"),
+             "Update parameters using gradients")
+        .def("zero_grad", &cyxwiz::AdamOptimizer::ZeroGrad,
+             "Clear optimizer state");
+
+    // AdamW Optimizer
+    py::class_<cyxwiz::AdamWOptimizer, cyxwiz::AdamOptimizer>(m, "AdamW")
+        .def(py::init<double, double, double, double, double>(),
+             py::arg("learning_rate") = 0.001,
+             py::arg("beta1") = 0.9,
+             py::arg("beta2") = 0.999,
+             py::arg("epsilon") = 1e-8,
+             py::arg("weight_decay") = 0.01,
+             "AdamW optimizer (Adam with decoupled weight decay)")
+        .def("step", &cyxwiz::AdamWOptimizer::Step,
+             py::arg("parameters"),
+             py::arg("gradients"),
+             "Update parameters using gradients")
+        .def("zero_grad", &cyxwiz::AdamWOptimizer::ZeroGrad,
+             "Clear optimizer state");
+
+    // ============================================================================
+    // FUNCTIONAL API (lowercase functions)
+    // ============================================================================
+
+    // Activation functions
+    m.def("relu", [](const cyxwiz::Tensor& x) {
+        cyxwiz::ReLU act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply ReLU activation: f(x) = max(0, x)");
+
+    m.def("sigmoid", [](const cyxwiz::Tensor& x) {
+        cyxwiz::Sigmoid act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply Sigmoid activation: f(x) = 1 / (1 + exp(-x))");
+
+    m.def("tanh", [](const cyxwiz::Tensor& x) {
+        cyxwiz::Tanh act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply Tanh activation: f(x) = tanh(x)");
+
+    m.def("softmax", [](const cyxwiz::Tensor& x, int dim) {
+        cyxwiz::SoftmaxActivation act(dim);
+        return act.Forward(x);
+    }, py::arg("input"), py::arg("dim") = -1, "Apply Softmax activation");
+
+    m.def("gelu", [](const cyxwiz::Tensor& x) {
+        cyxwiz::GELUActivation act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply GELU activation");
+
+    m.def("leaky_relu", [](const cyxwiz::Tensor& x, float negative_slope) {
+        cyxwiz::LeakyReLUActivation act(negative_slope);
+        return act.Forward(x);
+    }, py::arg("input"), py::arg("negative_slope") = 0.01f, "Apply LeakyReLU activation");
+
+    m.def("elu", [](const cyxwiz::Tensor& x, float alpha) {
+        cyxwiz::ELUActivation act(alpha);
+        return act.Forward(x);
+    }, py::arg("input"), py::arg("alpha") = 1.0f, "Apply ELU activation");
+
+    m.def("swish", [](const cyxwiz::Tensor& x) {
+        cyxwiz::SwishActivation act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply Swish activation: f(x) = x * sigmoid(x)");
+
+    m.def("silu", [](const cyxwiz::Tensor& x) {
+        cyxwiz::SwishActivation act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply SiLU activation (alias for Swish)");
+
+    m.def("mish", [](const cyxwiz::Tensor& x) {
+        cyxwiz::MishActivation act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply Mish activation");
+
+    // Layer-like functional operations
+    m.def("flatten", [](const cyxwiz::Tensor& x) {
+        cyxwiz::FlattenLayer layer;
+        return layer.Forward(x);
+    }, py::arg("input"), "Flatten spatial dimensions");
+
+    m.def("dropout", [](const cyxwiz::Tensor& x, float p, bool training) {
+        cyxwiz::DropoutLayer layer(p);
+        layer.SetTraining(training);
+        return layer.Forward(x);
+    }, py::arg("input"), py::arg("p") = 0.5f, py::arg("training") = true,
+    "Apply dropout during training");
+
+    // ============================================================================
+    // UTILITY FUNCTIONS
+    // ============================================================================
+
+    m.def("cuda_available", []() {
+        auto devices = cyxwiz::Device::GetAvailableDevices();
+        for (const auto& d : devices) {
+            if (d.type == cyxwiz::DeviceType::CUDA) return true;
+        }
+        return false;
+    }, "Check if CUDA is available");
+
+    m.def("opencl_available", []() {
+        auto devices = cyxwiz::Device::GetAvailableDevices();
+        for (const auto& d : devices) {
+            if (d.type == cyxwiz::DeviceType::OPENCL) return true;
+        }
+        return false;
+    }, "Check if OpenCL is available");
+
+    m.def("metal_available", []() {
+        auto devices = cyxwiz::Device::GetAvailableDevices();
+        for (const auto& d : devices) {
+            if (d.type == cyxwiz::DeviceType::METAL) return true;
+        }
+        return false;
+    }, "Check if Metal is available");
+
+    m.def("get_device", [](cyxwiz::DeviceType type, int device_id) {
+        return cyxwiz::Device(type, device_id);
+    }, py::arg("type"), py::arg("device_id") = 0, "Get a device by type and ID");
+
+    m.def("set_device", [](cyxwiz::Device& device) {
+        device.SetActive();
+    }, py::arg("device"), "Set the active device");
+
+    m.def("get_available_devices", &cyxwiz::Device::GetAvailableDevices,
+          "Get list of all available devices");
+
+    // ============================================================================
     // LINEAR ALGEBRA SUBMODULE
     // ============================================================================
     auto linalg = m.def_submodule("linalg", "Linear algebra functions (MATLAB-style)");
@@ -380,13 +758,31 @@ PYBIND11_MODULE(pycyxwiz, m) {
         auto result = cyxwiz::LinearAlgebra::Identity(n);
         if (!result.success) throw std::runtime_error(result.error_message);
         return result.matrix;
-    }, "Create identity matrix", py::arg("n"));
+    }, "Create square identity matrix", py::arg("n"));
+
+    linalg.def("eye", [](int rows, int cols) {
+        auto result = cyxwiz::LinearAlgebra::Identity(rows, cols);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Create non-square identity matrix (1s on diagonal)", py::arg("rows"), py::arg("cols"));
+
+    linalg.def("zeros", [](int n) {
+        auto result = cyxwiz::LinearAlgebra::Zeros(n);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Create square zero matrix", py::arg("n"));
 
     linalg.def("zeros", [](int rows, int cols) {
         auto result = cyxwiz::LinearAlgebra::Zeros(rows, cols);
         if (!result.success) throw std::runtime_error(result.error_message);
         return result.matrix;
     }, "Create zero matrix", py::arg("rows"), py::arg("cols"));
+
+    linalg.def("ones", [](int n) {
+        auto result = cyxwiz::LinearAlgebra::Ones(n);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.matrix;
+    }, "Create square ones matrix", py::arg("n"));
 
     linalg.def("ones", [](int rows, int cols) {
         auto result = cyxwiz::LinearAlgebra::Ones(rows, cols);

@@ -20,13 +20,28 @@ DeploymentManager::DeploymentManager(const std::string& node_id)
 DeploymentManager::~DeploymentManager() {
     shutdown_ = true;
 
-    // Stop all deployments
-    std::lock_guard<std::mutex> lock(deployments_mutex_);
-    for (auto& [id, instance] : deployments_) {
-        if (instance->worker_thread.joinable()) {
+    // Signal all deployments to stop
+    {
+        std::lock_guard<std::mutex> lock(deployments_mutex_);
+        for (auto& [id, instance] : deployments_) {
             instance->should_stop = true;
-            instance->worker_thread.join();
+            instance->queue_cv.notify_all();
         }
+    }
+
+    // Join all worker threads (outside the lock to avoid deadlock)
+    std::vector<std::thread*> threads_to_join;
+    {
+        std::lock_guard<std::mutex> lock(deployments_mutex_);
+        for (auto& [id, instance] : deployments_) {
+            if (instance->worker_thread.joinable()) {
+                threads_to_join.push_back(&instance->worker_thread);
+            }
+        }
+    }
+
+    for (auto* thread : threads_to_join) {
+        thread->join();
     }
 
     spdlog::info("DeploymentManager shutdown complete");
@@ -72,21 +87,26 @@ std::string DeploymentManager::AcceptDeployment(
 void DeploymentManager::StopDeployment(const std::string& deployment_id) {
     spdlog::info("Stopping deployment: {}", deployment_id);
 
-    std::lock_guard<std::mutex> lock(deployments_mutex_);
-    auto it = deployments_.find(deployment_id);
-    if (it == deployments_.end()) {
-        throw std::runtime_error("Deployment not found: " + deployment_id);
+    DeploymentInstance* instance = nullptr;
+
+    {
+        std::lock_guard<std::mutex> lock(deployments_mutex_);
+        auto it = deployments_.find(deployment_id);
+        if (it == deployments_.end()) {
+            throw std::runtime_error("Deployment not found: " + deployment_id);
+        }
+
+        instance = it->second.get();
+        instance->should_stop = true;
+        instance->status = protocol::DEPLOYMENT_STATUS_STOPPED;
     }
 
-    auto* instance = it->second.get();
-    instance->should_stop = true;
-    instance->status = protocol::DEPLOYMENT_STATUS_STOPPED;
+    // Notify the inference loop to wake up and check should_stop
+    instance->queue_cv.notify_all();
 
     // Wait for worker thread to finish
     if (instance->worker_thread.joinable()) {
-        deployments_mutex_.unlock();  // Unlock to avoid deadlock
         instance->worker_thread.join();
-        deployments_mutex_.lock();
     }
 
     spdlog::info("Deployment {} stopped successfully", deployment_id);
@@ -146,6 +166,94 @@ size_t DeploymentManager::GetActiveDeploymentCount() const {
 bool DeploymentManager::HasDeployment(const std::string& deployment_id) const {
     std::lock_guard<std::mutex> lock(deployments_mutex_);
     return deployments_.find(deployment_id) != deployments_.end();
+}
+
+bool DeploymentManager::RunInference(
+    const std::string& deployment_id,
+    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+
+    DeploymentInstance* instance = nullptr;
+
+    // Find deployment
+    {
+        std::lock_guard<std::mutex> lock(deployments_mutex_);
+        auto it = deployments_.find(deployment_id);
+        if (it == deployments_.end()) {
+            spdlog::error("RunInference: Deployment not found: {}", deployment_id);
+            return false;
+        }
+        instance = it->second.get();
+    }
+
+    // Check deployment status
+    if (instance->status != protocol::DEPLOYMENT_STATUS_RUNNING) {
+        spdlog::error("RunInference: Deployment {} is not running (status={})",
+                     deployment_id, static_cast<int>(instance->status));
+        return false;
+    }
+
+    // Create inference request
+    auto request = std::make_shared<InferenceRequest>();
+    request->request_id = GenerateDeploymentId();  // Reuse ID generator
+    request->inputs = inputs;
+
+    // Get future before queuing
+    auto future = request->promise.get_future();
+
+    // Queue the request
+    {
+        std::lock_guard<std::mutex> lock(instance->queue_mutex);
+        instance->request_queue.push(request);
+    }
+    instance->queue_cv.notify_one();
+
+    spdlog::debug("RunInference: Queued request {} for deployment {}",
+                 request->request_id, deployment_id);
+
+    // Wait for result
+    try {
+        auto [success, result_outputs] = future.get();
+        if (success) {
+            outputs = std::move(result_outputs);
+        }
+        return success;
+    } catch (const std::exception& e) {
+        spdlog::error("RunInference: Exception waiting for result: {}", e.what());
+        return false;
+    }
+}
+
+std::vector<servernode::TensorSpec> DeploymentManager::GetInputSpecs(
+    const std::string& deployment_id) const {
+
+    std::lock_guard<std::mutex> lock(deployments_mutex_);
+    auto it = deployments_.find(deployment_id);
+    if (it == deployments_.end()) {
+        return {};
+    }
+
+    const auto* instance = it->second.get();
+    if (instance->model_loader && instance->model_loader->IsLoaded()) {
+        return instance->model_loader->GetInputSpecs();
+    }
+    return {};
+}
+
+std::vector<servernode::TensorSpec> DeploymentManager::GetOutputSpecs(
+    const std::string& deployment_id) const {
+
+    std::lock_guard<std::mutex> lock(deployments_mutex_);
+    auto it = deployments_.find(deployment_id);
+    if (it == deployments_.end()) {
+        return {};
+    }
+
+    const auto* instance = it->second.get();
+    if (instance->model_loader && instance->model_loader->IsLoaded()) {
+        return instance->model_loader->GetOutputSpecs();
+    }
+    return {};
 }
 
 // ============================================================================
@@ -223,19 +331,82 @@ bool DeploymentManager::LoadModel(DeploymentInstance* instance) {
 }
 
 void DeploymentManager::RunInferenceLoop(DeploymentInstance* instance) {
-    spdlog::debug("Starting inference loop for deployment: {}", instance->id);
+    spdlog::info("Starting inference loop for deployment: {}", instance->id);
 
-    // Main loop
+    // Main loop - wait for and process inference requests
     while (!instance->should_stop && !shutdown_) {
-        // TODO: Wait for inference requests
-        // TODO: Process inference requests
-        // TODO: Update metrics (request_count, total_latency_ms)
+        std::shared_ptr<InferenceRequest> request;
 
-        // For now, just sleep
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Wait for a request
+        {
+            std::unique_lock<std::mutex> lock(instance->queue_mutex);
+
+            // Wait with timeout to allow checking should_stop
+            bool got_request = instance->queue_cv.wait_for(
+                lock,
+                std::chrono::milliseconds(100),
+                [instance]() { return !instance->request_queue.empty(); }
+            );
+
+            if (!got_request || instance->request_queue.empty()) {
+                continue;  // Timeout, check should_stop and loop again
+            }
+
+            request = instance->request_queue.front();
+            instance->request_queue.pop();
+        }
+
+        // Process the request
+        spdlog::debug("Processing inference request: {}", request->request_id);
+
+        auto start_time = std::chrono::high_resolution_clock::now();
+
+        try {
+            std::unordered_map<std::string, cyxwiz::Tensor> outputs;
+            bool success = instance->model_loader->Infer(request->inputs, outputs);
+
+            auto end_time = std::chrono::high_resolution_clock::now();
+            double latency_ms = std::chrono::duration<double, std::milli>(
+                end_time - start_time
+            ).count();
+
+            // Update metrics
+            instance->request_count.fetch_add(1);
+            // Atomic add for double (not directly supported, use compare-exchange)
+            double current = instance->total_latency_ms.load();
+            while (!instance->total_latency_ms.compare_exchange_weak(
+                current, current + latency_ms)) {}
+
+            spdlog::debug("Inference completed in {:.2f}ms, success={}",
+                         latency_ms, success);
+
+            // Set the result
+            request->promise.set_value({success, std::move(outputs)});
+
+        } catch (const std::exception& e) {
+            spdlog::error("Inference failed for request {}: {}",
+                         request->request_id, e.what());
+
+            // Set failure result
+            request->promise.set_value({false, {}});
+        }
     }
 
-    spdlog::debug("Inference loop stopped for deployment: {}", instance->id);
+    // Drain remaining requests with error
+    {
+        std::lock_guard<std::mutex> lock(instance->queue_mutex);
+        while (!instance->request_queue.empty()) {
+            auto request = instance->request_queue.front();
+            instance->request_queue.pop();
+            try {
+                request->promise.set_value({false, {}});
+            } catch (...) {
+                // Promise may already be set
+            }
+        }
+    }
+
+    spdlog::info("Inference loop stopped for deployment: {}", instance->id);
 }
 
 void DeploymentManager::CleanupDeployment(DeploymentInstance* instance) {

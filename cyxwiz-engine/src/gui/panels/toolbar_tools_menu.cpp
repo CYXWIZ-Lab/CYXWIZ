@@ -9,6 +9,17 @@ void ToolbarPanel::RenderToolsMenu() {
     if (ImGui::BeginMenu("Tools")) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 6));
 
+        // ==================== Model Export ====================
+        if (ImGui::BeginMenu(ICON_FA_FILE_EXPORT " Model Export")) {
+            if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save Trained Model...", "Ctrl+Shift+S")) {
+                if (save_model_callback_) save_model_callback_();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Save the trained model weights to a .cyxmodel file");
+            }
+            ImGui::EndMenu();
+        }
+
         // ==================== Checkpoints ====================
         if (ImGui::BeginMenu(ICON_FA_CLOCK_ROTATE_LEFT " Checkpoints")) {
             if (ImGui::MenuItem("Resume from Checkpoint...")) {

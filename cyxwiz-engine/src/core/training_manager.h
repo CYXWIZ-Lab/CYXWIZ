@@ -106,6 +106,17 @@ public:
     bool HasTrainedModel() const { return last_trained_model_ != nullptr; }
 
     /**
+     * Save the trained model to file
+     * @param path Base path (will create .json and .bin files)
+     * @param name Optional model name
+     * @param description Optional model description
+     * @return true if successful
+     */
+    bool SaveModel(const std::string& path,
+                   const std::string& name = "",
+                   const std::string& description = "");
+
+    /**
      * Clear the preserved model (e.g., when starting a new project)
      */
     void ClearTrainedModel();

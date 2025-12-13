@@ -9,6 +9,19 @@
 
 namespace cyxwiz {
 
+// Tool entry for command palette search
+struct ToolEntry {
+    std::string name;           // Display name (e.g., "K-Means Clustering")
+    std::string category;       // Category (e.g., "Clustering", "Statistics")
+    std::string keywords;       // Search keywords (e.g., "cluster kmeans machine learning")
+    std::string icon;           // FontAwesome icon code
+    std::string shortcut;       // Keyboard shortcut if any (e.g., "Ctrl+P")
+    std::function<void()> callback;  // Action to execute
+
+    // Fuzzy match score (used during search)
+    mutable int match_score = 0;
+};
+
 /**
  * Top Toolbar Panel
  * Renders main menu bar with File, Edit, View, Nodes, Train, Dataset, Script, Deploy, Plots, Help
@@ -20,12 +33,18 @@ public:
 
     void Render() override;
 
+    // Command Palette (Ctrl+P)
+    void OpenCommandPalette();
+    void HandleGlobalShortcuts();  // Call this from main window to handle Ctrl+P
+    bool IsCommandPaletteOpen() const { return show_command_palette_; }
+
     // Callbacks
     void SetResetLayoutCallback(std::function<void()> callback) { reset_layout_callback_ = callback; }
     void SetSaveLayoutCallback(std::function<void()> callback) { save_layout_callback_ = callback; }
     void SetSaveProjectSettingsCallback(std::function<void()> callback) { save_project_settings_callback_ = callback; }
     void SetTogglePlotTestControlCallback(std::function<void()> callback) { toggle_plot_test_control_callback_ = callback; }
     void SetConnectToServerCallback(std::function<void()> callback) { connect_to_server_callback_ = callback; }
+    void SetDeployToServerCallback(std::function<void()> callback) { deploy_to_server_callback_ = callback; }
     void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
     void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
@@ -101,6 +120,7 @@ public:
     // Tools menu callbacks
     void SetResumeCheckpointCallback(std::function<void()> cb) { resume_checkpoint_callback_ = cb; }
     void SetSaveCheckpointCallback(std::function<void()> cb) { save_checkpoint_callback_ = cb; }
+    void SetSaveModelCallback(std::function<void()> cb) { save_model_callback_ = cb; }
     void SetRunQuickTestCallback(std::function<void()> cb) { run_quick_test_callback_ = cb; }
     void SetCompareTestResultsCallback(std::function<void()> cb) { compare_test_results_callback_ = cb; }
     void SetExportTestReportCallback(std::function<void()> cb) { export_test_report_callback_ = cb; }
@@ -236,6 +256,13 @@ private:
                        bool whole_word, bool use_regex);
     void RenderHelpMenu();
 
+    // Command Palette functionality
+    void InitializeToolEntries();
+    void RenderCommandPalette();
+    void UpdateSearchResults(const std::string& query);
+    int FuzzyMatch(const std::string& pattern, const std::string& text) const;
+    std::string ToLowerCase(const std::string& str) const;
+
     // Helper functions
     std::string OpenFolderDialog();
     std::string OpenFileDialog(const char* filter, const char* title);
@@ -261,6 +288,7 @@ private:
     std::function<void()> save_project_settings_callback_;
     std::function<void()> toggle_plot_test_control_callback_;
     std::function<void()> connect_to_server_callback_;
+    std::function<void()> deploy_to_server_callback_;
     std::function<void()> import_dataset_callback_;
     std::function<void()> open_custom_node_editor_callback_;
     std::function<void()> open_theme_editor_callback_;
@@ -404,6 +432,7 @@ private:
     // Tools menu callbacks
     std::function<void()> resume_checkpoint_callback_;
     std::function<void()> save_checkpoint_callback_;
+    std::function<void()> save_model_callback_;
     std::function<void()> run_quick_test_callback_;
     std::function<void()> compare_test_results_callback_;
     std::function<void()> export_test_report_callback_;
@@ -526,6 +555,14 @@ private:
     int files_line_ending_ = 0;  // 0 = Auto, 1 = LF, 2 = CRLF
     bool files_trim_trailing_whitespace_ = false;
     bool files_insert_final_newline_ = true;
+
+    // Command Palette state
+    bool show_command_palette_ = false;
+    char search_buffer_[256] = "";
+    std::vector<ToolEntry> all_tools_;           // All available tools
+    std::vector<const ToolEntry*> filtered_tools_;  // Filtered results (pointers to all_tools_)
+    int selected_index_ = 0;                     // Currently selected item in list
+    bool focus_search_input_ = false;            // Flag to focus input on open
 };
 
 } // namespace cyxwiz

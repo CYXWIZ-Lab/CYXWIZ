@@ -7,11 +7,22 @@
 #include <thread>
 #include <atomic>
 #include <vector>
+#include <queue>
+#include <condition_variable>
+#include <future>
 #include "deployment.pb.h"
 #include "model_loader.h"
+#include <cyxwiz/tensor.h>
 
 namespace cyxwiz {
 namespace servernode {
+
+// Inference request structure
+struct InferenceRequest {
+    std::string request_id;
+    std::unordered_map<std::string, cyxwiz::Tensor> inputs;
+    std::promise<std::pair<bool, std::unordered_map<std::string, cyxwiz::Tensor>>> promise;
+};
 
 // Represents a single deployment instance
 struct DeploymentInstance {
@@ -23,6 +34,11 @@ struct DeploymentInstance {
     std::unique_ptr<ModelLoader> model_loader;
     std::thread worker_thread;
     std::atomic<bool> should_stop{false};
+
+    // Request queue for inference
+    std::queue<std::shared_ptr<InferenceRequest>> request_queue;
+    std::mutex queue_mutex;
+    std::condition_variable queue_cv;
 
     // Metrics
     std::atomic<uint64_t> request_count{0};
@@ -71,6 +87,18 @@ public:
 
     // Check if deployment exists
     bool HasDeployment(const std::string& deployment_id) const;
+
+    // Run inference on a deployment (thread-safe, queues request)
+    // Returns true if inference succeeded, outputs are populated
+    bool RunInference(
+        const std::string& deployment_id,
+        const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+        std::unordered_map<std::string, cyxwiz::Tensor>& outputs
+    );
+
+    // Get input/output specifications for a deployment
+    std::vector<servernode::TensorSpec> GetInputSpecs(const std::string& deployment_id) const;
+    std::vector<servernode::TensorSpec> GetOutputSpecs(const std::string& deployment_id) const;
 
 private:
     // Execute a deployment (runs in worker thread)

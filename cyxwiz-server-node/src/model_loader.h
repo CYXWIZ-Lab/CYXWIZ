@@ -135,5 +135,28 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// CyxWiz native model loader (.cyxmodel format)
+class CyxWizLoader : public ModelLoader {
+public:
+    CyxWizLoader();
+    ~CyxWizLoader() override;
+
+    bool Load(const std::string& model_path) override;
+    bool Infer(
+        const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+        std::unordered_map<std::string, cyxwiz::Tensor>& outputs
+    ) override;
+    std::vector<TensorSpec> GetInputSpecs() const override;
+    std::vector<TensorSpec> GetOutputSpecs() const override;
+    uint64_t GetMemoryUsage() const override;
+    void Unload() override;
+    bool IsLoaded() const override;
+    std::string GetFormat() const override { return "cyxmodel"; }
+
+private:
+    class Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
 } // namespace servernode
 } // namespace cyxwiz

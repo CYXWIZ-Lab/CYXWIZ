@@ -1,6 +1,11 @@
 #include "model_loader.h"
+#include <cyxwiz/sequential.h>
 #include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
+#include <fstream>
+#include <filesystem>
+#include <regex>
 
 namespace cyxwiz {
 namespace servernode {
@@ -20,6 +25,8 @@ std::unique_ptr<ModelLoader> ModelLoaderFactory::Create(const std::string& forma
         return std::make_unique<GGUFLoader>();
     } else if (fmt == "pytorch" || fmt == "pt" || fmt == "pth") {
         return std::make_unique<PyTorchLoader>();
+    } else if (fmt == "cyxmodel" || fmt == "cyxwiz") {
+        return std::make_unique<CyxWizLoader>();
     }
 
     spdlog::error("Unsupported model format: {}", format);
@@ -31,11 +38,12 @@ bool ModelLoaderFactory::IsFormatSupported(const std::string& format) {
     std::transform(fmt.begin(), fmt.end(), fmt.begin(), ::tolower);
 
     return fmt == "onnx" || fmt == "gguf" ||
-           fmt == "pytorch" || fmt == "pt" || fmt == "pth";
+           fmt == "pytorch" || fmt == "pt" || fmt == "pth" ||
+           fmt == "cyxmodel" || fmt == "cyxwiz";
 }
 
 std::vector<std::string> ModelLoaderFactory::GetSupportedFormats() {
-    return {"onnx", "gguf", "pytorch"};
+    return {"onnx", "gguf", "pytorch", "cyxmodel"};
 }
 
 // ============================================================================
@@ -332,6 +340,355 @@ void PyTorchLoader::Unload() {
 }
 
 bool PyTorchLoader::IsLoaded() const {
+    return impl_->loaded;
+}
+
+// ============================================================================
+// CyxWizLoader Implementation (Native .cyxmodel format)
+// ============================================================================
+
+using json = nlohmann::json;
+
+class CyxWizLoader::Impl {
+public:
+    bool loaded = false;
+    std::string model_path;
+    std::unique_ptr<cyxwiz::SequentialModel> model;
+    std::vector<TensorSpec> input_specs;
+    std::vector<TensorSpec> output_specs;
+    uint64_t memory_usage = 0;
+    json metadata;
+
+    // Parse module name like "Linear(784 -> 512)" or "ReLU" or "Dropout(p=0.2)"
+    bool ParseModuleName(const std::string& name,
+                         cyxwiz::ModuleType& type,
+                         std::map<std::string, std::string>& params) {
+        // Linear layer: "Linear(in -> out)" format
+        std::regex linear_regex(R"(Linear\((\d+)\s*->\s*(\d+)\))");
+        std::smatch match;
+        if (std::regex_search(name, match, linear_regex)) {
+            type = cyxwiz::ModuleType::Linear;
+            params["in_features"] = match[1].str();
+            params["out_features"] = match[2].str();
+            return true;
+        }
+
+        // Dropout: "Dropout(p=0.5)" format
+        std::regex dropout_regex(R"(Dropout\(p=([0-9.]+)\))");
+        if (std::regex_search(name, match, dropout_regex)) {
+            type = cyxwiz::ModuleType::Dropout;
+            params["p"] = match[1].str();
+            return true;
+        }
+
+        // Simple activations (no parameters)
+        if (name == "ReLU") {
+            type = cyxwiz::ModuleType::ReLU;
+            return true;
+        }
+        if (name == "Sigmoid") {
+            type = cyxwiz::ModuleType::Sigmoid;
+            return true;
+        }
+        if (name == "Tanh") {
+            type = cyxwiz::ModuleType::Tanh;
+            return true;
+        }
+        if (name == "Softmax" || name.find("Softmax") != std::string::npos) {
+            type = cyxwiz::ModuleType::Softmax;
+            return true;
+        }
+        if (name == "GELU") {
+            type = cyxwiz::ModuleType::GELU;
+            return true;
+        }
+        if (name == "Swish" || name == "SiLU") {
+            type = cyxwiz::ModuleType::Swish;
+            return true;
+        }
+        if (name == "Mish") {
+            type = cyxwiz::ModuleType::Mish;
+            return true;
+        }
+
+        // LeakyReLU: "LeakyReLU(slope=0.1)" format
+        std::regex leaky_regex(R"(LeakyReLU\(slope=([0-9.]+)\))");
+        if (std::regex_search(name, match, leaky_regex)) {
+            type = cyxwiz::ModuleType::LeakyReLU;
+            params["negative_slope"] = match[1].str();
+            return true;
+        }
+
+        // ELU: "ELU(alpha=1.0)" format
+        std::regex elu_regex(R"(ELU\(alpha=([0-9.]+)\))");
+        if (std::regex_search(name, match, elu_regex)) {
+            type = cyxwiz::ModuleType::ELU;
+            params["alpha"] = match[1].str();
+            return true;
+        }
+
+        // Flatten: "Flatten" or "Flatten(start_dim=1)"
+        if (name.find("Flatten") != std::string::npos) {
+            type = cyxwiz::ModuleType::Flatten;
+            std::regex flatten_regex(R"(Flatten\(start_dim=(\d+)\))");
+            if (std::regex_search(name, match, flatten_regex)) {
+                params["start_dim"] = match[1].str();
+            }
+            return true;
+        }
+
+        spdlog::warn("CyxWizLoader: Unknown module type: {}", name);
+        return false;
+    }
+
+    // Build architecture from JSON metadata
+    bool BuildArchitectureFromMetadata() {
+        if (!metadata.contains("modules")) {
+            spdlog::error("CyxWizLoader: No modules in metadata");
+            return false;
+        }
+
+        model = std::make_unique<cyxwiz::SequentialModel>();
+
+        for (const auto& mod : metadata["modules"]) {
+            std::string name = mod.value("name", "");
+            if (name.empty()) continue;
+
+            cyxwiz::ModuleType type;
+            std::map<std::string, std::string> params;
+
+            if (!ParseModuleName(name, type, params)) {
+                spdlog::error("CyxWizLoader: Failed to parse module: {}", name);
+                return false;
+            }
+
+            auto module = cyxwiz::CreateModule(type, params);
+            if (!module) {
+                spdlog::error("CyxWizLoader: Failed to create module: {}", name);
+                return false;
+            }
+
+            model->AddModule(std::move(module));
+            spdlog::debug("CyxWizLoader: Added module: {}", name);
+        }
+
+        return model->Size() > 0;
+    }
+
+    // Read .cyxmodel header and extract JSON metadata
+    bool ReadModelHeader(const std::string& path) {
+        std::ifstream file(path, std::ios::binary);
+        if (!file) {
+            spdlog::error("CyxWizLoader: Failed to open file: {}", path);
+            return false;
+        }
+
+        // Read magic number
+        uint32_t magic;
+        file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        if (magic != 0x43595857) {  // "CYXW"
+            spdlog::error("CyxWizLoader: Invalid magic number");
+            return false;
+        }
+
+        // Read version
+        uint32_t version;
+        file.read(reinterpret_cast<char*>(&version), sizeof(version));
+        if (version != 2) {
+            spdlog::error("CyxWizLoader: Unsupported format version: {}", version);
+            return false;
+        }
+
+        // Read JSON length
+        uint64_t json_len;
+        file.read(reinterpret_cast<char*>(&json_len), sizeof(json_len));
+
+        // Read JSON data
+        std::string json_str(json_len, '\0');
+        file.read(json_str.data(), json_len);
+
+        // Parse JSON
+        try {
+            metadata = json::parse(json_str);
+        } catch (const std::exception& e) {
+            spdlog::error("CyxWizLoader: Failed to parse JSON: {}", e.what());
+            return false;
+        }
+
+        return true;
+    }
+
+    // Infer input/output specs from the model architecture
+    void InferSpecs() {
+        input_specs.clear();
+        output_specs.clear();
+
+        if (!metadata.contains("modules") || metadata["modules"].empty()) {
+            return;
+        }
+
+        // Find first Linear layer for input spec
+        for (const auto& mod : metadata["modules"]) {
+            std::string name = mod.value("name", "");
+            std::regex linear_regex(R"(Linear\((\d+)\s*->\s*(\d+)\))");
+            std::smatch match;
+            if (std::regex_search(name, match, linear_regex)) {
+                TensorSpec input_spec;
+                input_spec.name = "input";
+                input_spec.shape = {-1, std::stoll(match[1].str())};  // [batch, in_features]
+                input_spec.dtype = "float32";
+                input_specs.push_back(input_spec);
+                break;
+            }
+        }
+
+        // Find last Linear layer for output spec
+        for (auto it = metadata["modules"].rbegin(); it != metadata["modules"].rend(); ++it) {
+            std::string name = (*it).value("name", "");
+            std::regex linear_regex(R"(Linear\((\d+)\s*->\s*(\d+)\))");
+            std::smatch match;
+            if (std::regex_search(name, match, linear_regex)) {
+                TensorSpec output_spec;
+                output_spec.name = "output";
+                output_spec.shape = {-1, std::stoll(match[2].str())};  // [batch, out_features]
+                output_spec.dtype = "float32";
+                output_specs.push_back(output_spec);
+                break;
+            }
+        }
+    }
+};
+
+CyxWizLoader::CyxWizLoader() : impl_(std::make_unique<Impl>()) {
+    spdlog::debug("CyxWizLoader created");
+}
+
+CyxWizLoader::~CyxWizLoader() {
+    Unload();
+}
+
+bool CyxWizLoader::Load(const std::string& model_path) {
+    spdlog::info("Loading CyxWiz model from: {}", model_path);
+
+    try {
+        // Ensure .cyxmodel extension
+        std::string path = model_path;
+        if (path.size() < 9 || path.substr(path.size() - 9) != ".cyxmodel") {
+            path += ".cyxmodel";
+        }
+
+        // Check file exists
+        if (!std::filesystem::exists(path)) {
+            spdlog::error("CyxWizLoader: File not found: {}", path);
+            return false;
+        }
+
+        impl_->model_path = path;
+
+        // Read header and extract metadata
+        if (!impl_->ReadModelHeader(path)) {
+            return false;
+        }
+
+        // Build model architecture from metadata
+        if (!impl_->BuildArchitectureFromMetadata()) {
+            spdlog::error("CyxWizLoader: Failed to build architecture");
+            return false;
+        }
+
+        // Load weights using SequentialModel::Load()
+        if (!impl_->model->Load(path)) {
+            spdlog::error("CyxWizLoader: Failed to load weights");
+            return false;
+        }
+
+        // Set to inference mode
+        impl_->model->SetTraining(false);
+
+        // Infer input/output specs
+        impl_->InferSpecs();
+
+        // Estimate memory usage (rough estimate based on parameters)
+        auto params = impl_->model->GetParameters();
+        uint64_t param_bytes = 0;
+        for (const auto& [name, tensor] : params) {
+            param_bytes += tensor.NumBytes();
+        }
+        impl_->memory_usage = param_bytes;
+
+        impl_->loaded = true;
+        spdlog::info("CyxWizLoader: Model loaded successfully ({} modules, {} bytes)",
+                     impl_->model->Size(), impl_->memory_usage);
+
+        return true;
+
+    } catch (const std::exception& e) {
+        spdlog::error("CyxWizLoader: Exception during load: {}", e.what());
+        impl_->loaded = false;
+        return false;
+    }
+}
+
+bool CyxWizLoader::Infer(
+    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+
+    if (!impl_->loaded || !impl_->model) {
+        spdlog::error("CyxWizLoader: Model not loaded");
+        return false;
+    }
+
+    try {
+        // Get input tensor (expect "input" key)
+        auto it = inputs.find("input");
+        if (it == inputs.end()) {
+            // Try to use first input if "input" not found
+            if (inputs.empty()) {
+                spdlog::error("CyxWizLoader: No input tensors provided");
+                return false;
+            }
+            it = inputs.begin();
+        }
+
+        // Run forward pass
+        cyxwiz::Tensor output = impl_->model->Forward(it->second);
+
+        // Store output
+        outputs["output"] = std::move(output);
+
+        return true;
+
+    } catch (const std::exception& e) {
+        spdlog::error("CyxWizLoader: Inference exception: {}", e.what());
+        return false;
+    }
+}
+
+std::vector<TensorSpec> CyxWizLoader::GetInputSpecs() const {
+    return impl_->input_specs;
+}
+
+std::vector<TensorSpec> CyxWizLoader::GetOutputSpecs() const {
+    return impl_->output_specs;
+}
+
+uint64_t CyxWizLoader::GetMemoryUsage() const {
+    return impl_->memory_usage;
+}
+
+void CyxWizLoader::Unload() {
+    if (impl_->loaded) {
+        spdlog::info("CyxWizLoader: Unloading model");
+        impl_->model.reset();
+        impl_->loaded = false;
+        impl_->input_specs.clear();
+        impl_->output_specs.clear();
+        impl_->memory_usage = 0;
+        impl_->metadata.clear();
+    }
+}
+
+bool CyxWizLoader::IsLoaded() const {
     return impl_->loaded;
 }
 

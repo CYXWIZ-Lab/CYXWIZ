@@ -442,6 +442,9 @@ void NodeEditor::Render() {
         // Show search bar if visible (Ctrl+F to toggle)
         ShowSearchBar();
 
+        // Show node add search (top-right search box for quick node creation)
+        ShowNodeAddSearch();
+
         // Update properties panel with selected node
         const int num_selected = ImNodes::NumSelectedNodes();
 

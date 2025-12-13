@@ -12,7 +12,7 @@ message NodeInfo {
   Version version = 3;
 
   // Hardware
-  repeated DeviceCapabilities devices = 4;
+  repeated DeviceCaps devices = 4;
   int32 cpu_cores = 5;
   int64 ram_total = 6;
   int64 ram_available = 7;

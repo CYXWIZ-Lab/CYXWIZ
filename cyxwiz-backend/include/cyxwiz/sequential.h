@@ -28,7 +28,12 @@ enum class ModuleType {
     Softmax,
     Dropout,
     BatchNorm,
-    Flatten
+    Flatten,
+    LeakyReLU,
+    ELU,
+    GELU,
+    Swish,
+    Mish
 };
 
 /**
@@ -411,6 +416,43 @@ public:
      */
     void Summary() const;
 
+    // ==================== Serialization ====================
+
+    /**
+     * @brief Save model to file
+     * @param path Base path (will create .json and .bin files)
+     * @return true if successful
+     */
+    bool Save(const std::string& path) const;
+
+    /**
+     * @brief Load model weights from file
+     * @param path Base path (expects .json and .bin files)
+     * @return true if successful
+     * @note Model architecture must already be set up before loading
+     */
+    bool Load(const std::string& path);
+
+    /**
+     * @brief Set model name (for metadata)
+     */
+    void SetName(const std::string& name) { model_name_ = name; }
+
+    /**
+     * @brief Get model name
+     */
+    const std::string& GetName() const { return model_name_; }
+
+    /**
+     * @brief Set model description (for metadata)
+     */
+    void SetDescription(const std::string& desc) { model_description_ = desc; }
+
+    /**
+     * @brief Get model description
+     */
+    const std::string& GetDescription() const { return model_description_; }
+
     // ==================== Transfer Learning ====================
 
     /**
@@ -446,6 +488,8 @@ public:
 private:
     std::vector<std::unique_ptr<Module>> modules_;
     std::vector<Tensor> intermediate_outputs_;  // Cached for backward pass
+    std::string model_name_;
+    std::string model_description_;
 };
 
 /**

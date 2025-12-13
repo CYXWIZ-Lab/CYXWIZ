@@ -45,6 +45,7 @@ class VariableExplorerPanel;
 class TestResultsPanel;
 class ExportDialog;
 class ImportDialog;
+class DeploymentDialog;
 class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
@@ -185,6 +186,7 @@ private:
     void BuildInitialDockLayout();
     void ShowAboutDialog();
     void RegisterPanelsWithSidebar();
+    void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
     void RenderSidebar();
     void RenderStatusBar();
     void HandleGlobalShortcuts();
@@ -227,6 +229,7 @@ private:
     std::unique_ptr<cyxwiz::TestResultsPanel> test_results_panel_;
     std::unique_ptr<cyxwiz::ExportDialog> export_dialog_;
     std::unique_ptr<cyxwiz::ImportDialog> import_dialog_;
+    std::unique_ptr<cyxwiz::DeploymentDialog> deployment_dialog_;
 
     // Model Analysis panels (Phase 2)
     std::unique_ptr<cyxwiz::ModelSummaryPanel> model_summary_panel_;

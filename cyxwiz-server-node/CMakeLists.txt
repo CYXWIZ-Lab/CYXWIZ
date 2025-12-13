@@ -87,6 +87,8 @@ set(DAEMON_SOURCES
     # HTTP API server
     src/http/openai_api_server.cpp
     src/http/routes/models_route.cpp
+    # gRPC InferenceService
+    src/inference_handler.cpp
     src/http/routes/chat_route.cpp
     src/http/routes/completions_route.cpp
     src/http/routes/embeddings_route.cpp

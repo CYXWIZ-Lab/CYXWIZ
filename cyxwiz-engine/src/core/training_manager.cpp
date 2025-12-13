@@ -283,4 +283,32 @@ void TrainingManager::ClearTrainedModel() {
     spdlog::info("TrainingManager: Cleared preserved trained model");
 }
 
+bool TrainingManager::SaveModel(const std::string& path,
+                                 const std::string& name,
+                                 const std::string& description) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!last_trained_model_) {
+        spdlog::error("TrainingManager::SaveModel: No trained model available");
+        return false;
+    }
+
+    // Set metadata if provided
+    if (!name.empty()) {
+        last_trained_model_->SetName(name);
+    }
+    if (!description.empty()) {
+        last_trained_model_->SetDescription(description);
+    }
+
+    // Save the model
+    if (last_trained_model_->Save(path)) {
+        spdlog::info("TrainingManager::SaveModel: Model saved to {}", path);
+        return true;
+    }
+
+    spdlog::error("TrainingManager::SaveModel: Failed to save model to {}", path);
+    return false;
+}
+
 } // namespace cyxwiz

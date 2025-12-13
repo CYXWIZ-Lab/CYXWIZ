@@ -12,6 +12,7 @@ find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
+find_package(httplib CONFIG REQUIRED)
 
 # Optional: HDF5 support for data files
 find_package(HighFive CONFIG)
@@ -66,6 +67,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_nodes.cpp
     src/gui/node_editor_validation.cpp
     src/gui/node_editor_skip.cpp
+    src/gui/node_editor_add_search.cpp
     src/gui/node_documentation.cpp
     src/gui/console.cpp
     src/gui/viewport.cpp
@@ -98,6 +100,9 @@ set(ENGINE_SOURCES
     src/gui/panels/test_results_panel.cpp
     src/gui/panels/export_dialog.cpp
     src/gui/panels/import_dialog.cpp
+    src/gui/panels/deployment_dialog.cpp
+    src/network/deployment_client.cpp
+    src/inference/local_inference_server.cpp
     src/gui/panels/model_summary_panel.cpp
     src/gui/panels/architecture_diagram.cpp
     src/gui/panels/lr_finder_panel.cpp
@@ -246,6 +251,9 @@ set(ENGINE_HEADERS
     src/gui/panels/test_results_panel.h
     src/gui/panels/export_dialog.h
     src/gui/panels/import_dialog.h
+    src/gui/panels/deployment_dialog.h
+    src/network/deployment_client.h
+    src/inference/local_inference_server.h
     src/gui/panels/model_summary_panel.h
     src/gui/panels/architecture_diagram.h
     src/gui/panels/lr_finder_panel.h
@@ -381,6 +389,7 @@ target_link_libraries(cyxwiz-engine PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     pybind11::embed
+    httplib::httplib
     cyxwiz-backend
     cyxwiz-protocol
 )

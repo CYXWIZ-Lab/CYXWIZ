@@ -1163,6 +1163,28 @@ MatrixResult LinearAlgebra::Identity(int n) {
     return result;
 }
 
+MatrixResult LinearAlgebra::Identity(int rows, int cols) {
+    MatrixResult result;
+    if (rows <= 0 || cols <= 0) {
+        result.error_message = "Dimensions must be positive";
+        return result;
+    }
+
+    result.matrix.resize(rows, std::vector<double>(cols, 0.0));
+    int diag_len = std::min(rows, cols);
+    for (int i = 0; i < diag_len; ++i) {
+        result.matrix[i][i] = 1.0;
+    }
+    result.rows = rows;
+    result.cols = cols;
+    result.success = true;
+    return result;
+}
+
+MatrixResult LinearAlgebra::Zeros(int n) {
+    return Zeros(n, n);
+}
+
 MatrixResult LinearAlgebra::Zeros(int rows, int cols) {
     MatrixResult result;
     if (rows <= 0 || cols <= 0) {
@@ -1175,6 +1197,10 @@ MatrixResult LinearAlgebra::Zeros(int rows, int cols) {
     result.cols = cols;
     result.success = true;
     return result;
+}
+
+MatrixResult LinearAlgebra::Ones(int n) {
+    return Ones(n, n);
 }
 
 MatrixResult LinearAlgebra::Ones(int rows, int cols) {

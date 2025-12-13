@@ -203,11 +203,20 @@ public:
 
     // ==================== Utility ====================
 
-    // Create identity matrix
+    // Create identity matrix (square)
     static MatrixResult Identity(int n);
+
+    // Create identity matrix (non-square) - 1s on main diagonal
+    static MatrixResult Identity(int rows, int cols);
+
+    // Create zero matrix (square)
+    static MatrixResult Zeros(int n);
 
     // Create zero matrix
     static MatrixResult Zeros(int rows, int cols);
+
+    // Create matrix filled with ones (square)
+    static MatrixResult Ones(int n);
 
     // Create matrix filled with ones
     static MatrixResult Ones(int rows, int cols);

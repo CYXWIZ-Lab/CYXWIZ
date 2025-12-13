@@ -306,8 +306,10 @@ void ToolbarPanel::RenderDeployMenu() {
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Deploy to Server Node...")) {
-            // TODO: Deploy to node
+        if (ImGui::MenuItem(ICON_FA_ROCKET " Deploy to Server Node...")) {
+            if (deploy_to_server_callback_) {
+                deploy_to_server_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Publish to Marketplace...")) {

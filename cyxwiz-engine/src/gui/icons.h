@@ -144,6 +144,7 @@
 #define ICON_FA_PLUG                "\xef\x87\xa6"  // U+F1E6
 #define ICON_FA_LINK                "\xef\x83\x81"  // U+F0C1
 #define ICON_FA_LINK_SLASH          "\xef\x84\xa7"  // U+F127
+#define ICON_FA_ROCKET              "\xef\x84\xb5"  // U+F135 - rocket/deploy
 
 // Search/Filter
 #define ICON_FA_FILTER              "\xef\x82\xb0"  // U+F0B0 - filter

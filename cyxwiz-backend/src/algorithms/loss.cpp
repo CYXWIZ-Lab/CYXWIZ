@@ -38,11 +38,22 @@ static af::dtype ToAfType(DataType dtype) {
 }
 
 // Helper: Create ArrayFire array from Tensor
+// Note: CyxWiz Tensor uses row-major (C-style), ArrayFire uses column-major (Fortran-style)
+// For 2D arrays [rows, cols], we need to transpose after loading row-major data
 static af::array TensorToAf(const Tensor& t) {
     const auto& shape = t.Shape();
     af::dim4 dims(1, 1, 1, 1);
     for (size_t i = 0; i < shape.size() && i < 4; i++) {
         dims[static_cast<unsigned int>(i)] = static_cast<dim_t>(shape[i]);
+    }
+
+    // For 2D arrays, swap dimensions to account for row-major input
+    // We load as [cols, rows] then transpose to get [rows, cols] in column-major
+    if (shape.size() == 2) {
+        af::dim4 swapped_dims(dims[1], dims[0], 1, 1);
+        af::array arr(swapped_dims, ToAfType(t.GetDataType()));
+        arr.write(t.Data(), arr.bytes(), afHost);
+        return af::transpose(arr);  // Now [rows, cols] in column-major
     }
 
     af::array arr(dims, ToAfType(t.GetDataType()));
@@ -51,22 +62,13 @@ static af::array TensorToAf(const Tensor& t) {
 }
 
 // Helper: Create Tensor from ArrayFire array
+// Note: Transpose 2D arrays back to row-major for CyxWiz Tensor
 static Tensor AfToTensor(const af::array& arr) {
-    std::vector<size_t> shape;
+    // Count significant dimensions
+    int ndims = 0;
     for (unsigned int i = 0; i < 4; i++) {
-        if (arr.dims(i) > 1 || i == 0) {
-            shape.push_back(static_cast<size_t>(arr.dims(i)));
-        } else if (i > 0 && arr.dims(i) == 1) {
-            bool all_ones = true;
-            for (unsigned int j = i; j < 4; j++) {
-                if (arr.dims(j) != 1) {
-                    all_ones = false;
-                    break;
-                }
-            }
-            if (all_ones) break;
-            shape.push_back(static_cast<size_t>(arr.dims(i)));
-        }
+        if (arr.dims(i) > 1) ndims = i + 1;
+        else if (i == 0) ndims = 1;
     }
 
     DataType dtype = DataType::Float32;
@@ -78,6 +80,25 @@ static Tensor AfToTensor(const af::array& arr) {
         case af::dtype::u8: dtype = DataType::UInt8; break;
         default: dtype = DataType::Float32;
     }
+
+    // For 2D arrays, transpose to row-major before copying to Tensor
+    if (ndims == 2) {
+        af::array transposed = af::transpose(arr);
+        std::vector<size_t> shape = {
+            static_cast<size_t>(arr.dims(0)),
+            static_cast<size_t>(arr.dims(1))
+        };
+        Tensor result(shape, dtype);
+        transposed.host(result.Data());
+        return result;
+    }
+
+    // For other dimensions, copy directly
+    std::vector<size_t> shape;
+    for (int i = 0; i < ndims; i++) {
+        shape.push_back(static_cast<size_t>(arr.dims(i)));
+    }
+    if (shape.empty()) shape.push_back(1);
 
     Tensor result(shape, dtype);
     arr.host(result.Data());
@@ -331,6 +352,49 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
         } else {
             // Targets are one-hot encoded or soft labels
             loss = -target * log_softmax;
+
+            // DEBUG: Log shapes and sample values (first batch only)
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                spdlog::info("DEBUG CrossEntropy: pred dims=({},{},{},{}), target dims=({},{},{},{})",
+                    pred.dims(0), pred.dims(1), pred.dims(2), pred.dims(3),
+                    target.dims(0), target.dims(1), target.dims(2), target.dims(3));
+                spdlog::info("DEBUG CrossEntropy: loss before sum dims=({},{},{},{})",
+                    loss.dims(0), loss.dims(1), loss.dims(2), loss.dims(3));
+
+                // Sample first batch element
+                af::array sample_softmax = softmax_pred(0, af::span);
+                af::array sample_target = target(0, af::span);
+                af::array sample_loss = loss(0, af::span);
+
+                float* sm_data = sample_softmax.host<float>();
+                float* tg_data = sample_target.host<float>();
+                float* ls_data = sample_loss.host<float>();
+
+                spdlog::info("DEBUG CrossEntropy: First sample softmax probs:");
+                std::string sm_str = "  [";
+                for (int i = 0; i < std::min((int)pred.dims(1), 10); i++) {
+                    sm_str += fmt::format("{:.4f}", sm_data[i]);
+                    if (i < std::min((int)pred.dims(1), 10) - 1) sm_str += ", ";
+                }
+                sm_str += "]";
+                spdlog::info("{}", sm_str);
+
+                spdlog::info("DEBUG CrossEntropy: First sample per-class loss:");
+                std::string ls_str = "  [";
+                for (int i = 0; i < std::min((int)pred.dims(1), 10); i++) {
+                    ls_str += fmt::format("{:.4f}", ls_data[i]);
+                    if (i < std::min((int)pred.dims(1), 10) - 1) ls_str += ", ";
+                }
+                ls_str += "]";
+                spdlog::info("{}", ls_str);
+
+                af::freeHost(sm_data);
+                af::freeHost(tg_data);
+                af::freeHost(ls_data);
+            }
+
             // Sum over class dimension
             loss = af::sum(loss, class_axis);
             loss = ApplyReduction(loss, reduction_);

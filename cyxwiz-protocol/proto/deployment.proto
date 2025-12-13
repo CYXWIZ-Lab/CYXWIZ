@@ -19,13 +19,15 @@ enum ModelFormat {
   MODEL_FORMAT_SAFETENSORS = 5;
   MODEL_FORMAT_TFLITE = 6;
   MODEL_FORMAT_TORCHSCRIPT = 7;
+  MODEL_FORMAT_CYXMODEL = 8;       // CyxWiz native format (.cyxmodel)
 }
 
 // Deployment types
 enum DeploymentType {
   DEPLOYMENT_TYPE_UNKNOWN = 0;
-  DEPLOYMENT_TYPE_LOCAL = 1;       // Deploy on user's machine
-  DEPLOYMENT_TYPE_NETWORK = 2;     // Deploy on decentralized network
+  DEPLOYMENT_TYPE_EMBEDDED = 1;    // In-process HTTP server within Engine
+  DEPLOYMENT_TYPE_LOCAL_NODE = 2;  // Local Server Node (separate process, same machine)
+  DEPLOYMENT_TYPE_NETWORK = 3;     // Remote Server Node (decentralized network)
 }
 
 // Deployment status
@@ -104,6 +106,15 @@ message DeploymentConfig {
   map<string, string> runtime_params = 10; // e.g., {"max_batch_size": "8"}
   int32 port = 11;                 // Port for model serving
   bool enable_terminal = 12;       // Enable terminal access
+
+  // GPU/Compute configuration
+  int32 gpu_layers = 13;           // Number of layers to offload to GPU (0 = CPU only)
+  int32 context_size = 14;         // Context window size for LLMs (default: 2048)
+  int32 batch_size = 15;           // Maximum batch size for inference
+  int32 threads = 16;              // CPU threads for inference (0 = auto)
+
+  // Embedded deployment specific
+  string server_address = 17;      // For LOCAL_NODE/NETWORK: "host:port" of Server Node
 }
 
 // Deployment instance

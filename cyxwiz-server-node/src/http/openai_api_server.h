@@ -1,31 +1,62 @@
-// openai_api_server.h - OpenAI-compatible HTTP API server (stub)
+// openai_api_server.h - HTTP REST API server for model inference
 #pragma once
 
 #include <string>
 #include <memory>
+#include <thread>
+#include <atomic>
+#include <functional>
+
+// Forward declare httplib types to avoid including in header
+namespace httplib {
+class Server;
+}
 
 namespace cyxwiz::servernode {
 
 class DeploymentManager;
 
-// Stub implementation for HTTP API server
+// HTTP REST API server providing inference endpoints
 class OpenAIAPIServer {
 public:
-    explicit OpenAIAPIServer(int port)
-        : port_(port), deployment_manager_(nullptr) {}
+    explicit OpenAIAPIServer(int port);
+    OpenAIAPIServer(int port, DeploymentManager* deployment_manager);
+    ~OpenAIAPIServer();
 
-    OpenAIAPIServer(int port, DeploymentManager* deployment_manager)
-        : port_(port), deployment_manager_(deployment_manager) {}
+    // Start the HTTP server (non-blocking, runs in a thread)
+    bool Start();
 
-    ~OpenAIAPIServer() = default;
+    // Stop the HTTP server
+    void Stop();
 
-    bool Start() { return false; }  // TODO: Implement
-    void Stop() {}
-    bool IsRunning() const { return false; }
+    // Check if server is running
+    bool IsRunning() const;
+
+    // Get the port
+    int GetPort() const { return port_; }
+
+    // Set deployment manager (can be set after construction)
+    void SetDeploymentManager(DeploymentManager* manager);
+
+private:
+    // Register all routes
+    void RegisterRoutes();
+
+    // Health check endpoint
+    void HandleHealth();
+
+    // List deployed models
+    void HandleModels();
+
+    // Run inference prediction
+    void HandlePredict();
 
 private:
     int port_;
     DeploymentManager* deployment_manager_;
+    std::unique_ptr<httplib::Server> server_;
+    std::thread server_thread_;
+    std::atomic<bool> running_{false};
 };
 
 } // namespace cyxwiz::servernode

@@ -1,5 +1,6 @@
 #include "training_executor.h"
 #include <spdlog/spdlog.h>
+#include <spdlog/fmt/fmt.h>
 #include <cmath>
 #include <algorithm>
 
@@ -264,10 +265,14 @@ void TrainingExecutor::Train(
 
     // Apply preprocessing settings
     if (config_.preprocessing.has_normalization) {
+        spdlog::info("TrainingExecutor: Applying normalization (mean={}, std={})",
+                     config_.preprocessing.norm_mean, config_.preprocessing.norm_std);
         train_batcher.SetNormalization(config_.preprocessing.norm_mean,
                                         config_.preprocessing.norm_std);
         val_batcher.SetNormalization(config_.preprocessing.norm_mean,
                                       config_.preprocessing.norm_std);
+    } else {
+        spdlog::info("TrainingExecutor: No normalization configured");
     }
 
     if (config_.preprocessing.has_onehot) {
@@ -386,6 +391,42 @@ void TrainingExecutor::RunTrainingEpoch(
 
         // Forward pass through model
         Tensor predictions = Forward(batch.data);
+
+        // DEBUG: Log sample values for first batch of first epoch
+        if (epoch == 1 && batch_num == 1) {
+            const float* input_data = batch.data.Data<float>();
+            const float* pred_data_debug = predictions.Data<float>();
+            const float* target_data_debug = batch.labels.Data<float>();
+
+            // Log input data range
+            float min_input = input_data[0], max_input = input_data[0];
+            size_t input_size = batch.data.Shape()[0] * batch.data.Shape()[1];
+            for (size_t i = 1; i < std::min(input_size, size_t(1000)); ++i) {
+                min_input = std::min(min_input, input_data[i]);
+                max_input = std::max(max_input, input_data[i]);
+            }
+            spdlog::info("DEBUG: Input data range: [{:.4f}, {:.4f}]", min_input, max_input);
+
+            // Log first sample prediction
+            spdlog::info("DEBUG: First sample predictions:");
+            std::string pred_str = "  [";
+            for (size_t c = 0; c < config_.output_size; ++c) {
+                pred_str += fmt::format("{:.4f}", pred_data_debug[c]);
+                if (c < config_.output_size - 1) pred_str += ", ";
+            }
+            pred_str += "]";
+            spdlog::info("{}", pred_str);
+
+            // Log first sample target
+            spdlog::info("DEBUG: First sample target:");
+            std::string target_str = "  [";
+            for (size_t c = 0; c < config_.output_size; ++c) {
+                target_str += fmt::format("{:.1f}", target_data_debug[c]);
+                if (c < config_.output_size - 1) target_str += ", ";
+            }
+            target_str += "]";
+            spdlog::info("{}", target_str);
+        }
 
         // Compute loss
         float batch_loss = ComputeLoss(predictions, batch.labels);
