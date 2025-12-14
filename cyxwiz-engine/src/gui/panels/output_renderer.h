@@ -6,11 +6,8 @@
 #include <functional>
 #include <imgui.h>
 
-#ifdef _WIN32
+// Use GLAD for cross-platform OpenGL loading
 #include <glad/glad.h>
-#else
-#include <GL/gl.h>
-#endif
 
 namespace cyxwiz {
 
