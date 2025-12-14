@@ -25,9 +25,17 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
-#else
+#elif defined(__APPLE__)
 #include <unistd.h>
 #include <pwd.h>
+#include <sys/sysctl.h>
+#include <mach/mach.h>
+#include <mach/mach_host.h>
+#else
+// Linux
+#include <unistd.h>
+#include <pwd.h>
+#include <sys/sysinfo.h>
 #endif
 
 using json = nlohmann::json;
@@ -655,7 +663,16 @@ HardwareSpecs AuthManager::DetectHardware() {
     memInfo.dwLength = sizeof(MEMORYSTATUSEX);
     GlobalMemoryStatusEx(&memInfo);
     total_ram = static_cast<int64_t>(memInfo.ullTotalPhys);
+#elif defined(__APPLE__)
+    // macOS: Use sysctl to get total physical memory
+    int mib[2] = { CTL_HW, HW_MEMSIZE };
+    int64_t memsize = 0;
+    size_t len = sizeof(memsize);
+    if (sysctl(mib, 2, &memsize, &len, NULL, 0) == 0) {
+        total_ram = memsize;
+    }
 #else
+    // Linux
     struct sysinfo memInfo;
     sysinfo(&memInfo);
     total_ram = static_cast<int64_t>(memInfo.totalram) * memInfo.mem_unit;
