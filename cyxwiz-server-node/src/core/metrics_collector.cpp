@@ -12,7 +12,19 @@
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "psapi.lib")
 #pragma comment(lib, "dxgi.lib")
+#elif defined(__APPLE__)
+#include <sys/sysctl.h>
+#include <sys/statvfs.h>
+#include <mach/mach.h>
+#include <mach/mach_host.h>
+#include <net/if.h>
+#include <net/if_dl.h>
+#include <ifaddrs.h>
+#include <fstream>
+#include <sstream>
+#include <cstring>
 #else
+// Linux
 #include <sys/sysinfo.h>
 #include <sys/statvfs.h>
 #include <fstream>
@@ -1190,7 +1202,147 @@ float MetricsCollector::CollectNetworkOut() {
     return 0.0f;
 }
 
-#else  // Linux/macOS
+#elif defined(__APPLE__)  // macOS
+
+float MetricsCollector::CollectCPUUsage() {
+    // macOS: Use host_processor_info or read from sysctl
+    // Simplified: use host_statistics for CPU load
+    host_cpu_load_info_data_t cpuinfo;
+    mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+
+    if (host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO,
+                       (host_info_t)&cpuinfo, &count) != KERN_SUCCESS) {
+        return 0.0f;
+    }
+
+    unsigned long long total = 0;
+    for (int i = 0; i < CPU_STATE_MAX; i++) {
+        total += cpuinfo.cpu_ticks[i];
+    }
+
+    unsigned long long idle = cpuinfo.cpu_ticks[CPU_STATE_IDLE];
+
+    float usage = 0.0f;
+    if (last_cpu_total_ > 0) {
+        unsigned long long total_diff = total - last_cpu_total_;
+        unsigned long long idle_diff = idle - last_cpu_idle_;
+        if (total_diff > 0) {
+            usage = 1.0f - (static_cast<float>(idle_diff) / total_diff);
+        }
+    }
+
+    last_cpu_total_ = total;
+    last_cpu_idle_ = idle;
+
+    return usage;
+}
+
+size_t MetricsCollector::CollectRAMUsed() {
+    // macOS: Use vm_statistics to get memory usage
+    vm_size_t page_size;
+    mach_port_t mach_port = mach_host_self();
+    vm_statistics64_data_t vm_stats;
+    mach_msg_type_number_t count = sizeof(vm_stats) / sizeof(natural_t);
+
+    host_page_size(mach_port, &page_size);
+
+    if (host_statistics64(mach_port, HOST_VM_INFO64,
+                         (host_info64_t)&vm_stats, &count) != KERN_SUCCESS) {
+        return 0;
+    }
+
+    // Used memory = total - free - inactive - speculative - purgeable
+    // For a simpler calculation, use: wired + active + compressed
+    size_t used = (vm_stats.wire_count + vm_stats.active_count +
+                   vm_stats.compressor_page_count) * page_size;
+    return used;
+}
+
+size_t MetricsCollector::CollectRAMTotal() {
+    // macOS: Use sysctl to get total physical memory
+    int mib[2] = { CTL_HW, HW_MEMSIZE };
+    int64_t memsize = 0;
+    size_t len = sizeof(memsize);
+
+    if (sysctl(mib, 2, &memsize, &len, NULL, 0) == 0) {
+        return static_cast<size_t>(memsize);
+    }
+    return 0;
+}
+
+float MetricsCollector::CollectNetworkIn() {
+    // macOS: Use getifaddrs to get network statistics
+    // Note: This is a simplified implementation - for full stats would need IOKit
+    struct ifaddrs *ifaddr, *ifa;
+    uint64_t total_bytes = 0;
+
+    if (getifaddrs(&ifaddr) == -1) {
+        return 0.0f;
+    }
+
+    for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr) continue;
+        if (ifa->ifa_addr->sa_family != AF_LINK) continue;
+        // Skip loopback
+        if (strcmp(ifa->ifa_name, "lo0") == 0) continue;
+
+        struct if_data *if_data = (struct if_data *)ifa->ifa_data;
+        if (if_data) {
+            total_bytes += if_data->ifi_ibytes;
+        }
+    }
+
+    freeifaddrs(ifaddr);
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_sample_time_).count();
+
+    float mbps = 0.0f;
+    if (elapsed > 0 && last_net_bytes_in_ > 0) {
+        uint64_t bytes_diff = total_bytes - last_net_bytes_in_;
+        mbps = (bytes_diff * 8.0f) / (elapsed * 1000.0f);
+    }
+
+    last_net_bytes_in_ = total_bytes;
+    return mbps;
+}
+
+float MetricsCollector::CollectNetworkOut() {
+    struct ifaddrs *ifaddr, *ifa;
+    uint64_t total_bytes = 0;
+
+    if (getifaddrs(&ifaddr) == -1) {
+        return 0.0f;
+    }
+
+    for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr) continue;
+        if (ifa->ifa_addr->sa_family != AF_LINK) continue;
+        if (strcmp(ifa->ifa_name, "lo0") == 0) continue;
+
+        struct if_data *if_data = (struct if_data *)ifa->ifa_data;
+        if (if_data) {
+            total_bytes += if_data->ifi_obytes;
+        }
+    }
+
+    freeifaddrs(ifaddr);
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_sample_time_).count();
+
+    float mbps = 0.0f;
+    if (elapsed > 0 && last_net_bytes_out_ > 0) {
+        uint64_t bytes_diff = total_bytes - last_net_bytes_out_;
+        mbps = (bytes_diff * 8.0f) / (elapsed * 1000.0f);
+    }
+
+    last_net_bytes_out_ = total_bytes;
+    last_sample_time_ = now;
+    return mbps;
+}
+
+#else  // Linux
 
 float MetricsCollector::CollectCPUUsage() {
     std::ifstream stat("/proc/stat");

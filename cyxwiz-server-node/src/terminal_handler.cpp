@@ -5,13 +5,20 @@
 #ifdef _WIN32
 #include <windows.h>
 // TODO: Include ConPTY headers when implementing
+#elif defined(__APPLE__)
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <util.h>  // macOS uses util.h for openpty()
 #else
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
-#include <pty.h>
+#include <pty.h>   // Linux uses pty.h for openpty()
 #endif
 
 namespace cyxwiz {

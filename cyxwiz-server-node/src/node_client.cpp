@@ -10,7 +10,17 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #pragma comment(lib, "iphlpapi.lib")
+#elif defined(__APPLE__)
+#include <unistd.h>
+#include <sys/sysctl.h>
+#include <sys/types.h>
+#include <mach/mach.h>
+#include <mach/mach_host.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #else
+// Linux
 #include <unistd.h>
 #include <sys/sysinfo.h>
 #include <sys/types.h>
@@ -115,7 +125,17 @@ int64_t HardwareDetector::GetTotalRAM() {
     memInfo.dwLength = sizeof(MEMORYSTATUSEX);
     GlobalMemoryStatusEx(&memInfo);
     return static_cast<int64_t>(memInfo.ullTotalPhys);
+#elif defined(__APPLE__)
+    // macOS: Use sysctl to get total physical memory
+    int mib[2] = { CTL_HW, HW_MEMSIZE };
+    int64_t memsize = 0;
+    size_t len = sizeof(memsize);
+    if (sysctl(mib, 2, &memsize, &len, NULL, 0) == 0) {
+        return memsize;
+    }
+    return 0;
 #else
+    // Linux
     struct sysinfo memInfo;
     sysinfo(&memInfo);
     return static_cast<int64_t>(memInfo.totalram) * memInfo.mem_unit;
@@ -128,7 +148,25 @@ int64_t HardwareDetector::GetAvailableRAM() {
     memInfo.dwLength = sizeof(MEMORYSTATUSEX);
     GlobalMemoryStatusEx(&memInfo);
     return static_cast<int64_t>(memInfo.ullAvailPhys);
+#elif defined(__APPLE__)
+    // macOS: Use vm_statistics to get available memory
+    vm_size_t page_size;
+    mach_port_t mach_port = mach_host_self();
+    vm_statistics64_data_t vm_stats;
+    mach_msg_type_number_t count = sizeof(vm_stats) / sizeof(natural_t);
+
+    host_page_size(mach_port, &page_size);
+
+    if (host_statistics64(mach_port, HOST_VM_INFO64,
+                         (host_info64_t)&vm_stats, &count) == KERN_SUCCESS) {
+        // Available = free + inactive + speculative
+        int64_t available = (vm_stats.free_count + vm_stats.inactive_count +
+                            vm_stats.speculative_count) * page_size;
+        return available;
+    }
+    return 0;
 #else
+    // Linux
     struct sysinfo memInfo;
     sysinfo(&memInfo);
     return static_cast<int64_t>(memInfo.freeram) * memInfo.mem_unit;
