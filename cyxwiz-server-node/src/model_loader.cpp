@@ -571,62 +571,346 @@ bool CyxWizLoader::Load(const std::string& model_path) {
     spdlog::info("Loading CyxWiz model from: {}", model_path);
 
     try {
-        // Ensure .cyxmodel extension
-        std::string path = model_path;
-        if (path.size() < 9 || path.substr(path.size() - 9) != ".cyxmodel") {
-            path += ".cyxmodel";
-        }
-
-        // Check file exists
-        if (!std::filesystem::exists(path)) {
-            spdlog::error("CyxWizLoader: File not found: {}", path);
+        // Check path exists
+        if (!std::filesystem::exists(model_path)) {
+            spdlog::error("CyxWizLoader: Path not found: {}", model_path);
             return false;
         }
 
-        impl_->model_path = path;
+        impl_->model_path = model_path;
 
-        // Read header and extract metadata
-        if (!impl_->ReadModelHeader(path)) {
-            return false;
+        // Check if it's directory format or binary format
+        if (std::filesystem::is_directory(model_path)) {
+            // Directory format - load from metadata.json and weights folder
+            return LoadDirectoryFormat(model_path);
+        } else {
+            // Binary format - load from single .cyxmodel file
+            return LoadBinaryFormat(model_path);
         }
-
-        // Build model architecture from metadata
-        if (!impl_->BuildArchitectureFromMetadata()) {
-            spdlog::error("CyxWizLoader: Failed to build architecture");
-            return false;
-        }
-
-        // Load weights using SequentialModel::Load()
-        if (!impl_->model->Load(path)) {
-            spdlog::error("CyxWizLoader: Failed to load weights");
-            return false;
-        }
-
-        // Set to inference mode
-        impl_->model->SetTraining(false);
-
-        // Infer input/output specs
-        impl_->InferSpecs();
-
-        // Estimate memory usage (rough estimate based on parameters)
-        auto params = impl_->model->GetParameters();
-        uint64_t param_bytes = 0;
-        for (const auto& [name, tensor] : params) {
-            param_bytes += tensor.NumBytes();
-        }
-        impl_->memory_usage = param_bytes;
-
-        impl_->loaded = true;
-        spdlog::info("CyxWizLoader: Model loaded successfully ({} modules, {} bytes)",
-                     impl_->model->Size(), impl_->memory_usage);
-
-        return true;
 
     } catch (const std::exception& e) {
         spdlog::error("CyxWizLoader: Exception during load: {}", e.what());
         impl_->loaded = false;
         return false;
     }
+}
+
+bool CyxWizLoader::LoadBinaryFormat(const std::string& path) {
+    spdlog::info("Loading binary format from: {}", path);
+
+    // Read header and extract metadata
+    if (!impl_->ReadModelHeader(path)) {
+        return false;
+    }
+
+    // Build model architecture from metadata
+    if (!impl_->BuildArchitectureFromMetadata()) {
+        spdlog::error("CyxWizLoader: Failed to build architecture");
+        return false;
+    }
+
+    // Load weights using SequentialModel::Load()
+    if (!impl_->model->Load(path)) {
+        spdlog::error("CyxWizLoader: Failed to load weights");
+        return false;
+    }
+
+    // Set to inference mode
+    impl_->model->SetTraining(false);
+
+    // Infer input/output specs
+    impl_->InferSpecs();
+
+    // Estimate memory usage
+    auto params = impl_->model->GetParameters();
+    uint64_t param_bytes = 0;
+    for (const auto& [name, tensor] : params) {
+        param_bytes += tensor.NumBytes();
+    }
+    impl_->memory_usage = param_bytes;
+
+    impl_->loaded = true;
+    spdlog::info("CyxWizLoader: Binary model loaded ({} modules, {} bytes)",
+                 impl_->model->Size(), impl_->memory_usage);
+    return true;
+}
+
+bool CyxWizLoader::LoadDirectoryFormat(const std::string& dir_path) {
+    spdlog::info("Loading directory format from: {}", dir_path);
+
+    namespace fs = std::filesystem;
+
+    // Check for required files - support both naming conventions
+    fs::path manifest_path = fs::path(dir_path) / "manifest.json";
+    fs::path metadata_path = fs::path(dir_path) / "metadata.json";
+    fs::path config_path = fs::path(dir_path) / "config.json";
+    fs::path graph_path = fs::path(dir_path) / "graph.cyxgraph";
+    fs::path weights_dir = fs::path(dir_path) / "weights";
+
+    // Find the metadata file (try manifest.json first, then metadata.json)
+    fs::path actual_metadata_path;
+    if (fs::exists(manifest_path)) {
+        actual_metadata_path = manifest_path;
+    } else if (fs::exists(metadata_path)) {
+        actual_metadata_path = metadata_path;
+    } else {
+        spdlog::error("CyxWizLoader: Neither manifest.json nor metadata.json found in {}", dir_path);
+        return false;
+    }
+
+    spdlog::info("CyxWizLoader: Using metadata from: {}", actual_metadata_path.filename().string());
+
+    // Read metadata/manifest
+    std::ifstream meta_file(actual_metadata_path);
+    if (!meta_file) {
+        spdlog::error("CyxWizLoader: Failed to open {}", actual_metadata_path.string());
+        return false;
+    }
+
+    try {
+        impl_->metadata = json::parse(meta_file);
+    } catch (const std::exception& e) {
+        spdlog::error("CyxWizLoader: Failed to parse {}: {}", actual_metadata_path.filename().string(), e.what());
+        return false;
+    }
+
+    // If metadata doesn't have modules, try to build from graph.cyxgraph
+    if (!impl_->metadata.contains("modules") || impl_->metadata["modules"].empty()) {
+        if (fs::exists(graph_path)) {
+            spdlog::info("CyxWizLoader: Building modules from graph.cyxgraph");
+            std::ifstream graph_file(graph_path);
+            if (graph_file) {
+                try {
+                    json graph = json::parse(graph_file);
+                    if (graph.contains("nodes")) {
+                        // Convert graph nodes to modules format
+                        json modules = json::array();
+                        for (const auto& node : graph["nodes"]) {
+                            int node_type = node.value("type", -1);
+                            std::string name = node.value("name", "");
+
+                            // Skip non-layer nodes (Input=77, Output=50, Loss=52, Optimizer=60)
+                            if (node_type == 77 || node_type == 50 || node_type >= 52) {
+                                continue;
+                            }
+
+                            json module;
+                            module["name"] = name;
+                            if (node.contains("parameters")) {
+                                module["parameters"] = node["parameters"];
+                            }
+                            modules.push_back(module);
+                        }
+                        impl_->metadata["modules"] = modules;
+                        spdlog::info("CyxWizLoader: Loaded {} modules from graph", modules.size());
+                    }
+                } catch (const std::exception& e) {
+                    spdlog::warn("CyxWizLoader: Failed to parse graph.cyxgraph: {}", e.what());
+                }
+            }
+        }
+    }
+
+    // Build architecture from metadata
+    if (!impl_->BuildArchitectureFromMetadata()) {
+        spdlog::error("CyxWizLoader: Failed to build architecture from directory");
+        return false;
+    }
+
+    // Load weights from directory
+    if (fs::exists(weights_dir) && fs::is_directory(weights_dir)) {
+        if (!LoadWeightsFromDirectory(weights_dir.string())) {
+            spdlog::error("CyxWizLoader: Failed to load weights from directory");
+            return false;
+        }
+    } else {
+        spdlog::warn("CyxWizLoader: weights directory not found, model has no pretrained weights");
+    }
+
+    // Set to inference mode
+    impl_->model->SetTraining(false);
+
+    // Infer input/output specs
+    impl_->InferSpecs();
+
+    // Estimate memory usage
+    auto params = impl_->model->GetParameters();
+    uint64_t param_bytes = 0;
+    for (const auto& [name, tensor] : params) {
+        param_bytes += tensor.NumBytes();
+    }
+    impl_->memory_usage = param_bytes;
+
+    impl_->loaded = true;
+    spdlog::info("CyxWizLoader: Directory model loaded ({} modules, {} bytes)",
+                 impl_->model->Size(), impl_->memory_usage);
+    return true;
+}
+
+bool CyxWizLoader::LoadWeightsFromDirectory(const std::string& weights_dir) {
+    namespace fs = std::filesystem;
+
+    if (!impl_->model) {
+        spdlog::error("CyxWizLoader: Model not initialized");
+        return false;
+    }
+
+    // First, try to read the weights manifest if it exists
+    fs::path manifest_path = fs::path(weights_dir) / "manifest.json";
+    json weights_manifest;
+    std::map<std::string, json> tensor_info;  // Maps tensor name to its info
+
+    if (fs::exists(manifest_path)) {
+        std::ifstream manifest_file(manifest_path);
+        if (manifest_file) {
+            try {
+                weights_manifest = json::parse(manifest_file);
+                if (weights_manifest.contains("tensors")) {
+                    for (const auto& t : weights_manifest["tensors"]) {
+                        std::string tensor_name = t.value("name", "");
+                        if (!tensor_name.empty()) {
+                            tensor_info[tensor_name] = t;
+                        }
+                    }
+                    spdlog::info("CyxWizLoader: Found weights manifest with {} tensors", tensor_info.size());
+                }
+            } catch (...) {
+                spdlog::warn("CyxWizLoader: Failed to parse weights manifest");
+            }
+        }
+    }
+
+    // Get model parameters (expected parameters)
+    auto expected_params = impl_->model->GetParameters();
+
+    // Build new parameter map
+    std::map<std::string, cyxwiz::Tensor> new_params;
+
+    // Build mapping from model layer indices to weight file indices
+    // Model has layer0, layer1, layer2 but weights might be layer0, layer3, layer6
+    std::vector<std::string> weight_layer_names;
+    for (const auto& [name, _] : tensor_info) {
+        // Extract layer index from names like "layer0.weight", "layer3.bias"
+        if (name.find("weight") != std::string::npos) {
+            size_t pos = name.find('.');
+            if (pos != std::string::npos) {
+                weight_layer_names.push_back(name.substr(0, pos));
+            }
+        }
+    }
+    std::sort(weight_layer_names.begin(), weight_layer_names.end());
+
+    // Map model layer indices to weight file indices
+    int linear_layer_idx = 0;
+    for (const auto& [name, tensor] : expected_params) {
+        // Try multiple file naming conventions
+        std::vector<fs::path> candidates;
+
+        // Original name with underscore (e.g., "layer0_weight.bin")
+        std::string underscore_name = name;
+        std::replace(underscore_name.begin(), underscore_name.end(), '.', '_');
+        candidates.push_back(fs::path(weights_dir) / (underscore_name + ".bin"));
+
+        // Original name with dot (e.g., "layer0.weight.bin")
+        candidates.push_back(fs::path(weights_dir) / (name + ".bin"));
+
+        // Try mapping model layer index to weight file index
+        // e.g., model's "layer0.weight" might map to file "layer0_weight.bin" or "layer3_weight.bin"
+        size_t dot_pos = name.find('.');
+        if (dot_pos != std::string::npos) {
+            std::string param_type = name.substr(dot_pos + 1);  // "weight" or "bias"
+            std::string layer_part = name.substr(0, dot_pos);   // "layer0"
+
+            // Extract our layer index
+            int our_idx = 0;
+            if (layer_part.size() > 5) {  // "layer" + digit
+                try {
+                    our_idx = std::stoi(layer_part.substr(5));
+                } catch (...) {}
+            }
+
+            // Try to find corresponding weight file layer
+            if (our_idx < (int)weight_layer_names.size()) {
+                std::string weight_layer = weight_layer_names[our_idx];
+                std::string mapped_name = weight_layer + "_" + param_type;
+                candidates.insert(candidates.begin(), fs::path(weights_dir) / (mapped_name + ".bin"));
+            }
+        }
+
+        // Find the first existing file
+        fs::path weight_file;
+        for (const auto& candidate : candidates) {
+            if (fs::exists(candidate)) {
+                weight_file = candidate;
+                break;
+            }
+        }
+
+        if (weight_file.empty()) {
+            spdlog::error("CyxWizLoader: Weight file not found for {}", name);
+            spdlog::error("  Tried: {}", candidates[0].string());
+            return false;
+        }
+
+        // Read weight data
+        std::ifstream file(weight_file, std::ios::binary);
+        if (!file) {
+            spdlog::error("CyxWizLoader: Failed to open weight file: {}", weight_file.string());
+            return false;
+        }
+
+        // Get file size
+        file.seekg(0, std::ios::end);
+        size_t file_size = file.tellg();
+        file.seekg(0, std::ios::beg);
+
+        // Create tensor from data with the expected shape
+        auto shape = tensor.Shape();
+        cyxwiz::Tensor new_tensor(shape, cyxwiz::DataType::Float32);
+        size_t expected_bytes = new_tensor.NumBytes();
+
+        // Calculate expected header size: ndims(4) + shape(ndims*8) + dtype(4)
+        size_t expected_header_size = 4 + shape.size() * 8 + 4;
+        size_t expected_total = expected_bytes + expected_header_size;
+
+        // Check if file has header (size matches with header)
+        bool has_header = (file_size == expected_total);
+
+        if (has_header) {
+            // Skip header: ndims (uint32_t), shape (ndims * int64_t), dtype (uint32_t)
+            uint32_t ndims;
+            file.read(reinterpret_cast<char*>(&ndims), sizeof(ndims));
+            for (uint32_t i = 0; i < ndims; ++i) {
+                int64_t dim;
+                file.read(reinterpret_cast<char*>(&dim), sizeof(dim));
+            }
+            uint32_t dtype;
+            file.read(reinterpret_cast<char*>(&dtype), sizeof(dtype));
+            spdlog::debug("CyxWizLoader: Skipped {} byte header for {}", expected_header_size, name);
+        } else if (file_size != expected_bytes) {
+            spdlog::error("CyxWizLoader: Weight size mismatch for {}: expected {} bytes (or {} with header), got {} bytes",
+                         name, expected_bytes, expected_total, file_size);
+            return false;
+        }
+
+        // Read the tensor data
+        std::vector<char> data(expected_bytes);
+        file.read(data.data(), expected_bytes);
+
+        std::memcpy(new_tensor.Data(), data.data(), expected_bytes);
+
+        // Add to parameter map
+        new_params[name] = std::move(new_tensor);
+
+        spdlog::debug("CyxWizLoader: Loaded weight {} from {} ({} bytes)",
+                     name, weight_file.filename().string(), file_size);
+    }
+
+    // Set all parameters at once
+    impl_->model->SetParameters(new_params);
+
+    spdlog::info("CyxWizLoader: Loaded {} weight tensors from directory", new_params.size());
+    return true;
 }
 
 bool CyxWizLoader::Infer(

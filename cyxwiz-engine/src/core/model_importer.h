@@ -58,8 +58,20 @@ public:
 
     /**
      * Import model from CyxModel format (.cyxmodel)
+     * Supports both directory format and binary CYXW format
      */
     ImportResult ImportCyxModel(
+        const std::string& input_path,
+        SequentialModel& model,
+        const ImportOptions& options,
+        ProgressCallback progress_cb = nullptr
+    );
+
+    /**
+     * Import model from binary CYXW format (.cyxmodel single file)
+     * Magic: 0x43595857 ("CYXW"), Version: 2
+     */
+    ImportResult ImportCyxModelBinary(
         const std::string& input_path,
         SequentialModel& model,
         const ImportOptions& options,

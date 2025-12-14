@@ -79,7 +79,7 @@ DeploymentResult DeploymentClient::Deploy(const DeploymentConfig& config) {
         cyxwiz::protocol::CreateDeploymentRequest request;
         auto* deploy_config = request.mutable_config();
 
-        // Set deployment type to local
+        // Set deployment type to local server node
         deploy_config->set_type(cyxwiz::protocol::DEPLOYMENT_TYPE_LOCAL_NODE);
 
         // Set model info
@@ -96,8 +96,7 @@ DeploymentResult DeploymentClient::Deploy(const DeploymentConfig& config) {
         // Detect format from extension
         std::string ext = fs::path(config.model_path).extension().string();
         if (ext == ".cyxmodel") {
-            // CyxWiz native format - use PyTorch as proxy since no specific enum
-            model_info->set_format(cyxwiz::protocol::MODEL_FORMAT_PYTORCH);
+            model_info->set_format(cyxwiz::protocol::MODEL_FORMAT_CYXMODEL);
         } else if (ext == ".onnx") {
             model_info->set_format(cyxwiz::protocol::MODEL_FORMAT_ONNX);
         } else if (ext == ".gguf") {

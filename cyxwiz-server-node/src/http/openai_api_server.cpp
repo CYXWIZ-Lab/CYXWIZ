@@ -116,7 +116,7 @@ void OpenAIAPIServer::RegisterRoutes() {
         res.set_content(response.dump(), "application/json");
     });
 
-    // List models/deployments
+    // List models/deployments (OpenAI-compatible format)
     server_->Get("/v1/models", [this](const httplib::Request&, httplib::Response& res) {
         if (!deployment_manager_) {
             json error = {
@@ -131,11 +131,54 @@ void OpenAIAPIServer::RegisterRoutes() {
             return;
         }
 
-        // TODO: Get list of deployments from manager
-        // For now, return empty list
+        auto deployments = deployment_manager_->GetAllDeployments();
+        json data = json::array();
+        for (const auto& dep : deployments) {
+            data.push_back({
+                {"id", dep.id},
+                {"object", "model"},
+                {"created", 0},
+                {"owned_by", "cyxwiz"}
+            });
+        }
+
         json response = {
             {"object", "list"},
-            {"data", json::array()}
+            {"data", data}
+        };
+
+        res.set_content(response.dump(), "application/json");
+    });
+
+    // List all deployments with details
+    server_->Get("/v1/deployments", [this](const httplib::Request&, httplib::Response& res) {
+        if (!deployment_manager_) {
+            json error = {
+                {"error", {
+                    {"message", "Deployment manager not available"},
+                    {"type", "server_error"},
+                    {"code", "service_unavailable"}
+                }}
+            };
+            res.status = 503;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        auto deployments = deployment_manager_->GetAllDeployments();
+        json data = json::array();
+        for (const auto& dep : deployments) {
+            data.push_back({
+                {"deployment_id", dep.id},
+                {"model_id", dep.model_id},
+                {"type", static_cast<int>(dep.type)},
+                {"status", static_cast<int>(dep.status)}
+            });
+        }
+
+        json response = {
+            {"deployments", data},
+            {"count", deployments.size()}
         };
 
         res.set_content(response.dump(), "application/json");
@@ -407,7 +450,7 @@ void OpenAIAPIServer::RegisterRoutes() {
         res.set_content(response.dump(), "application/json");
     });
 
-    spdlog::info("Registered HTTP routes: /health, /v1/models, /v1/predict, /v1/deployments/:id");
+    spdlog::info("Registered HTTP routes: /health, /v1/models, /v1/deployments, /v1/predict, /v1/deployments/:id");
 }
 
 void OpenAIAPIServer::HandleHealth() {

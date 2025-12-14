@@ -1,11 +1,135 @@
 #include "model_importer.h"
+#include "graph_compiler.h"
+#include <cyxwiz/sequential.h>
 #include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <cstring>
 
 namespace cyxwiz {
+
+// Forward declaration
+static bool IsCyxwBinaryFormat(const std::string& path);
+
+// Helper: Build model architecture from graph JSON
+static bool BuildModelFromGraph(
+    const std::string& graph_json,
+    SequentialModel& model,
+    std::string& error_message
+) {
+    if (graph_json.empty()) {
+        error_message = "No graph data available to rebuild model architecture";
+        return false;
+    }
+
+    try {
+        using json = nlohmann::json;
+        json j = json::parse(graph_json);
+
+        // Parse nodes
+        std::vector<gui::MLNode> nodes;
+        for (const auto& node_json : j["nodes"]) {
+            gui::MLNode node;
+            node.id = node_json["id"];
+            node.type = static_cast<gui::NodeType>(node_json["type"].get<int>());
+            node.name = node_json["name"];
+            if (node_json.contains("parameters")) {
+                node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+            }
+            nodes.push_back(node);
+        }
+
+        // Parse links
+        std::vector<gui::NodeLink> links;
+        for (const auto& link_json : j["links"]) {
+            gui::NodeLink link;
+            link.id = link_json["id"];
+            link.from_node = link_json["from_node"];
+            link.to_node = link_json["to_node"];
+            links.push_back(link);
+        }
+
+        // Compile graph to get layer configuration
+        GraphCompiler compiler;
+        TrainingConfiguration config = compiler.Compile(nodes, links);
+
+        if (!config.is_valid) {
+            error_message = "Graph compilation failed: " + config.error_message;
+            return false;
+        }
+
+        spdlog::info("Building model from graph: {} layers, input={}, output={}",
+                     config.layers.size(), config.input_size, config.output_size);
+
+        // Build model layers from configuration
+        size_t current_input_size = config.input_size;
+
+        for (size_t i = 0; i < config.layers.size(); ++i) {
+            const auto& layer_cfg = config.layers[i];
+
+            switch (layer_cfg.type) {
+                case gui::NodeType::Dense: {
+                    size_t out_features = 64;
+                    if (layer_cfg.parameters.count("units")) {
+                        out_features = std::stoul(layer_cfg.parameters.at("units"));
+                    }
+                    model.Add<LinearModule>(current_input_size, out_features, true);
+                    spdlog::debug("  [{}] Linear({} -> {})", i, current_input_size, out_features);
+                    current_input_size = out_features;
+                    break;
+                }
+
+                case gui::NodeType::ReLU:
+                    model.Add<ReLUModule>();
+                    break;
+
+                case gui::NodeType::Sigmoid:
+                    model.Add<SigmoidModule>();
+                    break;
+
+                case gui::NodeType::Tanh:
+                    model.Add<TanhModule>();
+                    break;
+
+                case gui::NodeType::Softmax:
+                    model.Add<SoftmaxModule>();
+                    break;
+
+                case gui::NodeType::Output:
+                    // Output node is just a terminal marker, not an actual layer
+                    // The last Dense layer already outputs the correct features
+                    break;
+
+                case gui::NodeType::Dropout: {
+                    float rate = 0.5f;
+                    if (layer_cfg.parameters.count("rate")) {
+                        rate = std::stof(layer_cfg.parameters.at("rate"));
+                    }
+                    model.Add<DropoutModule>(rate);
+                    break;
+                }
+
+                default:
+                    // Skip non-layer nodes (preprocessing, loss, optimizer, etc.)
+                    break;
+            }
+        }
+
+        if (model.Size() == 0) {
+            error_message = "No layers were created from the graph";
+            return false;
+        }
+
+        spdlog::info("Built model with {} layers from graph", model.Size());
+        return true;
+
+    } catch (const std::exception& e) {
+        error_message = std::string("Failed to parse graph: ") + e.what();
+        return false;
+    }
+}
 
 ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
     ProbeResult result;
@@ -173,7 +297,8 @@ ImportResult ModelImporter::Import(
     return result;
 }
 
-ImportResult ModelImporter::ImportCyxModel(
+// Import from binary CYXW format
+ImportResult ModelImporter::ImportCyxModelBinary(
     const std::string& input_path,
     SequentialModel& model,
     const ImportOptions& options,
@@ -181,7 +306,175 @@ ImportResult ModelImporter::ImportCyxModel(
 ) {
     ImportResult result;
 
-    if (progress_cb) progress_cb(0, 4, "Reading .cyxmodel file...");
+    if (progress_cb) progress_cb(0, 5, "Reading binary .cyxmodel file...");
+
+    try {
+        std::ifstream file(input_path, std::ios::binary);
+        if (!file) {
+            result.error_message = "Failed to open file: " + input_path;
+            return result;
+        }
+
+        // Read and verify magic
+        uint32_t magic;
+        file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        if (magic != 0x43595857) {
+            result.error_message = "Invalid magic number";
+            return result;
+        }
+
+        // Read version
+        uint32_t version;
+        file.read(reinterpret_cast<char*>(&version), sizeof(version));
+        if (version != 2) {
+            result.error_message = "Unsupported format version: " + std::to_string(version);
+            return result;
+        }
+
+        if (progress_cb) progress_cb(1, 5, "Reading metadata...");
+
+        // Read JSON metadata
+        uint64_t json_len;
+        file.read(reinterpret_cast<char*>(&json_len), sizeof(json_len));
+
+        std::string json_str(json_len, '\0');
+        file.read(json_str.data(), json_len);
+
+        auto meta = nlohmann::json::parse(json_str);
+
+        // Extract model info
+        if (meta.contains("metadata")) {
+            result.model_name = meta["metadata"].value("name", "");
+        }
+        result.format_version = "CYXW v2";
+
+        // Read number of modules
+        size_t num_modules;
+        file.read(reinterpret_cast<char*>(&num_modules), sizeof(num_modules));
+
+        if (progress_cb) progress_cb(2, 5, "Building model from metadata...");
+
+        // Build model architecture from metadata if model is empty
+        if (model.Size() == 0 && meta.contains("modules")) {
+            for (const auto& mod_json : meta["modules"]) {
+                if (!mod_json.value("has_parameters", false)) {
+                    // Activation layer - try to infer from name
+                    std::string name = mod_json.value("name", "");
+                    if (name.find("ReLU") != std::string::npos) {
+                        model.Add<ReLUModule>();
+                    } else if (name.find("Sigmoid") != std::string::npos) {
+                        model.Add<SigmoidModule>();
+                    } else if (name.find("Tanh") != std::string::npos) {
+                        model.Add<TanhModule>();
+                    } else if (name.find("Softmax") != std::string::npos) {
+                        model.Add<SoftmaxModule>();
+                    } else if (name.find("Dropout") != std::string::npos) {
+                        model.Add<DropoutModule>(0.5f);
+                    }
+                } else if (mod_json.contains("parameters")) {
+                    // Linear layer - get shape from parameters
+                    auto& params = mod_json["parameters"];
+                    for (const auto& p : params) {
+                        if (p["name"] == "weight" && p.contains("shape")) {
+                            auto shape = p["shape"];
+                            if (shape.size() == 2) {
+                                size_t out_features = shape[0].get<size_t>();
+                                size_t in_features = shape[1].get<size_t>();
+                                model.Add<LinearModule>(in_features, out_features, true);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            spdlog::info("Built model with {} layers from binary metadata", model.Size());
+        }
+
+        if (progress_cb) progress_cb(3, 5, "Loading weights...");
+
+        // Verify module count matches
+        if (num_modules != model.Size()) {
+            result.warnings.push_back("Module count mismatch: file has " +
+                std::to_string(num_modules) + ", model has " + std::to_string(model.Size()));
+        }
+
+        // Load weights into model
+        size_t modules_to_load = std::min(num_modules, model.Size());
+        for (size_t i = 0; i < num_modules; ++i) {
+            size_t num_params;
+            file.read(reinterpret_cast<char*>(&num_params), sizeof(num_params));
+
+            std::map<std::string, Tensor> params;
+            for (size_t j = 0; j < num_params; ++j) {
+                // Read parameter name
+                size_t name_len;
+                file.read(reinterpret_cast<char*>(&name_len), sizeof(name_len));
+                std::string name(name_len, '\0');
+                file.read(name.data(), name_len);
+
+                // Read tensor shape
+                size_t ndims;
+                file.read(reinterpret_cast<char*>(&ndims), sizeof(ndims));
+                std::vector<size_t> shape(ndims);
+                file.read(reinterpret_cast<char*>(shape.data()), ndims * sizeof(size_t));
+
+                // Read dtype
+                DataType dtype;
+                file.read(reinterpret_cast<char*>(&dtype), sizeof(dtype));
+
+                // Read data
+                size_t num_bytes;
+                file.read(reinterpret_cast<char*>(&num_bytes), sizeof(num_bytes));
+
+                Tensor tensor(shape, dtype);
+                file.read(reinterpret_cast<char*>(tensor.Data()), num_bytes);
+
+                params[name] = std::move(tensor);
+                result.layer_names.push_back("layer_" + std::to_string(i) + "." + name);
+                result.num_parameters += static_cast<int>(num_bytes / 4);  // Assume float32
+            }
+
+            // Set parameters on model module
+            if (i < model.Size()) {
+                auto* module = model.GetModule(i);
+                if (module && module->HasParameters()) {
+                    module->SetParameters(params);
+                }
+            }
+        }
+
+        if (progress_cb) progress_cb(4, 5, "Finalizing...");
+
+        result.success = true;
+        result.num_layers = static_cast<int>(model.Size());
+
+        if (progress_cb) progress_cb(5, 5, "Import complete!");
+
+        spdlog::info("Imported binary model: {} ({} layers)", input_path, result.num_layers);
+
+    } catch (const std::exception& e) {
+        result.error_message = std::string("Import failed: ") + e.what();
+        spdlog::error("ImportCyxModelBinary: {}", result.error_message);
+    }
+
+    return result;
+}
+
+ImportResult ModelImporter::ImportCyxModel(
+    const std::string& input_path,
+    SequentialModel& model,
+    const ImportOptions& options,
+    ProgressCallback progress_cb
+) {
+    // Check if this is binary format
+    if (IsCyxwBinaryFormat(input_path)) {
+        spdlog::info("Detected binary CYXW format: {}", input_path);
+        return ImportCyxModelBinary(input_path, model, options, progress_cb);
+    }
+
+    ImportResult result;
+
+    if (progress_cb) progress_cb(0, 5, "Reading .cyxmodel file...");
 
     try {
         formats::CyxModelFormat cyxmodel;
@@ -217,10 +510,123 @@ ImportResult ModelImporter::ImportCyxModel(
             return result;
         }
 
-        if (progress_cb) progress_cb(1, 4, "Validating model architecture...");
+        if (progress_cb) progress_cb(1, 5, "Building model architecture...");
 
-        // Validate model architecture matches weights
-        if (options.strict_mode) {
+        // Build model architecture from graph (if available)
+        bool model_built = false;
+        if (!graph_json.empty()) {
+            std::string build_error;
+            if (!BuildModelFromGraph(graph_json, model, build_error)) {
+                // If graph build fails, log warning but continue
+                // (for backward compatibility with models without graphs)
+                spdlog::warn("Could not build model from graph: {}", build_error);
+                result.warnings.push_back("Could not build model from graph: " + build_error);
+            } else {
+                model_built = true;
+            }
+        } else {
+            spdlog::warn("No graph.cyxgraph found - model architecture cannot be rebuilt");
+            result.warnings.push_back("No graph data - model architecture not available");
+        }
+
+        // Fallback: build model from weight shapes if graph compilation failed
+        if (!model_built && !weight_shapes.empty()) {
+            spdlog::info("Building model from weight shapes (graph unavailable)");
+
+            // Collect Dense layer shapes from weights
+            std::vector<std::pair<int, int>> dense_layers;  // (in_features, out_features)
+            std::map<int, std::pair<int, int>> layer_shapes;  // layer_idx -> (in, out)
+
+            for (const auto& [name, shape] : weight_shapes) {
+                // Parse layer index from name like "layer0.weight" or "layer3.bias"
+                if (name.find(".weight") != std::string::npos && shape.size() == 2) {
+                    size_t layer_start = name.find("layer");
+                    size_t dot_pos = name.find(".");
+                    if (layer_start != std::string::npos && dot_pos != std::string::npos) {
+                        std::string idx_str = name.substr(layer_start + 5, dot_pos - layer_start - 5);
+                        try {
+                            int layer_idx = std::stoi(idx_str);
+                            int out_features = static_cast<int>(shape[0]);
+                            int in_features = static_cast<int>(shape[1]);
+                            layer_shapes[layer_idx] = {in_features, out_features};
+                        } catch (...) {}
+                    }
+                }
+            }
+
+            // Build model with Dense + ReLU layers
+            std::vector<std::pair<int, std::pair<int, int>>> sorted_layers;
+            for (const auto& [idx, dims] : layer_shapes) {
+                sorted_layers.push_back({idx, dims});
+            }
+
+            for (size_t i = 0; i < sorted_layers.size(); ++i) {
+                int in_features = sorted_layers[i].second.first;
+                int out_features = sorted_layers[i].second.second;
+
+                // Add Linear layer
+                model.Add<LinearModule>(in_features, out_features);
+
+                // Add ReLU after all but the last Dense layer
+                if (i < sorted_layers.size() - 1) {
+                    model.Add<ReLUModule>();
+                }
+            }
+
+            if (model.Size() > 0) {
+                model_built = true;
+                spdlog::info("Built model with {} layers from weight shapes", model.Size());
+
+                // Remap weights to match model parameter names
+                // Model uses sequential naming: weight, bias for each linear layer
+                auto model_params = model.GetParameters();
+                std::map<std::string, std::vector<uint8_t>> remapped_weights;
+                std::map<std::string, std::vector<int64_t>> remapped_shapes;
+
+                // Map old names to new names by matching shapes
+                for (const auto& [model_name, model_tensor] : model_params) {
+                    auto model_shape = model_tensor.Shape();
+
+                    // Find matching weight by shape
+                    for (const auto& [weight_name, weight_shape] : weight_shapes) {
+                        if (weight_shape.size() == model_shape.size()) {
+                            bool match = true;
+                            for (size_t d = 0; d < weight_shape.size(); ++d) {
+                                if (static_cast<size_t>(weight_shape[d]) != model_shape[d]) {
+                                    match = false;
+                                    break;
+                                }
+                            }
+                            if (match && remapped_weights.find(model_name) == remapped_weights.end()) {
+                                // Check if this weight was already used
+                                bool already_used = false;
+                                for (const auto& [rn, rv] : remapped_weights) {
+                                    if (weights.at(weight_name) == rv) {
+                                        already_used = true;
+                                        break;
+                                    }
+                                }
+                                if (!already_used) {
+                                    remapped_weights[model_name] = weights.at(weight_name);
+                                    remapped_shapes[model_name] = weight_shape;
+                                    spdlog::debug("Remapped weight {} -> {}", weight_name, model_name);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Replace original weights with remapped ones
+                weights = std::move(remapped_weights);
+                weight_shapes = std::move(remapped_shapes);
+            }
+        }
+
+        if (progress_cb) progress_cb(2, 5, "Validating model architecture...");
+
+        // Validate model architecture matches weights (skip if no layers built)
+        if (options.strict_mode && model.Size() > 0) {
             std::string validation_error;
             if (!ValidateModelArchitecture(model, weight_shapes, validation_error)) {
                 result.success = false;
@@ -230,7 +636,7 @@ ImportResult ModelImporter::ImportCyxModel(
             }
         }
 
-        if (progress_cb) progress_cb(2, 4, "Loading weights...");
+        if (progress_cb) progress_cb(3, 5, "Loading weights...");
 
         // Populate model with weights
         if (!PopulateModelWeights(model, weights, weight_shapes, options, result.warnings)) {
@@ -239,21 +645,21 @@ ImportResult ModelImporter::ImportCyxModel(
             return result;
         }
 
-        if (progress_cb) progress_cb(3, 4, "Finalizing...");
+        if (progress_cb) progress_cb(4, 5, "Finalizing...");
 
         // Populate result
         result.success = true;
         result.model_name = manifest.model_name;
         result.format_version = manifest.version;
         result.num_parameters = manifest.num_parameters;
-        result.num_layers = manifest.num_layers;
+        result.num_layers = static_cast<int>(model.Size());  // Use actual model size
 
         // Collect layer names
         for (const auto& [name, _] : weights) {
             result.layer_names.push_back(name);
         }
 
-        if (progress_cb) progress_cb(4, 4, "Import complete!");
+        if (progress_cb) progress_cb(5, 5, "Import complete!");
 
         spdlog::info("Imported model from {} ({} parameters, {} layers)",
                      input_path, result.num_parameters, result.num_layers);
@@ -547,7 +953,24 @@ ModelFormat ModelImporter::DetectFormat(const std::string& path) {
         return ModelFormat::CyxModel;
     }
 
+    // CYXW magic (binary .cyxmodel): 0x43595857
+    if (magic[0] == 'W' && magic[1] == 'X' && magic[2] == 'Y' && magic[3] == 'C') {
+        return ModelFormat::CyxModel;  // Binary variant of CyxModel
+    }
+
     return ModelFormat::Unknown;
+}
+
+// Check if a file is binary CYXW format
+static bool IsCyxwBinaryFormat(const std::string& path) {
+    if (std::filesystem::is_directory(path)) return false;
+
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+
+    uint32_t magic;
+    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    return magic == 0x43595857;  // "CYXW"
 }
 
 Tensor ModelImporter::BytesToTensor(

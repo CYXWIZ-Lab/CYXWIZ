@@ -154,6 +154,11 @@ public:
     std::string GetFormat() const override { return "cyxmodel"; }
 
 private:
+    // Helper methods for different formats
+    bool LoadBinaryFormat(const std::string& path);
+    bool LoadDirectoryFormat(const std::string& dir_path);
+    bool LoadWeightsFromDirectory(const std::string& weights_dir);
+
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

@@ -66,8 +66,9 @@ private:
     void ConnectToServerNode();
     void DisconnectFromServerNode();
 
-    // File dialog helper
-    std::string OpenFileDialog(const char* filter, const char* title);
+    // File dialog helpers
+    std::string OpenModelFile();    // For binary .cyxmodel files
+    std::string OpenModelFolder();  // For directory .cyxmodel folders
 
 private:
     // Dialog state

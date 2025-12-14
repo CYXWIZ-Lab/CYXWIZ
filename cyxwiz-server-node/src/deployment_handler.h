@@ -40,6 +40,12 @@ public:
         const protocol::GetDeploymentMetricsRequest* request,
         protocol::GetDeploymentMetricsResponse* response) override;
 
+    // Called by Engine/Central Server to list all deployments on this node
+    grpc::Status ListDeployments(
+        grpc::ServerContext* context,
+        const protocol::ListDeploymentsRequest* request,
+        protocol::ListDeploymentsResponse* response) override;
+
 private:
     std::shared_ptr<DeploymentManager> manager_;
 };

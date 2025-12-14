@@ -168,6 +168,21 @@ bool DeploymentManager::HasDeployment(const std::string& deployment_id) const {
     return deployments_.find(deployment_id) != deployments_.end();
 }
 
+std::vector<DeploymentManager::DeploymentInfo> DeploymentManager::GetAllDeployments() const {
+    std::lock_guard<std::mutex> lock(deployments_mutex_);
+    std::vector<DeploymentInfo> result;
+    result.reserve(deployments_.size());
+    for (const auto& [id, instance] : deployments_) {
+        result.push_back({
+            instance->id,
+            instance->model_id,
+            instance->type,
+            instance->status
+        });
+    }
+    return result;
+}
+
 bool DeploymentManager::RunInference(
     const std::string& deployment_id,
     const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
@@ -296,24 +311,64 @@ void DeploymentManager::ExecuteDeployment(DeploymentInstance* instance) {
 }
 
 bool DeploymentManager::LoadModel(DeploymentInstance* instance) {
-    spdlog::info("Loading model {} with format {}",
-                 instance->model_id,
-                 protocol::ModelFormat_Name(instance->config.model().format()));
+    // Get model path - prefer local_path from config, fallback to model_id
+    std::string model_path = instance->config.model().local_path();
+    if (model_path.empty()) {
+        model_path = "./models/" + instance->model_id;
+    }
+
+    // Get format string - detect from extension (factory expects lowercase format names)
+    std::string format_str;
+
+    // Check if it's a directory (directory format .cyxmodel)
+    namespace fs = std::filesystem;
+    if (fs::is_directory(model_path)) {
+        format_str = "cyxmodel";
+        spdlog::info("Detected directory format model");
+    } else {
+        // Detect format from file extension
+        size_t dot_pos = model_path.rfind('.');
+        if (dot_pos != std::string::npos) {
+            std::string ext = model_path.substr(dot_pos);
+            if (ext == ".cyxmodel") {
+                format_str = "cyxmodel";
+            } else if (ext == ".onnx") {
+                format_str = "onnx";
+            } else if (ext == ".gguf") {
+                format_str = "gguf";
+            } else if (ext == ".safetensors") {
+                format_str = "safetensors";
+            } else if (ext == ".pt" || ext == ".pth") {
+                format_str = "pytorch";
+            }
+        }
+    }
+
+    // Fallback: check the proto format if extension detection failed
+    if (format_str.empty()) {
+        auto proto_format = instance->config.model().format();
+        if (proto_format == protocol::MODEL_FORMAT_CYXMODEL) {
+            format_str = "cyxmodel";
+        } else if (proto_format == protocol::MODEL_FORMAT_ONNX) {
+            format_str = "onnx";
+        } else if (proto_format == protocol::MODEL_FORMAT_GGUF) {
+            format_str = "gguf";
+        } else if (proto_format == protocol::MODEL_FORMAT_SAFETENSORS) {
+            format_str = "safetensors";
+        }
+    }
+
+    spdlog::info("Loading model {} from path {} with format {}",
+                 instance->model_id, model_path, format_str);
 
     try {
         // Create model loader based on format
-        instance->model_loader = ModelLoaderFactory::Create(
-            protocol::ModelFormat_Name(instance->config.model().format())
-        );
+        instance->model_loader = ModelLoaderFactory::Create(format_str);
 
         if (!instance->model_loader) {
-            spdlog::error("Failed to create model loader for format: {}",
-                         protocol::ModelFormat_Name(instance->config.model().format()));
+            spdlog::error("Failed to create model loader for format: {}", format_str);
             return false;
         }
-
-        // TODO: Get actual model path from model registry
-        std::string model_path = "./models/" + instance->model_id;
 
         // Load model
         if (!instance->model_loader->Load(model_path)) {

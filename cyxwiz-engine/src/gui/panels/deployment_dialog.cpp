@@ -9,6 +9,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
+#include <shobjidl.h>  // For IFileDialog
+#include <objbase.h>   // For CoInitialize
 #endif
 
 namespace cyxwiz {
@@ -136,28 +138,50 @@ void DeploymentDialog::RenderModelSection() {
     ImGui::Text("%s Model", ICON_FA_CUBE);
     ImGui::Spacing();
 
-    ImGui::SetNextItemWidth(350);
+    ImGui::SetNextItemWidth(300);
     ImGui::InputText("##ModelPath", model_path_, sizeof(model_path_));
 
     ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_FOLDER_OPEN " Browse")) {
-        std::string path = OpenFileDialog(
-            "CyxWiz Model (*.cyxmodel)\0*.cyxmodel\0All Files (*.*)\0*.*\0",
-            "Select Model File"
-        );
+    if (ImGui::Button(ICON_FA_FILE " File")) {
+        std::string path = OpenModelFile();
         if (!path.empty()) {
             SetModelPath(path);
         }
     }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Select binary .cyxmodel file\n(from Tools > Save Trained Model)");
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_FOLDER " Folder")) {
+        std::string path = OpenModelFolder();
+        if (!path.empty()) {
+            SetModelPath(path);
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Select .cyxmodel directory\n(from Deploy > Export Model)");
+    }
 
     // Show model info if valid path
     if (strlen(model_path_) > 0 && fs::exists(model_path_)) {
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s File found", ICON_FA_CHECK);
-        auto file_size = fs::file_size(model_path_);
-        ImGui::SameLine();
-        ImGui::TextDisabled("(%.2f MB)", file_size / (1024.0 * 1024.0));
+        if (fs::is_directory(model_path_)) {
+            ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Directory format", ICON_FA_CHECK);
+            // Count files in directory
+            size_t file_count = 0;
+            for (const auto& entry : fs::directory_iterator(model_path_)) {
+                if (entry.is_regular_file()) file_count++;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%zu files)", file_count);
+        } else {
+            ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Binary format", ICON_FA_CHECK);
+            auto file_size = fs::file_size(model_path_);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%.2f MB)", file_size / (1024.0 * 1024.0));
+        }
     } else if (strlen(model_path_) > 0) {
-        ImGui::TextColored(ImVec4(0.8f, 0.3f, 0.3f, 1.0f), "%s File not found", ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::TextColored(ImVec4(0.8f, 0.3f, 0.3f, 1.0f), "%s Path not found", ICON_FA_TRIANGLE_EXCLAMATION);
     }
 
     ImGui::Spacing();
@@ -491,23 +515,66 @@ void DeploymentDialog::DisconnectFromServerNode() {
     status_message_ = "Disconnected from Server Node";
 }
 
-std::string DeploymentDialog::OpenFileDialog(const char* filter, const char* title) {
+std::string DeploymentDialog::OpenModelFile() {
 #ifdef _WIN32
     char filename[MAX_PATH] = "";
 
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
+    OPENFILENAMEA ofn = {};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = filter;
+    ofn.lpstrFilter = "CyxWiz Model (*.cyxmodel)\0*.cyxmodel\0All Files (*.*)\0*.*\0";
     ofn.lpstrFile = filename;
     ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = title;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    ofn.lpstrTitle = "Select Binary .cyxmodel File";
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
     if (GetOpenFileNameA(&ofn)) {
         return std::string(filename);
     }
+#endif
+    return "";
+}
+
+std::string DeploymentDialog::OpenModelFolder() {
+#ifdef _WIN32
+    std::string result;
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (SUCCEEDED(hr)) {
+        IFileDialog* pfd = nullptr;
+        hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                              IID_IFileDialog, reinterpret_cast<void**>(&pfd));
+
+        if (SUCCEEDED(hr)) {
+            DWORD dwOptions;
+            hr = pfd->GetOptions(&dwOptions);
+            if (SUCCEEDED(hr)) {
+                hr = pfd->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST);
+            }
+
+            pfd->SetTitle(L"Select .cyxmodel Directory");
+            hr = pfd->Show(nullptr);
+            if (SUCCEEDED(hr)) {
+                IShellItem* psi = nullptr;
+                hr = pfd->GetResult(&psi);
+                if (SUCCEEDED(hr)) {
+                    PWSTR pszPath = nullptr;
+                    hr = psi->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
+                    if (SUCCEEDED(hr)) {
+                        int size = WideCharToMultiByte(CP_UTF8, 0, pszPath, -1, nullptr, 0, nullptr, nullptr);
+                        if (size > 0) {
+                            result.resize(size - 1);
+                            WideCharToMultiByte(CP_UTF8, 0, pszPath, -1, &result[0], size, nullptr, nullptr);
+                        }
+                        CoTaskMemFree(pszPath);
+                    }
+                    psi->Release();
+                }
+            }
+            pfd->Release();
+        }
+        CoUninitialize();
+    }
+    return result;
 #endif
     return "";
 }

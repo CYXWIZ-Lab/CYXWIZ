@@ -127,6 +127,10 @@ public:
     void SetClearCacheCallback(std::function<void()> cb) { clear_cache_callback_ = cb; }
     void SetRunGCCallback(std::function<void()> cb) { run_gc_callback_ = cb; }
 
+    // Model conversion callbacks
+    void SetConvertBinaryToDirCallback(std::function<void()> cb) { convert_binary_to_dir_callback_ = cb; }
+    void SetConvertDirToBinaryCallback(std::function<void()> cb) { convert_dir_to_binary_callback_ = cb; }
+
     // Model Analysis callbacks (Phase 2)
     void SetOpenModelSummaryCallback(std::function<void()> cb) { open_model_summary_callback_ = cb; }
     void SetOpenArchitectureDiagramCallback(std::function<void()> cb) { open_architecture_diagram_callback_ = cb; }
@@ -438,6 +442,10 @@ private:
     std::function<void()> export_test_report_callback_;
     std::function<void()> clear_cache_callback_;
     std::function<void()> run_gc_callback_;
+
+    // Model conversion callbacks
+    std::function<void()> convert_binary_to_dir_callback_;
+    std::function<void()> convert_dir_to_binary_callback_;
 
     // Model Analysis callbacks (Phase 2)
     std::function<void()> open_model_summary_callback_;

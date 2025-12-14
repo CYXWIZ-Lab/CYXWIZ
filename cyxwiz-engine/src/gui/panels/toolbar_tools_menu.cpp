@@ -15,8 +15,26 @@ void ToolbarPanel::RenderToolsMenu() {
                 if (save_model_callback_) save_model_callback_();
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Save the trained model weights to a .cyxmodel file");
+                ImGui::SetTooltip("Save the trained model weights to a binary .cyxmodel file");
             }
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Format Conversion:");
+
+            if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Binary to Directory...")) {
+                if (convert_binary_to_dir_callback_) convert_binary_to_dir_callback_();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Convert binary .cyxmodel file to directory format\n(for use with Deploy > Export Model)");
+            }
+
+            if (ImGui::MenuItem(ICON_FA_FILE " Directory to Binary...")) {
+                if (convert_dir_to_binary_callback_) convert_dir_to_binary_callback_();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Convert .cyxmodel directory to binary file format\n(for smaller, single-file storage)");
+            }
+
             ImGui::EndMenu();
         }
 

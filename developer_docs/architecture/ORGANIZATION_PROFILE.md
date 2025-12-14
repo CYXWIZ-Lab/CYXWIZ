@@ -372,7 +372,7 @@ Building the Decentralized AI Future
 
 <div align="center">
 
-**Made with 💙 by the CyxWiz Lab Team**
+**CyxWiz Lab Team**
 
 *Democratizing AI, One Model at a Time*
 

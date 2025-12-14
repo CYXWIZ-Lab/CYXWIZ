@@ -26,9 +26,13 @@ grpc::Status DeploymentServiceImpl::CreateDeployment(
                  protocol::DeploymentType_Name(config.type()));
 
     try {
-        // Accept the deployment
+        // Accept the deployment - use name if model_id is empty
+        std::string model_id = config.model().model_id();
+        if (model_id.empty()) {
+            model_id = config.model().name();
+        }
         std::string deployment_id = manager_->AcceptDeployment(
-            config.model().model_id(),
+            model_id,
             config.type(),
             config
         );
@@ -124,6 +128,35 @@ grpc::Status DeploymentServiceImpl::GetDeploymentMetrics(
                      request->deployment_id(), e.what());
         response->mutable_error()->set_message(e.what());
         return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
+    }
+}
+
+grpc::Status DeploymentServiceImpl::ListDeployments(
+    grpc::ServerContext* context,
+    const protocol::ListDeploymentsRequest* request,
+    protocol::ListDeploymentsResponse* response) {
+
+    spdlog::debug("Received list deployments request");
+
+    try {
+        auto deployments = manager_->GetAllDeployments();
+
+        for (const auto& info : deployments) {
+            auto* deployment = response->add_deployments();
+            deployment->set_deployment_id(info.id);
+            deployment->mutable_config()->mutable_model()->set_name(info.model_id);
+            deployment->mutable_config()->set_type(info.type);
+            deployment->set_status(info.status);
+        }
+
+        response->set_total_count(static_cast<int32_t>(deployments.size()));
+        spdlog::debug("Returned {} deployments", deployments.size());
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to list deployments: {}", e.what());
+        response->mutable_error()->set_message(e.what());
+        return grpc::Status(grpc::StatusCode::INTERNAL, e.what());
     }
 }
 

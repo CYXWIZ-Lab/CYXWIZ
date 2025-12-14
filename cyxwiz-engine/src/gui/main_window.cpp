@@ -105,6 +105,7 @@
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
+#include "../core/model_converter.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -476,6 +477,174 @@ MainWindow::MainWindow()
             }
         }
     );
+
+    // Set up Model Conversion callbacks
+    toolbar_->SetConvertBinaryToDirCallback([this]() {
+        spdlog::info("Binary to Directory conversion requested");
+
+#ifdef _WIN32
+        // Step 1: Select input binary file
+        OPENFILENAMEA ofn_in;
+        char szFileIn[260] = { 0 };
+        ZeroMemory(&ofn_in, sizeof(ofn_in));
+        ofn_in.lStructSize = sizeof(ofn_in);
+        ofn_in.hwndOwner = nullptr;
+        ofn_in.lpstrFile = szFileIn;
+        ofn_in.nMaxFile = sizeof(szFileIn);
+        ofn_in.lpstrFilter = "CyxWiz Model (*.cyxmodel)\0*.cyxmodel\0All Files (*.*)\0*.*\0";
+        ofn_in.nFilterIndex = 1;
+        ofn_in.lpstrTitle = "Select Binary .cyxmodel File";
+        ofn_in.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+        if (!GetOpenFileNameA(&ofn_in)) {
+            spdlog::info("Binary to Directory conversion cancelled");
+            return;
+        }
+
+        std::string input_path = szFileIn;
+
+        // Verify it's a binary file
+        if (!cyxwiz::ModelConverter::IsBinaryFormat(input_path)) {
+            spdlog::error("Selected file is not a binary .cyxmodel format");
+            return;
+        }
+
+        // Step 2: Select output folder using IFileDialog
+        IFileDialog* pFileDialog = nullptr;
+        HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(&pFileDialog));
+
+        if (SUCCEEDED(hr)) {
+            DWORD dwOptions;
+            pFileDialog->GetOptions(&dwOptions);
+            pFileDialog->SetOptions(dwOptions | FOS_PICKFOLDERS);
+            pFileDialog->SetTitle(L"Select Output Directory for .cyxmodel Folder");
+
+            hr = pFileDialog->Show(nullptr);
+            if (SUCCEEDED(hr)) {
+                IShellItem* pItem;
+                hr = pFileDialog->GetResult(&pItem);
+                if (SUCCEEDED(hr)) {
+                    LPWSTR pszPath;
+                    pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
+
+                    // Convert to string
+                    int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszPath, -1, nullptr, 0, nullptr, nullptr);
+                    std::string output_dir(size_needed - 1, 0);
+                    WideCharToMultiByte(CP_UTF8, 0, pszPath, -1, &output_dir[0], size_needed, nullptr, nullptr);
+
+                    CoTaskMemFree(pszPath);
+                    pItem->Release();
+
+                    // Generate output path
+                    std::filesystem::path in_path(input_path);
+                    std::string output_path = output_dir + "/" + in_path.stem().string() + ".cyxmodel";
+
+                    spdlog::info("Converting binary '{}' to directory '{}'", input_path, output_path);
+
+                    if (cyxwiz::ModelConverter::BinaryToDirectory(input_path, output_path)) {
+                        spdlog::info("Successfully converted to directory format: {}", output_path);
+                    } else {
+                        spdlog::error("Conversion failed: {}", cyxwiz::ModelConverter::GetLastError());
+                    }
+                }
+            } else {
+                spdlog::info("Binary to Directory conversion cancelled (output selection)");
+            }
+            pFileDialog->Release();
+        }
+#else
+        spdlog::warn("Model conversion dialog not implemented for this platform");
+#endif
+    });
+
+    toolbar_->SetConvertDirToBinaryCallback([this]() {
+        spdlog::info("Directory to Binary conversion requested");
+
+#ifdef _WIN32
+        // Step 1: Select input directory using IFileDialog
+        std::string input_path;
+        IFileDialog* pFileDialog = nullptr;
+        HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(&pFileDialog));
+
+        if (SUCCEEDED(hr)) {
+            DWORD dwOptions;
+            pFileDialog->GetOptions(&dwOptions);
+            pFileDialog->SetOptions(dwOptions | FOS_PICKFOLDERS);
+            pFileDialog->SetTitle(L"Select .cyxmodel Directory");
+
+            hr = pFileDialog->Show(nullptr);
+            if (SUCCEEDED(hr)) {
+                IShellItem* pItem;
+                hr = pFileDialog->GetResult(&pItem);
+                if (SUCCEEDED(hr)) {
+                    LPWSTR pszPath;
+                    pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
+
+                    int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszPath, -1, nullptr, 0, nullptr, nullptr);
+                    input_path.resize(size_needed - 1, 0);
+                    WideCharToMultiByte(CP_UTF8, 0, pszPath, -1, &input_path[0], size_needed, nullptr, nullptr);
+
+                    CoTaskMemFree(pszPath);
+                    pItem->Release();
+                }
+            } else {
+                spdlog::info("Directory to Binary conversion cancelled");
+                pFileDialog->Release();
+                return;
+            }
+            pFileDialog->Release();
+        }
+
+        if (input_path.empty()) {
+            return;
+        }
+
+        // Verify it's a directory format
+        if (!cyxwiz::ModelConverter::IsDirectoryFormat(input_path)) {
+            spdlog::error("Selected path is not a valid .cyxmodel directory format");
+            return;
+        }
+
+        // Step 2: Select output file
+        OPENFILENAMEA ofn_out;
+        char szFileOut[260] = { 0 };
+
+        // Pre-fill with suggested name
+        std::filesystem::path in_path(input_path);
+        std::string suggested = in_path.stem().string() + ".cyxmodel";
+        strncpy(szFileOut, suggested.c_str(), sizeof(szFileOut) - 1);
+
+        ZeroMemory(&ofn_out, sizeof(ofn_out));
+        ofn_out.lStructSize = sizeof(ofn_out);
+        ofn_out.hwndOwner = nullptr;
+        ofn_out.lpstrFile = szFileOut;
+        ofn_out.nMaxFile = sizeof(szFileOut);
+        ofn_out.lpstrFilter = "CyxWiz Model (*.cyxmodel)\0*.cyxmodel\0All Files (*.*)\0*.*\0";
+        ofn_out.nFilterIndex = 1;
+        ofn_out.lpstrTitle = "Save Binary .cyxmodel File";
+        ofn_out.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+        ofn_out.lpstrDefExt = "cyxmodel";
+
+        if (!GetSaveFileNameA(&ofn_out)) {
+            spdlog::info("Directory to Binary conversion cancelled (output selection)");
+            return;
+        }
+
+        std::string output_path = szFileOut;
+
+        spdlog::info("Converting directory '{}' to binary '{}'", input_path, output_path);
+
+        if (cyxwiz::ModelConverter::DirectoryToBinary(input_path, output_path)) {
+            spdlog::info("Successfully converted to binary format: {}", output_path);
+        } else {
+            spdlog::error("Conversion failed: {}", cyxwiz::ModelConverter::GetLastError());
+        }
+#else
+        spdlog::warn("Model conversion dialog not implemented for this platform");
+#endif
+    });
 
     // Set up Deploy to Server callback
     toolbar_->SetDeployToServerCallback([this]() {
@@ -2114,6 +2283,22 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
     spdlog::info("  Dataset: {} ({} samples, {} classes)",
                  config.dataset_name, dataset_info.num_samples, config.output_size);
 
+    // Check if we have a trained model
+    auto& tm = cyxwiz::TrainingManager::Instance();
+    if (!tm.HasTrainedModel()) {
+        spdlog::error("No trained model available! Please train the model first before testing.");
+        return;
+    }
+
+    // Get the trained model
+    auto* trained_model = tm.GetLastTrainedModel();
+    if (!trained_model) {
+        spdlog::error("Failed to get trained model from TrainingManager");
+        return;
+    }
+
+    spdlog::info("Using trained model for testing ({} layers)", trained_model->Size());
+
     int batch_size = 32;
 
     // Get callback to update test results panel
@@ -2125,12 +2310,17 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         spdlog::info("Testing complete! Accuracy: {:.2f}%", results.test_accuracy * 100);
     };
 
-    // Use TestManager to start testing
+    // Use TestManager to start testing with the TRAINED model
+    // We need to create a shared_ptr from the raw pointer (non-owning)
+    auto model_ptr = std::shared_ptr<cyxwiz::SequentialModel>(
+        trained_model, [](cyxwiz::SequentialModel*) {} // No-op deleter - TrainingManager owns it
+    );
+
     bool started = cyxwiz::TestManager::Instance().StartTesting(
         std::move(config),
         dataset,
         batch_size,
-        nullptr,  // Will build model from config
+        model_ptr,  // Use the TRAINED model!
         complete_callback
     );
 

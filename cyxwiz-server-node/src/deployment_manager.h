@@ -100,6 +100,15 @@ public:
     std::vector<servernode::TensorSpec> GetInputSpecs(const std::string& deployment_id) const;
     std::vector<servernode::TensorSpec> GetOutputSpecs(const std::string& deployment_id) const;
 
+    // Get list of all deployments (for ListDeployments RPC)
+    struct DeploymentInfo {
+        std::string id;
+        std::string model_id;
+        protocol::DeploymentType type;
+        protocol::DeploymentStatus status;
+    };
+    std::vector<DeploymentInfo> GetAllDeployments() const;
+
 private:
     // Execute a deployment (runs in worker thread)
     void ExecuteDeployment(DeploymentInstance* instance);
