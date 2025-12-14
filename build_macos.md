@@ -435,7 +435,107 @@ build/macos-release/bin/
 
 ---
 
-### Error 6: Missing startup_scripts.txt
+### Error 6: GPU Support - ArrayFire Installation & OpenCL Headers
+
+**Status**: ✅ **FIXED** - GPU acceleration now works on macOS with Intel/AMD GPUs!
+
+#### Issue 6a: ArrayFire Not Found (GPU disabled)
+
+**Symptoms:**
+- CMake warning: `ArrayFire not found - GPU metrics will be limited`
+- Application logs: `[warning] ArrayFire not available - using CPU-only mode`
+- Hardware panel shows no GPU devices
+
+**Cause**: ArrayFire library not installed. ArrayFire is required for GPU acceleration via OpenCL/CUDA.
+
+**Solution**: Install ArrayFire via Homebrew:
+```bash
+brew install arrayfire
+```
+
+This installs:
+- ArrayFire v3.10.0 with OpenCL support
+- OpenBLAS (CPU backend)
+- FFTW (Fast Fourier Transform)
+- CLBlast (OpenCL BLAS)
+
+**Verify Installation:**
+```bash
+# Check ArrayFire version
+brew info arrayfire
+
+# Test GPU detection
+cat > /tmp/test_af.cpp << 'EOF'
+#include <arrayfire.h>
+int main() { af::info(); return 0; }
+EOF
+
+c++ -std=c++17 /tmp/test_af.cpp -o /tmp/test_af \
+    -I/usr/local/include -L/usr/local/lib -laf -framework OpenCL
+/tmp/test_af
+```
+
+**Expected Output:**
+```
+ArrayFire v3.10.0 (OpenCL, 64-bit Mac OSX, build default)
+[0] APPLE: Iris Pro, 1536 MB
+```
+
+#### Issue 6b: OpenCL Headers Not Found (macOS framework path)
+
+**Error:**
+```
+device.cpp:12:10: fatal error: 'CL/cl.h' file not found
+   12 | #include <CL/cl.h>
+```
+
+**Cause**: On Linux/Windows, OpenCL headers are in `CL/cl.h`, but on macOS they're in the OpenCL framework at `<OpenCL/opencl.h>`.
+
+**Solution**: Add platform-specific include in `cyxwiz-backend/src/core/device.cpp`:
+```cpp
+#ifdef CYXWIZ_ENABLE_OPENCL
+#define CL_TARGET_OPENCL_VERSION 120
+#ifdef __APPLE__
+#include <OpenCL/opencl.h>  // macOS uses framework path
+#else
+#include <CL/cl.h>          // Linux/Windows use CL/ directory
+#endif
+#include <af/opencl.h>  // For afcl namespace
+#endif
+```
+
+**File**: `cyxwiz-backend/src/core/device.cpp:10-18`
+
+**After Fix**: Rebuild to enable GPU support:
+```bash
+cmake -B build/macos-release -S . -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+  -DCYXWIZ_BUILD_ENGINE=ON \
+  -DCYXWIZ_BUILD_SERVER_NODE=ON \
+  -DCYXWIZ_BUILD_TESTS=OFF
+
+ninja -C build/macos-release
+```
+
+**Expected CMake Output:**
+```
+-- ArrayFire found: /usr/local/share/ArrayFire/cmake
+-- Found OpenCL: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/OpenCL.framework
+-- ArrayFire found - GPU support enabled
+-- Compute Backends:
+--   CUDA: OFF
+--   OpenCL: ON
+```
+
+**Supported GPUs on macOS:**
+- Intel Iris/Iris Pro (OpenCL 1.2+)
+- AMD Radeon (OpenCL 1.2+)
+- Apple Silicon GPU (via Metal Performance Shaders - future support)
+
+---
+
+### Error 7: Missing startup_scripts.txt
 
 **Error:**
 ```

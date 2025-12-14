@@ -9,7 +9,11 @@
 #endif
 #ifdef CYXWIZ_ENABLE_OPENCL
 #define CL_TARGET_OPENCL_VERSION 120
+#ifdef __APPLE__
+#include <OpenCL/opencl.h>
+#else
 #include <CL/cl.h>
+#endif
 #include <af/opencl.h>  // For afcl namespace
 #endif
 #endif
