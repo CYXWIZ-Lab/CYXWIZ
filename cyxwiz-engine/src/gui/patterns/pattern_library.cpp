@@ -9,6 +9,12 @@
 #include <algorithm>
 #include <set>
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>  // For _NSGetExecutablePath
+#include <climits>         // For PATH_MAX
+#include <libgen.h>        // For dirname
+#endif
+
 namespace gui::patterns {
 
 using json = nlohmann::json;
@@ -46,6 +52,19 @@ void PatternLibrary::LoadBuiltinPatterns() {
         "../../resources/patterns",
         "../../../cyxwiz-engine/resources/patterns"
     };
+
+#ifdef __APPLE__
+    // On macOS, also check paths relative to the executable
+    char exec_path[PATH_MAX];
+    uint32_t size = sizeof(exec_path);
+    if (_NSGetExecutablePath(exec_path, &size) == 0) {
+        std::string exec_dir = fs::path(exec_path).parent_path().string();
+        search_paths.insert(search_paths.begin(), exec_dir + "/resources/patterns");
+        search_paths.insert(search_paths.begin(), exec_dir + "/../resources/patterns");
+        search_paths.insert(search_paths.begin(), exec_dir + "/../Resources/patterns");  // App bundle
+        spdlog::debug("macOS executable dir: {}", exec_dir);
+    }
+#endif
 
     for (const auto& path : search_paths) {
         if (fs::exists(path) && fs::is_directory(path)) {
