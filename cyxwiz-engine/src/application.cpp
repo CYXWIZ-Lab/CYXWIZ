@@ -17,6 +17,9 @@
 #include <GLFW/glfw3native.h>
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <libgen.h>
 #endif
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -661,19 +664,37 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     std::vector<std::string> font_paths = {
         "resources/fonts/",
         "cyxwiz-engine/resources/fonts/",
-        "../resources/fonts/"
+        "../resources/fonts/",
+        "../Resources/fonts/"  // macOS app bundle
     };
+
+#ifdef __APPLE__
+    // On macOS, also check paths relative to the executable
+    char exec_path[PATH_MAX];
+    uint32_t size = sizeof(exec_path);
+    if (_NSGetExecutablePath(exec_path, &size) == 0) {
+        std::string exec_dir = dirname(exec_path);
+        font_paths.insert(font_paths.begin(), exec_dir + "/resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../Resources/fonts/");  // App bundle
+        font_paths.insert(font_paths.begin(), exec_dir + "/../resources/fonts/");
+        spdlog::debug("macOS executable dir: {}", exec_dir);
+    }
+#endif
 
     std::string font_base_path;
     for (const auto& path : font_paths) {
-        if (std::filesystem::exists(path + "Inter-Regular.ttf")) {
+        std::string test_path = path + "Inter-Regular.ttf";
+        spdlog::debug("Checking font path: {}", test_path);
+        if (std::filesystem::exists(test_path)) {
             font_base_path = path;
+            spdlog::info("Found fonts at: {}", path);
             break;
         }
     }
 
     if (font_base_path.empty()) {
-        spdlog::warn("Custom fonts not found, using default ImGui font");
+        spdlog::warn("Custom fonts not found in any of the search paths, using default ImGui font");
+        spdlog::warn("Current working directory: {}", std::filesystem::current_path().string());
         io.Fonts->AddFontDefault();
         return;
     }
