@@ -3,6 +3,7 @@
 #include "../panel.h"
 #include "../../core/async_task_manager.h"
 #include "../../scripting/cell_manager.h"
+#include "../../scripting/debugger.h"
 #include <TextEditor.h>
 #include <string>
 #include <vector>
@@ -13,8 +14,6 @@
 
 namespace scripting {
     class ScriptingEngine;
-    class DebuggerManager;
-    enum class DebugState;
 }
 
 namespace cyxwiz {

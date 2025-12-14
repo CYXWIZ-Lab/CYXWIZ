@@ -8,6 +8,8 @@
 
 #ifdef _WIN32
 #include <Windows.h>
+#else
+#include <unistd.h>  // for gethostname on Unix/macOS
 #endif
 
 namespace cyxwiz::servernode::gui {

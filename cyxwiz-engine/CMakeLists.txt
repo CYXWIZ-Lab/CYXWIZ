@@ -55,7 +55,6 @@ set(ENGINE_SOURCES
     src/core/checkpoint_manager.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
-    src/core/model_converter.cpp
     src/core/model_analyzer.cpp
     src/core/formats/cyxmodel_format.cpp
     src/gui/main_window.cpp

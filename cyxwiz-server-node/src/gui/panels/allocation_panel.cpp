@@ -13,6 +13,10 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
+#ifndef _WIN32
+#include <sys/stat.h>  // for mkdir on Unix/macOS
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>

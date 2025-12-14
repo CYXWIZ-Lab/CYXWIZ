@@ -188,6 +188,10 @@ if(CYXWIZ_BUILD_DAEMON)
             PROTOBUF_USE_DLLS
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
+    elseif(APPLE)
+        find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
+        find_library(CFNETWORK_LIBRARY CFNetwork REQUIRED)
+        target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${COREFOUNDATION_LIBRARY} ${CFNETWORK_LIBRARY})
     else()
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread)
     endif()

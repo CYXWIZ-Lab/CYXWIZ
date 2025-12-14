@@ -11,6 +11,7 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <util.h>  // macOS uses util.h for openpty()
 #else
 #include <unistd.h>

@@ -80,7 +80,7 @@ DeploymentResult DeploymentClient::Deploy(const DeploymentConfig& config) {
         auto* deploy_config = request.mutable_config();
 
         // Set deployment type to local
-        deploy_config->set_type(cyxwiz::protocol::DEPLOYMENT_TYPE_LOCAL);
+        deploy_config->set_type(cyxwiz::protocol::DEPLOYMENT_TYPE_LOCAL_NODE);
 
         // Set model info
         auto* model_info = deploy_config->mutable_model();
