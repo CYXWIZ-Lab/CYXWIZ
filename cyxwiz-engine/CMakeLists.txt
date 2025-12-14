@@ -55,6 +55,7 @@ set(ENGINE_SOURCES
     src/core/checkpoint_manager.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/model_converter.cpp
     src/core/model_analyzer.cpp
     src/core/formats/cyxmodel_format.cpp
     src/gui/main_window.cpp
@@ -369,7 +370,8 @@ add_executable(cyxwiz-engine
 )
 
 # Include directories
-target_include_directories(cyxwiz-engine PRIVATE
+# Use BEFORE to ensure bundled libraries take priority over system-installed versions
+target_include_directories(cyxwiz-engine BEFORE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imnodes
