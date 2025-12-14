@@ -17,6 +17,9 @@
 #include <pdh.h>
 #include <intrin.h>
 #pragma comment(lib, "pdh.lib")
+#elif defined(__APPLE__)
+#include <sys/sysctl.h>
+#include <thread>
 #endif
 
 namespace cyxwiz::servernode::gui {
@@ -97,6 +100,63 @@ DashboardPanel::DashboardPanel() : ServerPanel("Dashboard") {
         }
         RegCloseKey(hKey);
     }
+
+    // Initialize per-core history
+    per_core_usage_.resize(cpu_logical_, 0.0f);
+    per_core_history_.resize(cpu_logical_);
+    for (auto& hist : per_core_history_) {
+        hist.resize(HISTORY_SIZE, 0.0f);
+    }
+#elif defined(__APPLE__)
+    // macOS CPU initialization
+    size_t size = sizeof(cpu_logical_);
+    if (sysctlbyname("hw.logicalcpu", &cpu_logical_, &size, nullptr, 0) == 0) {
+        // Successfully got logical CPU count
+    } else {
+        cpu_logical_ = 1;
+    }
+
+    size = sizeof(cpu_cores_);
+    if (sysctlbyname("hw.physicalcpu", &cpu_cores_, &size, nullptr, 0) == 0) {
+        // Successfully got physical CPU count
+    } else {
+        cpu_cores_ = 1;
+    }
+
+    // Get CPU name
+    char cpu_brand[256] = {0};
+    size = sizeof(cpu_brand);
+    if (sysctlbyname("machdep.cpu.brand_string", cpu_brand, &size, nullptr, 0) == 0) {
+        cpu_name_ = cpu_brand;
+    } else {
+        cpu_name_ = "Unknown CPU";
+    }
+
+    // Get CPU frequency (in Hz)
+    uint64_t freq_hz = 0;
+    size = sizeof(freq_hz);
+    if (sysctlbyname("hw.cpufrequency", &freq_hz, &size, nullptr, 0) == 0) {
+        cpu_speed_ghz_ = freq_hz / 1000000000.0f;
+        cpu_max_speed_ghz_ = cpu_speed_ghz_;
+    } else {
+        cpu_speed_ghz_ = 0.0f;
+        cpu_max_speed_ghz_ = 0.0f;
+    }
+
+    // Initialize per-core history
+    per_core_usage_.resize(cpu_logical_, 0.0f);
+    per_core_history_.resize(cpu_logical_);
+    for (auto& hist : per_core_history_) {
+        hist.resize(HISTORY_SIZE, 0.0f);
+    }
+#else
+    // Linux/other platforms - use basic defaults
+    cpu_logical_ = std::thread::hardware_concurrency();
+    cpu_cores_ = cpu_logical_ / 2;
+    if (cpu_cores_ < 1) cpu_cores_ = 1;
+    cpu_name_ = "CPU";
+    cpu_speed_ghz_ = 0.0f;
+    cpu_max_speed_ghz_ = 0.0f;
 
     // Initialize per-core history
     per_core_usage_.resize(cpu_logical_, 0.0f);

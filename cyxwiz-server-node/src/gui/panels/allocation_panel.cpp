@@ -17,6 +17,11 @@
 #include <sys/stat.h>  // for mkdir on Unix/macOS
 #endif
 
+#ifdef __APPLE__
+#include <sys/sysctl.h>  // for sysctlbyname on macOS
+#include <thread>  // for hardware_concurrency
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
@@ -130,6 +135,56 @@ void AllocationPanel::RefreshDeviceList() {
     if (cpu_alloc.device_name.empty()) {
         cpu_alloc.device_name = "CPU";
     }
+
+    allocations_.push_back(cpu_alloc);
+#elif defined(__APPLE__)
+    // macOS CPU allocation
+    ResourceAllocation cpu_alloc;
+    cpu_alloc.device_type = ResourceAllocation::DeviceType::Cpu;
+    cpu_alloc.device_id = 0;
+
+    // Get logical CPU count
+    int logical_cpus = 0;
+    size_t size = sizeof(logical_cpus);
+    if (sysctlbyname("hw.logicalcpu", &logical_cpus, &size, nullptr, 0) == 0) {
+        cpu_alloc.cores_total = logical_cpus;
+    } else {
+        cpu_alloc.cores_total = std::thread::hardware_concurrency();
+        if (cpu_alloc.cores_total == 0) cpu_alloc.cores_total = 1;
+    }
+
+    cpu_alloc.cores_reserved = std::min(2, cpu_alloc.cores_total / 4);
+    cpu_alloc.cores_allocated = cpu_alloc.cores_total - cpu_alloc.cores_reserved;
+    cpu_alloc.is_enabled = false;
+
+    // Get CPU name
+    char cpu_brand[256] = {0};
+    size = sizeof(cpu_brand);
+    if (sysctlbyname("machdep.cpu.brand_string", cpu_brand, &size, nullptr, 0) == 0) {
+        cpu_alloc.device_name = cpu_brand;
+        // Trim whitespace
+        size_t start = cpu_alloc.device_name.find_first_not_of(" ");
+        size_t end = cpu_alloc.device_name.find_last_not_of(" ");
+        if (start != std::string::npos) {
+            cpu_alloc.device_name = cpu_alloc.device_name.substr(start, end - start + 1);
+        }
+    }
+    if (cpu_alloc.device_name.empty()) {
+        cpu_alloc.device_name = "CPU";
+    }
+
+    allocations_.push_back(cpu_alloc);
+#else
+    // Linux/other platforms
+    ResourceAllocation cpu_alloc;
+    cpu_alloc.device_type = ResourceAllocation::DeviceType::Cpu;
+    cpu_alloc.device_id = 0;
+    cpu_alloc.cores_total = std::thread::hardware_concurrency();
+    if (cpu_alloc.cores_total == 0) cpu_alloc.cores_total = 1;
+    cpu_alloc.cores_reserved = std::min(2, cpu_alloc.cores_total / 4);
+    cpu_alloc.cores_allocated = cpu_alloc.cores_total - cpu_alloc.cores_reserved;
+    cpu_alloc.device_name = "CPU";
+    cpu_alloc.is_enabled = false;
 
     allocations_.push_back(cpu_alloc);
 #endif

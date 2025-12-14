@@ -13,6 +13,10 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <intrin.h>
+#elif defined(__APPLE__)
+#include <sys/sysctl.h>
+#include <mach/mach.h>
+#include <thread>
 #endif
 
 namespace cyxwiz::servernode::gui {
@@ -124,6 +128,86 @@ void HardwarePanel::RefreshHardwareInfo() {
     if (GlobalMemoryStatusEx(&memInfo)) {
         memory_info_.total_bytes = memInfo.ullTotalPhys;
         memory_info_.available_bytes = memInfo.ullAvailPhys;
+        memory_info_.used_bytes = memory_info_.total_bytes - memory_info_.available_bytes;
+    }
+#elif defined(__APPLE__)
+    // macOS CPU initialization
+    size_t size = sizeof(cpu_info_.logical_cores);
+    if (sysctlbyname("hw.logicalcpu", &cpu_info_.logical_cores, &size, nullptr, 0) != 0) {
+        cpu_info_.logical_cores = std::thread::hardware_concurrency();
+    }
+
+    size = sizeof(cpu_info_.physical_cores);
+    if (sysctlbyname("hw.physicalcpu", &cpu_info_.physical_cores, &size, nullptr, 0) != 0) {
+        cpu_info_.physical_cores = cpu_info_.logical_cores / 2;
+        if (cpu_info_.physical_cores < 1) cpu_info_.physical_cores = 1;
+    }
+
+    // Get CPU name
+    char cpu_brand[256] = {0};
+    size = sizeof(cpu_brand);
+    if (sysctlbyname("machdep.cpu.brand_string", cpu_brand, &size, nullptr, 0) == 0) {
+        cpu_info_.name = cpu_brand;
+        // Trim whitespace
+        size_t start = cpu_info_.name.find_first_not_of(" ");
+        size_t end = cpu_info_.name.find_last_not_of(" ");
+        if (start != std::string::npos) {
+            cpu_info_.name = cpu_info_.name.substr(start, end - start + 1);
+        }
+    } else {
+        cpu_info_.name = "Unknown CPU";
+    }
+
+    // Get CPU vendor
+    char cpu_vendor[256] = {0};
+    size = sizeof(cpu_vendor);
+    if (sysctlbyname("machdep.cpu.vendor", cpu_vendor, &size, nullptr, 0) == 0) {
+        cpu_info_.vendor = cpu_vendor;
+    } else {
+        cpu_info_.vendor = "Unknown";
+    }
+
+    // Get CPU frequency (in Hz)
+    uint64_t freq_hz = 0;
+    size = sizeof(freq_hz);
+    if (sysctlbyname("hw.cpufrequency", &freq_hz, &size, nullptr, 0) == 0) {
+        cpu_info_.base_speed_ghz = freq_hz / 1000000000.0f;
+        cpu_info_.current_speed_ghz = cpu_info_.base_speed_ghz;
+    } else {
+        cpu_info_.base_speed_ghz = 0.0f;
+        cpu_info_.current_speed_ghz = 0.0f;
+    }
+
+    // Get architecture
+#if defined(__x86_64__)
+    cpu_info_.architecture = "x86_64";
+#elif defined(__aarch64__) || defined(__arm64__)
+    cpu_info_.architecture = "ARM64";
+#else
+    cpu_info_.architecture = "Unknown";
+#endif
+
+    // Get memory info using Mach
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    vm_statistics64_data_t vm_stat;
+    if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                         (host_info64_t)&vm_stat, &count) == KERN_SUCCESS) {
+        // Get page size
+        vm_size_t page_size;
+        host_page_size(mach_host_self(), &page_size);
+
+        // Total physical memory
+        uint64_t total_mem = 0;
+        size = sizeof(total_mem);
+        if (sysctlbyname("hw.memsize", &total_mem, &size, nullptr, 0) == 0) {
+            memory_info_.total_bytes = total_mem;
+        }
+
+        // Calculate available memory (free + inactive + purgeable)
+        uint64_t free_pages = vm_stat.free_count;
+        uint64_t inactive_pages = vm_stat.inactive_count;
+        uint64_t purgeable_pages = vm_stat.purgeable_count;
+        memory_info_.available_bytes = (free_pages + inactive_pages + purgeable_pages) * page_size;
         memory_info_.used_bytes = memory_info_.total_bytes - memory_info_.available_bytes;
     }
 #endif

@@ -63,6 +63,11 @@ private:
     float CollectTemperature();
     float CollectPowerUsage();
 
+    // macOS GPU utilization monitoring
+#ifdef __APPLE__
+    float GetMacOSGPUUtilization(int device_id);
+#endif
+
     std::thread collection_thread_;
     std::atomic<bool> running_{false};
     std::atomic<int> interval_ms_{1000};
@@ -103,6 +108,11 @@ private:
     // ADL for GPU metrics (AMD only)
     bool adl_initialized_ = false;
     int amd_gpu_count_ = 0;  // Number of AMD GPUs
+
+#ifdef __APPLE__
+    // SMC (System Management Controller) for temperature/power on macOS
+    void* smc_connection_ = nullptr;  // io_connect_t SMC connection
+#endif
 };
 
 } // namespace cyxwiz::servernode::core
