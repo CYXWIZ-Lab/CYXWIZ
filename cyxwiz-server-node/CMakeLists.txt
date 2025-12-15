@@ -211,6 +211,14 @@ if(CYXWIZ_BUILD_DAEMON)
         message(STATUS "Server daemon: ONNX Runtime support enabled")
     endif()
 
+    # llama.cpp linkage for GGUF model support
+    # 'llama' target is created by vcpkg llama-cpp package or FindLlamaCpp.cmake
+    if(CYXWIZ_HAS_GGUF)
+        target_link_libraries(cyxwiz-server-daemon PRIVATE llama)
+        target_compile_definitions(cyxwiz-server-daemon PRIVATE CYXWIZ_HAS_GGUF)
+        message(STATUS "Server daemon: GGUF/llama.cpp support enabled")
+    endif()
+
     # Mark as daemon build (for conditional includes in shared code)
     target_compile_definitions(cyxwiz-server-daemon PRIVATE CYXWIZ_IS_DAEMON)
 
@@ -311,6 +319,13 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
         target_link_libraries(cyxwiz-server-gui PRIVATE onnxruntime::onnxruntime)
         target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_ONNX)
         message(STATUS "Server GUI: ONNX Runtime support enabled")
+    endif()
+
+    # llama.cpp linkage for GGUF model support
+    if(CYXWIZ_HAS_GGUF)
+        target_link_libraries(cyxwiz-server-gui PRIVATE llama)
+        target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_GGUF)
+        message(STATUS "Server GUI: GGUF/llama.cpp support enabled")
     endif()
 
     target_compile_features(cyxwiz-server-gui PRIVATE cxx_std_20)

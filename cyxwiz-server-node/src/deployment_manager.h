@@ -73,6 +73,9 @@ public:
     // Stop a running deployment
     void StopDeployment(const std::string& deployment_id);
 
+    // Remove a deployment completely (must be stopped first)
+    bool RemoveDeployment(const std::string& deployment_id);
+
     // Get deployment status
     protocol::DeploymentStatus GetDeploymentStatus(const std::string& deployment_id) const;
 

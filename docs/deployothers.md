@@ -9,7 +9,7 @@ This document outlines the support for additional model formats on the CyxWiz Se
 | `.cyxmodel` | **Working** | CyxWiz native format (binary + directory) |
 | `.onnx` | **Working** | ONNX Runtime with CUDA/CPU execution providers |
 | `.safetensors` | **Working** | HuggingFace safe tensor format (export only) |
-| `.gguf` | Stub | GGML format for LLMs (future) |
+| `.gguf` | **Working** | llama.cpp for LLMs with CUDA/Metal/CPU backends |
 | `.pt/.pth` | Stub | PyTorch models via LibTorch (future) |
 
 ---
@@ -184,17 +184,311 @@ bool using_cuda = false;
 
 ---
 
-# Future: GGUF Support (LLMs)
+# GGUF Support Implementation (Completed)
 
-For supporting large language models via llama.cpp:
+## Overview
+GGUF support has been implemented in CyxWiz using llama.cpp, enabling:
+- **Text Generation**: Load GGUF models for chat/completion inference
+- **Embeddings**: Extract vector embeddings for semantic search/RAG
+- **GPU Acceleration**: CUDA (NVIDIA), Metal (macOS), Vulkan support
 
-**Dependencies:**
-- llama.cpp library
+**Build Requirements:**
+- vcpkg packages: `llama-cpp` (GPU support auto-detected at build time)
+- CMake option: `CYXWIZ_ENABLE_GGUF=ON` (enabled by default)
 
-**Use Cases:**
-- Deploy quantized LLMs (Llama, Mistral, etc.)
-- Text generation inference
-- Embeddings extraction
+---
+
+## Key Features
+
+### Configuration (call before Load)
+- `SetContextSize(int n_ctx)` - Context window (512 to 128K)
+- `SetGPULayers(int n_gpu_layers)` - GPU offloading (0 = CPU only)
+- `SetThreads(int n_threads)` - CPU parallelism
+
+### Sampling Parameters
+- `SetTemperature(float)` - Randomness (0 = deterministic, 2 = creative)
+- `SetMaxTokens(int)` - Max generation length
+- `SetTopP(float)` - Nucleus sampling
+- `SetTopK(int)` - Top-K sampling
+- `SetRepeatPenalty(float)` - Repetition control
+
+### Inference Modes
+| Input Key | Mode | Description |
+|-----------|------|-------------|
+| `prompt` or `text` | Text Generation | Generate completion text |
+| `text` + embedding model | Embeddings | Extract embedding vector |
+| `input_ids` | Token Generation | Raw token ID input/output |
+
+---
+
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| `vcpkg.json` | Added llama-cpp dependency (platform-specific) |
+| `cmake/FindLlamaCpp.cmake` | **NEW** - CMake find module for llama.cpp |
+| `CMakeLists.txt` | Added CYXWIZ_ENABLE_GGUF option |
+| `cyxwiz-server-node/CMakeLists.txt` | Link llama target |
+| `cyxwiz-server-node/src/model_loader.h` | GGUFLoader config methods |
+| `cyxwiz-server-node/src/model_loader.cpp` | Full GGUFLoader implementation |
+| `cyxwiz-server-node/src/http/openai_api_server.cpp` | Added `/v1/completions` endpoint |
+| `cyxwiz-engine/src/gui/panels/deployment_dialog.h` | GGUF config members |
+| `cyxwiz-engine/src/gui/panels/deployment_dialog.cpp` | RenderGGUFConfig() UI |
+
+---
+
+## Deployment Dialog UI
+
+When a `.gguf` file is selected, the deployment dialog shows:
+- **GPU Layers slider** (0-100)
+- **Context Size dropdown** (512 to 128K presets)
+- **Temperature slider** (0.0-2.0)
+- **Max Tokens slider** (16-4096)
+- **Advanced Sampling** (collapsible):
+  - Top-P, Top-K, Repeat Penalty
+- **Embedding Mode checkbox**
+
+---
+
+## HTTP REST API Endpoints
+
+The Server Node exposes OpenAI-compatible REST API endpoints for inference:
+
+### GET /health
+Health check endpoint.
+```bash
+curl http://localhost:8080/health
+```
+
+### GET /v1/deployments
+List all active deployments.
+```bash
+curl http://localhost:8080/v1/deployments
+```
+
+### POST /v1/completions
+Text completion endpoint for LLM models (GGUF).
+
+**Request:**
+```bash
+curl -X POST http://localhost:8080/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployment_id": "dep_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "prompt": "Tell me a joke:",
+    "max_tokens": 100,
+    "temperature": 0.8
+  }'
+```
+
+**Response:**
+```json
+{
+  "id": "cmpl-xxxxxxxx",
+  "object": "text_completion",
+  "created": 1765808157,
+  "model": "dep_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "choices": [{
+    "text": "Why don't skeletons fight each other? They don't have the guts.",
+    "index": 0,
+    "logprobs": null,
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": -1,
+    "completion_tokens": -1,
+    "total_tokens": -1
+  }
+}
+```
+
+### POST /v1/predict
+Generic tensor-based prediction endpoint (for ONNX, CyxModel).
+
+**Request:**
+```bash
+curl -X POST http://localhost:8080/v1/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployment_id": "dep_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "input": [[1.0, 2.0, 3.0, 4.0]]
+  }'
+```
+
+---
+
+## Testing GGUF Deployment
+
+### Step 1: Start the Server Node Daemon
+```bash
+./build/bin/Release/cyxwiz-server-daemon.exe
+```
+
+The daemon starts with:
+- HTTP REST API on port 8080
+- gRPC Deployment endpoint on port 50056
+- gRPC Inference endpoint on port 50057
+
+### Step 2: Deploy a GGUF Model
+
+**Option A: Via CyxWiz Engine GUI**
+1. Launch the Engine: `./build/bin/Release/cyxwiz-engine.exe`
+2. Open the Deployment Dialog (View → Deploy Model or toolbar)
+3. Connect to Server Node at `localhost:50056`
+4. Browse and select a `.gguf` file
+5. Configure GPU layers, context size, temperature
+6. Click "Deploy"
+
+**Option B: Via gRPC (programmatic)**
+Use the `DeploymentService.AssignDeployment` RPC with model path and config.
+
+### Step 3: Test Inference via HTTP
+
+```bash
+# List deployments to get the deployment_id
+curl http://localhost:8080/v1/deployments
+
+# Run text completion
+curl -X POST http://localhost:8080/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployment_id": "dep_e0db9ec9-3bf9-c2ea-c076-b5550c8f847a",
+    "prompt": "What is machine learning?",
+    "max_tokens": 200
+  }'
+```
+
+### Example: Testing with GPT-OSS 20B
+
+```bash
+# Download model (example from HuggingFace)
+# Model: lmstudio-community/gpt-oss-20b-GGUF
+
+# Deploy via Engine GUI, then test:
+curl -X POST http://localhost:8080/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployment_id": "YOUR_DEPLOYMENT_ID",
+    "prompt": "Tell me a short funny joke:",
+    "max_tokens": 100,
+    "temperature": 0.8
+  }'
+
+# Expected output includes generated text in choices[0].text
+```
+
+---
+
+## Implementation Status
+
+| Step | Status | Notes |
+|------|--------|-------|
+| 1. vcpkg.json dependencies | **Done** | llama-cpp package |
+| 2. Root CMakeLists.txt | **Done** | CYXWIZ_ENABLE_GGUF option |
+| 3. Server Node CMakeLists.txt | **Done** | Linked llama target |
+| 4. GGUFLoader::Load() | **Done** | CPU + GPU layer offloading |
+| 5. GGUFLoader::Infer() | **Done** | Text generation + embeddings |
+| 6. Deployment Dialog UI | **Done** | Full config UI for GGUF |
+| 7. /v1/completions endpoint | **Done** | OpenAI-compatible text API |
+| 8. Unit tests | Pending | Create test files |
+
+---
+
+## Technical Notes
+
+### llama.cpp API (as of Dec 2024)
+The implementation uses the updated llama.cpp API with vocab-based functions:
+- `llama_model_get_vocab()` - Get vocab from model
+- `llama_n_vocab(vocab)` - Get vocabulary size
+- `llama_model_n_embd(model)` - Get embedding dimension
+- `llama_tokenize(vocab, ...)` - Tokenize text
+- `llama_token_to_piece(vocab, ...)` - Detokenize token
+- `llama_token_is_eog(vocab, ...)` - Check end-of-generation
+- `llama_model_load_from_file()` - Load model
+- `llama_init_from_model()` - Create context
+- `llama_memory_clear(llama_get_memory(ctx), true)` - Clear KV cache
+
+### Sampler Chain Setup
+```cpp
+llama_sampler* sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+llama_sampler_chain_add(sampler, llama_sampler_init_top_k(top_k));
+llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
+llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
+llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+llama_sampler_chain_add(sampler, llama_sampler_init_penalties(
+    64,              // penalty_last_n
+    repeat_penalty,  // penalty_repeat
+    0.0f,            // penalty_freq
+    0.0f             // penalty_present
+));
+```
+
+---
+
+# Quick Reference
+
+## Server Node Ports
+
+| Port | Protocol | Service |
+|------|----------|---------|
+| 8080 | HTTP | REST API (`/health`, `/v1/completions`, `/v1/predict`, `/v1/deployments`) |
+| 50052 | gRPC | P2P Job Execution Service |
+| 50053 | gRPC | Terminal Handler |
+| 50054 | gRPC | IPC Service (GUI communication) |
+| 50055 | gRPC | Node Service |
+| 50056 | gRPC | Deployment Handler |
+| 50057 | gRPC | Inference Service |
+
+## Supported Model Formats Summary
+
+| Format | Loader | Use Case | GPU Support |
+|--------|--------|----------|-------------|
+| `.cyxmodel` | CyxModelLoader | Native CyxWiz models | ArrayFire (CUDA/OpenCL) |
+| `.onnx` | ONNXLoader | Cross-framework models | CUDA EP, CPU fallback |
+| `.gguf` | GGUFLoader | LLM text generation | CUDA, Metal, Vulkan, CPU |
+| `.safetensors` | - | Export only | - |
+
+---
+
+# Troubleshooting
+
+## GGUF Model Loading Issues
+
+**"Failed to load model"**
+- Verify the `.gguf` file path is correct
+- Check file permissions
+- Ensure sufficient RAM (model size + context buffer)
+
+**Slow inference on CPU**
+- Increase GPU layers in deployment config
+- Reduce context size for faster processing
+- Use smaller quantization (Q4 vs Q8)
+
+**Out of memory**
+- Reduce `n_gpu_layers` to offload fewer layers to GPU
+- Reduce `n_ctx` context size
+- Use more aggressive quantization
+
+## ONNX Model Loading Issues
+
+**"CUDA EP not available"**
+- CUDA Toolkit must be installed
+- Falls back to CPU automatically
+- Check `onnxruntime-gpu` was linked
+
+**"Input shape mismatch"**
+- Verify input tensor dimensions match model expectations
+- Check batch size (usually first dimension)
+
+## Build Issues
+
+**"llama not found"**
+- Run `vcpkg install llama-cpp`
+- Ensure `CYXWIZ_ENABLE_GGUF=ON` in CMake
+
+**"onnxruntime not found"**
+- Run `vcpkg install onnxruntime-gpu` (Windows x64) or `vcpkg install onnxruntime`
+- Ensure `CYXWIZ_ENABLE_ONNX=ON` in CMake
 
 ---
 
@@ -209,3 +503,14 @@ For native PyTorch model loading via LibTorch:
 - Load `.pt` / `.pth` files directly
 - TorchScript models
 - Research model deployment
+
+---
+
+# Changelog
+
+## December 2024
+- Added GGUF/llama.cpp support with full text generation
+- Added `/v1/completions` HTTP endpoint for LLM inference
+- Updated llama.cpp API to use vocab-based functions
+- Added deployment dialog UI for GGUF configuration
+- Tested with GPT-OSS 20B (MXFP4 quantization)

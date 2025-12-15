@@ -160,6 +160,39 @@ grpc::Status DeploymentServiceImpl::ListDeployments(
     }
 }
 
+grpc::Status DeploymentServiceImpl::DeleteDeployment(
+    grpc::ServerContext* context,
+    const protocol::DeleteDeploymentRequest* request,
+    protocol::DeleteDeploymentResponse* response) {
+
+    const auto& deployment_id = request->deployment_id();
+    spdlog::info("Received delete deployment request: {}", deployment_id);
+
+    try {
+        if (!manager_->HasDeployment(deployment_id)) {
+            response->set_status(protocol::STATUS_ERROR);
+            response->mutable_error()->set_message("Deployment not found: " + deployment_id);
+            return grpc::Status::OK;
+        }
+
+        if (manager_->RemoveDeployment(deployment_id)) {
+            response->set_status(protocol::STATUS_SUCCESS);
+            spdlog::info("Deployment deleted: {}", deployment_id);
+        } else {
+            response->set_status(protocol::STATUS_FAILED);
+            response->mutable_error()->set_message("Cannot delete active deployment. Stop it first.");
+        }
+
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to delete deployment {}: {}", deployment_id, e.what());
+        response->set_status(protocol::STATUS_ERROR);
+        response->mutable_error()->set_message(e.what());
+        return grpc::Status(grpc::StatusCode::INTERNAL, e.what());
+    }
+}
+
 // ============================================================================
 // DeploymentHandler Implementation
 // ============================================================================

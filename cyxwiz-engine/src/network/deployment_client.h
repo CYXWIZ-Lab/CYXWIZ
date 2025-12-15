@@ -129,6 +129,13 @@ public:
     bool StopDeployment(const std::string& deployment_id);
 
     /**
+     * Delete a deployment (removes from server)
+     * @param deployment_id Deployment ID to delete
+     * @return true if deleted successfully
+     */
+    bool DeleteDeployment(const std::string& deployment_id);
+
+    /**
      * Get last error message
      */
     const std::string& GetLastError() const { return last_error_; }

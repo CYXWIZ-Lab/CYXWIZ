@@ -114,9 +114,67 @@ public:
     bool IsLoaded() const override;
     std::string GetFormat() const override { return "gguf"; }
 
+    // ========== Configuration (call before Load) ==========
+
+    // Set context window size (default: 2048)
+    void SetContextSize(int n_ctx);
+
+    // Set number of GPU layers to offload (default: 0 = CPU only)
+    // Higher values = more GPU memory used, faster inference
+    void SetGPULayers(int n_gpu_layers);
+
+    // Set number of CPU threads (default: 4)
+    void SetThreads(int n_threads);
+
+    // ========== Sampling Parameters (for text generation) ==========
+
+    // Set sampling temperature (default: 0.8)
+    // 0 = deterministic, 1 = balanced, 2 = very creative
+    void SetTemperature(float temp);
+
+    // Set maximum tokens to generate (default: 256)
+    void SetMaxTokens(int max_tokens);
+
+    // Set top-p (nucleus) sampling threshold (default: 0.95)
+    void SetTopP(float top_p);
+
+    // Set top-k sampling (default: 40)
+    void SetTopK(int top_k);
+
+    // Set repeat penalty (default: 1.1)
+    void SetRepeatPenalty(float penalty);
+
+    // ========== Model Information ==========
+
+    // Check if model is an embedding model (vs text generation)
+    bool IsEmbeddingModel() const;
+
+    // Get vocabulary size
+    int GetVocabSize() const;
+
+    // Get embedding dimension
+    int GetEmbeddingDim() const;
+
+    // Get configured context size
+    int GetContextSize() const;
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
+
+    // Helper methods for different inference modes
+    bool InferTextGeneration(
+        const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+        std::unordered_map<std::string, cyxwiz::Tensor>& outputs
+    );
+    bool InferEmbeddings(
+        const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+        std::unordered_map<std::string, cyxwiz::Tensor>& outputs
+    );
+    bool InferTokens(
+        const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+        std::unordered_map<std::string, cyxwiz::Tensor>& outputs
+    );
 };
 
 // PyTorch/LibTorch loader

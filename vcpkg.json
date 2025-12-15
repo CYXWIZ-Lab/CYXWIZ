@@ -37,7 +37,8 @@
       "name": "onnxruntime",
       "platform": "!(windows & x64)"
     },
-    "onnx"
+    "onnx",
+    "llama-cpp"
   ],
   "builtin-baseline": "17ff26d0566ba0fa05e35c9209e92664adb304e3"
 }

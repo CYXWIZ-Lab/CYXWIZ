@@ -16,6 +16,10 @@
 #endif
 #endif
 
+#ifdef CYXWIZ_HAS_GGUF
+#include <llama.h>
+#endif
+
 namespace cyxwiz {
 namespace servernode {
 
@@ -404,6 +408,45 @@ bool ONNXLoader::Infer(
 
     } catch (const Ort::Exception& e) {
         spdlog::error("ONNX Runtime inference error: {}", e.what());
+
+        // If CUDA inference failed and we haven't tried CPU fallback yet
+        if (impl_->using_cuda && !impl_->cuda_inference_failed) {
+            spdlog::warn("CUDA inference failed, attempting CPU fallback...");
+            impl_->cuda_inference_failed = true;
+
+            try {
+                // Reload model with CPU only
+                impl_->session.reset();
+                impl_->session_options.reset();
+
+                impl_->session_options = std::make_unique<Ort::SessionOptions>();
+                impl_->session_options->SetIntraOpNumThreads(4);
+                impl_->session_options->SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+                // Create new session with CPU only
+#ifdef CYXWIZ_PLATFORM_WINDOWS
+                std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+                std::wstring wide_path = converter.from_bytes(impl_->model_path);
+                impl_->session = std::make_unique<Ort::Session>(
+                    *impl_->env, wide_path.c_str(), *impl_->session_options);
+#else
+                impl_->session = std::make_unique<Ort::Session>(
+                    *impl_->env, impl_->model_path.c_str(), *impl_->session_options);
+#endif
+
+                impl_->using_cuda = false;
+                impl_->ExtractIOSpecs();
+                spdlog::info("ONNX: Reloaded model with CPU execution provider");
+
+                // Retry inference with CPU
+                return Infer(inputs, outputs);
+
+            } catch (const Ort::Exception& fallback_error) {
+                spdlog::error("CPU fallback also failed: {}", fallback_error.what());
+                return false;
+            }
+        }
+
         return false;
     } catch (const std::exception& e) {
         spdlog::error("ONNX inference exception: {}", e.what());
@@ -464,7 +507,7 @@ bool ONNXLoader::IsUsingCUDA() const {
 }
 
 // ============================================================================
-// GGUFLoader Implementation (Stub)
+// GGUFLoader Implementation
 // ============================================================================
 
 class GGUFLoader::Impl {
@@ -475,9 +518,81 @@ public:
     std::vector<TensorSpec> output_specs;
     uint64_t memory_usage = 0;
 
-    // TODO: Add llama.cpp context and related members
-    // llama_context* ctx = nullptr;
-    // llama_model* model = nullptr;
+#ifdef CYXWIZ_HAS_GGUF
+    // llama.cpp context
+    llama_model* model = nullptr;
+    llama_context* ctx = nullptr;
+    llama_sampler* sampler = nullptr;
+
+    // Configuration (set before Load)
+    int n_ctx = 2048;           // Context window size
+    int n_gpu_layers = 0;       // GPU offloading (0 = CPU only)
+    int n_threads = 4;          // CPU threads
+
+    // Sampling parameters
+    float temperature = 0.8f;
+    int max_tokens = 256;
+    float top_p = 0.95f;
+    int top_k = 40;
+    float repeat_penalty = 1.1f;
+
+    // Model info (populated after load)
+    int vocab_size = 0;
+    int embedding_dim = 0;
+    bool is_embedding_model = false;
+
+    // Detect model type from metadata
+    bool DetectModelType() {
+        if (!model) return false;
+
+        const llama_vocab* vocab = llama_model_get_vocab(model);
+        vocab_size = llama_n_vocab(vocab);
+        embedding_dim = llama_model_n_embd(model);
+
+        // Try to detect embedding model from metadata
+        // Embedding models typically have specific architecture names
+        char buf[256] = {0};
+        int32_t len = llama_model_meta_val_str(model, "general.architecture", buf, sizeof(buf));
+        if (len > 0) {
+            std::string arch(buf);
+            std::transform(arch.begin(), arch.end(), arch.begin(), ::tolower);
+            is_embedding_model = (arch.find("bert") != std::string::npos ||
+                                  arch.find("nomic") != std::string::npos ||
+                                  arch.find("embed") != std::string::npos ||
+                                  arch.find("e5") != std::string::npos);
+        }
+
+        return true;
+    }
+
+    // Setup sampler chain for text generation
+    void SetupSampler() {
+        if (sampler) {
+            llama_sampler_free(sampler);
+            sampler = nullptr;
+        }
+
+        // Create sampler chain
+        sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+
+        // Add samplers in order: penalties -> top-k -> top-p -> temp -> dist
+        llama_sampler_chain_add(sampler, llama_sampler_init_penalties(
+            64,                   // penalty_last_n
+            repeat_penalty,       // penalty_repeat
+            0.0f,                 // penalty_freq
+            0.0f                  // penalty_present
+        ));
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(top_k));
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
+        llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
+        llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+    }
+
+    // Reset sampler with new parameters
+    void UpdateSampler() {
+        SetupSampler();
+    }
+#endif
 };
 
 GGUFLoader::GGUFLoader() : impl_(std::make_unique<Impl>()) {
@@ -491,27 +606,101 @@ GGUFLoader::~GGUFLoader() {
 bool GGUFLoader::Load(const std::string& model_path) {
     spdlog::info("Loading GGUF model from: {}", model_path);
 
+#ifndef CYXWIZ_HAS_GGUF
+    spdlog::error("llama.cpp support not compiled. Rebuild with CYXWIZ_ENABLE_GGUF=ON");
+    return false;
+#else
     try {
-        // TODO: Implement actual llama.cpp loading
+        // Check file exists
+        if (!std::filesystem::exists(model_path)) {
+            spdlog::error("GGUF model file not found: {}", model_path);
+            return false;
+        }
+
         impl_->model_path = model_path;
+
+        // Initialize llama backend (safe to call multiple times)
+        llama_backend_init();
+
+        // Configure model loading
+        llama_model_params model_params = llama_model_default_params();
+        model_params.n_gpu_layers = impl_->n_gpu_layers;
+
+        // Load model
+        impl_->model = llama_model_load_from_file(model_path.c_str(), model_params);
+        if (!impl_->model) {
+            spdlog::error("Failed to load GGUF model: {}", model_path);
+            return false;
+        }
+
+        // Detect model type (text generation vs embedding)
+        impl_->DetectModelType();
+
+        // Configure context
+        llama_context_params ctx_params = llama_context_default_params();
+        ctx_params.n_ctx = impl_->n_ctx;
+        ctx_params.n_threads = impl_->n_threads;
+        ctx_params.n_threads_batch = impl_->n_threads;
+
+        // Create context
+        impl_->ctx = llama_init_from_model(impl_->model, ctx_params);
+        if (!impl_->ctx) {
+            spdlog::error("Failed to create llama context");
+            llama_model_free(impl_->model);
+            impl_->model = nullptr;
+            return false;
+        }
+
+        // Setup sampler for text generation
+        if (!impl_->is_embedding_model) {
+            impl_->SetupSampler();
+        }
+
+        // Setup input/output specs based on model type
+        impl_->input_specs.clear();
+        impl_->output_specs.clear();
+
+        if (impl_->is_embedding_model) {
+            // Embedding model: text in -> embedding vector out
+            TensorSpec input_spec;
+            input_spec.name = "text";
+            input_spec.shape = {-1};  // Variable length string
+            input_spec.dtype = "string";
+            impl_->input_specs.push_back(input_spec);
+
+            TensorSpec output_spec;
+            output_spec.name = "embedding";
+            output_spec.shape = {-1, impl_->embedding_dim};
+            output_spec.dtype = "float32";
+            impl_->output_specs.push_back(output_spec);
+        } else {
+            // Text generation model: text/tokens in -> text/tokens out
+            TensorSpec input_spec;
+            input_spec.name = "prompt";
+            input_spec.shape = {-1};
+            input_spec.dtype = "string";
+            impl_->input_specs.push_back(input_spec);
+
+            TensorSpec output_spec;
+            output_spec.name = "completion";
+            output_spec.shape = {-1};
+            output_spec.dtype = "string";
+            impl_->output_specs.push_back(output_spec);
+        }
+
+        // Get memory usage from model
+        impl_->memory_usage = llama_model_size(impl_->model);
+
         impl_->loaded = true;
 
-        // Mock input/output specs for text generation
-        TensorSpec input_spec;
-        input_spec.name = "input_ids";
-        input_spec.shape = {-1};  // Variable length sequence
-        input_spec.dtype = "int64";
-        impl_->input_specs.push_back(input_spec);
+        spdlog::info("GGUF model loaded successfully");
+        spdlog::info("  Type: {}", impl_->is_embedding_model ? "Embedding" : "Text Generation");
+        spdlog::info("  Vocab size: {}", impl_->vocab_size);
+        spdlog::info("  Embedding dim: {}", impl_->embedding_dim);
+        spdlog::info("  Context size: {}", impl_->n_ctx);
+        spdlog::info("  GPU layers: {}", impl_->n_gpu_layers);
+        spdlog::info("  Memory: {:.2f} GB", impl_->memory_usage / (1024.0 * 1024.0 * 1024.0));
 
-        TensorSpec output_spec;
-        output_spec.name = "logits";
-        output_spec.shape = {-1, 32000};  // Vocab size
-        output_spec.dtype = "float32";
-        impl_->output_specs.push_back(output_spec);
-
-        impl_->memory_usage = 4 * 1024 * 1024 * 1024ULL;  // Mock: 4 GB
-
-        spdlog::info("GGUF model loaded successfully (stub)");
         return true;
 
     } catch (const std::exception& e) {
@@ -519,6 +708,7 @@ bool GGUFLoader::Load(const std::string& model_path) {
         impl_->loaded = false;
         return false;
     }
+#endif
 }
 
 bool GGUFLoader::Infer(
@@ -526,13 +716,271 @@ bool GGUFLoader::Infer(
     std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
 
     if (!impl_->loaded) {
-        spdlog::error("Model not loaded");
+        spdlog::error("GGUF model not loaded");
         return false;
     }
 
-    // TODO: Implement actual inference with llama.cpp
-    spdlog::debug("Running GGUF inference (stub)");
+#ifndef CYXWIZ_HAS_GGUF
+    spdlog::error("llama.cpp support not compiled");
+    return false;
+#else
+    try {
+        // Determine inference mode from input keys
+        // Mode 1: "prompt" or "text" key -> text generation
+        // Mode 2: "text" key + embedding model -> embeddings
+        // Mode 3: "input_ids" key -> raw token generation
+
+        if (inputs.count("text") && impl_->is_embedding_model) {
+            return InferEmbeddings(inputs, outputs);
+        } else if (inputs.count("prompt") || inputs.count("text")) {
+            return InferTextGeneration(inputs, outputs);
+        } else if (inputs.count("input_ids")) {
+            return InferTokens(inputs, outputs);
+        } else {
+            spdlog::error("GGUF: Unknown input format. Expected 'prompt', 'text', or 'input_ids'");
+            return false;
+        }
+
+    } catch (const std::exception& e) {
+        spdlog::error("GGUF inference error: {}", e.what());
+        return false;
+    }
+#endif
+}
+
+// Text generation inference
+bool GGUFLoader::InferTextGeneration(
+    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+
+#ifndef CYXWIZ_HAS_GGUF
+    return false;
+#else
+    // Get prompt text from input tensor
+    std::string prompt;
+    if (inputs.count("prompt")) {
+        const auto& tensor = inputs.at("prompt");
+        const char* data = static_cast<const char*>(tensor.Data());
+        prompt = std::string(data, tensor.NumElements());
+    } else if (inputs.count("text")) {
+        const auto& tensor = inputs.at("text");
+        const char* data = static_cast<const char*>(tensor.Data());
+        prompt = std::string(data, tensor.NumElements());
+    }
+
+    if (prompt.empty()) {
+        spdlog::error("GGUF: Empty prompt");
+        return false;
+    }
+
+    spdlog::debug("GGUF: Generating text for prompt ({} chars)", prompt.length());
+
+    // Get vocab for tokenization
+    const llama_vocab* vocab = llama_model_get_vocab(impl_->model);
+
+    // Tokenize input
+    std::vector<llama_token> tokens(impl_->n_ctx);
+    int n_tokens = llama_tokenize(
+        vocab,
+        prompt.c_str(),
+        static_cast<int32_t>(prompt.length()),
+        tokens.data(),
+        static_cast<int32_t>(tokens.size()),
+        true,  // add_special (BOS)
+        false  // parse_special
+    );
+
+    if (n_tokens < 0) {
+        spdlog::error("GGUF: Tokenization failed");
+        return false;
+    }
+    tokens.resize(n_tokens);
+
+    spdlog::debug("GGUF: Prompt tokenized to {} tokens", n_tokens);
+
+    // Clear memory for fresh generation
+    llama_memory_clear(llama_get_memory(impl_->ctx), true);
+
+    // Decode prompt tokens
+    llama_batch batch = llama_batch_get_one(tokens.data(), static_cast<int32_t>(tokens.size()));
+    if (llama_decode(impl_->ctx, batch) != 0) {
+        spdlog::error("GGUF: Failed to decode prompt");
+        return false;
+    }
+
+    // Generate completion tokens
+    std::vector<llama_token> generated_tokens;
+    generated_tokens.reserve(impl_->max_tokens);
+
+    for (int i = 0; i < impl_->max_tokens; ++i) {
+        // Sample next token
+        llama_token new_token = llama_sampler_sample(impl_->sampler, impl_->ctx, -1);
+
+        // Check for end of generation
+        if (llama_token_is_eog(vocab, new_token)) {
+            break;
+        }
+
+        generated_tokens.push_back(new_token);
+
+        // Decode new token
+        batch = llama_batch_get_one(&new_token, 1);
+        if (llama_decode(impl_->ctx, batch) != 0) {
+            spdlog::error("GGUF: Failed to decode generated token");
+            break;
+        }
+    }
+
+    spdlog::debug("GGUF: Generated {} tokens", generated_tokens.size());
+
+    // Convert tokens back to text
+    std::string completion;
+    for (llama_token token : generated_tokens) {
+        char buf[256];
+        int len = llama_token_to_piece(vocab, token, buf, sizeof(buf), 0, false);
+        if (len > 0) {
+            completion.append(buf, len);
+        }
+    }
+
+    // Create output tensor with completion text
+    std::vector<size_t> shape = {completion.length()};
+    cyxwiz::Tensor output_tensor(shape, cyxwiz::DataType::UInt8);
+    std::memcpy(output_tensor.Data(), completion.data(), completion.length());
+
+    outputs["completion"] = std::move(output_tensor);
+    outputs["output"] = outputs["completion"];  // Alias for compatibility
+
+    spdlog::debug("GGUF: Generated completion ({} chars)", completion.length());
     return true;
+#endif
+}
+
+// Embeddings inference
+bool GGUFLoader::InferEmbeddings(
+    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+
+#ifndef CYXWIZ_HAS_GGUF
+    return false;
+#else
+    // Get text input
+    std::string text;
+    const auto& tensor = inputs.at("text");
+    const char* data = static_cast<const char*>(tensor.Data());
+    text = std::string(data, tensor.NumElements());
+
+    if (text.empty()) {
+        spdlog::error("GGUF: Empty text for embedding");
+        return false;
+    }
+
+    // Get vocab for tokenization
+    const llama_vocab* vocab = llama_model_get_vocab(impl_->model);
+
+    // Tokenize
+    std::vector<llama_token> tokens(impl_->n_ctx);
+    int n_tokens = llama_tokenize(
+        vocab,
+        text.c_str(),
+        static_cast<int32_t>(text.length()),
+        tokens.data(),
+        static_cast<int32_t>(tokens.size()),
+        true,
+        false
+    );
+
+    if (n_tokens < 0) {
+        spdlog::error("GGUF: Tokenization failed for embedding");
+        return false;
+    }
+    tokens.resize(n_tokens);
+
+    // Clear memory and decode
+    llama_memory_clear(llama_get_memory(impl_->ctx), true);
+    llama_batch batch = llama_batch_get_one(tokens.data(), static_cast<int32_t>(tokens.size()));
+
+    if (llama_decode(impl_->ctx, batch) != 0) {
+        spdlog::error("GGUF: Failed to decode for embedding");
+        return false;
+    }
+
+    // Get embeddings
+    float* embeddings = llama_get_embeddings(impl_->ctx);
+    if (!embeddings) {
+        spdlog::error("GGUF: Failed to get embeddings (model may not support embeddings)");
+        return false;
+    }
+
+    // Create output tensor
+    std::vector<size_t> shape = {1, static_cast<size_t>(impl_->embedding_dim)};
+    cyxwiz::Tensor output_tensor(shape, cyxwiz::DataType::Float32);
+    std::memcpy(output_tensor.Data(), embeddings, impl_->embedding_dim * sizeof(float));
+
+    outputs["embedding"] = std::move(output_tensor);
+    outputs["output"] = outputs["embedding"];  // Alias
+
+    return true;
+#endif
+}
+
+// Token-based inference (raw token IDs)
+bool GGUFLoader::InferTokens(
+    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+
+#ifndef CYXWIZ_HAS_GGUF
+    return false;
+#else
+    // Get input token IDs
+    const auto& tensor = inputs.at("input_ids");
+    const int32_t* token_data = static_cast<const int32_t*>(tensor.Data());
+    size_t n_tokens = tensor.NumElements();
+
+    std::vector<llama_token> tokens(token_data, token_data + n_tokens);
+
+    // Get vocab for EOG check
+    const llama_vocab* vocab = llama_model_get_vocab(impl_->model);
+
+    // Clear memory
+    llama_memory_clear(llama_get_memory(impl_->ctx), true);
+
+    // Decode input tokens
+    llama_batch batch = llama_batch_get_one(tokens.data(), static_cast<int32_t>(tokens.size()));
+    if (llama_decode(impl_->ctx, batch) != 0) {
+        spdlog::error("GGUF: Failed to decode input tokens");
+        return false;
+    }
+
+    // Generate completion tokens
+    std::vector<llama_token> generated_tokens;
+    generated_tokens.reserve(impl_->max_tokens);
+
+    for (int i = 0; i < impl_->max_tokens; ++i) {
+        llama_token new_token = llama_sampler_sample(impl_->sampler, impl_->ctx, -1);
+
+        if (llama_token_is_eog(vocab, new_token)) {
+            break;
+        }
+
+        generated_tokens.push_back(new_token);
+
+        batch = llama_batch_get_one(&new_token, 1);
+        if (llama_decode(impl_->ctx, batch) != 0) {
+            break;
+        }
+    }
+
+    // Create output tensor with token IDs
+    std::vector<size_t> shape = {generated_tokens.size()};
+    cyxwiz::Tensor output_tensor(shape, cyxwiz::DataType::Int32);
+    std::memcpy(output_tensor.Data(), generated_tokens.data(), generated_tokens.size() * sizeof(int32_t));
+
+    outputs["output_ids"] = std::move(output_tensor);
+    outputs["output"] = outputs["output_ids"];
+
+    return true;
+#endif
 }
 
 std::vector<TensorSpec> GGUFLoader::GetInputSpecs() const {
@@ -550,7 +998,21 @@ uint64_t GGUFLoader::GetMemoryUsage() const {
 void GGUFLoader::Unload() {
     if (impl_->loaded) {
         spdlog::info("Unloading GGUF model");
-        // TODO: Clean up llama.cpp resources
+#ifdef CYXWIZ_HAS_GGUF
+        if (impl_->sampler) {
+            llama_sampler_free(impl_->sampler);
+            impl_->sampler = nullptr;
+        }
+        if (impl_->ctx) {
+            llama_free(impl_->ctx);
+            impl_->ctx = nullptr;
+        }
+        if (impl_->model) {
+            llama_model_free(impl_->model);
+            impl_->model = nullptr;
+        }
+        // Note: llama_backend_free() is global, don't call per-model
+#endif
         impl_->loaded = false;
         impl_->input_specs.clear();
         impl_->output_specs.clear();
@@ -560,6 +1022,102 @@ void GGUFLoader::Unload() {
 
 bool GGUFLoader::IsLoaded() const {
     return impl_->loaded;
+}
+
+// ========== Configuration Methods ==========
+
+void GGUFLoader::SetContextSize(int n_ctx) {
+#ifdef CYXWIZ_HAS_GGUF
+    impl_->n_ctx = n_ctx;
+#endif
+}
+
+void GGUFLoader::SetGPULayers(int n_gpu_layers) {
+#ifdef CYXWIZ_HAS_GGUF
+    impl_->n_gpu_layers = n_gpu_layers;
+#endif
+}
+
+void GGUFLoader::SetThreads(int n_threads) {
+#ifdef CYXWIZ_HAS_GGUF
+    impl_->n_threads = n_threads;
+#endif
+}
+
+void GGUFLoader::SetTemperature(float temp) {
+#ifdef CYXWIZ_HAS_GGUF
+    impl_->temperature = temp;
+    if (impl_->loaded && impl_->sampler) {
+        impl_->UpdateSampler();
+    }
+#endif
+}
+
+void GGUFLoader::SetMaxTokens(int max_tokens) {
+#ifdef CYXWIZ_HAS_GGUF
+    impl_->max_tokens = max_tokens;
+#endif
+}
+
+void GGUFLoader::SetTopP(float top_p) {
+#ifdef CYXWIZ_HAS_GGUF
+    impl_->top_p = top_p;
+    if (impl_->loaded && impl_->sampler) {
+        impl_->UpdateSampler();
+    }
+#endif
+}
+
+void GGUFLoader::SetTopK(int top_k) {
+#ifdef CYXWIZ_HAS_GGUF
+    impl_->top_k = top_k;
+    if (impl_->loaded && impl_->sampler) {
+        impl_->UpdateSampler();
+    }
+#endif
+}
+
+void GGUFLoader::SetRepeatPenalty(float penalty) {
+#ifdef CYXWIZ_HAS_GGUF
+    impl_->repeat_penalty = penalty;
+    if (impl_->loaded && impl_->sampler) {
+        impl_->UpdateSampler();
+    }
+#endif
+}
+
+// ========== Model Information Methods ==========
+
+bool GGUFLoader::IsEmbeddingModel() const {
+#ifdef CYXWIZ_HAS_GGUF
+    return impl_->is_embedding_model;
+#else
+    return false;
+#endif
+}
+
+int GGUFLoader::GetVocabSize() const {
+#ifdef CYXWIZ_HAS_GGUF
+    return impl_->vocab_size;
+#else
+    return 0;
+#endif
+}
+
+int GGUFLoader::GetEmbeddingDim() const {
+#ifdef CYXWIZ_HAS_GGUF
+    return impl_->embedding_dim;
+#else
+    return 0;
+#endif
+}
+
+int GGUFLoader::GetContextSize() const {
+#ifdef CYXWIZ_HAS_GGUF
+    return impl_->n_ctx;
+#else
+    return 0;
+#endif
 }
 
 // ============================================================================

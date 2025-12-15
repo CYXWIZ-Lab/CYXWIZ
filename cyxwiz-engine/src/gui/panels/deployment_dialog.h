@@ -9,6 +9,7 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
+#include <chrono>
 
 namespace cyxwiz {
 
@@ -54,6 +55,7 @@ private:
     void RenderModelSection();
     void RenderEmbeddedConfig();
     void RenderServerNodeConfig();
+    void RenderGGUFConfig();  // GGUF/LLM-specific options
     void RenderDeployButton();
     void RenderActiveDeployments();
     void RenderStatusMessages();
@@ -63,6 +65,7 @@ private:
     void StopEmbeddedDeployment();
     void StartServerNodeDeployment();
     void StopServerNodeDeployment(const std::string& deployment_id);
+    void DeleteServerNodeDeployment(const std::string& deployment_id);
     void ConnectToServerNode();
     void DisconnectFromServerNode();
 
@@ -84,9 +87,18 @@ private:
     // Server Node mode config
     char server_address_[256] = "localhost:50055";
     int server_port_ = 8080;
-    int gpu_layers_ = 0;
-    int context_size_ = 2048;
     bool enable_terminal_ = false;
+
+    // GGUF/LLM mode config (shown when .gguf model detected)
+    bool is_gguf_model_ = false;           // Auto-detected from file extension
+    int n_gpu_layers_ = 0;                 // GPU offloading (0 = CPU only)
+    int context_size_ = 2048;              // Context window size
+    float temperature_ = 0.8f;             // Sampling temperature
+    int max_tokens_ = 256;                 // Max generation length
+    float top_p_ = 0.95f;                  // Top-p (nucleus) sampling
+    int top_k_ = 40;                       // Top-k sampling
+    float repeat_penalty_ = 1.1f;          // Repetition penalty
+    bool enable_embeddings_ = false;       // Run in embedding mode
 
     // Embedded server instance
     std::unique_ptr<LocalInferenceServer> embedded_server_;
@@ -106,6 +118,11 @@ private:
     // Thread for async operations
     std::unique_ptr<std::thread> operation_thread_;
     std::mutex state_mutex_;
+
+    // Polling control for Server Node deployments
+    std::chrono::steady_clock::time_point last_refresh_time_;
+    static constexpr float refresh_interval_seconds_ = 2.0f;  // Refresh every 2 seconds
+    bool last_refresh_failed_ = false;  // Backoff on failures
 };
 
 } // namespace cyxwiz

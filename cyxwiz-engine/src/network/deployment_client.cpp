@@ -307,4 +307,46 @@ bool DeploymentClient::StopDeployment(const std::string& deployment_id) {
     }
 }
 
+bool DeploymentClient::DeleteDeployment(const std::string& deployment_id) {
+    if (!connected_ || !stub_) {
+        last_error_ = "Not connected to Server Node";
+        spdlog::error("{}", last_error_);
+        return false;
+    }
+
+    spdlog::info("Deleting deployment: {}", deployment_id);
+
+    try {
+        cyxwiz::protocol::DeleteDeploymentRequest request;
+        request.set_deployment_id(deployment_id);
+
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+
+        cyxwiz::protocol::DeleteDeploymentResponse response;
+        grpc::Status status = stub_->DeleteDeployment(&context, request, &response);
+
+        if (!status.ok()) {
+            last_error_ = "gRPC error: " + status.error_message();
+            spdlog::error("{}", last_error_);
+            return false;
+        }
+
+        if (response.status() != cyxwiz::protocol::STATUS_SUCCESS) {
+            last_error_ = response.has_error() ?
+                response.error().message() : "Delete failed";
+            spdlog::error("{}", last_error_);
+            return false;
+        }
+
+        spdlog::info("Deployment deleted: {}", deployment_id);
+        return true;
+
+    } catch (const std::exception& e) {
+        last_error_ = std::string("Exception: ") + e.what();
+        spdlog::error("{}", last_error_);
+        return false;
+    }
+}
+
 } // namespace network

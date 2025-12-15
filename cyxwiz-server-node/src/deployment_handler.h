@@ -46,6 +46,12 @@ public:
         const protocol::ListDeploymentsRequest* request,
         protocol::ListDeploymentsResponse* response) override;
 
+    // Called by Engine/Central Server to delete a deployment from this node
+    grpc::Status DeleteDeployment(
+        grpc::ServerContext* context,
+        const protocol::DeleteDeploymentRequest* request,
+        protocol::DeleteDeploymentResponse* response) override;
+
 private:
     std::shared_ptr<DeploymentManager> manager_;
 };

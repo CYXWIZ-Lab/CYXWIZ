@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <chrono>
+#include <functional>
 #include <cyxwiz/tensor.h>
 
 namespace cyxwiz::servernode {
@@ -262,55 +263,55 @@ void OpenAIAPIServer::RegisterRoutes() {
             return;
         }
 
+        // Get the model's input specs to determine the correct input name
+        auto input_specs = deployment_manager_->GetInputSpecs(deployment_id);
+        std::string input_name = "input";  // Default fallback
+        if (!input_specs.empty()) {
+            input_name = input_specs[0].name;  // Use the model's actual input name
+            spdlog::debug("Using model input name: {}", input_name);
+        }
+
         // Parse input tensor
         std::unordered_map<std::string, cyxwiz::Tensor> inputs;
         try {
-            // Expect input as 2D array: [[val, val, ...]] for batch of 1
             const auto& input_json = request_body["input"];
 
             if (!input_json.is_array()) {
                 throw std::runtime_error("input must be an array");
             }
 
-            // Flatten input into vector
-            std::vector<float> input_data;
-            std::vector<size_t> shape;
-
             if (input_json.empty()) {
                 throw std::runtime_error("input array cannot be empty");
             }
 
-            // Handle 1D array: [val, val, ...]
-            if (!input_json[0].is_array()) {
-                for (const auto& val : input_json) {
-                    input_data.push_back(val.get<float>());
+            // Recursively determine shape and flatten data
+            std::vector<float> input_data;
+            std::vector<size_t> shape;
+
+            // Helper lambda to recursively process JSON array
+            std::function<void(const json&, size_t)> flatten_array;
+            flatten_array = [&](const json& arr, size_t depth) {
+                if (depth >= shape.size()) {
+                    shape.push_back(arr.size());
+                } else if (shape[depth] != arr.size()) {
+                    throw std::runtime_error("Inconsistent array dimensions at depth " + std::to_string(depth));
                 }
-                shape = {1, input_data.size()};  // Batch of 1
-            }
-            // Handle 2D array: [[val, val, ...], ...]
-            else {
-                size_t batch_size = input_json.size();
-                size_t feature_size = 0;
 
-                for (const auto& row : input_json) {
-                    if (!row.is_array()) {
-                        throw std::runtime_error("Each batch element must be an array");
-                    }
-                    if (feature_size == 0) {
-                        feature_size = row.size();
-                    } else if (row.size() != feature_size) {
-                        throw std::runtime_error("Inconsistent feature dimensions");
-                    }
-
-                    for (const auto& val : row) {
-                        input_data.push_back(val.get<float>());
+                for (const auto& elem : arr) {
+                    if (elem.is_array()) {
+                        flatten_array(elem, depth + 1);
+                    } else if (elem.is_number()) {
+                        input_data.push_back(elem.get<float>());
+                    } else {
+                        throw std::runtime_error("Array elements must be numbers or arrays");
                     }
                 }
-                shape = {batch_size, feature_size};
-            }
+            };
 
-            // Create tensor
-            inputs["input"] = cyxwiz::Tensor(shape, input_data.data());
+            flatten_array(input_json, 0);
+
+            // Create tensor with detected shape using the model's actual input name
+            inputs[input_name] = cyxwiz::Tensor(shape, input_data.data());
 
         } catch (const std::exception& e) {
             json error = {
@@ -450,7 +451,148 @@ void OpenAIAPIServer::RegisterRoutes() {
         res.set_content(response.dump(), "application/json");
     });
 
-    spdlog::info("Registered HTTP routes: /health, /v1/models, /v1/deployments, /v1/predict, /v1/deployments/:id");
+    // POST /v1/completions - Text completions for LLM models (GGUF)
+    server_->Post("/v1/completions", [this](const httplib::Request& req, httplib::Response& res) {
+        auto start_time = std::chrono::high_resolution_clock::now();
+
+        json request_body;
+        try {
+            request_body = json::parse(req.body);
+        } catch (const json::exception& e) {
+            json error = {
+                {"error", {
+                    {"message", std::string("Invalid JSON: ") + e.what()},
+                    {"type", "invalid_request_error"},
+                    {"code", "invalid_json"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        // Get deployment_id (required)
+        if (!request_body.contains("deployment_id") && !request_body.contains("model")) {
+            json error = {
+                {"error", {
+                    {"message", "Missing required field: deployment_id or model"},
+                    {"type", "invalid_request_error"},
+                    {"code", "missing_field"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        std::string deployment_id = request_body.contains("deployment_id")
+            ? request_body["deployment_id"].get<std::string>()
+            : request_body["model"].get<std::string>();
+
+        // Get prompt (required)
+        if (!request_body.contains("prompt")) {
+            json error = {
+                {"error", {
+                    {"message", "Missing required field: prompt"},
+                    {"type", "invalid_request_error"},
+                    {"code", "missing_field"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        std::string prompt = request_body["prompt"].get<std::string>();
+
+        // Get optional parameters
+        int max_tokens = request_body.value("max_tokens", 256);
+        float temperature = request_body.value("temperature", 0.8f);
+
+        // Check deployment exists
+        if (!deployment_manager_->HasDeployment(deployment_id)) {
+            json error = {
+                {"error", {
+                    {"message", "Deployment not found: " + deployment_id},
+                    {"type", "invalid_request_error"},
+                    {"code", "deployment_not_found"}
+                }}
+            };
+            res.status = 404;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        // Create text input tensor
+        std::unordered_map<std::string, cyxwiz::Tensor> inputs;
+        std::vector<size_t> shape = {prompt.length()};
+        cyxwiz::Tensor prompt_tensor(shape, cyxwiz::DataType::UInt8);
+        std::memcpy(prompt_tensor.Data(), prompt.data(), prompt.length());
+        inputs["prompt"] = std::move(prompt_tensor);
+
+        // Run inference
+        std::unordered_map<std::string, cyxwiz::Tensor> outputs;
+        bool success = deployment_manager_->RunInference(deployment_id, inputs, outputs);
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        double latency_ms = std::chrono::duration<double, std::milli>(
+            end_time - start_time).count();
+
+        if (!success) {
+            json error = {
+                {"error", {
+                    {"message", "Inference failed"},
+                    {"type", "server_error"},
+                    {"code", "inference_error"}
+                }}
+            };
+            res.status = 500;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        // Extract completion text from output
+        std::string completion_text;
+        if (outputs.count("completion")) {
+            const auto& tensor = outputs["completion"];
+            completion_text = std::string(
+                static_cast<const char*>(tensor.Data()),
+                tensor.NumElements()
+            );
+        } else if (outputs.count("output")) {
+            const auto& tensor = outputs["output"];
+            completion_text = std::string(
+                static_cast<const char*>(tensor.Data()),
+                tensor.NumElements()
+            );
+        }
+
+        // Build OpenAI-compatible response
+        json response = {
+            {"id", "cmpl-" + deployment_id.substr(4, 8)},
+            {"object", "text_completion"},
+            {"created", std::time(nullptr)},
+            {"model", deployment_id},
+            {"choices", json::array({
+                {
+                    {"text", completion_text},
+                    {"index", 0},
+                    {"logprobs", nullptr},
+                    {"finish_reason", "stop"}
+                }
+            })},
+            {"usage", {
+                {"prompt_tokens", -1},  // TODO: get actual token counts
+                {"completion_tokens", -1},
+                {"total_tokens", -1}
+            }}
+        };
+
+        res.set_content(response.dump(), "application/json");
+        spdlog::debug("Completions request completed in {:.2f}ms", latency_ms);
+    });
+
+    spdlog::info("Registered HTTP routes: /health, /v1/models, /v1/deployments, /v1/predict, /v1/completions, /v1/deployments/:id");
 }
 
 void OpenAIAPIServer::HandleHealth() {

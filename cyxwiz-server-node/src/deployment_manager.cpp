@@ -112,6 +112,32 @@ void DeploymentManager::StopDeployment(const std::string& deployment_id) {
     spdlog::info("Deployment {} stopped successfully", deployment_id);
 }
 
+bool DeploymentManager::RemoveDeployment(const std::string& deployment_id) {
+    spdlog::info("Removing deployment: {}", deployment_id);
+
+    std::lock_guard<std::mutex> lock(deployments_mutex_);
+    auto it = deployments_.find(deployment_id);
+    if (it == deployments_.end()) {
+        spdlog::warn("Deployment not found for removal: {}", deployment_id);
+        return false;
+    }
+
+    // Check if deployment is still running
+    auto status = it->second->status;
+    if (status == protocol::DEPLOYMENT_STATUS_RUNNING ||
+        status == protocol::DEPLOYMENT_STATUS_LOADING ||
+        status == protocol::DEPLOYMENT_STATUS_READY) {
+        spdlog::error("Cannot remove active deployment: {} (status={})",
+                     deployment_id, static_cast<int>(status));
+        return false;
+    }
+
+    // Remove from map
+    deployments_.erase(it);
+    spdlog::info("Deployment {} removed successfully", deployment_id);
+    return true;
+}
+
 protocol::DeploymentStatus DeploymentManager::GetDeploymentStatus(
     const std::string& deployment_id) const {
 

@@ -68,7 +68,8 @@ bool DeploymentDialog::HasActiveDeployment() const {
 void DeploymentDialog::Render() {
     if (!is_open_) return;
 
-    ImGui::SetNextWindowSize(ImVec2(550, 600), ImGuiCond_FirstUseEver);
+    // Taller window when GGUF options are shown
+    ImGui::SetNextWindowSize(ImVec2(550, is_gguf_model_ ? 750 : 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin(ICON_FA_ROCKET " Deploy Model", &is_open_)) {
         RenderModeSelector();
@@ -80,6 +81,12 @@ void DeploymentDialog::Render() {
             RenderEmbeddedConfig();
         } else {
             RenderServerNodeConfig();
+        }
+
+        // GGUF-specific config (shown for both modes when GGUF model detected)
+        if (is_gguf_model_) {
+            ImGui::Separator();
+            RenderGGUFConfig();
         }
 
         ImGui::Separator();
@@ -165,6 +172,11 @@ void DeploymentDialog::RenderModelSection() {
 
     // Show model info if valid path
     if (strlen(model_path_) > 0 && fs::exists(model_path_)) {
+        // Detect model format from extension
+        std::string ext = fs::path(model_path_).extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        is_gguf_model_ = (ext == ".gguf");
+
         if (fs::is_directory(model_path_)) {
             ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Directory format", ICON_FA_CHECK);
             // Count files in directory
@@ -174,6 +186,11 @@ void DeploymentDialog::RenderModelSection() {
             }
             ImGui::SameLine();
             ImGui::TextDisabled("(%zu files)", file_count);
+        } else if (is_gguf_model_) {
+            ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "%s GGUF/LLM Model", ICON_FA_BRAIN);
+            auto file_size = fs::file_size(model_path_);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%.2f GB)", file_size / (1024.0 * 1024.0 * 1024.0));
         } else {
             ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Binary format", ICON_FA_CHECK);
             auto file_size = fs::file_size(model_path_);
@@ -182,6 +199,9 @@ void DeploymentDialog::RenderModelSection() {
         }
     } else if (strlen(model_path_) > 0) {
         ImGui::TextColored(ImVec4(0.8f, 0.3f, 0.3f, 1.0f), "%s Path not found", ICON_FA_TRIANGLE_EXCLAMATION);
+        is_gguf_model_ = false;
+    } else {
+        is_gguf_model_ = false;
     }
 
     ImGui::Spacing();
@@ -245,9 +265,9 @@ void DeploymentDialog::RenderServerNodeConfig() {
         if (server_port_ > 65535) server_port_ = 65535;
 
         ImGui::SetNextItemWidth(150);
-        ImGui::InputInt("GPU Layers", &gpu_layers_);
-        if (gpu_layers_ < 0) gpu_layers_ = 0;
-        if (gpu_layers_ > 100) gpu_layers_ = 100;
+        ImGui::InputInt("GPU Layers", &n_gpu_layers_);
+        if (n_gpu_layers_ < 0) n_gpu_layers_ = 0;
+        if (n_gpu_layers_ > 100) n_gpu_layers_ = 100;
         ImGui::SameLine();
         ImGui::TextDisabled("(0 = CPU only)");
 
@@ -257,6 +277,101 @@ void DeploymentDialog::RenderServerNodeConfig() {
         if (context_size_ > 131072) context_size_ = 131072;
 
         ImGui::Checkbox("Enable Terminal Access", &enable_terminal_);
+    }
+
+    ImGui::Spacing();
+}
+
+void DeploymentDialog::RenderGGUFConfig() {
+    ImGui::Text("%s GGUF/LLM Configuration", ICON_FA_BRAIN);
+    ImGui::Spacing();
+
+    // GPU Offloading
+    ImGui::SetNextItemWidth(200);
+    ImGui::SliderInt("GPU Layers##GGUF", &n_gpu_layers_, 0, 100);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Number of layers to offload to GPU\n"
+                          "0 = CPU only\n"
+                          "Higher = more GPU memory used, faster inference");
+    }
+
+    // Context Size with presets
+    ImGui::SetNextItemWidth(200);
+    const char* ctx_items[] = {"512", "1K", "2K", "4K", "8K", "16K", "32K", "64K", "128K"};
+    static int ctx_sizes[] = {512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072};
+    int ctx_idx = 2;  // Default 2048
+    for (int i = 0; i < 9; ++i) {
+        if (ctx_sizes[i] == context_size_) {
+            ctx_idx = i;
+            break;
+        }
+    }
+    if (ImGui::Combo("Context Size##GGUF", &ctx_idx, ctx_items, 9)) {
+        context_size_ = ctx_sizes[ctx_idx];
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Maximum context window size\n"
+                          "Larger = more memory, longer prompts supported");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Sampling Parameters");
+    ImGui::Spacing();
+
+    // Temperature
+    ImGui::SetNextItemWidth(200);
+    ImGui::SliderFloat("Temperature", &temperature_, 0.0f, 2.0f, "%.2f");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Controls randomness\n"
+                          "0 = deterministic\n"
+                          "1 = balanced\n"
+                          "2 = very creative");
+    }
+
+    // Max Tokens
+    ImGui::SetNextItemWidth(200);
+    ImGui::SliderInt("Max Tokens", &max_tokens_, 16, 4096);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Maximum number of tokens to generate");
+    }
+
+    // Advanced sampling (collapsible)
+    if (ImGui::CollapsingHeader("Advanced Sampling")) {
+        ImGui::Indent();
+
+        ImGui::SetNextItemWidth(200);
+        ImGui::SliderFloat("Top-P", &top_p_, 0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Nucleus sampling threshold\n"
+                              "Lower = more focused\n"
+                              "1.0 = disabled");
+        }
+
+        ImGui::SetNextItemWidth(200);
+        ImGui::SliderInt("Top-K", &top_k_, 1, 100);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Top-K sampling\n"
+                              "Lower = more focused");
+        }
+
+        ImGui::SetNextItemWidth(200);
+        ImGui::SliderFloat("Repeat Penalty", &repeat_penalty_, 1.0f, 2.0f, "%.2f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Penalize repeated tokens\n"
+                              "1.0 = no penalty");
+        }
+
+        ImGui::Unindent();
+    }
+
+    ImGui::Spacing();
+
+    // Embedding mode toggle
+    ImGui::Checkbox("Embedding Mode", &enable_embeddings_);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Run as embedding model (for semantic search)\n"
+                          "Requires embedding-capable model like nomic-embed, e5, etc.");
     }
 
     ImGui::Spacing();
@@ -336,8 +451,17 @@ void DeploymentDialog::RenderActiveDeployments() {
 
     // Server Node deployments
     if (mode_ == DeploymentMode::ServerNode && deployment_client_ && deployment_client_->IsConnected()) {
-        // Refresh deployments
-        deployment_client_->ListDeployments(server_deployments_);
+        // Throttled refresh - only poll every refresh_interval_seconds_
+        auto now = std::chrono::steady_clock::now();
+        float elapsed = std::chrono::duration<float>(now - last_refresh_time_).count();
+
+        // Use longer interval if last refresh failed (backoff)
+        float interval = last_refresh_failed_ ? refresh_interval_seconds_ * 5.0f : refresh_interval_seconds_;
+
+        if (elapsed >= interval) {
+            last_refresh_time_ = now;
+            last_refresh_failed_ = !deployment_client_->ListDeployments(server_deployments_);
+        }
 
         for (const auto& deploy : server_deployments_) {
             has_deployments = true;
@@ -347,9 +471,23 @@ void DeploymentDialog::RenderActiveDeployments() {
             ImGui::BeginChild("ServerDeployment", ImVec2(0, 80), true);
 
             ImGui::Text("%s %s", ICON_FA_SERVER, deploy.model_name.c_str());
-            ImGui::SameLine(ImGui::GetWindowWidth() - 80);
-            if (ImGui::SmallButton(ICON_FA_STOP " Stop")) {
-                StopServerNodeDeployment(deploy.id);
+
+            // Show Stop button for running deployments, Delete for stopped ones
+            bool is_stopped = (deploy.status == 6 || deploy.status == 7 || deploy.status == 8);  // STOPPED, FAILED, TERMINATED
+            bool is_running = (deploy.status == 4 || deploy.status == 5 || deploy.status == 3);  // READY, RUNNING, LOADING
+
+            if (is_stopped) {
+                ImGui::SameLine(ImGui::GetWindowWidth() - 80);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+                if (ImGui::SmallButton(ICON_FA_TRASH " Delete")) {
+                    DeleteServerNodeDeployment(deploy.id);
+                }
+                ImGui::PopStyleColor();
+            } else if (is_running) {
+                ImGui::SameLine(ImGui::GetWindowWidth() - 80);
+                if (ImGui::SmallButton(ICON_FA_STOP " Stop")) {
+                    StopServerNodeDeployment(deploy.id);
+                }
             }
 
             // Status color
@@ -364,6 +502,18 @@ void DeploymentDialog::RenderActiveDeployments() {
                 case 3:  // LOADING
                     status_color = ImVec4(1.0f, 0.8f, 0.3f, 1.0f);
                     status_text = "Loading";
+                    break;
+                case 6:  // STOPPED
+                    status_color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+                    status_text = "Stopped";
+                    break;
+                case 7:  // FAILED
+                    status_color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+                    status_text = "Failed";
+                    break;
+                case 8:  // TERMINATED
+                    status_color = ImVec4(0.6f, 0.4f, 0.4f, 1.0f);
+                    status_text = "Terminated";
                     break;
                 default:
                     status_color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
@@ -462,7 +612,7 @@ void DeploymentDialog::StartServerNodeDeployment() {
         network::DeploymentConfig config;
         config.model_path = model_path_;
         config.port = server_port_;
-        config.gpu_layers = gpu_layers_;
+        config.gpu_layers = n_gpu_layers_;
         config.context_size = context_size_;
         config.enable_terminal = enable_terminal_;
 
@@ -496,13 +646,33 @@ void DeploymentDialog::StopServerNodeDeployment(const std::string& deployment_id
     }
 }
 
+void DeploymentDialog::DeleteServerNodeDeployment(const std::string& deployment_id) {
+    if (!deployment_client_ || !deployment_client_->IsConnected()) {
+        error_message_ = "Not connected to Server Node";
+        return;
+    }
+
+    if (deployment_client_->DeleteDeployment(deployment_id)) {
+        status_message_ = "Deployment deleted";
+        if (active_server_deployment_id_ == deployment_id) {
+            active_server_deployment_id_.clear();
+        }
+        // Force refresh of deployment list
+        last_refresh_time_ = std::chrono::steady_clock::time_point{};
+    } else {
+        error_message_ = "Failed to delete: " + deployment_client_->GetLastError();
+    }
+}
+
 void DeploymentDialog::ConnectToServerNode() {
     error_message_.clear();
     status_message_.clear();
 
     if (deployment_client_->Connect(server_address_)) {
         status_message_ = "Connected to Server Node";
-        deployment_client_->ListDeployments(server_deployments_);
+        // Reset refresh state for immediate first refresh
+        last_refresh_time_ = std::chrono::steady_clock::time_point{};
+        last_refresh_failed_ = false;
     } else {
         error_message_ = "Connection failed: " + deployment_client_->GetLastError();
     }
