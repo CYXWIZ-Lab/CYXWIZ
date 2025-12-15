@@ -396,6 +396,23 @@ bool DeploymentManager::LoadModel(DeploymentInstance* instance) {
             return false;
         }
 
+        // Apply GGUF-specific configuration from deployment config
+        if (format_str == "gguf") {
+            auto* gguf_loader = dynamic_cast<GGUFLoader*>(instance->model_loader.get());
+            if (gguf_loader) {
+                const auto& cfg = instance->config;
+                if (cfg.gpu_layers() > 0) {
+                    gguf_loader->SetGPULayers(cfg.gpu_layers());
+                    spdlog::info("GGUF: Setting {} GPU layers", cfg.gpu_layers());
+                }
+                if (cfg.context_size() > 0) {
+                    gguf_loader->SetContextSize(cfg.context_size());
+                    spdlog::info("GGUF: Setting context size to {}", cfg.context_size());
+                }
+                // Note: temperature, max_tokens, top_p could be added to DeploymentConfig proto
+            }
+        }
+
         // Load model
         if (!instance->model_loader->Load(model_path)) {
             spdlog::error("Failed to load model from: {}", model_path);
