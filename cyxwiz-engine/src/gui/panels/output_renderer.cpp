@@ -369,8 +369,26 @@ void OutputRenderer::RenderMarkdownLine(const std::string& line) {
     if (line.empty()) {
         ImGui::Spacing();
     }
+    // Check for HTML header tags: <h1>...</h1>, <h2>...</h2>, etc.
+    else if (IsHtmlHeader(line, header_level, list_content)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, GetHeaderColor());
+
+        // Different font sizes for different header levels
+        float scale = 1.0f + (4 - std::min(header_level, 4)) * 0.2f;  // h1=1.6, h2=1.4, h3=1.2
+        ImGui::SetWindowFontScale(scale);
+
+        ImGui::TextWrapped("%s", list_content.c_str());
+
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopStyleColor();
+
+        // Underline for h1
+        if (header_level == 1) {
+            ImGui::Separator();
+        }
+    }
     else if (IsHeaderLine(line, header_level)) {
-        // Extract header text
+        // Markdown headers: # Heading
         std::string header_text = line.substr(header_level + 1);
         // Trim leading space
         if (!header_text.empty() && header_text[0] == ' ') {
@@ -398,12 +416,16 @@ void OutputRenderer::RenderMarkdownLine(const std::string& line) {
         ImGui::SameLine();
         RenderMarkdownInline(list_content);
     }
-    else if (line.find("---") == 0 || line.find("***") == 0) {
-        // Horizontal rule
+    else if (line.find("---") == 0 || line.find("***") == 0 || line.find("<hr") == 0) {
+        // Horizontal rule (markdown or HTML)
         ImGui::Separator();
     }
+    else if (line.find("<br") == 0 || line.find("<BR") == 0) {
+        // Line break
+        ImGui::Spacing();
+    }
     else {
-        // Regular text - handle inline formatting
+        // Regular text - handle inline formatting (including HTML tags)
         RenderMarkdownInline(line);
     }
 }
@@ -480,6 +502,34 @@ bool OutputRenderer::IsHeaderLine(const std::string& line, int& level) {
         }
     }
     return level > 0 && level <= 6 && line.size() > static_cast<size_t>(level);
+}
+
+bool OutputRenderer::IsHtmlHeader(const std::string& line, int& level, std::string& content) {
+    // Check for <h1>...</h1>, <h2>...</h2>, etc. (case insensitive)
+    std::string lower_line = line;
+    for (auto& c : lower_line) c = std::tolower(c);
+
+    for (int h = 1; h <= 6; h++) {
+        std::string open_tag = "<h" + std::to_string(h) + ">";
+        std::string close_tag = "</h" + std::to_string(h) + ">";
+
+        size_t start = lower_line.find(open_tag);
+        if (start != std::string::npos) {
+            size_t content_start = start + open_tag.length();
+            size_t end = lower_line.find(close_tag, content_start);
+            if (end != std::string::npos) {
+                level = h;
+                content = line.substr(content_start, end - content_start);
+                return true;
+            } else {
+                // No closing tag - take rest of line as content
+                level = h;
+                content = line.substr(content_start);
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool OutputRenderer::IsListItem(const std::string& line, std::string& content) {

@@ -173,14 +173,14 @@ struct Cell {
 
     // Sync source from editor
     void SyncSourceFromEditor() {
-        if (type == CellType::Code) {
+        if (type == CellType::Code || type == CellType::Markdown) {
             source = editor.GetText();
         }
     }
 
     // Sync editor from source
     void SyncEditorFromSource() {
-        if (type == CellType::Code) {
+        if (type == CellType::Code || type == CellType::Markdown) {
             editor.SetText(source);
         }
     }

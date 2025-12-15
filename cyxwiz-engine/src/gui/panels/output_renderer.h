@@ -124,6 +124,7 @@ private:
     static void RenderMarkdownLine(const std::string& line);
     static void RenderMarkdownInline(const std::string& text);
     static bool IsHeaderLine(const std::string& line, int& level);
+    static bool IsHtmlHeader(const std::string& line, int& level, std::string& content);
     static bool IsListItem(const std::string& line, std::string& content);
     static bool IsCodeBlock(const std::string& line);
 

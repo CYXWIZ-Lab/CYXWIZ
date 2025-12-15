@@ -3461,11 +3461,10 @@ void ScriptEditorPanel::RenderMarkdownCell(Cell& cell, int index) {
     auto& tab = tabs_[active_tab_index_];
     bool is_editing = (tab->editing_cell == index);
 
-    if (is_editing) {
-        // Edit mode - simple text input
-        ImGui::PushItemWidth(-1);
+    float content_width = ImGui::GetContentRegionAvail().x;
 
-        // Use TextEditor for markdown editing too
+    if (is_editing) {
+        // Edit mode - show TextEditor for markdown directly (no extra container)
         // Only sync editor from source when ENTERING edit mode, not every frame
         if (tab->last_editing_cell != index) {
             cell.SyncEditorFromSource();
@@ -3474,20 +3473,32 @@ void ScriptEditorPanel::RenderMarkdownCell(Cell& cell, int index) {
 
         int line_count = cell.editor.GetTotalLines();
         float line_height = ImGui::GetTextLineHeightWithSpacing();
-        float content_height = std::max(60.0f, (line_count + 1) * line_height);
+        float content_height = std::max(80.0f, (line_count + 1) * line_height);
         content_height = std::min(content_height, 300.0f);
 
-        cell.editor.Render("##markdown_edit", ImVec2(-1, content_height));
+        // Render editor directly
+        cell.editor.Render("##markdown_edit", ImVec2(content_width, content_height));
         cell.SyncSourceFromEditor();
 
         if (cell.editor.IsTextChanged()) {
             tab->is_modified = true;
         }
-
-        ImGui::PopItemWidth();
     } else {
-        // View mode - render markdown
-        OutputRenderer::RenderMarkdown(cell.source);
+        // View mode - render markdown with background
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 3.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+        ImGui::BeginChild("##md_view", ImVec2(content_width, 0), ImGuiChildFlags_AutoResizeY);
+
+        if (cell.source.empty()) {
+            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "Empty markdown cell - double-click to edit");
+        } else {
+            OutputRenderer::RenderMarkdown(cell.source);
+        }
+
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor();
     }
 }
 
