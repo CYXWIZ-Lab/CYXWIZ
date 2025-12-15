@@ -2,10 +2,19 @@
 #include <cyxwiz/sequential.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
+#include <fmt/ranges.h>  // For fmt::join
 #include <algorithm>
 #include <fstream>
 #include <filesystem>
 #include <regex>
+
+#ifdef CYXWIZ_HAS_ONNX
+#include <onnxruntime_cxx_api.h>
+#ifdef CYXWIZ_PLATFORM_WINDOWS
+#include <codecvt>
+#include <locale>
+#endif
+#endif
 
 namespace cyxwiz {
 namespace servernode {
@@ -47,7 +56,7 @@ std::vector<std::string> ModelLoaderFactory::GetSupportedFormats() {
 }
 
 // ============================================================================
-// ONNXLoader Implementation (Stub)
+// ONNXLoader Implementation
 // ============================================================================
 
 class ONNXLoader::Impl {
@@ -57,10 +66,113 @@ public:
     std::vector<TensorSpec> input_specs;
     std::vector<TensorSpec> output_specs;
     uint64_t memory_usage = 0;
+    bool force_cpu = false;  // User can force CPU execution
 
-    // TODO: Add ONNX Runtime session and related members
-    // Ort::Session* session = nullptr;
-    // Ort::Env* env = nullptr;
+#ifdef CYXWIZ_HAS_ONNX
+    std::unique_ptr<Ort::Env> env;
+    std::unique_ptr<Ort::Session> session;
+    std::unique_ptr<Ort::SessionOptions> session_options;
+    Ort::AllocatorWithDefaultOptions allocator;
+
+    // Cached I/O names for inference
+    std::vector<std::string> input_names_str;
+    std::vector<std::string> output_names_str;
+    std::vector<const char*> input_names;
+    std::vector<const char*> output_names;
+
+    bool using_cuda = false;
+    int cuda_device_id = 0;
+    bool cuda_inference_failed = false;  // Track if CUDA inference failed (for fallback)
+
+    // Helper to convert ONNX element type to string
+    static std::string OnnxTypeToString(ONNXTensorElementDataType type) {
+        switch (type) {
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: return "float32";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE: return "float64";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8: return "int8";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16: return "int16";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32: return "int32";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64: return "int64";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8: return "uint8";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16: return "uint16";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32: return "uint32";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64: return "uint64";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL: return "bool";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING: return "string";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: return "float16";
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16: return "bfloat16";
+            default: return "unknown";
+        }
+    }
+
+    // Extract tensor specs from session
+    void ExtractIOSpecs() {
+        if (!session) return;
+
+        input_specs.clear();
+        output_specs.clear();
+        input_names_str.clear();
+        output_names_str.clear();
+        input_names.clear();
+        output_names.clear();
+
+        // Get input info
+        size_t num_inputs = session->GetInputCount();
+        for (size_t i = 0; i < num_inputs; ++i) {
+            auto name_ptr = session->GetInputNameAllocated(i, allocator);
+            std::string name = name_ptr.get();
+            input_names_str.push_back(name);
+
+            auto type_info = session->GetInputTypeInfo(i);
+            auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+            auto shape = tensor_info.GetShape();
+            auto elem_type = tensor_info.GetElementType();
+
+            TensorSpec spec;
+            spec.name = name;
+            spec.shape = shape;
+            spec.dtype = OnnxTypeToString(elem_type);
+            input_specs.push_back(spec);
+
+            spdlog::debug("ONNX input[{}]: {} shape=[{}] dtype={}",
+                         i, name,
+                         fmt::join(shape, ","),
+                         spec.dtype);
+        }
+
+        // Get output info
+        size_t num_outputs = session->GetOutputCount();
+        for (size_t i = 0; i < num_outputs; ++i) {
+            auto name_ptr = session->GetOutputNameAllocated(i, allocator);
+            std::string name = name_ptr.get();
+            output_names_str.push_back(name);
+
+            auto type_info = session->GetOutputTypeInfo(i);
+            auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+            auto shape = tensor_info.GetShape();
+            auto elem_type = tensor_info.GetElementType();
+
+            TensorSpec spec;
+            spec.name = name;
+            spec.shape = shape;
+            spec.dtype = OnnxTypeToString(elem_type);
+            output_specs.push_back(spec);
+
+            spdlog::debug("ONNX output[{}]: {} shape=[{}] dtype={}",
+                         i, name,
+                         fmt::join(shape, ","),
+                         spec.dtype);
+        }
+
+        // Cache const char* pointers for Run()
+        for (const auto& name : input_names_str) {
+            input_names.push_back(name.c_str());
+        }
+        for (const auto& name : output_names_str) {
+            output_names.push_back(name.c_str());
+        }
+    }
+#endif
 };
 
 ONNXLoader::ONNXLoader() : impl_(std::make_unique<Impl>()) {
@@ -74,35 +186,96 @@ ONNXLoader::~ONNXLoader() {
 bool ONNXLoader::Load(const std::string& model_path) {
     spdlog::info("Loading ONNX model from: {}", model_path);
 
+#ifndef CYXWIZ_HAS_ONNX
+    spdlog::error("ONNX Runtime support not compiled. Rebuild with CYXWIZ_ENABLE_ONNX=ON");
+    return false;
+#else
     try {
-        // TODO: Implement actual ONNX Runtime loading
-        // For now, just a stub
+        // Check file exists
+        if (!std::filesystem::exists(model_path)) {
+            spdlog::error("ONNX model file not found: {}", model_path);
+            return false;
+        }
+
         impl_->model_path = model_path;
+
+        // Create ONNX Runtime environment
+        impl_->env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "CyxWiz-ONNX");
+
+        // Configure session options
+        impl_->session_options = std::make_unique<Ort::SessionOptions>();
+        impl_->session_options->SetIntraOpNumThreads(4);
+        impl_->session_options->SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+        // Try to use CUDA execution provider first (unless force_cpu is set)
+        impl_->using_cuda = false;
+
+        if (!impl_->force_cpu) {
+            try {
+                // Try CUDA EP
+                // Note: Using Heuristic algorithm search for better compatibility with older GPUs
+                // (Pascal architecture / GTX 10xx series / compute capability 6.x)
+                OrtCUDAProviderOptions cuda_options{};
+                cuda_options.device_id = impl_->cuda_device_id;
+                cuda_options.arena_extend_strategy = 0;  // kNextPowerOfTwo
+                cuda_options.gpu_mem_limit = SIZE_MAX;   // Use all available GPU memory
+                cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
+                cuda_options.do_copy_in_default_stream = 1;
+
+                impl_->session_options->AppendExecutionProvider_CUDA(cuda_options);
+                impl_->using_cuda = true;
+                spdlog::info("ONNX: CUDA execution provider configured (device {})", impl_->cuda_device_id);
+            } catch (const Ort::Exception& e) {
+                spdlog::warn("ONNX: CUDA execution provider not available: {}", e.what());
+                spdlog::info("ONNX: Falling back to CPU execution provider");
+                // Reset session options to remove failed CUDA EP
+                impl_->session_options = std::make_unique<Ort::SessionOptions>();
+                impl_->session_options->SetIntraOpNumThreads(4);
+                impl_->session_options->SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+            }
+        } else {
+            spdlog::info("ONNX: Using CPU execution provider (forced)");
+        }
+
+        // Create session
+#ifdef CYXWIZ_PLATFORM_WINDOWS
+        // Windows: convert path to wide string for ONNX Runtime
+        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+        std::wstring wide_path = converter.from_bytes(model_path);
+        impl_->session = std::make_unique<Ort::Session>(
+            *impl_->env, wide_path.c_str(), *impl_->session_options);
+#else
+        impl_->session = std::make_unique<Ort::Session>(
+            *impl_->env, model_path.c_str(), *impl_->session_options);
+#endif
+
+        // Extract input/output specifications
+        impl_->ExtractIOSpecs();
+
+        // Estimate memory usage (rough estimate based on model file size + overhead)
+        auto file_size = std::filesystem::file_size(model_path);
+        impl_->memory_usage = file_size * 2;  // Assume 2x for runtime overhead
+
         impl_->loaded = true;
 
-        // Mock input/output specs
-        TensorSpec input_spec;
-        input_spec.name = "input";
-        input_spec.shape = {-1, 3, 224, 224};  // -1 = batch size (dynamic)
-        input_spec.dtype = "float32";
-        impl_->input_specs.push_back(input_spec);
+        std::string device_str = impl_->using_cuda ?
+            fmt::format("CUDA (device {})", impl_->cuda_device_id) : "CPU";
+        spdlog::info("ONNX model loaded successfully on {}", device_str);
+        spdlog::info("  Inputs: {}, Outputs: {}",
+                     impl_->input_specs.size(), impl_->output_specs.size());
 
-        TensorSpec output_spec;
-        output_spec.name = "output";
-        output_spec.shape = {-1, 1000};
-        output_spec.dtype = "float32";
-        impl_->output_specs.push_back(output_spec);
-
-        impl_->memory_usage = 100 * 1024 * 1024;  // Mock: 100 MB
-
-        spdlog::info("ONNX model loaded successfully (stub)");
         return true;
 
+    } catch (const Ort::Exception& e) {
+        spdlog::error("ONNX Runtime error: {}", e.what());
+        impl_->loaded = false;
+        return false;
     } catch (const std::exception& e) {
         spdlog::error("Failed to load ONNX model: {}", e.what());
         impl_->loaded = false;
         return false;
     }
+#endif
 }
 
 bool ONNXLoader::Infer(
@@ -110,13 +283,133 @@ bool ONNXLoader::Infer(
     std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
 
     if (!impl_->loaded) {
-        spdlog::error("Model not loaded");
+        spdlog::error("ONNX model not loaded");
         return false;
     }
 
-    // TODO: Implement actual inference with ONNX Runtime
-    spdlog::debug("Running ONNX inference (stub)");
-    return true;
+#ifndef CYXWIZ_HAS_ONNX
+    spdlog::error("ONNX Runtime support not compiled");
+    return false;
+#else
+    try {
+        Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(
+            OrtArenaAllocator, OrtMemTypeDefault);
+
+        // Prepare input tensors
+        std::vector<Ort::Value> input_tensors;
+
+        for (size_t i = 0; i < impl_->input_specs.size(); ++i) {
+            const auto& spec = impl_->input_specs[i];
+
+            // Find matching input from user-provided map
+            auto it = inputs.find(spec.name);
+            if (it == inputs.end()) {
+                // Try "input" as fallback for single-input models
+                if (impl_->input_specs.size() == 1) {
+                    it = inputs.find("input");
+                }
+                if (it == inputs.end() && !inputs.empty()) {
+                    it = inputs.begin();  // Use first available
+                }
+                if (it == inputs.end()) {
+                    spdlog::error("ONNX: Input '{}' not provided", spec.name);
+                    return false;
+                }
+            }
+
+            const cyxwiz::Tensor& tensor = it->second;
+
+            // Get shape (use concrete shape from tensor, replace -1 in spec)
+            std::vector<int64_t> shape;
+            auto tensor_shape = tensor.Shape();
+            for (size_t j = 0; j < spec.shape.size(); ++j) {
+                if (spec.shape[j] == -1 && j < tensor_shape.size()) {
+                    shape.push_back(static_cast<int64_t>(tensor_shape[j]));
+                } else if (j < tensor_shape.size()) {
+                    shape.push_back(static_cast<int64_t>(tensor_shape[j]));
+                } else {
+                    shape.push_back(spec.shape[j]);
+                }
+            }
+
+            // Calculate total elements
+            size_t num_elements = 1;
+            for (auto dim : shape) {
+                num_elements *= static_cast<size_t>(dim);
+            }
+
+            // Create ONNX tensor from CyxWiz tensor data
+            // NOTE: This assumes float32 data - extend for other types as needed
+            // const_cast is safe here - ONNX Runtime doesn't modify input data
+            float* data_ptr = const_cast<float*>(static_cast<const float*>(tensor.Data()));
+
+            auto ort_tensor = Ort::Value::CreateTensor<float>(
+                memory_info,
+                data_ptr,
+                num_elements,
+                shape.data(),
+                shape.size()
+            );
+
+            input_tensors.push_back(std::move(ort_tensor));
+        }
+
+        // Run inference
+        auto output_tensors = impl_->session->Run(
+            Ort::RunOptions{nullptr},
+            impl_->input_names.data(),
+            input_tensors.data(),
+            input_tensors.size(),
+            impl_->output_names.data(),
+            impl_->output_names.size()
+        );
+
+        // Convert outputs to CyxWiz tensors
+        outputs.clear();
+        for (size_t i = 0; i < output_tensors.size(); ++i) {
+            const auto& ort_output = output_tensors[i];
+            const auto& spec = impl_->output_specs[i];
+
+            // Get output shape
+            auto type_info = ort_output.GetTensorTypeAndShapeInfo();
+            auto ort_shape = type_info.GetShape();
+
+            std::vector<size_t> shape;
+            for (auto dim : ort_shape) {
+                shape.push_back(static_cast<size_t>(dim));
+            }
+
+            // Get output data pointer (use const version since ort_output is const)
+            const float* data = ort_output.GetTensorData<float>();
+
+            // Calculate total elements
+            size_t num_elements = 1;
+            for (auto dim : shape) {
+                num_elements *= dim;
+            }
+
+            // Create CyxWiz tensor and copy data
+            cyxwiz::Tensor output_tensor(shape, cyxwiz::DataType::Float32);
+            std::memcpy(output_tensor.Data(), data, num_elements * sizeof(float));
+
+            outputs[spec.name] = std::move(output_tensor);
+        }
+
+        // Also add "output" alias for single-output models
+        if (outputs.size() == 1 && outputs.find("output") == outputs.end()) {
+            outputs["output"] = outputs.begin()->second;
+        }
+
+        return true;
+
+    } catch (const Ort::Exception& e) {
+        spdlog::error("ONNX Runtime inference error: {}", e.what());
+        return false;
+    } catch (const std::exception& e) {
+        spdlog::error("ONNX inference exception: {}", e.what());
+        return false;
+    }
+#endif
 }
 
 std::vector<TensorSpec> ONNXLoader::GetInputSpecs() const {
@@ -134,7 +427,16 @@ uint64_t ONNXLoader::GetMemoryUsage() const {
 void ONNXLoader::Unload() {
     if (impl_->loaded) {
         spdlog::info("Unloading ONNX model");
-        // TODO: Clean up ONNX Runtime resources
+#ifdef CYXWIZ_HAS_ONNX
+        impl_->session.reset();
+        impl_->session_options.reset();
+        impl_->env.reset();
+        impl_->input_names_str.clear();
+        impl_->output_names_str.clear();
+        impl_->input_names.clear();
+        impl_->output_names.clear();
+        impl_->using_cuda = false;
+#endif
         impl_->loaded = false;
         impl_->input_specs.clear();
         impl_->output_specs.clear();
@@ -144,6 +446,21 @@ void ONNXLoader::Unload() {
 
 bool ONNXLoader::IsLoaded() const {
     return impl_->loaded;
+}
+
+void ONNXLoader::SetForceCPU(bool force) {
+    impl_->force_cpu = force;
+    if (force) {
+        spdlog::info("ONNXLoader: CPU execution forced");
+    }
+}
+
+bool ONNXLoader::IsUsingCUDA() const {
+#ifdef CYXWIZ_HAS_ONNX
+    return impl_->using_cuda;
+#else
+    return false;
+#endif
 }
 
 // ============================================================================

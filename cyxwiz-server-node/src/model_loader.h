@@ -84,6 +84,13 @@ public:
     bool IsLoaded() const override;
     std::string GetFormat() const override { return "onnx"; }
 
+    // Force CPU execution (call before Load)
+    // Use this when CUDA execution fails for specific models (e.g., CNNs on older GPUs)
+    void SetForceCPU(bool force);
+
+    // Check if model is using CUDA
+    bool IsUsingCUDA() const;
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

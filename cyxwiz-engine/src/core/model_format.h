@@ -65,8 +65,9 @@ struct ExportOptions {
     Quantization quantization = Quantization::None;
 
     // ONNX-specific options
-    int opset_version = 17;
+    int onnx_opset_version = 17;
     bool optimize_for_inference = true;
+    bool add_softmax_output = false;        // Add Softmax at output for classification
     std::vector<std::string> dynamic_axes;  // e.g., {"input:0", "output:0"}
 
     // Metadata

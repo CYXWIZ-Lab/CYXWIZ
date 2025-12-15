@@ -410,6 +410,14 @@ if(OpenCV_FOUND)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_OPENCV)
 endif()
 
+# Optional: ONNX Export support
+if(CYXWIZ_HAS_ONNX_EXPORT)
+    find_package(ONNX CONFIG REQUIRED)
+    target_link_libraries(cyxwiz-engine PRIVATE onnx onnx_proto)
+    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_ONNX_EXPORT)
+    message(STATUS "Engine: ONNX Export support enabled")
+endif()
+
 # Platform-specific settings
 if(WIN32)
     # Windows-specific

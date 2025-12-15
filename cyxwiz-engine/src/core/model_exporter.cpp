@@ -4,6 +4,11 @@
 #include <chrono>
 #include <filesystem>
 #include <cstring>
+#include <fstream>
+
+#ifdef CYXWIZ_HAS_ONNX_EXPORT
+#include <onnx/onnx_pb.h>
+#endif
 
 namespace cyxwiz {
 
@@ -191,19 +196,252 @@ ExportResult ModelExporter::ExportONNX(
     ExportResult result;
     result.output_path = output_path;
 
-#ifdef CYXWIZ_HAS_ONNX
-    // TODO: Implement ONNX export using onnxruntime
-    // This requires building the ONNX graph from SequentialModel layers
-    if (progress_cb) progress_cb(0, 1, "ONNX export not yet implemented");
+#ifndef CYXWIZ_HAS_ONNX_EXPORT
     result.success = false;
-    result.error_message = "ONNX export is planned but not yet implemented";
-#else
-    result.success = false;
-    result.error_message = "ONNX support not compiled. Build with CYXWIZ_ENABLE_ONNX=ON";
-#endif
-
+    result.error_message = "ONNX export support not compiled. Build with CYXWIZ_ENABLE_ONNX=ON and ensure onnx package is installed.";
     last_error_ = result.error_message;
     return result;
+#else
+    try {
+        if (progress_cb) progress_cb(0, 5, "Creating ONNX model...");
+
+        // Create ONNX ModelProto
+        onnx::ModelProto model_proto;
+        model_proto.set_ir_version(8);  // ONNX IR version 8
+        model_proto.set_producer_name("CyxWiz Engine");
+        model_proto.set_producer_version("0.2.0");
+        model_proto.set_domain("ai.cyxwiz");
+        model_proto.set_model_version(1);
+
+        // Set opset import
+        auto* opset = model_proto.add_opset_import();
+        opset->set_domain("");  // Default ONNX domain
+        opset->set_version(options.onnx_opset_version > 0 ? options.onnx_opset_version : 17);
+
+        if (progress_cb) progress_cb(1, 5, "Building computation graph...");
+
+        // Create graph
+        auto* graph = model_proto.mutable_graph();
+        graph->set_name(options.model_name.empty() ? "cyxwiz_model" : options.model_name);
+
+        // Get model parameters
+        auto params = model.GetParameters();
+        result.num_parameters = 0;
+        result.total_tensor_bytes = 0;
+
+        // Determine input shape from first Linear layer
+        std::vector<int64_t> input_shape = {-1};  // -1 for dynamic batch size
+        int64_t current_size = 0;
+
+        // Find input size from first Linear layer
+        for (const auto& [name, tensor] : params) {
+            if (name.find("weight") != std::string::npos) {
+                auto shape = tensor.Shape();
+                if (shape.size() == 2) {
+                    input_shape.push_back(static_cast<int64_t>(shape[1]));  // in_features
+                    current_size = static_cast<int64_t>(shape[0]);  // out_features
+                    break;
+                }
+            }
+        }
+
+        // Add graph input
+        auto* graph_input = graph->add_input();
+        graph_input->set_name("input");
+        auto* input_type = graph_input->mutable_type()->mutable_tensor_type();
+        input_type->set_elem_type(onnx::TensorProto::FLOAT);
+        auto* input_shape_proto = input_type->mutable_shape();
+        for (auto dim : input_shape) {
+            auto* dim_proto = input_shape_proto->add_dim();
+            if (dim == -1) {
+                dim_proto->set_dim_param("batch_size");
+            } else {
+                dim_proto->set_dim_value(dim);
+            }
+        }
+
+        if (progress_cb) progress_cb(2, 5, "Adding weights as initializers...");
+
+        // Add weights as initializers
+        for (const auto& [name, tensor] : params) {
+            auto* initializer = graph->add_initializer();
+            initializer->set_name(name);
+            initializer->set_data_type(onnx::TensorProto::FLOAT);
+
+            // Set shape
+            for (size_t dim : tensor.Shape()) {
+                initializer->add_dims(static_cast<int64_t>(dim));
+            }
+
+            // Set raw data
+            size_t num_bytes = tensor.NumBytes();
+            initializer->set_raw_data(tensor.Data(), num_bytes);
+
+            result.num_parameters += static_cast<int>(tensor.NumElements());
+            result.total_tensor_bytes += num_bytes;
+        }
+
+        if (progress_cb) progress_cb(3, 5, "Creating ONNX operators...");
+
+        // Build ONNX nodes from model layers
+        std::string current_input = "input";
+        int node_idx = 0;
+        int layer_idx = 0;
+
+        // Iterate through model modules and create corresponding ONNX nodes
+        // Note: This requires knowledge of the layer types in SequentialModel
+        // We'll use the parameter names to infer layer structure
+
+        // Group parameters by layer
+        std::map<int, std::map<std::string, const Tensor*>> layer_params;
+        for (const auto& [name, tensor] : params) {
+            // Parse layer index from name like "layer0.weight", "layer0.bias"
+            if (name.find("layer") == 0) {
+                size_t dot_pos = name.find('.');
+                if (dot_pos != std::string::npos) {
+                    int idx = std::stoi(name.substr(5, dot_pos - 5));
+                    std::string param_name = name.substr(dot_pos + 1);
+                    layer_params[idx][param_name] = &tensor;
+                }
+            }
+        }
+
+        // Create ONNX nodes for each layer
+        for (const auto& [idx, params_map] : layer_params) {
+            auto weight_it = params_map.find("weight");
+            auto bias_it = params_map.find("bias");
+
+            if (weight_it != params_map.end()) {
+                const Tensor* weight = weight_it->second;
+                auto weight_shape = weight->Shape();
+
+                if (weight_shape.size() == 2) {
+                    // Linear layer -> Gemm node
+                    std::string weight_name = "layer" + std::to_string(idx) + ".weight";
+                    std::string bias_name = "layer" + std::to_string(idx) + ".bias";
+                    std::string output_name = "gemm_" + std::to_string(node_idx) + "_out";
+
+                    auto* gemm_node = graph->add_node();
+                    gemm_node->set_name("Gemm_" + std::to_string(node_idx));
+                    gemm_node->set_op_type("Gemm");
+                    gemm_node->add_input(current_input);
+                    gemm_node->add_input(weight_name);
+                    if (bias_it != params_map.end()) {
+                        gemm_node->add_input(bias_name);
+                    }
+                    gemm_node->add_output(output_name);
+
+                    // Gemm attributes: Y = alpha * A * B^T + beta * C
+                    auto* alpha_attr = gemm_node->add_attribute();
+                    alpha_attr->set_name("alpha");
+                    alpha_attr->set_f(1.0f);
+                    alpha_attr->set_type(onnx::AttributeProto::FLOAT);
+
+                    auto* beta_attr = gemm_node->add_attribute();
+                    beta_attr->set_name("beta");
+                    beta_attr->set_f(1.0f);
+                    beta_attr->set_type(onnx::AttributeProto::FLOAT);
+
+                    auto* transB_attr = gemm_node->add_attribute();
+                    transB_attr->set_name("transB");
+                    transB_attr->set_i(1);  // Transpose weight matrix
+                    transB_attr->set_type(onnx::AttributeProto::INT);
+
+                    current_input = output_name;
+                    current_size = static_cast<int64_t>(weight_shape[0]);
+                    node_idx++;
+                    layer_idx++;
+
+                    // Check if next layer is an activation (based on layer count)
+                    // For simplicity, add ReLU after each linear except the last
+                    // This is a heuristic - ideally we'd have explicit layer type info
+                    if (idx < static_cast<int>(layer_params.size()) - 1) {
+                        // Add ReLU activation
+                        std::string relu_output = "relu_" + std::to_string(node_idx) + "_out";
+                        auto* relu_node = graph->add_node();
+                        relu_node->set_name("Relu_" + std::to_string(node_idx));
+                        relu_node->set_op_type("Relu");
+                        relu_node->add_input(current_input);
+                        relu_node->add_output(relu_output);
+                        current_input = relu_output;
+                        node_idx++;
+                    }
+                }
+            }
+        }
+
+        // Add Softmax at the end (common for classification)
+        if (options.add_softmax_output) {
+            std::string softmax_output = "softmax_out";
+            auto* softmax_node = graph->add_node();
+            softmax_node->set_name("Softmax_output");
+            softmax_node->set_op_type("Softmax");
+            softmax_node->add_input(current_input);
+            softmax_node->add_output(softmax_output);
+
+            auto* axis_attr = softmax_node->add_attribute();
+            axis_attr->set_name("axis");
+            axis_attr->set_i(-1);  // Last axis
+            axis_attr->set_type(onnx::AttributeProto::INT);
+
+            current_input = softmax_output;
+        }
+
+        // Add graph output
+        auto* graph_output = graph->add_output();
+        graph_output->set_name("output");
+        auto* output_type = graph_output->mutable_type()->mutable_tensor_type();
+        output_type->set_elem_type(onnx::TensorProto::FLOAT);
+        auto* output_shape = output_type->mutable_shape();
+        auto* batch_dim = output_shape->add_dim();
+        batch_dim->set_dim_param("batch_size");
+        auto* feature_dim = output_shape->add_dim();
+        feature_dim->set_dim_value(current_size);
+
+        // Rename the last node's output to "output"
+        if (graph->node_size() > 0) {
+            auto* last_node = graph->mutable_node(graph->node_size() - 1);
+            last_node->set_output(0, "output");
+        }
+
+        if (progress_cb) progress_cb(4, 5, "Writing ONNX file...");
+
+        // Serialize to file
+        std::ofstream output_file(output_path, std::ios::binary);
+        if (!output_file) {
+            result.success = false;
+            result.error_message = "Failed to open output file: " + output_path;
+            last_error_ = result.error_message;
+            return result;
+        }
+
+        if (!model_proto.SerializeToOstream(&output_file)) {
+            result.success = false;
+            result.error_message = "Failed to serialize ONNX model";
+            last_error_ = result.error_message;
+            return result;
+        }
+
+        output_file.close();
+
+        if (progress_cb) progress_cb(5, 5, "Export complete!");
+
+        result.success = true;
+        result.num_layers = layer_idx;
+        result.file_size_bytes = std::filesystem::file_size(output_path);
+
+        spdlog::info("Exported model to ONNX: {} ({} layers, {} parameters, {} bytes)",
+                     output_path, result.num_layers, result.num_parameters, result.file_size_bytes);
+
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = std::string("ONNX export failed: ") + e.what();
+        last_error_ = result.error_message;
+        spdlog::error("ONNX export failed: {}", e.what());
+    }
+
+    return result;
+#endif
 }
 
 ExportResult ModelExporter::ExportSafetensors(

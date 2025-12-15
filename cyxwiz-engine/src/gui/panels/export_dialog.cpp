@@ -388,7 +388,7 @@ void ExportDialog::StartExport() {
     export_options_.include_training_history = include_training_history_;
     export_options_.include_graph = include_graph_;
     export_options_.compress = compress_;
-    export_options_.opset_version = opset_version_;
+    export_options_.onnx_opset_version = opset_version_;
     export_options_.model_name = model_name_;
     export_options_.author = author_;
     export_options_.description = description_;

@@ -191,8 +191,7 @@ if(CYXWIZ_BUILD_DAEMON)
     elseif(APPLE)
         find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
         find_library(CFNETWORK_LIBRARY CFNetwork REQUIRED)
-        find_library(IOKIT_LIBRARY IOKit REQUIRED)
-        target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${COREFOUNDATION_LIBRARY} ${CFNETWORK_LIBRARY} ${IOKIT_LIBRARY})
+        target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${COREFOUNDATION_LIBRARY} ${CFNETWORK_LIBRARY})
     else()
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread)
     endif()
@@ -201,6 +200,15 @@ if(CYXWIZ_BUILD_DAEMON)
     if(ArrayFire_FOUND)
         target_link_libraries(cyxwiz-server-daemon PRIVATE ArrayFire::af)
         target_compile_definitions(cyxwiz-server-daemon PRIVATE CYXWIZ_HAS_ARRAYFIRE)
+    endif()
+
+    # ONNX Runtime linkage
+    # onnxruntime::onnxruntime target is created by root CMakeLists.txt (via FindONNXRuntime.cmake)
+    # Works on Windows (vcpkg onnxruntime-gpu), Linux (vcpkg onnxruntime), macOS (vcpkg/brew)
+    if(CYXWIZ_HAS_ONNX)
+        target_link_libraries(cyxwiz-server-daemon PRIVATE onnxruntime::onnxruntime)
+        target_compile_definitions(cyxwiz-server-daemon PRIVATE CYXWIZ_HAS_ONNX)
+        message(STATUS "Server daemon: ONNX Runtime support enabled")
     endif()
 
     # Mark as daemon build (for conditional includes in shared code)
@@ -295,6 +303,14 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
     if(ArrayFire_FOUND)
         target_link_libraries(cyxwiz-server-gui PRIVATE ArrayFire::af)
         target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_ARRAYFIRE)
+    endif()
+
+    # ONNX Runtime linkage
+    # onnxruntime::onnxruntime target created by root CMakeLists.txt
+    if(CYXWIZ_HAS_ONNX)
+        target_link_libraries(cyxwiz-server-gui PRIVATE onnxruntime::onnxruntime)
+        target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_ONNX)
+        message(STATUS "Server GUI: ONNX Runtime support enabled")
     endif()
 
     target_compile_features(cyxwiz-server-gui PRIVATE cxx_std_20)
@@ -449,6 +465,53 @@ if(CYXWIZ_BUILD_TESTS)
             WIN32_LEAN_AND_MEAN
             NOGDI
         )
+    endif()
+
+    # ONNX Loader Tests (conditional on ONNX support)
+    if(CYXWIZ_HAS_ONNX)
+        add_executable(test_onnx_loader
+            tests/test_onnx_loader.cpp
+            src/model_loader.cpp
+        )
+
+        target_include_directories(test_onnx_loader PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+        )
+
+        target_link_libraries(test_onnx_loader PRIVATE
+            Catch2::Catch2
+            Catch2::Catch2WithMain
+            fmt::fmt
+            spdlog::spdlog
+            nlohmann_json::nlohmann_json
+            cyxwiz-backend
+            onnxruntime::onnxruntime
+            Threads::Threads
+        )
+
+        # Link ONNX protobuf for test model creation
+        if(CYXWIZ_HAS_ONNX_EXPORT)
+            find_package(ONNX CONFIG QUIET)
+            if(ONNX_FOUND)
+                # Use namespaced targets: ONNX::onnx already includes ONNX::onnx_proto
+                target_link_libraries(test_onnx_loader PRIVATE ONNX::onnx)
+                target_compile_definitions(test_onnx_loader PRIVATE CYXWIZ_HAS_ONNX_EXPORT)
+            endif()
+        endif()
+
+        target_compile_definitions(test_onnx_loader PRIVATE CYXWIZ_HAS_ONNX)
+
+        if(WIN32)
+            target_compile_definitions(test_onnx_loader PRIVATE
+                NOMINMAX
+                WIN32_LEAN_AND_MEAN
+                NOGDI
+            )
+        endif()
+
+        add_test(NAME ONNXLoaderTests COMMAND test_onnx_loader)
+        message(STATUS "Server Node ONNX Loader tests enabled")
     endif()
 
     # Register tests with CTest
