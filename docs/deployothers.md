@@ -315,6 +315,82 @@ curl -X POST http://localhost:8080/v1/predict \
   }'
 ```
 
+
+### POST /v1/chat/completions
+OpenAI-compatible chat completion endpoint for conversational LLMs (GGUF).
+
+**Request:**
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployment_id": "dep_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Hello!"}
+    ],
+    "max_tokens": 100,
+    "temperature": 0.7
+  }'
+```
+
+**Response:**
+```json
+{
+  "id": "chatcmpl-xxxxxxxx",
+  "object": "chat.completion",
+  "created": 1765808157,
+  "model": "dep_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "Hello! How can I help you today?"
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": -1,
+    "completion_tokens": -1,
+    "total_tokens": -1
+  }
+}
+```
+
+**Prompt Format:** Uses ChatML internally (`<|im_start|>role\ncontent<|im_end|>`)
+
+### POST /v1/embeddings
+Generate text embeddings for semantic search, RAG, or similarity tasks.
+
+**Request:**
+```bash
+curl -X POST http://localhost:8080/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployment_id": "dep_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "input": "Hello world"
+  }'
+```
+
+**Response:**
+```json
+{
+  "object": "list",
+  "data": [{
+    "object": "embedding",
+    "index": 0,
+    "embedding": [0.123, -0.456, 0.789, ...]
+  }],
+  "model": "dep_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "usage": {
+    "prompt_tokens": -1,
+    "total_tokens": -1
+  }
+}
+```
+
+**Multiple inputs:** Pass an array to `input` for batch embedding.
+
 ---
 
 ## Testing GGUF Deployment
@@ -514,3 +590,5 @@ For native PyTorch model loading via LibTorch:
 - Updated llama.cpp API to use vocab-based functions
 - Added deployment dialog UI for GGUF configuration
 - Tested with GPT-OSS 20B (MXFP4 quantization)
+- Added /v1/chat/completions endpoint (OpenAI-compatible chat API)
+- Added /v1/embeddings endpoint (text embeddings for RAG/search)
