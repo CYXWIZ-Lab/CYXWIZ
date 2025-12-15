@@ -3101,6 +3101,7 @@ void ScriptEditorPanel::ToggleCellMode() {
 
         tab->selected_cell = 0;
         tab->editing_cell = -1;  // Start in command mode
+        tab->last_editing_cell = -1;
         spdlog::info("Entered cell mode with {} cells", tab->cell_manager.GetCellCount());
     } else {
         // Exiting cell mode - serialize cells back to text
@@ -3114,10 +3115,7 @@ void ScriptEditorPanel::ToggleCellMode() {
 void ScriptEditorPanel::RenderCellBasedEditor() {
     auto& tab = tabs_[active_tab_index_];
 
-    // Apply font scale
-    if (font_scale_ != 1.0f) {
-        ImGui::SetWindowFontScale(font_scale_);
-    }
+    // Don't apply font scaling in notebook mode - use default font for cleaner look
 
     // Handle keyboard shortcuts in cell mode
     HandleCellKeyboardShortcuts();
@@ -3126,9 +3124,16 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     float available_height = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
     float available_width = ImGui::GetContentRegionAvail().x;
 
-    // Toolbar at top
-    ImGui::BeginChild("##cell_toolbar", ImVec2(available_width, 30), false);
+    // Jupyter-style toolbar at top with subtle background
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.16f, 0.18f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
+    ImGui::BeginChild("##cell_toolbar", ImVec2(available_width, 36), false);
     {
+        // Style toolbar buttons
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.38f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+
         // Add cell buttons
         if (ImGui::Button(ICON_FA_PLUS " Code")) {
             int pos = tab->selected_cell >= 0 ? tab->selected_cell + 1 : -1;
@@ -3147,18 +3152,22 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         }
 
         ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
+        ImGui::SameLine(0, 15);
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "|");
+        ImGui::SameLine(0, 15);
 
-        // Run buttons
+        // Run buttons with accent color
         bool can_run = scripting_engine_ && !scripting_engine_->IsScriptRunning();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.30f, 1.0f));
         ImGui::BeginDisabled(!can_run || tab->selected_cell < 0);
-        if (ImGui::Button(ICON_FA_PLAY " Run Cell")) {
+        if (ImGui::Button(ICON_FA_PLAY " Run")) {
             if (tab->selected_cell >= 0) {
                 tab->cell_manager.RunCell(tab->selected_cell);
             }
         }
         ImGui::EndDisabled();
+        ImGui::PopStyleColor(2);
 
         ImGui::SameLine();
 
@@ -3169,28 +3178,36 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
+        ImGui::SameLine(0, 15);
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "|");
+        ImGui::SameLine(0, 15);
 
         // Clear outputs
-        if (ImGui::Button(ICON_FA_ERASER " Clear Outputs")) {
+        if (ImGui::Button(ICON_FA_ERASER " Clear")) {
             tab->cell_manager.ClearAllOutputs();
         }
 
-        ImGui::SameLine();
+        // Right-aligned cell count
+        float right_text_width = ImGui::CalcTextSize("Cells: 999").x + 20;
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - right_text_width);
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Cells: %d", tab->cell_manager.GetCellCount());
 
-        // Cell count info
-        ImGui::TextDisabled("| %d cells", tab->cell_manager.GetCellCount());
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
     }
     ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
 
     // Show debug toolbar when debugging is active
     if (debug_mode_active_ && debugger_) {
         RenderDebugToolbar();
     }
 
-    // Cells container with scroll
-    ImGui::BeginChild("##cells_container", ImVec2(available_width, available_height - 35), false,
+    // Jupyter-style cells container with scroll and subtle background
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.11f, 0.13f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 15));
+    ImGui::BeginChild("##cells_container", ImVec2(available_width, available_height - 40), false,
                       ImGuiWindowFlags_AlwaysVerticalScrollbar);
     {
         // Restore scroll position
@@ -3213,39 +3230,53 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         tab->cell_scroll_y = ImGui::GetScrollY();
     }
     ImGui::EndChild();
-
-    // Reset font scale
-    if (font_scale_ != 1.0f) {
-        ImGui::SetWindowFontScale(1.0f);
-    }
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
 }
 
 void ScriptEditorPanel::RenderCell(Cell& cell, int index) {
     auto& tab = tabs_[active_tab_index_];
     bool is_selected = (tab->selected_cell == index);
-    bool is_editing = (tab->editing_cell == index);
 
     ImGui::PushID(index);
 
-    // Cell container
-    float available_width = ImGui::GetContentRegionAvail().x - 10;
+    // Cell container - Jupyter-style
+    float available_width = ImGui::GetContentRegionAvail().x;
 
-    // Calculate border color based on state
-    ImVec4 border_color = is_selected ? ImVec4(0.3f, 0.6f, 1.0f, 1.0f) : ImVec4(0.3f, 0.3f, 0.3f, 1.0f);
+    // Jupyter-style: left border indicator for selected cell
+    ImVec4 left_border_color;
     if (cell.state == CellState::Running) {
-        border_color = ImVec4(1.0f, 0.8f, 0.0f, 1.0f);  // Yellow while running
+        left_border_color = ImVec4(0.0f, 0.7f, 0.4f, 1.0f);  // Green while running
     } else if (cell.state == CellState::Error) {
-        border_color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);  // Red on error
+        left_border_color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);  // Red on error
+    } else if (is_selected) {
+        left_border_color = ImVec4(0.3f, 0.5f, 0.9f, 1.0f);  // Blue for selected
+    } else {
+        left_border_color = ImVec4(0.2f, 0.2f, 0.22f, 1.0f);  // Subtle gray
     }
 
-    ImGui::PushStyleColor(ImGuiCol_Border, border_color);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, is_selected ? 2.0f : 1.0f);
+    // Draw left border indicator (Jupyter-style)
+    ImVec2 cell_start_pos = ImGui::GetCursorScreenPos();
+
+    // Cell background color
+    ImVec4 cell_bg = is_selected ? ImVec4(0.14f, 0.14f, 0.16f, 1.0f) : ImVec4(0.12f, 0.12f, 0.14f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, cell_bg);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.2f, 0.2f, 0.22f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
 
     // Start cell region
     ImGui::BeginChild(("##cell_" + std::to_string(index)).c_str(), ImVec2(available_width, 0),
                       ImGuiChildFlags_Border | ImGuiChildFlags_AutoResizeY);
 
-    // Cell header with toolbar
+    // Draw left accent border after BeginChild (overlay)
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 cell_min = ImGui::GetWindowPos();
+    ImVec2 cell_max = ImVec2(cell_min.x + 4.0f, cell_min.y + ImGui::GetWindowHeight());
+    draw_list->AddRectFilled(cell_min, cell_max, ImGui::ColorConvertFloat4ToU32(left_border_color));
+
+    // Minimal toolbar - just show cell type and essential buttons inline
     RenderCellToolbar(index);
 
     // Cell content (skip if collapsed)
@@ -3260,42 +3291,50 @@ void ScriptEditorPanel::RenderCell(Cell& cell, int index) {
         }
 
         // Cell outputs (only when not collapsed)
+        // Cell outputs - Jupyter-style with Out[n]: label
         if (!cell.outputs.empty() && !cell.output_collapsed) {
-            ImGui::Separator();
+            ImGui::Spacing();
             ImGui::Spacing();
 
-            // Output header with collapse toggle
-            const char* output_icon = cell.output_collapsed ? ICON_FA_CHEVRON_RIGHT : ICON_FA_CHEVRON_DOWN;
-            if (ImGui::SmallButton(output_icon)) {
-                cell.output_collapsed = !cell.output_collapsed;
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("Output (%zu items)", cell.outputs.size());
+            // Jupyter-style Out[n]: label
+            std::string out_label = "Out[" + (cell.execution_count > 0 ? std::to_string(cell.execution_count) : " ") + "]:";
+            ImGui::TextColored(ImVec4(0.7f, 0.4f, 0.4f, 1.0f), "%s", out_label.c_str());
+            ImGui::SameLine(0, 10);
 
-            // Clear outputs button
-            ImGui::SameLine();
-            if (ImGui::SmallButton(ICON_FA_XMARK "##clear_output")) {
-                cell.ClearOutputs();
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Clear outputs");
-            }
-
-            ImGui::Spacing();
+            // Output area with subtle background
+            float output_width = ImGui::GetContentRegionAvail().x;
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.09f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 3.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+            ImGui::BeginChild("##output_view", ImVec2(output_width, 0), ImGuiChildFlags_AutoResizeY);
 
             // Render outputs
             for (const auto& output : cell.outputs) {
                 RenderCellOutput(output);
             }
+
+            ImGui::EndChild();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+
+            // Clear outputs button (subtle, right-aligned)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.2f, 0.2f, 0.5f));
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20);
+            if (ImGui::SmallButton(ICON_FA_XMARK "##clear_output")) {
+                cell.ClearOutputs();
+            }
+            ImGui::PopStyleColor(2);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Clear output");
+            }
         } else if (!cell.outputs.empty() && cell.output_collapsed) {
             // Show collapsed output indicator
-            ImGui::Separator();
-            const char* output_icon = ICON_FA_CHEVRON_RIGHT;
-            if (ImGui::SmallButton(output_icon)) {
-                cell.output_collapsed = false;
-            }
+            ImGui::Spacing();
+            std::string out_label = "Out[" + (cell.execution_count > 0 ? std::to_string(cell.execution_count) : " ") + "]:";
+            ImGui::TextColored(ImVec4(0.5f, 0.3f, 0.3f, 1.0f), "%s", out_label.c_str());
             ImGui::SameLine();
-            ImGui::TextDisabled("Output collapsed (%zu items)", cell.outputs.size());
+            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "(output hidden - %zu items)", cell.outputs.size());
         }
     } else {
         // Collapsed indicator
@@ -3310,13 +3349,14 @@ void ScriptEditorPanel::RenderCell(Cell& cell, int index) {
 
     ImGui::EndChild();
 
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);  // ChildBorderSize, ChildRounding, WindowPadding
+    ImGui::PopStyleColor(2);  // ChildBg, Border
 
     // Handle cell selection
     if (ImGui::IsItemClicked() && !is_selected) {
         tab->selected_cell = index;
         tab->editing_cell = -1;  // Exit edit mode when clicking another cell
+        tab->last_editing_cell = -1;
     }
 
     // Double-click to edit
@@ -3327,41 +3367,47 @@ void ScriptEditorPanel::RenderCell(Cell& cell, int index) {
 
     ImGui::PopID();
     ImGui::Spacing();
+    ImGui::Spacing();  // Extra spacing between cells like Jupyter
 }
 
 void ScriptEditorPanel::RenderCodeCell(Cell& cell, int index) {
     auto& tab = tabs_[active_tab_index_];
     bool is_editing = (tab->editing_cell == index);
 
-    // Breakpoint gutter (left side)
-    RenderBreakpointGutter(cell, index);
-    ImGui::SameLine();
-
-    // Execution count display
+    // Jupyter-style In [n]: label on the left
     ImGui::BeginGroup();
     {
+        // Execution count label - Jupyter style
         std::string exec_label;
+        ImVec4 label_color;
         if (cell.state == CellState::Running) {
-            exec_label = "[*]:";
+            exec_label = "In [*]:";
+            label_color = ImVec4(0.0f, 0.7f, 0.4f, 1.0f);  // Green while running
         } else if (cell.execution_count > 0) {
-            exec_label = "[" + std::to_string(cell.execution_count) + "]:";
+            exec_label = "In [" + std::to_string(cell.execution_count) + "]:";
+            label_color = ImVec4(0.4f, 0.5f, 0.7f, 1.0f);  // Blue-gray for executed
         } else {
-            exec_label = "[ ]:";
+            exec_label = "In [ ]:";
+            label_color = ImVec4(0.4f, 0.4f, 0.4f, 1.0f);  // Gray for not executed
         }
 
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", exec_label.c_str());
+        ImGui::TextColored(label_color, "%s", exec_label.c_str());
     }
     ImGui::EndGroup();
 
-    ImGui::SameLine();
+    ImGui::SameLine(0, 10);
 
-    // Code content
+    // Code content area
     float code_width = ImGui::GetContentRegionAvail().x;
-    float min_height = 60.0f;
+    float min_height = 50.0f;
 
     if (is_editing) {
         // Edit mode - show TextEditor
-        cell.SyncEditorFromSource();
+        // Only sync editor from source when ENTERING edit mode, not every frame
+        if (tab->last_editing_cell != index) {
+            cell.SyncEditorFromSource();
+            tab->last_editing_cell = index;
+        }
 
         // Calculate height based on content
         int line_count = cell.editor.GetTotalLines();
@@ -3382,21 +3428,31 @@ void ScriptEditorPanel::RenderCodeCell(Cell& cell, int index) {
 
         ImGui::PopID();
     } else {
-        // View mode - display syntax highlighted text
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
+        // View mode - display code with subtle background
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 3.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
         ImGui::BeginChild("##code_view", ImVec2(code_width, 0), ImGuiChildFlags_AutoResizeY);
 
-        // Simple syntax-highlighted code display
+        // Code display with line numbers
         std::istringstream stream(cell.source);
         std::string line;
         int line_num = 1;
         while (std::getline(stream, line)) {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%3d", line_num++);
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", line.c_str());
+            // Line number in subtle color
+            ImGui::TextColored(ImVec4(0.35f, 0.35f, 0.38f, 1.0f), "%3d ", line_num++);
+            ImGui::SameLine(0, 0);
+            // Code in bright color
+            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "%s", line.c_str());
+        }
+
+        // Handle empty cell
+        if (cell.source.empty()) {
+            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "# Empty cell - double-click to edit");
         }
 
         ImGui::EndChild();
+        ImGui::PopStyleVar(2);
         ImGui::PopStyleColor();
     }
 }
@@ -3410,7 +3466,11 @@ void ScriptEditorPanel::RenderMarkdownCell(Cell& cell, int index) {
         ImGui::PushItemWidth(-1);
 
         // Use TextEditor for markdown editing too
-        cell.SyncEditorFromSource();
+        // Only sync editor from source when ENTERING edit mode, not every frame
+        if (tab->last_editing_cell != index) {
+            cell.SyncEditorFromSource();
+            tab->last_editing_cell = index;
+        }
 
         int line_count = cell.editor.GetTotalLines();
         float line_height = ImGui::GetTextLineHeightWithSpacing();
@@ -3442,20 +3502,29 @@ void ScriptEditorPanel::RenderCellToolbar(int index) {
 
     bool is_editing = (tab->editing_cell == index);
 
-    // Cell type indicator
-    const char* type_icon = (cell.type == CellType::Code) ? ICON_FA_CODE :
-                            (cell.type == CellType::Markdown) ? ICON_FA_PARAGRAPH : ICON_FA_FILE_LINES;
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", type_icon);
+    // Compact Jupyter-style toolbar with subtle styling
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));  // Transparent buttons
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
 
-    ImGui::SameLine();
+    // Cell type badge
+    const char* type_label = (cell.type == CellType::Code) ? "Code" :
+                             (cell.type == CellType::Markdown) ? "Markdown" : "Raw";
+    ImVec4 badge_color = (cell.type == CellType::Code) ? ImVec4(0.3f, 0.4f, 0.6f, 1.0f) :
+                         (cell.type == CellType::Markdown) ? ImVec4(0.4f, 0.5f, 0.3f, 1.0f) :
+                         ImVec4(0.5f, 0.4f, 0.3f, 1.0f);
+    ImGui::TextColored(badge_color, "%s", type_label);
+    ImGui::SameLine(0, 15);
 
-    // Run button (for code cells)
+    // Run button (for code cells) with play icon
     if (cell.type == CellType::Code) {
         bool can_run = scripting_engine_ && !scripting_engine_->IsScriptRunning();
         ImGui::BeginDisabled(!can_run);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 0.5f, 1.0f));  // Green
         if (ImGui::SmallButton(ICON_FA_PLAY)) {
             tab->cell_manager.RunCell(index);
         }
+        ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Run cell (Shift+Enter)");
         }
@@ -3463,25 +3532,36 @@ void ScriptEditorPanel::RenderCellToolbar(int index) {
         ImGui::SameLine();
     }
 
+    // Spacer to push remaining buttons to the right
+    float right_buttons_width = 120.0f;
+    float available = ImGui::GetContentRegionAvail().x;
+    if (available > right_buttons_width) {
+        ImGui::Dummy(ImVec2(available - right_buttons_width, 0));
+        ImGui::SameLine();
+    }
+
     // Edit/View toggle
     if (is_editing) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 0.5f, 1.0f));  // Green check
         if (ImGui::SmallButton(ICON_FA_CHECK)) {
             tab->editing_cell = -1;  // Exit edit mode
+            tab->last_editing_cell = -1;
         }
+        ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Finish editing (Escape)");
+            ImGui::SetTooltip("Done (Escape)");
         }
     } else {
         if (ImGui::SmallButton(ICON_FA_PEN)) {
             tab->editing_cell = index;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Edit cell (Enter)");
+            ImGui::SetTooltip("Edit (Enter)");
         }
     }
     ImGui::SameLine();
 
-    // Move up
+    // Move up/down
     ImGui::BeginDisabled(index == 0);
     if (ImGui::SmallButton(ICON_FA_ARROW_UP)) {
         if (tab->cell_manager.MoveCell(index, index - 1)) {
@@ -3490,9 +3570,8 @@ void ScriptEditorPanel::RenderCellToolbar(int index) {
         }
     }
     ImGui::EndDisabled();
-    ImGui::SameLine();
+    ImGui::SameLine(0, 2);
 
-    // Move down
     ImGui::BeginDisabled(index >= tab->cell_manager.GetCellCount() - 1);
     if (ImGui::SmallButton(ICON_FA_ARROW_DOWN)) {
         if (tab->cell_manager.MoveCell(index, index + 1)) {
@@ -3503,43 +3582,27 @@ void ScriptEditorPanel::RenderCellToolbar(int index) {
     ImGui::EndDisabled();
     ImGui::SameLine();
 
-    // Delete
+    // Delete with confirmation color on hover
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.2f, 0.2f, 0.8f));
     if (ImGui::SmallButton(ICON_FA_TRASH)) {
         if (tab->cell_manager.DeleteCell(index)) {
             if (tab->selected_cell >= tab->cell_manager.GetCellCount()) {
                 tab->selected_cell = tab->cell_manager.GetCellCount() - 1;
             }
             tab->editing_cell = -1;
+            tab->last_editing_cell = -1;
             tab->is_modified = true;
         }
     }
+    ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Delete cell");
     }
 
-    // Clear outputs (for code cells)
-    if (cell.type == CellType::Code && !cell.outputs.empty()) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton(ICON_FA_ERASER)) {
-            cell.ClearOutputs();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Clear outputs");
-        }
-    }
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
 
-    // Collapse toggle
-    ImGui::SameLine();
-    const char* collapse_icon = cell.collapsed ? ICON_FA_CHEVRON_RIGHT : ICON_FA_CHEVRON_DOWN;
-    if (ImGui::SmallButton(collapse_icon)) {
-        cell.collapsed = !cell.collapsed;
-        tab->is_modified = true;
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(cell.collapsed ? "Expand cell (C)" : "Collapse cell (C)");
-    }
-
-    ImGui::Separator();
+    ImGui::Spacing();
 }
 
 void ScriptEditorPanel::HandleCellKeyboardShortcuts() {
@@ -3569,6 +3632,7 @@ void ScriptEditorPanel::HandleCellKeyboardShortcuts() {
             cell.SyncSourceFromEditor();
         }
         tab->editing_cell = -1;
+        tab->last_editing_cell = -1;
         return;
     }
 
@@ -3598,6 +3662,7 @@ void ScriptEditorPanel::HandleCellKeyboardShortcuts() {
                 tab->is_modified = true;
             }
             tab->editing_cell = -1;  // Exit edit mode
+            tab->last_editing_cell = -1;
         }
         return;
     }

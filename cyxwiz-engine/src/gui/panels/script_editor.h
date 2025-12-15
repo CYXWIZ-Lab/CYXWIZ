@@ -141,6 +141,7 @@ private:
         CellManager cell_manager;        // Cell management
         int selected_cell = -1;          // Currently selected cell
         int editing_cell = -1;           // Cell being edited (-1 = command mode)
+        int last_editing_cell = -1;      // Track previous editing cell to detect mode change
         float cell_scroll_y = 0.0f;      // Scroll position in cell view
 
         // Breakpoints for traditional script mode (1-based line numbers)
