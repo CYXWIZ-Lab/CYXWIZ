@@ -413,8 +413,11 @@ endif()
 # Optional: ONNX Export support
 if(CYXWIZ_HAS_ONNX_EXPORT)
     find_package(ONNX CONFIG REQUIRED)
-    target_link_libraries(cyxwiz-engine PRIVATE ONNX::onnx ONNX::onnx_proto)
-    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_ONNX_EXPORT)
+    target_link_libraries(cyxwiz-engine PRIVATE ONNX::onnx)
+    target_compile_definitions(cyxwiz-engine PRIVATE
+        CYXWIZ_HAS_ONNX_EXPORT
+        ONNX_ML  # Required for vcpkg ONNX headers
+    )
     message(STATUS "Engine: ONNX Export support enabled")
 endif()
 

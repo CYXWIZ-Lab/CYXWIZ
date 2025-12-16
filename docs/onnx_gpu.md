@@ -96,13 +96,23 @@ This document covers ONNX Runtime GPU configuration for CyxWiz across Windows, L
 
 macOS does not support NVIDIA CUDA. ONNX Runtime uses CPU or CoreML execution providers.
 
-```bash
-# Install via vcpkg
-vcpkg install onnxruntime
+**ONNX Runtime (Inference)**: Uses vendored binary in `third_party/onnxruntime/`
 
-# Or via Homebrew
-brew install onnxruntime
+```bash
+# Download ONNX Runtime v1.20.1 (see build_macos.md for details)
+curl -L https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-osx-x86_64-1.20.1.tgz -o onnxruntime.tgz
+tar -xzf onnxruntime.tgz
+mv onnxruntime-osx-x86_64-1.20.1 third_party/onnxruntime
 ```
+
+**ONNX Export (Model Conversion)**: ✅ Enabled via vcpkg ONNX package
+
+```bash
+# Automatically installed via vcpkg during CMake configuration
+# Requires ONNX_ML preprocessor define and ONNX::onnx namespaced target
+```
+
+**Note**: See `build_macos.md` for complete setup instructions, including solutions for `ONNX_ML` header issues and proper CMake target configuration.
 
 ## GPU Architecture Compatibility
 

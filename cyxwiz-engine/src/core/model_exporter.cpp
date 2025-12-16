@@ -593,7 +593,11 @@ std::vector<ModelFormat> ModelExporter::GetSupportedFormats() {
         ModelFormat::Safetensors
     };
 
-#ifdef CYXWIZ_HAS_ONNX
+    // Note: Use CYXWIZ_HAS_ONNX_EXPORT (not CYXWIZ_HAS_ONNX) to distinguish between:
+    // - CYXWIZ_HAS_ONNX: ONNX Runtime available for inference (model loading)
+    // - CYXWIZ_HAS_ONNX_EXPORT: ONNX protobuf available for export (model saving)
+    // On macOS, Runtime is ON (vendored binary) but Export is OFF (protobuf conflicts)
+#ifdef CYXWIZ_HAS_ONNX_EXPORT
     formats.push_back(ModelFormat::ONNX);
 #endif
 
@@ -610,7 +614,9 @@ bool ModelExporter::IsFormatSupported(ModelFormat format) {
         case ModelFormat::Safetensors:
             return true;
         case ModelFormat::ONNX:
-#ifdef CYXWIZ_HAS_ONNX
+            // Use CYXWIZ_HAS_ONNX_EXPORT to check for model export capability
+            // (not CYXWIZ_HAS_ONNX which only indicates inference runtime availability)
+#ifdef CYXWIZ_HAS_ONNX_EXPORT
             return true;
 #else
             return false;
@@ -653,8 +659,10 @@ bool ModelExporter::ValidateForExport(
     // Format-specific validation
     switch (format) {
         case ModelFormat::ONNX:
-#ifndef CYXWIZ_HAS_ONNX
-            error_message = "ONNX support not compiled";
+            // Use CYXWIZ_HAS_ONNX_EXPORT for model export validation
+            // (CYXWIZ_HAS_ONNX only indicates inference capability, not export)
+#ifndef CYXWIZ_HAS_ONNX_EXPORT
+            error_message = "ONNX export support not compiled";
             return false;
 #endif
             // TODO: Validate that all layer types are supported in ONNX

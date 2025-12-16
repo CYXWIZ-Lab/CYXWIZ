@@ -191,7 +191,8 @@ if(CYXWIZ_BUILD_DAEMON)
     elseif(APPLE)
         find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
         find_library(CFNETWORK_LIBRARY CFNetwork REQUIRED)
-        target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${COREFOUNDATION_LIBRARY} ${CFNETWORK_LIBRARY})
+        find_library(IOKIT_LIBRARY IOKit REQUIRED)
+        target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${COREFOUNDATION_LIBRARY} ${CFNETWORK_LIBRARY} ${IOKIT_LIBRARY})
     else()
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread)
     endif()
@@ -528,7 +529,10 @@ if(CYXWIZ_BUILD_TESTS)
             if(ONNX_FOUND)
                 # Use namespaced targets: ONNX::onnx already includes ONNX::onnx_proto
                 target_link_libraries(test_onnx_loader PRIVATE ONNX::onnx)
-                target_compile_definitions(test_onnx_loader PRIVATE CYXWIZ_HAS_ONNX_EXPORT)
+                target_compile_definitions(test_onnx_loader PRIVATE
+                    CYXWIZ_HAS_ONNX_EXPORT
+                    ONNX_ML  # Required for vcpkg ONNX headers
+                )
             endif()
         endif()
 

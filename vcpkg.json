@@ -35,10 +35,10 @@
     },
     {
       "name": "onnxruntime",
-      "platform": "!(windows & x64)"
+      "platform": "!(windows & x64) & !osx"
     },
     "onnx",
     "llama-cpp"
   ],
-  "builtin-baseline": "17ff26d0566ba0fa05e35c9209e92664adb304e3"
+  "builtin-baseline": "594ad8871e1e8e45f8e626c015fd611163430207"
 }
