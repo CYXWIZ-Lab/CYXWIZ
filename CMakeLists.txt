@@ -27,6 +27,7 @@ option(CYXWIZ_ENABLE_CUDA "Enable CUDA support for ArrayFire" OFF)
 option(CYXWIZ_ENABLE_OPENCL "Enable OpenCL support for ArrayFire" ON)
 option(CYXWIZ_ENABLE_ONNX "Enable ONNX Runtime support" ON)
 option(CYXWIZ_ENABLE_GGUF "Enable GGUF/llama.cpp support for LLMs" ON)
+option(CYXWIZ_ENABLE_PYTORCH "Enable PyTorch/LibTorch support" ON)
 option(CYXWIZ_ANDROID_BUILD "Build for Android" OFF)
 
 # Platform detection
@@ -164,6 +165,44 @@ else()
     set(CYXWIZ_HAS_GGUF OFF CACHE BOOL "llama.cpp available" FORCE)
 endif()
 
+# LibTorch for PyTorch/TorchScript model support
+# Cross-platform support:
+#   Windows: Download from pytorch.org, set TORCH_DIR environment variable
+#   Linux:   Download from pytorch.org or conda install pytorch
+#   macOS:   Download from pytorch.org
+# Note: LibTorch provides TorchConfig.cmake, so CONFIG mode is preferred
+if(CYXWIZ_ENABLE_PYTORCH)
+    # First try CMake CONFIG mode (official LibTorch provides TorchConfig.cmake)
+    find_package(Torch CONFIG QUIET HINTS
+        $ENV{TORCH_DIR}
+        ${TORCH_DIR}
+    )
+    if(Torch_FOUND)
+        message(STATUS "LibTorch found (CONFIG) - PyTorch support enabled")
+        set(CYXWIZ_HAS_PYTORCH ON CACHE BOOL "LibTorch available" FORCE)
+        if(TORCH_CUDA_LIBRARIES)
+            message(STATUS "  CUDA support available")
+        endif()
+    else()
+        # Fallback to custom FindTorch module
+        find_package(Torch QUIET)
+        if(Torch_FOUND)
+            message(STATUS "LibTorch found (MODULE) - PyTorch support enabled")
+            set(CYXWIZ_HAS_PYTORCH ON CACHE BOOL "LibTorch available" FORCE)
+            if(TORCH_HAS_CUDA)
+                message(STATUS "  CUDA support available")
+            endif()
+        else()
+            message(WARNING "LibTorch not found - PyTorch support disabled")
+            message(STATUS "Download from: https://pytorch.org/get-started/locally/")
+            message(STATUS "Set TORCH_DIR environment variable or CMAKE_PREFIX_PATH to LibTorch path")
+            set(CYXWIZ_HAS_PYTORCH OFF CACHE BOOL "LibTorch available" FORCE)
+        endif()
+    endif()
+else()
+    set(CYXWIZ_HAS_PYTORCH OFF CACHE BOOL "LibTorch available" FORCE)
+endif()
+
 # ImGui is handled separately (not all features in vcpkg)
 find_package(imgui CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -287,6 +326,7 @@ message(STATUS "  OpenCL: ${CYXWIZ_ENABLE_OPENCL}")
 message(STATUS "  ONNX Runtime: ${CYXWIZ_HAS_ONNX}")
 message(STATUS "  ONNX Export: ${CYXWIZ_HAS_ONNX_EXPORT}")
 message(STATUS "  GGUF/llama.cpp: ${CYXWIZ_HAS_GGUF}")
+message(STATUS "  PyTorch/LibTorch: ${CYXWIZ_HAS_PYTORCH}")
 message(STATUS "  Android Build: ${CYXWIZ_ANDROID_BUILD}")
 message(STATUS "==========================================")
 message(STATUS "")

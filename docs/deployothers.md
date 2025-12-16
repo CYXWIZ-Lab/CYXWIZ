@@ -10,7 +10,7 @@ This document outlines the support for additional model formats on the CyxWiz Se
 | `.onnx` | **Working** | ONNX Runtime with CUDA/CPU execution providers |
 | `.safetensors` | **Working** | HuggingFace safe tensor format (export only) |
 | `.gguf` | **Working** | llama.cpp for LLMs with CUDA/Metal/CPU backends |
-| `.pt/.pth` | Stub | PyTorch models via LibTorch (future) |
+| `.pt/.pth` | **Working** | PyTorch/TorchScript models via LibTorch |
 
 ---
 
@@ -522,6 +522,7 @@ llama_sampler_chain_add(sampler, llama_sampler_init_penalties(
 | `.cyxmodel` | CyxModelLoader | Native CyxWiz models | ArrayFire (CUDA/OpenCL) |
 | `.onnx` | ONNXLoader | Cross-framework models | CUDA EP, CPU fallback |
 | `.gguf` | GGUFLoader | LLM text generation | CUDA, Metal, Vulkan, CPU |
+| `.pt/.pth` | PyTorchLoader | TorchScript inference | CUDA, CPU |
 | `.safetensors` | - | Export only | - |
 
 ---
@@ -568,17 +569,189 @@ llama_sampler_chain_add(sampler, llama_sampler_init_penalties(
 
 ---
 
-# Future: PyTorch Support
+# PyTorch/LibTorch Support Implementation (Completed)
 
-For native PyTorch model loading via LibTorch:
+## Overview
+PyTorch support has been implemented in CyxWiz using LibTorch (PyTorch C++ API), enabling:
+- **TorchScript Models**: Load `.pt` / `.pth` files created with `torch.jit.trace()` or `torch.jit.script()`
+- **GPU Acceleration**: Automatic CUDA detection with CPU fallback
+- **Tensor Conversion**: Seamless conversion between CyxWiz and PyTorch tensors
 
-**Dependencies:**
-- LibTorch (PyTorch C++ frontend)
+**Build Requirements:**
+- LibTorch (~2GB download from https://pytorch.org/get-started/locally/)
+- Set `TORCH_DIR` environment variable to LibTorch installation path
+- CMake option: `CYXWIZ_ENABLE_PYTORCH=ON` (enabled by default)
 
-**Use Cases:**
-- Load `.pt` / `.pth` files directly
-- TorchScript models
-- Research model deployment
+---
+
+## Installation
+
+### Step 1: Download LibTorch
+
+Visit https://pytorch.org/get-started/locally/ and select:
+- **PyTorch Build**: Stable
+- **Your OS**: Windows/Linux/macOS
+- **Package**: LibTorch
+- **Language**: C++/Java
+- **Compute Platform**: CUDA 12.4 (or CPU-only)
+
+Download and extract to a permanent location:
+```bash
+# Windows
+C:\libtorch
+
+# Linux/macOS
+/opt/libtorch
+```
+
+### Step 2: Set Environment Variable
+
+```bash
+# Windows (PowerShell)
+$env:TORCH_DIR = "C:\libtorch"
+
+# Windows (CMD)
+set TORCH_DIR=C:\libtorch
+
+# Linux/macOS
+export TORCH_DIR=/opt/libtorch
+```
+
+### Step 3: Build with PyTorch Support
+
+```bash
+# Configure with PyTorch enabled
+cmake --preset windows-release -DCYXWIZ_ENABLE_PYTORCH=ON
+
+# Build
+cmake --build build --config Release
+```
+
+---
+
+## Creating TorchScript Models
+
+PyTorchLoader requires TorchScript models (`.pt` files). Create them in Python:
+
+### Method 1: torch.jit.trace (for models without control flow)
+```python
+import torch
+
+class MyModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = torch.nn.Linear(784, 256)
+        self.fc2 = torch.nn.Linear(256, 10)
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        return self.fc2(x)
+
+model = MyModel()
+model.eval()
+
+# Create example input for tracing
+example_input = torch.randn(1, 784)
+
+# Trace and save
+traced_model = torch.jit.trace(model, example_input)
+traced_model.save("model.pt")
+```
+
+### Method 2: torch.jit.script (for models with control flow)
+```python
+import torch
+
+@torch.jit.script
+def my_function(x: torch.Tensor) -> torch.Tensor:
+    if x.sum() > 0:
+        return x * 2
+    else:
+        return x * -1
+
+# Or for a module
+scripted_model = torch.jit.script(model)
+scripted_model.save("model.pt")
+```
+
+---
+
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| `cmake/FindTorch.cmake` | **NEW** - CMake find module for LibTorch |
+| `CMakeLists.txt` | Added `CYXWIZ_ENABLE_PYTORCH` option, `find_package(Torch)` |
+| `cyxwiz-server-node/CMakeLists.txt` | Link `${TORCH_LIBRARIES}` to daemon and GUI targets |
+| `cyxwiz-server-node/src/model_loader.cpp` | Full PyTorchLoader implementation |
+
+---
+
+## PyTorchLoader API
+
+### Configuration
+PyTorchLoader automatically:
+- Detects CUDA availability and uses GPU if present
+- Falls back to CPU if CUDA is not available
+- Estimates memory usage from model parameters
+
+### Inference
+```cpp
+// Input: map of tensor name -> CyxWiz::Tensor
+std::unordered_map<std::string, cyxwiz::Tensor> inputs;
+inputs["input"] = my_input_tensor;
+
+// Output: populated by Infer()
+std::unordered_map<std::string, cyxwiz::Tensor> outputs;
+
+bool success = loader->Infer(inputs, outputs);
+// Result in outputs["output"]
+```
+
+### Supported Data Types
+| CyxWiz DataType | PyTorch dtype |
+|-----------------|---------------|
+| Float32 | torch::kFloat32 |
+| Float64 | torch::kFloat64 |
+| Int32 | torch::kInt32 |
+| Int64 | torch::kInt64 |
+
+---
+
+## Implementation Status
+
+| Step | Status | Notes |
+|------|--------|-------|
+| 1. cmake/FindTorch.cmake | **Done** | CONFIG and MODULE mode support |
+| 2. Root CMakeLists.txt | **Done** | CYXWIZ_ENABLE_PYTORCH option |
+| 3. Server Node CMakeLists.txt | **Done** | Linked for daemon and GUI |
+| 4. PyTorchLoader::Load() | **Done** | CUDA detection, model loading |
+| 5. PyTorchLoader::Infer() | **Done** | Tensor conversion, forward() |
+| 6. Unit tests | Pending | Create test files |
+
+---
+
+## Troubleshooting
+
+### "LibTorch not found"
+- Verify `TORCH_DIR` environment variable is set correctly
+- Ensure the path contains `include/torch/torch.h` and `lib/` directory
+- Try setting `CMAKE_PREFIX_PATH` to LibTorch path
+
+### "CUDA not available"
+- LibTorch CUDA version requires CUDA Toolkit installed
+- Check CUDA version matches LibTorch version (e.g., CUDA 12.4)
+- Falls back to CPU automatically - check logs for device info
+
+### "Failed to load model"
+- Ensure model was created with `torch.jit.trace()` or `torch.jit.script()`
+- Regular `.pth` state dict files are NOT supported
+- Check Python and LibTorch version compatibility
+
+### Build errors with LibTorch
+- On Linux, may need to set `_GLIBCXX_USE_CXX11_ABI=0`
+- On Windows, ensure MSVC compiler matches LibTorch build
+- Check LibTorch was built for your platform (x64 vs ARM)
 
 ---
 
@@ -592,3 +765,6 @@ For native PyTorch model loading via LibTorch:
 - Tested with GPT-OSS 20B (MXFP4 quantization)
 - Added /v1/chat/completions endpoint (OpenAI-compatible chat API)
 - Added /v1/embeddings endpoint (text embeddings for RAG/search)
+- Added PyTorch/LibTorch support for TorchScript model inference
+- Created cmake/FindTorch.cmake for LibTorch discovery
+- PyTorchLoader with CUDA auto-detection and CPU fallback

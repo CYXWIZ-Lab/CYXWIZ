@@ -219,6 +219,15 @@ if(CYXWIZ_BUILD_DAEMON)
         message(STATUS "Server daemon: GGUF/llama.cpp support enabled")
     endif()
 
+    # LibTorch linkage for PyTorch/TorchScript model support
+    # 'Torch::Torch' target is created by TorchConfig.cmake or FindTorch.cmake
+    if(CYXWIZ_HAS_PYTORCH)
+        target_link_libraries(cyxwiz-server-daemon PRIVATE ${TORCH_LIBRARIES})
+        target_include_directories(cyxwiz-server-daemon PRIVATE ${TORCH_INCLUDE_DIRS})
+        target_compile_definitions(cyxwiz-server-daemon PRIVATE CYXWIZ_HAS_PYTORCH)
+        message(STATUS "Server daemon: PyTorch/LibTorch support enabled")
+    endif()
+
     # Mark as daemon build (for conditional includes in shared code)
     target_compile_definitions(cyxwiz-server-daemon PRIVATE CYXWIZ_IS_DAEMON)
 
@@ -326,6 +335,14 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
         target_link_libraries(cyxwiz-server-gui PRIVATE llama)
         target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_GGUF)
         message(STATUS "Server GUI: GGUF/llama.cpp support enabled")
+    endif()
+
+    # LibTorch linkage for PyTorch/TorchScript model support
+    if(CYXWIZ_HAS_PYTORCH)
+        target_link_libraries(cyxwiz-server-gui PRIVATE ${TORCH_LIBRARIES})
+        target_include_directories(cyxwiz-server-gui PRIVATE ${TORCH_INCLUDE_DIRS})
+        target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_PYTORCH)
+        message(STATUS "Server GUI: PyTorch/LibTorch support enabled")
     endif()
 
     target_compile_features(cyxwiz-server-gui PRIVATE cxx_std_20)

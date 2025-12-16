@@ -20,6 +20,11 @@
 #include <llama.h>
 #endif
 
+#ifdef CYXWIZ_HAS_PYTORCH
+#include <torch/script.h>
+#include <torch/cuda.h>
+#endif
+
 namespace cyxwiz {
 namespace servernode {
 
@@ -1121,7 +1126,7 @@ int GGUFLoader::GetContextSize() const {
 }
 
 // ============================================================================
-// PyTorchLoader Implementation (Stub)
+// PyTorchLoader Implementation (LibTorch)
 // ============================================================================
 
 class PyTorchLoader::Impl {
@@ -1132,8 +1137,11 @@ public:
     std::vector<TensorSpec> output_specs;
     uint64_t memory_usage = 0;
 
-    // TODO: Add LibTorch module and related members
-    // torch::jit::script::Module* module = nullptr;
+#ifdef CYXWIZ_HAS_PYTORCH
+    torch::jit::script::Module module;
+    torch::Device device = torch::kCPU;
+    bool has_cuda = false;
+#endif
 };
 
 PyTorchLoader::PyTorchLoader() : impl_(std::make_unique<Impl>()) {
@@ -1147,34 +1155,62 @@ PyTorchLoader::~PyTorchLoader() {
 bool PyTorchLoader::Load(const std::string& model_path) {
     spdlog::info("Loading PyTorch model from: {}", model_path);
 
+#ifdef CYXWIZ_HAS_PYTORCH
     try {
-        // TODO: Implement actual LibTorch loading
+        // Check for CUDA availability
+        if (torch::cuda::is_available()) {
+            impl_->device = torch::Device(torch::kCUDA, 0);
+            impl_->has_cuda = true;
+            spdlog::info("PyTorch: Using CUDA device");
+        } else {
+            impl_->device = torch::kCPU;
+            impl_->has_cuda = false;
+            spdlog::info("PyTorch: Using CPU device");
+        }
+
+        // Load TorchScript model
+        impl_->module = torch::jit::load(model_path, impl_->device);
+        impl_->module.eval();  // Set to evaluation mode
         impl_->model_path = model_path;
         impl_->loaded = true;
 
-        // Mock input/output specs
+        // TorchScript doesn't have standard input/output metadata
+        // Use default specs that can be overridden
         TensorSpec input_spec;
         input_spec.name = "input";
-        input_spec.shape = {-1, 3, 224, 224};
+        input_spec.shape = {-1};  // Dynamic batch
         input_spec.dtype = "float32";
         impl_->input_specs.push_back(input_spec);
 
         TensorSpec output_spec;
         output_spec.name = "output";
-        output_spec.shape = {-1, 1000};
+        output_spec.shape = {-1};
         output_spec.dtype = "float32";
         impl_->output_specs.push_back(output_spec);
 
-        impl_->memory_usage = 150 * 1024 * 1024;  // Mock: 150 MB
+        // Estimate memory usage from model parameters
+        impl_->memory_usage = 0;
+        for (const auto& param : impl_->module.parameters()) {
+            impl_->memory_usage += param.numel() * param.element_size();
+        }
 
-        spdlog::info("PyTorch model loaded successfully (stub)");
+        spdlog::info("PyTorch model loaded successfully, estimated memory: {} MB",
+                     impl_->memory_usage / (1024 * 1024));
         return true;
 
+    } catch (const c10::Error& e) {
+        spdlog::error("Failed to load PyTorch model (c10::Error): {}", e.what());
+        impl_->loaded = false;
+        return false;
     } catch (const std::exception& e) {
         spdlog::error("Failed to load PyTorch model: {}", e.what());
         impl_->loaded = false;
         return false;
     }
+#else
+    spdlog::error("PyTorch support not compiled - install LibTorch and rebuild with CYXWIZ_ENABLE_PYTORCH=ON");
+    return false;
+#endif
 }
 
 bool PyTorchLoader::Infer(
@@ -1186,9 +1222,111 @@ bool PyTorchLoader::Infer(
         return false;
     }
 
-    // TODO: Implement actual inference with LibTorch
-    spdlog::debug("Running PyTorch inference (stub)");
-    return true;
+#ifdef CYXWIZ_HAS_PYTORCH
+    try {
+        // Convert inputs to torch::Tensor
+        std::vector<torch::jit::IValue> torch_inputs;
+
+        for (const auto& [name, tensor] : inputs) {
+            // Get shape as int64_t vector
+            std::vector<int64_t> shape;
+            for (size_t dim : tensor.Shape()) {
+                shape.push_back(static_cast<int64_t>(dim));
+            }
+
+            // Create torch tensor from data
+            torch::Tensor t;
+            switch (tensor.DType()) {
+                case cyxwiz::DataType::Float32:
+                    t = torch::from_blob(
+                        const_cast<void*>(tensor.Data()),
+                        shape,
+                        torch::kFloat32
+                    ).clone().to(impl_->device);
+                    break;
+                case cyxwiz::DataType::Float64:
+                    t = torch::from_blob(
+                        const_cast<void*>(tensor.Data()),
+                        shape,
+                        torch::kFloat64
+                    ).clone().to(impl_->device);
+                    break;
+                case cyxwiz::DataType::Int32:
+                    t = torch::from_blob(
+                        const_cast<void*>(tensor.Data()),
+                        shape,
+                        torch::kInt32
+                    ).clone().to(impl_->device);
+                    break;
+                case cyxwiz::DataType::Int64:
+                    t = torch::from_blob(
+                        const_cast<void*>(tensor.Data()),
+                        shape,
+                        torch::kInt64
+                    ).clone().to(impl_->device);
+                    break;
+                default:
+                    // Default to float32
+                    t = torch::from_blob(
+                        const_cast<void*>(tensor.Data()),
+                        shape,
+                        torch::kFloat32
+                    ).clone().to(impl_->device);
+            }
+            torch_inputs.push_back(t);
+        }
+
+        // Run inference with no gradient
+        torch::NoGradGuard no_grad;
+        auto result = impl_->module.forward(torch_inputs);
+
+        // Convert output to cyxwiz::Tensor
+        torch::Tensor output_tensor;
+        if (result.isTensor()) {
+            output_tensor = result.toTensor().to(torch::kCPU).contiguous();
+        } else if (result.isTuple()) {
+            // Take first element of tuple
+            output_tensor = result.toTuple()->elements()[0].toTensor().to(torch::kCPU).contiguous();
+        } else {
+            spdlog::error("PyTorch model returned unsupported output type");
+            return false;
+        }
+
+        // Build output tensor
+        std::vector<size_t> output_shape;
+        for (int64_t dim : output_tensor.sizes()) {
+            output_shape.push_back(static_cast<size_t>(dim));
+        }
+
+        cyxwiz::DataType output_dtype = cyxwiz::DataType::Float32;
+        if (output_tensor.scalar_type() == torch::kFloat64) {
+            output_dtype = cyxwiz::DataType::Float64;
+        } else if (output_tensor.scalar_type() == torch::kInt32) {
+            output_dtype = cyxwiz::DataType::Int32;
+        } else if (output_tensor.scalar_type() == torch::kInt64) {
+            output_dtype = cyxwiz::DataType::Int64;
+        }
+
+        cyxwiz::Tensor out_tensor(output_shape, output_dtype);
+        std::memcpy(out_tensor.Data(), output_tensor.data_ptr(),
+                    output_tensor.numel() * output_tensor.element_size());
+
+        outputs["output"] = std::move(out_tensor);
+
+        spdlog::debug("PyTorch inference completed successfully");
+        return true;
+
+    } catch (const c10::Error& e) {
+        spdlog::error("PyTorch inference failed (c10::Error): {}", e.what());
+        return false;
+    } catch (const std::exception& e) {
+        spdlog::error("PyTorch inference failed: {}", e.what());
+        return false;
+    }
+#else
+    spdlog::error("PyTorch support not compiled");
+    return false;
+#endif
 }
 
 std::vector<TensorSpec> PyTorchLoader::GetInputSpecs() const {
@@ -1206,7 +1344,9 @@ uint64_t PyTorchLoader::GetMemoryUsage() const {
 void PyTorchLoader::Unload() {
     if (impl_->loaded) {
         spdlog::info("Unloading PyTorch model");
-        // TODO: Clean up LibTorch resources
+#ifdef CYXWIZ_HAS_PYTORCH
+        impl_->module = torch::jit::script::Module();  // Reset module
+#endif
         impl_->loaded = false;
         impl_->input_specs.clear();
         impl_->output_specs.clear();
