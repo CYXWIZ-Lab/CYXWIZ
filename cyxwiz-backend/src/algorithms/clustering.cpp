@@ -145,6 +145,7 @@ af::array Clustering::ComputeManhattanDistanceMatrix(const af::array& data) {
 
 af::array Clustering::ComputeCosineDistanceMatrix(const af::array& data) {
     int n = static_cast<int>(data.dims(0));
+    (void)n;  // Suppress unused variable warning
 
     // Normalize data
     af::array norms = af::sqrt(af::sum(data * data, 1));  // [n x 1]
@@ -265,6 +266,7 @@ af::array Clustering::AssignClusters(const af::array& data, const af::array& cen
 
 af::array Clustering::UpdateCentroids(const af::array& data, const af::array& labels, int n_clusters) {
     int n = static_cast<int>(data.dims(0));
+    (void)n;  // Suppress unused variable warning
     int d = static_cast<int>(data.dims(1));
 
     af::array new_centroids = af::constant(0.0, n_clusters, d, f64);

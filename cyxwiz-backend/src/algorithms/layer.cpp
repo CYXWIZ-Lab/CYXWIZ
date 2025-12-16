@@ -408,7 +408,7 @@ Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
                 // Correlate input with grad_output to get weight gradient
                 af::array dw_single = af::constant(0.0f, af::dim4(kernel_size_, kernel_size_));
 
-                for (dim_t b = 0; b < batch_size; b++) {
+                for (int b = 0; b < static_cast<int>(batch_size); b++) {
                     af::array g = grad_channel(af::span, af::span, af::span, b);
                     af::array i = input_channel(af::span, af::span, af::span, b);
                     dw_single += af::convolve2(i, g, AF_CONV_DEFAULT)(
@@ -444,14 +444,14 @@ Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
 
                 // Extract valid region
                 dx(af::span, af::span, ic, af::span) += dx_single(
-                    af::seq(0, x.dims(0) - 1), af::seq(0, x.dims(1) - 1), af::span, af::span);
+                    af::seq(0, static_cast<double>(x.dims(0) - 1)), af::seq(0, static_cast<double>(x.dims(1) - 1)), af::span, af::span);
             }
         }
 
         // Remove padding from gradient if padding was applied
         if (padding_ > 0) {
-            dx = dx(af::seq(padding_, in_h + padding_ - 1),
-                    af::seq(padding_, in_w + padding_ - 1),
+            dx = dx(af::seq(static_cast<double>(padding_), static_cast<double>(in_h + padding_ - 1)),
+                    af::seq(static_cast<double>(padding_), static_cast<double>(in_w + padding_ - 1)),
                     af::span, af::span);
         }
 
@@ -510,8 +510,8 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
 
         dim_t in_h = x.dims(0);
         dim_t in_w = x.dims(1);
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+        int channels = static_cast<int>(x.dims(2));
+        int batch_size = static_cast<int>((x.numdims() > 3) ? x.dims(3) : 1);
 
         // Calculate output dimensions
         dim_t out_h = (in_h - pool_size_) / stride_ + 1;
@@ -522,8 +522,8 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
         af::array output = af::constant(0.0f, af::dim4(out_h, out_w, channels, batch_size));
         af::array indices = af::constant(0, af::dim4(out_h, out_w, channels, batch_size), af::dtype::s32);
 
-        for (dim_t c = 0; c < channels; c++) {
-            for (dim_t b = 0; b < batch_size; b++) {
+        for (int c = 0; c < channels; c++) {
+            for (int b = 0; b < batch_size; b++) {
                 af::array channel = x(af::span, af::span, c, b);
 
                 // Extract patches using unwrap
@@ -560,30 +560,34 @@ Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
         af::array x = TensorToAf(cached_input_);
         af::array indices = TensorToAf(max_indices_);
 
-        dim_t in_h = x.dims(0);
-        dim_t in_w = x.dims(1);
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+        int in_h = static_cast<int>(x.dims(0));
+        int in_w = static_cast<int>(x.dims(1));
+        int channels = static_cast<int>(x.dims(2));
+        int batch_size = static_cast<int>((x.numdims() > 3) ? x.dims(3) : 1);
 
-        dim_t out_h = grad_out.dims(0);
-        dim_t out_w = grad_out.dims(1);
+        int out_h = static_cast<int>(grad_out.dims(0));
+        int out_w = static_cast<int>(grad_out.dims(1));
+
+        // Suppress unused variable warnings
+        (void)in_h;
+        (void)in_w;
 
         // Initialize gradient w.r.t. input
         af::array dx = af::constant(0.0f, x.dims());
 
         // Scatter gradients back to max positions
-        for (dim_t c = 0; c < channels; c++) {
-            for (dim_t b = 0; b < batch_size; b++) {
-                for (dim_t oh = 0; oh < out_h; oh++) {
-                    for (dim_t ow = 0; ow < out_w; ow++) {
+        for (int c = 0; c < channels; c++) {
+            for (int b = 0; b < batch_size; b++) {
+                for (int oh = 0; oh < out_h; oh++) {
+                    for (int ow = 0; ow < out_w; ow++) {
                         // Get the max index within the pool window
                         int idx = indices(oh, ow, c, b).scalar<int>();
                         int pool_h = idx / pool_size_;
                         int pool_w = idx % pool_size_;
 
                         // Calculate input position
-                        dim_t ih = oh * stride_ + pool_h;
-                        dim_t iw = ow * stride_ + pool_w;
+                        int ih = oh * stride_ + pool_h;
+                        int iw = ow * stride_ + pool_w;
 
                         // Add gradient
                         dx(ih, iw, c, b) += grad_out(oh, ow, c, b);
@@ -624,8 +628,8 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
 
         dim_t in_h = x.dims(0);
         dim_t in_w = x.dims(1);
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+        int channels = static_cast<int>(x.dims(2));
+        int batch_size = static_cast<int>((x.numdims() > 3) ? x.dims(3) : 1);
 
         // Calculate output dimensions
         dim_t out_h = (in_h - pool_size_) / stride_ + 1;
@@ -633,8 +637,8 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
 
         af::array output = af::constant(0.0f, af::dim4(out_h, out_w, channels, batch_size));
 
-        for (dim_t c = 0; c < channels; c++) {
-            for (dim_t b = 0; b < batch_size; b++) {
+        for (int c = 0; c < channels; c++) {
+            for (int b = 0; b < batch_size; b++) {
                 af::array channel = x(af::span, af::span, c, b);
 
                 // Extract patches using unwrap
@@ -666,30 +670,34 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(cached_input_);
 
-        dim_t in_h = x.dims(0);
-        dim_t in_w = x.dims(1);
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+        int in_h = static_cast<int>(x.dims(0));
+        int in_w = static_cast<int>(x.dims(1));
+        int channels = static_cast<int>(x.dims(2));
+        int batch_size = static_cast<int>((x.numdims() > 3) ? x.dims(3) : 1);
 
-        dim_t out_h = grad_out.dims(0);
-        dim_t out_w = grad_out.dims(1);
+        int out_h = static_cast<int>(grad_out.dims(0));
+        int out_w = static_cast<int>(grad_out.dims(1));
+
+        // Suppress unused variable warnings
+        (void)in_h;
+        (void)in_w;
 
         // For average pooling, gradient is distributed equally
         float scale = 1.0f / (pool_size_ * pool_size_);
 
         af::array dx = af::constant(0.0f, x.dims());
 
-        for (dim_t c = 0; c < channels; c++) {
-            for (dim_t b = 0; b < batch_size; b++) {
-                for (dim_t oh = 0; oh < out_h; oh++) {
-                    for (dim_t ow = 0; ow < out_w; ow++) {
+        for (int c = 0; c < channels; c++) {
+            for (int b = 0; b < batch_size; b++) {
+                for (int oh = 0; oh < out_h; oh++) {
+                    for (int ow = 0; ow < out_w; ow++) {
                         float grad_val = grad_out(oh, ow, c, b).scalar<float>() * scale;
 
                         // Distribute gradient to all positions in the pool window
                         for (int ph = 0; ph < pool_size_; ph++) {
                             for (int pw = 0; pw < pool_size_; pw++) {
-                                dim_t ih = oh * stride_ + ph;
-                                dim_t iw = ow * stride_ + pw;
+                                int ih = oh * stride_ + ph;
+                                int iw = ow * stride_ + pw;
                                 dx(ih, iw, c, b) += grad_val;
                             }
                         }

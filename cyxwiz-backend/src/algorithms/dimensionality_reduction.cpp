@@ -400,7 +400,7 @@ std::vector<std::vector<double>> DimensionalityReduction::ComputeSquaredDistance
             af::array dot_products = af::matmul(X, af::transpose(X));  // [n x n]
 
             // Broadcast sq_norms to [n x n]
-            af::array dist_sq = af::tile(sq_norms, 1, n) + af::tile(af::transpose(sq_norms), n, 1) - 2.0 * dot_products;
+            af::array dist_sq = af::tile(sq_norms, 1, static_cast<unsigned int>(n)) + af::tile(af::transpose(sq_norms), static_cast<unsigned int>(n), 1) - 2.0 * dot_products;
             dist_sq = af::max(dist_sq, 0.0);  // Clamp negative values due to numerical errors
 
             // Copy back to CPU

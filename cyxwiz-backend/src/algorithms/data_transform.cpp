@@ -70,7 +70,7 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
             stats.min = af::min<double>(gpu_data);
             stats.max = af::max<double>(gpu_data);
             stats.mean = af::mean<double>(gpu_data);
-            stats.std_dev = af::stdev<double>(gpu_data);
+            stats.std_dev = af::stdev<double>(gpu_data, AF_VARIANCE_SAMPLE);
 
             // Sort for percentiles
             af::array sorted = af::sort(gpu_data);
@@ -297,7 +297,7 @@ TransformResult DataTransform::StandardizeColumn(const std::vector<double>& data
             af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
 
             double mean = af::mean<double>(gpu_data);
-            double std_dev = af::stdev<double>(gpu_data);
+            double std_dev = af::stdev<double>(gpu_data, AF_VARIANCE_SAMPLE);
 
             if (std_dev < 1e-10) {
                 result.error_message = "Data has zero variance (constant values)";

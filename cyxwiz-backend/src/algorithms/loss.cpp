@@ -341,7 +341,7 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
             dim_t batch_size = pred.dims(0);
             af::array batch_loss = af::constant(0.0f, af::dim4(batch_size));
 
-            for (dim_t i = 0; i < batch_size; i++) {
+            for (int i = 0; i < static_cast<int>(batch_size); i++) {
                 int class_idx = target(i).scalar<int>();
                 if (class_idx != ignore_index_) {
                     // Cast array_proxy to scalar to enable unary minus
@@ -426,9 +426,9 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
 
             // Create one-hot encoding
             af::array one_hot = af::constant(0.0f, pred.dims());
-            for (dim_t i = 0; i < batch_size; i++) {
+            for (int i = 0; i < static_cast<int>(batch_size); i++) {
                 int class_idx = target(i).scalar<int>();
-                if (class_idx != ignore_index_ && class_idx >= 0 && class_idx < num_classes) {
+                if (class_idx != ignore_index_ && class_idx >= 0 && class_idx < static_cast<int>(num_classes)) {
                     one_hot(i, class_idx) = 1.0f;
                 }
             }
@@ -564,7 +564,7 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         dim_t batch_size = log_probs.dims(0);
         af::array batch_loss = af::constant(0.0f, af::dim4(batch_size));
 
-        for (dim_t i = 0; i < batch_size; i++) {
+        for (int i = 0; i < static_cast<int>(batch_size); i++) {
             int class_idx = target(i).scalar<int>();
             if (class_idx != ignore_index_) {
                 // Cast array_proxy to scalar to enable unary minus
@@ -594,9 +594,9 @@ Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         // Gradient: -1 at target class, 0 elsewhere
         af::array grad = af::constant(0.0f, log_probs.dims());
 
-        for (dim_t i = 0; i < batch_size; i++) {
+        for (int i = 0; i < static_cast<int>(batch_size); i++) {
             int class_idx = target(i).scalar<int>();
-            if (class_idx != ignore_index_ && class_idx >= 0 && class_idx < num_classes) {
+            if (class_idx != ignore_index_ && class_idx >= 0 && class_idx < static_cast<int>(num_classes)) {
                 grad(i, class_idx) = -1.0f;
             }
         }

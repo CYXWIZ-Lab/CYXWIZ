@@ -161,7 +161,7 @@ Tensor LinearLayer::Forward(const Tensor& input) {
             if (use_bias_) {
                 af::array bias_gpu(static_cast<dim_t>(out_features_), 1,
                                    static_cast<const float*>(bias_.Data()));
-                output_gpu = output_gpu + af::tile(bias_gpu, 1, static_cast<dim_t>(batch_size));
+                output_gpu = output_gpu + af::tile(bias_gpu, 1, static_cast<unsigned int>(batch_size));
             }
 
             // Create output tensor and copy back
@@ -232,6 +232,7 @@ Tensor LinearLayer::Forward(const Tensor& input) {
 Tensor LinearLayer::Backward(const Tensor& grad_output) {
     const auto& grad_shape = grad_output.Shape();
     const auto& input_shape = input_cache_.Shape();
+    (void)input_shape;  // Suppress unused variable warning
     bool is_batched = grad_shape.size() == 2;
 
     size_t batch_size = is_batched ? grad_shape[0] : 1;
