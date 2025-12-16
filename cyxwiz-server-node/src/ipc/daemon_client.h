@@ -264,7 +264,11 @@ public:
     bool IsConnected() const { return connected_.load(); }
     bool IsTLSEnabled() const { return tls_enabled_.load(); }
     std::string GetAddress() const { return address_; }
+    void SetTargetAddress(const std::string& address) { address_ = address; }
 
+    // Async connection - returns immediately, connects in background
+    void ConnectAsync(const std::string& address);
+    
     // Test connection without fully connecting (for settings validation)
     static bool TestConnection(const std::string& address,
                                const TLSConnectionSettings& tls_settings,

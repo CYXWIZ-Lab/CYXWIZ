@@ -7,6 +7,7 @@
 
 #include <spdlog/spdlog.h>
 #include <chrono>
+#include <thread>
 #include <fstream>
 #include <sstream>
 
@@ -203,6 +204,18 @@ bool DaemonClient::TestConnection(const std::string& address,
     }
 
     return true;
+}
+
+void DaemonClient::ConnectAsync(const std::string& address) {
+    // Launch connection in background thread
+    std::thread([this, address]() {
+        spdlog::info("Connecting to daemon at {} (background)...", address);
+        if (Connect(address)) {
+            spdlog::info("Connected to daemon successfully");
+        } else {
+            spdlog::warn("Failed to connect to daemon at {}", address);
+        }
+    }).detach();
 }
 
 void DaemonClient::Disconnect() {

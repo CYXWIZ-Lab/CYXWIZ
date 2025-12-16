@@ -20,6 +20,10 @@
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <libgen.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#include <limits.h>
+#include <libgen.h>
 #endif
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -678,6 +682,20 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         font_paths.insert(font_paths.begin(), exec_dir + "/../Resources/fonts/");  // App bundle
         font_paths.insert(font_paths.begin(), exec_dir + "/../resources/fonts/");
         spdlog::debug("macOS executable dir: {}", exec_dir);
+    }
+#elif defined(__linux__)
+    // On Linux, check paths relative to the executable using /proc/self/exe
+    char exec_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
+    if (len != -1) {
+        exec_path[len] = ' ';
+        char* exec_path_copy = strdup(exec_path);
+        std::string exec_dir = dirname(exec_path_copy);
+        free(exec_path_copy);
+        font_paths.insert(font_paths.begin(), exec_dir + "/resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../../../cyxwiz-engine/resources/fonts/");  // From build/bin/Release/
+        spdlog::debug("Linux executable dir: {}", exec_dir);
     }
 #endif
 

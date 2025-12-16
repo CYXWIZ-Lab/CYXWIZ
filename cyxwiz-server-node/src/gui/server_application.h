@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <string>
+#include <future>
 
 struct GLFWwindow;
 struct ImFont;
@@ -70,6 +71,9 @@ private:
 
     // Daemon client (for dual-process mode)
     std::shared_ptr<ipc::DaemonClient> daemon_client_;
+
+    // Background initialization
+    std::future<void> backend_init_future_;
 };
 
 } // namespace cyxwiz::servernode::gui

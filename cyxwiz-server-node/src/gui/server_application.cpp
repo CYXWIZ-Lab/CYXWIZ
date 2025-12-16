@@ -5,6 +5,7 @@
 #include "gui/icons.h"
 #include "gui/IconsFontAwesome6.h"
 #include "ipc/daemon_client.h"
+#include "core/backend_manager.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -17,6 +18,8 @@
 #include <stb_image.h>
 
 #include <filesystem>
+#include <thread>
+#include <future>
 
 #ifdef _WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -24,6 +27,15 @@
 #include <windows.h>
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <libgen.h>
+#include <limits.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#include <limits.h>
+#include <libgen.h>
+#include <cstring>
 #endif
 
 // Load window icon from resources
@@ -113,6 +125,20 @@ bool ServerApplication::Initialize() {
 
     // Create main window with daemon client
     main_window_ = std::make_unique<ServerMainWindow>(daemon_client_.get());
+
+    // Start daemon connection asynchronously (if address was set)
+    if (daemon_client_ && !daemon_client_->GetAddress().empty()) {
+        daemon_client_->ConnectAsync(daemon_client_->GetAddress());
+    }
+
+    // Initialize BackendManager asynchronously to avoid blocking UI
+    backend_init_future_ = std::async(std::launch::async, []() {
+        spdlog::info("Initializing BackendManager in background...");
+        cyxwiz::servernode::core::NodeConfig node_config;
+        node_config.node_id = "gui-client";
+        cyxwiz::servernode::core::BackendManager::Instance().Initialize(node_config);
+        spdlog::info("BackendManager initialization complete");
+    });
 
     spdlog::info("ServerApplication initialized successfully");
     return true;
@@ -210,6 +236,36 @@ void ServerApplication::LoadFonts() {
         "../../cyxwiz-server-node/resources/fonts/",
         "../cyxwiz-engine/resources/fonts/"
     };
+
+#ifdef __APPLE__
+    // On macOS, also check paths relative to the executable
+    char exec_path[PATH_MAX];
+    uint32_t size = sizeof(exec_path);
+    if (_NSGetExecutablePath(exec_path, &size) == 0) {
+        std::string exec_dir = dirname(exec_path);
+        font_paths.insert(font_paths.begin(), exec_dir + "/resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../Resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../../../cyxwiz-engine/resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../../../cyxwiz-server-node/resources/fonts/");
+        spdlog::debug("macOS executable dir: {}", exec_dir);
+    }
+#elif defined(__linux__)
+    // On Linux, check paths relative to the executable using /proc/self/exe
+    char exec_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
+    if (len != -1) {
+        exec_path[len] = '';
+        char* exec_path_copy = strdup(exec_path);
+        std::string exec_dir = dirname(exec_path_copy);
+        free(exec_path_copy);
+        font_paths.insert(font_paths.begin(), exec_dir + "/resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../../../cyxwiz-engine/resources/fonts/");
+        font_paths.insert(font_paths.begin(), exec_dir + "/../../../cyxwiz-server-node/resources/fonts/");
+        spdlog::debug("Linux executable dir: {}", exec_dir);
+    }
+#endif
 
     std::string font_dir;
     for (const auto& path : font_paths) {

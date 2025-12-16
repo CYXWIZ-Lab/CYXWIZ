@@ -5,6 +5,7 @@
 #include <imgui_internal.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
+#include <thread>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -34,12 +35,12 @@ namespace {
 
     // Dimensions
     constexpr float kCardWidth = 420.0f;
-    constexpr float kCardPadding = 32.0f;
-    constexpr float kInputHeight = 42.0f;
-    constexpr float kButtonHeight = 44.0f;
-    constexpr float kSpacingSmall = 8.0f;
-    constexpr float kSpacingMedium = 16.0f;
-    constexpr float kSpacingLarge = 24.0f;
+    constexpr float kCardPadding = 20.0f;
+    constexpr float kInputHeight = 36.0f;
+    constexpr float kButtonHeight = 36.0f;
+    constexpr float kSpacingSmall = 4.0f;
+    constexpr float kSpacingMedium = 8.0f;
+    constexpr float kSpacingLarge = 12.0f;
     constexpr float kBorderRadius = 8.0f;
 
     // Helper to draw a styled input field
@@ -186,18 +187,9 @@ namespace {
 
 LoginPanel::LoginPanel()
     : ServerPanel("Login", true) {
-    // Try to restore saved session on startup
-    auto& auth = auth::AuthManager::Instance();
-    if (auth.LoadSavedSession()) {
-        spdlog::info("Restored saved login session");
-
-        // If node was already registered, send initial heartbeat
-        if (auth.IsNodeRegistered()) {
-            auth.SendHeartbeatToApi();
-            last_heartbeat_time_ = std::chrono::steady_clock::now();
-            spdlog::info("Sent initial heartbeat for restored node: {}", auth.GetNodeId());
-        }
-    }
+    // Session restoration will happen asynchronously on first Update()
+    // to avoid blocking the UI during startup
+    session_restore_pending_ = true;
 }
 
 void LoginPanel::Render() {
@@ -240,6 +232,23 @@ void LoginPanel::Render() {
 
 void LoginPanel::Update() {
     auto& auth = auth::AuthManager::Instance();
+
+    // Deferred session restoration (runs once on first Update to avoid blocking startup)
+    if (session_restore_pending_) {
+        session_restore_pending_ = false;
+        // Launch session restore in background thread
+        std::thread([this]() {
+            auto& auth = auth::AuthManager::Instance();
+            if (auth.LoadSavedSession()) {
+                spdlog::info("Restored saved login session");
+                if (auth.IsNodeRegistered()) {
+                    auth.SendHeartbeatToApi();
+                    last_heartbeat_time_ = std::chrono::steady_clock::now();
+                    spdlog::info("Sent initial heartbeat for restored node: {}", auth.GetNodeId());
+                }
+            }
+        }).detach();
+    }
 
     // Check if async login completed
     if (login_future_.valid()) {
@@ -339,7 +348,7 @@ void LoginPanel::RenderLoginForm() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
 
     // Calculate card position (centered)
-    float card_height = 520.0f;
+    float card_height = 460.0f;
     ImVec2 card_pos(
         (viewport->WorkSize.x - kCardWidth) / 2.0f,
         (viewport->WorkSize.y - card_height) / 2.0f
@@ -629,7 +638,7 @@ void LoginPanel::RenderAlternativeOptions() {
     float button_width = (content_width - kSpacingMedium) / 2.0f;
 
     // Wallet login button
-    if (StyledButton(ICON_FA_WALLET " Wallet", ImVec2(button_width, 40),
+    if (StyledButton(ICON_FA_WALLET " Wallet", ImVec2(button_width, 36),
                      kSecondaryColor, kSecondaryHover, ImVec4(0.45f, 0.25f, 0.65f, 1.0f))) {
         error_message_ = "Wallet login coming soon";
     }
@@ -639,12 +648,12 @@ void LoginPanel::RenderAlternativeOptions() {
 
     ImGui::SameLine(0, kSpacingMedium);
 
-    // Offline mode button
-    ImVec4 offline_color = ImVec4(0.25f, 0.25f, 0.30f, 1.0f);
-    ImVec4 offline_hover = ImVec4(0.30f, 0.30f, 0.35f, 1.0f);
-    ImVec4 offline_active = ImVec4(0.20f, 0.20f, 0.25f, 1.0f);
+    // Offline mode button - use amber/orange color to stand out
+    ImVec4 offline_color = ImVec4(0.85f, 0.55f, 0.15f, 1.0f);  // Amber/orange
+    ImVec4 offline_hover = ImVec4(0.95f, 0.65f, 0.25f, 1.0f);  // Lighter amber
+    ImVec4 offline_active = ImVec4(0.75f, 0.45f, 0.10f, 1.0f); // Darker amber
 
-    if (StyledButton(ICON_FA_WIFI " Offline", ImVec2(button_width, 40),
+    if (StyledButton(ICON_FA_DESKTOP " Work Offline", ImVec2(button_width, 36),
                      offline_color, offline_hover, offline_active)) {
         offline_mode_ = true;
         error_message_.clear();
@@ -655,14 +664,6 @@ void LoginPanel::RenderAlternativeOptions() {
         ImGui::SetTooltip("Continue without network - local training only");
     }
 
-    ImGui::SetCursorPosX(kCardPadding);
-    ImGui::Dummy(ImVec2(0, kSpacingMedium));
-
-    // Footer text
-    const char* footer = "Local mode allows training without internet";
-    float footer_width = ImGui::CalcTextSize(footer).x;
-    ImGui::SetCursorPosX(kCardPadding + (content_width - footer_width) / 2.0f);
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "%s", footer);
 }
 
 void LoginPanel::RenderLoggedInState() {

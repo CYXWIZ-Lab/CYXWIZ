@@ -99,44 +99,12 @@ int main(int argc, char** argv) {
 
     const char* mode_name = (config.mode == InterfaceMode::GUI) ? "GUI" : "TUI";
     spdlog::info("Interface mode: {}", mode_name);
-    spdlog::info("Connecting to daemon at: {}", config.daemon_address);
 
-    // Initialize BackendManager for local metrics collection
-    cyxwiz::servernode::core::NodeConfig node_config;
-    node_config.node_id = "gui-client";
-    cyxwiz::servernode::core::BackendManager::Instance().Initialize(node_config);
-
-    // Create daemon client
+    // Create daemon client (connection will happen in background)
     auto daemon_client = std::make_shared<cyxwiz::servernode::ipc::DaemonClient>();
+    daemon_client->SetTargetAddress(config.daemon_address);
 
-    // Try to connect to daemon
-    if (!daemon_client->Connect(config.daemon_address)) {
-        spdlog::error("Failed to connect to daemon at {}", config.daemon_address);
-        spdlog::error("Make sure cyxwiz-server-daemon is running");
-
-        // In GUI mode, we might still want to start and show connection dialog
-#ifdef CYXWIZ_HAS_GUI
-        if (config.mode == InterfaceMode::GUI) {
-            spdlog::info("Starting GUI in disconnected mode...");
-            cyxwiz::servernode::gui::ServerApplication app(argc, argv, daemon_client);
-            app.Run();
-            return 0;
-        }
-#endif
-        return 1;
-    }
-
-    // Get daemon status
-    cyxwiz::servernode::ipc::DaemonStatus status;
-    if (daemon_client->GetStatus(status)) {
-        spdlog::info("Connected to daemon:");
-        spdlog::info("  Node ID: {}", status.node_id);
-        spdlog::info("  Version: {}", status.version);
-        spdlog::info("  Active jobs: {}", status.active_jobs);
-        spdlog::info("  Active deployments: {}", status.active_deployments);
-    }
-
-    // Run in selected mode
+    // Start GUI immediately - daemon connection happens asynchronously
     int result = 0;
 
     switch (config.mode) {

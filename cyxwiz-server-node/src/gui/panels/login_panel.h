@@ -60,6 +60,9 @@ private:
 
     // Offline mode
     bool offline_mode_ = false;
+    
+    // Deferred session restoration
+    bool session_restore_pending_ = false;
 
     // Heartbeat timer
     std::chrono::steady_clock::time_point last_heartbeat_time_;
