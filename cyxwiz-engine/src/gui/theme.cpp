@@ -124,11 +124,11 @@ void Theme::ApplyCyxWizDark() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
-    // CyxWiz brand colors
-    ImVec4 bg_dark       = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);   // Very dark background
-    ImVec4 bg_medium     = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);   // Panel background
-    ImVec4 bg_light      = ImVec4(0.16f, 0.16f, 0.20f, 1.00f);   // Lighter elements
-    ImVec4 border        = ImVec4(0.25f, 0.25f, 0.30f, 1.00f);   // Subtle borders
+    // CyxWiz brand colors - Clean, minimal borders
+    ImVec4 bg_dark       = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);   // Very dark background
+    ImVec4 bg_medium     = ImVec4(0.14f, 0.14f, 0.16f, 1.00f);   // Panel background
+    ImVec4 bg_light      = ImVec4(0.18f, 0.18f, 0.21f, 1.00f);   // Lighter elements
+    ImVec4 border        = ImVec4(0.20f, 0.20f, 0.23f, 0.50f);   // Very subtle borders (semi-transparent)
     ImVec4 text          = ImVec4(0.92f, 0.92f, 0.94f, 1.00f);   // Main text
     ImVec4 text_dim      = ImVec4(0.60f, 0.60f, 0.65f, 1.00f);   // Dimmed text
     ImVec4 accent        = ImVec4(0.20f, 0.55f, 0.85f, 1.00f);   // Blue accent
@@ -187,8 +187,8 @@ void Theme::ApplyCyxWizDark() {
     colors[ImGuiCol_HeaderHovered]          = ImVec4(accent.x, accent.y, accent.z, 0.50f);
     colors[ImGuiCol_HeaderActive]           = ImVec4(accent.x, accent.y, accent.z, 0.70f);
 
-    // Separator
-    colors[ImGuiCol_Separator]              = border;
+    // Separator - Very subtle
+    colors[ImGuiCol_Separator]              = ImVec4(0.20f, 0.20f, 0.23f, 0.30f);  // Almost invisible
     colors[ImGuiCol_SeparatorHovered]       = accent;
     colors[ImGuiCol_SeparatorActive]        = accent_active;
 
@@ -235,15 +235,16 @@ void Theme::ApplyCyxWizDark() {
     // Modal
     colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.60f);
 
-    // Configuration
-    config_.window_rounding = 6.0f;
-    config_.frame_rounding = 4.0f;
-    config_.popup_rounding = 6.0f;
-    config_.scrollbar_rounding = 6.0f;
-    config_.grab_rounding = 4.0f;
-    config_.tab_rounding = 4.0f;
-    config_.window_border_size = 1.0f;
+    // Configuration - Clean, minimal appearance
+    config_.window_rounding = 4.0f;
+    config_.frame_rounding = 3.0f;
+    config_.popup_rounding = 4.0f;
+    config_.scrollbar_rounding = 4.0f;
+    config_.grab_rounding = 3.0f;
+    config_.tab_rounding = 3.0f;
+    config_.window_border_size = 0.0f;   // No window borders - cleaner look
     config_.frame_border_size = 0.0f;
+    config_.popup_border_size = 1.0f;    // Keep popup borders for visibility
 }
 
 // ============================================================================

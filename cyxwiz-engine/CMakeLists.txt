@@ -13,6 +13,7 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # Optional: HDF5 support for data files
 find_package(HighFive CONFIG)
@@ -42,6 +43,7 @@ endif()
 set(ENGINE_SOURCES
     src/main.cpp
     src/application.cpp
+    src/auth/auth_client.cpp
     src/core/project_manager.cpp
     src/core/data_registry.cpp
     src/core/texture_manager.cpp
@@ -207,6 +209,7 @@ set(ENGINE_SOURCES
 
 set(ENGINE_HEADERS
     src/application.h
+    src/auth/auth_client.h
     src/core/project_manager.h
     src/core/data_registry.h
     src/core/texture_manager.h
@@ -393,6 +396,8 @@ target_link_libraries(cyxwiz-engine PRIVATE
     nlohmann_json::nlohmann_json
     pybind11::embed
     httplib::httplib
+    OpenSSL::SSL
+    OpenSSL::Crypto
     cyxwiz-backend
     cyxwiz-protocol
 )

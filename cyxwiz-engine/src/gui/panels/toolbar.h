@@ -2,10 +2,12 @@
 
 #include "../panel.h"
 #include "plot_window.h"
+#include "auth/auth_client.h"
 #include <functional>
 #include <string>
 #include <vector>
 #include <memory>
+#include <future>
 
 namespace cyxwiz {
 
@@ -37,6 +39,9 @@ public:
     void OpenCommandPalette();
     void HandleGlobalShortcuts();  // Call this from main window to handle Ctrl+P
     bool IsCommandPaletteOpen() const { return show_command_palette_; }
+
+    // User profile popup (for custom title bar integration)
+    void ToggleUserProfilePopup() { show_user_profile_popup_ = !show_user_profile_popup_; }
 
     // Callbacks
     void SetResetLayoutCallback(std::function<void()> callback) { reset_layout_callback_ = callback; }
@@ -259,6 +264,8 @@ private:
                        const std::string& file_patterns, bool case_sensitive,
                        bool whole_word, bool use_regex);
     void RenderHelpMenu();
+    void RenderUserAvatar();
+    void RenderUserProfilePopup();
 
     // Command Palette functionality
     void InitializeToolEntries();
@@ -282,10 +289,17 @@ private:
 
     // Account/Auth state
     bool is_logged_in_ = false;
+    bool is_logging_in_ = false;
+    bool session_restore_pending_ = true;
+    bool show_user_profile_popup_ = false;
+    int popup_open_frames_ = 0;  // Track frames since popup opened (for click-away delay)
+    float avatar_popup_x_ = 0.0f;  // X position for profile popup
     char login_identifier_[256] = "";  // Email or phone (auto-detected)
     char login_password_[256] = "";
     std::string logged_in_user_;
     std::string login_error_message_;
+    std::string login_success_message_;
+    std::future<auth::AuthResult> login_future_;
 
     std::function<void()> reset_layout_callback_;
     std::function<void()> save_layout_callback_;

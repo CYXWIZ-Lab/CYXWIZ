@@ -1,6 +1,7 @@
 #include "toolbar.h"
 #include "plot_window.h"
 #include "../theme.h"
+#include "../../auth/auth_client.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -10,6 +11,7 @@
 #include <cctype>
 #include <regex>
 #include <sstream>
+#include <chrono>
 #include "../dock_style.h"
 #include "../../core/project_manager.h"
 #include "../icons.h"
@@ -219,6 +221,44 @@ void ToolbarPanel::SearchInFiles(const std::string& search_text, const std::stri
 void ToolbarPanel::Render() {
     if (!visible_) return;
 
+    // Check for session restore (runs once on first render)
+    if (session_restore_pending_) {
+        session_restore_pending_ = false;
+        auto& auth = auth::AuthClient::Instance();
+        if (auth.LoadSavedSession()) {
+            is_logged_in_ = true;
+            auto user = auth.GetUserInfo();
+            logged_in_user_ = user.email.empty() ? user.username : user.email;
+            spdlog::info("Restored saved session for: {}", logged_in_user_);
+        }
+    }
+
+    // Check if async login completed
+    if (login_future_.valid()) {
+        auto status = login_future_.wait_for(std::chrono::milliseconds(0));
+        if (status == std::future_status::ready) {
+            auto result = login_future_.get();
+            is_logging_in_ = false;
+
+            if (result.success) {
+                is_logged_in_ = true;
+                login_error_message_.clear();
+                auto user = result.user_info;
+                logged_in_user_ = user.email.empty() ? user.username : user.email;
+                login_success_message_ = "Login successful!";
+                spdlog::info("Login successful: {}", logged_in_user_);
+                memset(login_password_, 0, sizeof(login_password_));
+                // Close login dialog on success
+                show_account_settings_dialog_ = false;
+            } else {
+                login_error_message_ = result.error;
+                login_success_message_.clear();
+                spdlog::error("Login failed: {}", result.error);
+            }
+        }
+    }
+
+    // Use standard ImGui main menu bar (positioned right below the OS title bar)
     if (ImGui::BeginMainMenuBar()) {
         RenderFileMenu();
         RenderEditMenu();
@@ -239,7 +279,15 @@ void ToolbarPanel::Render() {
             ImGui::TextDisabled("| Project: %s", pm.GetProjectName().c_str());
         }
 
+        // User avatar on the right side of menu bar
+        RenderUserAvatar();
+
         ImGui::EndMainMenuBar();
+    }
+
+    // Render user profile popup outside menu bar
+    if (show_user_profile_popup_ && is_logged_in_) {
+        RenderUserProfilePopup();
     }
 
     // Render all plot windows
@@ -639,7 +687,14 @@ void ToolbarPanel::Render() {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.60f, 1.0f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.45f, 0.85f, 1.0f));
 
-                if (ImGui::Button("Sign In", ImVec2(input_width, 38)) || enter_pressed) {
+                bool can_login = strlen(login_identifier_) > 0 && strlen(login_password_) > 0 && !is_logging_in_;
+
+                if (is_logging_in_) {
+                    // Show loading state
+                    ImGui::BeginDisabled();
+                    ImGui::Button("Signing in...", ImVec2(input_width, 38));
+                    ImGui::EndDisabled();
+                } else if ((ImGui::Button("Sign In", ImVec2(input_width, 38)) || enter_pressed) && can_login) {
                     // Validate input
                     std::string identifier = login_identifier_;
                     std::string password = login_password_;
@@ -651,19 +706,17 @@ void ToolbarPanel::Render() {
                     } else {
                         // Auto-detect if email or phone
                         bool is_email = identifier.find('@') != std::string::npos;
-                        bool is_phone = !is_email && identifier.length() >= 10 &&
-                            std::all_of(identifier.begin(), identifier.end(),
-                                [](char c) { return std::isdigit(c) || c == '+' || c == '-' || c == ' ' || c == '(' || c == ')'; });
 
-                        if (!is_email && !is_phone) {
-                            login_error_message_ = "Please enter a valid email or phone number";
-                        } else {
-                            // TODO: Actual authentication API call
-                            is_logged_in_ = true;
-                            logged_in_user_ = identifier;
+                        if (is_email) {
+                            // Start async login
+                            is_logging_in_ = true;
                             login_error_message_.clear();
-                            spdlog::info("User signed in: {} ({})", identifier, is_email ? "email" : "phone");
-                            memset(login_password_, 0, sizeof(login_password_));
+                            login_success_message_.clear();
+                            auto& auth = auth::AuthClient::Instance();
+                            login_future_ = auth.LoginWithEmail(identifier, password);
+                            spdlog::info("Starting login for: {}", identifier);
+                        } else {
+                            login_error_message_ = "Please enter a valid email address";
                         }
                     }
                 }
@@ -698,41 +751,86 @@ void ToolbarPanel::Render() {
                     ImGui::PopStyleColor();
                 }
                 if (ImGui::IsItemClicked()) {
-                    spdlog::info("Create account clicked");
+                    auth::AuthClient::OpenRegistrationPage();
                 }
 
                 ImGui::PopStyleColor();
 
             } else {
                 // ========== Logged In View ==========
+                auto& auth = auth::AuthClient::Instance();
+                auto user = auth.GetUserInfo();
+
+                // Get initials from name
+                std::string initials;
+                if (!user.name.empty()) {
+                    std::istringstream iss(user.name);
+                    std::string word;
+                    while (iss >> word && initials.length() < 2) {
+                        if (!word.empty()) {
+                            initials += static_cast<char>(std::toupper(static_cast<unsigned char>(word[0])));
+                        }
+                    }
+                }
+                if (initials.empty() && !user.email.empty()) {
+                    initials = std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(user.email[0]))));
+                }
+                if (initials.empty()) initials = "U";
 
                 // Header with user avatar placeholder
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
-                ImGui::Text(ICON_FA_USER "  Account");
+                ImGui::Text(ICON_FA_USER "  Account Settings");
                 ImGui::PopStyleColor();
 
                 ImGui::Spacing();
 
-                // User card
+                // User card with better info
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
-                ImGui::BeginChild("##UserCard", ImVec2(-1, 60), true, ImGuiWindowFlags_NoScrollbar);
+                ImGui::BeginChild("##UserCard", ImVec2(340, 90), true, ImGuiWindowFlags_NoScrollbar);
 
                 ImGui::SetCursorPos(ImVec2(12, 12));
 
-                // Avatar circle placeholder
+                // Avatar circle with initials
                 ImDrawList* draw_list = ImGui::GetWindowDrawList();
                 ImVec2 pos = ImGui::GetCursorScreenPos();
-                draw_list->AddCircleFilled(ImVec2(pos.x + 18, pos.y + 18), 18,
-                    IM_COL32(64, 100, 180, 255));
-                draw_list->AddText(ImVec2(pos.x + 10, pos.y + 8),
-                    IM_COL32(255, 255, 255, 255),
-                    std::string(1, static_cast<char>(std::toupper(logged_in_user_[0]))).c_str());
+                float avatar_radius = 28.0f;
+                ImVec2 avatar_center(pos.x + avatar_radius, pos.y + avatar_radius);
+                draw_list->AddCircleFilled(avatar_center, avatar_radius, IM_COL32(40, 80, 160, 255));
 
-                ImGui::SetCursorPos(ImVec2(52, 14));
-                ImGui::Text("Signed in as");
-                ImGui::SetCursorPos(ImVec2(52, 32));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
-                ImGui::Text("%s", logged_in_user_.c_str());
+                // Draw initials centered
+                float font_scale = 1.4f;
+                ImVec2 text_size = ImGui::CalcTextSize(initials.c_str());
+                ImVec2 text_pos(avatar_center.x - text_size.x * font_scale * 0.5f,
+                              avatar_center.y - text_size.y * font_scale * 0.5f);
+                draw_list->AddText(ImGui::GetFont(), ImGui::GetFontSize() * font_scale,
+                                  text_pos, IM_COL32(255, 255, 255, 255), initials.c_str());
+
+                // User info next to avatar
+                ImGui::SetCursorPos(ImVec2(72, 12));
+
+                // Name (or username if no name)
+                std::string display_name = user.name.empty() ? user.username : user.name;
+                if (display_name.empty()) display_name = "User";
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                ImGui::Text("%s", display_name.c_str());
+                ImGui::PopStyleColor();
+
+                // Email
+                ImGui::SetCursorPos(ImVec2(72, 32));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.65f, 1.0f));
+                ImGui::Text("%s", user.email.c_str());
+                ImGui::PopStyleColor();
+
+                // Role badge
+                ImGui::SetCursorPos(ImVec2(72, 54));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 0.4f, 1.0f));
+                ImGui::Text(ICON_FA_CIRCLE_CHECK);
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.55f, 1.0f));
+                std::string role_display = user.role.empty() ? "User" : user.role;
+                role_display[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(role_display[0])));
+                ImGui::Text("%s", role_display.c_str());
                 ImGui::PopStyleColor();
 
                 ImGui::EndChild();
@@ -749,18 +847,49 @@ void ToolbarPanel::Render() {
                 ImGui::Spacing();
 
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
-                ImGui::BeginChild("##WalletCard", ImVec2(-1, 70), true, ImGuiWindowFlags_NoScrollbar);
+                ImGui::BeginChild("##WalletCard", ImVec2(340, 70), true, ImGuiWindowFlags_NoScrollbar);
 
-                ImGui::SetCursorPos(ImVec2(12, 10));
-                ImGui::TextDisabled("Connect your Solana wallet");
-                ImGui::SetCursorPos(ImVec2(12, 30));
+                if (!user.wallet_address.empty()) {
+                    // Show connected wallet
+                    ImGui::SetCursorPos(ImVec2(12, 10));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 0.4f, 1.0f));
+                    ImGui::Text(ICON_FA_CIRCLE_CHECK " Connected");
+                    ImGui::PopStyleColor();
 
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.30f, 1.0f));
-                if (ImGui::Button(ICON_FA_LINK " Connect Wallet", ImVec2(150, 28))) {
-                    spdlog::info("Connect wallet clicked");
+                    ImGui::SetCursorPos(ImVec2(12, 32));
+                    // Truncate wallet address for display
+                    std::string wallet_display = user.wallet_address;
+                    if (wallet_display.length() > 20) {
+                        wallet_display = wallet_display.substr(0, 8) + "..." + wallet_display.substr(wallet_display.length() - 6);
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.65f, 1.0f));
+                    ImGui::Text("%s", wallet_display.c_str());
+                    ImGui::PopStyleColor();
+
+                    // Copy button
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+                    if (ImGui::Button(ICON_FA_COPY "##copy_wallet")) {
+                        ImGui::SetClipboardText(user.wallet_address.c_str());
+                        spdlog::info("Wallet address copied to clipboard");
+                    }
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Copy to clipboard");
+                    }
+                } else {
+                    ImGui::SetCursorPos(ImVec2(12, 10));
+                    ImGui::TextDisabled("Connect your Solana wallet");
+                    ImGui::SetCursorPos(ImVec2(12, 32));
+
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.30f, 1.0f));
+                    if (ImGui::Button(ICON_FA_LINK " Connect Wallet", ImVec2(150, 28))) {
+                        spdlog::info("Connect wallet clicked");
+                    }
+                    ImGui::PopStyleColor(2);
                 }
-                ImGui::PopStyleColor(2);
 
                 ImGui::EndChild();
                 ImGui::PopStyleColor();
@@ -776,14 +905,14 @@ void ToolbarPanel::Render() {
                 ImGui::Spacing();
 
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
-                ImGui::BeginChild("##ServerCard", ImVec2(-1, 65), true, ImGuiWindowFlags_NoScrollbar);
+                ImGui::BeginChild("##ServerCard", ImVec2(340, 65), true, ImGuiWindowFlags_NoScrollbar);
 
                 ImGui::SetCursorPos(ImVec2(12, 10));
                 ImGui::Text("Default Server");
                 ImGui::SetCursorPos(ImVec2(12, 32));
 
                 static char server_address[256] = "localhost:50051";
-                ImGui::SetNextItemWidth(-24);
+                ImGui::SetNextItemWidth(316);
                 ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
                 ImGui::InputText("##server", server_address, sizeof(server_address));
                 ImGui::PopStyleColor();
@@ -799,12 +928,14 @@ void ToolbarPanel::Render() {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.18f, 0.18f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.25f, 0.25f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
-                if (ImGui::Button("Sign Out", ImVec2(-1, 36))) {
+                if (ImGui::Button("Sign Out", ImVec2(340, 36))) {
+                    auth.Logout();
                     is_logged_in_ = false;
                     logged_in_user_.clear();
                     memset(login_identifier_, 0, sizeof(login_identifier_));
                     memset(login_password_, 0, sizeof(login_password_));
                     login_error_message_.clear();
+                    login_success_message_.clear();
                     spdlog::info("User signed out");
                 }
                 ImGui::PopStyleColor(3);

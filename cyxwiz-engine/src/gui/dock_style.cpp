@@ -118,11 +118,11 @@ void DockStyle::ApplyUnrealEnginePreset() {
     style_.tab_separator_width = 1.0f;
     style_.tab_separator_color = ImVec4(0.08f, 0.08f, 0.08f, 1.0f);
 
-    // Dock area
+    // Dock area - Minimal borders for clean look
     style_.dock_bg = ImVec4(0.10f, 0.10f, 0.10f, 1.0f);
-    style_.dock_border = ImVec4(0.08f, 0.08f, 0.08f, 1.0f);
-    style_.dock_border_size = 1.0f;
-    style_.dock_splitter_size = 4.0f;
+    style_.dock_border = ImVec4(0.12f, 0.12f, 0.12f, 0.0f);  // Transparent border
+    style_.dock_border_size = 0.0f;  // No dock borders
+    style_.dock_splitter_size = 2.0f;  // Thinner splitter
 
     // Overflow
     style_.show_overflow_button = true;
@@ -364,10 +364,10 @@ bool DockStyle::RenderSidebarToggles() {
                                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNav;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);  // No sidebar border
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.10f, 0.95f * alpha));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.20f, 0.20f, alpha));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.15f, 0.15f, 0.15f, 0.3f * alpha));  // Very subtle
 
     if (ImGui::Begin("##SidebarPanel", nullptr, sidebar_flags)) {
         ImDrawList* draw_list = ImGui::GetWindowDrawList();

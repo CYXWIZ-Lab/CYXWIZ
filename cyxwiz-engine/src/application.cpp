@@ -3,6 +3,7 @@
 #include "gui/console.h"
 #include "gui/console_sink.h"
 #include "gui/theme.h"
+#include "auth/auth_client.h"
 #include "scripting/python_engine.h"
 #include "network/grpc_client.h"
 #include "network/job_manager.h"
@@ -242,6 +243,12 @@ bool CyxWizApp::Initialize() {
         // Test log to verify spdlog integration
         spdlog::info("✓ Console logging enabled");
         console->AddSuccess("✓ spdlog integration working");
+    }
+
+    // Restore saved auth session at startup
+    auto& auth = cyxwiz::auth::AuthClient::Instance();
+    if (auth.LoadSavedSession()) {
+        spdlog::info("Auth session restored for: {}", auth.GetUserInfo().email);
     }
 
     spdlog::info("Application initialized successfully");
