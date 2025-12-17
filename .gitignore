@@ -48,6 +48,14 @@ vcpkg/downloads/
 vcpkg/packages/
 third_party/*/
 
+# External pre-built libraries (download via scripts/setup-*.ps1 or .sh)
+external/onnxruntime-gpu/bin/
+external/onnxruntime-gpu/lib/
+external/onnxruntime-gpu/runtimes/
+external/onnxruntime-gpu/buildTransitive/
+external/onnxruntime-gpu/*.zip
+external/onnxruntime-gpu/*.nupkg
+
 # Python
 __pycache__/
 *.pyc

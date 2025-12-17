@@ -149,6 +149,16 @@ int main(int argc, char** argv) {
     // Initialize BackendManager for GUI/TUI modes
     auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
 
+    // Initialize BackendManager with default config for TUI/GUI modes (metrics collection)
+    if (mode == InterfaceMode::TUI || mode == InterfaceMode::GUI) {
+        cyxwiz::servernode::core::NodeConfig config;
+        config.node_id = "node_" + std::to_string(std::time(nullptr));
+        config.deployment_enabled = false;  // Daemon handles deployment in these modes
+        if (!backend.Initialize(config)) {
+            spdlog::warn("Failed to initialize BackendManager - metrics may not be available");
+        }
+    }
+
     // Run in selected mode
     int result = 0;
 

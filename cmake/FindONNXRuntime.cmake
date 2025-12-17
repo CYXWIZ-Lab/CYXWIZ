@@ -53,10 +53,14 @@ may be available:
 
 #]=======================================================================]
 
+# First check for pre-built GPU version in external/onnxruntime-gpu
+set(_PREBUILT_ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/external/onnxruntime-gpu")
+
 # Look for the header file
 find_path(ONNXRUNTIME_INCLUDE_DIR
     NAMES onnxruntime_cxx_api.h
     PATHS
+        ${_PREBUILT_ONNXRUNTIME_DIR}
         ${ONNXRUNTIME_ROOT}
         $ENV{ONNXRUNTIME_ROOT}
         ${CMAKE_PREFIX_PATH}
@@ -71,6 +75,7 @@ if(WIN32)
     find_library(ONNXRUNTIME_LIBRARY
         NAMES onnxruntime
         PATHS
+            ${_PREBUILT_ONNXRUNTIME_DIR}
             ${ONNXRUNTIME_ROOT}
             $ENV{ONNXRUNTIME_ROOT}
             ${CMAKE_PREFIX_PATH}
@@ -83,6 +88,7 @@ if(WIN32)
     find_file(ONNXRUNTIME_DLL
         NAMES onnxruntime.dll
         PATHS
+            ${_PREBUILT_ONNXRUNTIME_DIR}
             ${ONNXRUNTIME_ROOT}
             $ENV{ONNXRUNTIME_ROOT}
             ${CMAKE_PREFIX_PATH}
@@ -91,17 +97,37 @@ if(WIN32)
             bin/x64
     )
 
-    # Optional: GPU provider libraries
+    # Optional: GPU provider libraries (check pre-built first)
     find_library(ONNXRUNTIME_PROVIDERS_CUDA_LIBRARY
         NAMES onnxruntime_providers_cuda
-        PATHS ${CMAKE_PREFIX_PATH}
+        PATHS
+            ${_PREBUILT_ONNXRUNTIME_DIR}
+            ${CMAKE_PREFIX_PATH}
         PATH_SUFFIXES lib
     )
 
     find_library(ONNXRUNTIME_PROVIDERS_SHARED_LIBRARY
         NAMES onnxruntime_providers_shared
-        PATHS ${CMAKE_PREFIX_PATH}
+        PATHS
+            ${_PREBUILT_ONNXRUNTIME_DIR}
+            ${CMAKE_PREFIX_PATH}
         PATH_SUFFIXES lib
+    )
+
+    find_file(ONNXRUNTIME_PROVIDERS_CUDA_DLL
+        NAMES onnxruntime_providers_cuda.dll
+        PATHS
+            ${_PREBUILT_ONNXRUNTIME_DIR}
+            ${CMAKE_PREFIX_PATH}
+        PATH_SUFFIXES bin
+    )
+
+    find_file(ONNXRUNTIME_PROVIDERS_SHARED_DLL
+        NAMES onnxruntime_providers_shared.dll
+        PATHS
+            ${_PREBUILT_ONNXRUNTIME_DIR}
+            ${CMAKE_PREFIX_PATH}
+        PATH_SUFFIXES bin
     )
 
 elseif(APPLE)
@@ -184,6 +210,7 @@ if(ONNXRuntime_FOUND AND NOT TARGET onnxruntime::onnxruntime)
         if(WIN32)
             set_target_properties(onnxruntime::providers_cuda PROPERTIES
                 IMPORTED_IMPLIB "${ONNXRUNTIME_PROVIDERS_CUDA_LIBRARY}"
+                IMPORTED_LOCATION "${ONNXRUNTIME_PROVIDERS_CUDA_DLL}"
             )
         else()
             set_target_properties(onnxruntime::providers_cuda PROPERTIES
@@ -191,6 +218,7 @@ if(ONNXRuntime_FOUND AND NOT TARGET onnxruntime::onnxruntime)
             )
         endif()
         set(ONNXRUNTIME_HAS_CUDA TRUE)
+        message(STATUS "  ONNX Runtime CUDA provider found")
     endif()
 
     # Add shared provider target if found (Windows)
@@ -198,6 +226,7 @@ if(ONNXRuntime_FOUND AND NOT TARGET onnxruntime::onnxruntime)
         add_library(onnxruntime::providers_shared SHARED IMPORTED)
         set_target_properties(onnxruntime::providers_shared PROPERTIES
             IMPORTED_IMPLIB "${ONNXRUNTIME_PROVIDERS_SHARED_LIBRARY}"
+            IMPORTED_LOCATION "${ONNXRUNTIME_PROVIDERS_SHARED_DLL}"
         )
     endif()
 endif()
@@ -212,4 +241,6 @@ mark_as_advanced(
     ONNXRUNTIME_DLL
     ONNXRUNTIME_PROVIDERS_CUDA_LIBRARY
     ONNXRUNTIME_PROVIDERS_SHARED_LIBRARY
+    ONNXRUNTIME_PROVIDERS_CUDA_DLL
+    ONNXRUNTIME_PROVIDERS_SHARED_DLL
 )

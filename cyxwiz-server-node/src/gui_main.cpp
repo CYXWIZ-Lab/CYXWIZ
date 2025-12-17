@@ -100,6 +100,15 @@ int main(int argc, char** argv) {
     const char* mode_name = (config.mode == InterfaceMode::GUI) ? "GUI" : "TUI";
     spdlog::info("Interface mode: {}", mode_name);
 
+    // Initialize BackendManager for standalone/single-process mode
+    // This enables metrics collection even when daemon is not connected
+    cyxwiz::servernode::core::NodeConfig node_config;
+    node_config.node_id = "gui-standalone";
+    node_config.deployment_enabled = false;
+    if (!cyxwiz::servernode::core::BackendManager::Instance().Initialize(node_config)) {
+        spdlog::warn("Failed to initialize BackendManager - metrics may not be available in standalone mode");
+    }
+
     // Create daemon client (connection will happen in background)
     auto daemon_client = std::make_shared<cyxwiz::servernode::ipc::DaemonClient>();
     daemon_client->SetTargetAddress(config.daemon_address);

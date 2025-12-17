@@ -5,7 +5,11 @@
   "dependencies": [
     {
       "name": "imgui",
-      "features": ["docking-experimental", "glfw-binding", "opengl3-binding"]
+      "features": [
+        "docking-experimental",
+        "glfw-binding",
+        "opengl3-binding"
+      ]
     },
     "implot",
     "glfw3",
@@ -29,16 +33,12 @@
     "ftxui",
     "cpp-httplib",
     "yaml-cpp",
-    {
-      "name": "onnxruntime-gpu",
-      "platform": "windows & x64"
-    },
+    "onnx",
+    "llama-cpp",
     {
       "name": "onnxruntime",
-      "platform": "!(windows & x64) & !osx"
-    },
-    "onnx",
-    "llama-cpp"
+      "platform": "!osx"
+    }
   ],
   "builtin-baseline": "594ad8871e1e8e45f8e626c015fd611163430207"
 }
