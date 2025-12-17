@@ -109,6 +109,7 @@ startup_scripts.txt
 install-solana*.bat
 install-solana*.ps1
 *.png
+!cyxtoken.png
 
 # Session notes and planning docs (temporary)
 SESSION_*.md
