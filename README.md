@@ -39,6 +39,8 @@ The platform consists of three main components:
 
 ## 🚀 Quick Start
 
+> **For detailed build instructions**, including pre-built binary options, Ninja for faster builds, and troubleshooting, see **[docs/mainbuild.md](docs/mainbuild.md)**.
+
 ### 🖥️ Shell Requirements
 
 **⚠️ Windows Users - READ THIS FIRST:**
