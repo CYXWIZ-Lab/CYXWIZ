@@ -346,8 +346,20 @@ AuthResult AuthManager::DoLogin(const std::string& endpoint, const std::string& 
                     user_info_.email = user.value("email", "");
                     user_info_.username = user.value("username", "");
                     user_info_.name = user.value("name", "");
-                    user_info_.wallet_address = user.value("wallet_address", "");
                     user_info_.role = user.value("role", "user");
+
+                    // Parse CyxWallet (internal wallet)
+                    if (user.contains("cyxWallet") && !user["cyxWallet"].is_null()) {
+                        user_info_.wallet_address = user["cyxWallet"].value("publicKey", "");
+                    }
+                    // Parse external wallet if present
+                    else if (user.contains("externalWallet") && !user["externalWallet"].is_null()) {
+                        user_info_.wallet_address = user["externalWallet"].value("address", "");
+                    }
+                    // Fallback to direct wallet_address field
+                    else {
+                        user_info_.wallet_address = user.value("wallet_address", "");
+                    }
                 }
             }
 

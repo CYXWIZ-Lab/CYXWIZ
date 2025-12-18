@@ -874,7 +874,7 @@ Element TUIApplication::RenderJobDetails() {
 
 Component TUIApplication::CreateModelsView() {
     // Deploy dialog inputs
-    auto port_input = Input(&deploy_port_input_, "8080");
+    auto port_input = Input(&deploy_port_input_, "8082");
     auto gpu_layers_input = Input(&deploy_gpu_layers_input_, "35");
     auto context_size_input = Input(&deploy_context_size_input_, "4096");
 

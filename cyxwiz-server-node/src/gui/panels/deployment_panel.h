@@ -27,7 +27,7 @@ private:
     int selected_model_idx_ = -1;
 
     // Deploy configuration
-    int port_ = 8080;
+    int port_ = 8082;
     int context_size_ = 4096;
     int gpu_layers_ = 35;
     bool deploying_ = false;

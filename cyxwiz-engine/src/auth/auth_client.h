@@ -33,6 +33,21 @@ struct AuthResult {
     UserInfo user_info;
 };
 
+// Wallet nonce result
+struct WalletNonceResult {
+    bool success = false;
+    std::string nonce;
+    std::string message;  // Full message to sign
+    std::string error;
+};
+
+// Wallet verification result
+struct WalletVerifyResult {
+    bool success = false;
+    std::string wallet_address;
+    std::string error;
+};
+
 // Authentication client - singleton for handling CyxWiz API auth
 class AuthClient {
 public:
@@ -48,6 +63,15 @@ public:
 
     // Login methods
     std::future<AuthResult> LoginWithEmail(const std::string& email, const std::string& password);
+
+    // Wallet connection
+    std::future<WalletNonceResult> GetWalletNonce(const std::string& wallet_address);
+    std::future<WalletVerifyResult> VerifyWalletSignature(const std::string& wallet_address,
+                                                          const std::string& signature,
+                                                          const std::string& nonce);
+    std::future<WalletVerifyResult> LinkWallet(const std::string& wallet_address,
+                                               const std::string& signature,
+                                               const std::string& nonce);
 
     // Logout
     void Logout();

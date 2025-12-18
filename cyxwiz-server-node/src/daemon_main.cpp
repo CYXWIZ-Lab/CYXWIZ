@@ -49,7 +49,7 @@ void PrintUsage(const char* program) {
               << "\nOptions:\n"
               << "  --ipc-address=ADDR   IPC address for GUI connection (default: localhost:50054)\n"
               << "  --central-server=ADDR Central server address (default: localhost:50051)\n"
-              << "  --http-port=PORT     HTTP REST API port (default: 8080)\n"
+              << "  --http-port=PORT     HTTP REST API port (default: 8082)\n"
               << "  --inference-addr=ADDR gRPC InferenceService address (default: 0.0.0.0:50057)\n"
               << "  --config=PATH        Path to config file (default: ~/.cyxwiz/daemon.yaml)\n"
               << "  --tls                Enable TLS for gRPC servers\n"
@@ -62,7 +62,7 @@ void PrintUsage(const char* program) {
               << "  - gRPC IPC service for GUI/TUI client connections\n"
               << "  - P2P service for Engine connections\n"
               << "  - Model deployment with OpenAI-compatible API\n"
-              << "  - HTTP REST API for inference at http://localhost:8080/v1/predict\n"
+              << "  - HTTP REST API for inference at http://localhost:8082/v1/predict\n"
               << "  - Job execution for distributed training\n"
               << std::endl;
 }
@@ -76,7 +76,7 @@ struct DaemonConfig {
     std::string inference_address = "0.0.0.0:50057";
     std::string central_server = "localhost:50051";
     std::string config_path;
-    int http_port = 8080;  // HTTP REST API port
+    int http_port = 8082;  // HTTP REST API port
 
     // TLS settings
     bool enable_tls = false;

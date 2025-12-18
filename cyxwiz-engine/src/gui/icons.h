@@ -291,6 +291,11 @@
 #define ICON_FA_CREDIT_CARD         "\xef\x82\x9d"  // U+F09D
 #define ICON_FA_BITCOIN_SIGN        "\xee\x82\xb4"  // U+E0B4
 #define ICON_FA_ETHEREUM            "\xef\x90\xae"  // U+F42E
+#define ICON_FA_GEM                 "ï¥"  // U+F3A5 - gem/diamond for SOL
+#define ICON_FA_PAPER_PLANE         "ï"  // U+F1D8 - paper plane for sending
+#define ICON_FA_UNLOCK              "ï"  // U+F09C - unlock
+#define ICON_FA_ARROW_UP_RIGHT_FROM_SQUARE "ï"  // U+F08E - external link
+#define ICON_FA_CIRCLE_QUESTION     "ï"  // U+F059 - question mark in circle
 
 // Common/Simple shapes
 #define ICON_FA_CIRCLE_DOT          "\xef\x86\x92"  // U+F192

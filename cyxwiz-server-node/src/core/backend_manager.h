@@ -36,7 +36,7 @@ struct NodeConfig {
     int terminal_port = 50053;
     int node_service_port = 50054;
     int deployment_port = 50055;
-    int http_api_port = 8080;
+    int http_api_port = 8082;
     bool enable_tls = false;
     std::string cert_path;
     std::string key_path;

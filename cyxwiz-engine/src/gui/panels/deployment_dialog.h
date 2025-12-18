@@ -85,7 +85,7 @@ private:
     int embedded_port_ = 8080;
 
     // Server Node mode config
-    char server_address_[256] = "localhost:50055";
+    char server_address_[256] = "localhost:50056";
     int server_port_ = 8080;
     bool enable_terminal_ = false;
 

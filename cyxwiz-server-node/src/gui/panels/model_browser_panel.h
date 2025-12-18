@@ -35,7 +35,7 @@ private:
     // Deployment dialog state
     bool show_deploy_dialog_ = false;
     std::string pending_deploy_model_;
-    int deploy_port_ = 8080;
+    int deploy_port_ = 8082;
     int deploy_gpu_layers_ = 35;
     int deploy_context_size_ = 4096;
     std::string deploy_error_;

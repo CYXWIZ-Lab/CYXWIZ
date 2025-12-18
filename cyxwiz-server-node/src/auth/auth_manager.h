@@ -161,7 +161,7 @@ private:
     // State
     mutable std::mutex mutex_;
     AuthState state_ = AuthState::Offline;
-    std::string api_base_url_ = "http://127.0.0.1:8080/api";
+    std::string api_base_url_ = "http://127.0.0.1:3002/api";
     std::string jwt_token_;
     std::string node_token_;
     UserInfo user_info_;

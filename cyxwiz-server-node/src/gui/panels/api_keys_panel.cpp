@@ -58,7 +58,7 @@ void APIKeysPanel::Render() {
     ImGui::Spacing();
 
     ImGui::PushFont(GetSafeFont(FONT_MONO));
-    ImGui::TextDisabled("curl -H \"Authorization: Bearer <key>\" http://localhost:8080/v1/models");
+    ImGui::TextDisabled("curl -H \"Authorization: Bearer <key>\" http://localhost:8082/v1/models");
     ImGui::PopFont();
 
     // Dialogs

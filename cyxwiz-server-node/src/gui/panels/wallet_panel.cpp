@@ -5,6 +5,9 @@
 #include "core/state_manager.h"
 #include "auth/auth_manager.h"
 #include <imgui.h>
+#include <ctime>
+#include <sstream>
+#include <iomanip>
 
 namespace cyxwiz::servernode::gui {
 
@@ -28,8 +31,6 @@ void WalletPanel::Render() {
         current_address = state->GetWalletAddress();
     }
 
-    double balance = state ? state->GetWalletBalance() : 0.0;
-
     // Show login prompt if not authenticated
     if (!auth.IsAuthenticated()) {
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f),
@@ -47,7 +48,6 @@ void WalletPanel::Render() {
     if (current_address.empty()) {
         // Not connected
         if (auth.IsAuthenticated()) {
-            // Logged in but no wallet linked
             ImGui::TextColored(ImVec4(0.8f, 0.5f, 0.2f, 1.0f),
                 ICON_FA_LINK_SLASH " No Wallet Linked");
             ImGui::Spacing();
@@ -66,7 +66,6 @@ void WalletPanel::Render() {
 #endif
             }
         } else {
-            // Not logged in - show manual entry option
             ImGui::TextWrapped("Connect your Solana wallet to receive earnings.");
             ImGui::Spacing();
 
@@ -75,10 +74,8 @@ void WalletPanel::Render() {
 
             ImGui::Spacing();
             if (ImGui::Button(ICON_FA_LINK " Connect Wallet", ImVec2(200, 40))) {
-                // TODO: Validate and connect wallet
                 if (strlen(wallet_address_) > 0) {
                     is_connected_ = true;
-                    // state->UpdateWallet(wallet_address_, 0.0);
                 }
             }
         }
@@ -86,75 +83,180 @@ void WalletPanel::Render() {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-
         ImGui::TextDisabled("Supported wallets: Phantom, Solflare, Backpack");
     } else {
-        // Connected
-        ImGui::Text("Connected Wallet");
-        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "%s", current_address.c_str());
+        ImGui::Text(ICON_FA_WALLET " Connected Wallet");
+        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "%s", FormatAddress(current_address).c_str());
+        
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", current_address.c_str());
+        }
 
-        if (ImGui::Button(ICON_FA_COPY " Copy")) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton(ICON_FA_COPY " Copy")) {
             ImGui::SetClipboardText(current_address.c_str());
         }
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_LINK_SLASH " Disconnect")) {
-            // TODO: Disconnect wallet
+        if (ImGui::SmallButton(ICON_FA_ARROW_UP_RIGHT_FROM_SQUARE " Explorer")) {
+            std::string url = "start https://explorer.solana.com/address/" + current_address + "?cluster=devnet";
+#ifdef _WIN32
+            std::system(url.c_str());
+#endif
         }
 
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        // Balance
-        ImGui::Text("Balance");
-        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[2]);
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%.4f CYXWIZ", balance);
-        ImGui::PopFont();
-        ImGui::TextDisabled("~$%.2f USD", balance * 0.20);  // Placeholder rate
+        RenderBalanceSection(current_address, sol_balance_, cyxwiz_balance_);
 
         ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
 
-        if (ImGui::Button(ICON_FA_ARROW_UP " Withdraw", ImVec2(150, 0))) {
-            // TODO: Withdraw funds
+        ImGui::Text(ICON_FA_CHART_LINE " Earnings Summary");
+
+        auto today = state ? state->GetEarningsToday() : core::EarningsInfo{};
+        auto week = state ? state->GetEarningsThisWeek() : core::EarningsInfo{};
+        auto month = state ? state->GetEarningsThisMonth() : core::EarningsInfo{};
+
+        if (ImGui::BeginTable("Earnings", 3, ImGuiTableFlags_BordersInnerV)) {
+            ImGui::TableSetupColumn("Period");
+            ImGui::TableSetupColumn("CYXWIZ");
+            ImGui::TableSetupColumn("USD");
+            ImGui::TableHeadersRow();
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("Today");
+            ImGui::TableNextColumn(); ImGui::Text("%.4f", today.total_earnings);
+            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "$%.2f", today.total_earnings * cyxwiz_usd_price_);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("This Week");
+            ImGui::TableNextColumn(); ImGui::Text("%.4f", week.total_earnings);
+            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "$%.2f", week.total_earnings * cyxwiz_usd_price_);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("This Month");
+            ImGui::TableNextColumn(); ImGui::Text("%.4f", month.total_earnings);
+            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "$%.2f", month.total_earnings * cyxwiz_usd_price_);
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        RenderTransactionHistory();
+    }
+}
+
+void WalletPanel::RenderBalanceSection(const std::string& wallet_address, double sol_balance, double cyxwiz_balance) {
+    double total_usd = (sol_balance * sol_usd_price_) + (cyxwiz_balance * cyxwiz_usd_price_);
+
+    ImGui::BeginChild("Balance", ImVec2(0, 140), true, ImGuiWindowFlags_NoScrollbar);
+
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Total Balance");
+    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[2]);
+    ImGui::Text("$%.2f USD", total_usd);
+    ImGui::PopFont();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Columns(2, "balances", false);
+
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), ICON_FA_COINS " CYXWIZ");
+    ImGui::Text("%.2f", cyxwiz_balance);
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "$%.2f", cyxwiz_balance * cyxwiz_usd_price_);
+
+    ImGui::NextColumn();
+
+    ImGui::TextColored(ImVec4(0.6f, 0.4f, 1.0f, 1.0f), ICON_FA_CIRCLE " SOL");
+    ImGui::Text("%.4f", sol_balance);
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "$%.2f", sol_balance * sol_usd_price_);
+
+    ImGui::Columns(1);
+
+    ImGui::Spacing();
+
+    if (ImGui::Button(ICON_FA_ROTATE " Refresh")) {
+        // TODO: Refresh balance from blockchain
+    }
+
+    ImGui::EndChild();
+}
+
+void WalletPanel::RenderTransactionHistory() {
+    ImGui::Text(ICON_FA_CLOCK_ROTATE_LEFT " Recent Transactions");
+    ImGui::SameLine();
+    if (ImGui::SmallButton(ICON_FA_ROTATE " Refresh##tx")) {
+        // TODO: Refresh transactions
+    }
+
+    ImGui::BeginChild("Transactions", ImVec2(0, 150), true);
+    
+    if (transactions_.empty()) {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No transactions yet");
+    } else {
+        for (const auto& tx : transactions_) {
+            ImGui::PushID(tx.signature.c_str());
+            
+            if (tx.type == "EARNING") {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ICON_FA_ARROW_DOWN);
+            } else if (tx.type == "WITHDRAW") {
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ICON_FA_ARROW_UP);
+            } else {
+                ImGui::Text(ICON_FA_ARROW_RIGHT);
+            }
+            
+            ImGui::SameLine();
+            ImGui::Text("%s", tx.description.c_str());
+            
+            ImGui::SameLine(ImGui::GetWindowWidth() - 120);
+            if (tx.amount > 0) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "+%.4f", tx.amount);
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%.4f", tx.amount);
+            }
+            
+            ImGui::Indent(20.0f);
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", FormatTimestamp(tx.timestamp).c_str());
+            ImGui::SameLine();
+            if (tx.status == "CONFIRMED") {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ICON_FA_CIRCLE_CHECK);
+            } else if (tx.status == "PENDING") {
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), ICON_FA_SPINNER);
+            }
+            ImGui::Unindent(20.0f);
+            
+            ImGui::PopID();
         }
     }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Earnings summary
-    ImGui::Text("Earnings Summary");
-
-    auto today = state ? state->GetEarningsToday() : core::EarningsInfo{};
-    auto week = state ? state->GetEarningsThisWeek() : core::EarningsInfo{};
-    auto month = state ? state->GetEarningsThisMonth() : core::EarningsInfo{};
-
-    if (ImGui::BeginTable("Earnings", 2)) {
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::Text("Today");
-        ImGui::TableNextColumn(); ImGui::Text("%.4f CYXWIZ", today.total_earnings);
-
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::Text("This Week");
-        ImGui::TableNextColumn(); ImGui::Text("%.4f CYXWIZ", week.total_earnings);
-
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::Text("This Month");
-        ImGui::TableNextColumn(); ImGui::Text("%.4f CYXWIZ", month.total_earnings);
-
-        ImGui::EndTable();
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Transaction history
-    ImGui::Text("Recent Transactions");
-    ImGui::BeginChild("Transactions", ImVec2(0, 150), true);
-    ImGui::TextDisabled("No transactions yet");
+    
     ImGui::EndChild();
+}
+
+std::string WalletPanel::FormatAddress(const std::string& address) const {
+    if (address.length() <= 16) return address;
+    return address.substr(0, 8) + "..." + address.substr(address.length() - 8);
+}
+
+std::string WalletPanel::FormatTimestamp(int64_t timestamp) const {
+    time_t now = std::time(nullptr);
+    int64_t diff = now - timestamp;
+
+    if (diff < 60) {
+        return std::to_string(diff) + "s ago";
+    } else if (diff < 3600) {
+        return std::to_string(diff / 60) + "m ago";
+    } else if (diff < 86400) {
+        return std::to_string(diff / 3600) + "h ago";
+    } else {
+        return std::to_string(diff / 86400) + "d ago";
+    }
 }
 
 } // namespace cyxwiz::servernode::gui

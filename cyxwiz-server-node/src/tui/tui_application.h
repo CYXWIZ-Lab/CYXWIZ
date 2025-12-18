@@ -210,8 +210,8 @@ private:
 
     // Deploy dialog state
     bool show_deploy_dialog_ = false;
-    int deploy_port_ = 8080;
-    std::string deploy_port_input_ = "8080";
+    int deploy_port_ = 8082;
+    std::string deploy_port_input_ = "8082";
     int deploy_gpu_layers_ = 35;
     std::string deploy_gpu_layers_input_ = "35";
     int deploy_context_size_ = 4096;

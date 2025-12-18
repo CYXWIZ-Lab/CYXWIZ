@@ -51,12 +51,14 @@ private:
     void RenderActions();
     void RenderTransactionHistory();
     void RenderConnectionDialog();
+    void RenderExternalWalletDialog();
 
     // Helper functions
     std::string FormatAddress(const std::string& address) const;
     std::string FormatBalance(double balance) const;
     std::string FormatTimestamp(int64_t timestamp) const;
     std::string GetTransactionIcon(const std::string& type) const;
+    void SyncWithAuthClient();
 
     // Wallet state
     WalletConnectionStatus status_;
@@ -75,6 +77,20 @@ private:
     std::string error_message_;
     float last_refresh_time_;
     bool auto_refresh_enabled_;
+
+    // USD prices (mock data)
+    double sol_usd_price_;
+    double cyxwiz_usd_price_;
+
+    // External wallet state
+    bool show_external_wallet_dialog_;
+    int external_wallet_step_;
+    char external_wallet_buffer_[128];
+    std::string external_wallet_nonce_;
+    std::string external_wallet_address_;
+
+    // Auth sync
+    bool auth_synced_;
 };
 
 } // namespace gui

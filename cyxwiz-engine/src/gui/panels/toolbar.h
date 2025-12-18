@@ -301,6 +301,17 @@ private:
     std::string login_success_message_;
     std::future<auth::AuthResult> login_future_;
 
+    // Wallet connection state
+    bool show_wallet_connect_dialog_ = false;
+    int wallet_connect_step_ = 0;  // 0 = enter address, 1 = sign message, 2 = verifying
+    char wallet_address_buffer_[128] = "";
+    char wallet_signature_buffer_[512] = "";  // Base58 signatures can be long
+    std::string wallet_nonce_;
+    std::string wallet_sign_message_;  // Full message to sign from server
+    std::string wallet_error_message_;
+    std::future<auth::WalletNonceResult> wallet_nonce_future_;
+    std::future<auth::WalletVerifyResult> wallet_link_future_;
+
     std::function<void()> reset_layout_callback_;
     std::function<void()> save_layout_callback_;
     std::function<void()> save_project_settings_callback_;

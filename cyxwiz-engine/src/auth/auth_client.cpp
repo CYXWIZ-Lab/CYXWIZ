@@ -195,8 +195,20 @@ AuthResult AuthClient::DoLogin(const std::string& endpoint, const std::string& j
                             user_info_.email = user.value("email", "");
                             user_info_.username = user.value("username", "");
                             user_info_.name = user.value("name", "");
-                            user_info_.wallet_address = user.value("wallet_address", "");
                             user_info_.role = user.value("role", "user");
+
+                            // Parse CyxWallet (internal wallet)
+                            if (user.contains("cyxWallet") && !user["cyxWallet"].is_null()) {
+                                user_info_.wallet_address = user["cyxWallet"].value("publicKey", "");
+                            }
+                            // Parse external wallet if present
+                            else if (user.contains("externalWallet") && !user["externalWallet"].is_null()) {
+                                user_info_.wallet_address = user["externalWallet"].value("address", "");
+                            }
+                            // Fallback to direct wallet_address field
+                            else {
+                                user_info_.wallet_address = user.value("wallet_address", "");
+                            }
                         }
 
                         result.success = true;
@@ -210,6 +222,7 @@ AuthResult AuthClient::DoLogin(const std::string& endpoint, const std::string& j
                     SaveSession();
 
                     spdlog::info("Login successful for user: {}", result.user_info.email);
+                    spdlog::info("User wallet_address: {}", result.user_info.wallet_address.empty() ? "(none)" : result.user_info.wallet_address);
                 } else {
                     result.error = "Invalid response: missing token";
                     SetState(AuthState::Offline);
@@ -282,6 +295,229 @@ bool AuthClient::FetchUserProfile() {
     }
 
     return false;
+}
+
+std::future<WalletNonceResult> AuthClient::GetWalletNonce(const std::string& wallet_address) {
+    return std::async(std::launch::async, [this, wallet_address]() {
+        WalletNonceResult result;
+
+        try {
+            auto parsed = ParseUrl(api_base_url_);
+            bool is_https = api_base_url_.substr(0, 5) == "https";
+            std::string full_endpoint = parsed.base_path + "/auth/wallet/nonce";
+
+            json body;
+            body["wallet_address"] = wallet_address;
+
+            spdlog::debug("Fetching wallet nonce for: {}", wallet_address);
+
+            httplib::Result res;
+
+            if (is_https) {
+                httplib::SSLClient client(parsed.host, parsed.port);
+                client.set_connection_timeout(10);
+                client.set_read_timeout(30);
+                res = client.Post(full_endpoint, body.dump(), "application/json");
+            } else {
+                httplib::Client client(parsed.host, parsed.port);
+                client.set_connection_timeout(10);
+                client.set_read_timeout(30);
+                res = client.Post(full_endpoint, body.dump(), "application/json");
+            }
+
+            if (!res) {
+                result.error = "Network error: Could not connect to server";
+                spdlog::error("Failed to get wallet nonce: {}", result.error);
+                return result;
+            }
+
+            if (res->status == 200) {
+                json response = json::parse(res->body);
+                result.success = true;
+                result.nonce = response.value("nonce", "");
+                result.message = response.value("message", "");
+                spdlog::info("Got wallet nonce for {}", wallet_address);
+            } else {
+                try {
+                    json error_response = json::parse(res->body);
+                    result.error = error_response.value("message",
+                        error_response.value("error", "Failed to get nonce"));
+                } catch (...) {
+                    result.error = "Failed to get nonce (status " + std::to_string(res->status) + ")";
+                }
+                spdlog::error("Failed to get wallet nonce: {}", result.error);
+            }
+        } catch (const std::exception& e) {
+            result.error = std::string("Network error: ") + e.what();
+            spdlog::error("Get wallet nonce exception: {}", e.what());
+        }
+
+        return result;
+    });
+}
+
+std::future<WalletVerifyResult> AuthClient::VerifyWalletSignature(const std::string& wallet_address,
+                                                                   const std::string& signature,
+                                                                   const std::string& nonce) {
+    return std::async(std::launch::async, [this, wallet_address, signature, nonce]() {
+        WalletVerifyResult result;
+
+        try {
+            auto parsed = ParseUrl(api_base_url_);
+            bool is_https = api_base_url_.substr(0, 5) == "https";
+            std::string full_endpoint = parsed.base_path + "/auth/wallet/verify";
+
+            json body;
+            body["wallet_address"] = wallet_address;
+            body["signature"] = signature;
+            body["nonce"] = nonce;
+
+            spdlog::debug("Verifying wallet signature for: {}", wallet_address);
+
+            httplib::Result res;
+
+            if (is_https) {
+                httplib::SSLClient client(parsed.host, parsed.port);
+                client.set_connection_timeout(10);
+                client.set_read_timeout(30);
+                res = client.Post(full_endpoint, body.dump(), "application/json");
+            } else {
+                httplib::Client client(parsed.host, parsed.port);
+                client.set_connection_timeout(10);
+                client.set_read_timeout(30);
+                res = client.Post(full_endpoint, body.dump(), "application/json");
+            }
+
+            if (!res) {
+                result.error = "Network error: Could not connect to server";
+                spdlog::error("Failed to verify wallet: {}", result.error);
+                return result;
+            }
+
+            if (res->status == 200) {
+                json response = json::parse(res->body);
+                result.success = true;
+                result.wallet_address = wallet_address;
+
+                // If this returns a token (for wallet-only auth), store it
+                if (response.contains("token")) {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    jwt_token_ = response["token"].get<std::string>();
+
+                    if (response.contains("user")) {
+                        auto& user = response["user"];
+                        user_info_.id = user.value("id", "");
+                        user_info_.email = user.value("email", "");
+                        user_info_.username = user.value("username", "");
+                        user_info_.name = user.value("name", "");
+                        user_info_.wallet_address = wallet_address;
+                        user_info_.role = user.value("role", "user");
+                    }
+                }
+
+                spdlog::info("Wallet verified: {}", wallet_address);
+            } else {
+                try {
+                    json error_response = json::parse(res->body);
+                    result.error = error_response.value("message",
+                        error_response.value("error", "Verification failed"));
+                } catch (...) {
+                    result.error = "Verification failed (status " + std::to_string(res->status) + ")";
+                }
+                spdlog::error("Wallet verification failed: {}", result.error);
+            }
+        } catch (const std::exception& e) {
+            result.error = std::string("Network error: ") + e.what();
+            spdlog::error("Wallet verification exception: {}", e.what());
+        }
+
+        return result;
+    });
+}
+
+std::future<WalletVerifyResult> AuthClient::LinkWallet(const std::string& wallet_address,
+                                                        const std::string& signature,
+                                                        const std::string& nonce) {
+    return std::async(std::launch::async, [this, wallet_address, signature, nonce]() {
+        WalletVerifyResult result;
+
+        try {
+            auto parsed = ParseUrl(api_base_url_);
+            bool is_https = api_base_url_.substr(0, 5) == "https";
+            std::string full_endpoint = parsed.base_path + "/auth/wallet/login";
+
+            json body;
+            body["wallet_address"] = wallet_address;
+            body["signature"] = signature;
+            body["nonce"] = nonce;
+
+            spdlog::debug("Verifying wallet signature for: {}", wallet_address);
+
+            httplib::Result res;
+
+            if (is_https) {
+                httplib::SSLClient client(parsed.host, parsed.port);
+                client.set_connection_timeout(10);
+                client.set_read_timeout(30);
+                res = client.Post(full_endpoint, body.dump(), "application/json");
+            } else {
+                httplib::Client client(parsed.host, parsed.port);
+                client.set_connection_timeout(10);
+                client.set_read_timeout(30);
+                res = client.Post(full_endpoint, body.dump(), "application/json");
+            }
+
+            if (!res) {
+                result.error = "Network error: Could not connect to server";
+                spdlog::error("Failed to verify wallet: {}", result.error);
+                return result;
+            }
+
+            if (res->status == 200) {
+                json response = json::parse(res->body);
+                result.success = true;
+                result.wallet_address = wallet_address;
+
+                // Store JWT token and user info
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (response.contains("token")) {
+                        jwt_token_ = response["token"].get<std::string>();
+                    }
+
+                    if (response.contains("user")) {
+                        auto& user = response["user"];
+                        user_info_.id = user.value("id", "");
+                        user_info_.wallet_address = user.value("wallet_address", wallet_address);
+                        user_info_.username = user.value("username", "");
+                        user_info_.name = user.value("name", "");
+                        user_info_.email = user.value("email", "");
+                        user_info_.role = user.value("role", "user");
+                    }
+
+                    state_ = AuthState::Authenticated;
+                }
+                SaveSession();
+
+                bool is_new = response.value("is_new_user", false);
+                spdlog::info("Wallet login successful: {} (new_user: {})", wallet_address, is_new);
+            } else {
+                try {
+                    json error_response = json::parse(res->body);
+                    result.error = error_response.value("message",
+                        error_response.value("error", "Wallet verification failed"));
+                } catch (...) {
+                    result.error = "Wallet verification failed (status " + std::to_string(res->status) + ")";
+                }
+                spdlog::error("Wallet login failed: {}", result.error);
+            }
+        } catch (const std::exception& e) {
+            result.error = std::string("Network error: ") + e.what();
+            spdlog::error("Wallet login exception: {}", e.what());
+        }
+
+        return result;
+    });
 }
 
 void AuthClient::Logout() {

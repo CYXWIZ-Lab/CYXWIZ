@@ -850,19 +850,19 @@ void ToolbarPanel::Render() {
                 ImGui::BeginChild("##WalletCard", ImVec2(340, 70), true, ImGuiWindowFlags_NoScrollbar);
 
                 if (!user.wallet_address.empty()) {
-                    // Show connected wallet
+                    // Show connected CyxWallet
                     ImGui::SetCursorPos(ImVec2(12, 10));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 0.4f, 1.0f));
-                    ImGui::Text(ICON_FA_CIRCLE_CHECK " Connected");
+                    ImGui::Text(ICON_FA_CIRCLE_CHECK " CyxWallet");
                     ImGui::PopStyleColor();
 
-                    ImGui::SetCursorPos(ImVec2(12, 32));
                     // Truncate wallet address for display
+                    ImGui::SameLine();
                     std::string wallet_display = user.wallet_address;
                     if (wallet_display.length() > 20) {
                         wallet_display = wallet_display.substr(0, 8) + "..." + wallet_display.substr(wallet_display.length() - 6);
                     }
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.65f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.55f, 1.0f));
                     ImGui::Text("%s", wallet_display.c_str());
                     ImGui::PopStyleColor();
 
@@ -878,15 +878,43 @@ void ToolbarPanel::Render() {
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Copy to clipboard");
                     }
+
+                    // Link External Wallet - subtle text link
+                    ImGui::SetCursorPos(ImVec2(12, 38));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.55f, 0.8f, 1.0f));
+                    if (ImGui::SmallButton(ICON_FA_LINK " Link external wallet")) {
+                        show_wallet_connect_dialog_ = true;
+                        show_account_settings_dialog_ = false;
+                        wallet_connect_step_ = 0;
+                        memset(wallet_address_buffer_, 0, sizeof(wallet_address_buffer_));
+                        memset(wallet_signature_buffer_, 0, sizeof(wallet_signature_buffer_));
+                        wallet_nonce_.clear();
+                        wallet_error_message_.clear();
+                        spdlog::info("Connect external wallet dialog opened");
+                    }
+                    ImGui::PopStyleColor(4);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Connect Phantom or other Solana wallet");
+                    }
                 } else {
-                    ImGui::SetCursorPos(ImVec2(12, 10));
-                    ImGui::TextDisabled("Connect your Solana wallet");
-                    ImGui::SetCursorPos(ImVec2(12, 32));
+                    ImGui::SetCursorPos(ImVec2(12, 12));
+                    ImGui::TextDisabled("No wallet connected");
+                    ImGui::SetCursorPos(ImVec2(12, 35));
 
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.30f, 1.0f));
-                    if (ImGui::Button(ICON_FA_LINK " Connect Wallet", ImVec2(150, 28))) {
-                        spdlog::info("Connect wallet clicked");
+                    if (ImGui::Button(ICON_FA_WALLET " Connect Wallet", ImVec2(140, 26))) {
+                        show_wallet_connect_dialog_ = true;
+                        show_account_settings_dialog_ = false;
+                        wallet_connect_step_ = 0;
+                        memset(wallet_address_buffer_, 0, sizeof(wallet_address_buffer_));
+                        memset(wallet_signature_buffer_, 0, sizeof(wallet_signature_buffer_));
+                        wallet_nonce_.clear();
+                        wallet_error_message_.clear();
+                        spdlog::info("Connect wallet dialog opened");
                     }
                     ImGui::PopStyleColor(2);
                 }
@@ -951,6 +979,212 @@ void ToolbarPanel::Render() {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
             if (ImGui::Button("Close", ImVec2(close_width, 28))) {
                 show_account_settings_dialog_ = false;
+            }
+            ImGui::PopStyleColor(3);
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopStyleVar(5);
+    }
+
+    // Wallet Connect Dialog
+    if (show_wallet_connect_dialog_) {
+        ImGui::OpenPopup("##WalletConnect");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 24));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 12));
+
+        ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar;
+
+        if (ImGui::BeginPopupModal("##WalletConnect", &show_wallet_connect_dialog_, flags)) {
+            // Check for async operation results
+            if (wallet_nonce_future_.valid() &&
+                wallet_nonce_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                auto result = wallet_nonce_future_.get();
+                if (result.success) {
+                    wallet_nonce_ = result.nonce;
+                    wallet_sign_message_ = result.message;
+                    wallet_connect_step_ = 1;  // Move to sign step
+                    spdlog::info("Got wallet nonce, ready for signing");
+                } else {
+                    wallet_error_message_ = result.error;
+                    wallet_connect_step_ = 0;  // Back to address entry
+                }
+            }
+
+            if (wallet_link_future_.valid() &&
+                wallet_link_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                auto result = wallet_link_future_.get();
+                if (result.success) {
+                    spdlog::info("Wallet login successful: {}", result.wallet_address);
+                    show_wallet_connect_dialog_ = false;
+                    // Update logged-in state
+                    is_logged_in_ = true;
+                    auto& auth_client = auth::AuthClient::Instance();
+                    auto user = auth_client.GetUserInfo();
+                    logged_in_user_ = user.email.empty() ? user.wallet_address : user.email;
+                } else {
+                    wallet_error_message_ = result.error;
+                    wallet_connect_step_ = 1;  // Stay on sign step
+                }
+            }
+
+            // Header
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+            ImGui::Text(ICON_FA_WALLET);
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::Text("Connect Solana Wallet");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            float input_width = 380.0f;
+
+            if (wallet_connect_step_ == 0) {
+                // Step 1: Enter wallet address
+                ImGui::TextWrapped("Enter your Solana wallet address to connect:");
+                ImGui::Spacing();
+
+                ImGui::Text("Wallet Address");
+                ImGui::SetNextItemWidth(input_width);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+                ImGui::InputText("##wallet_address", wallet_address_buffer_, sizeof(wallet_address_buffer_));
+                ImGui::PopStyleColor();
+
+                if (!wallet_error_message_.empty()) {
+                    ImGui::Spacing();
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                    ImGui::TextWrapped("%s", wallet_error_message_.c_str());
+                    ImGui::PopStyleColor();
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Get Nonce button
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.52f, 0.96f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.60f, 1.0f, 1.0f));
+                bool can_get_nonce = strlen(wallet_address_buffer_) > 30;  // Basic validation
+                if (!can_get_nonce) ImGui::BeginDisabled();
+                if (ImGui::Button("Get Signing Message", ImVec2(input_width, 36))) {
+                    wallet_error_message_.clear();
+                    auto& auth_client = auth::AuthClient::Instance();
+                    wallet_nonce_future_ = auth_client.GetWalletNonce(wallet_address_buffer_);
+                    spdlog::info("Requesting nonce for wallet: {}", wallet_address_buffer_);
+                }
+                if (!can_get_nonce) ImGui::EndDisabled();
+                ImGui::PopStyleColor(2);
+
+            } else if (wallet_connect_step_ == 1) {
+                // Step 2: Sign the message
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.5f, 1.0f));
+                ImGui::Text("Step 1:");
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                ImGui::TextWrapped("Copy this message and sign it in your Phantom wallet");
+                ImGui::Spacing();
+
+                // Show the message to sign from server
+                ImGui::Text("Message to Sign:");
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
+                ImGui::InputTextMultiline("##sign_message", const_cast<char*>(wallet_sign_message_.c_str()),
+                    wallet_sign_message_.size() + 1, ImVec2(input_width, 80),
+                    ImGuiInputTextFlags_ReadOnly);
+                ImGui::PopStyleColor();
+
+                // Copy button
+                if (ImGui::Button(ICON_FA_COPY " Copy Message")) {
+                    ImGui::SetClipboardText(wallet_sign_message_.c_str());
+                    spdlog::info("Sign message copied to clipboard");
+                    spdlog::info("Copied message: {}", wallet_sign_message_);
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.5f, 1.0f));
+                ImGui::Text("Step 2:");
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                ImGui::TextWrapped("Paste the SIGNATURE from Phantom (not the message!)");
+
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.65f, 1.0f));
+                ImGui::TextWrapped("The signature is a base58 string like: 3AhUen...");
+                ImGui::PopStyleColor();
+
+                ImGui::Text("Signature:");
+                ImGui::SetNextItemWidth(input_width);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+                ImGui::InputText("##signature", wallet_signature_buffer_, sizeof(wallet_signature_buffer_));
+                ImGui::PopStyleColor();
+
+                if (!wallet_error_message_.empty()) {
+                    ImGui::Spacing();
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                    ImGui::TextWrapped("%s", wallet_error_message_.c_str());
+                    ImGui::PopStyleColor();
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Verify button
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.52f, 0.96f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.60f, 1.0f, 1.0f));
+                bool can_verify = strlen(wallet_signature_buffer_) > 10;
+                if (!can_verify) ImGui::BeginDisabled();
+                if (ImGui::Button("Verify & Link Wallet", ImVec2(input_width, 36))) {
+                    wallet_error_message_.clear();
+                    auto& auth_client = auth::AuthClient::Instance();
+                    // Debug logging
+                    spdlog::info("=== Wallet Login Debug ===");
+                    spdlog::info("Wallet Address: {}", wallet_address_buffer_);
+                    spdlog::info("Nonce: {}", wallet_nonce_);
+                    spdlog::info("Signature (first 50 chars): {}", std::string(wallet_signature_buffer_).substr(0, 50));
+                    spdlog::info("Signature length: {}", strlen(wallet_signature_buffer_));
+                    spdlog::info("Message to sign was: {}", wallet_sign_message_);
+                    wallet_link_future_ = auth_client.LinkWallet(
+                        wallet_address_buffer_, wallet_signature_buffer_, wallet_nonce_);
+                    wallet_connect_step_ = 2;  // Show verifying state
+                    spdlog::info("Verifying wallet signature...");
+                }
+                if (!can_verify) ImGui::EndDisabled();
+                ImGui::PopStyleColor(2);
+
+                // Back button
+                ImGui::SameLine();
+                if (ImGui::Button("Back")) {
+                    wallet_connect_step_ = 0;
+                    wallet_error_message_.clear();
+                }
+
+            } else if (wallet_connect_step_ == 2) {
+                // Verifying...
+                ImGui::TextWrapped("Verifying signature...");
+                ImGui::Spacing();
+                ImGui::ProgressBar(-1.0f * ImGui::GetTime(), ImVec2(input_width, 4));
+            }
+
+            ImGui::Spacing();
+
+            // Cancel button
+            float cancel_width = 80;
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - cancel_width - 24);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            if (ImGui::Button("Cancel", ImVec2(cancel_width, 28))) {
+                show_wallet_connect_dialog_ = false;
             }
             ImGui::PopStyleColor(3);
 
