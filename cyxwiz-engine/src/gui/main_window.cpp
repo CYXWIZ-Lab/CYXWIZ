@@ -99,6 +99,7 @@
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
+#include "../network/grpc_client.h"
 #include "../core/project_manager.h"
 #include "../core/data_registry.h"
 #include "../core/graph_compiler.h"
@@ -1558,6 +1559,21 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         toolbar_->SetConnectToServerCallback([this]() {
             if (connection_dialog_) {
                 connection_dialog_->Show();
+            }
+        });
+
+        // Set up auth callbacks to propagate JWT token to gRPC client
+        toolbar_->SetOnLoginSuccessCallback([client](const std::string& jwt_token) {
+            if (client) {
+                client->SetAuthToken(jwt_token);
+                spdlog::info("Auth token set on gRPC client after login");
+            }
+        });
+
+        toolbar_->SetOnLogoutCallback([client]() {
+            if (client) {
+                client->ClearAuthToken();
+                spdlog::info("Auth token cleared from gRPC client after logout");
             }
         });
     }

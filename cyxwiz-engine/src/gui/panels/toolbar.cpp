@@ -230,6 +230,10 @@ void ToolbarPanel::Render() {
             auto user = auth.GetUserInfo();
             logged_in_user_ = user.email.empty() ? user.username : user.email;
             spdlog::info("Restored saved session for: {}", logged_in_user_);
+            // Notify application of restored session with JWT token
+            if (on_login_success_callback_) {
+                on_login_success_callback_(auth.GetJwtToken());
+            }
         }
     }
 
@@ -249,7 +253,12 @@ void ToolbarPanel::Render() {
                 spdlog::info("Login successful: {}", logged_in_user_);
                 memset(login_password_, 0, sizeof(login_password_));
                 // Close login dialog on success
+                // Notify application of successful login with JWT token
                 show_account_settings_dialog_ = false;
+                if (on_login_success_callback_) {
+                    auto& auth = auth::AuthClient::Instance();
+                    on_login_success_callback_(auth.GetJwtToken());
+                }
             } else {
                 login_error_message_ = result.error;
                 login_success_message_.clear();
@@ -359,6 +368,57 @@ void ToolbarPanel::Render() {
 
             if (ImGui::Button("OK", ImVec2(120, 0))) {
                 show_about_dialog_ = false;
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    // Login Required popup - shown when user tries to access server features without logging in
+    if (show_login_required_popup_) {
+        ImGui::OpenPopup("Login Required");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+        ImGuiWindowFlags popup_flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove;
+        if (ImGui::BeginPopupModal("Login Required", &show_login_required_popup_, popup_flags)) {
+            // Warning icon and message
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f));
+            ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION);
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::Text("Authentication Required");
+
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Dynamic message based on action
+            ImGui::TextWrapped("You need to be logged in to %s.", login_required_action_.c_str());
+            ImGui::Spacing();
+            ImGui::TextWrapped("Please login to your CyxWiz account or create a new account to continue.");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Buttons
+            float button_width = 120.0f;
+            float total_width = button_width * 2 + ImGui::GetStyle().ItemSpacing.x;
+            float start_x = (ImGui::GetWindowWidth() - total_width) * 0.5f;
+            ImGui::SetCursorPosX(start_x);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
+            if (ImGui::Button(ICON_FA_RIGHT_TO_BRACKET " Login", ImVec2(button_width, 0))) {
+                show_login_required_popup_ = false;
+                show_account_settings_dialog_ = true;  // Open login dialog
+            }
+            ImGui::PopStyleColor(2);
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+                show_login_required_popup_ = false;
             }
 
             ImGui::EndPopup();
@@ -650,11 +710,30 @@ void ToolbarPanel::Render() {
                 ImGui::SetCursorPosX(start_x);
                 ImGui::Text("Email or Phone");
                 ImGui::SetCursorPosX(start_x);
-                ImGui::SetNextItemWidth(input_width);
+
+                float button_size = 28.0f;
+                float field_width = input_width - button_size - 4.0f;
+
+                ImGui::SetNextItemWidth(field_width);
                 ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
                 ImGui::InputText("##identifier", login_identifier_, sizeof(login_identifier_));
                 ImGui::PopStyleColor(2);
+
+                // Paste button for email
+                ImGui::SameLine(0, 4.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+                if (ImGui::Button(ICON_FA_PASTE "##paste_email", ImVec2(button_size, 0))) {
+                    if (ImGui::GetClipboardText()) {
+                        strncpy(login_identifier_, ImGui::GetClipboardText(), sizeof(login_identifier_) - 1);
+                        login_identifier_[sizeof(login_identifier_) - 1] = '\0';
+                    }
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Paste from clipboard");
+                }
 
                 ImGui::Spacing();
 
@@ -662,12 +741,44 @@ void ToolbarPanel::Render() {
                 ImGui::SetCursorPosX(start_x);
                 ImGui::Text("Password");
                 ImGui::SetCursorPosX(start_x);
-                ImGui::SetNextItemWidth(input_width);
+
+                float password_field_width = input_width - (button_size * 2) - 8.0f;
+                ImGui::SetNextItemWidth(password_field_width);
                 ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
-                bool enter_pressed = ImGui::InputText("##password", login_password_, sizeof(login_password_),
-                    ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGuiInputTextFlags password_flags = ImGuiInputTextFlags_EnterReturnsTrue;
+                if (!show_password_) {
+                    password_flags |= ImGuiInputTextFlags_Password;
+                }
+                bool enter_pressed = ImGui::InputText("##password", login_password_, sizeof(login_password_), password_flags);
                 ImGui::PopStyleColor(2);
+
+                // Show/Hide password toggle button
+                ImGui::SameLine(0, 4.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+                if (ImGui::Button(show_password_ ? ICON_FA_EYE_SLASH "##toggle_pw" : ICON_FA_EYE "##toggle_pw", ImVec2(button_size, 0))) {
+                    show_password_ = !show_password_;
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(show_password_ ? "Hide password" : "Show password");
+                }
+
+                // Paste button for password
+                ImGui::SameLine(0, 4.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+                if (ImGui::Button(ICON_FA_PASTE "##paste_password", ImVec2(button_size, 0))) {
+                    if (ImGui::GetClipboardText()) {
+                        strncpy(login_password_, ImGui::GetClipboardText(), sizeof(login_password_) - 1);
+                        login_password_[sizeof(login_password_) - 1] = '\0';
+                    }
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Paste from clipboard");
+                }
 
                 // Error message
                 if (!login_error_message_.empty()) {
@@ -888,6 +999,10 @@ void ToolbarPanel::Render() {
                     if (ImGui::SmallButton(ICON_FA_LINK " Link external wallet")) {
                         show_wallet_connect_dialog_ = true;
                         show_account_settings_dialog_ = false;
+                if (on_login_success_callback_) {
+                    auto& auth = auth::AuthClient::Instance();
+                    on_login_success_callback_(auth.GetJwtToken());
+                }
                         wallet_connect_step_ = 0;
                         memset(wallet_address_buffer_, 0, sizeof(wallet_address_buffer_));
                         memset(wallet_signature_buffer_, 0, sizeof(wallet_signature_buffer_));
@@ -909,6 +1024,10 @@ void ToolbarPanel::Render() {
                     if (ImGui::Button(ICON_FA_WALLET " Connect Wallet", ImVec2(140, 26))) {
                         show_wallet_connect_dialog_ = true;
                         show_account_settings_dialog_ = false;
+                if (on_login_success_callback_) {
+                    auto& auth = auth::AuthClient::Instance();
+                    on_login_success_callback_(auth.GetJwtToken());
+                }
                         wallet_connect_step_ = 0;
                         memset(wallet_address_buffer_, 0, sizeof(wallet_address_buffer_));
                         memset(wallet_signature_buffer_, 0, sizeof(wallet_signature_buffer_));
@@ -965,6 +1084,10 @@ void ToolbarPanel::Render() {
                     login_error_message_.clear();
                     login_success_message_.clear();
                     spdlog::info("User signed out");
+                    // Notify application of logout
+                    if (on_logout_callback_) {
+                        on_logout_callback_();
+                    }
                 }
                 ImGui::PopStyleColor(3);
             }
@@ -979,6 +1102,10 @@ void ToolbarPanel::Render() {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
             if (ImGui::Button("Close", ImVec2(close_width, 28))) {
                 show_account_settings_dialog_ = false;
+                if (on_login_success_callback_) {
+                    auto& auth = auth::AuthClient::Instance();
+                    on_login_success_callback_(auth.GetJwtToken());
+                }
             }
             ImGui::PopStyleColor(3);
 

@@ -62,6 +62,8 @@ public:
     void SetAccountSettingsCallback(std::function<void()> callback) { account_settings_callback_ = callback; }
     void SetExitCallback(std::function<void()> callback) { exit_callback_ = callback; }
     void SetHasUnsavedChangesCallback(std::function<bool()> callback) { has_unsaved_changes_callback_ = callback; }
+    void SetOnLoginSuccessCallback(std::function<void(const std::string&)> callback) { on_login_success_callback_ = callback; }
+    void SetOnLogoutCallback(std::function<void()> callback) { on_logout_callback_ = callback; }
 
     // Edit menu callbacks
     void SetUndoCallback(std::function<void()> callback) { undo_callback_ = callback; }
@@ -292,10 +294,13 @@ private:
     bool is_logging_in_ = false;
     bool session_restore_pending_ = true;
     bool show_user_profile_popup_ = false;
+    bool show_login_required_popup_ = false;
+    std::string login_required_action_;  // What action requires login (for popup message)
     int popup_open_frames_ = 0;  // Track frames since popup opened (for click-away delay)
     float avatar_popup_x_ = 0.0f;  // X position for profile popup
     char login_identifier_[256] = "";  // Email or phone (auto-detected)
     char login_password_[256] = "";
+    bool show_password_ = false;  // Toggle password visibility
     std::string logged_in_user_;
     std::string login_error_message_;
     std::string login_success_message_;
@@ -330,6 +335,8 @@ private:
     std::function<void()> account_settings_callback_;
     std::function<void()> exit_callback_;
     std::function<bool()> has_unsaved_changes_callback_;
+    std::function<void(const std::string&)> on_login_success_callback_;
+    std::function<void()> on_logout_callback_;
 
     // Project creation state
     char project_name_buffer_[256];
