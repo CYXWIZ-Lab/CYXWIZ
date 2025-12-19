@@ -18,6 +18,11 @@ public:
     bool IsConnected() const { return connected_; }
     std::string GetServerAddress() const { return server_address_; }
 
+    // Authentication
+    void SetAuthToken(const std::string& token) { auth_token_ = token; }
+    void ClearAuthToken() { auth_token_.clear(); }
+    bool HasAuthToken() const { return !auth_token_.empty(); }
+
     // Job operations
     bool SubmitJob(const cyxwiz::protocol::SubmitJobRequest& request,
                    cyxwiz::protocol::SubmitJobResponse& response);
@@ -36,9 +41,13 @@ public:
     std::string GetLastError() const { return last_error_; }
 
 private:
+    // Add authorization header to gRPC context
+    void AddAuthMetadata(grpc::ClientContext& context);
+
     bool connected_;
     std::string server_address_;
     std::string last_error_;
+    std::string auth_token_;  // JWT token for authentication
 
     std::shared_ptr<grpc::Channel> channel_;
     std::unique_ptr<cyxwiz::protocol::JobService::Stub> job_stub_;

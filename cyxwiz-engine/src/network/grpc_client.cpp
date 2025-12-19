@@ -6,6 +6,14 @@ namespace network {
 GRPCClient::GRPCClient() : connected_(false) {
 }
 
+void GRPCClient::AddAuthMetadata(grpc::ClientContext& context) {
+    if (!auth_token_.empty()) {
+        // Add Bearer token to authorization header
+        context.AddMetadata("authorization", "Bearer " + auth_token_);
+        spdlog::debug("Added auth token to gRPC request");
+    }
+}
+
 GRPCClient::~GRPCClient() {
     Disconnect();
 }
@@ -69,6 +77,9 @@ bool GRPCClient::SubmitJob(const cyxwiz::protocol::SubmitJobRequest& request,
             std::chrono::system_clock::now() + std::chrono::seconds(30);
         context.set_deadline(deadline);
 
+        // Add authentication header
+        AddAuthMetadata(context);
+
         // Make the RPC call
         grpc::Status status = job_stub_->SubmitJob(&context, request, &response);
 
@@ -102,6 +113,7 @@ bool GRPCClient::GetJobStatus(const std::string& job_id,
 
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+        AddAuthMetadata(context);
 
         grpc::Status status = job_stub_->GetJobStatus(&context, request, &response);
 
@@ -134,6 +146,7 @@ bool GRPCClient::CancelJob(const std::string& job_id,
 
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+        AddAuthMetadata(context);
 
         grpc::Status status = job_stub_->CancelJob(&context, request, &response);
 
@@ -171,6 +184,7 @@ bool GRPCClient::ListJobs(cyxwiz::protocol::ListJobsResponse& response,
 
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+        AddAuthMetadata(context);
 
         grpc::Status status = job_stub_->ListJobs(&context, request, &response);
 

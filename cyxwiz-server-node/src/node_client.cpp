@@ -322,6 +322,14 @@ NodeClient::NodeClient(const std::string& central_server_address, const std::str
     job_status_stub_ = protocol::JobStatusService::NewStub(channel_);
 }
 
+void NodeClient::AddAuthMetadata(grpc::ClientContext& context) {
+    if (!auth_token_.empty()) {
+        // Add Bearer token to authorization header
+        context.AddMetadata("authorization", "Bearer " + auth_token_);
+        spdlog::debug("Added auth token to gRPC request");
+    }
+}
+
 NodeClient::~NodeClient() {
     StopHeartbeat();
 }
@@ -345,6 +353,9 @@ bool NodeClient::Register() {
     // Set timeout
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
     context.set_deadline(deadline);
+
+    // Add auth header to gRPC metadata
+    AddAuthMetadata(context);
 
     grpc::Status status = stub_->RegisterNode(&context, request, &response);
 
@@ -449,6 +460,9 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
     context.set_deadline(deadline);
 
+    // Add auth header to gRPC metadata
+    AddAuthMetadata(context);
+
     grpc::Status status = stub_->RegisterNode(&context, request, &response);
 
     if (status.ok()) {
@@ -528,6 +542,7 @@ bool NodeClient::SendHeartbeat() {
 
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
     context.set_deadline(deadline);
+    AddAuthMetadata(context);
 
     grpc::Status status = stub_->Heartbeat(&context, request, &response);
 
@@ -633,6 +648,7 @@ bool NodeClient::UpdateJobStatus(
 
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
     context.set_deadline(deadline);
+    AddAuthMetadata(context);
 
     grpc::Status grpc_status = job_status_stub_->UpdateJobStatus(&context, request, &response);
 
@@ -697,6 +713,7 @@ bool NodeClient::ReportJobResult(
 
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(30);
     context.set_deadline(deadline);
+    AddAuthMetadata(context);
 
     grpc::Status grpc_status = job_status_stub_->ReportJobResult(&context, request, &response);
 

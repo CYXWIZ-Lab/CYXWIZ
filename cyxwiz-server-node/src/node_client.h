@@ -73,6 +73,8 @@ public:
 
     // Set authentication token (JWT from user login)
     void SetAuthToken(const std::string& token) { auth_token_ = token; }
+    void ClearAuthToken() { auth_token_.clear(); }
+    bool HasAuthToken() const { return !auth_token_.empty(); }
 
     // ========================================================================
     // Job Status Reporting (Server Node → Central Server)
@@ -102,6 +104,7 @@ public:
 
 private:
     void HeartbeatLoop();
+    void AddAuthMetadata(grpc::ClientContext& context);
 
     std::string central_server_address_;
     std::string node_id_;
