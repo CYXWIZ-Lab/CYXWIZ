@@ -12,7 +12,16 @@ P2PClient::P2PClient()
     , node_id_("")
     , current_job_id_("")
     , last_error_("")
+    , auth_token_("")
 {
+}
+
+void P2PClient::AddAuthMetadata(grpc::ClientContext& context) {
+    if (!auth_token_.empty()) {
+        // Add Bearer token to authorization header
+        context.AddMetadata("authorization", "Bearer " + auth_token_);
+        spdlog::debug("Added auth token to P2P request");
+    }
 }
 
 P2PClient::~P2PClient() {
@@ -35,6 +44,9 @@ bool P2PClient::ConnectToNode(const std::string& node_address,
     channel_ = grpc::CreateChannel(node_address, grpc::InsecureChannelCredentials());
     stub_ = cyxwiz::protocol::JobExecutionService::NewStub(channel_);
 
+    // Store auth token for subsequent calls
+    auth_token_ = auth_token;
+
     // Prepare connection request
     cyxwiz::protocol::ConnectRequest request;
     request.set_job_id(job_id);
@@ -43,6 +55,7 @@ bool P2PClient::ConnectToNode(const std::string& node_address,
 
     cyxwiz::protocol::ConnectResponse response;
     grpc::ClientContext context;
+    AddAuthMetadata(context);
 
     // Call ConnectToNode RPC
     grpc::Status status = stub_->ConnectToNode(&context, request, &response);
@@ -126,6 +139,7 @@ bool P2PClient::SendJob(const cyxwiz::protocol::JobConfig& config,
 
     cyxwiz::protocol::SendJobResponse response;
     grpc::ClientContext context;
+    AddAuthMetadata(context);
 
     grpc::Status status = stub_->SendJob(&context, request, &response);
 
@@ -165,6 +179,7 @@ bool P2PClient::SendJobWithDatasetURI(const cyxwiz::protocol::JobConfig& config,
 
     cyxwiz::protocol::SendJobResponse response;
     grpc::ClientContext context;
+    AddAuthMetadata(context);
 
     grpc::Status status = stub_->SendJob(&context, request, &response);
 
@@ -238,6 +253,7 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
 
     // Create new context for this stream
     stream_context_ = std::make_unique<grpc::ClientContext>();
+    AddAuthMetadata(*stream_context_);
 
     // Start bidirectional stream
     stream_ = stub_->StreamTrainingMetrics(stream_context_.get());
@@ -414,6 +430,7 @@ bool P2PClient::DownloadWeightsWithOffset(const std::string& job_id,
     request.set_chunk_size(chunk_size);
 
     grpc::ClientContext context;
+    AddAuthMetadata(context);
     auto reader = stub_->DownloadWeights(&context, request);
 
     // Open output file

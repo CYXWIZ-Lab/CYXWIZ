@@ -1,6 +1,7 @@
 // deployment_dialog.cpp - UI dialog for deploying models
 #include "deployment_dialog.h"
 #include "../icons.h"
+#include "../../auth/auth_client.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -225,6 +226,10 @@ void DeploymentDialog::RenderServerNodeConfig() {
     ImGui::Text("%s Server Node Configuration", ICON_FA_GEAR);
     ImGui::Spacing();
 
+    // Check authentication status
+    auto& auth = auth::AuthClient::Instance();
+    bool is_authenticated = auth.IsAuthenticated();
+
     // Connection section
     ImGui::Text("Connection");
     ImGui::SetNextItemWidth(250);
@@ -238,14 +243,26 @@ void DeploymentDialog::RenderServerNodeConfig() {
             DisconnectFromServerNode();
         }
     } else {
+        // Disable connect button if not authenticated
+        if (!is_authenticated) {
+            ImGui::BeginDisabled();
+        }
         if (ImGui::Button(ICON_FA_LINK " Connect")) {
             ConnectToServerNode();
+        }
+        if (!is_authenticated) {
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Please log in first to connect to Server Node");
+            }
         }
     }
 
     // Connection status
     if (is_connected) {
         ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Connected", ICON_FA_CIRCLE_CHECK);
+    } else if (!is_authenticated) {
+        ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f), "%s Login required", ICON_FA_LOCK);
     } else {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s Disconnected", ICON_FA_CIRCLE_XMARK);
     }
@@ -667,6 +684,18 @@ void DeploymentDialog::DeleteServerNodeDeployment(const std::string& deployment_
 void DeploymentDialog::ConnectToServerNode() {
     error_message_.clear();
     status_message_.clear();
+
+    // Require authentication before connecting
+    auto& auth = auth::AuthClient::Instance();
+    if (!auth.IsAuthenticated()) {
+        error_message_ = "Please log in first to connect to Server Node";
+        spdlog::warn("Connection rejected - user not authenticated");
+        return;
+    }
+
+    // Set JWT token for authenticated requests
+    deployment_client_->SetAuthToken(auth.GetJwtToken());
+    spdlog::debug("Set JWT token for deployment client");
 
     if (deployment_client_->Connect(server_address_)) {
         status_message_ = "Connected to Server Node";

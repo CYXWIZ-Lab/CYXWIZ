@@ -128,7 +128,14 @@ public:
     // Error handling
     std::string GetLastError() const { return last_error_; }
 
+    // Authentication
+    void SetAuthToken(const std::string& token) { auth_token_ = token; }
+    void ClearAuthToken() { auth_token_.clear(); }
+    bool HasAuthToken() const { return !auth_token_.empty(); }
+
 private:
+    // Add authorization header to gRPC context
+    void AddAuthMetadata(grpc::ClientContext& context);
     // Internal streaming thread function
     void StreamingThreadFunc(const std::string& job_id);
 
@@ -143,6 +150,7 @@ private:
     std::string current_job_id_;
     NodeCapabilities capabilities_;
     std::string last_error_;
+    std::string auth_token_;  // JWT token for authentication
 
     // gRPC communication
     std::shared_ptr<grpc::Channel> channel_;

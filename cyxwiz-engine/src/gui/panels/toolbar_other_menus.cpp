@@ -260,7 +260,11 @@ void ToolbarPanel::RenderPlotsMenu() {
 void ToolbarPanel::RenderDeployMenu() {
     if (ImGui::BeginMenu("Deploy")) {
         if (ImGui::MenuItem("Connect to Server...")) {
-            if (connect_to_server_callback_) {
+            if (!is_logged_in_) {
+                // User not logged in - show warning popup
+                show_login_required_popup_ = true;
+                login_required_action_ = "connect to the server";
+            } else if (connect_to_server_callback_) {
                 connect_to_server_callback_();
             }
         }
@@ -309,7 +313,11 @@ void ToolbarPanel::RenderDeployMenu() {
         ImGui::Separator();
 
         if (ImGui::MenuItem(ICON_FA_ROCKET " Deploy to Server Node...")) {
-            if (deploy_to_server_callback_) {
+            if (!is_logged_in_) {
+                // User not logged in - show warning popup
+                show_login_required_popup_ = true;
+                login_required_action_ = "deploy to a server node";
+            } else if (deploy_to_server_callback_) {
                 deploy_to_server_callback_();
             }
         }

@@ -3,11 +3,38 @@
 #include "gui/icons.h"
 #include "auth/auth_manager.h"
 #include <imgui.h>
+#include <spdlog/spdlog.h>
+#include <cstring>
 
 namespace cyxwiz::servernode::gui {
 
+void AccountSettingsPanel::Update() {
+    // Check if async login completed
+    if (login_future_.valid()) {
+        auto status = login_future_.wait_for(std::chrono::milliseconds(0));
+        if (status == std::future_status::ready) {
+            auto result = login_future_.get();
+            is_logging_in_ = false;
+
+            if (result.success) {
+                login_error_.clear();
+                login_success_ = "Login successful!";
+                std::memset(login_password_, 0, sizeof(login_password_));
+                spdlog::info("Login successful: {}", result.user_info.email);
+            } else {
+                login_error_ = result.error;
+                login_success_.clear();
+                spdlog::error("Login failed: {}", result.error);
+            }
+        }
+    }
+}
+
 void AccountSettingsPanel::Render() {
     auto& auth = auth::AuthManager::Instance();
+
+    // Update async operations
+    Update();
 
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[2]);
     ImGui::Text("%s Account Settings", ICON_FA_USER_GEAR);
@@ -24,13 +51,8 @@ void AccountSettingsPanel::Render() {
     }
 
     if (!auth.IsAuthenticated()) {
-        // Not logged in
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-            "You are not logged in.");
-        ImGui::Spacing();
-        ImGui::TextWrapped("Please sign in to view and manage your account settings.");
-        ImGui::Spacing();
-        ImGui::TextDisabled("Go to the login panel to sign in with your CyxWiz account.");
+        // Not logged in - show login form
+        RenderLoginForm();
         return;
     }
 
@@ -65,6 +87,151 @@ void AccountSettingsPanel::Render() {
 
         ImGui::EndTabBar();
     }
+}
+
+void AccountSettingsPanel::RenderLoginForm() {
+    ImGui::Spacing();
+
+    // Header
+    ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), ICON_FA_RIGHT_TO_BRACKET);
+    ImGui::SameLine();
+    ImGui::Text("Sign In to CyxWiz");
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        "Sign in to access your account settings and connect to the network.");
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Error message
+    if (!login_error_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::Text("%s %s", ICON_FA_CIRCLE_EXCLAMATION, login_error_.c_str());
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+    }
+
+    // Success message
+    if (!login_success_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.9f, 0.4f, 1.0f));
+        ImGui::Text("%s %s", ICON_FA_CIRCLE_CHECK, login_success_.c_str());
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+    }
+
+    float input_width = 300.0f;
+    float button_size = 28.0f;
+
+    // Email field
+    ImGui::Text("Email");
+    ImGui::SetNextItemWidth(input_width - button_size - 4.0f);
+    ImGui::InputText("##login_email", login_email_, sizeof(login_email_));
+
+    // Paste button for email
+    ImGui::SameLine(0, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+    if (ImGui::Button(ICON_FA_PASTE "##paste_email", ImVec2(button_size, 0))) {
+        if (ImGui::GetClipboardText()) {
+            strncpy(login_email_, ImGui::GetClipboardText(), sizeof(login_email_) - 1);
+            login_email_[sizeof(login_email_) - 1] = '\0';
+        }
+    }
+    ImGui::PopStyleColor(2);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Paste from clipboard");
+    }
+
+    ImGui::Spacing();
+
+    // Password field
+    ImGui::Text("Password");
+    float password_field_width = input_width - (button_size * 2) - 8.0f;
+    ImGui::SetNextItemWidth(password_field_width);
+
+    ImGuiInputTextFlags password_flags = ImGuiInputTextFlags_EnterReturnsTrue;
+    if (!show_password_) {
+        password_flags |= ImGuiInputTextFlags_Password;
+    }
+    bool enter_pressed = ImGui::InputText("##login_password", login_password_, sizeof(login_password_), password_flags);
+
+    // Show/Hide password toggle
+    ImGui::SameLine(0, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+    if (ImGui::Button(show_password_ ? ICON_FA_EYE_SLASH "##toggle_pw" : ICON_FA_EYE "##toggle_pw", ImVec2(button_size, 0))) {
+        show_password_ = !show_password_;
+    }
+    ImGui::PopStyleColor(2);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(show_password_ ? "Hide password" : "Show password");
+    }
+
+    // Paste button for password
+    ImGui::SameLine(0, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+    if (ImGui::Button(ICON_FA_PASTE "##paste_password", ImVec2(button_size, 0))) {
+        if (ImGui::GetClipboardText()) {
+            strncpy(login_password_, ImGui::GetClipboardText(), sizeof(login_password_) - 1);
+            login_password_[sizeof(login_password_) - 1] = '\0';
+        }
+    }
+    ImGui::PopStyleColor(2);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Paste from clipboard");
+    }
+
+    ImGui::Spacing();
+    ImGui::Spacing();
+
+    // Login button
+    bool can_login = strlen(login_email_) > 0 && strlen(login_password_) > 0 && !is_logging_in_;
+
+    if (is_logging_in_) {
+        ImGui::BeginDisabled();
+        ImGui::Button("Signing in...", ImVec2(input_width, 36));
+        ImGui::EndDisabled();
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.52f, 0.96f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.60f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.45f, 0.85f, 1.0f));
+
+        if (!can_login) {
+            ImGui::BeginDisabled();
+        }
+
+        if ((ImGui::Button(ICON_FA_RIGHT_TO_BRACKET " Sign In", ImVec2(input_width, 36)) || enter_pressed) && can_login) {
+            // Start async login
+            is_logging_in_ = true;
+            login_error_.clear();
+            login_success_.clear();
+            auto& auth = auth::AuthManager::Instance();
+            login_future_ = auth.LoginWithEmail(login_email_, login_password_);
+            spdlog::info("Starting login for: {}", login_email_);
+        }
+
+        if (!can_login) {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::PopStyleColor(3);
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Create account link
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Don't have an account?");
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
+    if (ImGui::SmallButton("Create one")) {
+        auth::AuthManager::OpenRegistrationPage();
+    }
+    ImGui::PopStyleColor(3);
 }
 
 void AccountSettingsPanel::RenderProfileSection() {

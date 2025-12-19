@@ -11,6 +11,14 @@ namespace fs = std::filesystem;
 
 DeploymentClient::DeploymentClient() = default;
 
+void DeploymentClient::AddAuthMetadata(grpc::ClientContext& context) {
+    if (!auth_token_.empty()) {
+        // Add Bearer token to authorization header
+        context.AddMetadata("authorization", "Bearer " + auth_token_);
+        spdlog::debug("Added auth token to deployment request");
+    }
+}
+
 DeploymentClient::~DeploymentClient() {
     Disconnect();
 }
@@ -25,11 +33,27 @@ bool DeploymentClient::Connect(const std::string& server_address) {
         // Create stub
         stub_ = cyxwiz::protocol::DeploymentService::NewStub(channel_);
 
-        // Test connection by checking channel state
-        auto state = channel_->GetState(true);
-        if (state == GRPC_CHANNEL_SHUTDOWN || state == GRPC_CHANNEL_TRANSIENT_FAILURE) {
-            last_error_ = "Failed to connect: Channel in bad state";
+        // Actually wait for connection with timeout (3 seconds)
+        // gRPC channels are lazy - they don't connect until an RPC is made
+        // GetState(true) triggers a connection attempt
+        channel_->GetState(true);
+
+        // Wait for the channel to be connected or fail
+        auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(3);
+        bool connected = channel_->WaitForConnected(deadline);
+
+        if (!connected) {
+            auto state = channel_->GetState(false);
+            if (state == GRPC_CHANNEL_TRANSIENT_FAILURE) {
+                last_error_ = "Connection refused - Server Node not running";
+            } else if (state == GRPC_CHANNEL_CONNECTING) {
+                last_error_ = "Connection timed out - Server Node unreachable";
+            } else {
+                last_error_ = "Failed to connect: Channel state " + std::to_string(state);
+            }
             spdlog::error("{}", last_error_);
+            stub_.reset();
+            channel_.reset();
             return false;
         }
 
@@ -42,6 +66,8 @@ bool DeploymentClient::Connect(const std::string& server_address) {
         last_error_ = std::string("Connection error: ") + e.what();
         spdlog::error("{}", last_error_);
         connected_ = false;
+        stub_.reset();
+        channel_.reset();
         return false;
     }
 }
@@ -121,6 +147,7 @@ DeploymentResult DeploymentClient::Deploy(const DeploymentConfig& config) {
         // Make RPC call
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(60));
+        AddAuthMetadata(context);
 
         cyxwiz::protocol::CreateDeploymentResponse response;
         grpc::Status status = stub_->CreateDeployment(&context, request, &response);
@@ -184,6 +211,7 @@ bool DeploymentClient::ListDeployments(std::vector<DeploymentSummary>& deploymen
 
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+        AddAuthMetadata(context);
 
         cyxwiz::protocol::ListDeploymentsResponse response;
         grpc::Status status = stub_->ListDeployments(&context, request, &response);
@@ -239,6 +267,7 @@ bool DeploymentClient::GetDeployment(const std::string& deployment_id, Deploymen
 
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+        AddAuthMetadata(context);
 
         cyxwiz::protocol::GetDeploymentResponse response;
         grpc::Status status = stub_->GetDeployment(&context, request, &response);
@@ -280,6 +309,7 @@ bool DeploymentClient::StopDeployment(const std::string& deployment_id) {
 
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
+        AddAuthMetadata(context);
 
         cyxwiz::protocol::StopDeploymentResponse response;
         grpc::Status status = stub_->StopDeployment(&context, request, &response);
@@ -322,6 +352,7 @@ bool DeploymentClient::DeleteDeployment(const std::string& deployment_id) {
 
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+        AddAuthMetadata(context);
 
         cyxwiz::protocol::DeleteDeploymentResponse response;
         grpc::Status status = stub_->DeleteDeployment(&context, request, &response);

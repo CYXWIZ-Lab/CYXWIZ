@@ -755,7 +755,9 @@ grpc::Status DaemonServiceImpl::SetAllocations(
         }
 
         // Set JWT token on NodeClient for authentication
-        node_client_->SetAuthToken(request->jwt_token());
+        std::string jwt = request->jwt_token();
+        spdlog::info("Setting auth token on NodeClient (token length: {})", jwt.length());
+        node_client_->SetAuthToken(jwt);
 
         // Convert protocol allocations to C++ DeviceAllocation structs
         std::vector<cyxwiz::servernode::DeviceAllocation> device_allocations;
