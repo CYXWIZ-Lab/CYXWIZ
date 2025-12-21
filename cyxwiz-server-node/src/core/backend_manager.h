@@ -41,6 +41,11 @@ struct NodeConfig {
     std::string cert_path;
     std::string key_path;
 
+    // P2P Authentication
+    // Secret for validating P2P JWT tokens from Central Server
+    // Must match Central Server's jwt.secret or jwt.p2p_secret
+    std::string p2p_secret;
+
     // Training
     bool training_enabled = true;
     int max_concurrent_jobs = 2;
@@ -64,6 +69,39 @@ struct NodeConfig {
     // Wallet
     std::string wallet_address;
     double auto_withdraw_threshold = 100.0;
+
+    // Pricing - what this node charges for compute
+    enum class BillingModel {
+        Hourly = 0,        // Charged per hour of compute time
+        PerEpoch = 1,      // Charged per training epoch
+        PerJob = 2,        // Fixed price per job
+        PerInference = 3   // Charged per inference request
+    };
+    BillingModel billing_model = BillingModel::Hourly;
+
+    // Base prices (in CYXWIZ tokens)
+    double price_per_hour = 0.10;           // Default: 0.10 CYXWIZ/hour
+    double price_per_epoch = 0.01;          // Default: 0.01 CYXWIZ/epoch
+    double price_per_job_base = 1.0;        // Default: 1.0 CYXWIZ flat rate
+    double price_per_inference = 0.0001;    // Default: 0.0001 CYXWIZ/inference
+
+    // Minimum charges
+    double minimum_charge = 0.01;           // Minimum 0.01 CYXWIZ per job
+    int minimum_duration_minutes = 1;       // Minimum 1 minute billing
+
+    // Volume discounts (as percentages, e.g., 0.05 = 5% off)
+    double discount_1h_plus = 0.0;          // Discount for jobs > 1 hour
+    double discount_24h_plus = 0.10;        // 10% off for jobs > 24 hours
+    double discount_bulk = 0.15;            // 15% off for repeat customers
+
+    // Accepted payment methods
+    bool accepts_cyxwiz_token = true;
+    bool accepts_sol = false;
+    bool accepts_usdc = false;
+
+    // Free tier
+    bool free_tier_enabled = false;
+    int free_tier_minutes = 5;              // 5 minutes free for new users
 
     // Logging
     std::string log_level = "info";

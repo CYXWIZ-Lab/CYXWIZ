@@ -1,5 +1,6 @@
 #include "dataset_panel.h"
 #include "training_plot_panel.h"
+#include "wallet_panel.h"
 #include "../node_editor.h"
 #include "../../network/job_manager.h"
 #include "../../core/texture_manager.h"
@@ -2272,6 +2273,15 @@ bool DatasetPanel::SubmitTrainingJob() {
     config.set_estimated_duration(estimated_duration);
 
     config.set_payment_amount(0.1);
+
+    // Set wallet address from WalletPanel for blockchain escrow
+    if (wallet_panel_ && wallet_panel_->IsConnected()) {
+        config.set_payment_address(wallet_panel_->GetWalletAddress());
+        spdlog::info("Using wallet address for job payment: {}", wallet_panel_->GetWalletAddress());
+    } else {
+        spdlog::error("Cannot submit job: wallet not connected. Please connect your wallet first.");
+        return false;
+    }
 
     // Add hyperparameters
     auto* hyperparams = config.mutable_hyperparameters();

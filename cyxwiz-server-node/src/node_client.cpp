@@ -326,7 +326,7 @@ void NodeClient::AddAuthMetadata(grpc::ClientContext& context) {
     if (!auth_token_.empty()) {
         // Add Bearer token to authorization header
         context.AddMetadata("authorization", "Bearer " + auth_token_);
-        spdlog::info("Added auth token to gRPC request (token length: {})", auth_token_.length());
+        spdlog::debug("Added auth token to gRPC request (token length: {})", auth_token_.length());
     } else {
         spdlog::warn("AddAuthMetadata called but auth_token_ is empty!");
     }
@@ -510,6 +510,13 @@ void NodeClient::StopHeartbeat() {
         heartbeat_thread_.join();
     }
     spdlog::info("Heartbeat stopped");
+}
+
+void NodeClient::Disconnect() {
+    StopHeartbeat();
+    is_registered_ = false;
+    session_token_.clear();
+    spdlog::info("NodeClient disconnected from Central Server");
 }
 
 bool NodeClient::SendHeartbeat() {

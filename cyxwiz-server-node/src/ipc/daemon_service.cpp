@@ -14,6 +14,10 @@
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <thread>
+#include <functional>
+
+// External callback for node_id persistence (defined in daemon_main.cpp)
+extern std::function<void(const std::string&, const std::string&)> g_save_node_id_callback;
 
 namespace cyxwiz::servernode::ipc {
 
@@ -251,12 +255,19 @@ grpc::Status DaemonServiceImpl::ListJobs(
     const ListJobsRequest* request,
     ListJobsResponse* response) {
 
+    spdlog::info("DaemonServiceImpl::ListJobs called");
+
     if (!state_) {
+        spdlog::error("ListJobs: State not available");
         return grpc::Status(grpc::StatusCode::UNAVAILABLE, "State not available");
     }
 
     auto jobs = state_->GetActiveJobs();
+    spdlog::info("ListJobs: Got {} active jobs from state", jobs.size());
+
     for (const auto& job : jobs) {
+        spdlog::info("  Job: id={}, running={}, paused={}, progress={:.2f}",
+                    job.id, job.is_running, job.is_paused, job.progress);
         auto* job_pb = response->add_jobs();
         job_pb->set_id(job.id);
         job_pb->set_type(job.type);
@@ -780,6 +791,13 @@ grpc::Status DaemonServiceImpl::SetAllocations(
             device_allocations.push_back(da);
         }
 
+        // Log device allocation details for debugging
+        for (const auto& da : device_allocations) {
+            spdlog::info("  Device: {} (type={}, vram_total={}MB, vram_alloc={}MB, mem_total={}B)",
+                        da.device_name, da.device_type, da.vram_total_mb,
+                        da.vram_allocated_mb, da.memory_total);
+        }
+
         // Attempt registration with device allocations
         spdlog::info("Attempting to register with Central Server with {} allocations...",
                      device_allocations.size());
@@ -790,6 +808,12 @@ grpc::Status DaemonServiceImpl::SetAllocations(
             response->set_success(true);
             response->set_connected_to_central(true);
             response->set_node_id(node_client_->GetNodeId());
+
+            // Persist the Central Server node_id for future restarts
+            if (g_save_node_id_callback) {
+                g_save_node_id_callback(node_client_->GetNodeId(), node_id_);
+                spdlog::info("Persisted Central Server node_id: {}", node_client_->GetNodeId());
+            }
         } else {
             spdlog::warn("Failed to register with Central Server");
             response->set_success(false);
@@ -842,6 +866,12 @@ grpc::Status DaemonServiceImpl::RetryConnection(
         response->set_success(true);
         response->set_connected_to_central(true);
         response->set_node_id(node_client_->GetNodeId());
+
+        // Persist the Central Server node_id for future restarts
+        if (g_save_node_id_callback) {
+            g_save_node_id_callback(node_client_->GetNodeId(), node_id_);
+            spdlog::info("Persisted Central Server node_id: {}", node_client_->GetNodeId());
+        }
     } else {
         spdlog::warn("Failed to register with Central Server on retry");
         response->set_success(false);
@@ -864,11 +894,9 @@ grpc::Status DaemonServiceImpl::DisconnectFromCentral(
         return grpc::Status::OK;
     }
 
-    // Stop heartbeat
-    node_client_->StopHeartbeat();
+    // Disconnect from Central Server (stops heartbeat and clears registration)
+    node_client_->Disconnect();
 
-    // TODO: Send unregister to Central Server
-    // node_client_->Unregister();
 
     spdlog::info("Disconnected from Central Server");
     response->set_success(true);

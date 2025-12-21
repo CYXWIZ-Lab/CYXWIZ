@@ -291,6 +291,11 @@
 #define ICON_FA_CREDIT_CARD         "\xef\x82\x9d"  // U+F09D
 #define ICON_FA_BITCOIN_SIGN        "\xee\x82\xb4"  // U+E0B4
 #define ICON_FA_ETHEREUM            "\xef\x90\xae"  // U+F42E
+#define ICON_FA_DOLLAR_SIGN         "\x24"          // U+0024 (ASCII $)
+#define ICON_FA_GIFT                "\xef\x81\xab"  // U+F06B
+
+// Cloud/Network
+#define ICON_FA_CLOUD               "\xef\x83\x82"  // U+F0C2
 #define ICON_FA_GEM                 "ï¥"  // U+F3A5 - gem/diamond for SOL
 #define ICON_FA_PAPER_PLANE         "ï"  // U+F1D8 - paper plane for sending
 #define ICON_FA_UNLOCK              "ï"  // U+F09C - unlock

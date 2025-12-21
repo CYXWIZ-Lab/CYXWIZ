@@ -48,7 +48,7 @@ int main(int argc, char* argv[]) {
     try {
         // Create and initialize P2P service
         g_service = std::make_unique<JobExecutionServiceImpl>();
-        g_service->Initialize(nullptr, "localhost:50051");
+        g_service->Initialize(nullptr, "localhost:50051", "standalone_test_node", "test_p2p_secret");
 
         // Start the P2P server
         if (!g_service->StartServer(listen_address)) {

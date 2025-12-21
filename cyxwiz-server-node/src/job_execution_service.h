@@ -8,11 +8,15 @@
 #include <atomic>
 
 #include "execution.grpc.pb.h"
+#include "auth/p2p_jwt_validator.h"
 
-// Forward declaration - JobExecutor is in servernode namespace
+// Forward declarations - JobExecutor is in servernode namespace
 namespace cyxwiz {
 namespace servernode {
 class JobExecutor;
+}
+namespace server_node {
+class RemoteDataLoader;
 }
 }
 
@@ -35,7 +39,9 @@ public:
 
     // Initialize the service with dependencies
     void Initialize(std::shared_ptr<cyxwiz::servernode::JobExecutor> executor,
-                   const std::string& central_server_address);
+                   const std::string& central_server_address,
+                   const std::string& node_id,
+                   const std::string& p2p_secret);
 
     // Start the P2P server on the specified port
     bool StartServer(const std::string& listen_address = "0.0.0.0:50052");
@@ -98,6 +104,10 @@ private:
         std::string final_weights_path;
         std::mutex metrics_mutex;
         cyxwiz::protocol::TrainingProgress latest_progress;
+
+        // Remote data loaders for lazy-loading datasets
+        std::shared_ptr<RemoteDataLoader> train_loader;
+        std::shared_ptr<RemoteDataLoader> val_loader;
     };
 
     // Helper methods
@@ -126,6 +136,9 @@ private:
     // Node information
     std::string node_id_;
     cyxwiz::protocol::NodeCapabilities capabilities_;
+
+    // P2P JWT validator
+    std::unique_ptr<P2PJwtValidator> jwt_validator_;
 };
 
 } // namespace server_node

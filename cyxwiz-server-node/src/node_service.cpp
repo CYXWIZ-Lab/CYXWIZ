@@ -38,7 +38,32 @@ grpc::Status NodeServiceImpl::AssignJob(
         return grpc::Status::OK;
     }
 
-    // Pass job to JobExecutor
+    // Check if this is a remote dataset job (requires P2P connection from Engine)
+    const std::string& dataset_uri = request->job().dataset_uri();
+    bool is_remote_dataset = dataset_uri.find("remote://") == 0;
+
+    if (is_remote_dataset) {
+        // Remote dataset jobs don't start immediately - they wait for P2P connection
+        // The Engine will connect via StreamTrainingMetrics and training will start then
+        spdlog::info("Job {} has remote dataset ({}), waiting for P2P connection from Engine",
+                     request->job().job_id(), dataset_uri);
+
+        // Store the job config for when P2P connection arrives
+        {
+            std::lock_guard<std::mutex> lock(pending_jobs_mutex_);
+            pending_p2p_jobs_[request->job().job_id()] = request->job();
+        }
+
+        response->set_status(protocol::STATUS_SUCCESS);
+        response->set_accepted(true);
+        response->set_job_id(request->job().job_id());
+        response->set_estimated_start_time("waiting_for_p2p");
+
+        spdlog::info("Job {} registered, waiting for Engine P2P connection", request->job().job_id());
+        return grpc::Status::OK;
+    }
+
+    // Local dataset jobs start immediately via JobExecutor
     bool accepted = job_executor_->ExecuteJobAsync(request->job());
 
     if (accepted) {
@@ -46,7 +71,7 @@ grpc::Status NodeServiceImpl::AssignJob(
         response->set_status(protocol::STATUS_SUCCESS);
         response->set_accepted(true);
         response->set_job_id(request->job().job_id());
-        response->set_estimated_start_time("immediate");  // TODO: Actual estimation
+        response->set_estimated_start_time("immediate");
     } else {
         spdlog::warn("Job {} rejected by JobExecutor (busy or error)", request->job().job_id());
         response->set_status(protocol::STATUS_FAILED);
@@ -113,6 +138,23 @@ bool NodeServiceImpl::ValidateJobConfig(
     // - Validate hyperparameters format
 
     spdlog::debug("Job {} validation passed", job_config.job_id());
+    return true;
+}
+
+bool NodeServiceImpl::GetAndRemovePendingJob(const std::string& job_id, protocol::JobConfig* config) {
+    std::lock_guard<std::mutex> lock(pending_jobs_mutex_);
+
+    auto it = pending_p2p_jobs_.find(job_id);
+    if (it == pending_p2p_jobs_.end()) {
+        return false;
+    }
+
+    if (config) {
+        *config = it->second;
+    }
+    pending_p2p_jobs_.erase(it);
+
+    spdlog::info("Retrieved pending P2P job config for job {}", job_id);
     return true;
 }
 

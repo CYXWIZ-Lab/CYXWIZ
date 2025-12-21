@@ -418,7 +418,13 @@ void DaemonClient::StopMetricsStream() {
 // ============================================================================
 
 bool DaemonClient::ListJobs(std::vector<JobInfo>& jobs, bool include_completed) {
-    if (!connected_.load() || !stub_) return false;
+    spdlog::info("DaemonClient::ListJobs called (connected={}, stub={})",
+                 connected_.load(), stub_ ? "valid" : "null");
+
+    if (!connected_.load() || !stub_) {
+        spdlog::warn("ListJobs: Not connected or no stub");
+        return false;
+    }
 
     grpc::ClientContext context;
     context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
@@ -427,14 +433,20 @@ bool DaemonClient::ListJobs(std::vector<JobInfo>& jobs, bool include_completed) 
     request.set_include_completed(include_completed);
     ListJobsResponse response;
 
+    spdlog::info("Calling gRPC ListJobs...");
     auto status = stub_->stub->ListJobs(&context, request, &response);
     if (!status.ok()) {
-        spdlog::error("ListJobs failed: {}", status.error_message());
+        spdlog::error("ListJobs gRPC failed: {} (code={})",
+                     status.error_message(), static_cast<int>(status.error_code()));
         return false;
     }
 
+    spdlog::info("ListJobs gRPC success: {} jobs in response", response.jobs_size());
+
     jobs.clear();
     for (const auto& j : response.jobs()) {
+        spdlog::info("  Received job: id={}, status={}, progress={:.2f}",
+                    j.id(), static_cast<int>(j.status()), j.progress());
         JobInfo job;
         job.id = j.id();
         job.type = j.type();
@@ -1478,9 +1490,18 @@ SetAllocationsResult DaemonClient::SetAllocations(
     // Convert allocations to proto format
     for (const auto& alloc : allocations) {
         auto* proto_alloc = request.add_allocations();
-        proto_alloc->set_device_type(static_cast<DeviceType>(alloc.device_type));
+        // Map AllocDeviceType (Gpu=0, Cpu=1) to proto DeviceType (UNSPECIFIED=0, GPU=1, CPU=2)
+        DeviceType proto_device_type;
+        switch (alloc.device_type) {
+            case AllocDeviceType::Gpu: proto_device_type = DEVICE_TYPE_GPU; break;
+            case AllocDeviceType::Cpu: proto_device_type = DEVICE_TYPE_CPU; break;
+            default: proto_device_type = DEVICE_TYPE_UNSPECIFIED; break;
+        }
+        proto_alloc->set_device_type(proto_device_type);
         proto_alloc->set_device_id(alloc.device_id);
+        proto_alloc->set_device_name(alloc.device_name);
         proto_alloc->set_is_enabled(alloc.is_enabled);
+        proto_alloc->set_vram_total_mb(alloc.vram_total_mb);
         proto_alloc->set_vram_allocated_mb(alloc.vram_allocation_mb);
         proto_alloc->set_cores_allocated(alloc.cpu_cores_allocation);
         proto_alloc->set_priority(static_cast<AllocationPriority>(alloc.priority));

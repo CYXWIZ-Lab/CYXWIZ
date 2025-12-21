@@ -2,8 +2,14 @@
  * Mock Engine Client - Simulates Engine connecting to Server Node for P2P testing
  *
  * Usage:
- *   mock_engine_client <node_address> <job_id>
- *   Example: mock_engine_client localhost:50052 test_job_001
+ *   mock_engine_client <node_address> <job_id> [auth_token]
+ *
+ * Examples:
+ *   mock_engine_client localhost:50052 test_job_001
+ *   mock_engine_client localhost:50052 job_001 "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *
+ * Generate a valid JWT token using:
+ *   generate_test_jwt "your-p2p-secret" "job_001" "node_123"
  */
 
 #include <iostream>
@@ -262,17 +268,19 @@ int main(int argc, char* argv[]) {
 
     std::string node_address = argc > 1 ? argv[1] : "localhost:50052";
     std::string job_id = argc > 2 ? argv[2] : "test_job_001";
+    std::string auth_token = argc > 3 ? argv[3] : "mock_token_123";
 
     std::cout << "Configuration:" << std::endl;
     std::cout << "  Node Address: " << node_address << std::endl;
     std::cout << "  Job ID: " << job_id << std::endl;
+    std::cout << "  Auth Token: " << (auth_token.length() > 20 ? auth_token.substr(0, 20) + "..." : auth_token) << std::endl;
     std::cout << std::endl;
 
     try {
         MockEngineClient client(node_address);
 
-        // Test 1: Connect
-        if (!client.ConnectToNode(job_id)) {
+        // Test 1: Connect with auth token
+        if (!client.ConnectToNode(job_id, auth_token)) {
             return 1;
         }
 

@@ -206,11 +206,22 @@ void JobMonitorPanel::RenderCancelDialog() {
 void JobMonitorPanel::RefreshJobs() {
     jobs_.clear();
     auto* client = GetDaemonClient();
+    spdlog::info("JobMonitorPanel::RefreshJobs - client={}, connected={}",
+                 client ? "valid" : "null",
+                 (client && client->IsConnected()) ? "yes" : "no");
+
     if (client && client->IsConnected()) {
         // Get all jobs (including completed if filter is on)
         bool include_completed = show_completed_ || show_failed_;
+        spdlog::info("Calling ListJobs(include_completed={})", include_completed);
         client->ListJobs(jobs_, include_completed);
-        spdlog::debug("Loaded {} jobs", jobs_.size());
+        spdlog::info("ListJobs returned {} jobs", jobs_.size());
+
+        // Log each job for debugging
+        for (const auto& job : jobs_) {
+            spdlog::info("  Job: id={}, status={}, model={}, progress={:.2f}",
+                        job.id, job.status, job.model_name, job.progress);
+        }
 
         // Store loss values for history (simulate - in real implementation, daemon would track history)
         for (const auto& job : jobs_) {

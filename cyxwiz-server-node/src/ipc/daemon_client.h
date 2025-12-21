@@ -208,8 +208,10 @@ enum class AllocPriority {
 struct DeviceAllocationInfo {
     AllocDeviceType device_type = AllocDeviceType::Gpu;
     int device_id = 0;
+    std::string device_name;         // Device name (e.g., "NVIDIA GeForce GTX 1050 Ti")
     bool is_enabled = true;
-    int vram_allocation_mb = 0;      // For GPU
+    int vram_total_mb = 0;           // Total VRAM in MB (for GPU)
+    int vram_allocation_mb = 0;      // Allocated VRAM in MB (for GPU)
     int cpu_cores_allocation = 0;    // For CPU
     AllocPriority priority = AllocPriority::Medium;
 };

@@ -16,6 +16,11 @@
 #include <cstring>
 #include <fstream>
 #include <grpcpp/grpcpp.h>
+#include <nlohmann/json.hpp>
+
+#ifdef _WIN32
+#include <shlobj.h>
+#endif
 
 #include "deployment_handler.h"
 #include "deployment_manager.h"
@@ -78,6 +83,10 @@ struct DaemonConfig {
     std::string config_path;
     int http_port = 8082;  // HTTP REST API port
 
+    // P2P Authentication (must match Central Server's jwt.secret or jwt.p2p_secret)
+    // Default matches Central Server's config.toml for development
+    std::string p2p_secret = "your-super-secret-jwt-key-change-in-production";
+
     // TLS settings
     bool enable_tls = false;
     std::string tls_cert_path;
@@ -85,6 +94,71 @@ struct DaemonConfig {
     std::string tls_ca_path;
     bool tls_auto = false;
 };
+
+// Node ID persistence helpers
+std::string GetNodeIdConfigPath() {
+#ifdef _WIN32
+    char path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, 0, path))) {
+        std::string config_dir = std::string(path) + "\\CyxWiz";
+        CreateDirectoryA(config_dir.c_str(), nullptr);
+        return config_dir + "\\node_registration.json";
+    }
+    return "node_registration.json";
+#else
+    const char* home = getenv("HOME");
+    if (home) {
+        std::string config_dir = std::string(home) + "/.config/cyxwiz";
+        mkdir(config_dir.c_str(), 0755);
+        return config_dir + "/node_registration.json";
+    }
+    return "node_registration.json";
+#endif
+}
+
+std::string LoadPersistedNodeId() {
+    try {
+        std::string config_path = GetNodeIdConfigPath();
+        std::ifstream file(config_path);
+        if (!file.is_open()) {
+            return "";  // No persisted node_id
+        }
+
+        nlohmann::json j;
+        file >> j;
+
+        if (j.contains("central_server_node_id") && j["central_server_node_id"].is_string()) {
+            std::string node_id = j["central_server_node_id"].get<std::string>();
+            spdlog::info("Loaded persisted Central Server node_id: {}", node_id);
+            return node_id;
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("Failed to load persisted node_id: {}", e.what());
+    }
+    return "";
+}
+
+void SaveNodeId(const std::string& central_server_node_id, const std::string& local_node_id) {
+    try {
+        std::string config_path = GetNodeIdConfigPath();
+
+        nlohmann::json j;
+        j["central_server_node_id"] = central_server_node_id;
+        j["local_node_id"] = local_node_id;
+        j["last_updated"] = std::time(nullptr);
+
+        std::ofstream file(config_path);
+        if (file.is_open()) {
+            file << j.dump(2);
+            spdlog::info("Saved node_id to {}", config_path);
+        }
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to save node_id: {}", e.what());
+    }
+}
+
+// Global callback for node_id persistence (called by DaemonServiceImpl)
+std::function<void(const std::string&, const std::string&)> g_save_node_id_callback;
 
 DaemonConfig ParseArgs(int argc, char** argv) {
     DaemonConfig config;
@@ -100,6 +174,8 @@ DaemonConfig ParseArgs(int argc, char** argv) {
             config.inference_address = argv[i] + 17;
         } else if (std::strncmp(argv[i], "--config=", 9) == 0) {
             config.config_path = argv[i] + 9;
+        } else if (std::strncmp(argv[i], "--p2p-secret=", 13) == 0) {
+            config.p2p_secret = argv[i] + 13;
         } else if (std::strcmp(argv[i], "--tls") == 0) {
             config.enable_tls = true;
         } else if (std::strncmp(argv[i], "--tls-cert=", 11) == 0) {
@@ -136,8 +212,25 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Generate node ID
-    std::string node_id = "node_" + std::to_string(std::time(nullptr));
+    // Load or generate node ID
+    // First try to load persisted Central Server node_id
+    std::string persisted_node_id = LoadPersistedNodeId();
+    std::string local_node_id = "node_" + std::to_string(std::time(nullptr));
+
+    // Use persisted ID if available, otherwise use local ID
+    // Note: The NodeClient will use this as initial ID, but may receive a new UUID from Central Server
+    std::string node_id = persisted_node_id.empty() ? local_node_id : persisted_node_id;
+
+    if (!persisted_node_id.empty()) {
+        spdlog::info("Using persisted Central Server node_id: {}", node_id);
+    } else {
+        spdlog::info("Generated new local node_id: {}", node_id);
+    }
+
+    // Set up save callback
+    g_save_node_id_callback = [local_node_id](const std::string& central_id, const std::string& /*unused*/) {
+        SaveNodeId(central_id, local_node_id);
+    };
 
     spdlog::info("Node ID: {}", node_id);
     spdlog::info("IPC service: {}", daemon_config.ipc_address);
@@ -294,7 +387,8 @@ int main(int argc, char** argv) {
 
         // Create P2P JobExecutionService
         auto p2p_service = std::make_unique<cyxwiz::server_node::JobExecutionServiceImpl>();
-        p2p_service->Initialize(job_executor, daemon_config.central_server);
+        p2p_service->Initialize(job_executor, daemon_config.central_server,
+                              node_id, daemon_config.p2p_secret);
 
         if (!p2p_service->StartServer(daemon_config.p2p_address)) {
             spdlog::error("Failed to start P2P JobExecutionService");

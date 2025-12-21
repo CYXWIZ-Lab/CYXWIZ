@@ -71,6 +71,7 @@ public:
 
     // Job submission (P2P training)
     void SetJobManager(network::JobManager* job_manager) { job_manager_ = job_manager; }
+    void SetWalletPanel(class WalletPanel* wallet_panel) { wallet_panel_ = wallet_panel; }
 
     // Callback for when training starts (for UI updates)
     using TrainingStartCallback = std::function<void(const std::string& job_id)>;
@@ -122,6 +123,7 @@ private:
 
     // Job manager for submitting training jobs
     network::JobManager* job_manager_ = nullptr;
+    WalletPanel* wallet_panel_ = nullptr;
     TrainingStartCallback training_start_callback_;
 
     // Training configuration

@@ -86,6 +86,7 @@ ServerMainWindow::ServerMainWindow(ipc::DaemonClient* daemon_client)
         marketplace_->SetDaemonClient(daemon_client_);
         wallet_->SetDaemonClient(daemon_client_);
         account_settings_->SetDaemonClient(daemon_client_);
+        login_->SetDaemonClient(daemon_client_);
     }
 
     // Register as state observer

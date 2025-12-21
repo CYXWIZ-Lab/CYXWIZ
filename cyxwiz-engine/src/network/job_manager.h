@@ -4,7 +4,14 @@
 #include <memory>
 #include <chrono>
 #include <map>
+#include <atomic>
 #include "job.pb.h"
+
+// Forward declare DatasetHandle from data_registry
+namespace cyxwiz {
+class DatasetHandle;
+class JobStatusPanel;
+}
 
 namespace network {
 
@@ -25,6 +32,12 @@ struct ActiveJob {
     // Store original job config for P2P transmission
     cyxwiz::protocol::JobConfig original_config;
     std::string initial_dataset_bytes;  // For inline dataset transfer
+
+    // Dataset handle for remote streaming (lazy loading)
+    std::shared_ptr<cyxwiz::DatasetHandle> remote_dataset;
+
+    // Cancel safety flag - prevents callbacks from accessing job after cancel
+    std::shared_ptr<std::atomic<bool>> is_cancelled = std::make_shared<std::atomic<bool>>(false);
 };
 
 class JobManager {
@@ -53,11 +66,20 @@ public:
     // P2P workflow: Connect to assigned node and start P2P job execution
     bool StartP2PExecution(const std::string& job_id);
 
+    // Set dataset for remote streaming (lazy loading from Engine)
+    // Call this before StartP2PExecution to enable dataset streaming
+    void SetRemoteDataset(const std::string& job_id, std::shared_ptr<cyxwiz::DatasetHandle> dataset);
+
     // Get P2P client for a specific job (for UI integration)
     std::shared_ptr<P2PClient> GetP2PClient(const std::string& job_id);
 
+    // Set JobStatusPanel for progress forwarding
+    void SetJobStatusPanel(cyxwiz::JobStatusPanel* panel) { job_status_panel_ = panel; }
+
     // Job control
     void CancelJob(const std::string& job_id);
+    bool DeleteJob(const std::string& job_id);  // Deletes from Central Server
+    void RemoveLocalJob(const std::string& job_id);  // Removes from local list only
 
     // Query specific job status
     bool GetJobStatus(const std::string& job_id, cyxwiz::protocol::JobStatus& out_status);
@@ -71,10 +93,13 @@ public:
 private:
     GRPCClient* client_;
     std::vector<ActiveJob> active_jobs_;
-    std::chrono::seconds status_poll_interval_{5}; // Poll every 5 seconds
+    std::chrono::seconds status_poll_interval_{30}; // Poll every 30 seconds (P2P stream provides real-time updates)
 
     // P2P clients map (job_id -> P2PClient)
     std::map<std::string, std::shared_ptr<P2PClient>> p2p_clients_;
+
+    // UI panel for progress forwarding (not owned)
+    cyxwiz::JobStatusPanel* job_status_panel_ = nullptr;
 
     // Helper: Find active job by ID
     ActiveJob* FindJob(const std::string& job_id);

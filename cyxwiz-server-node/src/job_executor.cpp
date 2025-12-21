@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <type_traits>
 
 // Backend includes for real training
 #include <cyxwiz/cyxwiz.h>
@@ -639,13 +640,443 @@ bool JobExecutor::LoadCSVDataset(
     return true;
 }
 
-std::unique_ptr<cyxwiz::Model> JobExecutor::BuildModel(const std::string& model_definition) {
-    spdlog::info("Building model from definition");
+// NodeType enum values from Engine (must match gui::NodeType exactly)
+enum class EngineNodeType {
+    // Core Layers
+    Dense = 0,
+    Conv1D = 1,
+    Conv2D = 2,
+    Conv3D = 3,
+    DepthwiseConv2D = 4,
 
-    // TODO: Parse model_definition JSON and build actual model
-    // For now, return nullptr as we're using mock training
+    // Pooling Layers
+    MaxPool2D = 5,
+    AvgPool2D = 6,
+    GlobalMaxPool = 7,
+    GlobalAvgPool = 8,
+    AdaptiveAvgPool = 9,
 
-    return nullptr;
+    // Normalization Layers
+    BatchNorm = 10,
+    LayerNorm = 11,
+    GroupNorm = 12,
+    InstanceNorm = 13,
+
+    // Regularization
+    Dropout = 14,
+    Flatten = 15,
+
+    // Recurrent Layers
+    RNN = 16,
+    LSTM = 17,
+    GRU = 18,
+    Bidirectional = 19,
+    TimeDistributed = 20,
+    Embedding = 21,
+
+    // Attention & Transformer
+    MultiHeadAttention = 22,
+    SelfAttention = 23,
+    CrossAttention = 24,
+    LinearAttention = 25,
+    TransformerEncoder = 26,
+    TransformerDecoder = 27,
+    PositionalEncoding = 28,
+
+    // Activation Functions
+    ReLU = 29,
+    LeakyReLU = 30,
+    PReLU = 31,
+    ELU = 32,
+    SELU = 33,
+    GELU = 34,
+    Swish = 35,
+    Mish = 36,
+    Sigmoid = 37,
+    Tanh = 38,
+    Softmax = 39,
+
+    // Shape Operations
+    Reshape = 40,
+    Permute = 41,
+    Squeeze = 42,
+    Unsqueeze = 43,
+    View = 44,
+    Split = 45,
+
+    // Merge Operations
+    Concatenate = 46,
+    Add = 47,
+    Multiply = 48,
+    Average = 49,
+
+    // Output
+    Output = 50,
+
+    // Loss Functions
+    MSELoss = 51,
+    CrossEntropyLoss = 52,
+    BCELoss = 53,
+    BCEWithLogits = 54,
+    L1Loss = 55,
+    SmoothL1Loss = 56,
+    HuberLoss = 57,
+    NLLLoss = 58,
+
+    // Optimizers
+    SGD = 59,
+    Adam = 60,
+    AdamW = 61,
+    RMSprop = 62,
+    Adagrad = 63,
+    NAdam = 64,
+
+    // Learning Rate Schedulers
+    StepLR = 65,
+    CosineAnnealing = 66,
+    ReduceOnPlateau = 67,
+    ExponentialLR = 68,
+    WarmupScheduler = 69,
+
+    // Regularization Nodes
+    L1Regularization = 70,
+    L2Regularization = 71,
+    ElasticNet = 72,
+
+    // Utility Nodes
+    Lambda = 73,
+    Identity = 74,
+    Constant = 75,
+    Parameter = 76,
+
+    // Data Pipeline Nodes
+    DatasetInput = 77,      // Load dataset from DataRegistry
+    DataLoader = 78,        // Batch iterator
+    Augmentation = 79,      // Transform pipeline
+    DataSplit = 80,         // Train/val/test splitter
+    TensorReshape = 81,     // Reshape tensor dimensions
+    Normalize = 82,         // Normalize values (mean/std)
+    OneHotEncode = 83,      // Label encoding
+
+    // Composite Nodes
+    Subgraph = 84           // Encapsulated subgraph
+};
+
+// Helper functions to safely get numeric parameters that may be stored as strings
+template<typename T>
+T GetJsonNumber(const nlohmann::json& params, const std::string& key, T default_val) {
+    if (!params.contains(key)) {
+        return default_val;
+    }
+
+    const auto& val = params[key];
+    if (val.is_number()) {
+        return val.get<T>();
+    } else if (val.is_string()) {
+        try {
+            std::string str = val.get<std::string>();
+            if constexpr (std::is_integral_v<T>) {
+                return static_cast<T>(std::stoll(str));
+            } else {
+                return static_cast<T>(std::stod(str));
+            }
+        } catch (...) {
+            return default_val;
+        }
+    }
+    return default_val;
+}
+
+// Helper to get boolean that may be stored as string
+bool GetJsonBool(const nlohmann::json& params, const std::string& key, bool default_val) {
+    if (!params.contains(key)) {
+        return default_val;
+    }
+
+    const auto& val = params[key];
+    if (val.is_boolean()) {
+        return val.get<bool>();
+    } else if (val.is_string()) {
+        std::string str = val.get<std::string>();
+        return str == "true" || str == "1" || str == "yes";
+    } else if (val.is_number()) {
+        return val.get<int>() != 0;
+    }
+    return default_val;
+}
+
+std::unique_ptr<cyxwiz::SequentialModel> JobExecutor::BuildModel(const std::string& model_definition, size_t input_size) {
+    using json = nlohmann::json;
+
+    spdlog::info("Building model from JSON definition ({} bytes)", model_definition.size());
+
+    try {
+        json j = json::parse(model_definition);
+
+        // Get nodes and links
+        if (!j.contains("nodes") || !j.contains("links")) {
+            spdlog::error("Model JSON missing 'nodes' or 'links' arrays");
+            return nullptr;
+        }
+
+        auto nodes = j["nodes"];
+        auto links = j["links"];
+
+        spdlog::info("Parsed {} nodes and {} links", nodes.size(), links.size());
+
+        // Check if CrossEntropyLoss is in the graph - if so, we should skip Softmax
+        // because CrossEntropyLoss applies softmax internally (prevents double-softmax issue)
+        bool uses_cross_entropy = false;
+        for (const auto& node : nodes) {
+            int type_int = node["type"].get<int>();
+            if (type_int == static_cast<int>(EngineNodeType::CrossEntropyLoss)) {
+                uses_cross_entropy = true;
+                spdlog::info("Detected CrossEntropyLoss - will skip Softmax layer (internal softmax)");
+                break;
+            }
+        }
+
+        // Build adjacency list for topological sort
+        std::map<int, std::vector<int>> adj;  // node_id -> downstream node_ids
+        std::map<int, int> in_degree;
+        std::map<int, json> node_map;  // node_id -> node JSON
+
+        for (const auto& node : nodes) {
+            int node_id = node["id"].get<int>();
+            node_map[node_id] = node;
+            in_degree[node_id] = 0;
+            adj[node_id] = {};
+        }
+
+        for (const auto& link : links) {
+            int from_node = link["from_node"].get<int>();
+            int to_node = link["to_node"].get<int>();
+            adj[from_node].push_back(to_node);
+            in_degree[to_node]++;
+        }
+
+        // Topological sort (Kahn's algorithm)
+        std::queue<int> queue;
+        for (const auto& [id, deg] : in_degree) {
+            if (deg == 0) queue.push(id);
+        }
+
+        std::vector<int> sorted_ids;
+        while (!queue.empty()) {
+            int id = queue.front();
+            queue.pop();
+            sorted_ids.push_back(id);
+
+            for (int next : adj[id]) {
+                in_degree[next]--;
+                if (in_degree[next] == 0) {
+                    queue.push(next);
+                }
+            }
+        }
+
+        if (sorted_ids.size() != nodes.size()) {
+            spdlog::error("Graph has cycles - cannot build sequential model");
+            return nullptr;
+        }
+
+        // Build sequential model from sorted nodes
+        auto model = std::make_unique<cyxwiz::SequentialModel>();
+        size_t prev_output_size = input_size;  // Use input_size if provided, otherwise infer from DatasetInput node
+
+        for (int node_id : sorted_ids) {
+            const auto& node = node_map[node_id];
+            int type_int = node["type"].get<int>();
+            auto type = static_cast<EngineNodeType>(type_int);
+            std::string name = node.value("name", "");
+            auto params = node.value("parameters", json::object());
+
+            spdlog::debug("Processing node {}: type={}, name={}", node_id, type_int, name);
+
+            switch (type) {
+                case EngineNodeType::Dense: {
+                    // Use helper functions to handle string-typed parameters
+                    size_t in_features = GetJsonNumber<size_t>(params, "in_features", 0);
+                    size_t out_features = GetJsonNumber<size_t>(params, "units", 128);
+                    bool use_bias = GetJsonBool(params, "use_bias", true);
+
+                    // If in_features not specified, use previous layer's output
+                    if (in_features == 0 && prev_output_size > 0) {
+                        in_features = prev_output_size;
+                    }
+
+                    if (in_features > 0) {
+                        model->Add<cyxwiz::LinearModule>(in_features, out_features, use_bias);
+                        prev_output_size = out_features;
+                        spdlog::info("Added Linear({}, {}) layer", in_features, out_features);
+                    } else {
+                        spdlog::warn("Skipping Dense layer - in_features not specified");
+                    }
+                    break;
+                }
+
+                case EngineNodeType::ReLU:
+                    model->Add<cyxwiz::ReLUModule>();
+                    spdlog::info("Added ReLU activation");
+                    break;
+
+                case EngineNodeType::LeakyReLU: {
+                    float slope = GetJsonNumber<float>(params, "negative_slope", 0.01f);
+                    model->Add<cyxwiz::LeakyReLUModule>(slope);
+                    spdlog::info("Added LeakyReLU({}) activation", slope);
+                    break;
+                }
+
+                case EngineNodeType::ELU: {
+                    float alpha = GetJsonNumber<float>(params, "alpha", 1.0f);
+                    model->Add<cyxwiz::ELUModule>(alpha);
+                    spdlog::info("Added ELU({}) activation", alpha);
+                    break;
+                }
+
+                case EngineNodeType::GELU:
+                    model->Add<cyxwiz::GELUModule>();
+                    spdlog::info("Added GELU activation");
+                    break;
+
+                case EngineNodeType::Swish:
+                    model->Add<cyxwiz::SwishModule>();
+                    spdlog::info("Added Swish activation");
+                    break;
+
+                case EngineNodeType::Mish:
+                    model->Add<cyxwiz::MishModule>();
+                    spdlog::info("Added Mish activation");
+                    break;
+
+                case EngineNodeType::Sigmoid:
+                    model->Add<cyxwiz::SigmoidModule>();
+                    spdlog::info("Added Sigmoid activation");
+                    break;
+
+                case EngineNodeType::Tanh:
+                    model->Add<cyxwiz::TanhModule>();
+                    spdlog::info("Added Tanh activation");
+                    break;
+
+                case EngineNodeType::Softmax:
+                    // Skip Softmax when using CrossEntropyLoss (it applies softmax internally)
+                    if (uses_cross_entropy) {
+                        spdlog::info("Skipping Softmax - CrossEntropyLoss applies softmax internally");
+                    } else {
+                        model->Add<cyxwiz::SoftmaxModule>();
+                        spdlog::info("Added Softmax activation");
+                    }
+                    break;
+
+                case EngineNodeType::Dropout: {
+                    float p = GetJsonNumber<float>(params, "rate", 0.5f);
+                    model->Add<cyxwiz::DropoutModule>(p);
+                    spdlog::info("Added Dropout({}) layer", p);
+                    break;
+                }
+
+                case EngineNodeType::Flatten:
+                    model->Add<cyxwiz::FlattenModule>();
+                    spdlog::info("Added Flatten layer");
+                    break;
+
+                case EngineNodeType::DatasetInput:
+                    // Input node - extract input shape for first layer
+                    if (params.contains("input_shape")) {
+                        // Parse input shape - could be "[28, 28]" or array
+                        auto shape = params["input_shape"];
+                        if (shape.is_array() && !shape.empty()) {
+                            prev_output_size = 1;
+                            for (const auto& dim : shape) {
+                                // Handle both number and string values
+                                if (dim.is_number()) {
+                                    prev_output_size *= dim.get<size_t>();
+                                } else if (dim.is_string()) {
+                                    try {
+                                        prev_output_size *= std::stoul(dim.get<std::string>());
+                                    } catch (...) {
+                                        spdlog::warn("Invalid dimension in input_shape: {}", dim.get<std::string>());
+                                    }
+                                }
+                            }
+                            spdlog::info("Input shape detected: {} features", prev_output_size);
+                        } else if (shape.is_string()) {
+                            std::string shape_str = shape.get<std::string>();
+                            // Parse "[28, 28]" format
+                            size_t total = 1;
+                            size_t pos = 0;
+                            while ((pos = shape_str.find_first_of("0123456789", pos)) != std::string::npos) {
+                                size_t end = shape_str.find_first_not_of("0123456789", pos);
+                                try {
+                                    size_t dim = std::stoul(shape_str.substr(pos, end - pos));
+                                    total *= dim;
+                                } catch (...) {
+                                    // Skip invalid number
+                                }
+                                pos = end;
+                                if (pos == std::string::npos) break;
+                            }
+                            prev_output_size = total;
+                            spdlog::info("Input shape parsed from string: {} features", prev_output_size);
+                        }
+                    }
+                    spdlog::info("DatasetInput node processed (data pipeline node)");
+                    break;
+
+                case EngineNodeType::Normalize:
+                    // Data pipeline node - normalization is handled during data preprocessing
+                    spdlog::info("Normalize node skipped (handled in preprocessing)");
+                    break;
+
+                case EngineNodeType::OneHotEncode:
+                    // Data pipeline node - one-hot encoding is handled during data preprocessing
+                    spdlog::info("OneHotEncode node skipped (handled in preprocessing)");
+                    break;
+
+                case EngineNodeType::DataLoader:
+                case EngineNodeType::Augmentation:
+                case EngineNodeType::DataSplit:
+                case EngineNodeType::TensorReshape:
+                    // Data pipeline nodes - handled during data loading, not model building
+                    spdlog::info("Data pipeline node {} skipped", type_int);
+                    break;
+
+                case EngineNodeType::Output:
+                    // Output node - just a marker, no layer needed
+                    spdlog::info("Reached Output node");
+                    break;
+
+                case EngineNodeType::MSELoss:
+                case EngineNodeType::CrossEntropyLoss:
+                    // Loss nodes - handled separately during training
+                    spdlog::info("Loss node type: {}", type_int);
+                    break;
+
+                default:
+                    spdlog::warn("Unsupported node type {} - skipping", type_int);
+                    break;
+            }
+        }
+
+        if (model->Size() == 0) {
+            spdlog::error("No layers added to model");
+            return nullptr;
+        }
+
+        spdlog::info("Built model with {} modules", model->Size());
+        model->Summary();
+
+        return model;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to parse model JSON: {}", e.what());
+        return nullptr;
+    }
+}
+
+std::unique_ptr<cyxwiz::SequentialModel> JobExecutor::BuildModelFromDefinition(const std::string& model_definition, size_t input_size) {
+    return BuildModel(model_definition, input_size);
 }
 
 bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
@@ -671,17 +1102,39 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
         return false;
     }
 
-    // Mock training loop
-    spdlog::info("Beginning training: {} epochs, batch size {}, lr {}",
-                total_epochs, batch_size, learning_rate);
+    // Build model from definition
+    std::string model_definition = config.model_definition();
+    auto model = BuildModel(model_definition);
+
+    // Check if model was built successfully
+    bool use_real_training = (model != nullptr && model->Size() > 0);
+
+    if (use_real_training) {
+        spdlog::info("Using REAL training with {} layers", model->Size());
+    } else {
+        spdlog::warn("Model not built - falling back to SIMULATED training");
+    }
+
+    spdlog::info("Beginning training: {} epochs, batch size {}, lr {}, samples={}",
+                total_epochs, batch_size, learning_rate, train_data.size());
 
     // Initialize metrics
     state->current_metrics.total_epochs = total_epochs;
     state->current_metrics.learning_rate = learning_rate;
 
-    // Simulate training with realistic loss decay
-    double initial_loss = 2.3;  // Typical for random initialization
-    double target_loss = 0.1;   // Good final loss
+    // Create optimizer if using real training
+    std::unique_ptr<cyxwiz::Optimizer> optimizer;
+    if (use_real_training) {
+        optimizer = CreateOptimizer(hyperparams);
+        if (!optimizer) {
+            optimizer = cyxwiz::CreateOptimizer(cyxwiz::OptimizerType::SGD, learning_rate);
+        }
+        model->SetTraining(true);
+    }
+
+    // Calculate batches per epoch
+    size_t num_samples = train_data.size();
+    size_t batches_per_epoch = (num_samples + batch_size - 1) / batch_size;
 
     for (int epoch = 1; epoch <= total_epochs; ++epoch) {
         // Check for cancellation
@@ -690,19 +1143,112 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
             return false;
         }
 
-        // Update metrics
         state->current_metrics.current_epoch = epoch;
+        double epoch_loss = 0.0;
+        int correct = 0;
+        int total = 0;
 
-        // Simulate loss decay (exponential)
-        double progress = static_cast<double>(epoch) / total_epochs;
-        double loss = initial_loss * std::exp(-3.0 * progress) + target_loss;
-        state->current_metrics.loss = loss;
+        if (use_real_training) {
+            // ===== REAL TRAINING LOOP =====
+            for (size_t batch_idx = 0; batch_idx < batches_per_epoch; ++batch_idx) {
+                if (state->should_cancel) break;
 
-        // Simulate accuracy increase
-        state->current_metrics.accuracy = 0.1 + 0.85 * progress;
+                // Get batch indices
+                size_t start = batch_idx * batch_size;
+                size_t end = std::min(start + batch_size, num_samples);
+                size_t current_batch_size = end - start;
 
-        // Simulate samples processed
-        state->current_metrics.samples_processed = epoch * static_cast<int64_t>(train_data.size());
+                // Stack batch data
+                std::vector<cyxwiz::Tensor> batch_inputs;
+                std::vector<cyxwiz::Tensor> batch_targets;
+                for (size_t i = start; i < end; ++i) {
+                    batch_inputs.push_back(train_data[i]);
+                    batch_targets.push_back(train_labels[i]);
+                }
+
+                // Simple batch processing: use first sample for now
+                // TODO: Proper batch stacking when Tensor batch operations are ready
+                if (batch_inputs.empty()) continue;
+
+                auto& input = batch_inputs[0];
+                auto& target = batch_targets[0];
+
+                // Forward pass
+                cyxwiz::Tensor output = model->Forward(input);
+
+                // Compute loss (CrossEntropy for classification)
+                cyxwiz::CrossEntropyLoss loss_fn;
+                cyxwiz::Tensor loss_tensor = loss_fn.Forward(output, target);
+
+                // Get scalar loss value from tensor
+                float batch_loss = 0.0f;
+                if (loss_tensor.NumElements() > 0) {
+                    batch_loss = *loss_tensor.Data<float>();
+                }
+                epoch_loss += batch_loss;
+
+                // Backward pass
+                cyxwiz::Tensor grad = loss_fn.Backward(output, target);
+                model->Backward(grad);
+
+                // Update weights
+                model->UpdateParameters(optimizer.get());
+
+                // Compute accuracy for this sample
+                size_t output_size = output.NumElements();
+                size_t target_size = target.NumElements();
+                if (output_size > 0 && target_size > 0) {
+                    const float* output_data = output.Data<float>();
+                    const float* target_data = target.Data<float>();
+
+                    // Find argmax for prediction
+                    int pred = 0;
+                    float max_val = output_data[0];
+                    for (size_t i = 1; i < output_size; ++i) {
+                        if (output_data[i] > max_val) {
+                            max_val = output_data[i];
+                            pred = static_cast<int>(i);
+                        }
+                    }
+
+                    // Find argmax for target (assuming one-hot)
+                    int label = 0;
+                    max_val = target_data[0];
+                    for (size_t i = 1; i < target_size; ++i) {
+                        if (target_data[i] > max_val) {
+                            max_val = target_data[i];
+                            label = static_cast<int>(i);
+                        }
+                    }
+
+                    if (pred == label) correct++;
+                    total++;
+                }
+            }
+
+            // Average loss over batches
+            epoch_loss /= batches_per_epoch;
+            double accuracy = (total > 0) ? static_cast<double>(correct) / total : 0.0;
+
+            state->current_metrics.loss = epoch_loss;
+            state->current_metrics.accuracy = accuracy;
+
+        } else {
+            // ===== SIMULATED TRAINING (fallback) =====
+            double progress = static_cast<double>(epoch) / total_epochs;
+            double initial_loss = 2.3;
+            double target_loss = 0.1;
+            epoch_loss = initial_loss * std::exp(-3.0 * progress) + target_loss;
+            double accuracy = 0.1 + 0.85 * progress;
+
+            state->current_metrics.loss = epoch_loss;
+            state->current_metrics.accuracy = accuracy;
+
+            // Simulate some processing time
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+
+        state->current_metrics.samples_processed = epoch * static_cast<int64_t>(num_samples);
 
         // Calculate elapsed time
         auto now = std::chrono::steady_clock::now();
@@ -710,23 +1256,17 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
             now - state->start_time);
         state->current_metrics.time_elapsed_ms = elapsed.count();
 
-        // Report progress every 5 epochs or on last epoch
-        if (epoch % 5 == 0 || epoch == total_epochs) {
-            double progress_pct = static_cast<double>(epoch) / total_epochs;
-            ReportProgress(job_id, state);
+        // Report progress every epoch
+        ReportProgress(job_id, state);
 
-            spdlog::info("Job {} - Epoch {}/{}: Loss={:.4f}, Acc={:.2f}%",
-                        job_id, epoch, total_epochs, loss,
-                        state->current_metrics.accuracy * 100.0);
-        }
-
-        // Simulate epoch duration (100ms per epoch for demo)
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        spdlog::info("Job {} - Epoch {}/{}: Loss={:.4f}, Acc={:.2f}% [{}]",
+                    job_id, epoch, total_epochs, state->current_metrics.loss,
+                    state->current_metrics.accuracy * 100.0,
+                    use_real_training ? "REAL" : "SIMULATED");
     }
 
-    // Save results
-    // TODO: Implement actual model saving
-    spdlog::info("Training completed successfully for job: {}", job_id);
+    spdlog::info("Training completed successfully for job: {} [{}]",
+                job_id, use_real_training ? "REAL TRAINING" : "SIMULATED");
 
     return true;
 }

@@ -137,6 +137,16 @@ message CancelJobResponse {
   Error error = 3;
 }
 
+// Delete job request - permanently removes job from database
+message DeleteJobRequest {
+  string job_id = 1;
+}
+
+message DeleteJobResponse {
+  StatusCode status = 1;
+  Error error = 2;
+}
+
 // Job streaming updates
 message JobUpdateStream {
   string job_id = 1;
@@ -164,6 +174,9 @@ service JobService {
 
   // List user's jobs
   rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+
+  // Delete a job permanently (removes from database)
+  rpc DeleteJob(DeleteJobRequest) returns (DeleteJobResponse);
 }
 
 message ListJobsRequest {

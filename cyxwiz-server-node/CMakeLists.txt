@@ -19,6 +19,7 @@ find_package(httplib CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
+find_package(jwt-cpp CONFIG REQUIRED)
 
 # Optional: Find ArrayFire for GPU support
 find_package(ArrayFire QUIET)
@@ -80,6 +81,7 @@ set(DAEMON_SOURCES
     src/job_execution_service.cpp
     src/node_server.cpp
     src/job_executor.cpp
+    src/remote_data_loader.cpp
     # API layer
     src/api/api_key_manager.cpp
     src/api/rate_limiter.cpp
@@ -98,6 +100,8 @@ set(DAEMON_SOURCES
     src/security/audit_logger.cpp
     src/security/docker_manager.cpp
     src/security/wallet_manager.cpp
+    # P2P Authentication
+    src/auth/p2p_jwt_validator.cpp
 )
 
 # ========== GUI Client Sources ==========
@@ -176,6 +180,7 @@ if(CYXWIZ_BUILD_DAEMON)
         OpenSSL::SSL
         OpenSSL::Crypto
         unofficial::sqlite3::sqlite3
+        jwt-cpp::jwt-cpp
     )
 
     # Platform-specific libraries for daemon
@@ -375,7 +380,10 @@ if(CYXWIZ_BUILD_TESTS)
         tests/test_job_execution_service.cpp
         src/job_execution_service.cpp
         src/job_executor.cpp
+        src/remote_data_loader.cpp
         src/node_client.cpp
+        src/auth/p2p_jwt_validator.cpp
+        src/core/device_pool.cpp
     )
 
     target_include_directories(test_job_execution_service PRIVATE
@@ -388,11 +396,13 @@ if(CYXWIZ_BUILD_TESTS)
         Catch2::Catch2WithMain
         fmt::fmt
         spdlog::spdlog
+        nlohmann_json::nlohmann_json
         cyxwiz-backend
         cyxwiz-protocol
         gRPC::grpc++
         protobuf::libprotobuf
         Threads::Threads
+        jwt-cpp::jwt-cpp
     )
 
     if(WIN32)
@@ -431,12 +441,34 @@ if(CYXWIZ_BUILD_TESTS)
         )
     endif()
 
+    # JWT Token Generator (for testing P2P auth)
+    add_executable(generate_test_jwt
+        tests/generate_test_jwt.cpp
+    )
+
+    target_link_libraries(generate_test_jwt PRIVATE
+        jwt-cpp::jwt-cpp
+        nlohmann_json::nlohmann_json
+    )
+
+    if(WIN32)
+        target_compile_definitions(generate_test_jwt PRIVATE
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN
+        )
+    endif()
+
+    target_compile_features(generate_test_jwt PRIVATE cxx_std_17)
+
     # Standalone P2P Server (for manual testing)
     add_executable(standalone_p2p_server
         tests/standalone_p2p_server.cpp
         src/job_execution_service.cpp
         src/job_executor.cpp
+        src/remote_data_loader.cpp
         src/node_client.cpp
+        src/auth/p2p_jwt_validator.cpp
+        src/core/device_pool.cpp
     )
 
     target_include_directories(standalone_p2p_server PRIVATE
@@ -452,6 +484,7 @@ if(CYXWIZ_BUILD_TESTS)
         spdlog::spdlog
         fmt::fmt
         Threads::Threads
+        jwt-cpp::jwt-cpp
     )
 
     if(WIN32)

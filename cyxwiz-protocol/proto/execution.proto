@@ -60,14 +60,90 @@ message SendJobResponse {
   Error error = 5;
 }
 
+// ============================================================================
+// Dataset Split Enum
+// ============================================================================
+
+enum DatasetSplit {
+  SPLIT_TRAIN = 0;
+  SPLIT_VALIDATION = 1;
+  SPLIT_TEST = 2;
+}
+
+// ============================================================================
+// Dataset Streaming Messages (for lazy-loading from Engine)
+// ============================================================================
+
+// Server Node → Engine: Request dataset metadata
+message DatasetInfoRequest {
+  string job_id = 1;
+  string auth_token = 2;  // JWT for verification
+}
+
+// Engine → Server Node: Dataset metadata response
+message DatasetInfoResponse {
+  StatusCode status = 1;
+
+  // Per-split information
+  SplitInfo train = 2;
+  SplitInfo validation = 3;
+  SplitInfo test = 4;
+
+  // Common metadata
+  repeated int32 sample_shape = 10;   // [1, 28, 28] for MNIST
+  repeated int32 label_shape = 11;    // [10] for one-hot, [1] for class idx
+  string dtype = 12;                   // "float32"
+  int32 num_classes = 13;              // 10 for MNIST
+  repeated string class_names = 14;    // ["0", "1", ..., "9"]
+
+  Error error = 20;
+}
+
+// Information about a dataset split
+message SplitInfo {
+  int64 num_samples = 1;      // 50000 for MNIST train
+  bool available = 2;         // false if kept private (e.g., test)
+  bool shuffle_enabled = 3;   // Server can request shuffled
+}
+
+// Server Node → Engine: Request a batch of samples
+message BatchRequest {
+  string job_id = 1;
+  string auth_token = 2;
+  DatasetSplit split = 3;             // TRAIN, VALIDATION, or TEST
+  repeated int64 sample_indices = 4;  // Which samples to get [0, 5, 23, 100, ...]
+  int32 request_id = 5;               // For matching responses to requests
+}
+
+// Engine → Server Node: Batch data response
+message BatchResponse {
+  StatusCode status = 1;
+  int32 request_id = 2;               // Matches the request
+
+  bytes images = 3;                   // Flattened tensor data (float32)
+  bytes labels = 4;                   // Flattened labels
+  repeated int64 batch_shape = 5;     // [batch_size, C, H, W]
+  repeated int64 label_shape = 6;     // [batch_size, num_classes] or [batch_size]
+
+  Error error = 10;
+}
+
+// ============================================================================
 // Engine → Server Node commands during training
+// ============================================================================
+
 message TrainingCommand {
   oneof command {
+    // Training control commands
     bool pause = 1;
     bool resume = 2;
     bool stop = 3;
     bool request_checkpoint = 4;
     UpdateHyperparameters update_params = 5;
+
+    // Dataset streaming responses (Engine sends batch data to Server Node)
+    BatchResponse batch_response = 10;
+    DatasetInfoResponse dataset_info_response = 11;
   }
 }
 
@@ -77,17 +153,25 @@ message UpdateHyperparameters {
   map<string, double> other_params = 3;
 }
 
+// ============================================================================
 // Server Node → Engine updates during training
+// ============================================================================
+
 message TrainingUpdate {
   string job_id = 1;
   int64 timestamp = 2;  // Unix timestamp
 
   oneof update {
+    // Training status updates
     TrainingProgress progress = 3;
     TrainingCheckpoint checkpoint = 4;
     TrainingComplete complete = 5;
     TrainingError error = 6;
     LogMessage log = 7;
+
+    // Dataset requests (Server Node requests data from Engine)
+    DatasetInfoRequest dataset_info_request = 10;
+    BatchRequest batch_request = 11;
   }
 }
 

@@ -1533,9 +1533,15 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
     // Create connection dialog with network components
     connection_dialog_ = std::make_unique<cyxwiz::ConnectionDialog>(client, job_manager);
 
+    // Connect NodeEditor so ConnectionDialog can access the model graph
+    if (connection_dialog_ && node_editor_) {
+        connection_dialog_->SetNodeEditor(node_editor_.get());
+    }
+
     // Set JobManager for JobStatusPanel
     if (job_status_panel_) {
         job_status_panel_->SetJobManager(job_manager);
+        job_manager->SetJobStatusPanel(job_status_panel_.get());
     }
 
     // Set JobManager for DatasetPanel (enables training job submission)
@@ -1547,6 +1553,9 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
 
         // Connect NodeEditor so DatasetPanel can compile the graph for training
         dataset_panel_->SetNodeEditor(node_editor_.get());
+
+        // Connect WalletPanel so DatasetPanel can get wallet address for job submission
+        dataset_panel_->SetWalletPanel(wallet_panel_.get());
 
         // Set callback to start P2P monitoring when training starts
         dataset_panel_->SetTrainingStartCallback([this](const std::string& job_id) {

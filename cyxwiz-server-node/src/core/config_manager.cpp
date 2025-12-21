@@ -54,6 +54,7 @@ bool ConfigManager::LoadConfig(const std::string& path, NodeConfig& config) {
             if (network["enable_tls"]) config.enable_tls = network["enable_tls"].as<bool>();
             if (network["cert_path"]) config.cert_path = network["cert_path"].as<std::string>();
             if (network["key_path"]) config.key_path = network["key_path"].as<std::string>();
+            if (network["p2p_secret"]) config.p2p_secret = network["p2p_secret"].as<std::string>();
         }
 
         // Training settings
@@ -145,6 +146,7 @@ bool ConfigManager::SaveConfig(const NodeConfig& config, const std::string& path
         out << YAML::Key << "enable_tls" << YAML::Value << config.enable_tls;
         out << YAML::Key << "cert_path" << YAML::Value << config.cert_path;
         out << YAML::Key << "key_path" << YAML::Value << config.key_path;
+        out << YAML::Key << "p2p_secret" << YAML::Value << config.p2p_secret;
         out << YAML::EndMap;
 
         // Training settings

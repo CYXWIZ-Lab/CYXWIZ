@@ -121,7 +121,7 @@ public:
     std::future<NodeRegistrationResult> RegisterNodeWithApi(
         const std::string& node_name,
         const std::string& node_type = "server");
-    bool SendHeartbeatToApi();
+    bool SendHeartbeatToApi(bool is_online = true);
     std::string GetNodeId() const;
     std::string GetNodeApiKey() const;
     bool IsNodeRegistered() const;

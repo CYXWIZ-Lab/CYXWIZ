@@ -1,6 +1,7 @@
 // login_panel.cpp - Professional login overlay panel implementation
 #include "gui/panels/login_panel.h"
 #include "gui/icons.h"
+#include "ipc/daemon_client.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <spdlog/spdlog.h>
@@ -313,12 +314,33 @@ void LoginPanel::Update() {
         }
     }
 
-    // Send periodic heartbeats while node is registered
-    if (auth.IsNodeRegistered() && !offline_mode_) {
-        auto now = std::chrono::steady_clock::now();
+    // Send periodic heartbeats while node is registered AND connected to Central Server
+    bool connected_to_central = false;
+    if (IsDaemonConnected() && GetDaemonClient()) {
+        ipc::DaemonStatus status;
+        if (GetDaemonClient()->GetStatus(status)) {
+            connected_to_central = status.connected_to_central;
+        }
+    }
+
+    bool node_registered = auth.IsNodeRegistered();
+
+    // Debug: log conditions every 10 seconds
+    static auto last_debug_time = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    auto debug_elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_debug_time).count();
+    if (debug_elapsed >= 10) {
+        spdlog::info("Heartbeat check: node_registered={}, offline={}, central={}",
+                     node_registered, offline_mode_, connected_to_central);
+        last_debug_time = now;
+    }
+
+    if (node_registered && !offline_mode_ && connected_to_central) {
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat_time_).count();
 
         if (elapsed >= kHeartbeatIntervalSeconds) {
+            spdlog::info("Sending Web API heartbeat (node_registered={}, offline={}, central={})",
+                         node_registered, offline_mode_, connected_to_central);
             auth.SendHeartbeatToApi();
             last_heartbeat_time_ = now;
         }

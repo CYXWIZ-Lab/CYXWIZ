@@ -58,6 +58,15 @@ void AllocationPanel::Update() {
         LoadAllocations();
         devices_initialized_ = true;
     }
+
+    // Check connection status from daemon
+    if (IsDaemonConnected()) {
+        auto* daemon = GetDaemonClient();
+        ipc::DaemonStatus status;
+        if (daemon && daemon->GetStatus(status)) {
+            is_connected_to_central_ = status.connected_to_central;
+        }
+    }
 }
 
 void AllocationPanel::RefreshDeviceList() {
@@ -471,7 +480,11 @@ void AllocationPanel::RenderActionButtons() {
         // Just toggle the flag
     }
 
-    float button_width = show_retry_button_ ? 320.0f : 220.0f;
+    // Calculate button width based on visible buttons
+    float button_width = 220.0f;  // Save + Apply
+    if (show_retry_button_) button_width += 110.0f;  // + Retry
+    if (is_connected_to_central_) button_width += 110.0f;  // + Disconnect
+
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - button_width);
 
     // Save button
@@ -482,7 +495,7 @@ void AllocationPanel::RenderActionButtons() {
 
     ImGui::SameLine();
 
-    // Apply button
+    // Apply/Connect button
     ImGui::PushStyleColor(ImGuiCol_Button, AllocColors::ButtonApply);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AllocColors::ButtonApplyHover);
 
@@ -494,8 +507,24 @@ void AllocationPanel::RenderActionButtons() {
 
     ImGui::PopStyleColor(2);
 
+    // Disconnect button (shown when connected)
+    if (is_connected_to_central_) {
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, AllocColors::AccentRed);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.50f, 0.50f, 1.0f));
+
+        ImGui::BeginDisabled(is_applying_);
+        if (ImGui::Button(ICON_FA_LINK_SLASH " Disconnect", ImVec2(100, 30))) {
+            DisconnectFromCentral();
+        }
+        ImGui::EndDisabled();
+
+        ImGui::PopStyleColor(2);
+    }
+
     // Retry button (shown when connection failed)
-    if (show_retry_button_) {
+    if (show_retry_button_ && !is_connected_to_central_) {
         ImGui::SameLine();
 
         ImGui::PushStyleColor(ImGuiCol_Button, AllocColors::AccentOrange);
@@ -704,7 +733,9 @@ void AllocationPanel::ApplyAllocations() {
             info.device_type = (alloc.device_type == ResourceAllocation::DeviceType::Gpu)
                 ? ipc::AllocDeviceType::Gpu : ipc::AllocDeviceType::Cpu;
             info.device_id = alloc.device_id;
+            info.device_name = alloc.device_name;
             info.is_enabled = alloc.is_enabled;
+            info.vram_total_mb = static_cast<int>(alloc.vram_total_mb);
             info.vram_allocation_mb = static_cast<int>(alloc.vram_allocated_mb);
             info.cpu_cores_allocation = alloc.cores_allocated;
             info.priority = static_cast<ipc::AllocPriority>(alloc.priority);
@@ -725,7 +756,8 @@ void AllocationPanel::ApplyAllocations() {
             status_message_ = "Connected to Central Server! Node ID: " + result.node_id;
             show_retry_button_ = false;
             connection_failed_ = false;
-            
+            is_connected_to_central_ = true;
+
             // Sync node_id with Web API so website shows Central Server ID
             if (!result.node_id.empty()) {
                 bool synced = auth.SyncNodeIdWithWebApi(result.node_id);
@@ -734,6 +766,12 @@ void AllocationPanel::ApplyAllocations() {
                 } else {
                     spdlog::warn("Failed to sync node_id with Web API");
                 }
+            }
+
+            // Send immediate online heartbeat to Web API
+            if (auth.IsNodeRegistered()) {
+                spdlog::info("Sending online heartbeat to Web API...");
+                auth.SendHeartbeatToApi(true);  // true = online
             }
         } else {
             status_message_ = "Allocations saved (offline mode)";
@@ -759,7 +797,8 @@ void AllocationPanel::RetryConnection() {
         status_message_ = "Connected to Central Server! Node ID: " + result.node_id;
         show_retry_button_ = false;
         connection_failed_ = false;
-        
+        is_connected_to_central_ = true;
+
         // Sync node_id with Web API so website shows Central Server ID
         if (!result.node_id.empty()) {
             auto& auth = auth::AuthManager::Instance();
@@ -774,6 +813,36 @@ void AllocationPanel::RetryConnection() {
         status_message_ = "Retry failed: " + result.message;
         show_retry_button_ = true;
         connection_failed_ = true;
+    }
+}
+
+void AllocationPanel::DisconnectFromCentral() {
+    if (!IsDaemonConnected() || !GetDaemonClient()) {
+        status_message_ = "Not connected to daemon";
+        return;
+    }
+
+    is_applying_ = true;
+    auto result = GetDaemonClient()->DisconnectFromCentral();
+    is_applying_ = false;
+
+    if (result.success) {
+        status_message_ = "Disconnected from Central Server";
+        is_connected_to_central_ = false;
+        show_retry_button_ = false;
+        connection_failed_ = false;
+        spdlog::info("Disconnected from Central Server");
+
+        // Send immediate offline heartbeat to Web API
+        auto& auth = auth::AuthManager::Instance();
+        if (auth.IsNodeRegistered()) {
+            spdlog::info("Sending offline heartbeat to Web API...");
+            auth.SendHeartbeatToApi(false);  // false = offline
+        }
+    } else {
+        status_message_ = "Disconnect failed: " + result.message;
+        connection_failed_ = true;
+        spdlog::error("Failed to disconnect: {}", result.message);
     }
 }
 

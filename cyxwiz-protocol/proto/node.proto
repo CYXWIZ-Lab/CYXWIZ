@@ -43,6 +43,50 @@ message NodeInfo {
   int64 max_model_size = 22;               // Maximum model size in bytes
   bool supports_terminal_access = 23;      // Can provide terminal/CLI access
   repeated string available_runtimes = 24; // e.g., ["onnxruntime", "pytorch", "llama.cpp"]
+
+  // Pricing
+  NodePricing pricing = 25;                // Pricing configuration
+}
+
+// Pricing configuration for compute nodes
+message NodePricing {
+  // Billing model type
+  enum BillingModel {
+    BILLING_HOURLY = 0;      // Charged per hour of compute time
+    BILLING_PER_EPOCH = 1;   // Charged per training epoch
+    BILLING_PER_JOB = 2;     // Fixed price per job
+    BILLING_PER_INFERENCE = 3; // Charged per inference request (for deployment)
+  }
+
+  BillingModel billing_model = 1;
+
+  // Base prices (in CYXWIZ tokens)
+  double price_per_hour = 2;           // Price per hour of compute
+  double price_per_epoch = 3;          // Price per training epoch
+  double price_per_job_base = 4;       // Base price for per-job billing
+  double price_per_inference = 5;      // Price per inference request
+
+  // Minimum charges
+  double minimum_charge = 6;           // Minimum charge per job (prevents micro-jobs)
+  int32 minimum_duration_minutes = 7;  // Minimum billable duration
+
+  // Discounts
+  double discount_1h_plus = 8;         // Discount % for jobs > 1 hour (e.g., 0.05 = 5%)
+  double discount_24h_plus = 9;        // Discount % for jobs > 24 hours
+  double discount_bulk = 10;           // Discount % for bulk/repeat customers
+
+  // Currency display (for UI)
+  double usd_equivalent = 11;          // Current USD equivalent of price_per_hour
+  int64 price_updated_at = 12;         // Unix timestamp of last price update
+
+  // Accepted payment methods
+  bool accepts_cyxwiz_token = 13;      // Accepts CYXWIZ token (default)
+  bool accepts_sol = 14;               // Accepts SOL
+  bool accepts_usdc = 15;              // Accepts USDC
+
+  // Special pricing
+  bool free_tier_available = 16;       // Offers free tier for testing
+  int32 free_tier_minutes = 17;        // Minutes available in free tier
 }
 
 // Node registration
@@ -190,28 +234,77 @@ service NodeDiscoveryService {
 }
 
 message FindNodesRequest {
+  // Hardware requirements
   DeviceType required_device = 1;
-  int64 min_memory = 2;
+  int64 min_memory = 2;                    // Minimum GPU/RAM in bytes
+  int64 min_vram = 10;                     // Minimum VRAM in bytes (for GPU jobs)
+  double min_compute_score = 11;           // Minimum benchmark score
+
+  // Trust requirements
   double min_reputation = 3;
+  double min_stake = 12;                   // Minimum staked CYXWIZ tokens
+
+  // Location preferences
   string preferred_region = 4;
+  repeated string allowed_regions = 13;    // Only consider these regions
+  repeated string blocked_regions = 14;    // Exclude these regions
+
+  // Pricing constraints
+  double max_price_per_hour = 6;           // Maximum price in CYXWIZ tokens
+  double max_price_usd = 7;                // Maximum price in USD (for convenience)
+  NodePricing.BillingModel preferred_billing = 8;  // Preferred billing model
+  bool require_free_tier = 9;              // Only nodes with free tier
+
+  // Results
   int32 max_results = 5;
+
+  // Sorting preference
+  enum SortBy {
+    SORT_BY_PRICE = 0;           // Cheapest first
+    SORT_BY_PERFORMANCE = 1;     // Highest compute_score first
+    SORT_BY_REPUTATION = 2;      // Highest reputation first
+    SORT_BY_AVAILABILITY = 3;    // Most available (lowest queue) first
+  }
+  SortBy sort_by = 15;
 }
 
 message FindNodesResponse {
   repeated NodeInfo nodes = 1;
-  Error error = 2;
+  int32 total_matching = 2;          // Total nodes matching criteria (for pagination info)
+  double avg_price_per_hour = 3;     // Average price of matching nodes
+  double min_price_per_hour = 4;     // Cheapest matching node
+  double max_price_per_hour = 5;     // Most expensive matching node
+  Error error = 6;
 }
 
 message ListNodesRequest {
+  // Pagination
   int32 page_size = 1;
   string page_token = 2;
+
+  // Filters
   bool online_only = 3;
+  DeviceType filter_device = 4;        // Filter by device type
+  string filter_region = 5;            // Filter by region
+
+  // Price range filter (for marketplace browsing)
+  double min_price_per_hour = 6;
+  double max_price_per_hour = 7;
+
+  // Sorting (reuse FindNodesRequest.SortBy enum)
+  FindNodesRequest.SortBy sort_by = 8;
+  bool sort_descending = 9;            // Default is ascending
 }
 
 message ListNodesResponse {
   repeated NodeInfo nodes = 1;
   string next_page_token = 2;
   int32 total_count = 3;
+
+  // Marketplace statistics (for UI display)
+  int32 online_count = 4;              // Number of currently online nodes
+  double network_avg_price = 5;        // Average price across all nodes
+  double network_total_compute = 6;    // Total compute power available (sum of compute_scores)
 }
 
 message GetNodeInfoRequest {

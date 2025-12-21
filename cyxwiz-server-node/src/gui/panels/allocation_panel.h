@@ -68,6 +68,7 @@ private:
     void SaveAllocations();
     void ApplyAllocations();
     void RetryConnection();
+    void DisconnectFromCentral();
     std::string FormatMB(size_t mb) const;
 
     // Allocation data
@@ -80,6 +81,7 @@ private:
     bool is_applying_ = false;
     bool show_retry_button_ = false;
     bool connection_failed_ = false;
+    bool is_connected_to_central_ = false;
 
     // Update timing
     std::chrono::steady_clock::time_point last_refresh_;

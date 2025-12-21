@@ -84,6 +84,10 @@ public:
     // Set node client for progress reporting
     void SetNodeClient(NodeClient* client);
 
+    // Build model from JSON definition (public access for remote training)
+    // input_size: If > 0, use this as the input size for the first layer (overrides DatasetInput node)
+    std::unique_ptr<cyxwiz::SequentialModel> BuildModelFromDefinition(const std::string& model_definition, size_t input_size = 0);
+
 private:
     // Job execution state
     struct JobState {
@@ -104,8 +108,9 @@ private:
                     std::vector<cyxwiz::Tensor>& train_data,
                     std::vector<cyxwiz::Tensor>& train_labels);
 
-    // Model building from definition
-    std::unique_ptr<cyxwiz::Model> BuildModel(const std::string& model_definition);
+    // Model building from definition (returns SequentialModel for training)
+    // input_size: If > 0, use this as the input size for the first layer
+    std::unique_ptr<cyxwiz::SequentialModel> BuildModel(const std::string& model_definition, size_t input_size = 0);
 
     // Training loop
     bool RunTraining(const std::string& job_id, JobState* state);

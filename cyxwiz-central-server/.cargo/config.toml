@@ -1,0 +1,2 @@
+[env]
+PROTOC = "D:/Dev/CyxWiz_Claude/vcpkg/packages/protobuf_x64-windows/tools/protobuf/protoc.exe"

@@ -1065,7 +1065,7 @@ std::future<NodeRegistrationResult> AuthManager::RegisterNodeWithApi(
     });
 }
 
-bool AuthManager::SendHeartbeatToApi() {
+bool AuthManager::SendHeartbeatToApi(bool is_online) {
     std::string base_url;
     std::string node_id;
     std::string api_key;
@@ -1115,6 +1115,7 @@ bool AuthManager::SendHeartbeatToApi() {
         body["api_key"] = api_key;
         body["current_load"] = 0;  // TODO: Get actual CPU load
         body["ip_address"] = specs.ip_address;
+        body["is_online"] = is_online;
 
         // Include specs in heartbeat so GPU info gets updated
         body["specs"] = {
@@ -1124,7 +1125,10 @@ bool AuthManager::SendHeartbeatToApi() {
             {"storage", specs.storage}
         };
 
-        std::string full_path = base_path + "/machines/" + node_id_ + "/heartbeat";
+        std::string full_path = base_path + "/machines/" + node_id + "/heartbeat";
+
+        spdlog::debug("Sending heartbeat to http://{}:{}{}", host, port, full_path);
+        spdlog::debug("Heartbeat body: {}", body.dump());
 
         httplib::Result res;
 
@@ -1141,10 +1145,12 @@ bool AuthManager::SendHeartbeatToApi() {
         }
 
         if (res && res->status == 200) {
-            spdlog::debug("Heartbeat sent successfully");
+            spdlog::info("Heartbeat sent successfully to {}", full_path);
             return true;
         } else {
-            spdlog::warn("Heartbeat failed: HTTP {}", res ? res->status : 0);
+            int status_code = res ? res->status : 0;
+            std::string error_msg = res ? res->body : "Connection failed";
+            spdlog::warn("Heartbeat failed: HTTP {} - {}", status_code, error_msg);
             return false;
         }
 

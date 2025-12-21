@@ -273,7 +273,10 @@ int RunHeadlessMode(int argc, char** argv) {
 
         // Create and start P2P JobExecutionService for direct Engine connections
         auto p2p_service = std::make_unique<cyxwiz::server_node::JobExecutionServiceImpl>();
-        p2p_service->Initialize(job_executor, central_server);
+        // P2P JWT secret - must match Central Server's jwt.secret config
+        // Development default matches Central Server's config.toml
+        const std::string p2p_secret = "your-super-secret-jwt-key-change-in-production";
+        p2p_service->Initialize(job_executor, central_server, node_id, p2p_secret);
 
         if (!p2p_service->StartServer(p2p_service_address)) {
             spdlog::error("Failed to start P2P JobExecutionService");

@@ -8,6 +8,7 @@
 #include <grpcpp/grpcpp.h>
 #include "execution.grpc.pb.h"
 #include "job.pb.h"
+#include "dataset_provider.h"
 
 namespace network {
 
@@ -133,6 +134,14 @@ public:
     void ClearAuthToken() { auth_token_.clear(); }
     bool HasAuthToken() const { return !auth_token_.empty(); }
 
+    // Dataset provider for lazy-loading streaming
+    DatasetProvider& GetDatasetProvider() { return dataset_provider_; }
+    const DatasetProvider& GetDatasetProvider() const { return dataset_provider_; }
+
+    // Register a dataset for streaming to Server Node
+    void RegisterDatasetForJob(const std::string& job_id, cyxwiz::DatasetHandle dataset);
+    void UnregisterDatasetForJob(const std::string& job_id);
+
 private:
     // Add authorization header to gRPC context
     void AddAuthMetadata(grpc::ClientContext& context);
@@ -141,6 +150,9 @@ private:
 
     // Send control command during streaming
     bool SendTrainingCommand(const cyxwiz::protocol::TrainingCommand& command);
+
+    // Handle dataset requests from Server Node
+    void HandleDatasetRequest(const cyxwiz::protocol::TrainingUpdate& update);
 
     // Connection state
     bool connected_;
@@ -168,6 +180,9 @@ private:
     CompletionCallback completion_callback_;
     ErrorCallback error_callback_;
     LogCallback log_callback_;
+
+    // Dataset provider for lazy-loading streaming
+    DatasetProvider dataset_provider_;
 };
 
 } // namespace network

@@ -14,6 +14,7 @@ public:
 
 private:
     void RenderRemoteConnectionTab();
+    void RenderPricingTab();
     void TestRemoteConnection();
 
     core::NodeConfig config_;

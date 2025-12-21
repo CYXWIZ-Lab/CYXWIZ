@@ -93,7 +93,7 @@ test_results/
 coverage/
 
 # Private/Company IP
-cyxwiz-central-server/
+cyx_cloud/
 
 # Blockchain (contains keypairs, wallets, private keys)
 cyxwiz-blockchain/
@@ -127,3 +127,14 @@ WALLET_*.md
 
 # External dependencies (git repos)
 cyxwiz-engine/external/imnodes/
+
+# Central Server build artifacts and data
+cyxwiz-central-server/target/
+cyxwiz-central-server/*.db
+cyxwiz-central-server/*.db.backup
+cyxwiz-central-server/*.log
+cyxwiz-central-server/config.toml
+cyxwiz-central-server/bin/
+cyxwiz-central-server/include/
+cyxwiz-central-server/protoc.zip
+cyxwiz-central-server/nul

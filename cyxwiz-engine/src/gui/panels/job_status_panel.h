@@ -2,10 +2,15 @@
 
 #include "../panel.h"
 #include "../../network/job_manager.h"
+#include "../../network/p2p_client.h"
 #include <imgui.h>
+#include <implot.h>
 #include <memory>
 #include <string>
 #include <chrono>
+#include <vector>
+#include <map>
+#include <mutex>
 
 namespace cyxwiz {
 
@@ -35,13 +40,42 @@ public:
     // Manual refresh trigger
     void Refresh();
 
+    // P2P progress callback (called by JobManager)
+    void OnP2PProgressUpdate(const std::string& job_id, const network::TrainingProgress& progress);
+
 private:
+    // Metric history for graphs
+    struct MetricHistory {
+        std::vector<float> epochs;
+        std::vector<float> loss;
+        std::vector<float> accuracy;
+        size_t max_points = 500;
+
+        void AddPoint(float epoch, float loss_val, float acc_val) {
+            if (epochs.size() >= max_points) {
+                epochs.erase(epochs.begin());
+                loss.erase(loss.begin());
+                accuracy.erase(accuracy.begin());
+            }
+            epochs.push_back(epoch);
+            loss.push_back(loss_val);
+            accuracy.push_back(acc_val);
+        }
+
+        void Clear() {
+            epochs.clear();
+            loss.clear();
+            accuracy.clear();
+        }
+    };
+
     // Render sub-components
     void RenderJobList();
     void RenderSelectedJobDetails();
     void RenderNodeAssignment();
     void RenderP2PConnectionStatus();
     void RenderJobControls();
+    void RenderTrainingGraphs(const network::ActiveJob* job);
 
     // Helper methods
     void SelectJob(const std::string& job_id);
@@ -68,6 +102,10 @@ private:
     char model_definition_input_[256];
     char dataset_uri_input_[256];
     bool submit_job_dialog_open_;
+
+    // Training metrics history per job (for graphs)
+    std::map<std::string, MetricHistory> job_metrics_;
+    std::mutex metrics_mutex_;
 };
 
 } // namespace cyxwiz

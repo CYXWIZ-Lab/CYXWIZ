@@ -3,6 +3,7 @@
 
 #include "../panel.h"
 #include "../../network/deployment_client.h"
+#include "../../network/grpc_client.h"
 #include "../../inference/local_inference_server.h"
 #include <string>
 #include <memory>
@@ -10,6 +11,7 @@
 #include <thread>
 #include <mutex>
 #include <chrono>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -55,7 +57,11 @@ private:
     void RenderModelSection();
     void RenderEmbeddedConfig();
     void RenderServerNodeConfig();
-    void RenderGGUFConfig();  // GGUF/LLM-specific options
+    void RenderNodeDiscoverySection();  // Node marketplace/search
+    void RenderNodeTable();             // Table of available nodes
+    void RenderNodeSearchFilters();     // Search/filter controls
+    void RenderSelectedNodeInfo();      // Details of selected node
+    void RenderGGUFConfig();            // GGUF/LLM-specific options
     void RenderDeployButton();
     void RenderActiveDeployments();
     void RenderStatusMessages();
@@ -68,6 +74,12 @@ private:
     void DeleteServerNodeDeployment(const std::string& deployment_id);
     void ConnectToServerNode();
     void DisconnectFromServerNode();
+
+    // Central Server actions (for node discovery)
+    void ConnectToCentralServer();
+    void DisconnectFromCentralServer();
+    void RefreshNodeList();
+    void SearchNodes();
 
     // File dialog helpers
     std::string OpenModelFile();    // For binary .cyxmodel files
@@ -121,8 +133,35 @@ private:
 
     // Polling control for Server Node deployments
     std::chrono::steady_clock::time_point last_refresh_time_;
-    static constexpr float refresh_interval_seconds_ = 2.0f;  // Refresh every 2 seconds
+    static constexpr float refresh_interval_seconds_ = 30.0f;  // Refresh every 30 seconds
     bool last_refresh_failed_ = false;  // Backoff on failures
+
+    // ========== Node Discovery (Central Server) ==========
+    // Central Server connection
+    std::unique_ptr<network::GRPCClient> central_server_client_;
+    char central_server_address_[256] = "localhost:50051";
+
+    // Node list from Central Server
+    std::vector<network::NodeDisplayInfo> discovered_nodes_;
+    int selected_node_index_ = -1;  // -1 = none selected
+    std::string selected_node_id_;
+
+    // Search/filter state
+    bool show_search_filters_ = false;
+    network::NodeSearchCriteria search_criteria_;
+
+    // Search filter UI buffers
+    int filter_device_type_ = 0;        // 0=Any, 1=CUDA, 2=OpenCL, 3=CPU
+    float filter_min_vram_gb_ = 0.0f;
+    float filter_max_price_ = 0.0f;     // 0 = no limit
+    float filter_min_reputation_ = 0.0f;
+    bool filter_free_tier_only_ = false;
+    char filter_region_[64] = "";
+    int filter_sort_by_ = 0;            // 0=Price, 1=Performance, 2=Reputation, 3=Availability
+
+    // Node list refresh timing
+    std::chrono::steady_clock::time_point last_node_refresh_time_;
+    static constexpr float node_refresh_interval_seconds_ = 10.0f;  // Refresh every 10 seconds
 };
 
 } // namespace cyxwiz

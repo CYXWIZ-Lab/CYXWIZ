@@ -3,12 +3,39 @@
 #include <grpcpp/grpcpp.h>
 #include <thread>
 #include <chrono>
+#include <jwt-cpp/jwt.h>
+#include <jwt-cpp/traits/nlohmann-json/traits.h>
 
 #include "../src/job_execution_service.h"
 #include "execution.grpc.pb.h"
 
 using namespace cyxwiz::server_node;
 using namespace cyxwiz::protocol;
+
+// Test constants
+static const std::string TEST_SECRET = "test_p2p_secret";
+static const std::string TEST_NODE_ID = "test_node";
+
+// Helper function to generate valid JWT tokens for testing
+std::string GenerateTestJwt(const std::string& job_id,
+                            const std::string& node_id = TEST_NODE_ID,
+                            int expires_in_seconds = 3600) {
+    using jwt_traits = jwt::traits::nlohmann_json;
+
+    auto now = std::chrono::system_clock::now();
+    auto exp = now + std::chrono::seconds(expires_in_seconds);
+
+    auto token = jwt::create<jwt_traits>()
+        .set_issuer("CyxWiz-Central-Server")
+        .set_subject("test_user")
+        .set_issued_at(now)
+        .set_expires_at(exp)
+        .set_payload_claim("job_id", job_id)
+        .set_payload_claim("node_id", node_id)
+        .sign(jwt::algorithm::hs256{TEST_SECRET});
+
+    return token;
+}
 
 // Test fixture for JobExecutionService
 class JobExecutionServiceTest {
@@ -18,7 +45,7 @@ public:
         service = std::make_unique<JobExecutionServiceImpl>();
 
         // Initialize with mock dependencies
-        service->Initialize(nullptr, "localhost:50051");
+        service->Initialize(nullptr, "localhost:50051", "test_node", "test_p2p_secret");
 
         // Start server
         REQUIRE(service->StartServer("127.0.0.1:50053"));  // Use different port for tests
@@ -45,7 +72,7 @@ public:
 
 TEST_CASE("JobExecutionService - Server Startup", "[p2p][service]") {
     auto test_service = std::make_unique<JobExecutionServiceImpl>();
-    test_service->Initialize(nullptr, "localhost:50051");
+    test_service->Initialize(nullptr, "localhost:50051", "test_node_startup", "test_p2p_secret");
 
     SECTION("Server starts successfully") {
         REQUIRE(test_service->StartServer("127.0.0.1:50054"));
@@ -65,7 +92,7 @@ TEST_CASE("JobExecutionService - ConnectToNode", "[p2p][connect]") {
     SECTION("Connect with valid auth token") {
         ConnectRequest request;
         request.set_job_id("test_job_001");
-        request.set_auth_token("valid_test_token_123");
+        request.set_auth_token(GenerateTestJwt("test_job_001"));
         request.set_engine_version("1.0.0");
 
         ConnectResponse response;
@@ -99,7 +126,7 @@ TEST_CASE("JobExecutionService - ConnectToNode", "[p2p][connect]") {
     SECTION("Node capabilities are populated") {
         ConnectRequest request;
         request.set_job_id("test_job_003");
-        request.set_auth_token("test_token");
+        request.set_auth_token(GenerateTestJwt("test_job_003"));
         request.set_engine_version("1.0.0");
 
         ConnectResponse response;
@@ -121,7 +148,7 @@ TEST_CASE("JobExecutionService - SendJob", "[p2p][job]") {
     // First connect
     ConnectRequest conn_req;
     conn_req.set_job_id("test_job_004");
-    conn_req.set_auth_token("test_token");
+    conn_req.set_auth_token(GenerateTestJwt("test_job_004"));
     conn_req.set_engine_version("1.0.0");
 
     ConnectResponse conn_resp;
@@ -183,7 +210,7 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
     // Connect first
     ConnectRequest conn_req;
     conn_req.set_job_id("test_job_stream");
-    conn_req.set_auth_token("test_token");
+    conn_req.set_auth_token(GenerateTestJwt("test_job_stream"));
     conn_req.set_engine_version("1.0.0");
 
     ConnectResponse conn_resp;
@@ -323,7 +350,7 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
     // Setup: Connect and complete a job first
     ConnectRequest conn_req;
     conn_req.set_job_id("test_job_weights");
-    conn_req.set_auth_token("test_token");
+    conn_req.set_auth_token(GenerateTestJwt("test_job_weights"));
     conn_req.set_engine_version("1.0.0");
 
     ConnectResponse conn_resp;
@@ -424,7 +451,7 @@ TEST_CASE("JobExecutionService - Multiple Concurrent Jobs", "[p2p][concurrent]")
             // Connect
             ConnectRequest conn_req;
             conn_req.set_job_id(job_id);
-            conn_req.set_auth_token("test_token_" + std::to_string(i));
+            conn_req.set_auth_token(GenerateTestJwt(job_id));
             conn_req.set_engine_version("1.0.0");
 
             ConnectResponse conn_resp;

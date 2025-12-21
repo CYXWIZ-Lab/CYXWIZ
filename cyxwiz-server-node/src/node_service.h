@@ -1,7 +1,9 @@
 #pragma once
 
 #include <grpcpp/grpcpp.h>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include "node.grpc.pb.h"
 #include "job_executor.h"
@@ -60,6 +62,19 @@ public:
         const protocol::GetNodeMetricsRequest* request,
         protocol::GetNodeMetricsResponse* response) override;
 
+    /**
+     * @brief Get pending P2P job config (for remote dataset jobs)
+     *
+     * When a job with remote:// dataset URI is assigned, it's stored here
+     * until the Engine connects via P2P. The job_execution_service can
+     * retrieve and remove the config when P2P connection arrives.
+     *
+     * @param job_id Job ID to look up
+     * @param config Output parameter for job config
+     * @return true if job was found and removed from pending
+     */
+    bool GetAndRemovePendingJob(const std::string& job_id, protocol::JobConfig* config);
+
 private:
     /**
      * @brief Validate job configuration before acceptance
@@ -77,6 +92,10 @@ private:
 
     JobExecutor* job_executor_;  ///< Non-owning pointer to JobExecutor
     std::string node_id_;         ///< This node's unique ID
+
+    /// Jobs with remote datasets waiting for P2P connection
+    std::map<std::string, protocol::JobConfig> pending_p2p_jobs_;
+    mutable std::mutex pending_jobs_mutex_;
 };
 
 } // namespace servernode

@@ -33,6 +33,7 @@
     "ftxui",
     "cpp-httplib",
     "yaml-cpp",
+    "jwt-cpp",
     "onnx",
     "llama-cpp",
     {

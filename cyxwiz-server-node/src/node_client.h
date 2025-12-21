@@ -59,6 +59,9 @@ public:
     // Stop heartbeat loop
     void StopHeartbeat();
 
+    // Disconnect from Central Server (stops heartbeat and clears registration)
+    void Disconnect();
+
     // Send single heartbeat
     bool SendHeartbeat();
 

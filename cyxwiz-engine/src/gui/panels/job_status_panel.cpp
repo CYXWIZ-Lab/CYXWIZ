@@ -23,7 +23,7 @@ JobStatusPanel::JobStatusPanel()
     , job_manager_(nullptr)
     , selected_job_id_("")
     , auto_refresh_(true)
-    , refresh_interval_(1.0f)  // Refresh every second
+    , refresh_interval_(5.0f)  // Refresh every 5 seconds
     , last_refresh_(std::chrono::steady_clock::now())
     , show_all_jobs_(false)  // Only show P2P jobs by default
     , show_completed_jobs_(true)
@@ -235,6 +235,27 @@ void JobStatusPanel::RenderSelectedJobDetails() {
 
     ImGui::Text("Progress: %.1f%%", selected_job->status.progress() * 100.0f);
 
+    // Show epoch if available
+    if (selected_job->status.current_epoch() > 0) {
+        ImGui::Text("Epoch: %d", selected_job->status.current_epoch());
+    }
+
+    // Show metrics from P2P updates
+    if (selected_job->status.metrics_size() > 0) {
+        const auto& metrics = selected_job->status.metrics();
+        if (metrics.count("loss")) {
+            ImGui::Text("Loss: %.4f", metrics.at("loss"));
+        }
+        if (metrics.count("accuracy")) {
+            ImGui::Text("Accuracy: %.2f%%", metrics.at("accuracy") * 100.0);
+        }
+    }
+
+    // Render training graphs for P2P jobs
+    if (selected_job->is_p2p_job) {
+        RenderTrainingGraphs(selected_job);
+    }
+
     ImGui::Separator();
 
     // P2P-specific information
@@ -256,6 +277,86 @@ void JobStatusPanel::RenderSelectedJobDetails() {
         ImGui::Separator();
         ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error");
         ImGui::TextWrapped("%s", selected_job->status.error().message().c_str());
+    }
+
+    // Job action buttons
+    ImGui::Separator();
+    ImGui::Text("Actions:");
+    ImGui::Spacing();
+
+    // Reuse status_code from above
+    bool is_active = (status_code == cyxwiz::protocol::STATUS_PENDING ||
+                      status_code == cyxwiz::protocol::STATUS_IN_PROGRESS);
+
+    // Cancel button - only for active jobs
+    if (is_active) {
+        if (ImGui::Button("Cancel", ImVec2(70, 0))) {
+            std::string job_to_cancel = selected_job_id_;  // Copy before cancel
+            job_manager_->CancelJob(job_to_cancel);
+            spdlog::info("Cancel requested for job: {}", job_to_cancel);
+        }
+        ImGui::SameLine();
+
+        // Pause/Resume buttons for P2P jobs - show always, disabled if not connected
+        if (selected_job->is_p2p_job) {
+            bool p2p_connected = selected_job->p2p_client && selected_job->p2p_client->IsConnected();
+
+            if (!p2p_connected) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::Button("Pause", ImVec2(60, 0))) {
+                if (p2p_connected && selected_job->p2p_client->PauseTraining()) {
+                    spdlog::info("Pause sent for job: {}", selected_job_id_);
+                }
+            }
+            ImGui::SameLine();
+
+            if (ImGui::Button("Resume", ImVec2(60, 0))) {
+                if (p2p_connected && selected_job->p2p_client->ResumeTraining()) {
+                    spdlog::info("Resume sent for job: {}", selected_job_id_);
+                }
+            }
+            ImGui::SameLine();
+            if (!p2p_connected) {
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "(Waiting for P2P)");
+            }
+        }
+    }
+
+    // Delete button - always visible, but disabled for active jobs
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
+    if (is_active) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Delete", ImVec2(70, 0))) {
+        std::string job_to_delete = selected_job_id_;
+        if (job_manager_->DeleteJob(job_to_delete)) {
+            selected_job_id_.clear();  // Clear selection after delete
+            spdlog::info("Job deleted: {}", job_to_delete);
+        }
+    }
+    if (is_active) {
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Cancel job first before deleting");
+        }
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::SameLine();
+
+    // Hide button - removes from local list only
+    if (ImGui::Button("Hide", ImVec2(60, 0))) {
+        std::string job_to_hide = selected_job_id_;
+        job_manager_->RemoveLocalJob(job_to_hide);
+        selected_job_id_.clear();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Remove from this list only.\nJob remains on server.");
     }
 }
 
@@ -418,6 +519,72 @@ std::string JobStatusPanel::GetTimeUntilExpiration(int64_t expiration_timestamp)
     } else {
         return std::to_string(minutes) + "m " + std::to_string(seconds_remaining % 60) + "s";
     }
+}
+
+void JobStatusPanel::RenderTrainingGraphs(const network::ActiveJob* job) {
+    if (!job) return;
+
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+
+    auto it = job_metrics_.find(job->job_id);
+    if (it == job_metrics_.end() || it->second.epochs.empty()) {
+        ImGui::TextDisabled("Waiting for training data...");
+        return;
+    }
+
+    const auto& metrics = it->second;
+
+    if (ImGui::CollapsingHeader("Training Metrics", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Loss plot
+        if (ImPlot::BeginPlot("Loss", ImVec2(-1, 150))) {
+            ImPlot::SetupAxes("Epoch", "Loss");
+            if (!metrics.loss.empty()) {
+                ImPlot::PlotLine("Loss", metrics.epochs.data(), metrics.loss.data(),
+                                static_cast<int>(metrics.loss.size()));
+            }
+            ImPlot::EndPlot();
+        }
+
+        // Accuracy plot
+        if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, 150))) {
+            ImPlot::SetupAxes("Epoch", "Accuracy (%)");
+            ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 100, ImGuiCond_Once);
+            if (!metrics.accuracy.empty()) {
+                ImPlot::PlotLine("Accuracy", metrics.epochs.data(), metrics.accuracy.data(),
+                                static_cast<int>(metrics.accuracy.size()));
+            }
+            ImPlot::EndPlot();
+        }
+    }
+}
+
+void JobStatusPanel::OnP2PProgressUpdate(const std::string& job_id,
+                                          const network::TrainingProgress& progress) {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+
+    auto& metrics = job_metrics_[job_id];
+
+    // Calculate epoch value (epoch + batch fraction)
+    float epoch_val = static_cast<float>(progress.current_epoch);
+    if (progress.total_batches > 0) {
+        epoch_val += static_cast<float>(progress.current_batch) / progress.total_batches;
+    }
+
+    // Get loss and accuracy from metrics map
+    float loss = 0.0f;
+    float acc = 0.0f;
+
+    auto loss_it = progress.metrics.find("loss");
+    if (loss_it != progress.metrics.end()) {
+        loss = loss_it->second;
+    }
+
+    auto acc_it = progress.metrics.find("accuracy");
+    if (acc_it != progress.metrics.end()) {
+        acc = acc_it->second * 100.0f;  // Convert to percentage
+    }
+
+    metrics.AddPoint(epoch_val, loss, acc);
 }
 
 } // namespace cyxwiz

@@ -193,6 +193,7 @@ set(ENGINE_SOURCES
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
     src/network/p2p_client.cpp
+    src/network/dataset_provider.cpp
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/job_status_panel.cpp
     src/gui/panels/wallet_panel.cpp
@@ -344,6 +345,7 @@ set(ENGINE_HEADERS
     src/network/grpc_client.h
     src/network/job_manager.h
     src/network/p2p_client.h
+    src/network/dataset_provider.h
     src/gui/panels/p2p_training_panel.h
     src/gui/panels/job_status_panel.h
     src/gui/panels/wallet_panel.h

@@ -255,6 +255,9 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
     stream_context_ = std::make_unique<grpc::ClientContext>();
     AddAuthMetadata(*stream_context_);
 
+    // Add job_id to metadata so Server Node can identify the job
+    stream_context_->AddMetadata("x-job-id", job_id);
+
     // Start bidirectional stream
     stream_ = stub_->StreamTrainingMetrics(stream_context_.get());
 
@@ -346,6 +349,10 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
                 log_callback_(log.source(), log.message());
             }
         }
+        // Handle dataset streaming requests from Server Node
+        else if (update.has_dataset_info_request() || update.has_batch_request()) {
+            HandleDatasetRequest(update);
+        }
     }
 
     // Finish the stream
@@ -403,6 +410,54 @@ bool P2PClient::RequestCheckpoint() {
     cyxwiz::protocol::TrainingCommand cmd;
     cmd.set_request_checkpoint(true);
     return SendTrainingCommand(cmd);
+}
+
+void P2PClient::RegisterDatasetForJob(const std::string& job_id, cyxwiz::DatasetHandle dataset) {
+    dataset_provider_.RegisterDataset(job_id, dataset);
+    spdlog::info("P2PClient: Registered dataset for job {}", job_id);
+}
+
+void P2PClient::UnregisterDatasetForJob(const std::string& job_id) {
+    dataset_provider_.UnregisterDataset(job_id);
+    spdlog::info("P2PClient: Unregistered dataset for job {}", job_id);
+}
+
+void P2PClient::HandleDatasetRequest(const cyxwiz::protocol::TrainingUpdate& update) {
+    if (!stream_) {
+        spdlog::error("P2PClient: Cannot handle dataset request - stream not active");
+        return;
+    }
+
+    cyxwiz::protocol::TrainingCommand response_cmd;
+
+    if (update.has_dataset_info_request()) {
+        const auto& request = update.dataset_info_request();
+        spdlog::info("P2PClient: Received DatasetInfoRequest for job {}", request.job_id());
+
+        auto info_response = dataset_provider_.HandleDatasetInfoRequest(request);
+        *response_cmd.mutable_dataset_info_response() = info_response;
+
+        if (!stream_->Write(response_cmd)) {
+            spdlog::error("P2PClient: Failed to send DatasetInfoResponse");
+        } else {
+            spdlog::debug("P2PClient: Sent DatasetInfoResponse");
+        }
+    }
+    else if (update.has_batch_request()) {
+        const auto& request = update.batch_request();
+        spdlog::debug("P2PClient: Received BatchRequest for job {}, {} indices",
+                      request.job_id(), request.sample_indices_size());
+
+        auto batch_response = dataset_provider_.HandleBatchRequest(request);
+        *response_cmd.mutable_batch_response() = batch_response;
+
+        if (!stream_->Write(response_cmd)) {
+            spdlog::error("P2PClient: Failed to send BatchResponse");
+        } else {
+            spdlog::debug("P2PClient: Sent BatchResponse ({} bytes)",
+                          batch_response.images().size());
+        }
+    }
 }
 
 bool P2PClient::DownloadWeights(const std::string& job_id,
