@@ -158,6 +158,8 @@ private:
     // Helper methods
     bool VerifyAuthToken(const std::string& token, const std::string& job_id);
     bool NotifyCentralServer(const std::string& job_id, const std::string& node_id);
+    void NotifyJobEnded(const std::string& job_id, bool success, const std::string& reason);
+    void CleanupJob(const std::string& job_id);
     void UpdateJobMetrics(const std::string& job_id,
                          const cyxwiz::protocol::TrainingProgress& progress);
     std::string SaveDatasetToFile(const std::string& job_id,

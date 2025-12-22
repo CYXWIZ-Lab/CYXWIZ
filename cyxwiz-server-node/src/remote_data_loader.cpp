@@ -24,6 +24,7 @@ RemoteDataLoader::RemoteDataLoader(StreamWriteFunc write_func,
 }
 
 RemoteDataLoader::~RemoteDataLoader() {
+    StopPrefetching();
     spdlog::debug("RemoteDataLoader: Destroyed for job {}", job_id_);
 }
 
@@ -110,7 +111,44 @@ Batch RemoteDataLoader::GetNextBatch() {
         return batch;
     }
 
-    // Calculate indices for this batch
+    // If prefetching is enabled, try to get from prefetch queue first
+    if (prefetch_running_.load()) {
+        // Wait for prefetched batch with timeout
+        std::unique_lock<std::mutex> lock(prefetch_mutex_);
+
+        // Wait up to timeout for a batch to be available
+        bool has_batch = prefetch_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms_),
+            [this]() {
+                return !prefetch_queue_.empty() || cancelled_.load() || !prefetch_running_.load();
+            });
+
+        if (!prefetch_queue_.empty()) {
+            batch = std::move(prefetch_queue_.front());
+            prefetch_queue_.pop();
+            current_batch_idx_++;
+
+            spdlog::debug("RemoteDataLoader: Got prefetched batch {} with {} samples (queue: {})",
+                          current_batch_idx_ - 1, batch.batch_size, prefetch_queue_.size());
+
+            // Notify prefetch thread that there's room for more
+            lock.unlock();
+            prefetch_cv_.notify_all();
+
+            return batch;
+        }
+
+        // If prefetch queue is empty but we're still running, fall through to sync fetch
+        if (!has_batch || cancelled_.load()) {
+            spdlog::warn("RemoteDataLoader: Prefetch queue empty, cancelled or timeout");
+            return batch;
+        }
+
+        lock.unlock();
+        // Fall through to synchronous fetch below
+        spdlog::debug("RemoteDataLoader: Prefetch queue empty, falling back to sync fetch");
+    }
+
+    // Synchronous fetch (used when prefetching not running or as fallback)
     int64_t start_idx = current_batch_idx_ * batch_size_;
     int64_t end_idx = std::min(start_idx + batch_size_, num_samples_);
     std::vector<int64_t> batch_indices(indices_.begin() + start_idx,
@@ -147,7 +185,7 @@ Batch RemoteDataLoader::GetNextBatch() {
     batch = ParseBatchResponse(response);
     current_batch_idx_++;
 
-    spdlog::debug("RemoteDataLoader: Got batch {} with {} samples",
+    spdlog::debug("RemoteDataLoader: Got batch {} with {} samples (sync)",
                   current_batch_idx_ - 1, batch.batch_size);
 
     return batch;
@@ -157,12 +195,26 @@ void RemoteDataLoader::Reset() {
     current_batch_idx_ = 0;
     current_epoch_++;
 
+    // Clear prefetch queue for new epoch
+    {
+        std::lock_guard<std::mutex> lock(prefetch_mutex_);
+        while (!prefetch_queue_.empty()) {
+            prefetch_queue_.pop();
+        }
+    }
+
+    // Reset prefetch batch index
+    prefetch_batch_idx_.store(0);
+
     // Reshuffle for new epoch
     if (shuffle_) {
         std::random_device rd;
         std::mt19937 gen(rd());
         std::shuffle(indices_.begin(), indices_.end(), gen);
     }
+
+    // Notify prefetch thread to start fetching for new epoch
+    prefetch_cv_.notify_all();
 
     spdlog::info("RemoteDataLoader: Reset for epoch {}", current_epoch_);
 }
@@ -242,9 +294,21 @@ bool RemoteDataLoader::WaitForResponse(int32_t request_id) {
                     std::chrono::milliseconds(timeout_ms_);
 
     while (batch_responses_.empty()) {
+        // Check for cancellation
+        if (cancelled_.load()) {
+            spdlog::info("RemoteDataLoader: Wait cancelled for request {}", request_id);
+            return false;
+        }
+
         if (response_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
             spdlog::warn("RemoteDataLoader: Timeout waiting for response {}",
                          request_id);
+            return false;
+        }
+
+        // Check for cancellation after waking up
+        if (cancelled_.load()) {
+            spdlog::info("RemoteDataLoader: Wait cancelled for request {}", request_id);
             return false;
         }
     }
@@ -297,6 +361,136 @@ Batch RemoteDataLoader::ParseBatchResponse(const cyxwiz::protocol::BatchResponse
     }
 
     return batch;
+}
+
+void RemoteDataLoader::StartPrefetching() {
+    if (prefetch_running_.load()) {
+        return;  // Already running
+    }
+
+    spdlog::info("RemoteDataLoader: Starting prefetch thread (prefetch_count={})", prefetch_count_);
+
+    prefetch_running_.store(true);
+    prefetch_batch_idx_.store(current_batch_idx_);
+    prefetch_thread_ = std::thread(&RemoteDataLoader::PrefetchThreadFunc, this);
+}
+
+void RemoteDataLoader::StopPrefetching() {
+    if (!prefetch_running_.load()) {
+        return;
+    }
+
+    spdlog::info("RemoteDataLoader: Stopping prefetch thread");
+
+    prefetch_running_.store(false);
+    prefetch_cv_.notify_all();
+    response_cv_.notify_all();
+
+    if (prefetch_thread_.joinable()) {
+        prefetch_thread_.join();
+    }
+
+    // Clear prefetch queue
+    {
+        std::lock_guard<std::mutex> lock(prefetch_mutex_);
+        while (!prefetch_queue_.empty()) {
+            prefetch_queue_.pop();
+        }
+    }
+
+    spdlog::debug("RemoteDataLoader: Prefetch thread stopped");
+}
+
+void RemoteDataLoader::PrefetchThreadFunc() {
+    spdlog::debug("RemoteDataLoader: Prefetch thread started");
+
+    while (prefetch_running_.load() && !cancelled_.load()) {
+        // Check if we need to prefetch more batches
+        int queue_size;
+        {
+            std::lock_guard<std::mutex> lock(prefetch_mutex_);
+            queue_size = static_cast<int>(prefetch_queue_.size());
+        }
+
+        // Get current batch index for comparison
+        int fetch_idx = prefetch_batch_idx_.load();
+        int64_t num_batches = NumBatches();
+
+        // If queue is full or no more batches, wait
+        if (queue_size >= prefetch_count_ || fetch_idx >= num_batches) {
+            std::unique_lock<std::mutex> lock(prefetch_mutex_);
+            prefetch_cv_.wait_for(lock, std::chrono::milliseconds(100),
+                [this, num_batches]() {
+                    return !prefetch_running_.load() ||
+                           cancelled_.load() ||
+                           (static_cast<int>(prefetch_queue_.size()) < prefetch_count_ &&
+                            prefetch_batch_idx_.load() < num_batches);
+                });
+            continue;
+        }
+
+        // Fetch next batch
+        int64_t start_idx = fetch_idx * batch_size_;
+        int64_t end_idx = std::min(start_idx + batch_size_, num_samples_);
+
+        if (start_idx >= num_samples_) {
+            // No more batches this epoch
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        std::vector<int64_t> batch_indices(indices_.begin() + start_idx,
+                                            indices_.begin() + end_idx);
+
+        // Send batch request
+        int32_t request_id = next_request_id_++;
+        pending_request_id_ = request_id;
+
+        spdlog::debug("RemoteDataLoader: Prefetching batch {} (request_id={})", fetch_idx, request_id);
+
+        if (!SendBatchRequest(batch_indices)) {
+            spdlog::warn("RemoteDataLoader: Failed to send prefetch request for batch {}", fetch_idx);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        // Wait for response
+        if (!WaitForResponse(request_id)) {
+            if (cancelled_.load() || !prefetch_running_.load()) {
+                break;  // Cancelled, exit cleanly
+            }
+            spdlog::warn("RemoteDataLoader: Prefetch response timeout for batch {}", fetch_idx);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        // Get response from queue
+        cyxwiz::protocol::BatchResponse response;
+        {
+            std::lock_guard<std::mutex> lock(response_mutex_);
+            if (batch_responses_.empty()) {
+                spdlog::warn("RemoteDataLoader: Prefetch response queue empty");
+                continue;
+            }
+            response = std::move(batch_responses_.front());
+            batch_responses_.pop();
+        }
+
+        // Parse and add to prefetch queue
+        Batch batch = ParseBatchResponse(response);
+        if (batch.batch_size > 0) {
+            std::lock_guard<std::mutex> lock(prefetch_mutex_);
+            prefetch_queue_.push(std::move(batch));
+            prefetch_batch_idx_.fetch_add(1);
+            spdlog::debug("RemoteDataLoader: Prefetched batch {} ({} samples), queue size={}",
+                          fetch_idx, batch.batch_size, prefetch_queue_.size());
+        }
+
+        // Notify GetNextBatch that data is available
+        prefetch_cv_.notify_all();
+    }
+
+    spdlog::debug("RemoteDataLoader: Prefetch thread exiting");
 }
 
 } // namespace server_node

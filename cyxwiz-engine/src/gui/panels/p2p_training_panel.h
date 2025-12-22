@@ -49,6 +49,10 @@ public:
     // Clear data
     void Clear();
 
+    // Public methods to receive progress updates from external sources
+    void OnProgressUpdate(const network::TrainingProgress& progress) { OnProgress(progress); }
+    void OnTrainingComplete(const network::TrainingComplete& complete) { OnComplete(complete); }
+
 private:
     // Rendering sub-components
     void RenderConnectionStatus();
@@ -57,6 +61,7 @@ private:
     void RenderMetricsPlots();
     void RenderLogs();
     void RenderCheckpoints();
+    void RenderStopConfirmPopup();
 
     // P2P callbacks (called from P2P client thread)
     void OnProgress(const network::TrainingProgress& progress);
@@ -144,6 +149,7 @@ private:
     bool show_checkpoints_ = false;
     bool auto_scroll_logs_ = true;
     int selected_metric_plot_ = 0;  // 0=Loss, 1=Accuracy, 2=GPU, 3=Memory
+    bool show_stop_confirm_popup_ = false;
 
     // Thread safety
     mutable std::mutex data_mutex_;

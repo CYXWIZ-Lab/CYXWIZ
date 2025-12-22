@@ -159,6 +159,9 @@ void P2PTrainingPanel::Render() {
         ImGui::EndTabBar();
     }
 
+    // Render stop confirmation popup (must be rendered even when not monitoring)
+    RenderStopConfirmPopup();
+
     ImGui::End();
 }
 
@@ -248,15 +251,10 @@ void P2PTrainingPanel::RenderTrainingControls() {
 
     ImGui::SameLine();
 
-    // Stop button
+    // Stop button - shows confirmation popup
     if (ImGui::Button("Stop", ImVec2(button_width, 0))) {
-        if (p2p_client_ && stop_button_enabled_) {
-            if (p2p_client_->StopTraining()) {
-                AddLogEntry("WARN", "Stop command sent");
-                stop_button_enabled_ = false;
-            } else {
-                AddLogEntry("ERROR", "Failed to stop training");
-            }
+        if (stop_button_enabled_) {
+            show_stop_confirm_popup_ = true;
         }
     }
 }
@@ -292,19 +290,20 @@ void P2PTrainingPanel::RenderMetricsPlots() {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     if (ImPlot::BeginPlot("Training Metrics", ImVec2(-1, -1))) {
-        ImPlot::SetupAxes("Epoch", "Value");
+        // All SetupAxis calls must happen BEFORE any PlotLine calls
+        ImPlot::SetupAxes("Epoch", "Loss");
         ImPlot::SetupAxisLimits(ImAxis_X1, 0, total_epochs_ > 0 ? total_epochs_ : 10, ImGuiCond_Always);
+        ImPlot::SetupAxis(ImAxis_Y2, "Accuracy", ImPlotAxisFlags_AuxDefault);
 
-        // Plot loss
+        // Plot loss on Y1
         if (!loss_history_.epochs.empty()) {
             ImPlot::PlotLine("Loss", loss_history_.epochs.data(), loss_history_.values.data(),
                            static_cast<int>(loss_history_.epochs.size()));
         }
 
-        // Plot accuracy
+        // Plot accuracy on Y2
         if (!accuracy_history_.epochs.empty()) {
             ImPlot::SetAxes(ImAxis_X1, ImAxis_Y2);
-            ImPlot::SetupAxis(ImAxis_Y2, "Accuracy", ImPlotAxisFlags_AuxDefault);
             ImPlot::PlotLine("Accuracy", accuracy_history_.epochs.data(), accuracy_history_.values.data(),
                            static_cast<int>(accuracy_history_.epochs.size()));
         }
@@ -405,8 +404,62 @@ void P2PTrainingPanel::RenderCheckpoints() {
     }
 }
 
+void P2PTrainingPanel::RenderStopConfirmPopup() {
+    // Open popup if requested
+    if (show_stop_confirm_popup_) {
+        ImGui::OpenPopup("Stop Training?");
+        show_stop_confirm_popup_ = false;
+    }
+
+    // Center the popup
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("Stop Training?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to stop the current training?");
+        ImGui::Text("This action cannot be undone.");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Center the buttons
+        float button_width = 120.0f;
+        float total_width = button_width * 2 + ImGui::GetStyle().ItemSpacing.x;
+        float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
+        if (ImGui::Button("Yes, Stop", ImVec2(button_width, 0))) {
+            if (p2p_client_ && p2p_client_->StopTraining()) {
+                AddLogEntry("WARN", "Training stopped by user");
+                stop_button_enabled_ = false;
+                pause_button_enabled_ = false;
+                resume_button_enabled_ = false;
+            } else {
+                AddLogEntry("ERROR", "Failed to stop training");
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopStyleColor(2);
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
 void P2PTrainingPanel::OnProgress(const network::TrainingProgress& progress) {
     std::lock_guard<std::mutex> lock(data_mutex_);
+
+    spdlog::debug("P2PTrainingPanel::OnProgress - epoch {}/{}, batch {}/{}, gpu={:.2f}%, mem={:.2f}%",
+                  progress.current_epoch, progress.total_epochs,
+                  progress.current_batch, progress.total_batches,
+                  progress.gpu_usage * 100.0f, progress.memory_usage * 100.0f);
 
     latest_progress_ = progress;
     current_epoch_ = progress.current_epoch;
@@ -415,9 +468,11 @@ void P2PTrainingPanel::OnProgress(const network::TrainingProgress& progress) {
     total_batches_ = progress.total_batches;
     current_progress_ = progress.progress_percentage;
 
-    // Update metrics history
-    float epoch_value = static_cast<float>(progress.current_epoch) +
-                        (static_cast<float>(progress.current_batch) / progress.total_batches);
+    // Update metrics history - protect against division by zero
+    float epoch_value = static_cast<float>(progress.current_epoch);
+    if (progress.total_batches > 0) {
+        epoch_value += static_cast<float>(progress.current_batch) / progress.total_batches;
+    }
 
     if (progress.metrics.count("loss")) {
         loss_history_.AddPoint(epoch_value, progress.metrics.at("loss"));

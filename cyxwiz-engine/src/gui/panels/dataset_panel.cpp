@@ -2276,8 +2276,22 @@ bool DatasetPanel::SubmitTrainingJob() {
 
     // Set wallet address from WalletPanel for blockchain escrow
     if (wallet_panel_ && wallet_panel_->IsConnected()) {
-        config.set_payment_address(wallet_panel_->GetWalletAddress());
-        spdlog::info("Using wallet address for job payment: {}", wallet_panel_->GetWalletAddress());
+        std::string wallet_address = wallet_panel_->GetWalletAddress();
+
+        // Validate Solana address format (base58, 32-44 chars)
+        if (wallet_address.empty()) {
+            spdlog::error("Cannot submit job: wallet address is empty. Please link a wallet to your account.");
+            return false;
+        }
+        if (wallet_address.length() < 32 || wallet_address.length() > 44) {
+            spdlog::error("Cannot submit job: invalid wallet address length ({} chars). Expected 32-44 for Solana address.",
+                         wallet_address.length());
+            spdlog::error("Wallet address received: '{}'", wallet_address);
+            return false;
+        }
+
+        config.set_payment_address(wallet_address);
+        spdlog::info("Using wallet address for job payment: {}", wallet_address);
     } else {
         spdlog::error("Cannot submit job: wallet not connected. Please connect your wallet first.");
         return false;

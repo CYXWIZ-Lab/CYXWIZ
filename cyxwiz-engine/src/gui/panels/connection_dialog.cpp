@@ -1,13 +1,19 @@
 #include "connection_dialog.h"
+#include "wallet_panel.h"
 #include "../icons.h"
 #include "../node_editor.h"
 #include "network/grpc_client.h"
 #include "network/job_manager.h"
+#include "network/reservation_client.h"
+#include "network/p2p_client.h"
 #include "core/data_registry.h"
+#include "auth/auth_client.h"
 #include "common.pb.h"
+#include "job.pb.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <cstring>
+#include <ctime>
 
 // Undefine Windows macros that conflict with protobuf STATUS_* enums
 #ifdef STATUS_PENDING
@@ -23,15 +29,12 @@
 namespace cyxwiz {
 
 ConnectionDialog::ConnectionDialog(network::GRPCClient* client, network::JobManager* job_manager)
-    : client_(client), job_manager_(job_manager), show_(false), connecting_(false), submitting_job_(false) {
+    : client_(client), job_manager_(job_manager), show_(false), connecting_(false) {
     // Default server address
     std::strncpy(server_address_, "localhost:50051", sizeof(server_address_) - 1);
     server_address_[sizeof(server_address_) - 1] = '\0';
 
-    // Initialize job submission fields
-    std::strncpy(model_definition_, "# Python model definition\nimport cyxwiz\n", sizeof(model_definition_) - 1);
-    model_definition_[sizeof(model_definition_) - 1] = '\0';
-
+    // Initialize dataset URI for P2P training
     std::strncpy(dataset_uri_, "remote://engine", sizeof(dataset_uri_) - 1);
     dataset_uri_[sizeof(dataset_uri_) - 1] = '\0';
 }
@@ -43,23 +46,34 @@ void ConnectionDialog::Render() {
         return;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(900, 750), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Server Connection", &show_, ImGuiWindowFlags_NoCollapse)) {
         RenderConnectionPanel();
 
         ImGui::Separator();
 
         if (client_ && client_->IsConnected()) {
-            // Node Discovery section (new)
-            RenderNodeDiscoveryPanel();
-            ImGui::Separator();
+            // Show active reservation if we have one
+            if (has_active_reservation_) {
+                RenderActiveReservationPanel();
+                ImGui::Separator();
+            }
 
-            RenderJobSubmitPanel();
-            ImGui::Separator();
-            RenderActiveJobsPanel();
+            // Node Discovery section
+            RenderNodeDiscoveryPanel();
+
+            // Show reservation panel when a node is selected
+            if (selected_node_index_ >= 0 && !has_active_reservation_) {
+                ImGui::Separator();
+                RenderReservationPanel();
+            }
+            // Job history removed - jobs are tracked via P2P Training Progress panel
         } else {
             ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.0f, 1.0f), "Not connected to server");
         }
+
+        // Render reservation confirmation dialog (modal popup)
+        RenderReservationConfirmDialog();
     }
     ImGui::End();
 }
@@ -133,183 +147,7 @@ void ConnectionDialog::RenderConnectionPanel() {
     }
 }
 
-void ConnectionDialog::RenderJobSubmitPanel() {
-    ImGui::SeparatorText("Submit Job");
-
-    // Show model from node editor instead of text input
-    ImGui::Text("Model Definition:");
-    if (node_editor_) {
-        std::string graph_json = node_editor_->GetGraphJson();
-        if (!graph_json.empty() && graph_json != "{}") {
-            // Count nodes and links in the graph for display
-            size_t node_count = 0;
-            size_t link_count = 0;
-            // Simple counting by finding "type": occurrences for nodes
-            size_t pos = 0;
-            while ((pos = graph_json.find("\"type\":", pos)) != std::string::npos) {
-                node_count++;
-                pos++;
-            }
-            pos = 0;
-            while ((pos = graph_json.find("\"id\":", pos)) != std::string::npos) {
-                link_count++;
-                pos++;
-            }
-            // Rough estimate: links are in the "links" array
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
-                ICON_FA_CHECK " Graph loaded: %zu nodes", node_count);
-
-            // Show preview of graph JSON (first 200 chars)
-            ImGui::BeginChild("graph_preview", ImVec2(-1, 80), true);
-            ImGui::TextWrapped("%s", graph_json.substr(0, 500).c_str());
-            if (graph_json.length() > 500) {
-                ImGui::TextDisabled("... (%zu more characters)", graph_json.length() - 500);
-            }
-            ImGui::EndChild();
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
-                ICON_FA_TRIANGLE_EXCLAMATION " No model graph - create nodes in Node Editor first");
-        }
-    } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
-            ICON_FA_XMARK " Node Editor not connected");
-    }
-
-    ImGui::Spacing();
-
-    ImGui::Text("Dataset URI:");
-    ImGui::InputText("##dataset_uri", dataset_uri_, sizeof(dataset_uri_));
-
-    ImGui::Spacing();
-
-    // Disable submit if no node editor or empty graph
-    bool can_submit = node_editor_ != nullptr;
-    std::string graph_json;
-    if (node_editor_) {
-        graph_json = node_editor_->GetGraphJson();
-        can_submit = !graph_json.empty() && graph_json != "{}";
-    }
-
-    ImGui::BeginDisabled(submitting_job_ || !can_submit);
-    if (ImGui::Button(submitting_job_ ? "Submitting..." : "Submit Job", ImVec2(120, 0))) {
-        submitting_job_ = true;
-
-        std::string job_id;
-        // Use the graph JSON from NodeEditor as model definition
-        if (job_manager_->SubmitSimpleJob(graph_json, dataset_uri_, job_id)) {
-            last_submitted_job_id_ = job_id;
-            spdlog::info("Job submitted successfully: {}", job_id);
-
-            // If using remote:// URI, register the loaded dataset for lazy streaming
-            std::string uri_str(dataset_uri_);
-            if (uri_str.find("remote://") == 0) {
-                auto& registry = cyxwiz::DataRegistry::Instance();
-                auto dataset_names = registry.GetDatasetNames();
-                if (!dataset_names.empty()) {
-                    // Get the first loaded dataset
-                    auto dataset = registry.GetDataset(dataset_names[0]);
-                    if (dataset.IsValid()) {
-                        auto dataset_ptr = std::make_shared<cyxwiz::DatasetHandle>(dataset);
-                        job_manager_->SetRemoteDataset(job_id, dataset_ptr);
-                        spdlog::info("Registered dataset '{}' for remote streaming", dataset_names[0]);
-                    }
-                } else {
-                    spdlog::warn("No datasets loaded - remote streaming will fail");
-                }
-            }
-        } else {
-            spdlog::error("Failed to submit job");
-        }
-
-        submitting_job_ = false;
-    }
-    ImGui::EndDisabled();
-
-    if (!last_submitted_job_id_.empty()) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Last job: %s", last_submitted_job_id_.c_str());
-    }
-}
-
-void ConnectionDialog::RenderActiveJobsPanel() {
-    ImGui::SeparatorText("Active Jobs");
-
-    const auto& active_jobs = job_manager_->GetActiveJobs();
-
-    if (active_jobs.empty()) {
-        ImGui::TextDisabled("No active jobs");
-        return;
-    }
-
-    if (ImGui::BeginTable("active_jobs", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Job ID", ImGuiTableColumnFlags_WidthFixed, 200);
-        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 100);
-        ImGui::TableSetupColumn("Progress", ImGuiTableColumnFlags_WidthFixed, 150);
-        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 100);
-        ImGui::TableHeadersRow();
-
-        for (const auto& job : active_jobs) {
-            ImGui::TableNextRow();
-
-            // Job ID
-            ImGui::TableNextColumn();
-            ImGui::Text("%s", job.job_id.c_str());
-
-            // Status
-            ImGui::TableNextColumn();
-            std::string status_name = cyxwiz::protocol::StatusCode_Name(job.status.status());
-
-            ImVec4 status_color;
-            if (job.status.status() == cyxwiz::protocol::STATUS_SUCCESS) {
-                status_color = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
-            } else if (job.status.status() == cyxwiz::protocol::STATUS_FAILED ||
-                       job.status.status() == cyxwiz::protocol::STATUS_CANCELLED) {
-                status_color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
-            } else if (job.status.status() == cyxwiz::protocol::STATUS_IN_PROGRESS) {
-                status_color = ImVec4(0.0f, 0.8f, 1.0f, 1.0f);
-            } else {
-                status_color = ImVec4(0.8f, 0.8f, 0.0f, 1.0f);
-            }
-
-            ImGui::TextColored(status_color, "%s", status_name.c_str());
-
-            // Progress
-            ImGui::TableNextColumn();
-            float progress = static_cast<float>(job.status.progress());
-            ImGui::ProgressBar(progress, ImVec2(-1, 0), nullptr);
-            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-            ImGui::Text("%.1f%%", progress * 100.0f);
-
-            // Actions
-            ImGui::TableNextColumn();
-            ImGui::PushID(job.job_id.c_str());
-
-            // Use fully qualified names to avoid Windows macro conflicts
-            bool is_active = (job.status.status() == cyxwiz::protocol::STATUS_IN_PROGRESS ||
-                              job.status.status() == cyxwiz::protocol::STATUS_PENDING);
-
-            if (is_active) {
-                // Cancel button for active jobs
-                if (ImGui::SmallButton("Cancel")) {
-                    job_manager_->CancelJob(job.job_id);
-                }
-            } else {
-                // Delete button for completed/failed/cancelled jobs
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
-                if (ImGui::SmallButton("Delete")) {
-                    job_manager_->DeleteJob(job.job_id);
-                }
-                ImGui::PopStyleColor(3);
-            }
-
-            ImGui::PopID();
-        }
-
-        ImGui::EndTable();
-    }
-}
+// RenderActiveJobsPanel removed - jobs are now tracked via P2P Training Progress panel
 
 // ============================================================================
 // Node Discovery
@@ -589,6 +427,634 @@ void ConnectionDialog::SearchNodes() {
     } else {
         spdlog::error("Failed to search nodes: {}", client_->GetLastError());
     }
+}
+
+// ============================================================================
+// Reservation System
+// ============================================================================
+
+bool ConnectionDialog::HasActiveReservation() const {
+    return has_active_reservation_;
+}
+
+const network::ReservationInfo& ConnectionDialog::GetReservation() const {
+    return active_reservation_;
+}
+
+void ConnectionDialog::RenderReservationPanel() {
+    if (selected_node_index_ < 0 || selected_node_index_ >= static_cast<int>(discovered_nodes_.size())) {
+        return;
+    }
+
+    const auto& node = discovered_nodes_[selected_node_index_];
+
+    ImGui::SeparatorText(ICON_FA_CLOCK " Reserve Node");
+
+    // Duration selection
+    ImGui::Text("Reservation Duration:");
+    ImGui::SetNextItemWidth(200);
+    ImGui::SliderInt("##duration_minutes", &reservation_duration_minutes_, 10, 480, "%d minutes");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%.1f hours)", reservation_duration_minutes_ / 60.0f);
+
+    // Training hyperparameters
+    ImGui::Spacing();
+    ImGui::Text("Training Settings:");
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputInt("Epochs##res", &reservation_epochs_);
+    if (reservation_epochs_ < 1) reservation_epochs_ = 1;
+    if (reservation_epochs_ > 1000) reservation_epochs_ = 1000;
+
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputInt("Batch Size##res", &reservation_batch_size_);
+    if (reservation_batch_size_ < 1) reservation_batch_size_ = 1;
+    if (reservation_batch_size_ > 512) reservation_batch_size_ = 512;
+
+    // Cost estimate
+    double hourly_rate = node.price_per_hour;
+    double estimated_cost = hourly_rate * (reservation_duration_minutes_ / 60.0);
+    double estimated_usd = node.price_usd_equivalent * (reservation_duration_minutes_ / 60.0);
+
+    ImGui::Spacing();
+    ImGui::Text("Estimated Cost:");
+    if (node.free_tier_available) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.4f, 1.0f), ICON_FA_GIFT " FREE");
+    } else {
+        ImGui::SameLine();
+        ImGui::Text("%.4f CYX", estimated_cost);
+        if (estimated_usd > 0) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("($%.4f)", estimated_usd);
+        }
+    }
+
+    // Wallet address (from AuthClient user profile)
+    ImGui::Spacing();
+    ImGui::Text("Your Wallet Address:");
+
+    std::string wallet_address;
+    auto& auth = cyxwiz::auth::AuthClient::Instance();
+    if (auth.IsAuthenticated()) {
+        wallet_address = auth.GetUserInfo().wallet_address;
+    }
+
+    if (!wallet_address.empty()) {
+        // Show truncated wallet address
+        std::string display_addr = wallet_address;
+        if (display_addr.length() > 20) {
+            display_addr = display_addr.substr(0, 8) + "..." + display_addr.substr(display_addr.length() - 8);
+        }
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), ICON_FA_WALLET " %s", display_addr.c_str());
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
+            ICON_FA_TRIANGLE_EXCLAMATION " Connect wallet in Wallet Panel first (View > Panels > Wallet)");
+    }
+
+    ImGui::Spacing();
+
+    // Reserve button - enabled if wallet address exists, node is online, and not already reserving
+    bool can_reserve = !wallet_address.empty() && node.is_online && !reserving_;
+
+    ImGui::BeginDisabled(!can_reserve);
+    if (ImGui::Button(reserving_ ? ICON_FA_SPINNER " Reserving..." : ICON_FA_CALENDAR_CHECK " Reserve Node", ImVec2(150, 0))) {
+        show_reservation_confirm_ = true;
+    }
+    ImGui::EndDisabled();
+
+    // Show reservation error if any
+    if (!reservation_error_.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ICON_FA_XMARK " %s", reservation_error_.c_str());
+    }
+}
+
+void ConnectionDialog::RenderReservationConfirmDialog() {
+    if (!show_reservation_confirm_) {
+        return;
+    }
+
+    ImGui::OpenPopup("Confirm Reservation");
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("Confirm Reservation", &show_reservation_confirm_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (selected_node_index_ < 0 || selected_node_index_ >= static_cast<int>(discovered_nodes_.size())) {
+            ImGui::Text("Error: No node selected");
+            if (ImGui::Button("Close")) {
+                show_reservation_confirm_ = false;
+            }
+            ImGui::EndPopup();
+            return;
+        }
+
+        const auto& node = discovered_nodes_[selected_node_index_];
+
+        ImGui::Text(ICON_FA_SERVER " Reserving Node: %s", node.name.c_str());
+        ImGui::Separator();
+
+        // Reservation details
+        ImGui::BulletText("Duration: %d minutes (%.1f hours)", reservation_duration_minutes_, reservation_duration_minutes_ / 60.0);
+        ImGui::BulletText("Device: %s", node.device_type.c_str());
+        if (node.vram_bytes > 0) {
+            ImGui::BulletText("VRAM: %.1f GB", node.vram_bytes / (1024.0 * 1024.0 * 1024.0));
+        }
+        ImGui::BulletText("Reputation: %.0f%%", node.reputation_score * 100);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Cost breakdown
+        double hourly_rate = node.price_per_hour;
+        double estimated_cost = hourly_rate * (reservation_duration_minutes_ / 60.0);
+
+        ImGui::Text(ICON_FA_COINS " Cost Breakdown:");
+        if (node.free_tier_available) {
+            ImGui::BulletText("Node cost: FREE");
+            ImGui::BulletText("Platform fee: FREE");
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.4f, 1.0f), "Total: FREE");
+        } else {
+            double platform_fee = estimated_cost * 0.10;
+            double total = estimated_cost + platform_fee;
+            ImGui::BulletText("Node cost: %.4f CYX", estimated_cost);
+            ImGui::BulletText("Platform fee (10%%): %.4f CYX", platform_fee);
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Total (Escrow): %.4f CYX", total);
+        }
+
+        ImGui::Spacing();
+        ImGui::Text("Payment will be locked in escrow until job completes.");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Confirm/Cancel buttons
+        if (ImGui::Button(ICON_FA_CHECK " Confirm Reservation", ImVec2(160, 0))) {
+            StartReservation();
+            show_reservation_confirm_ = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_XMARK " Cancel", ImVec2(100, 0))) {
+            show_reservation_confirm_ = false;
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+void ConnectionDialog::RenderActiveReservationPanel() {
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.15f, 1.0f));
+
+    // Active Reservation Card
+    if (ImGui::BeginChild("ActiveReservationCard", ImVec2(-1, 220), true)) {
+        // Header with icon
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+        ImGui::Text(ICON_FA_BOLT " ACTIVE RESERVATION");
+        ImGui::PopStyleColor();
+
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Calculate time remaining
+        int64_t now = static_cast<int64_t>(std::time(nullptr));
+        int64_t remaining_seconds = active_reservation_.end_time - now;
+        int64_t total_seconds = active_reservation_.end_time - active_reservation_.start_time;
+        if (remaining_seconds < 0) remaining_seconds = 0;
+
+        // Time display with hours:minutes:seconds
+        int hours = static_cast<int>(remaining_seconds / 3600);
+        int minutes = static_cast<int>((remaining_seconds % 3600) / 60);
+        int seconds = static_cast<int>(remaining_seconds % 60);
+
+        // Progress calculation
+        float progress = (total_seconds > 0) ? (1.0f - static_cast<float>(remaining_seconds) / total_seconds) : 1.0f;
+
+        // Time color based on urgency
+        ImVec4 time_color;
+        ImVec4 progress_color;
+        if (remaining_seconds < 300) { // < 5 minutes - Red
+            time_color = ImVec4(1.0f, 0.2f, 0.2f, 1.0f);
+            progress_color = ImVec4(1.0f, 0.2f, 0.2f, 1.0f);
+        } else if (remaining_seconds < 600) { // < 10 minutes - Orange
+            time_color = ImVec4(1.0f, 0.6f, 0.0f, 1.0f);
+            progress_color = ImVec4(1.0f, 0.6f, 0.0f, 1.0f);
+        } else { // Normal - Green
+            time_color = ImVec4(0.2f, 1.0f, 0.4f, 1.0f);
+            progress_color = ImVec4(0.2f, 0.8f, 0.4f, 1.0f);
+        }
+
+        // Large countdown timer display
+        ImGui::BeginGroup();
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, time_color);
+            ImGui::Text(ICON_FA_STOPWATCH);
+            ImGui::SameLine();
+
+            // Format time as HH:MM:SS or MM:SS
+            char time_str[32];
+            if (hours > 0) {
+                snprintf(time_str, sizeof(time_str), "%d:%02d:%02d", hours, minutes, seconds);
+            } else {
+                snprintf(time_str, sizeof(time_str), "%02d:%02d", minutes, seconds);
+            }
+
+            // Display time in larger format
+            ImGui::SetWindowFontScale(1.5f);
+            ImGui::Text("%s", time_str);
+            ImGui::SetWindowFontScale(1.0f);
+
+            ImGui::SameLine();
+            ImGui::TextDisabled("remaining");
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndGroup();
+
+        // Progress bar
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, progress_color);
+        ImGui::ProgressBar(progress, ImVec2(-1, 6), "");
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+
+        // Two-column layout for details
+        float col_width = ImGui::GetContentRegionAvail().x * 0.5f;
+
+        // Left column - Node info
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("Node");
+        ImGui::Text(ICON_FA_SERVER " %s", active_reservation_.node_endpoint.c_str());
+        ImGui::EndGroup();
+
+        ImGui::SameLine(col_width);
+
+        // Right column - P2P Status
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("Connection");
+        bool p2p_connected = p2p_client_ && p2p_client_->IsConnected();
+        if (p2p_connected) {
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), ICON_FA_LINK " Connected");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), ICON_FA_LINK_SLASH " Disconnected");
+        }
+        ImGui::EndGroup();
+
+        ImGui::Spacing();
+
+        // Action buttons
+        if (p2p_connected) {
+            // Check if training is already streaming
+            bool is_streaming = p2p_client_ && p2p_client_->IsStreaming();
+
+            if (!is_streaming) {
+                // Start Training button - sends job to Server Node via P2P
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
+                if (ImGui::Button(ICON_FA_PLAY " Start Training", ImVec2(140, 28))) {
+                    StartP2PTraining();
+                }
+                ImGui::PopStyleColor(2);
+                ImGui::SameLine();
+            } else {
+                // Training in progress - show stop button
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.3f, 0.2f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.4f, 0.3f, 1.0f));
+                if (ImGui::Button(ICON_FA_STOP " Stop Training", ImVec2(140, 28))) {
+                    if (p2p_client_) {
+                        p2p_client_->StopTraining();
+                    }
+                }
+                ImGui::PopStyleColor(2);
+                ImGui::SameLine();
+            }
+
+            if (ImGui::Button(ICON_FA_LINK_SLASH " Disconnect", ImVec2(120, 28))) {
+                if (p2p_client_) {
+                    p2p_client_->StopTrainingStream();
+                    p2p_client_->Disconnect();
+                }
+            }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.4f, 1.0f));
+            if (ImGui::Button(ICON_FA_LINK " Connect to Node", ImVec2(150, 28))) {
+                ConnectToReservedNode();
+            }
+            ImGui::PopStyleColor(2);
+        }
+
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.3f, 0.3f, 1.0f));
+        if (ImGui::Button(ICON_FA_XMARK " Release", ImVec2(100, 28))) {
+            CancelReservation();
+        }
+        ImGui::PopStyleColor(2);
+
+        // Warning for low time
+        if (remaining_seconds < 300 && remaining_seconds > 0) {
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+            ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION " Reservation ending soon!");
+            ImGui::PopStyleColor();
+        }
+
+        // Check if reservation has expired
+        if (remaining_seconds <= 0) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f),
+                ICON_FA_CIRCLE_XMARK " Reservation has expired");
+            has_active_reservation_ = false;
+            if (reservation_client_) {
+                reservation_client_->StopHeartbeat();
+            }
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
+void ConnectionDialog::StartReservation() {
+    if (selected_node_index_ < 0 || selected_node_index_ >= static_cast<int>(discovered_nodes_.size())) {
+        reservation_error_ = "No node selected";
+        return;
+    }
+
+    if (!reservation_client_) {
+        reservation_error_ = "Reservation client not configured";
+        return;
+    }
+
+    // Get wallet address from AuthClient user profile
+    std::string wallet_address;
+    auto& auth = cyxwiz::auth::AuthClient::Instance();
+    if (auth.IsAuthenticated()) {
+        wallet_address = auth.GetUserInfo().wallet_address;
+    }
+
+    if (wallet_address.empty()) {
+        reservation_error_ = "No wallet address in profile. Please set wallet in your account settings.";
+        return;
+    }
+
+    const auto& node = discovered_nodes_[selected_node_index_];
+
+    reserving_ = true;
+    reservation_error_.clear();
+
+    spdlog::info("Reserving node {} for {} minutes with wallet {}...",
+        node.node_id, reservation_duration_minutes_, wallet_address);
+
+    // Build job config from node editor
+    cyxwiz::protocol::JobConfig job_config;
+    if (node_editor_) {
+        std::string graph_json = node_editor_->GetGraphJson();
+        if (!graph_json.empty() && graph_json != "{}") {
+            job_config.set_model_definition(graph_json);
+        }
+    }
+    job_config.set_dataset_uri(dataset_uri_);
+
+    // Make async reservation request
+    reservation_client_->ReserveNodeAsync(
+        node.node_id,
+        wallet_address,
+        reservation_duration_minutes_,
+        job_config,
+        [this](bool success, const network::ReservationInfo& info, const std::string& error) {
+            reserving_ = false;
+
+            if (success) {
+                active_reservation_ = info;
+                has_active_reservation_ = true;
+                reservation_error_.clear();
+
+                spdlog::info("Node reserved successfully!");
+                spdlog::info("  Reservation ID: {}", info.reservation_id);
+                spdlog::info("  Job ID: {}", info.job_id);
+                spdlog::info("  Node endpoint: {}", info.node_endpoint);
+
+                // Start heartbeat
+                reservation_client_->StartHeartbeat(info.reservation_id, info.job_id);
+
+                // Update P2P training panel if available
+                if (p2p_training_panel_) {
+                    // P2P panel will be updated when we connect
+                }
+            } else {
+                reservation_error_ = error;
+                spdlog::error("Reservation failed: {}", error);
+            }
+        }
+    );
+}
+
+void ConnectionDialog::CancelReservation() {
+    if (!has_active_reservation_) {
+        return;
+    }
+
+    if (!reservation_client_) {
+        reservation_error_ = "Reservation client not configured";
+        return;
+    }
+
+    spdlog::info("Releasing reservation {}...", active_reservation_.reservation_id);
+
+    int64_t time_used = 0;
+    int64_t payment_released = 0;
+    int64_t refund_amount = 0;
+
+    bool success = reservation_client_->ReleaseReservation(
+        active_reservation_.reservation_id,
+        "User requested cancellation",
+        time_used,
+        payment_released,
+        refund_amount
+    );
+
+    if (success) {
+        spdlog::info("Reservation released!");
+        spdlog::info("  Time used: {} seconds", time_used);
+        spdlog::info("  Payment to node: {} lamports", payment_released);
+        spdlog::info("  Refund: {} lamports", refund_amount);
+
+        // Disconnect P2P if connected
+        if (p2p_client_ && p2p_client_->IsConnected()) {
+            p2p_client_->Disconnect();
+        }
+
+        // Stop heartbeat
+        reservation_client_->StopHeartbeat();
+
+        // Clear reservation state
+        has_active_reservation_ = false;
+        active_reservation_ = network::ReservationInfo{};
+        reservation_error_.clear();
+    } else {
+        reservation_error_ = reservation_client_->GetLastError();
+        spdlog::error("Failed to release reservation: {}", reservation_error_);
+    }
+}
+
+void ConnectionDialog::ConnectToReservedNode() {
+    if (!has_active_reservation_) {
+        reservation_error_ = "No active reservation";
+        return;
+    }
+
+    if (!p2p_client_) {
+        reservation_error_ = "P2P client not configured";
+        return;
+    }
+
+    spdlog::info("Connecting to reserved node at {}...", active_reservation_.node_endpoint);
+
+    // Connect to node with auth token
+    if (p2p_client_->ConnectToNode(
+            active_reservation_.node_endpoint,
+            active_reservation_.job_id,
+            active_reservation_.p2p_auth_token)) {
+        spdlog::info("P2P connected to reserved node!");
+
+        // Start monitoring with P2P training panel if available
+        if (p2p_training_panel_) {
+            p2p_training_panel_->StartMonitoring(
+                active_reservation_.job_id,
+                active_reservation_.node_endpoint
+            );
+        }
+
+        reservation_error_.clear();
+    } else {
+        reservation_error_ = "Failed to connect to node: " + p2p_client_->GetLastError();
+        spdlog::error("{}", reservation_error_);
+    }
+}
+
+void ConnectionDialog::StartP2PTraining() {
+    if (!p2p_client_ || !p2p_client_->IsConnected()) {
+        reservation_error_ = "Not connected to node. Please connect first.";
+        return;
+    }
+
+    if (!node_editor_) {
+        reservation_error_ = "Node editor not configured";
+        return;
+    }
+
+    // Get the model definition from NodeEditor
+    std::string graph_json = node_editor_->GetGraphJson();
+    if (graph_json.empty() || graph_json == "{}") {
+        reservation_error_ = "No model defined. Please create a model in the Node Editor.";
+        return;
+    }
+
+    spdlog::info("Starting P2P training (direct to Server Node)...");
+    spdlog::info("  Model definition: {} chars", graph_json.size());
+    spdlog::info("  Dataset URI: {}", dataset_uri_);
+    spdlog::info("  Epochs: {}", reservation_epochs_);
+    spdlog::info("  Batch Size: {}", reservation_batch_size_);
+
+    // Build JobConfig for P2P transmission to Server Node
+    // Note: No wallet/payment_address needed - escrow was handled during reservation
+    cyxwiz::protocol::JobConfig config;
+    config.set_job_id(active_reservation_.job_id);
+    config.set_job_type(cyxwiz::protocol::JOB_TYPE_TRAINING);
+    config.set_priority(cyxwiz::protocol::PRIORITY_NORMAL);
+    config.set_model_definition(graph_json);
+    config.set_dataset_uri(dataset_uri_);
+    config.set_batch_size(reservation_batch_size_);  // From user input
+    config.set_epochs(reservation_epochs_);          // From user input
+    config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
+
+    // Send job config directly to Server Node via P2P
+    std::string uri_str(dataset_uri_);
+    bool send_success = false;
+
+    if (!uri_str.empty()) {
+        send_success = p2p_client_->SendJobWithDatasetURI(config, uri_str);
+    } else {
+        send_success = p2p_client_->SendJob(config);
+    }
+
+    if (!send_success) {
+        reservation_error_ = "Failed to send job to node: " + p2p_client_->GetLastError();
+        spdlog::error("{}", reservation_error_);
+        return;
+    }
+
+    spdlog::info("Job config sent to Server Node successfully via P2P");
+
+    // Register dataset for lazy streaming if using remote://
+    if (uri_str.find("remote://") == 0) {
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        auto dataset_names = registry.GetDatasetNames();
+        if (!dataset_names.empty()) {
+            auto dataset = registry.GetDataset(dataset_names[0]);
+            if (dataset.IsValid()) {
+                p2p_client_->RegisterDatasetForJob(active_reservation_.job_id, dataset);
+                spdlog::info("Registered dataset '{}' for lazy streaming", dataset_names[0]);
+            }
+        }
+    }
+
+    // Start monitoring on the P2P training panel
+    if (p2p_training_panel_) {
+        // Set the P2P client on the panel
+        p2p_training_panel_->SetP2PClient(p2p_client_);
+
+        // Start monitoring
+        p2p_training_panel_->StartMonitoring(
+            active_reservation_.job_id,
+            active_reservation_.node_endpoint
+        );
+
+        // Make the panel visible
+        p2p_training_panel_->Show();
+
+        spdlog::info("P2P Training Panel: Started monitoring for job {}", active_reservation_.job_id);
+    }
+
+    // Set up progress callbacks - forward to P2P training panel only (no console log)
+    p2p_client_->SetProgressCallback([this](const network::TrainingProgress& progress) {
+        // Forward to P2P training panel if available
+        if (p2p_training_panel_) {
+            p2p_training_panel_->OnProgressUpdate(progress);
+        }
+    });
+
+    p2p_client_->SetCompletionCallback([this](const network::TrainingComplete& complete) {
+        spdlog::info("Training completed! Success: {}", complete.success);
+        if (p2p_training_panel_) {
+            p2p_training_panel_->OnTrainingComplete(complete);
+        }
+    });
+
+    p2p_client_->SetErrorCallback([this](const std::string& error, bool is_fatal) {
+        spdlog::error("Training error: {} (fatal: {})", error, is_fatal);
+        if (is_fatal) {
+            reservation_error_ = "Training error: " + error;
+        }
+    });
+
+    // Start bidirectional training stream with Server Node
+    if (!p2p_client_->StartTrainingStream(active_reservation_.job_id)) {
+        reservation_error_ = "Failed to start training stream: " + p2p_client_->GetLastError();
+        spdlog::error("{}", reservation_error_);
+        return;
+    }
+
+    spdlog::info("P2P training started successfully!");
+    spdlog::info("  Job ID: {}", active_reservation_.job_id);
+    spdlog::info("  Training on Server Node: {}", active_reservation_.node_endpoint);
+
+    reservation_error_.clear();
 }
 
 } // namespace cyxwiz

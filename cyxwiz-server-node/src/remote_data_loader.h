@@ -8,6 +8,7 @@
 #include <queue>
 #include <atomic>
 #include <functional>
+#include <thread>
 #include <grpcpp/grpcpp.h>
 #include "execution.pb.h"
 
@@ -122,7 +123,29 @@ public:
     // Set timeout for batch requests (milliseconds)
     void SetTimeout(int timeout_ms) { timeout_ms_ = timeout_ms; }
 
+    // Set number of batches to prefetch (default: 2)
+    void SetPrefetchCount(int count) { prefetch_count_ = std::max(1, count); }
+
+    // Cancel the loader (signals all waiting threads to exit)
+    void Cancel() {
+        cancelled_.store(true);
+        response_cv_.notify_all();
+        info_cv_.notify_all();
+        prefetch_cv_.notify_all();
+    }
+
+    // Check if loader is cancelled
+    bool IsCancelled() const { return cancelled_.load(); }
+
+    // Start the prefetch thread (call after Initialize)
+    void StartPrefetching();
+
+    // Stop prefetching (called automatically in destructor)
+    void StopPrefetching();
+
 private:
+    // Prefetch thread function
+    void PrefetchThreadFunc();
     // Send batch request through the stream
     bool SendBatchRequest(const std::vector<int64_t>& indices);
 
@@ -166,8 +189,20 @@ private:
     std::mutex info_mutex_;
     std::condition_variable info_cv_;
 
-    // Timeout
-    int timeout_ms_ = 30000;  // 30 seconds default
+    // Timeout - 3 seconds for quick disconnect detection
+    int timeout_ms_ = 3000;  // 3 seconds default
+
+    // Cancellation flag
+    std::atomic<bool> cancelled_{false};
+
+    // Prefetch settings and state
+    int prefetch_count_ = 2;  // Number of batches to prefetch
+    std::queue<Batch> prefetch_queue_;  // Queue of prefetched batches
+    std::mutex prefetch_mutex_;
+    std::condition_variable prefetch_cv_;
+    std::thread prefetch_thread_;
+    std::atomic<bool> prefetch_running_{false};
+    std::atomic<int> prefetch_batch_idx_{0};  // Next batch to prefetch
 };
 
 } // namespace server_node

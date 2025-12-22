@@ -83,15 +83,11 @@ void JobManager::Update() {
         return;
     }
 
-    // Periodically refresh the job list from server
-    static auto last_list_refresh = std::chrono::steady_clock::now();
-    auto now = std::chrono::steady_clock::now();
-    auto list_refresh_elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_list_refresh);
+    // NOTE: Auto-polling disabled - jobs are tracked locally via P2P.
+    // Central Server doesn't need to track jobs since they go directly to Server Node.
+    // Use RefreshJobList() manually via the UI if historical view is needed.
 
-    if (list_refresh_elapsed >= std::chrono::seconds(60)) {  // Refresh job list every 60 seconds
-        RefreshJobList();
-        last_list_refresh = now;
-    }
+    auto now = std::chrono::steady_clock::now();
 
     // Poll status for active jobs (skip jobs with active P2P connections - they get real-time updates)
 
@@ -106,6 +102,9 @@ void JobManager::Update() {
         if (elapsed >= status_poll_interval_) {
             cyxwiz::protocol::GetJobStatusResponse response;
             if (client_->GetJobStatus(job.job_id, response)) {
+                // Reset failure counter on successful request
+                consecutive_failures_ = 0;
+
                 job.status = response.status();
                 job.last_update = now;
 
@@ -156,6 +155,17 @@ void JobManager::Update() {
                     spdlog::info("Job {} finished with status: {}",
                                 job.job_id,
                                 cyxwiz::protocol::StatusCode_Name(job.status.status()));
+                }
+            } else {
+                // Failed to get job status - might indicate server disconnection
+                consecutive_failures_++;
+                spdlog::warn("Failed to get status for job {} (consecutive failures: {}/{})",
+                            job.job_id, consecutive_failures_, MAX_CONSECUTIVE_FAILURES);
+
+                if (consecutive_failures_ >= MAX_CONSECUTIVE_FAILURES) {
+                    spdlog::error("Max consecutive failures reached - Central Server appears to be down");
+                    OnServerDisconnected();
+                    return;  // Exit Update() early since we're disconnected
                 }
             }
         }
@@ -229,6 +239,7 @@ bool JobManager::SubmitSimpleJob(const std::string& model_definition,
                                    const std::string& dataset_uri,
                                    std::string& out_job_id) {
     // Create a simple job config for testing
+    // Note: payment_address is not needed here - Central Server gets it from JWT
     cyxwiz::protocol::JobConfig config;
     config.set_job_type(cyxwiz::protocol::JOB_TYPE_TRAINING);
     config.set_priority(cyxwiz::protocol::PRIORITY_NORMAL);
@@ -367,6 +378,18 @@ void JobManager::RemoveLocalJob(const std::string& job_id) {
         active_jobs_.erase(it, active_jobs_.end());
         spdlog::info("Removed job {} from local list", job_id);
     }
+}
+
+void JobManager::ClearAllLocalJobs() {
+    spdlog::info("Clearing all local jobs...");
+
+    // Stop all P2P connections first
+    CloseAllP2PConnections();
+
+    // Clear active jobs list
+    active_jobs_.clear();
+
+    spdlog::info("All local jobs cleared");
 }
 
 bool JobManager::GetJobStatus(const std::string& job_id, cyxwiz::protocol::JobStatus& out_status) {
@@ -587,6 +610,55 @@ ActiveJob* JobManager::FindJob(const std::string& job_id) {
         }
     }
     return nullptr;
+}
+
+void JobManager::CloseAllP2PConnections() {
+    spdlog::info("Closing all P2P connections...");
+
+    // Close all P2P clients
+    for (auto& [job_id, p2p_client] : p2p_clients_) {
+        if (p2p_client) {
+            spdlog::info("Disconnecting P2P client for job {}", job_id);
+            p2p_client->Disconnect();
+        }
+    }
+    p2p_clients_.clear();
+
+    // Clear P2P clients from active jobs
+    for (auto& job : active_jobs_) {
+        if (job.p2p_client) {
+            job.p2p_client.reset();
+        }
+        // Mark job as cancelled to prevent callbacks
+        if (job.is_cancelled) {
+            job.is_cancelled->store(true);
+        }
+    }
+
+    spdlog::info("All P2P connections closed");
+}
+
+void JobManager::OnServerDisconnected() {
+    spdlog::warn("========================================");
+    spdlog::warn("Central Server disconnected!");
+    spdlog::warn("Closing all connections and stopping polling...");
+    spdlog::warn("========================================");
+
+    // Close all P2P connections
+    CloseAllP2PConnections();
+
+    // Clear active jobs list (they're no longer valid without server connection)
+    active_jobs_.clear();
+
+    // Disconnect from Central Server
+    if (client_) {
+        client_->Disconnect();
+    }
+
+    // Reset failure counter
+    consecutive_failures_ = 0;
+
+    spdlog::info("Cleanup complete. Reconnect to Central Server to resume.");
 }
 
 } // namespace network

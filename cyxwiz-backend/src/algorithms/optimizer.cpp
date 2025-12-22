@@ -1,6 +1,7 @@
 #include "cyxwiz/optimizer.h"
 #include "cyxwiz/tensor.h"
 #include <cmath>
+#include <cstring>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -64,8 +65,8 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
                     // Initialize velocity if needed
                     if (velocity_.find(name) == velocity_.end()) {
                         velocity_[name] = Tensor(param.Shape(), DataType::Float32);
-                        float* v_data = velocity_[name].Data<float>();
-                        for (size_t i = 0; i < num_elements; ++i) v_data[i] = 0.0f;
+                        // Use memset for faster zero-initialization (optimized from CPU loop)
+                        std::memset(velocity_[name].Data<float>(), 0, num_elements * sizeof(float));
                     }
 
                     af::array v_gpu(static_cast<dim_t>(num_elements),
@@ -141,12 +142,9 @@ void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
         if (m_.find(name) == m_.end()) {
             m_[name] = Tensor(param.Shape(), DataType::Float32);
             v_[name] = Tensor(param.Shape(), DataType::Float32);
-            float* m_data = m_[name].Data<float>();
-            float* v_data = v_[name].Data<float>();
-            for (size_t i = 0; i < num_elements; ++i) {
-                m_data[i] = 0.0f;
-                v_data[i] = 0.0f;
-            }
+            // Use memset for faster zero-initialization (optimized from CPU loop)
+            std::memset(m_[name].Data<float>(), 0, num_elements * sizeof(float));
+            std::memset(v_[name].Data<float>(), 0, num_elements * sizeof(float));
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE

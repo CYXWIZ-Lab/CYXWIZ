@@ -247,7 +247,10 @@
 #define ICON_FA_TAG                 "\xef\x80\xab"  // U+F02B
 #define ICON_FA_TAGS                "\xef\x80\xac"  // U+F02C
 #define ICON_FA_CLOCK               "\xef\x80\x97"  // U+F017
+#define ICON_FA_STOPWATCH           "\xef\x8b\xb2"  // U+F2F2 - stopwatch
+#define ICON_FA_HOURGLASS_HALF      "\xef\x89\x92"  // U+F252 - hourglass half
 #define ICON_FA_CALENDAR            "\xef\x84\xb3"  // U+F133
+#define ICON_FA_CALENDAR_CHECK      "\xef\x89\xb4"  // U+F274
 #define ICON_FA_USER                "\xef\x80\x87"  // U+F007
 #define ICON_FA_USERS               "\xef\x83\x80"  // U+F0C0
 #define ICON_FA_LOCK                "\xef\x80\xa3"  // U+F023

@@ -100,6 +100,9 @@
 #include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
 #include "../network/grpc_client.h"
+#include "../network/reservation_client.h"
+#include "../network/p2p_client.h"
+#include "../auth/auth_client.h"
 #include "../core/project_manager.h"
 #include "../core/data_registry.h"
 #include "../core/graph_compiler.h"
@@ -1538,6 +1541,46 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         connection_dialog_->SetNodeEditor(node_editor_.get());
     }
 
+    // Create and wire up ReservationClient for node reservation
+    if (connection_dialog_ && client) {
+        auto reservation_client = std::make_shared<network::ReservationClient>();
+        // Get server address from existing client (assuming same server hosts reservation service)
+        if (reservation_client->Connect("localhost:50051")) {
+            // Set auth token from AuthClient if authenticated
+            auto& auth = cyxwiz::auth::AuthClient::Instance();
+            if (auth.IsAuthenticated()) {
+                reservation_client->SetAuthToken(auth.GetJwtToken());
+                spdlog::info("ReservationClient auth token set from AuthClient");
+            }
+            connection_dialog_->SetReservationClient(reservation_client);
+            spdlog::info("ReservationClient connected and wired to ConnectionDialog");
+        } else {
+            spdlog::warn("Failed to connect ReservationClient - reservation feature disabled");
+        }
+    }
+
+    // Create a shared P2PClient for reservation-based connections
+    if (connection_dialog_) {
+        auto p2p_client = std::make_shared<network::P2PClient>();
+        connection_dialog_->SetP2PClient(p2p_client);
+        spdlog::info("P2PClient created and wired to ConnectionDialog");
+    }
+
+    // Wire up P2PTrainingPanel to ConnectionDialog
+    if (connection_dialog_ && p2p_training_panel_) {
+        connection_dialog_->SetP2PTrainingPanel(p2p_training_panel_.get());
+        spdlog::info("P2PTrainingPanel wired to ConnectionDialog");
+    }
+
+    // Wire up WalletPanel to ConnectionDialog for wallet address
+    if (connection_dialog_ && wallet_panel_) {
+        connection_dialog_->SetWalletPanel(wallet_panel_.get());
+        spdlog::info("WalletPanel wired to ConnectionDialog (ptr={:p})", (void*)wallet_panel_.get());
+    } else {
+        spdlog::warn("Failed to wire WalletPanel: connection_dialog_={}, wallet_panel_={}",
+            (bool)connection_dialog_, (bool)wallet_panel_);
+    }
+
     // Set JobManager for JobStatusPanel
     if (job_status_panel_) {
         job_status_panel_->SetJobManager(job_manager);
@@ -2040,6 +2083,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (job_status_panel_) {
         dock_style.RegisterPanel("Jobs", ICON_FA_LIST_CHECK, job_status_panel_->GetVisiblePtr());
+    }
+    if (p2p_training_panel_) {
+        dock_style.RegisterPanel("P2P Training", ICON_FA_NETWORK_WIRED, p2p_training_panel_->GetVisiblePtr());
     }
     if (wallet_panel_) {
         dock_style.RegisterPanel("Wallet", ICON_FA_WALLET, wallet_panel_->GetVisiblePtr());

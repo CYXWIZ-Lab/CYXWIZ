@@ -336,18 +336,28 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
 
         // Check if target is one-hot encoded or class indices
         if (target.type() == af::dtype::s32 || target.type() == af::dtype::s64) {
-            // Targets are class indices
-            // Gather log probabilities at target indices
+            // Targets are class indices - GPU-optimized gather
             dim_t batch_size = pred.dims(0);
-            af::array batch_loss = af::constant(0.0f, af::dim4(batch_size));
-
-            for (int i = 0; i < static_cast<int>(batch_size); i++) {
-                int class_idx = target(i).scalar<int>();
-                if (class_idx != ignore_index_) {
-                    // Cast array_proxy to scalar to enable unary minus
-                    batch_loss(i) = 0.0f - log_softmax(i, class_idx).scalar<float>();
-                }
+            dim_t num_classes = pred.dims(1);
+            
+            // Create linear indices for gathering from flattened log_softmax
+            af::array batch_indices = af::range(af::dim4(batch_size), 0, s32);
+            af::array target_int = target.as(s32);
+            af::array linear_indices = batch_indices * static_cast<int>(num_classes) + target_int;
+            
+            // Gather log probabilities at target indices (single GPU operation)
+            af::array flat_log_softmax = af::flat(log_softmax);
+            af::array gathered = flat_log_softmax(linear_indices);
+            
+            // Cross entropy loss: -log_softmax[target]
+            af::array batch_loss = -gathered;
+            
+            // Handle ignore_index with mask (GPU operation)
+            if (ignore_index_ >= 0) {
+                af::array mask = (target_int != ignore_index_).as(f32);
+                batch_loss = batch_loss * mask;
             }
+            
             loss = ApplyReduction(batch_loss, reduction_);
         } else {
             // Targets are one-hot encoded or soft labels
@@ -419,18 +429,21 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
 
         // Check if target is one-hot encoded or class indices
         if (target.type() == af::dtype::s32 || target.type() == af::dtype::s64) {
-            // Targets are class indices
-            // Gradient: softmax - one_hot(target)
+            // Targets are class indices - GPU-optimized one-hot encoding
             dim_t batch_size = pred.dims(0);
             dim_t num_classes = pred.dims(1);
+            af::array target_int = target.as(s32);
 
-            // Create one-hot encoding
-            af::array one_hot = af::constant(0.0f, pred.dims());
-            for (int i = 0; i < static_cast<int>(batch_size); i++) {
-                int class_idx = target(i).scalar<int>();
-                if (class_idx != ignore_index_ && class_idx >= 0 && class_idx < static_cast<int>(num_classes)) {
-                    one_hot(i, class_idx) = 1.0f;
-                }
+            // Create one-hot using identity matrix indexing (GPU operation)
+            af::array identity = af::identity(af::dim4(num_classes, num_classes), f32);
+            af::array one_hot = identity(af::span, target_int);  // [num_classes, batch]
+            one_hot = af::transpose(one_hot);  // [batch, num_classes]
+
+            // Handle ignore_index with mask (GPU operation)
+            if (ignore_index_ >= 0) {
+                af::array mask = (target_int != ignore_index_).as(f32);
+                af::array mask_tiled = af::tile(mask, 1, static_cast<unsigned>(num_classes));
+                one_hot = one_hot * mask_tiled;
             }
 
             grad = softmax_pred - one_hot;
@@ -557,19 +570,31 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
 Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array log_probs = TensorToAf(predictions);  // Expects log probabilities
-        af::array target = TensorToAf(targets);         // Class indices
+        af::array log_probs = TensorToAf(predictions);  // Expects log probabilities [batch, classes]
+        af::array target = TensorToAf(targets);         // Class indices [batch]
 
-        // NLL: -log_probs[target]
         dim_t batch_size = log_probs.dims(0);
-        af::array batch_loss = af::constant(0.0f, af::dim4(batch_size));
+        dim_t num_classes = log_probs.dims(1);
 
-        for (int i = 0; i < static_cast<int>(batch_size); i++) {
-            int class_idx = target(i).scalar<int>();
-            if (class_idx != ignore_index_) {
-                // Cast array_proxy to scalar to enable unary minus
-                batch_loss(i) = 0.0f - log_probs(i, class_idx).scalar<float>();
-            }
+        // GPU-optimized gather: compute linear indices and gather in one operation
+        // Linear index = batch_idx * num_classes + class_idx
+        af::array batch_indices = af::range(af::dim4(batch_size), 0, s32);
+        af::array target_int = target.as(s32);
+
+        // Compute linear indices for gathering from flattened log_probs
+        af::array linear_indices = batch_indices * static_cast<int>(num_classes) + target_int;
+
+        // Gather log probabilities at target indices (single GPU operation)
+        af::array flat_log_probs = af::flat(log_probs);
+        af::array gathered = flat_log_probs(linear_indices);
+
+        // NLL loss: -log_probs[target]
+        af::array batch_loss = -gathered;
+
+        // Handle ignore_index with mask (GPU operation)
+        if (ignore_index_ >= 0) {
+            af::array mask = (target_int != ignore_index_).as(f32);
+            batch_loss = batch_loss * mask;
         }
 
         af::array loss = ApplyReduction(batch_loss, reduction_);
@@ -591,14 +616,26 @@ Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         dim_t batch_size = log_probs.dims(0);
         dim_t num_classes = log_probs.dims(1);
 
-        // Gradient: -1 at target class, 0 elsewhere
-        af::array grad = af::constant(0.0f, log_probs.dims());
+        // GPU-optimized: Create one-hot encoding using identity matrix indexing
+        af::array target_int = target.as(s32);
+        
+        // Create one-hot gradient: -1 at target class, 0 elsewhere
+        // Use identity matrix rows indexed by target classes
+        af::array identity = af::identity(af::dim4(num_classes, num_classes), f32);
+        
+        // Gather rows from identity matrix at target indices (one-hot encoding)
+        af::array one_hot = identity(af::span, target_int);  // [num_classes, batch]
+        one_hot = af::transpose(one_hot);  // [batch, num_classes]
+        
+        // Gradient is -one_hot
+        af::array grad = -one_hot;
 
-        for (int i = 0; i < static_cast<int>(batch_size); i++) {
-            int class_idx = target(i).scalar<int>();
-            if (class_idx != ignore_index_ && class_idx >= 0 && class_idx < static_cast<int>(num_classes)) {
-                grad(i, class_idx) = -1.0f;
-            }
+        // Handle ignore_index with mask (GPU operation)
+        if (ignore_index_ >= 0) {
+            af::array mask = (target_int != ignore_index_).as(f32);
+            // Tile mask to match grad dimensions
+            af::array mask_tiled = af::tile(mask, 1, static_cast<unsigned>(num_classes));
+            grad = grad * mask_tiled;
         }
 
         if (reduction_ == Reduction::Mean) {

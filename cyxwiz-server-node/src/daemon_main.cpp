@@ -302,21 +302,29 @@ int main(int argc, char** argv) {
     }
 
     try {
-        // Initialize core services
-        auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
+        // Initialize BackendManager first - this sets up MetricsCollector, StateManager, etc.
+        cyxwiz::servernode::core::NodeConfig backend_config;
+        backend_config.node_id = node_id;
+        backend_config.deployment_enabled = true;
+        backend_config.http_api_port = daemon_config.http_port;
 
-        // Initialize config manager
-        auto config_manager = std::make_unique<cyxwiz::servernode::core::ConfigManager>();
-        if (!daemon_config.config_path.empty()) {
+        auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
+        if (!backend.Initialize(backend_config)) {
+            spdlog::error("Failed to initialize BackendManager");
+            cyxwiz::Shutdown();
+            return 1;
+        }
+        spdlog::info("BackendManager initialized with MetricsCollector");
+
+        // Get references from BackendManager (they're now managed by it)
+        auto* metrics_collector = backend.GetMetricsCollector();
+        auto* state_manager = backend.GetStateManager();
+        auto* config_manager = backend.GetConfigManager();
+
+        // Load config if specified
+        if (!daemon_config.config_path.empty() && config_manager) {
             config_manager->Load(daemon_config.config_path);
         }
-
-        // Initialize metrics collector
-        auto metrics_collector = std::make_unique<cyxwiz::servernode::core::MetricsCollector>();
-        metrics_collector->StartCollection();
-
-        // Initialize state manager
-        auto state_manager = std::make_unique<cyxwiz::servernode::core::StateManager>();
 
         // Get current device for job execution
         cyxwiz::Device* device = cyxwiz::Device::GetCurrentDevice();
@@ -463,6 +471,16 @@ int main(int argc, char** argv) {
             daemon_config.central_server,
             node_id
         );
+
+        // Set up callback to clear pending jobs when Central Server connection is lost
+        auto* node_service_ptr = node_service.get();
+        node_client->SetConnectionLostCallback([node_service_ptr]() {
+            spdlog::warn("Central Server connection lost - clearing pending P2P jobs");
+            if (node_service_ptr) {
+                node_service_ptr->ClearAllPendingJobs();
+            }
+        });
+
         spdlog::info("Central Server configured at {} (not connected - waiting for user allocation)",
                      daemon_config.central_server);
 
@@ -472,9 +490,9 @@ int main(int argc, char** argv) {
             job_executor.get(),
             deployment_manager.get(),
             node_client.get(),
-            metrics_collector.get(),
-            state_manager.get(),
-            config_manager.get()
+            metrics_collector,
+            state_manager,
+            config_manager
         );
 
         // Set shutdown callback
@@ -523,9 +541,6 @@ int main(int argc, char** argv) {
         spdlog::info("Stopping InferenceService...");
         inference_server->Stop();
 
-        spdlog::info("Stopping metrics collector...");
-        metrics_collector->StopCollection();
-
         spdlog::info("Stopping P2P JobExecutionService...");
         p2p_service->StopServer();
 
@@ -535,6 +550,9 @@ int main(int argc, char** argv) {
         spdlog::info("Stopping terminal and deployment handlers...");
         terminal_handler.Stop();
         deployment_handler.Stop();
+
+        spdlog::info("Shutting down BackendManager (stops MetricsCollector)...");
+        backend.Shutdown();
 
         spdlog::info("Server Daemon shutdown complete");
 

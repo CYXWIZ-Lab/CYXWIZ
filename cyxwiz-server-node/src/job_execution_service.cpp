@@ -4,6 +4,7 @@
 #include "core/backend_manager.h"
 #include "core/state_manager.h"
 #include "core/device_pool.h"
+#include "core/metrics_collector.h"
 #include <spdlog/spdlog.h>
 #include <grpcpp/create_channel.h>
 #include <chrono>
@@ -373,6 +374,24 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 (*prog->mutable_metrics())["learning_rate"] = metrics.learning_rate;
                 prog->set_elapsed_time(metrics.time_elapsed_ms / 1000);  // Convert to seconds
 
+                // Add GPU and memory usage
+                auto* metrics_collector = cyxwiz::servernode::core::BackendManager::Instance().GetMetricsCollector();
+                if (metrics_collector) {
+                    auto sys_metrics = metrics_collector->GetCurrentMetrics();
+                    // gpu_usage is already in 0-1 range from MetricsCollector
+                    float gpu_pct = sys_metrics.gpu_usage;
+                    float mem_pct = sys_metrics.vram_total_bytes > 0 ?
+                        static_cast<float>(sys_metrics.vram_used_bytes) / sys_metrics.vram_total_bytes : 0.0f;
+
+                    spdlog::debug("JobExecutor: GPU metrics - gpu_usage={:.4f}, vram_used={}, vram_total={}, mem_pct={:.4f}",
+                                  gpu_pct, sys_metrics.vram_used_bytes, sys_metrics.vram_total_bytes, mem_pct);
+
+                    prog->set_gpu_usage(gpu_pct);
+                    prog->set_memory_usage(mem_pct);
+                } else {
+                    spdlog::warn("JobExecutor: MetricsCollector is null!");
+                }
+
                 // Add custom metrics
                 for (const auto& [key, value] : metrics.custom_metrics) {
                     (*prog->mutable_metrics())[key] = value;
@@ -481,6 +500,10 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                         val_loader->Initialize(metadata);
                     }
 
+                    // Start async prefetching for faster training
+                    train_loader->StartPrefetching();
+                    spdlog::info("Started async data prefetching for training");
+
                     // Calculate input size from sample shape (e.g., [1, 28, 28] -> 784)
                     input_size = 1;
                     for (int32_t dim : metadata.sample_shape) {
@@ -538,186 +561,218 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                     double epoch_loss_sum = 0.0;
                     int correct_predictions = 0;
                     int total_samples = 0;
+                    int consecutive_failures = 0;
+                    constexpr int MAX_CONSECUTIVE_FAILURES = 3;
 
                     while (train_loader->HasNextBatch() && !session->should_stop) {
+                        // Check if loader was cancelled (Engine disconnected)
+                        if (train_loader->IsCancelled()) {
+                            spdlog::warn("RemoteDataLoader cancelled - Engine may have disconnected");
+                            session->should_stop = true;
+                            break;
+                        }
+
                         Batch batch = train_loader->GetNextBatch();
-                        if (batch.batch_size > 0) {
-                            batches_processed++;
+                        if (batch.batch_size <= 0) {
+                            // Failed to get batch - Engine may have disconnected
+                            consecutive_failures++;
+                            spdlog::warn("Failed to get batch (consecutive failures: {}/{})",
+                                        consecutive_failures, MAX_CONSECUTIVE_FAILURES);
 
-                            if (use_real_training) {
-                                // Real training: Convert batch to Tensors and train
-                                try {
-                                    // Validate batch data consistency
-                                    if (batch.batch_size <= 0) {
-                                        spdlog::error("Batch {} has invalid batch_size: {}", batches_processed, batch.batch_size);
-                                        continue;
-                                    }
-                                    if (batch.images.empty()) {
-                                        spdlog::error("Batch {} has empty images", batches_processed);
-                                        continue;
-                                    }
-                                    if (batch.labels.size() != static_cast<size_t>(batch.batch_size)) {
-                                        spdlog::error("Batch {} label count mismatch: {} labels vs batch_size {}",
-                                                     batches_processed, batch.labels.size(), batch.batch_size);
-                                        continue;
-                                    }
-
-                                    // Create input tensor from batch images (flattened)
-                                    size_t input_size = batch.images.size() / batch.batch_size;
-                                    if (batch.images.size() % batch.batch_size != 0) {
-                                        spdlog::error("Batch {} image size {} not divisible by batch_size {}",
-                                                     batches_processed, batch.images.size(), batch.batch_size);
-                                        continue;
-                                    }
-
-                                    // Normalize input data: (x - mean) / std
-                                    // Using MNIST normalization values as default
-                                    float norm_mean = 0.1307f;
-                                    float norm_std = 0.3081f;
-                                    std::vector<float> normalized_images(batch.images.size());
-                                    for (size_t i = 0; i < batch.images.size(); ++i) {
-                                        normalized_images[i] = (batch.images[i] - norm_mean) / norm_std;
-                                    }
-
-                                    cyxwiz::Tensor input({static_cast<size_t>(batch.batch_size), input_size},
-                                                        normalized_images.data());
-
-                                    // Convert int32 labels to one-hot encoded floats
-                                    // batch.labels is std::vector<int32_t> with class indices
-                                    int num_classes = train_loader ? train_loader->GetMetadata().num_classes : 10;
-                                    if (num_classes <= 0) num_classes = 10;  // Default for MNIST
-
-                                    std::vector<float> one_hot_labels(batch.batch_size * num_classes, 0.0f);
-                                    for (size_t s = 0; s < static_cast<size_t>(batch.batch_size); ++s) {
-                                        int label_idx = batch.labels[s];
-                                        if (label_idx >= 0 && label_idx < num_classes) {
-                                            one_hot_labels[s * num_classes + label_idx] = 1.0f;
-                                        }
-                                    }
-
-                                    cyxwiz::Tensor target({static_cast<size_t>(batch.batch_size),
-                                                          static_cast<size_t>(num_classes)},
-                                                         one_hot_labels.data());
-
-                                    size_t label_size = num_classes;
-
-                                    // Forward pass
-                                    cyxwiz::Tensor output = model_ptr->Forward(input);
-
-                                    // Log shapes on first batch for debugging
-                                    if (batches_processed == 1) {
-                                        auto in_shape = input.Shape();
-                                        auto out_shape = output.Shape();
-                                        auto tgt_shape = target.Shape();
-                                        spdlog::info("[TRAINING] First batch shapes:");
-                                        spdlog::info("  Input:  [{}, {}]",
-                                                    in_shape.size() > 0 ? in_shape[0] : 0,
-                                                    in_shape.size() > 1 ? in_shape[1] : 0);
-                                        spdlog::info("  Output: [{}, {}]",
-                                                    out_shape.size() > 0 ? out_shape[0] : 0,
-                                                    out_shape.size() > 1 ? out_shape[1] : 0);
-                                        spdlog::info("  Target: [{}, {}]",
-                                                    tgt_shape.size() > 0 ? tgt_shape[0] : 0,
-                                                    tgt_shape.size() > 1 ? tgt_shape[1] : 0);
-                                    }
-
-                                    // Validate output shape matches target shape
-                                    auto output_shape = output.Shape();
-                                    auto target_shape = target.Shape();
-                                    if (output_shape.size() != target_shape.size()) {
-                                        spdlog::error("Shape mismatch: output dims={} vs target dims={}",
-                                                     output_shape.size(), target_shape.size());
-                                        throw std::runtime_error("Output/target dimension mismatch");
-                                    }
-                                    for (size_t d = 0; d < output_shape.size(); ++d) {
-                                        if (output_shape[d] != target_shape[d]) {
-                                            spdlog::error("Shape mismatch at dim {}: output[{}]={} vs target[{}]={}",
-                                                         d, d, output_shape[d], d, target_shape[d]);
-                                            spdlog::error("Batch {} - input shape: [{}, {}], output shape: [{}, {}], target shape: [{}, {}]",
-                                                         batches_processed,
-                                                         batch.batch_size, input_size,
-                                                         output_shape.size() > 0 ? output_shape[0] : 0,
-                                                         output_shape.size() > 1 ? output_shape[1] : 0,
-                                                         target_shape.size() > 0 ? target_shape[0] : 0,
-                                                         target_shape.size() > 1 ? target_shape[1] : 0);
-                                            throw std::runtime_error("Output/target shape mismatch");
-                                        }
-                                    }
-
-                                    // Compute loss (using shared loss function)
-                                    cyxwiz::Tensor loss_tensor = loss_ptr->Forward(output, target);
-
-                                    // Get loss value
-                                    float batch_loss = 0.0f;
-                                    const float* loss_data = loss_tensor.Data<float>();
-                                    if (loss_data) {
-                                        batch_loss = loss_data[0];
-                                    }
-                                    epoch_loss_sum += batch_loss;
-
-                                    // Backward pass (using same loss function instance)
-                                    cyxwiz::Tensor grad = loss_ptr->Backward(output, target);
-                                    model_ptr->Backward(grad);
-
-                                    // Update parameters
-                                    model_ptr->UpdateParameters(optimizer_ptr.get());
-
-                                    // Calculate accuracy (argmax comparison)
-                                    const float* out_data = output.Data<float>();
-                                    const float* tgt_data = target.Data<float>();
-                                    if (out_data && tgt_data) {
-                                        for (size_t s = 0; s < batch.batch_size; ++s) {
-                                            int pred_class = 0, true_class = 0;
-                                            float max_pred = out_data[s * label_size];
-                                            float max_true = tgt_data[s * label_size];
-                                            for (size_t c = 1; c < label_size; ++c) {
-                                                if (out_data[s * label_size + c] > max_pred) {
-                                                    max_pred = out_data[s * label_size + c];
-                                                    pred_class = static_cast<int>(c);
-                                                }
-                                                if (tgt_data[s * label_size + c] > max_true) {
-                                                    max_true = tgt_data[s * label_size + c];
-                                                    true_class = static_cast<int>(c);
-                                                }
-                                            }
-                                            if (pred_class == true_class) correct_predictions++;
-                                        }
-                                    }
-                                    total_samples += batch.batch_size;
-
-                                    loss = epoch_loss_sum / batches_processed;
-                                    accuracy = total_samples > 0 ? static_cast<double>(correct_predictions) / total_samples : 0.0;
-
-                                } catch (const std::exception& e) {
-                                    spdlog::error("Training error on batch {}: {}", batches_processed, e.what());
-                                    // Fall back to simulated values on error
-                                    loss = 2.0 / (epoch + batches_processed * 0.01);
-                                    accuracy = std::min(0.99, 0.5 + epoch * 0.05 + batches_processed * 0.001);
+                            if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
+                                spdlog::error("Max consecutive failures reached - Engine disconnected");
+                                spdlog::info("Stopping training and resetting state...");
+                                session->should_stop = true;
+                                training_success = false;
+                                {
+                                    std::lock_guard<std::mutex> lock(error_mutex);
+                                    training_error = "Engine disconnected - batch fetch failed 3 consecutive times";
                                 }
-                            } else {
-                                // Simulated training
+                                break;
+                            }
+
+                            // Wait briefly before retrying
+                            std::this_thread::sleep_for(std::chrono::seconds(1));
+                            continue;
+                        }
+
+                        // Reset failure counter on successful batch
+                        consecutive_failures = 0;
+                        batches_processed++;
+
+                        if (use_real_training) {
+                            // Real training: Convert batch to Tensors and train
+                            try {
+                                // Validate batch data consistency
+                                if (batch.batch_size <= 0) {
+                                    spdlog::error("Batch {} has invalid batch_size: {}", batches_processed, batch.batch_size);
+                                    continue;
+                                }
+                                if (batch.images.empty()) {
+                                    spdlog::error("Batch {} has empty images", batches_processed);
+                                    continue;
+                                }
+                                if (batch.labels.size() != static_cast<size_t>(batch.batch_size)) {
+                                    spdlog::error("Batch {} label count mismatch: {} labels vs batch_size {}",
+                                                 batches_processed, batch.labels.size(), batch.batch_size);
+                                    continue;
+                                }
+
+                                // Create input tensor from batch images (flattened)
+                                size_t input_size = batch.images.size() / batch.batch_size;
+                                if (batch.images.size() % batch.batch_size != 0) {
+                                    spdlog::error("Batch {} image size {} not divisible by batch_size {}",
+                                                 batches_processed, batch.images.size(), batch.batch_size);
+                                    continue;
+                                }
+
+                                // Normalize input data: (x - mean) / std
+                                // Using MNIST normalization values as default
+                                float norm_mean = 0.1307f;
+                                float norm_std = 0.3081f;
+                                std::vector<float> normalized_images(batch.images.size());
+                                for (size_t i = 0; i < batch.images.size(); ++i) {
+                                    normalized_images[i] = (batch.images[i] - norm_mean) / norm_std;
+                                }
+
+                                cyxwiz::Tensor input({static_cast<size_t>(batch.batch_size), input_size},
+                                                    normalized_images.data());
+
+                                // Convert int32 labels to one-hot encoded floats
+                                // batch.labels is std::vector<int32_t> with class indices
+                                int num_classes = train_loader ? train_loader->GetMetadata().num_classes : 10;
+                                if (num_classes <= 0) num_classes = 10;  // Default for MNIST
+
+                                std::vector<float> one_hot_labels(batch.batch_size * num_classes, 0.0f);
+                                for (size_t s = 0; s < static_cast<size_t>(batch.batch_size); ++s) {
+                                    int label_idx = batch.labels[s];
+                                    if (label_idx >= 0 && label_idx < num_classes) {
+                                        one_hot_labels[s * num_classes + label_idx] = 1.0f;
+                                    }
+                                }
+
+                                cyxwiz::Tensor target({static_cast<size_t>(batch.batch_size),
+                                                      static_cast<size_t>(num_classes)},
+                                                     one_hot_labels.data());
+
+                                size_t label_size = num_classes;
+
+                                // Forward pass
+                                cyxwiz::Tensor output = model_ptr->Forward(input);
+
+                                // Log shapes on first batch for debugging
+                                if (batches_processed == 1) {
+                                    auto in_shape = input.Shape();
+                                    auto out_shape = output.Shape();
+                                    auto tgt_shape = target.Shape();
+                                    spdlog::info("[TRAINING] First batch shapes:");
+                                    spdlog::info("  Input:  [{}, {}]",
+                                                in_shape.size() > 0 ? in_shape[0] : 0,
+                                                in_shape.size() > 1 ? in_shape[1] : 0);
+                                    spdlog::info("  Output: [{}, {}]",
+                                                out_shape.size() > 0 ? out_shape[0] : 0,
+                                                out_shape.size() > 1 ? out_shape[1] : 0);
+                                    spdlog::info("  Target: [{}, {}]",
+                                                tgt_shape.size() > 0 ? tgt_shape[0] : 0,
+                                                tgt_shape.size() > 1 ? tgt_shape[1] : 0);
+                                }
+
+                                // Validate output shape matches target shape
+                                auto output_shape = output.Shape();
+                                auto target_shape = target.Shape();
+                                if (output_shape.size() != target_shape.size()) {
+                                    spdlog::error("Shape mismatch: output dims={} vs target dims={}",
+                                                 output_shape.size(), target_shape.size());
+                                    throw std::runtime_error("Output/target dimension mismatch");
+                                }
+                                for (size_t d = 0; d < output_shape.size(); ++d) {
+                                    if (output_shape[d] != target_shape[d]) {
+                                        spdlog::error("Shape mismatch at dim {}: output[{}]={} vs target[{}]={}",
+                                                     d, d, output_shape[d], d, target_shape[d]);
+                                        spdlog::error("Batch {} - input shape: [{}, {}], output shape: [{}, {}], target shape: [{}, {}]",
+                                                     batches_processed,
+                                                     batch.batch_size, input_size,
+                                                     output_shape.size() > 0 ? output_shape[0] : 0,
+                                                     output_shape.size() > 1 ? output_shape[1] : 0,
+                                                     target_shape.size() > 0 ? target_shape[0] : 0,
+                                                     target_shape.size() > 1 ? target_shape[1] : 0);
+                                        throw std::runtime_error("Output/target shape mismatch");
+                                    }
+                                }
+
+                                // Compute loss (using shared loss function)
+                                cyxwiz::Tensor loss_tensor = loss_ptr->Forward(output, target);
+
+                                // Get loss value
+                                float batch_loss = 0.0f;
+                                const float* loss_data = loss_tensor.Data<float>();
+                                if (loss_data) {
+                                    batch_loss = loss_data[0];
+                                }
+                                epoch_loss_sum += batch_loss;
+
+                                // Backward pass (using same loss function instance)
+                                cyxwiz::Tensor grad = loss_ptr->Backward(output, target);
+                                model_ptr->Backward(grad);
+
+                                // Update parameters
+                                model_ptr->UpdateParameters(optimizer_ptr.get());
+
+                                // Calculate accuracy (argmax comparison)
+                                const float* out_data = output.Data<float>();
+                                const float* tgt_data = target.Data<float>();
+                                if (out_data && tgt_data) {
+                                    for (size_t s = 0; s < batch.batch_size; ++s) {
+                                        int pred_class = 0, true_class = 0;
+                                        float max_pred = out_data[s * label_size];
+                                        float max_true = tgt_data[s * label_size];
+                                        for (size_t c = 1; c < label_size; ++c) {
+                                            if (out_data[s * label_size + c] > max_pred) {
+                                                max_pred = out_data[s * label_size + c];
+                                                pred_class = static_cast<int>(c);
+                                            }
+                                            if (tgt_data[s * label_size + c] > max_true) {
+                                                max_true = tgt_data[s * label_size + c];
+                                                true_class = static_cast<int>(c);
+                                            }
+                                        }
+                                        if (pred_class == true_class) correct_predictions++;
+                                    }
+                                }
+                                total_samples += batch.batch_size;
+
+                                loss = epoch_loss_sum / batches_processed;
+                                accuracy = total_samples > 0 ? static_cast<double>(correct_predictions) / total_samples : 0.0;
+
+                            } catch (const std::exception& e) {
+                                spdlog::error("Training error on batch {}: {}", batches_processed, e.what());
+                                // Fall back to simulated values on error
                                 loss = 2.0 / (epoch + batches_processed * 0.01);
                                 accuracy = std::min(0.99, 0.5 + epoch * 0.05 + batches_processed * 0.001);
                             }
-
-                            // Report batch progress
-                            cyxwiz::protocol::TrainingUpdate batch_update;
-                            batch_update.set_job_id(job_id);
-                            batch_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
-
-                            auto* log = batch_update.mutable_log();
-                            log->set_level(cyxwiz::protocol::LogMessage::DEBUG);
-                            log->set_source(use_real_training ? "RealTraining" : "SimulatedTraining");
-                            log->set_message("Batch " + std::to_string(batches_processed) +
-                                           ": loss=" + std::to_string(loss).substr(0, 6) +
-                                           ", acc=" + std::to_string(accuracy * 100).substr(0, 5) + "%");
-
-                            {
-                                std::lock_guard<std::mutex> lock(queue_mutex);
-                                update_queue.push(std::move(batch_update));
-                            }
-                            queue_cv.notify_one();
+                        } else {
+                            // Simulated training
+                            loss = 2.0 / (epoch + batches_processed * 0.01);
+                            accuracy = std::min(0.99, 0.5 + epoch * 0.05 + batches_processed * 0.001);
                         }
+
+                        // Report batch progress
+                        cyxwiz::protocol::TrainingUpdate batch_update;
+                        batch_update.set_job_id(job_id);
+                        batch_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
+
+                        auto* log = batch_update.mutable_log();
+                        log->set_level(cyxwiz::protocol::LogMessage::DEBUG);
+                        log->set_source(use_real_training ? "RealTraining" : "SimulatedTraining");
+                        log->set_message("Batch " + std::to_string(batches_processed) +
+                                       ": loss=" + std::to_string(loss).substr(0, 6) +
+                                       ", acc=" + std::to_string(accuracy * 100).substr(0, 5) + "%");
+
+                        {
+                            std::lock_guard<std::mutex> lock(queue_mutex);
+                            update_queue.push(std::move(batch_update));
+                        }
+                        queue_cv.notify_one();
                     }
                     spdlog::info("Epoch {} completed: {} batches, loss={:.4f}, acc={:.2f}%",
                                 epoch, batches_processed, loss, accuracy * 100);
@@ -735,10 +790,30 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 auto* progress = update.mutable_progress();
                 progress->set_current_epoch(epoch);
                 progress->set_total_epochs(total_epochs);
+                progress->set_current_batch(batches_processed);
+                progress->set_total_batches(batches_processed);  // At epoch end, all batches done
                 progress->set_progress_percentage(static_cast<double>(epoch) / total_epochs);
                 (*progress->mutable_metrics())["loss"] = loss;
                 (*progress->mutable_metrics())["accuracy"] = accuracy;
                 (*progress->mutable_metrics())["batches"] = static_cast<double>(batches_processed);
+
+                // Add GPU and memory usage
+                auto* metrics_collector = cyxwiz::servernode::core::BackendManager::Instance().GetMetricsCollector();
+                if (metrics_collector) {
+                    auto sys_metrics = metrics_collector->GetCurrentMetrics();
+                    // gpu_usage is already in 0-1 range from MetricsCollector
+                    float gpu_pct = sys_metrics.gpu_usage;
+                    float mem_pct = sys_metrics.vram_total_bytes > 0 ?
+                        static_cast<float>(sys_metrics.vram_used_bytes) / sys_metrics.vram_total_bytes : 0.0f;
+
+                    spdlog::debug("JobExecution: GPU metrics - gpu_usage={:.4f}, vram_used={}, vram_total={}, mem_pct={:.4f}",
+                                  gpu_pct, sys_metrics.vram_used_bytes, sys_metrics.vram_total_bytes, mem_pct);
+
+                    progress->set_gpu_usage(gpu_pct);
+                    progress->set_memory_usage(mem_pct);
+                } else {
+                    spdlog::warn("JobExecution: MetricsCollector is null!");
+                }
 
                 // Update StateManager for GUI
                 auto* sm = cyxwiz::servernode::core::BackendManager::Instance().GetStateManager();
@@ -845,10 +920,25 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 write_success = stream->Write(update);
             }
             if (!write_success) {
-                spdlog::warn("Failed to write training update, client may have disconnected");
+                spdlog::warn("Failed to write training update, Engine disconnected");
                 session->should_stop = true;
+
+                // Cancel data loaders to unblock any waiting threads
+                if (session->train_loader) {
+                    session->train_loader->Cancel();
+                }
+                if (session->val_loader) {
+                    session->val_loader->Cancel();
+                }
+
                 if (job_executor_) {
                     job_executor_->CancelJob(job_id);
+                }
+
+                training_success = false;
+                {
+                    std::lock_guard<std::mutex> err_lock(error_mutex);
+                    training_error = "Engine disconnected - stream write failed";
                 }
                 training_complete = true;
                 break;
@@ -906,6 +996,14 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     }
 
     session->is_running = false;
+
+    // Cleanup and notify Central Server
+    std::string reason = training_success ? "Training completed successfully" :
+                         (!training_error.empty() ? training_error : "Training ended");
+    spdlog::info("Notifying Central Server and cleaning up job {}...", job_id);
+    NotifyJobEnded(job_id, training_success, reason);
+    CleanupJob(job_id);
+
     spdlog::info("Training metrics stream ended for job {}", job_id);
     return grpc::Status::OK;
 }
@@ -1016,6 +1114,110 @@ bool JobExecutionServiceImpl::NotifyCentralServer(const std::string& job_id,
         spdlog::error("Exception notifying Central Server: {}", e.what());
         return false;
     }
+}
+
+void JobExecutionServiceImpl::NotifyJobEnded(const std::string& job_id, bool success, const std::string& reason) {
+    try {
+        // Create gRPC channel to Central Server
+        auto channel = grpc::CreateChannel(central_server_address_,
+                                          grpc::InsecureChannelCredentials());
+        auto stub = cyxwiz::protocol::NodeService::NewStub(channel);
+
+        // Prepare heartbeat request to update node status
+        cyxwiz::protocol::HeartbeatRequest request;
+        request.set_node_id(node_id_);
+
+        // Set current status - node is now available
+        auto* node_info = request.mutable_current_status();
+        node_info->set_node_id(node_id_);
+        node_info->set_ram_available(capabilities_.max_memory());  // All memory available now
+
+        // Clear active jobs list (no jobs running)
+        request.clear_active_jobs();
+
+        // Send heartbeat to update status
+        cyxwiz::protocol::HeartbeatResponse response;
+        grpc::ClientContext context;
+
+        auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
+        context.set_deadline(deadline);
+
+        grpc::Status status = stub->Heartbeat(&context, request, &response);
+
+        if (status.ok()) {
+            spdlog::info("Notified Central Server: job {} ended (success={}, reason={})",
+                        job_id, success, reason);
+        } else {
+            spdlog::warn("Failed to notify Central Server about job end: {}",
+                        status.error_message());
+        }
+    } catch (const std::exception& e) {
+        spdlog::error("Exception notifying Central Server about job end: {}", e.what());
+    }
+}
+
+void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {
+    spdlog::info("Cleaning up job {}...", job_id);
+
+    // Find and stop the job session
+    JobSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        auto it = active_jobs_.find(job_id);
+        if (it != active_jobs_.end()) {
+            session = it->second.get();
+        }
+    }
+
+    if (session) {
+        // Cancel any data loaders
+        if (session->train_loader) {
+            session->train_loader->Cancel();
+        }
+        if (session->val_loader) {
+            session->val_loader->Cancel();
+        }
+
+        // Mark job as stopped
+        session->should_stop = true;
+        session->is_running = false;
+        session->is_paused = false;
+
+        // Wake up any waiting threads
+        session->pause_cv.notify_all();
+    }
+
+    // Update StateManager to show job as ended
+    auto* state_manager = cyxwiz::servernode::core::BackendManager::Instance().GetStateManager();
+    if (state_manager) {
+        cyxwiz::servernode::core::JobState job_state;
+        job_state.id = job_id;
+        job_state.type = "Training";
+        job_state.is_running = false;
+        job_state.progress = 0.0f;
+        state_manager->UpdateJob(job_state);
+    }
+
+    // Remove from active jobs
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        active_jobs_.erase(job_id);
+    }
+
+    // Remove connection tracking
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        // Find and remove connection by job_id
+        for (auto it = connections_.begin(); it != connections_.end(); ) {
+            if (it->second.job_id == job_id) {
+                it = connections_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    spdlog::info("Job {} cleanup complete. Server Node ready for new jobs.", job_id);
 }
 
 std::string JobExecutionServiceImpl::SaveDatasetToFile(const std::string& job_id,

@@ -80,6 +80,7 @@ public:
     void CancelJob(const std::string& job_id);
     bool DeleteJob(const std::string& job_id);  // Deletes from Central Server
     void RemoveLocalJob(const std::string& job_id);  // Removes from local list only
+    void ClearAllLocalJobs();  // Clears entire local job list (for historical view)
 
     // Query specific job status
     bool GetJobStatus(const std::string& job_id, cyxwiz::protocol::JobStatus& out_status);
@@ -89,6 +90,12 @@ public:
 
     // Check if connected to server
     bool IsConnected() const;
+
+    // Handle server disconnection - close all P2P connections and stop polling
+    void OnServerDisconnected();
+
+    // Close all active P2P connections
+    void CloseAllP2PConnections();
 
 private:
     GRPCClient* client_;
@@ -100,6 +107,10 @@ private:
 
     // UI panel for progress forwarding (not owned)
     cyxwiz::JobStatusPanel* job_status_panel_ = nullptr;
+
+    // Track consecutive failures to detect server disconnection
+    int consecutive_failures_ = 0;
+    static constexpr int MAX_CONSECUTIVE_FAILURES = 3;
 
     // Helper: Find active job by ID
     ActiveJob* FindJob(const std::string& job_id);
