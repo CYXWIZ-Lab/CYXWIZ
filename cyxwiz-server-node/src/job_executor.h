@@ -66,8 +66,26 @@ public:
     // Cancel a running job
     bool CancelJob(const std::string& job_id);
 
+    // Pause a running job
+    bool PauseJob(const std::string& job_id);
+
+    // Resume a paused job
+    bool ResumeJob(const std::string& job_id);
+
+    // Stop a running job (same as cancel, for P2P API consistency)
+    bool StopJob(const std::string& job_id);
+
+    // Get current model weights (for checkpointing)
+    std::vector<char> GetCurrentWeights(const std::string& job_id);
+
+    // Load weights into a job's model
+    bool LoadWeights(const std::string& job_id, const std::vector<char>& weights);
+
     // Check if a job is running
     bool IsJobRunning(const std::string& job_id) const;
+
+    // Check if a job is paused
+    bool IsJobPaused(const std::string& job_id) const;
 
     // Get active job count
     size_t GetActiveJobCount() const;
@@ -94,10 +112,19 @@ private:
         std::thread worker_thread;
         std::atomic<bool> should_cancel{false};
         std::atomic<bool> is_running{false};
+        std::atomic<bool> is_paused{false};  // Pause flag for P2P control
         protocol::JobConfig config;
         TrainingMetrics current_metrics;
         std::chrono::steady_clock::time_point start_time;
         int assigned_device_id = -1;  // Device from pool
+
+        // Model storage for weights extraction
+        std::unique_ptr<cyxwiz::SequentialModel> model;
+        std::mutex model_mutex;
+
+        // Pause/resume synchronization
+        std::condition_variable pause_cv;
+        std::mutex pause_mutex;
     };
 
     // Execute job in worker thread (synchronous)

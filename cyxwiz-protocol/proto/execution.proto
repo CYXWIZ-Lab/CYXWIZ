@@ -18,6 +18,75 @@ service JobExecutionService {
 
   // Engine downloads final model weights
   rpc DownloadWeights(DownloadRequest) returns (stream WeightsChunk);
+
+  // ========== P2P Training Control RPCs (Direct Engine <-> Node) ==========
+  // These are explicit control commands, separate from the streaming commands.
+  // Central Server is NOT involved in these calls.
+
+  // Pause training and save checkpoint
+  rpc PauseTraining(PauseTrainingRequest) returns (PauseTrainingResponse);
+
+  // Resume training from checkpoint
+  rpc ResumeTraining(ResumeTrainingRequest) returns (ResumeTrainingResponse);
+
+  // Cancel training and optionally save partial model
+  rpc CancelTraining(CancelTrainingRequest) returns (CancelTrainingResponse);
+
+  // Start a new training job within the same reservation
+  rpc StartNewJob(StartNewJobRequest) returns (StartNewJobResponse);
+}
+
+// ============================================================================
+// P2P Training Control Messages
+// ============================================================================
+
+message PauseTrainingRequest {
+  string job_id = 1;
+}
+
+message PauseTrainingResponse {
+  bool success = 1;
+  string checkpoint_path = 2;      // Path to saved checkpoint
+  int32 current_epoch = 3;
+  int32 current_batch = 4;
+  string message = 5;
+}
+
+message ResumeTrainingRequest {
+  string job_id = 1;
+  string checkpoint_path = 2;      // Optional: resume from specific checkpoint
+}
+
+message ResumeTrainingResponse {
+  bool success = 1;
+  int32 resumed_epoch = 2;
+  int32 resumed_batch = 3;
+  string message = 4;
+}
+
+message CancelTrainingRequest {
+  string job_id = 1;
+  string reason = 2;               // Optional reason for logging
+  bool save_partial_model = 3;     // Whether to save current weights
+}
+
+message CancelTrainingResponse {
+  bool success = 1;
+  int32 epochs_completed = 2;
+  bool partial_model_saved = 3;
+  string partial_model_path = 4;   // Path if saved
+  string message = 5;
+}
+
+message StartNewJobRequest {
+  string reservation_id = 1;       // The active reservation
+  string job_id = 2;               // New job ID
+  JobConfig job_config = 3;        // New model/hyperparameters
+}
+
+message StartNewJobResponse {
+  bool accepted = 1;
+  string message = 2;
 }
 
 // Connection establishment

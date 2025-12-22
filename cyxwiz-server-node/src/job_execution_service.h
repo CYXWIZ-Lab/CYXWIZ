@@ -83,6 +83,40 @@ public:
         const cyxwiz::protocol::DownloadRequest* request,
         grpc::ServerWriter<cyxwiz::protocol::WeightsChunk>* writer) override;
 
+    // ========== P2P Training Control RPCs ==========
+
+    /**
+     * PauseTraining - Pause training and save checkpoint
+     */
+    grpc::Status PauseTraining(
+        grpc::ServerContext* context,
+        const cyxwiz::protocol::PauseTrainingRequest* request,
+        cyxwiz::protocol::PauseTrainingResponse* response) override;
+
+    /**
+     * ResumeTraining - Resume training from checkpoint
+     */
+    grpc::Status ResumeTraining(
+        grpc::ServerContext* context,
+        const cyxwiz::protocol::ResumeTrainingRequest* request,
+        cyxwiz::protocol::ResumeTrainingResponse* response) override;
+
+    /**
+     * CancelTraining - Cancel training and optionally save partial model
+     */
+    grpc::Status CancelTraining(
+        grpc::ServerContext* context,
+        const cyxwiz::protocol::CancelTrainingRequest* request,
+        cyxwiz::protocol::CancelTrainingResponse* response) override;
+
+    /**
+     * StartNewJob - Start a new training job within the same reservation
+     */
+    grpc::Status StartNewJob(
+        grpc::ServerContext* context,
+        const cyxwiz::protocol::StartNewJobRequest* request,
+        cyxwiz::protocol::StartNewJobResponse* response) override;
+
 private:
     // Connection tracking
     struct ConnectionInfo {
@@ -96,6 +130,7 @@ private:
     // Job tracking
     struct JobSession {
         std::string job_id;
+        std::string reservation_id;
         std::string engine_address;
         cyxwiz::protocol::JobConfig job_config;
         std::atomic<bool> is_running;
@@ -108,6 +143,16 @@ private:
         // Remote data loaders for lazy-loading datasets
         std::shared_ptr<RemoteDataLoader> train_loader;
         std::shared_ptr<RemoteDataLoader> val_loader;
+
+        // Checkpoint state for pause/resume
+        std::string checkpoint_path;
+        std::atomic<int> paused_at_epoch{0};
+        std::atomic<int> paused_at_batch{0};
+        std::atomic<int> completed_epochs{0};
+
+        // Condition variable for pause/resume synchronization
+        std::condition_variable pause_cv;
+        std::mutex pause_mutex;
     };
 
     // Helper methods
@@ -117,6 +162,11 @@ private:
                          const cyxwiz::protocol::TrainingProgress& progress);
     std::string SaveDatasetToFile(const std::string& job_id,
                                   const std::string& dataset_data);
+
+    // Checkpoint helpers
+    std::string SaveCheckpoint(const std::string& job_id, int epoch, int batch);
+    bool LoadCheckpoint(const std::string& job_id, const std::string& checkpoint_path);
+    std::string SavePartialModel(const std::string& job_id);
 
     // Server management
     std::unique_ptr<grpc::Server> server_;

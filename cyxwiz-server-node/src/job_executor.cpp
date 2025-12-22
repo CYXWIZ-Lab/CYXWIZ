@@ -153,10 +153,234 @@ bool JobExecutor::CancelJob(const std::string& job_id) {
     return true;
 }
 
+bool JobExecutor::PauseJob(const std::string& job_id) {
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+    auto it = active_jobs_.find(job_id);
+    if (it == active_jobs_.end()) {
+        spdlog::warn("Cannot pause job {}: not found", job_id);
+        return false;
+    }
+
+    if (!it->second->is_running) {
+        spdlog::warn("Cannot pause job {}: not running", job_id);
+        return false;
+    }
+
+    if (it->second->is_paused) {
+        spdlog::info("Job {} is already paused", job_id);
+        return true;
+    }
+
+    spdlog::info("Pausing job {}...", job_id);
+    it->second->is_paused = true;
+    return true;
+}
+
+bool JobExecutor::ResumeJob(const std::string& job_id) {
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+    auto it = active_jobs_.find(job_id);
+    if (it == active_jobs_.end()) {
+        spdlog::warn("Cannot resume job {}: not found", job_id);
+        return false;
+    }
+
+    if (!it->second->is_paused) {
+        spdlog::warn("Cannot resume job {}: not paused", job_id);
+        return false;
+    }
+
+    spdlog::info("Resuming job {}...", job_id);
+    it->second->is_paused = false;
+
+    // Notify waiting threads
+    {
+        std::lock_guard<std::mutex> pause_lock(it->second->pause_mutex);
+        it->second->pause_cv.notify_all();
+    }
+
+    return true;
+}
+
+bool JobExecutor::StopJob(const std::string& job_id) {
+    // StopJob is an alias for CancelJob for P2P API consistency
+    return CancelJob(job_id);
+}
+
+std::vector<char> JobExecutor::GetCurrentWeights(const std::string& job_id) {
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+    auto it = active_jobs_.find(job_id);
+    if (it == active_jobs_.end()) {
+        spdlog::warn("Cannot get weights for job {}: not found", job_id);
+        return {};
+    }
+
+    auto* state = it->second.get();
+    std::lock_guard<std::mutex> model_lock(state->model_mutex);
+
+    if (!state->model) {
+        spdlog::warn("Cannot get weights for job {}: no model", job_id);
+        return {};
+    }
+
+    // Serialize model weights to binary format using GetParameters()
+    try {
+        std::vector<char> weights_data;
+
+        // Get all parameters as a map of name -> tensor
+        auto params = state->model->GetParameters();
+        uint32_t num_params = static_cast<uint32_t>(params.size());
+
+        // Write header: magic + num_params
+        const char* magic = "CYXW";
+        weights_data.insert(weights_data.end(), magic, magic + 4);
+        weights_data.insert(weights_data.end(),
+                           reinterpret_cast<char*>(&num_params),
+                           reinterpret_cast<char*>(&num_params) + sizeof(num_params));
+
+        // For each parameter, write name and tensor data
+        for (auto& [name, tensor] : params) {
+            // Write parameter name (length + string)
+            uint32_t name_len = static_cast<uint32_t>(name.size());
+            weights_data.insert(weights_data.end(),
+                               reinterpret_cast<char*>(&name_len),
+                               reinterpret_cast<char*>(&name_len) + sizeof(name_len));
+            weights_data.insert(weights_data.end(), name.begin(), name.end());
+
+            // Write tensor shape
+            auto shape = tensor.Shape();
+            uint32_t num_dims = static_cast<uint32_t>(shape.size());
+            weights_data.insert(weights_data.end(),
+                               reinterpret_cast<char*>(&num_dims),
+                               reinterpret_cast<char*>(&num_dims) + sizeof(num_dims));
+            for (size_t dim : shape) {
+                uint64_t d = dim;
+                weights_data.insert(weights_data.end(),
+                                   reinterpret_cast<char*>(&d),
+                                   reinterpret_cast<char*>(&d) + sizeof(d));
+            }
+
+            // Write tensor data
+            size_t data_size = tensor.NumElements() * sizeof(float);
+            weights_data.insert(weights_data.end(),
+                               reinterpret_cast<char*>(&data_size),
+                               reinterpret_cast<char*>(&data_size) + sizeof(data_size));
+
+            // Copy tensor data (assumes data is on CPU)
+            const char* data_ptr = static_cast<const char*>(tensor.Data());
+            if (data_ptr) {
+                weights_data.insert(weights_data.end(), data_ptr, data_ptr + data_size);
+            } else {
+                // Tensor data not accessible, write zeros
+                weights_data.insert(weights_data.end(), data_size, 0);
+            }
+        }
+
+        spdlog::info("Serialized {} bytes of weights for job {} ({} params)",
+                    weights_data.size(), job_id, num_params);
+        return weights_data;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to serialize weights for job {}: {}", job_id, e.what());
+        return {};
+    }
+}
+
+bool JobExecutor::LoadWeights(const std::string& job_id, const std::vector<char>& weights) {
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+    auto it = active_jobs_.find(job_id);
+    if (it == active_jobs_.end()) {
+        spdlog::warn("Cannot load weights for job {}: not found", job_id);
+        return false;
+    }
+
+    auto* state = it->second.get();
+    std::lock_guard<std::mutex> model_lock(state->model_mutex);
+
+    if (!state->model) {
+        spdlog::warn("Cannot load weights for job {}: no model", job_id);
+        return false;
+    }
+
+    if (weights.size() < 8) {
+        spdlog::error("Invalid weights data for job {}: too small", job_id);
+        return false;
+    }
+
+    try {
+        // Verify magic header
+        if (std::string(weights.data(), 4) != "CYXW") {
+            spdlog::error("Invalid weights format for job {}: bad magic", job_id);
+            return false;
+        }
+
+        size_t offset = 4;
+        uint32_t num_params = *reinterpret_cast<const uint32_t*>(weights.data() + offset);
+        offset += sizeof(uint32_t);
+
+        // Deserialize parameters into a map
+        std::map<std::string, cyxwiz::Tensor> params_map;
+
+        for (uint32_t i = 0; i < num_params; ++i) {
+            // Read parameter name
+            uint32_t name_len = *reinterpret_cast<const uint32_t*>(weights.data() + offset);
+            offset += sizeof(uint32_t);
+            std::string name(weights.data() + offset, name_len);
+            offset += name_len;
+
+            // Read shape
+            uint32_t num_dims = *reinterpret_cast<const uint32_t*>(weights.data() + offset);
+            offset += sizeof(uint32_t);
+
+            std::vector<size_t> shape(num_dims);
+            for (uint32_t d = 0; d < num_dims; ++d) {
+                shape[d] = *reinterpret_cast<const uint64_t*>(weights.data() + offset);
+                offset += sizeof(uint64_t);
+            }
+
+            // Read data size and data
+            size_t data_size = *reinterpret_cast<const size_t*>(weights.data() + offset);
+            offset += sizeof(size_t);
+
+            if (offset + data_size > weights.size()) {
+                spdlog::error("Truncated weights data for job {}", job_id);
+                return false;
+            }
+
+            // Create tensor from data
+            const void* data_ptr = weights.data() + offset;
+            cyxwiz::Tensor tensor(shape, data_ptr, cyxwiz::DataType::Float32);
+            params_map[name] = std::move(tensor);
+
+            offset += data_size;
+        }
+
+        // Set all parameters at once
+        state->model->SetParameters(params_map);
+
+        spdlog::info("Loaded {} bytes of weights for job {} ({} params)",
+                    weights.size(), job_id, num_params);
+        return true;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to load weights for job {}: {}", job_id, e.what());
+        return false;
+    }
+}
+
 bool JobExecutor::IsJobRunning(const std::string& job_id) const {
     std::lock_guard<std::mutex> lock(jobs_mutex_);
     auto it = active_jobs_.find(job_id);
     return it != active_jobs_.end() && it->second->is_running;
+}
+
+bool JobExecutor::IsJobPaused(const std::string& job_id) const {
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+    auto it = active_jobs_.find(job_id);
+    return it != active_jobs_.end() && it->second->is_paused;
 }
 
 size_t JobExecutor::GetActiveJobCount() const {

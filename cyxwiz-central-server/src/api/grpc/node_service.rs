@@ -403,8 +403,14 @@ impl NodeService for NodeServiceImpl {
             wallet_address: final_wallet,
             name: node_info.name.clone(),
             status: DbNodeStatus::Online,
-            reputation_score: 0.5, // Initial reputation
+            reputation_score: 75.0, // Initial reputation (Normal tier)
             stake_amount: (node_info.staked_amount * 1_000_000_000.0) as i64, // Convert to lamports
+
+            // Reputation tracking (for ban system)
+            strike_count: 0,
+            banned_until: None,
+            total_bans: 0,
+            last_strike_at: None,
 
             // User association - set from authenticated JWT
             user_id: authenticated_user_id.clone(),

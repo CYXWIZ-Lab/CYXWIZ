@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <chrono>
 #include "node.grpc.pb.h"
 #include "job_executor.h"
 
@@ -75,6 +76,13 @@ public:
      */
     bool GetAndRemovePendingJob(const std::string& job_id, protocol::JobConfig* config);
 
+    /**
+     * @brief Clear all pending P2P jobs
+     *
+     * Called when Central Server connection is lost to cleanup stale jobs.
+     */
+    void ClearAllPendingJobs();
+
 private:
     /**
      * @brief Validate job configuration before acceptance
@@ -90,12 +98,22 @@ private:
      */
     bool ValidateJobConfig(const protocol::JobConfig& job_config, std::string* error_msg);
 
+    /// Clean up pending jobs that have exceeded the timeout
+    void CleanupExpiredPendingJobs();
+
     JobExecutor* job_executor_;  ///< Non-owning pointer to JobExecutor
     std::string node_id_;         ///< This node's unique ID
 
-    /// Jobs with remote datasets waiting for P2P connection
-    std::map<std::string, protocol::JobConfig> pending_p2p_jobs_;
+    /// Pending job with timestamp for timeout tracking
+    struct PendingJob {
+        protocol::JobConfig config;
+        std::chrono::steady_clock::time_point registered_at;
+    };
+
+    /// Jobs with remote datasets waiting for P2P connection (timeout: 10 seconds)
+    std::map<std::string, PendingJob> pending_p2p_jobs_;
     mutable std::mutex pending_jobs_mutex_;
+    static constexpr int PENDING_JOB_TIMEOUT_SECONDS = 10;
 };
 
 } // namespace servernode

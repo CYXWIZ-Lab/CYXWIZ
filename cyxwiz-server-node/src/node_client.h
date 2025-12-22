@@ -5,6 +5,7 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <functional>
 #include <grpcpp/grpcpp.h>
 #include "node.pb.h"
 #include "node.grpc.pb.h"
@@ -79,6 +80,10 @@ public:
     void ClearAuthToken() { auth_token_.clear(); }
     bool HasAuthToken() const { return !auth_token_.empty(); }
 
+    // Callback for when Central Server connection is lost
+    using ConnectionLostCallback = std::function<void()>;
+    void SetConnectionLostCallback(ConnectionLostCallback callback) { connection_lost_callback_ = callback; }
+
     // ========================================================================
     // Job Status Reporting (Server Node → Central Server)
     // ========================================================================
@@ -127,6 +132,9 @@ private:
     // Current status
     std::vector<std::string> active_jobs_;
     std::mutex jobs_mutex_;
+
+    // Callback for connection lost events
+    ConnectionLostCallback connection_lost_callback_;
 };
 
 } // namespace servernode

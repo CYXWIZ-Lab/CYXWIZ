@@ -586,6 +586,12 @@ void NodeClient::HeartbeatLoop() {
                 spdlog::error("Connection to Central Server lost!");
                 spdlog::warn("Attempting to reconnect...");
                 was_connected = false;
+
+                // Notify listeners that connection was lost
+                if (connection_lost_callback_) {
+                    spdlog::info("Notifying listeners of connection loss...");
+                    connection_lost_callback_();
+                }
             } else {
                 // Subsequent failures - only log periodically to avoid spam
                 if (consecutive_failures % 6 == 0) {  // Every minute (6 x 10s)

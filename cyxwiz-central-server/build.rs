@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "../cyxwiz-protocol/proto/compute.proto",
                 "../cyxwiz-protocol/proto/deployment.proto",
                 "../cyxwiz-protocol/proto/wallet.proto",
+                "../cyxwiz-protocol/proto/reservation.proto",
             ],
             &["../cyxwiz-protocol/proto"],
         )?;

@@ -1,0 +1,271 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+import "common.proto";
+import "job.proto";
+
+// ============================================================================
+// Node Reservation Service
+// ============================================================================
+// This service handles time-based node reservations. Users reserve a node
+// for a duration (e.g., 1 hour), pay upfront via escrow, and get direct
+// P2P access to the node for that time period.
+
+// Request to reserve a node for training
+message ReserveNodeRequest {
+  string node_id = 1;              // Selected node from free list
+  string user_wallet = 2;          // User's Solana wallet for payment
+  int32 duration_minutes = 3;      // Reservation duration in minutes
+  JobConfig job_config = 4;        // Initial model/hyperparameters (optional)
+}
+
+// Response with reservation details and P2P connection info
+message ReserveNodeResponse {
+  StatusCode status = 1;
+  string reservation_id = 2;       // Unique reservation identifier
+  string job_id = 3;               // Job ID for tracking (same as reservation_id)
+  string node_endpoint = 4;        // IP:port for direct P2P connection
+  string p2p_auth_token = 5;       // JWT for P2P authentication
+  int64 p2p_token_expires = 6;     // Unix timestamp when P2P token expires
+  string escrow_account = 7;       // Solana escrow PDA address
+  int64 escrow_amount = 8;         // Amount locked in escrow (lamports)
+  int64 reservation_start = 9;     // Unix timestamp when reservation starts
+  int64 reservation_expires = 10;  // Unix timestamp when reservation ends
+  double price_per_hour = 11;      // Price charged per hour (CYXWIZ tokens)
+  Error error = 15;
+}
+
+// Confirm job completion (from Engine)
+message ConfirmJobCompleteRequest {
+  string reservation_id = 1;
+  string job_id = 2;               // May have multiple jobs per reservation
+  string model_hash = 3;           // SHA256 hash of trained model weights
+  map<string, double> final_metrics = 4; // Final training metrics
+  bool success = 5;                // Whether training completed successfully
+}
+
+message ConfirmJobCompleteResponse {
+  StatusCode status = 1;
+  bool payment_released = 2;       // Whether payment was released to node
+  string payment_tx_hash = 3;      // Solana transaction hash
+  Error error = 10;
+}
+
+// Extend an existing reservation
+message ExtendReservationRequest {
+  string reservation_id = 1;
+  int32 additional_minutes = 2;    // Additional time to add
+}
+
+message ExtendReservationResponse {
+  StatusCode status = 1;
+  int64 new_expires = 2;           // New expiration timestamp
+  int64 additional_escrow = 3;     // Additional escrow amount locked
+  string escrow_tx_hash = 4;       // Transaction hash for additional escrow
+  Error error = 10;
+}
+
+// Release a reservation early (user done before time expires)
+message ReleaseReservationRequest {
+  string reservation_id = 1;
+  string reason = 2;               // Optional reason
+}
+
+message ReleaseReservationResponse {
+  StatusCode status = 1;
+  int64 time_used_seconds = 2;     // How much time was used
+  int64 payment_released = 3;      // Amount paid to node (lamports)
+  int64 refund_amount = 4;         // Amount refunded to user (lamports)
+  string payment_tx_hash = 5;
+  string refund_tx_hash = 6;
+  Error error = 10;
+}
+
+// Get active reservation details
+message GetReservationRequest {
+  string reservation_id = 1;
+}
+
+message GetReservationResponse {
+  StatusCode status = 1;
+  ReservationInfo reservation = 2;
+  Error error = 10;
+}
+
+// Reservation status enum
+enum ReservationStatus {
+  RESERVATION_UNKNOWN = 0;
+  RESERVATION_PENDING = 1;         // Escrow created, waiting for P2P connection
+  RESERVATION_ACTIVE = 2;          // Training in progress
+  RESERVATION_PAUSED = 3;          // Training paused by user
+  RESERVATION_COMPLETING = 4;      // Waiting for confirmations
+  RESERVATION_COMPLETED = 5;       // Successfully completed
+  RESERVATION_CANCELLED = 6;       // User cancelled
+  RESERVATION_EXPIRED = 7;         // Time ran out
+  RESERVATION_FAILED = 8;          // Node failed
+}
+
+// Detailed reservation information
+message ReservationInfo {
+  string reservation_id = 1;
+  string user_id = 2;
+  string user_wallet = 3;
+  string node_id = 4;
+  string node_wallet = 5;
+  string node_endpoint = 6;
+
+  ReservationStatus status = 7;
+  int64 start_time = 8;
+  int64 end_time = 9;
+  int64 time_remaining_seconds = 10;
+
+  // Escrow details
+  string escrow_account = 11;
+  int64 escrow_amount = 12;
+  double price_per_hour = 13;
+
+  // Current job (if any)
+  string current_job_id = 14;
+  double job_progress = 15;
+  map<string, double> current_metrics = 16;
+
+  // Stats
+  int32 jobs_completed = 17;       // Number of jobs completed in this reservation
+}
+
+// List user's reservations
+message ListReservationsRequest {
+  string user_id = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+  bool active_only = 4;            // Only show active reservations
+}
+
+message ListReservationsResponse {
+  repeated ReservationInfo reservations = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+// ============================================================================
+// Engine Heartbeat Messages
+// ============================================================================
+// The Engine must send periodic heartbeats to the Central Server during
+// an active reservation. If heartbeats stop (e.g., Engine crashes), the
+// Central Server will release the node and calculate proportional payment.
+
+message EngineHeartbeatRequest {
+  string reservation_id = 1;
+  string job_id = 2;               // Current job being executed (if any)
+  bool training_active = 3;        // Whether training is currently running
+  double job_progress = 4;         // 0.0 to 1.0 progress
+  map<string, double> current_metrics = 5;  // Current training metrics
+}
+
+message EngineHeartbeatResponse {
+  StatusCode status = 1;
+  int64 time_remaining_seconds = 2;  // Time left in reservation
+  bool should_extend = 3;            // Hint that reservation is about to expire
+  string message = 4;
+  Error error = 10;
+}
+
+// ============================================================================
+// Job Reservation Service - Central Server
+// ============================================================================
+
+service JobReservationService {
+  // Reserve a node for a time period
+  rpc ReserveNode(ReserveNodeRequest) returns (ReserveNodeResponse);
+
+  // Confirm job completion (from Engine)
+  rpc ConfirmJobComplete(ConfirmJobCompleteRequest) returns (ConfirmJobCompleteResponse);
+
+  // Extend an existing reservation
+  rpc ExtendReservation(ExtendReservationRequest) returns (ExtendReservationResponse);
+
+  // Release reservation early (done before time expires)
+  rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
+
+  // Get reservation details
+  rpc GetReservation(GetReservationRequest) returns (GetReservationResponse);
+
+  // List user's reservations
+  rpc ListReservations(ListReservationsRequest) returns (ListReservationsResponse);
+
+  // Engine heartbeat - must be sent every 30 seconds during active reservation
+  // If heartbeat stops, node will be released with proportional payment
+  rpc EngineHeartbeat(EngineHeartbeatRequest) returns (EngineHeartbeatResponse);
+}
+
+// ============================================================================
+// P2P Training Control Messages (Direct Engine <-> Node)
+// ============================================================================
+// These messages are used for direct P2P communication between Engine and
+// Server Node. The Central Server is NOT involved in these calls.
+
+message PauseTrainingRequest {
+  string job_id = 1;
+}
+
+message PauseTrainingResponse {
+  bool success = 1;
+  string checkpoint_path = 2;      // Path to saved checkpoint
+  int32 current_epoch = 3;
+  int32 current_batch = 4;
+  string message = 5;
+}
+
+message ResumeTrainingRequest {
+  string job_id = 1;
+  string checkpoint_path = 2;      // Optional: resume from specific checkpoint
+}
+
+message ResumeTrainingResponse {
+  bool success = 1;
+  int32 resumed_epoch = 2;
+  int32 resumed_batch = 3;
+  string message = 4;
+}
+
+message CancelTrainingRequest {
+  string job_id = 1;
+  string reason = 2;               // Optional reason for logging
+  bool save_partial_model = 3;     // Whether to save current weights
+}
+
+message CancelTrainingResponse {
+  bool success = 1;
+  int32 epochs_completed = 2;
+  bool partial_model_saved = 3;
+  string partial_model_path = 4;   // Path if saved
+  string message = 5;
+}
+
+message StartNewJobRequest {
+  string reservation_id = 1;       // The active reservation
+  string job_id = 2;               // New job ID
+  JobConfig job_config = 3;        // New model/hyperparameters
+}
+
+message StartNewJobResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+// ============================================================================
+// P2P Training Service (Runs on Server Node, called by Engine)
+// ============================================================================
+// This service handles direct P2P communication during training.
+// Central Server is NOT involved in these RPCs.
+
+service P2PTrainingService {
+  // Training control commands (P2P direct)
+  rpc PauseTraining(PauseTrainingRequest) returns (PauseTrainingResponse);
+  rpc ResumeTraining(ResumeTrainingRequest) returns (ResumeTrainingResponse);
+  rpc CancelTraining(CancelTrainingRequest) returns (CancelTrainingResponse);
+
+  // Start new training job (within same reservation)
+  rpc StartNewJob(StartNewJobRequest) returns (StartNewJobResponse);
+}

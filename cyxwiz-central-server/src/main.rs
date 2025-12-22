@@ -9,7 +9,9 @@ mod pb; // Needed by scheduler for gRPC client
 mod scheduler;
 mod tui;
 
-use crate::api::grpc::{JobServiceImpl, JobStatusServiceImpl, NodeServiceImpl, NodeDiscoveryServiceImpl, WalletServiceImpl};
+use crate::api::grpc::{JobServiceImpl, JobStatusServiceImpl, NodeServiceImpl, NodeDiscoveryServiceImpl, WalletServiceImpl, ReservationServiceImpl};
+use crate::api::grpc::reservation_service::ActiveReservation;
+use std::collections::HashMap;
 use crate::api::rest::v1::infrastructure::InfrastructureState;
 use crate::api::rest::create_rest_router;
 use crate::auth::middleware::grpc::create_auth_interceptor;
@@ -18,7 +20,7 @@ use crate::blockchain::{PaymentProcessor, SolanaClient};
 use crate::cache::RedisCache;
 use crate::config::Config;
 use crate::database::{create_pool, run_migrations, MongoClient};
-use crate::scheduler::{JobScheduler, NodeMonitor};
+use crate::scheduler::{JobScheduler, NodeMonitor, SessionMonitor, BanExpirationChecker};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
@@ -279,6 +281,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet_service = WalletServiceImpl::new(blockchain_client.clone());
     let node_discovery_service = NodeDiscoveryServiceImpl::new(db_pool.clone());
 
+    // Create shared active reservations map for SessionMonitor
+    let active_reservations: Arc<RwLock<HashMap<String, ActiveReservation>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+
+    let reservation_service = ReservationServiceImpl::with_shared_reservations(
+        db_pool.clone(),
+        Arc::clone(&jwt_manager),
+        config.jwt.clone(),
+        mongo_client.clone(),
+        blockchain_client.clone(),
+        Arc::clone(&active_reservations),
+    );
+
+    // Start session monitor to detect disconnected engines
+    info!("Starting session monitor for Engine heartbeats...");
+    let session_monitor = SessionMonitor::new(
+        db_pool.clone(),
+        Arc::clone(&active_reservations),
+    );
+    tokio::spawn(async move {
+        session_monitor.run().await;
+    });
+    info!("Session monitor started (heartbeat timeout: 60s)");
+
+    // Start ban expiration checker to automatically unban nodes after their ban period expires
+    info!("Starting ban expiration checker...");
+    let ban_checker = BanExpirationChecker::new(db_pool.clone());
+    tokio::spawn(async move {
+        ban_checker.run().await;
+    });
+    info!("Ban expiration checker started (check interval: 60s)");
+
     // Initialize deployment services
     // let deployment_service = DeploymentServiceImpl::new(db_pool.clone()); // Temporarily disabled
     // let terminal_service = TerminalServiceImpl::new(db_pool.clone()); // Temporarily disabled
@@ -300,6 +334,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(pb::node_discovery_service_server::NodeDiscoveryServiceServer::new(node_discovery_service))
         .add_service(pb::job_status_service_server::JobStatusServiceServer::with_interceptor(job_status_service, auth_interceptor.clone()))
         .add_service(pb::wallet_service_server::WalletServiceServer::with_interceptor(wallet_service, auth_interceptor.clone()))
+        .add_service(pb::job_reservation_service_server::JobReservationServiceServer::with_interceptor(reservation_service, auth_interceptor.clone()))
         // .add_service(pb::deployment_service_server::DeploymentServiceServer::new(deployment_service)) // Temporarily disabled
         // .add_service(pb::terminal_service_server::TerminalServiceServer::new(terminal_service)) // Temporarily disabled
         // .add_service(pb::model_service_server::ModelServiceServer::new(model_service)) // Temporarily disabled
@@ -334,6 +369,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("     - JobService: ENABLED");
     info!("     - NodeService: ENABLED");
     info!("     - JobStatusService: ENABLED");
+    info!("     - JobReservationService: ENABLED");
     info!("   ");
     info!("   REST API v1 Endpoints:");
     info!("     - GET /api/v1/health");

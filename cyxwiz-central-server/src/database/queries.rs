@@ -11,16 +11,19 @@ pub async fn create_node(pool: &DbPool, node: &Node) -> Result<Node> {
         r#"
         INSERT INTO nodes (
             id, wallet_address, name, status, reputation_score, stake_amount,
+            strike_count, banned_until, total_bans, last_strike_at,
             user_id, device_id,
             cpu_cores, ram_gb, gpu_model, gpu_memory_gb, has_cuda, has_opencl,
             total_jobs_completed, total_jobs_failed, uptime_percentage, current_load,
             country, region, ip_address, port, last_heartbeat, registered_at, updated_at
         ) VALUES (
-            $1, $2, $3, $4, CAST($5 AS REAL), $6, $7, $8, $9, $10, $11, $12, $13, $14,
-            $15, $16, CAST($17 AS REAL), CAST($18 AS REAL), $19, $20, $21, $22, $23, $24, $25
+            $1, $2, $3, $4, CAST($5 AS REAL), $6, $7, $8, $9, $10, $11, $12,
+            $13, $14, $15, $16, $17, $18,
+            $19, $20, CAST($21 AS REAL), CAST($22 AS REAL), $23, $24, $25, $26, $27, $28, $29
         )
         RETURNING id, wallet_address, name, status,
             CAST(reputation_score AS REAL) as reputation_score, stake_amount,
+            strike_count, banned_until, total_bans, last_strike_at,
             user_id, device_id, cpu_cores, ram_gb, gpu_model, gpu_memory_gb,
             has_cuda, has_opencl, total_jobs_completed, total_jobs_failed,
             CAST(uptime_percentage AS REAL) as uptime_percentage,
@@ -34,6 +37,10 @@ pub async fn create_node(pool: &DbPool, node: &Node) -> Result<Node> {
     .bind(&node.status)
     .bind(node.reputation_score)
     .bind(node.stake_amount)
+    .bind(node.strike_count)
+    .bind(&node.banned_until)
+    .bind(node.total_bans)
+    .bind(&node.last_strike_at)
     .bind(&node.user_id)
     .bind(&node.device_id)
     .bind(node.cpu_cores)
@@ -182,15 +189,16 @@ pub async fn update_node_load(pool: &DbPool, node_id: DbId, load: f64) -> Result
 
 /// Update node reputation score by a delta amount
 /// Positive delta increases reputation, negative decreases
+/// Note: Reputation scale is 0-100 (0.0 to 100.0)
 pub async fn update_node_reputation(pool: &DbPool, node_id: DbId, delta: f64) -> Result<()> {
     let now = chrono::Utc::now();
-    // Clamp reputation between 0.0 and 5.0
+    // Clamp reputation between 0.0 and 100.0
     sqlx::query(
         r#"
         UPDATE nodes
         SET reputation_score = CASE
             WHEN reputation_score + $1 < 0.0 THEN 0.0
-            WHEN reputation_score + $1 > 5.0 THEN 5.0
+            WHEN reputation_score + $1 > 100.0 THEN 100.0
             ELSE reputation_score + $1
         END,
         updated_at = $2
@@ -204,6 +212,168 @@ pub async fn update_node_reputation(pool: &DbPool, node_id: DbId, delta: f64) ->
     .await?;
 
     Ok(())
+}
+
+/// Update node reputation and check if it crossed the probation threshold
+/// Returns the new reputation score
+pub async fn update_node_reputation_with_check(
+    pool: &DbPool,
+    node_id: DbId,
+    delta: f64,
+) -> Result<f64> {
+    let now = chrono::Utc::now();
+
+    // Get current reputation before update
+    let node = get_node(pool, node_id.clone()).await?
+        .ok_or_else(|| ServerError::Internal("Node not found".to_string()))?;
+
+    let old_score = node.reputation_score;
+
+    // Clamp new score between 0.0 and 100.0
+    let new_score = (old_score + delta).clamp(0.0, 100.0);
+
+    // Update the reputation score
+    sqlx::query("UPDATE nodes SET reputation_score = $1, updated_at = $2 WHERE id = $3")
+        .bind(new_score)
+        .bind(now)
+        .bind(node_id)
+        .execute(pool)
+        .await?;
+
+    Ok(new_score)
+}
+
+/// Record a strike on a node (when reputation drops below probation threshold)
+pub async fn record_node_strike(pool: &DbPool, node_id: DbId) -> Result<i32> {
+    let now = chrono::Utc::now();
+
+    // Increment strike count and update last_strike_at
+    sqlx::query(
+        "UPDATE nodes SET strike_count = strike_count + 1, last_strike_at = $1, updated_at = $1 WHERE id = $2"
+    )
+    .bind(now)
+    .bind(node_id.clone())
+    .execute(pool)
+    .await?;
+
+    // Get the new strike count
+    let node = get_node(pool, node_id).await?
+        .ok_or_else(|| ServerError::Internal("Node not found".to_string()))?;
+
+    Ok(node.strike_count)
+}
+
+/// Ban a node for a specified duration
+pub async fn ban_node(pool: &DbPool, node_id: DbId, ban_until: DateTime<Utc>) -> Result<()> {
+    let now = chrono::Utc::now();
+
+    sqlx::query(
+        r#"
+        UPDATE nodes
+        SET status = 'offline',
+            banned_until = $1,
+            total_bans = total_bans + 1,
+            updated_at = $2
+        WHERE id = $3
+        "#
+    )
+    .bind(ban_until)
+    .bind(now)
+    .bind(node_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Unban a node (clear banned_until and reset to online if appropriate)
+pub async fn unban_node(pool: &DbPool, node_id: DbId) -> Result<()> {
+    let now = chrono::Utc::now();
+
+    // Clear ban, set reputation to probation level, and status to offline (node must reconnect)
+    sqlx::query(
+        r#"
+        UPDATE nodes
+        SET banned_until = NULL,
+            strike_count = 0,
+            reputation_score = 25.0,
+            updated_at = $1
+        WHERE id = $2
+        "#
+    )
+    .bind(now)
+    .bind(node_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Get all nodes that have expired bans and need to be unbanned
+pub async fn get_expired_bans(pool: &DbPool) -> Result<Vec<Node>> {
+    let now = chrono::Utc::now();
+
+    let nodes = sqlx::query_as::<_, Node>(
+        "SELECT * FROM nodes WHERE banned_until IS NOT NULL AND banned_until < $1"
+    )
+    .bind(now)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(nodes)
+}
+
+/// Get all currently banned nodes
+pub async fn get_banned_nodes(pool: &DbPool) -> Result<Vec<Node>> {
+    let now = chrono::Utc::now();
+
+    let nodes = sqlx::query_as::<_, Node>(
+        "SELECT * FROM nodes WHERE banned_until IS NOT NULL AND banned_until > $1"
+    )
+    .bind(now)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(nodes)
+}
+
+/// Get nodes on probation (reputation between 25 and 50, need free work)
+pub async fn get_probation_nodes(pool: &DbPool) -> Result<Vec<Node>> {
+    let nodes = sqlx::query_as::<_, Node>(
+        r#"
+        SELECT * FROM nodes
+        WHERE reputation_score >= 25.0
+          AND reputation_score < 50.0
+          AND (banned_until IS NULL OR banned_until < CURRENT_TIMESTAMP)
+        ORDER BY reputation_score ASC
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(nodes)
+}
+
+/// Get available nodes filtered by reputation tier
+/// Only returns nodes with reputation >= 50 (not on probation or banned)
+pub async fn list_available_nodes_filtered(pool: &DbPool) -> Result<Vec<Node>> {
+    let now = chrono::Utc::now();
+
+    let nodes = sqlx::query_as::<_, Node>(
+        r#"
+        SELECT * FROM nodes
+        WHERE status = 'online'
+          AND current_load < 0.9
+          AND reputation_score >= 50.0
+          AND (banned_until IS NULL OR banned_until < $1)
+        ORDER BY reputation_score DESC
+        "#
+    )
+    .bind(now)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(nodes)
 }
 
 // Job queries

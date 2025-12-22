@@ -1044,5 +1044,390 @@ std::string JobExecutionServiceImpl::SaveDatasetToFile(const std::string& job_id
     }
 }
 
+// ========== Checkpoint Helpers ==========
+
+std::string JobExecutionServiceImpl::SaveCheckpoint(const std::string& job_id,
+                                                     int epoch, int batch) {
+    try {
+        fs::path checkpoint_dir = fs::temp_directory_path() / "cyxwiz_checkpoints" / job_id;
+        fs::create_directories(checkpoint_dir);
+
+        auto timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+        std::string checkpoint_name = "checkpoint_e" + std::to_string(epoch) +
+                                      "_b" + std::to_string(batch) +
+                                      "_" + std::to_string(timestamp) + ".ckpt";
+        fs::path checkpoint_path = checkpoint_dir / checkpoint_name;
+
+        // Get model weights from job executor if available
+        if (job_executor_) {
+            auto weights = job_executor_->GetCurrentWeights(job_id);
+            if (!weights.empty()) {
+                std::ofstream file(checkpoint_path, std::ios::binary);
+                if (file) {
+                    file.write(weights.data(), weights.size());
+                    file.close();
+                    spdlog::info("Checkpoint saved: {} ({} bytes)",
+                                checkpoint_path.string(), weights.size());
+                    return checkpoint_path.string();
+                }
+            }
+        }
+
+        // If no job executor or weights, save placeholder
+        std::ofstream file(checkpoint_path, std::ios::binary);
+        if (file) {
+            // Write minimal checkpoint header
+            file << "CYXWIZ_CKPT\n";
+            file << "job_id=" << job_id << "\n";
+            file << "epoch=" << epoch << "\n";
+            file << "batch=" << batch << "\n";
+            file.close();
+            spdlog::info("Checkpoint placeholder saved: {}", checkpoint_path.string());
+            return checkpoint_path.string();
+        }
+
+        return "";
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to save checkpoint for job {}: {}", job_id, e.what());
+        return "";
+    }
+}
+
+bool JobExecutionServiceImpl::LoadCheckpoint(const std::string& job_id,
+                                              const std::string& checkpoint_path) {
+    try {
+        if (!fs::exists(checkpoint_path)) {
+            spdlog::error("Checkpoint not found: {}", checkpoint_path);
+            return false;
+        }
+
+        std::ifstream file(checkpoint_path, std::ios::binary);
+        if (!file) {
+            spdlog::error("Failed to open checkpoint: {}", checkpoint_path);
+            return false;
+        }
+
+        // Read checkpoint data
+        std::vector<char> data((std::istreambuf_iterator<char>(file)),
+                               std::istreambuf_iterator<char>());
+        file.close();
+
+        // Load weights into job executor if available
+        if (job_executor_ && !data.empty()) {
+            if (job_executor_->LoadWeights(job_id, data)) {
+                spdlog::info("Checkpoint loaded: {} ({} bytes)",
+                            checkpoint_path, data.size());
+                return true;
+            }
+        }
+
+        spdlog::info("Checkpoint file read: {} ({} bytes)", checkpoint_path, data.size());
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to load checkpoint for job {}: {}", job_id, e.what());
+        return false;
+    }
+}
+
+std::string JobExecutionServiceImpl::SavePartialModel(const std::string& job_id) {
+    try {
+        fs::path models_dir = fs::temp_directory_path() / "cyxwiz_models" / job_id;
+        fs::create_directories(models_dir);
+
+        auto timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+        std::string model_name = "partial_model_" + std::to_string(timestamp) + ".weights";
+        fs::path model_path = models_dir / model_name;
+
+        // Get model weights from job executor if available
+        if (job_executor_) {
+            auto weights = job_executor_->GetCurrentWeights(job_id);
+            if (!weights.empty()) {
+                std::ofstream file(model_path, std::ios::binary);
+                if (file) {
+                    file.write(weights.data(), weights.size());
+                    file.close();
+                    spdlog::info("Partial model saved: {} ({} bytes)",
+                                model_path.string(), weights.size());
+                    return model_path.string();
+                }
+            }
+        }
+
+        spdlog::warn("No weights available for partial model save");
+        return "";
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to save partial model for job {}: {}", job_id, e.what());
+        return "";
+    }
+}
+
+// ========== P2P Training Control RPCs ==========
+
+grpc::Status JobExecutionServiceImpl::PauseTraining(
+    grpc::ServerContext* context,
+    const cyxwiz::protocol::PauseTrainingRequest* request,
+    cyxwiz::protocol::PauseTrainingResponse* response) {
+
+    spdlog::info("PauseTraining requested for job {}", request->job_id());
+
+    // Find job session
+    JobSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        auto it = active_jobs_.find(request->job_id());
+        if (it == active_jobs_.end()) {
+            response->set_success(false);
+            response->set_message("Job not found: " + request->job_id());
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Job not found");
+        }
+        session = it->second.get();
+    }
+
+    // Check if job is running
+    if (!session->is_running) {
+        response->set_success(false);
+        response->set_message("Job is not running");
+        return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "Job not running");
+    }
+
+    // Check if already paused
+    if (session->is_paused) {
+        response->set_success(true);
+        response->set_message("Job is already paused");
+        response->set_checkpoint_path(session->checkpoint_path);
+        response->set_current_epoch(session->paused_at_epoch);
+        response->set_current_batch(session->paused_at_batch);
+        return grpc::Status::OK;
+    }
+
+    // Get current training state
+    int current_epoch = 0;
+    int current_batch = 0;
+    {
+        std::lock_guard<std::mutex> lock(session->metrics_mutex);
+        current_epoch = session->latest_progress.current_epoch();
+        current_batch = session->latest_progress.current_batch();
+    }
+
+    // Set pause flag - training loop should check this and pause
+    session->is_paused = true;
+    session->paused_at_epoch = current_epoch;
+    session->paused_at_batch = current_batch;
+
+    // Signal job executor to pause (if available)
+    if (job_executor_) {
+        job_executor_->PauseJob(request->job_id());
+    }
+
+    // Save checkpoint
+    std::string checkpoint_path = SaveCheckpoint(request->job_id(), current_epoch, current_batch);
+    session->checkpoint_path = checkpoint_path;
+
+    // Build response
+    response->set_success(true);
+    response->set_checkpoint_path(checkpoint_path);
+    response->set_current_epoch(current_epoch);
+    response->set_current_batch(current_batch);
+    response->set_message("Training paused at epoch " + std::to_string(current_epoch) +
+                          ", batch " + std::to_string(current_batch));
+
+    spdlog::info("Training paused for job {} at epoch {}, batch {}",
+                request->job_id(), current_epoch, current_batch);
+    return grpc::Status::OK;
+}
+
+grpc::Status JobExecutionServiceImpl::ResumeTraining(
+    grpc::ServerContext* context,
+    const cyxwiz::protocol::ResumeTrainingRequest* request,
+    cyxwiz::protocol::ResumeTrainingResponse* response) {
+
+    spdlog::info("ResumeTraining requested for job {}", request->job_id());
+
+    // Find job session
+    JobSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        auto it = active_jobs_.find(request->job_id());
+        if (it == active_jobs_.end()) {
+            response->set_success(false);
+            response->set_message("Job not found: " + request->job_id());
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Job not found");
+        }
+        session = it->second.get();
+    }
+
+    // Check if job is paused
+    if (!session->is_paused) {
+        response->set_success(false);
+        response->set_message("Job is not paused");
+        return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "Job not paused");
+    }
+
+    // Determine checkpoint to resume from
+    std::string checkpoint_path = request->checkpoint_path();
+    if (checkpoint_path.empty()) {
+        checkpoint_path = session->checkpoint_path;  // Use last saved checkpoint
+    }
+
+    // Load checkpoint if specified and exists
+    if (!checkpoint_path.empty() && fs::exists(checkpoint_path)) {
+        LoadCheckpoint(request->job_id(), checkpoint_path);
+    }
+
+    // Get paused state
+    int resumed_epoch = session->paused_at_epoch;
+    int resumed_batch = session->paused_at_batch;
+
+    // Clear pause flag - training loop should resume
+    session->is_paused = false;
+
+    // Signal job executor to resume (if available)
+    if (job_executor_) {
+        job_executor_->ResumeJob(request->job_id());
+    }
+
+    // Notify waiting threads
+    {
+        std::lock_guard<std::mutex> lock(session->pause_mutex);
+        session->pause_cv.notify_all();
+    }
+
+    // Build response
+    response->set_success(true);
+    response->set_resumed_epoch(resumed_epoch);
+    response->set_resumed_batch(resumed_batch);
+    response->set_message("Training resumed from epoch " + std::to_string(resumed_epoch) +
+                          ", batch " + std::to_string(resumed_batch));
+
+    spdlog::info("Training resumed for job {} from epoch {}, batch {}",
+                request->job_id(), resumed_epoch, resumed_batch);
+    return grpc::Status::OK;
+}
+
+grpc::Status JobExecutionServiceImpl::CancelTraining(
+    grpc::ServerContext* context,
+    const cyxwiz::protocol::CancelTrainingRequest* request,
+    cyxwiz::protocol::CancelTrainingResponse* response) {
+
+    spdlog::info("CancelTraining requested for job {}", request->job_id());
+    if (!request->reason().empty()) {
+        spdlog::info("Cancel reason: {}", request->reason());
+    }
+
+    // Find job session
+    JobSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        auto it = active_jobs_.find(request->job_id());
+        if (it == active_jobs_.end()) {
+            response->set_success(false);
+            response->set_message("Job not found: " + request->job_id());
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Job not found");
+        }
+        session = it->second.get();
+    }
+
+    // Get current training state
+    int epochs_completed = 0;
+    {
+        std::lock_guard<std::mutex> lock(session->metrics_mutex);
+        epochs_completed = session->latest_progress.current_epoch();
+    }
+    session->completed_epochs = epochs_completed;
+
+    // Save partial model if requested
+    std::string partial_model_path;
+    bool partial_saved = false;
+    if (request->save_partial_model() && session->is_running) {
+        partial_model_path = SavePartialModel(request->job_id());
+        partial_saved = !partial_model_path.empty();
+    }
+
+    // Set stop flag - training loop should exit
+    session->should_stop = true;
+    session->is_running = false;
+    session->is_paused = false;
+
+    // Signal job executor to stop (if available)
+    if (job_executor_) {
+        job_executor_->StopJob(request->job_id());
+    }
+
+    // Notify any waiting threads
+    {
+        std::lock_guard<std::mutex> lock(session->pause_mutex);
+        session->pause_cv.notify_all();
+    }
+
+    // Build response
+    response->set_success(true);
+    response->set_epochs_completed(epochs_completed);
+    response->set_partial_model_saved(partial_saved);
+    response->set_partial_model_path(partial_model_path);
+    response->set_message("Training cancelled after " + std::to_string(epochs_completed) +
+                          " epochs" + (partial_saved ? ", partial model saved" : ""));
+
+    spdlog::info("Training cancelled for job {}, {} epochs completed, partial_saved={}",
+                request->job_id(), epochs_completed, partial_saved);
+    return grpc::Status::OK;
+}
+
+grpc::Status JobExecutionServiceImpl::StartNewJob(
+    grpc::ServerContext* context,
+    const cyxwiz::protocol::StartNewJobRequest* request,
+    cyxwiz::protocol::StartNewJobResponse* response) {
+
+    spdlog::info("StartNewJob requested for reservation {}, job {}",
+                request->reservation_id(), request->job_id());
+
+    // Check if we have an active session for this reservation
+    bool has_active_session = false;
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        for (const auto& [job_id, session] : active_jobs_) {
+            if (session->reservation_id == request->reservation_id()) {
+                // Found session for this reservation
+                if (session->is_running && !session->should_stop) {
+                    response->set_accepted(false);
+                    response->set_message("Another job is still running in this reservation. "
+                                         "Cancel or wait for it to complete.");
+                    return grpc::Status::OK;
+                }
+                has_active_session = true;
+                break;
+            }
+        }
+    }
+
+    // Create new job session
+    auto new_session = std::make_unique<JobSession>();
+    new_session->job_id = request->job_id();
+    new_session->reservation_id = request->reservation_id();
+    new_session->job_config = request->job_config();
+    new_session->is_running = false;
+    new_session->is_paused = false;
+    new_session->should_stop = false;
+
+    // Store the new session
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        active_jobs_[request->job_id()] = std::move(new_session);
+    }
+
+    // Initialize job in executor if available
+    if (job_executor_) {
+        // The actual training will start when Engine connects to StreamTrainingMetrics
+        spdlog::info("New job {} ready for execution in reservation {}",
+                    request->job_id(), request->reservation_id());
+    }
+
+    response->set_accepted(true);
+    response->set_message("New job accepted. Connect to StreamTrainingMetrics to start training.");
+
+    spdlog::info("New job {} accepted for reservation {}",
+                request->job_id(), request->reservation_id());
+    return grpc::Status::OK;
+}
+
 } // namespace server_node
 } // namespace cyxwiz

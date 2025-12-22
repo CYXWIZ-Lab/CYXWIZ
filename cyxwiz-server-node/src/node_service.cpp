@@ -48,10 +48,17 @@ grpc::Status NodeServiceImpl::AssignJob(
         spdlog::info("Job {} has remote dataset ({}), waiting for P2P connection from Engine",
                      request->job().job_id(), dataset_uri);
 
-        // Store the job config for when P2P connection arrives
+        // Store the job config with timestamp for when P2P connection arrives
         {
             std::lock_guard<std::mutex> lock(pending_jobs_mutex_);
-            pending_p2p_jobs_[request->job().job_id()] = request->job();
+
+            // Clean up any expired pending jobs first
+            CleanupExpiredPendingJobs();
+
+            PendingJob pending;
+            pending.config = request->job();
+            pending.registered_at = std::chrono::steady_clock::now();
+            pending_p2p_jobs_[request->job().job_id()] = pending;
         }
 
         response->set_status(protocol::STATUS_SUCCESS);
@@ -144,18 +151,56 @@ bool NodeServiceImpl::ValidateJobConfig(
 bool NodeServiceImpl::GetAndRemovePendingJob(const std::string& job_id, protocol::JobConfig* config) {
     std::lock_guard<std::mutex> lock(pending_jobs_mutex_);
 
+    // First, clean up expired jobs
+    CleanupExpiredPendingJobs();
+
     auto it = pending_p2p_jobs_.find(job_id);
     if (it == pending_p2p_jobs_.end()) {
         return false;
     }
 
     if (config) {
-        *config = it->second;
+        *config = it->second.config;
     }
     pending_p2p_jobs_.erase(it);
 
     spdlog::info("Retrieved pending P2P job config for job {}", job_id);
     return true;
+}
+
+void NodeServiceImpl::CleanupExpiredPendingJobs() {
+    // Note: Caller must hold pending_jobs_mutex_
+    auto now = std::chrono::steady_clock::now();
+    auto timeout = std::chrono::seconds(PENDING_JOB_TIMEOUT_SECONDS);
+
+    for (auto it = pending_p2p_jobs_.begin(); it != pending_p2p_jobs_.end(); ) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->second.registered_at);
+        if (elapsed > timeout) {
+            spdlog::warn("Pending P2P job {} timed out after {}s (no Engine connection received)",
+                        it->first, elapsed.count());
+            it = pending_p2p_jobs_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void NodeServiceImpl::ClearAllPendingJobs() {
+    std::lock_guard<std::mutex> lock(pending_jobs_mutex_);
+
+    if (pending_p2p_jobs_.empty()) {
+        return;
+    }
+
+    spdlog::warn("Clearing {} pending P2P jobs due to Central Server disconnection",
+                pending_p2p_jobs_.size());
+
+    for (const auto& [job_id, pending] : pending_p2p_jobs_) {
+        spdlog::info("  Cancelled pending job: {}", job_id);
+    }
+
+    pending_p2p_jobs_.clear();
+    spdlog::info("All pending P2P jobs cleared");
 }
 
 } // namespace servernode

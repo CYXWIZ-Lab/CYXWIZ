@@ -88,6 +88,12 @@ pub struct Node {
     pub reputation_score: f64,
     pub stake_amount: i64, // in lamports (smallest unit of SOL)
 
+    // Reputation tracking (for ban system)
+    pub strike_count: i32,                      // Times dropped below probation threshold
+    pub banned_until: Option<DateTime<Utc>>,    // When ban expires (None = not banned)
+    pub total_bans: i32,                        // Lifetime ban count (for escalation)
+    pub last_strike_at: Option<DateTime<Utc>>,  // When last strike occurred
+
     // User association (MongoDB ObjectId from Website)
     pub user_id: Option<String>,
     // Hardware-based unique device identifier
@@ -199,10 +205,80 @@ pub struct NodeMetrics {
     pub timestamp: DateTime<Utc>,
 }
 
+/// Reputation thresholds for node status
+pub const REPUTATION_PREMIUM_THRESHOLD: f64 = 80.0;
+pub const REPUTATION_NORMAL_THRESHOLD: f64 = 50.0;
+pub const REPUTATION_PROBATION_THRESHOLD: f64 = 25.0;
+
+/// Reputation change amounts
+pub const REPUTATION_JOB_SUCCESS: f64 = 1.0;
+pub const REPUTATION_GOOD_METRICS_BONUS: f64 = 0.5;
+pub const REPUTATION_FREE_WORK_SUCCESS: f64 = 2.0;
+pub const REPUTATION_NODE_DISCONNECT: f64 = -5.0;
+pub const REPUTATION_HEARTBEAT_TIMEOUT: f64 = -2.0;
+pub const REPUTATION_USER_COMPLAINT: f64 = -10.0;
+
+/// Ban durations in hours
+pub const BAN_DURATION_FIRST: i64 = 24;      // 24 hours
+pub const BAN_DURATION_SECOND: i64 = 48;     // 48 hours
+pub const BAN_DURATION_THIRD: i64 = 168;     // 1 week
+
+/// Node reputation tier
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ReputationTier {
+    Premium,    // 80-100: Priority in node list, higher rates allowed
+    Normal,     // 50-79: Standard free list
+    Probation,  // 25-49: FREE_WORK_LIST only (no payment)
+    Banned,     // 0-24: Cannot accept any jobs
+}
+
 // Helper functions for Node
 impl Node {
     pub fn is_available(&self) -> bool {
-        matches!(self.status, NodeStatus::Online) && self.current_load < 0.9
+        matches!(self.status, NodeStatus::Online) && self.current_load < 0.9 && !self.is_banned()
+    }
+
+    /// Check if node is currently banned
+    pub fn is_banned(&self) -> bool {
+        if let Some(banned_until) = self.banned_until {
+            banned_until > Utc::now()
+        } else {
+            self.reputation_score < REPUTATION_PROBATION_THRESHOLD
+        }
+    }
+
+    /// Get the node's current reputation tier
+    pub fn reputation_tier(&self) -> ReputationTier {
+        if self.is_banned() {
+            ReputationTier::Banned
+        } else if self.reputation_score >= REPUTATION_PREMIUM_THRESHOLD {
+            ReputationTier::Premium
+        } else if self.reputation_score >= REPUTATION_NORMAL_THRESHOLD {
+            ReputationTier::Normal
+        } else {
+            ReputationTier::Probation
+        }
+    }
+
+    /// Check if node can accept paid jobs (not on probation or banned)
+    pub fn can_accept_paid_jobs(&self) -> bool {
+        self.reputation_score >= REPUTATION_NORMAL_THRESHOLD && !self.is_banned()
+    }
+
+    /// Check if node needs to do free work to rebuild reputation
+    pub fn needs_free_work(&self) -> bool {
+        self.reputation_score < REPUTATION_NORMAL_THRESHOLD &&
+            self.reputation_score >= REPUTATION_PROBATION_THRESHOLD &&
+            !self.is_banned()
+    }
+
+    /// Calculate ban duration based on total bans (escalating)
+    pub fn calculate_ban_duration(&self) -> chrono::Duration {
+        match self.total_bans {
+            0 => chrono::Duration::hours(BAN_DURATION_FIRST),
+            1 => chrono::Duration::hours(BAN_DURATION_SECOND),
+            _ => chrono::Duration::hours(BAN_DURATION_THIRD),
+        }
     }
 
     pub fn can_handle_job(&self, job: &Job) -> bool {
