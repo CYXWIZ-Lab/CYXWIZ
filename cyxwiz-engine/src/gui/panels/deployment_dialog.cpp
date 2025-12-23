@@ -2,17 +2,11 @@
 #include "deployment_dialog.h"
 #include "../icons.h"
 #include "../../auth/auth_client.h"
+#include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <cstring>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#include <shobjidl.h>  // For IFileDialog
-#include <objbase.h>   // For CoInitialize
-#endif
 
 namespace cyxwiz {
 
@@ -1092,67 +1086,13 @@ void DeploymentDialog::RenderSelectedNodeInfo() {
 }
 
 std::string DeploymentDialog::OpenModelFile() {
-#ifdef _WIN32
-    char filename[MAX_PATH] = "";
-
-    OPENFILENAMEA ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = "CyxWiz Model (*.cyxmodel)\0*.cyxmodel\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = "Select Binary .cyxmodel File";
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn)) {
-        return std::string(filename);
-    }
-#endif
-    return "";
+    auto result = FileDialogs::OpenModel();
+    return result.value_or("");
 }
 
 std::string DeploymentDialog::OpenModelFolder() {
-#ifdef _WIN32
-    std::string result;
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    if (SUCCEEDED(hr)) {
-        IFileDialog* pfd = nullptr;
-        hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
-                              IID_IFileDialog, reinterpret_cast<void**>(&pfd));
-
-        if (SUCCEEDED(hr)) {
-            DWORD dwOptions;
-            hr = pfd->GetOptions(&dwOptions);
-            if (SUCCEEDED(hr)) {
-                hr = pfd->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST);
-            }
-
-            pfd->SetTitle(L"Select .cyxmodel Directory");
-            hr = pfd->Show(nullptr);
-            if (SUCCEEDED(hr)) {
-                IShellItem* psi = nullptr;
-                hr = pfd->GetResult(&psi);
-                if (SUCCEEDED(hr)) {
-                    PWSTR pszPath = nullptr;
-                    hr = psi->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
-                    if (SUCCEEDED(hr)) {
-                        int size = WideCharToMultiByte(CP_UTF8, 0, pszPath, -1, nullptr, 0, nullptr, nullptr);
-                        if (size > 0) {
-                            result.resize(size - 1);
-                            WideCharToMultiByte(CP_UTF8, 0, pszPath, -1, &result[0], size, nullptr, nullptr);
-                        }
-                        CoTaskMemFree(pszPath);
-                    }
-                    psi->Release();
-                }
-            }
-            pfd->Release();
-        }
-        CoUninitialize();
-    }
-    return result;
-#endif
-    return "";
+    auto result = FileDialogs::SelectFolder("Select .cyxmodel Directory");
+    return result.value_or("");
 }
 
 } // namespace cyxwiz

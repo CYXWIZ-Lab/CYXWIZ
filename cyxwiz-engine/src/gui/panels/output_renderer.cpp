@@ -1,5 +1,6 @@
 #include "output_renderer.h"
 #include "../icons.h"
+#include "../../core/file_dialogs.h"
 #include <spdlog/spdlog.h>
 #include <sstream>
 #include <algorithm>
@@ -10,9 +11,7 @@
 #include <stb_image.h>
 
 #ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#include <shellapi.h>
+#include <windows.h>  // For clipboard functionality
 #endif
 
 namespace cyxwiz {
@@ -241,54 +240,32 @@ bool OutputRenderer::CopyImageToClipboard(const std::vector<unsigned char>& png_
 bool OutputRenderer::SaveImageToFile(const std::vector<unsigned char>& png_data, const std::string& default_name) {
     if (png_data.empty()) return false;
 
-#ifdef _WIN32
-    // Create save file dialog
-    char filename[MAX_PATH] = "";
+    // Cross-platform save dialog
     std::string default_filename = default_name + ".png";
-    strncpy_s(filename, default_filename.c_str(), MAX_PATH - 1);
+    auto result = FileDialogs::SaveFile(
+        "Save Plot Image",
+        {{"PNG Files", "png"}, {"All Files", "*"}},
+        nullptr,
+        default_filename.c_str()
+    );
 
-    OPENFILENAMEA ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = "PNG Files (*.png)\0*.png\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = "Save Plot Image";
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    ofn.lpstrDefExt = "png";
-
-    if (!GetSaveFileNameA(&ofn)) {
-        // User cancelled or error
+    if (!result) {
+        // User cancelled
         return false;
     }
 
     // Write PNG data to file
-    std::ofstream file(filename, std::ios::binary);
+    std::ofstream file(*result, std::ios::binary);
     if (!file) {
-        spdlog::error("Failed to create file: {}", filename);
+        spdlog::error("Failed to create file: {}", *result);
         return false;
     }
 
     file.write(reinterpret_cast<const char*>(png_data.data()), png_data.size());
     file.close();
 
-    spdlog::info("Plot saved to: {}", filename);
+    spdlog::info("Plot saved to: {}", *result);
     return true;
-#else
-    // Non-Windows platforms: save to current directory with timestamp
-    std::string filename = default_name + ".png";
-    std::ofstream file(filename, std::ios::binary);
-    if (!file) {
-        spdlog::error("Failed to create file: {}", filename);
-        return false;
-    }
-
-    file.write(reinterpret_cast<const char*>(png_data.data()), png_data.size());
-    file.close();
-
-    spdlog::info("Plot saved to: {}", filename);
-    return true;
-#endif
 }
 
 void OutputRenderer::RenderTable(const std::vector<std::vector<std::string>>& data,

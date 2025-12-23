@@ -2,6 +2,7 @@
 #include "plot_window.h"
 #include "../theme.h"
 #include "../../auth/auth_client.h"
+#include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -15,12 +16,6 @@
 #include "../dock_style.h"
 #include "../../core/project_manager.h"
 #include "../icons.h"
-
-#ifdef _WIN32
-#include <windows.h>
-#include <shlobj.h>
-#include <commdlg.h>
-#endif
 
 namespace cyxwiz {
 
@@ -2192,58 +2187,15 @@ void ToolbarPanel::Render() {
 }
 
 std::string ToolbarPanel::OpenFolderDialog() {
-#ifdef _WIN32
-    BROWSEINFO bi = { 0 };
-    bi.lpszTitle = "Select Project Location";
-    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-
-    LPITEMIDLIST pidl = SHBrowseForFolder(&bi);
-    if (pidl != nullptr) {
-        char path[MAX_PATH];
-        if (SHGetPathFromIDList(pidl, path)) {
-            CoTaskMemFree(pidl);
-            return std::string(path);
-        }
-        CoTaskMemFree(pidl);
-    }
-    return "";
-#else
-    // For Linux/Mac, we'd need a different implementation
-    // For now, return empty string
-    spdlog::warn("Folder dialog not implemented for this platform");
-    return "";
-#endif
+    auto result = FileDialogs::SelectFolder("Select Project Location");
+    return result.value_or("");
 }
 
 
 std::string ToolbarPanel::OpenFileDialog(const char* filter, const char* title) {
-#ifdef _WIN32
-    OPENFILENAMEA ofn;
-    char szFile[260] = { 0 };
-
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.lpstrFilter = filter;
-    ofn.nFilterIndex = 1;
-    ofn.lpstrFileTitle = nullptr;
-    ofn.nMaxFileTitle = 0;
-    ofn.lpstrInitialDir = nullptr;
-    ofn.lpstrTitle = title;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn)) {
-        return std::string(szFile);
-    }
-    return "";
-#else
-    (void)filter;
-    (void)title;
-    spdlog::warn("File dialog not implemented for this platform");
-    return "";
-#endif
+    (void)filter;  // Filter format differs from nfd, using generic dialog
+    auto result = FileDialogs::OpenFile(title, {{"All Files", "*"}});
+    return result.value_or("");
 }
 
 // ============================================================================

@@ -1,14 +1,11 @@
 #include "hash_generator_panel.h"
 #include "../icons.h"
+#include "../../core/file_dialogs.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
 #include <fstream>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
+#include <cstring>
 
 namespace cyxwiz {
 
@@ -352,29 +349,14 @@ void HashGeneratorPanel::ClearAll() {
 }
 
 void HashGeneratorPanel::BrowseFile() {
-#ifdef _WIN32
-    OPENFILENAMEA ofn;
-    char szFile[512] = {0};
-
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.lpstrFilter = "All Files\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrFileTitle = NULL;
-    ofn.nMaxFileTitle = 0;
-    ofn.lpstrInitialDir = NULL;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn)) {
-        strcpy(file_path_buffer_, ofn.lpstrFile);
+    auto result = FileDialogs::OpenFile(
+        "Select File to Hash",
+        {{"All Files", "*"}}
+    );
+    if (result) {
+        strncpy(file_path_buffer_, result->c_str(), sizeof(file_path_buffer_) - 1);
+        file_path_buffer_[sizeof(file_path_buffer_) - 1] = '\0';
     }
-#else
-    // For non-Windows, just show a message
-    spdlog::info("File browser not implemented for this platform. Enter file path manually.");
-#endif
 }
 
 } // namespace cyxwiz

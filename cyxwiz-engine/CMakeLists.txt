@@ -15,6 +15,9 @@ find_package(pybind11 CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
+# Cross-platform native file dialogs
+find_package(nfd CONFIG REQUIRED)
+
 # Optional: HDF5 support for data files
 find_package(HighFive CONFIG)
 if(HighFive_FOUND)
@@ -59,6 +62,7 @@ set(ENGINE_SOURCES
     src/core/model_importer.cpp
     src/core/model_analyzer.cpp
     src/core/model_converter.cpp
+    src/core/file_dialogs.cpp
     src/core/formats/cyxmodel_format.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
@@ -228,6 +232,7 @@ set(ENGINE_HEADERS
     src/core/model_importer.h
     src/core/model_analyzer.h
     src/core/model_converter.h
+    src/core/file_dialogs.h
     src/core/formats/cyxmodel_format.h
     src/gui/main_window.h
     src/gui/node_editor.h
@@ -404,6 +409,7 @@ target_link_libraries(cyxwiz-engine PRIVATE
     OpenSSL::Crypto
     cyxwiz-backend
     cyxwiz-protocol
+    nfd::nfd
 )
 
 # Optional: Link HDF5 if found

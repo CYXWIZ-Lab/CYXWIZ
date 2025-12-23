@@ -1,14 +1,10 @@
 #include "test_results_panel.h"
 #include "../../core/test_manager.h"
+#include "../../core/file_dialogs.h"
 #include "../theme.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
 
 namespace cyxwiz {
 
@@ -479,51 +475,31 @@ ImVec4 TestResultsPanel::GetConfusionCellColor(int value, int max_value) {
 }
 
 void TestResultsPanel::ExportToCSV() {
-#ifdef _WIN32
-    char filename[MAX_PATH] = "test_results.csv";
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = "CSV Files (*.csv)\0*.csv\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = "csv";
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-
-    if (GetSaveFileNameA(&ofn)) {
-        if (TestManager::Instance().ExportResultsToCSV(filename)) {
-            spdlog::info("Exported results to: {}", filename);
+    auto result = FileDialogs::SaveFile(
+        "Export Test Results",
+        {{"CSV Files", "csv"}, {"All Files", "*"}},
+        nullptr,
+        "test_results.csv"
+    );
+    if (result) {
+        if (TestManager::Instance().ExportResultsToCSV(*result)) {
+            spdlog::info("Exported results to: {}", *result);
         }
     }
-#else
-    // TODO: Add platform-specific file dialog for other platforms
-    TestManager::Instance().ExportResultsToCSV("test_results.csv");
-#endif
 }
 
 void TestResultsPanel::ExportToJSON() {
-#ifdef _WIN32
-    char filename[MAX_PATH] = "test_results.json";
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = "JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = "json";
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-
-    if (GetSaveFileNameA(&ofn)) {
-        if (TestManager::Instance().ExportResultsToJSON(filename)) {
-            spdlog::info("Exported results to: {}", filename);
+    auto result = FileDialogs::SaveFile(
+        "Export Test Results",
+        {{"JSON Files", "json"}, {"All Files", "*"}},
+        nullptr,
+        "test_results.json"
+    );
+    if (result) {
+        if (TestManager::Instance().ExportResultsToJSON(*result)) {
+            spdlog::info("Exported results to: {}", *result);
         }
     }
-#else
-    // TODO: Add platform-specific file dialog for other platforms
-    TestManager::Instance().ExportResultsToJSON("test_results.json");
-#endif
 }
 
 } // namespace cyxwiz

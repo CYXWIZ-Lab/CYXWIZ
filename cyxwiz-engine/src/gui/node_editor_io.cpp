@@ -1,20 +1,16 @@
 // File I/O Module for Node Editor
 // This module contains all file operations for the visual node editor:
 // - Graph save/load functionality (JSON serialization)
-// - Platform-specific file dialogs (Windows native, cross-platform fallback)
+// - Cross-platform native file dialogs
 // - Code export functionality (PyTorch, TensorFlow, Keras, PyCyxWiz)
 
 #include "node_editor.h"
+#include "../core/file_dialogs.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <filesystem>
 #include <unordered_map>
 #include <spdlog/spdlog.h>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
 
 namespace gui {
 
@@ -725,50 +721,25 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
     }
 }
 
-// ========== Platform-Specific File Dialogs ==========
+// ========== Cross-Platform File Dialogs ==========
 
-#ifdef _WIN32
 void NodeEditor::ShowSaveDialog() {
-    char szFile[260] = {0};
-
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "CyxWiz Graph Files\0*.cyxgraph\0All Files\0*.*\0";
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
-    ofn.lpstrDefExt = "cyxwiz";
-    ofn.lpstrTitle = "Save Neural Network Graph";
-
-    if (GetSaveFileNameA(&ofn)) {
-        if (SaveGraph(szFile)) {
+    auto result = cyxwiz::FileDialogs::SaveGraph();
+    if (result) {
+        if (SaveGraph(*result)) {
             spdlog::info("Graph successfully saved");
         }
     }
 }
 
 void NodeEditor::ShowLoadDialog() {
-    char szFile[260] = {0};
-
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "CyxWiz Graph Files\0*.cyxgraph\0All Files\0*.*\0";
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-    ofn.lpstrTitle = "Load Neural Network Graph";
-
-    if (GetOpenFileNameA(&ofn)) {
-        if (LoadGraph(szFile)) {
+    auto result = cyxwiz::FileDialogs::OpenGraph();
+    if (result) {
+        if (LoadGraph(*result)) {
             spdlog::info("Graph successfully loaded");
         }
     }
 }
-#endif // _WIN32
 
 // ========== Code Export Implementation ==========
 
@@ -822,13 +793,11 @@ void NodeEditor::ExportCodeToFile() {
     return;
 }
 
-#ifdef _WIN32
 void NodeEditor::ShowExportDialog() {
     // Validate graph first
     std::string error_message;
     if (!ValidateGraph(error_message)) {
         spdlog::error("Cannot export code: {}", error_message);
-        // TODO: Show error dialog to user
         return;
     }
 
@@ -868,102 +837,21 @@ void NodeEditor::ShowExportDialog() {
 
     std::string full_code = header + code;
 
-    // Show Windows file save dialog
-    char szFile[260] = {0};
-
-    // Suggest a default filename based on framework
+    // Default filename based on framework
     std::string default_name = "model_" + framework_name + ".py";
-    strncpy(szFile, default_name.c_str(), sizeof(szFile) - 1);
 
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "Python Files\0*.py\0All Files\0*.*\0";
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
-    ofn.lpstrDefExt = "py";
-    ofn.lpstrTitle = "Export Neural Network Code";
-
-    if (GetSaveFileNameA(&ofn)) {
-        // Save code to file
-        std::ofstream file(szFile);
+    // Show cross-platform save dialog
+    auto result = cyxwiz::FileDialogs::SaveScript();
+    if (result) {
+        std::ofstream file(*result);
         if (file.is_open()) {
             file << full_code;
             file.close();
-            spdlog::info("Code exported successfully to: {}", szFile);
+            spdlog::info("Code exported successfully to: {}", *result);
         } else {
-            spdlog::error("Failed to open file for writing: {}", szFile);
+            spdlog::error("Failed to open file for writing: {}", *result);
         }
     }
 }
-#else
-// For non-Windows platforms, implement later or use a cross-platform dialog library
-void NodeEditor::ShowSaveDialog() {
-    SaveGraph("model.cyxgraph");
-}
-
-void NodeEditor::ShowLoadDialog() {
-    LoadGraph("model.cyxgraph");
-}
-
-void NodeEditor::ShowExportDialog() {
-    // Export to default filename for now
-    std::string filename = "model_export.py";
-
-    // Generate and save code
-    ExportCodeToFile();
-
-    // Validate graph first
-    std::string error_message;
-    if (!ValidateGraph(error_message)) {
-        spdlog::error("Cannot export code: {}", error_message);
-        return;
-    }
-
-    auto sorted_ids = TopologicalSort();
-    if (sorted_ids.empty()) {
-        return;
-    }
-
-    std::string code;
-    std::string framework_name;
-
-    switch (selected_framework_) {
-        case CodeFramework::PyTorch:
-            code = GeneratePyTorchCode(sorted_ids);
-            framework_name = "PyTorch";
-            filename = "model_pytorch.py";
-            break;
-        case CodeFramework::TensorFlow:
-            code = GenerateTensorFlowCode(sorted_ids);
-            framework_name = "TensorFlow";
-            filename = "model_tensorflow.py";
-            break;
-        case CodeFramework::Keras:
-            code = GenerateKerasCode(sorted_ids);
-            framework_name = "Keras";
-            filename = "model_keras.py";
-            break;
-        case CodeFramework::PyCyxWiz:
-            code = GeneratePyCyxWizCode(sorted_ids);
-            framework_name = "PyCyxWiz";
-            filename = "model_pycyxwiz.py";
-            break;
-    }
-
-    std::string header = "# Neural Network Model Generated by CyxWiz\n";
-    header += "# Framework: " + framework_name + "\n\n";
-    std::string full_code = header + code;
-
-    std::ofstream file(filename);
-    if (file.is_open()) {
-        file << full_code;
-        file.close();
-        spdlog::info("Code exported to: {}", filename);
-    }
-}
-#endif
 
 } // namespace gui

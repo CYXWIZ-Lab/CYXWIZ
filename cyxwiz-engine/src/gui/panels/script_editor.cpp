@@ -4,6 +4,7 @@
 #include "../icons.h"
 #include "../../scripting/scripting_engine.h"
 #include "../../scripting/debugger.h"
+#include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <fstream>
 #include <sstream>
@@ -12,11 +13,6 @@
 #include <cstdio>
 #include <regex>
 #include <spdlog/spdlog.h>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
 
 namespace cyxwiz {
 
@@ -1551,52 +1547,13 @@ bool ScriptEditorPanel::SaveFileContent(const std::string& filepath, const std::
 }
 
 std::string ScriptEditorPanel::OpenFileDialog() {
-#ifdef _WIN32
-    OPENFILENAMEA ofn;
-    char filename[MAX_PATH] = "";
-
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "CyxWiz Scripts (*.cyx)\0*.cyx\0Python Files (*.py)\0*.py\0Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn)) {
-        return std::string(filename);
-    }
-#else
-    // TODO: Implement for Linux/macOS using native dialogs or portable file browser
-    spdlog::error("File dialog not implemented for this platform");
-#endif
-    return "";
+    auto result = FileDialogs::OpenScript();
+    return result.value_or("");
 }
 
 std::string ScriptEditorPanel::SaveFileDialog() {
-#ifdef _WIN32
-    OPENFILENAMEA ofn;
-    char filename[MAX_PATH] = "Untitled.cyx";
-
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "CyxWiz Scripts (*.cyx)\0*.cyx\0All Files (*.*)\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrDefExt = "cyx";
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-
-    if (GetSaveFileNameA(&ofn)) {
-        return std::string(filename);
-    }
-#else
-    // TODO: Implement for Linux/macOS
-    spdlog::error("File dialog not implemented for this platform");
-#endif
-    return "";
+    auto result = FileDialogs::SaveScript();
+    return result.value_or("");
 }
 
 std::vector<ScriptEditorPanel::Section> ScriptEditorPanel::ParseSections(const std::string& text) {

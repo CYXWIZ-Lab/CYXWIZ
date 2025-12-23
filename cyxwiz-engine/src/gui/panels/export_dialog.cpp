@@ -1,16 +1,11 @@
 #include "export_dialog.h"
 #include "../icons.h"
+#include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/optimizer.h>
 #include "../../core/training_executor.h"
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#include <shlobj.h>
-#endif
 
 namespace cyxwiz {
 
@@ -354,24 +349,10 @@ void ExportDialog::RenderButtons() {
 }
 
 std::string ExportDialog::SaveFileDialog(const char* filter, const char* default_ext) {
-#ifdef _WIN32
-    char filename[MAX_PATH] = "";
-
-    OPENFILENAMEA ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = filter;
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = default_ext;
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    ofn.lpstrTitle = "Export Model";
-
-    if (GetSaveFileNameA(&ofn)) {
-        return std::string(filename);
-    }
-#endif
-    return "";
+    (void)filter;  // Using FileDialogs which has a different filter format
+    (void)default_ext;
+    auto result = FileDialogs::SaveModel();
+    return result.value_or("");
 }
 
 void ExportDialog::StartExport() {

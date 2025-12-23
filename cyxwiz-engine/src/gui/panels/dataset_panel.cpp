@@ -6,6 +6,7 @@
 #include "../../core/texture_manager.h"
 #include "../../core/training_manager.h"
 #include "../../core/graph_compiler.h"
+#include "../../core/file_dialogs.h"
 #include "job.pb.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -13,6 +14,7 @@
 #include <sstream>
 #include <algorithm>
 #include <random>
+#include <optional>
 #include <cmath>
 #include <numeric>
 #include <chrono>
@@ -26,8 +28,6 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#include <commdlg.h>
-#include <shobjidl.h>  // For IFileDialog (folder browser)
 #include <shellapi.h>  // For ShellExecuteA (open URLs)
 #endif
 
@@ -490,24 +490,18 @@ void DatasetPanel::RenderDatasetSelection() {
     if (ImGui::CollapsingHeader("Configuration")) {
         if (IsDatasetLoaded()) {
             if (ImGui::Button("Export Config", ImVec2(-1, 0))) {
-                #ifdef _WIN32
-                OPENFILENAMEA ofn;
-                char filename[MAX_PATH] = "dataset_config.json";
-                ZeroMemory(&ofn, sizeof(ofn));
-                ofn.lStructSize = sizeof(ofn);
-                ofn.hwndOwner = NULL;
-                ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
-                ofn.lpstrFile = filename;
-                ofn.nMaxFile = MAX_PATH;
-                ofn.lpstrDefExt = "json";
-                ofn.Flags = OFN_OVERWRITEPROMPT;
-                if (GetSaveFileNameA(&ofn)) {
+                auto result = cyxwiz::FileDialogs::SaveFile(
+                    "Export Dataset Config",
+                    {{"JSON Files", "json"}, {"All Files", "*"}},
+                    nullptr,
+                    "dataset_config.json"
+                );
+                if (result) {
                     auto& registry = cyxwiz::DataRegistry::Instance();
-                    if (registry.ExportConfig(cached_info_.name, filename, split_config_)) {
-                        spdlog::info("Exported config to: {}", filename);
+                    if (registry.ExportConfig(cached_info_.name, *result, split_config_)) {
+                        spdlog::info("Exported config to: {}", *result);
                     }
                 }
-                #endif
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Export dataset configuration to JSON file");
@@ -515,21 +509,15 @@ void DatasetPanel::RenderDatasetSelection() {
         }
 
         if (ImGui::Button("Import Config", ImVec2(-1, 0))) {
-            #ifdef _WIN32
-            OPENFILENAMEA ofn;
-            char filename[MAX_PATH] = "";
-            ZeroMemory(&ofn, sizeof(ofn));
-            ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner = NULL;
-            ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
-            ofn.lpstrFile = filename;
-            ofn.nMaxFile = MAX_PATH;
-            ofn.Flags = OFN_FILEMUSTEXIST;
-            if (GetOpenFileNameA(&ofn)) {
+            auto result = cyxwiz::FileDialogs::OpenFile(
+                "Import Dataset Config",
+                {{"JSON Files", "json"}, {"All Files", "*"}}
+            );
+            if (result) {
                 auto& registry = cyxwiz::DataRegistry::Instance();
                 std::string loaded_name;
                 cyxwiz::SplitConfig imported_split;
-                if (registry.ImportConfig(filename, loaded_name, imported_split)) {
+                if (registry.ImportConfig(*result, loaded_name, imported_split)) {
                     current_dataset_ = registry.GetDataset(loaded_name);
                     if (current_dataset_.IsValid()) {
                         cached_info_ = current_dataset_.GetInfo();
@@ -543,7 +531,6 @@ void DatasetPanel::RenderDatasetSelection() {
                     }
                 }
             }
-            #endif
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Import dataset configuration from JSON file");
@@ -1265,101 +1252,46 @@ void DatasetPanel::RenderTablePreview(size_t dataset_size) {
 }
 
 void DatasetPanel::ShowFileBrowser() {
-#ifdef _WIN32
     // For ImageCSV and ImageFolder, show folder browser
     if (selected_type_ == cyxwiz::DatasetType::ImageCSV ||
         selected_type_ == cyxwiz::DatasetType::ImageFolder) {
         ShowFolderBrowser(file_path_buffer_, sizeof(file_path_buffer_));
     } else {
         // Show file browser for other types
-        OPENFILENAMEA ofn;
-        ZeroMemory(&ofn, sizeof(ofn));
-        ofn.lStructSize = sizeof(ofn);
-        ofn.hwndOwner = NULL;
-        ofn.lpstrFile = file_path_buffer_;
-        ofn.nMaxFile = sizeof(file_path_buffer_);
-
+        std::optional<std::string> result;
         if (selected_type_ == cyxwiz::DatasetType::CSV) {
-            ofn.lpstrFilter = "CSV Files\0*.csv\0All Files\0*.*\0";
+            result = cyxwiz::FileDialogs::OpenDataset();
         } else {
-            ofn.lpstrFilter = "All Files\0*.*\0";
+            result = cyxwiz::FileDialogs::OpenFile(
+                "Select Dataset",
+                {{"All Files", "*"}}
+            );
         }
 
-        ofn.nFilterIndex = 1;
-        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-
-        if (GetOpenFileNameA(&ofn)) {
+        if (result) {
+            strncpy(file_path_buffer_, result->c_str(), sizeof(file_path_buffer_) - 1);
+            file_path_buffer_[sizeof(file_path_buffer_) - 1] = '\0';
             spdlog::info("Selected file: {}", file_path_buffer_);
         }
     }
-#else
-    spdlog::warn("File browser not implemented for this platform");
-#endif
 }
 
 void DatasetPanel::ShowFolderBrowser(char* buffer, size_t buffer_size) {
-#ifdef _WIN32
-    // Use IFileDialog for modern folder selection
-    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-
-    IFileDialog* pfd = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL,
-                                   IID_IFileDialog, reinterpret_cast<void**>(&pfd));
-
-    if (SUCCEEDED(hr)) {
-        // Set options to pick folders
-        DWORD dwOptions;
-        pfd->GetOptions(&dwOptions);
-        pfd->SetOptions(dwOptions | FOS_PICKFOLDERS);
-
-        // Set title
-        pfd->SetTitle(L"Select Image Folder");
-
-        // Show the dialog
-        hr = pfd->Show(NULL);
-        if (SUCCEEDED(hr)) {
-            IShellItem* psi = nullptr;
-            hr = pfd->GetResult(&psi);
-            if (SUCCEEDED(hr)) {
-                PWSTR pszPath = nullptr;
-                hr = psi->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
-                if (SUCCEEDED(hr)) {
-                    // Convert wide string to narrow
-                    size_t converted = 0;
-                    wcstombs_s(&converted, buffer, buffer_size, pszPath, _TRUNCATE);
-                    spdlog::info("Selected folder: {}", buffer);
-                    CoTaskMemFree(pszPath);
-                }
-                psi->Release();
-            }
-        }
-        pfd->Release();
+    auto result = cyxwiz::FileDialogs::SelectDatasetFolder();
+    if (result) {
+        strncpy(buffer, result->c_str(), buffer_size - 1);
+        buffer[buffer_size - 1] = '\0';
+        spdlog::info("Selected folder: {}", buffer);
     }
-
-    CoUninitialize();
-#else
-    spdlog::warn("Folder browser not implemented for this platform");
-#endif
 }
 
 void DatasetPanel::ShowCSVFileBrowser() {
-#ifdef _WIN32
-    OPENFILENAMEA ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFile = csv_path_buffer_;
-    ofn.nMaxFile = sizeof(csv_path_buffer_);
-    ofn.lpstrFilter = "CSV Files\0*.csv\0Text Files\0*.txt\0All Files\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-
-    if (GetOpenFileNameA(&ofn)) {
+    auto result = cyxwiz::FileDialogs::OpenDataset();
+    if (result) {
+        strncpy(csv_path_buffer_, result->c_str(), sizeof(csv_path_buffer_) - 1);
+        csv_path_buffer_[sizeof(csv_path_buffer_) - 1] = '\0';
         spdlog::info("Selected CSV file: {}", csv_path_buffer_);
     }
-#else
-    spdlog::warn("File browser not implemented for this platform");
-#endif
 }
 
 bool DatasetPanel::LoadDataset(const std::string& path) {

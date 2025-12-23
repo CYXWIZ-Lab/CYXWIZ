@@ -1,14 +1,9 @@
 #include "import_dialog.h"
 #include "../icons.h"
+#include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#include <shlobj.h>
-#endif
 
 namespace cyxwiz {
 
@@ -411,23 +406,9 @@ void ImportDialog::RenderButtons() {
 }
 
 std::string ImportDialog::OpenFileDialog(const char* filter, const char* title) {
-#ifdef _WIN32
-    char filename[MAX_PATH] = "";
-
-    OPENFILENAMEA ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = filter;
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    ofn.lpstrTitle = title;
-
-    if (GetOpenFileNameA(&ofn)) {
-        return std::string(filename);
-    }
-#endif
-    return "";
+    (void)filter;  // Using FileDialogs which has a different filter format
+    auto result = FileDialogs::OpenModel();
+    return result.value_or("");
 }
 
 void ImportDialog::ProbeFile() {

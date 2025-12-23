@@ -8,13 +8,8 @@
 #include <cstring>
 #include "../dock_style.h"
 #include "../../core/project_manager.h"
+#include "../../core/file_dialogs.h"
 #include "../icons.h"
-
-#ifdef _WIN32
-#include <windows.h>
-#include <shlobj.h>
-#include <commdlg.h>
-#endif
 
 namespace cyxwiz {
 
@@ -29,13 +24,13 @@ void ToolbarPanel::RenderFileMenu() {
         }
 
         if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Project...", "Ctrl+Shift+O")) {
-            std::string file_path = OpenFileDialog("CyxWiz Projects (*.cyxwiz)\0*.cyxwiz\0All Files (*.*)\0*.*\0", "Open Project");
-            if (!file_path.empty()) {
+            auto result = FileDialogs::OpenProject();
+            if (result) {
                 auto& pm = ProjectManager::Instance();
-                if (pm.OpenProject(file_path)) {
-                    spdlog::info("Project opened: {}", file_path);
+                if (pm.OpenProject(*result)) {
+                    spdlog::info("Project opened: {}", *result);
                 } else {
-                    spdlog::error("Failed to open project: {}", file_path);
+                    spdlog::error("Failed to open project: {}", *result);
                 }
             }
         }
@@ -56,14 +51,12 @@ void ToolbarPanel::RenderFileMenu() {
         }
 
         if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Script...", "Ctrl+O")) {
-            std::string file_path = OpenFileDialog(
-                "CyxWiz Scripts (*.cyx)\0*.cyx\0Python Scripts (*.py)\0*.py\0All Scripts (*.cyx;*.py)\0*.cyx;*.py\0All Files (*.*)\0*.*\0",
-                "Open Script");
-            if (!file_path.empty()) {
+            auto result = FileDialogs::OpenScript();
+            if (result) {
                 if (open_script_in_editor_callback_) {
-                    open_script_in_editor_callback_(file_path);
+                    open_script_in_editor_callback_(*result);
                 }
-                spdlog::info("Opening script: {}", file_path);
+                spdlog::info("Opening script: {}", *result);
             }
         }
 
