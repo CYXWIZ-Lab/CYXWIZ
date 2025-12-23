@@ -173,6 +173,75 @@ message EngineHeartbeatResponse {
 }
 
 // ============================================================================
+// Reservation-Based Job Complete Messages (No Payment Release)
+// ============================================================================
+// When a job completes WITHIN a reservation, we report for reputation only.
+// Payment is NOT released until reservation timer expires.
+
+// Server Node → Central Server: Report job completion (reputation only)
+message ReportJobCompleteFromNodeRequest {
+  string reservation_id = 1;
+  string job_id = 2;
+  string node_id = 3;
+  bool success = 4;
+  string model_hash = 5;              // SHA256 of trained model
+  map<string, double> final_metrics = 6;
+  int64 training_time_seconds = 7;
+  int32 epochs_completed = 8;
+}
+
+message ReportJobCompleteFromNodeResponse {
+  StatusCode status = 1;
+  double new_reputation = 2;          // Updated reputation score
+  double reputation_change = 3;       // How much reputation changed (+1.0 for success)
+  int32 jobs_in_reservation = 4;      // Total jobs completed in this reservation
+  string message = 5;
+  Error error = 10;
+}
+
+// ============================================================================
+// Reservation End Messages (Triggers Payment Release)
+// ============================================================================
+// When reservation timer expires, BOTH Engine and Node report to Central Server.
+// Payment is released when both confirmations are received.
+
+// Engine → Central Server: Report reservation timer expired
+message ReportReservationEndFromEngineRequest {
+  string reservation_id = 1;
+  int32 jobs_completed = 2;           // Total jobs user ran
+  string final_model_hash = 3;        // Hash of last model (if any)
+  bool user_satisfied = 4;            // User satisfaction flag
+  string feedback = 5;                // Optional user feedback
+}
+
+message ReportReservationEndFromEngineResponse {
+  StatusCode status = 1;
+  bool payment_released = 2;          // Whether payment was released
+  int64 amount_paid = 3;              // Amount paid to node (lamports)
+  string payment_tx_hash = 4;
+  string message = 5;
+  Error error = 10;
+}
+
+// Server Node → Central Server: Report reservation timer expired
+message ReportReservationEndFromNodeRequest {
+  string reservation_id = 1;
+  string node_id = 2;
+  int32 jobs_completed = 3;           // Jobs the node completed
+  int64 total_compute_time = 4;       // Total compute time in seconds
+  bool node_available = 5;            // Whether node is ready for new reservations
+}
+
+message ReportReservationEndFromNodeResponse {
+  StatusCode status = 1;
+  bool payment_released = 2;          // Whether payment was released
+  int64 amount_received = 3;          // Amount node will receive (lamports)
+  string payment_tx_hash = 4;
+  string message = 5;
+  Error error = 10;
+}
+
+// ============================================================================
 // Job Reservation Service - Central Server
 // ============================================================================
 
@@ -180,7 +249,7 @@ service JobReservationService {
   // Reserve a node for a time period
   rpc ReserveNode(ReserveNodeRequest) returns (ReserveNodeResponse);
 
-  // Confirm job completion (from Engine)
+  // Confirm job completion (from Engine) - DEPRECATED, use ReportReservationEndFromEngine
   rpc ConfirmJobComplete(ConfirmJobCompleteRequest) returns (ConfirmJobCompleteResponse);
 
   // Extend an existing reservation
@@ -198,6 +267,21 @@ service JobReservationService {
   // Engine heartbeat - must be sent every 30 seconds during active reservation
   // If heartbeat stops, node will be released with proportional payment
   rpc EngineHeartbeat(EngineHeartbeatRequest) returns (EngineHeartbeatResponse);
+
+  // ========== NEW Reservation-Based Payment RPCs ==========
+
+  // Server Node reports job completion (reputation only, no payment release)
+  // Called when a job finishes WITHIN the reservation time
+  rpc ReportJobCompleteFromNode(ReportJobCompleteFromNodeRequest) returns (ReportJobCompleteFromNodeResponse);
+
+  // Engine reports reservation timer expired
+  // Called when the reservation countdown reaches 0
+  rpc ReportReservationEndFromEngine(ReportReservationEndFromEngineRequest) returns (ReportReservationEndFromEngineResponse);
+
+  // Server Node reports reservation timer expired
+  // Called when the reservation countdown reaches 0
+  // Payment is released when BOTH Engine and Node have reported
+  rpc ReportReservationEndFromNode(ReportReservationEndFromNodeRequest) returns (ReportReservationEndFromNodeResponse);
 }
 
 // ============================================================================

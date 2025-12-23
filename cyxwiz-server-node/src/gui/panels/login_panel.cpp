@@ -314,12 +314,25 @@ void LoginPanel::Update() {
         }
     }
 
-    // Send periodic heartbeats while node is registered AND connected to Central Server
-    bool connected_to_central = false;
-    if (IsDaemonConnected() && GetDaemonClient()) {
-        ipc::DaemonStatus status;
-        if (GetDaemonClient()->GetStatus(status)) {
-            connected_to_central = status.connected_to_central;
+    // Rate-limit daemon status checks to avoid excessive polling
+    auto now = std::chrono::steady_clock::now();
+    auto status_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_status_check_time_).count();
+
+    // Only check daemon status every kStatusCheckIntervalMs (not every frame)
+    if (status_elapsed >= kStatusCheckIntervalMs) {
+        last_status_check_time_ = now;
+
+        // Check Central Server connection status from daemon
+        if (IsDaemonConnected() && GetDaemonClient()) {
+            ipc::DaemonStatus status;
+            if (GetDaemonClient()->GetStatus(status)) {
+                cached_connected_to_central_ = status.connected_to_central;
+            } else {
+                // GetStatus failed - connection might be lost
+                cached_connected_to_central_ = false;
+            }
+        } else {
+            cached_connected_to_central_ = false;
         }
     }
 
@@ -327,20 +340,20 @@ void LoginPanel::Update() {
 
     // Debug: log conditions every 10 seconds
     static auto last_debug_time = std::chrono::steady_clock::now();
-    auto now = std::chrono::steady_clock::now();
     auto debug_elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_debug_time).count();
     if (debug_elapsed >= 10) {
         spdlog::info("Heartbeat check: node_registered={}, offline={}, central={}",
-                     node_registered, offline_mode_, connected_to_central);
+                     node_registered, offline_mode_, cached_connected_to_central_);
         last_debug_time = now;
     }
 
-    if (node_registered && !offline_mode_ && connected_to_central) {
+    // Send periodic heartbeats while node is registered AND connected to Central Server
+    if (node_registered && !offline_mode_ && cached_connected_to_central_) {
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat_time_).count();
 
         if (elapsed >= kHeartbeatIntervalSeconds) {
             spdlog::info("Sending Web API heartbeat (node_registered={}, offline={}, central={})",
-                         node_registered, offline_mode_, connected_to_central);
+                         node_registered, offline_mode_, cached_connected_to_central_);
             auth.SendHeartbeatToApi();
             last_heartbeat_time_ = now;
         }

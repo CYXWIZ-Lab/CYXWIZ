@@ -19,6 +19,10 @@ use crate::pb::{
     ListReservationsRequest, ListReservationsResponse,
     EngineHeartbeatRequest, EngineHeartbeatResponse,
     ReservationInfo, ReservationStatus, StatusCode, Error,
+    // New reservation-based payment RPCs
+    ReportJobCompleteFromNodeRequest, ReportJobCompleteFromNodeResponse,
+    ReportReservationEndFromEngineRequest, ReportReservationEndFromEngineResponse,
+    ReportReservationEndFromNodeRequest, ReportReservationEndFromNodeResponse,
 };
 use chrono::{Duration, Utc};
 use std::collections::HashMap;
@@ -50,6 +54,11 @@ pub struct ActiveReservation {
     pub training_active: bool,       // Whether training is currently running
     pub job_progress: f64,           // 0.0 to 1.0
     pub current_metrics: HashMap<String, f64>,  // Current training metrics
+    // Reservation end tracking (payment released when both report)
+    pub engine_reported_end: bool,   // Engine reported reservation timer expired
+    pub node_reported_end: bool,     // Node reported reservation timer expired
+    pub payment_released: bool,      // Payment has been released
+    pub payment_tx_hash: Option<String>,
 }
 
 /// Type alias for the active reservations map
@@ -302,11 +311,19 @@ impl JobReservationService for ReservationServiceImpl {
         };
 
         // Mark node as BUSY in database
+        info!("========================================");
+        info!("[NODE STATE CHANGE] Marking node as BUSY");
+        info!("  Node ID: {}", req.node_id);
+        info!("  User wallet: {}", req.user_wallet);
+        info!("  Duration: {} minutes", req.duration_minutes);
+        info!("========================================");
+
         if let Err(e) = queries::update_node_status(&self.db_pool, node_id.clone(), NodeStatus::Busy).await {
-            error!("Failed to update node status: {}", e);
+            error!("[NODE STATE] FAILED to update node status to BUSY: {}", e);
             return Err(Status::internal(format!("Failed to reserve node: {}", e)));
         }
-        info!("Node {} marked as BUSY", req.node_id);
+        info!("[NODE STATE] SUCCESS - Node {} is now BUSY", req.node_id);
+        info!("  Node removed from FREE list, added to BUSY list");
 
         // Generate P2P authentication token
         let p2p_auth_token = self.generate_p2p_token(
@@ -340,6 +357,11 @@ impl JobReservationService for ReservationServiceImpl {
             training_active: false,
             job_progress: 0.0,
             current_metrics: HashMap::new(),
+            // Initialize reservation end tracking
+            engine_reported_end: false,
+            node_reported_end: false,
+            payment_released: false,
+            payment_tx_hash: None,
         };
 
         {
@@ -785,5 +807,378 @@ impl JobReservationService for ReservationServiceImpl {
                 }))
             }
         }
+    }
+
+    /// Server Node reports job completion within reservation
+    /// This adds reputation but does NOT release payment
+    async fn report_job_complete_from_node(
+        &self,
+        request: Request<ReportJobCompleteFromNodeRequest>,
+    ) -> Result<Response<ReportJobCompleteFromNodeResponse>, Status> {
+        let req = request.into_inner();
+
+        info!(
+            "ReportJobCompleteFromNode: reservation_id={}, job_id={}, node_id={}, success={}",
+            req.reservation_id, req.job_id, req.node_id, req.success
+        );
+
+        // Find the reservation
+        let reservation = {
+            let reservations = self.active_reservations.read().await;
+            reservations.get(&req.reservation_id).cloned()
+        };
+
+        let reservation = match reservation {
+            Some(r) => r,
+            None => {
+                warn!("Reservation not found: {}", req.reservation_id);
+                return Ok(Response::new(ReportJobCompleteFromNodeResponse {
+                    status: StatusCode::StatusFailed as i32,
+                    error: Some(Error {
+                        code: 404,
+                        message: "Reservation not found".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }));
+            }
+        };
+
+        // Verify node ID matches
+        if reservation.node_id != req.node_id {
+            warn!(
+                "Node ID mismatch: expected {}, got {}",
+                reservation.node_id, req.node_id
+            );
+            return Ok(Response::new(ReportJobCompleteFromNodeResponse {
+                status: StatusCode::StatusFailed as i32,
+                error: Some(Error {
+                    code: 403,
+                    message: "Node ID does not match reservation".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }));
+        }
+
+        // Calculate reputation change
+        let reputation_change = if req.success { 1.0 } else { -0.5 };
+
+        // Update node reputation in database
+        let node_id = Self::parse_db_id(&req.node_id)?;
+        let new_reputation = match queries::update_node_reputation_with_check(
+            &self.db_pool,
+            node_id,
+            reputation_change,
+        )
+        .await
+        {
+            Ok(new_rep) => {
+                info!(
+                    "Node {} reputation updated by {:.1} to {:.1}",
+                    req.node_id, reputation_change, new_rep
+                );
+                new_rep
+            }
+            Err(e) => {
+                error!("Failed to update node reputation: {}", e);
+                75.0 // Default if update fails
+            }
+        };
+
+        // Update reservation jobs completed count
+        let jobs_in_reservation = {
+            let mut reservations = self.active_reservations.write().await;
+            if let Some(res) = reservations.get_mut(&req.reservation_id) {
+                res.jobs_completed += 1;
+                res.current_job_id = None; // Job done, waiting for new one
+                res.training_active = false;
+                res.jobs_completed
+            } else {
+                1
+            }
+        };
+
+        info!(
+            "Job {} complete within reservation {}. Jobs completed: {}, reputation: {:.1}",
+            req.job_id, req.reservation_id, jobs_in_reservation, new_reputation
+        );
+
+        Ok(Response::new(ReportJobCompleteFromNodeResponse {
+            status: StatusCode::StatusSuccess as i32,
+            new_reputation,
+            reputation_change,
+            jobs_in_reservation,
+            message: "Job complete. Waiting for new job or reservation end.".to_string(),
+            error: None,
+        }))
+    }
+
+    /// Engine reports reservation timer expired
+    async fn report_reservation_end_from_engine(
+        &self,
+        request: Request<ReportReservationEndFromEngineRequest>,
+    ) -> Result<Response<ReportReservationEndFromEngineResponse>, Status> {
+        let req = request.into_inner();
+
+        info!(
+            "ReportReservationEndFromEngine: reservation_id={}, jobs_completed={}",
+            req.reservation_id, req.jobs_completed
+        );
+
+        // Find the reservation
+        let (should_release_payment, reservation) = {
+            let mut reservations = self.active_reservations.write().await;
+            if let Some(res) = reservations.get_mut(&req.reservation_id) {
+                res.engine_reported_end = true;
+
+                // Check if both have reported
+                let should_release = res.node_reported_end && !res.payment_released;
+                (should_release, Some(res.clone()))
+            } else {
+                (false, None)
+            }
+        };
+
+        let reservation = match reservation {
+            Some(r) => r,
+            None => {
+                warn!("Reservation not found: {}", req.reservation_id);
+                return Ok(Response::new(ReportReservationEndFromEngineResponse {
+                    status: StatusCode::StatusFailed as i32,
+                    error: Some(Error {
+                        code: 404,
+                        message: "Reservation not found".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }));
+            }
+        };
+
+        // If both have reported, release payment
+        if should_release_payment {
+            let payment_tx_hash = self.release_payment(&reservation).await;
+
+            // Update reservation state
+            {
+                let mut reservations = self.active_reservations.write().await;
+                if let Some(res) = reservations.get_mut(&req.reservation_id) {
+                    res.payment_released = true;
+                    res.payment_tx_hash = Some(payment_tx_hash.clone());
+                    res.status = ReservationStatus::ReservationCompleted as i32;
+                }
+            }
+
+            // Mark node as Online (available) in database
+            let node_id = Self::parse_db_id(&reservation.node_id)?;
+            if let Err(e) = queries::update_node_status(&self.db_pool, node_id, NodeStatus::Online).await {
+                error!("Failed to update node status: {}", e);
+            } else {
+                info!("Node {} marked as ONLINE (reservation ended)", reservation.node_id);
+            }
+
+            info!(
+                "Payment released for reservation {}: {} lamports, tx={}",
+                req.reservation_id, reservation.escrow_amount, payment_tx_hash
+            );
+
+            return Ok(Response::new(ReportReservationEndFromEngineResponse {
+                status: StatusCode::StatusSuccess as i32,
+                payment_released: true,
+                amount_paid: reservation.escrow_amount,
+                payment_tx_hash,
+                message: "Reservation completed. Payment released to node.".to_string(),
+                error: None,
+            }));
+        }
+
+        // Engine reported first, waiting for node
+        info!(
+            "Engine reported reservation end for {}. Waiting for node confirmation.",
+            req.reservation_id
+        );
+
+        Ok(Response::new(ReportReservationEndFromEngineResponse {
+            status: StatusCode::StatusSuccess as i32,
+            payment_released: false,
+            amount_paid: 0,
+            payment_tx_hash: String::new(),
+            message: "Waiting for node to confirm reservation end.".to_string(),
+            error: None,
+        }))
+    }
+
+    /// Server Node reports reservation timer expired
+    async fn report_reservation_end_from_node(
+        &self,
+        request: Request<ReportReservationEndFromNodeRequest>,
+    ) -> Result<Response<ReportReservationEndFromNodeResponse>, Status> {
+        let req = request.into_inner();
+
+        info!("========================================");
+        info!("[NODE STATE CHANGE] ReportReservationEndFromNode received");
+        info!("  Reservation ID: {}", req.reservation_id);
+        info!("  Node ID: {}", req.node_id);
+        info!("  Jobs completed: {}", req.jobs_completed);
+        info!("  Node available: {}", req.node_available);
+        info!("  Expected action: Move node from BUSY to FREE list");
+        info!("========================================");
+
+        // Find the reservation
+        let (should_release_payment, reservation) = {
+            let mut reservations = self.active_reservations.write().await;
+            if let Some(res) = reservations.get_mut(&req.reservation_id) {
+                // Verify node ID matches
+                if res.node_id != req.node_id {
+                    return Ok(Response::new(ReportReservationEndFromNodeResponse {
+                        status: StatusCode::StatusFailed as i32,
+                        error: Some(Error {
+                            code: 403,
+                            message: "Node ID does not match reservation".to_string(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }));
+                }
+
+                res.node_reported_end = true;
+
+                // Check if both have reported
+                let should_release = res.engine_reported_end && !res.payment_released;
+                (should_release, Some(res.clone()))
+            } else {
+                (false, None)
+            }
+        };
+
+        let reservation = match reservation {
+            Some(r) => r,
+            None => {
+                warn!("Reservation not found: {}", req.reservation_id);
+                return Ok(Response::new(ReportReservationEndFromNodeResponse {
+                    status: StatusCode::StatusFailed as i32,
+                    error: Some(Error {
+                        code: 404,
+                        message: "Reservation not found".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }));
+            }
+        };
+
+        // Calculate node's share (90% of escrow)
+        let node_share = (reservation.escrow_amount as f64 * 0.90) as i64;
+
+        // If both have reported, release payment
+        if should_release_payment {
+            let payment_tx_hash = self.release_payment(&reservation).await;
+
+            // Update reservation state
+            {
+                let mut reservations = self.active_reservations.write().await;
+                if let Some(res) = reservations.get_mut(&req.reservation_id) {
+                    res.payment_released = true;
+                    res.payment_tx_hash = Some(payment_tx_hash.clone());
+                    res.status = ReservationStatus::ReservationCompleted as i32;
+                }
+            }
+
+            // Mark node as Online (available) in database
+            let node_id = Self::parse_db_id(&reservation.node_id)?;
+            info!("[NODE STATE] Updating node {} status in database: BUSY -> ONLINE (FREE)", reservation.node_id);
+            if let Err(e) = queries::update_node_status(&self.db_pool, node_id, NodeStatus::Online).await {
+                error!("[NODE STATE] FAILED to update node status: {}", e);
+                error!("  Node {} may still appear as BUSY!", reservation.node_id);
+            } else {
+                info!("========================================");
+                info!("[NODE STATE] SUCCESS - Node {} is now FREE", reservation.node_id);
+                info!("  Database status: ONLINE");
+                info!("  Node can now accept new reservations");
+                info!("========================================");
+            }
+
+            info!(
+                "[PAYMENT] Released for reservation {}: node receives {} lamports, tx={}",
+                req.reservation_id, node_share, payment_tx_hash
+            );
+
+            return Ok(Response::new(ReportReservationEndFromNodeResponse {
+                status: StatusCode::StatusSuccess as i32,
+                payment_released: true,
+                amount_received: node_share,
+                payment_tx_hash,
+                message: "Reservation completed. Payment received. Node is now FREE.".to_string(),
+                error: None,
+            }));
+        }
+
+        // Node reported first, waiting for engine
+        // Even without Engine confirmation, mark node as FREE since Engine disconnected
+        info!("[NODE STATE] Node {} reported end first. Marking as FREE regardless of Engine status.", req.node_id);
+
+        // Mark node as Online (available) even if Engine hasn't reported
+        // This handles the case where Engine disconnected
+        let node_id = Self::parse_db_id(&req.node_id)?;
+        if let Err(e) = queries::update_node_status(&self.db_pool, node_id, NodeStatus::Online).await {
+            error!("[NODE STATE] FAILED to update node status: {}", e);
+        } else {
+            info!("========================================");
+            info!("[NODE STATE] SUCCESS - Node {} is now FREE", req.node_id);
+            info!("  Reason: Engine may have disconnected");
+            info!("  Payment status: Waiting for Engine confirmation");
+            info!("========================================");
+        }
+
+        info!(
+            "Node reported reservation end for {}. Node is FREE. Waiting for engine confirmation for payment.",
+            req.reservation_id
+        );
+
+        Ok(Response::new(ReportReservationEndFromNodeResponse {
+            status: StatusCode::StatusSuccess as i32,
+            payment_released: false,
+            amount_received: 0,
+            payment_tx_hash: String::new(),
+            message: "Waiting for engine to confirm reservation end.".to_string(),
+            error: None,
+        }))
+    }
+}
+
+impl ReservationServiceImpl {
+    /// Release payment from escrow to node
+    async fn release_payment(&self, reservation: &ActiveReservation) -> String {
+        // TODO: Call Solana blockchain to release escrow
+        // For now, generate a placeholder transaction hash
+        let tx_hash = format!("pay_tx_{}", Uuid::new_v4());
+
+        info!(
+            "Releasing payment for reservation {}: {} lamports from escrow {} to node wallet {}",
+            reservation.reservation_id,
+            reservation.escrow_amount,
+            reservation.escrow_account,
+            reservation.node_wallet
+        );
+
+        // Calculate split: 90% to node, 10% to platform
+        let node_share = (reservation.escrow_amount as f64 * 0.90) as i64;
+        let platform_fee = reservation.escrow_amount - node_share;
+
+        info!(
+            "Payment split: {} to node, {} to platform",
+            node_share, platform_fee
+        );
+
+        // TODO: Implement actual Solana escrow release
+        // if let Some(ref solana) = self.solana_client {
+        //     match solana.release_escrow(&reservation.escrow_account, &reservation.node_wallet, node_share).await {
+        //         Ok(hash) => return hash,
+        //         Err(e) => error!("Solana payment failed: {}", e),
+        //     }
+        // }
+
+        tx_hash
     }
 }

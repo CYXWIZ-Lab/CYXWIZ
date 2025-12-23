@@ -249,14 +249,24 @@ void ConnectionDialog::RenderNodeTable() {
                 ImGui::TextDisabled("-");
             }
 
-            // Price per hour
+            // Price per hour (hourly pricing like AWS/GCP/Azure)
             ImGui::TableNextColumn();
-            if (node.free_tier_available) {
-                ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.4f, 1.0f), ICON_FA_GIFT " Free");
+            // Check if node is in free work tier (poor reputation < 50, displayed as < 0.5)
+            float rep_check = static_cast<float>(node.reputation_score);
+            if (rep_check < 0.5f) {
+                // Low reputation node - must do free work to rebuild
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Free*");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Low reputation node - free work tier");
+                }
             } else if (node.price_usd_equivalent > 0) {
-                ImGui::Text("$%.3f", node.price_usd_equivalent);
+                // Show USD price per hour like cloud providers
+                ImGui::Text("$%.2f/hr", node.price_usd_equivalent);
+            } else if (node.price_per_hour > 0) {
+                // Show CYX token price per hour
+                ImGui::Text("%.2f CYX/hr", node.price_per_hour);
             } else {
-                ImGui::Text("%.4f CYX", node.price_per_hour);
+                ImGui::TextDisabled("N/A");
             }
 
             // Reputation
@@ -308,7 +318,10 @@ void ConnectionDialog::RenderNodeSearchFilters() {
     ImGui::InputText("Region", filter_region_, sizeof(filter_region_));
     ImGui::SameLine();
 
-    ImGui::Checkbox("Free Only", &filter_free_tier_only_);
+    ImGui::Checkbox("Low-Rep (Free)", &filter_free_tier_only_);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Show only low-reputation nodes\noffering free compute to rebuild trust");
+    }
     ImGui::SameLine();
 
     ImGui::SetNextItemWidth(100);
@@ -351,14 +364,28 @@ void ConnectionDialog::RenderSelectedNodeInfo() {
 
     // Right column
     ImGui::Text("Region: %s", node.region.c_str());
-    ImGui::Text("Reputation: %.1f%%", node.reputation_score * 100);
+    ImGui::Text("Reputation: %.0f%%", node.reputation_score * 100);
     ImGui::Text("Jobs Completed: %d", node.total_jobs_completed);
-    ImGui::Text("Billing: %s", node.billing_model.c_str());
-    if (node.free_tier_available) {
-        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.4f, 1.0f), ICON_FA_GIFT " Free tier available");
-    } else {
-        ImGui::Text("Price: $%.4f/hr (%.4f CYX)", node.price_usd_equivalent, node.price_per_hour);
+    ImGui::Text("Billing: Hourly");
+
+    // Price display based on reputation tier
+    float rep_score = static_cast<float>(node.reputation_score);
+    if (rep_score < 0.5f) {
+        // Low reputation - free work tier (must rebuild reputation)
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
+            ICON_FA_TRIANGLE_EXCLAMATION " Free Tier (Reputation Recovery)");
+        ImGui::TextDisabled("This node has low reputation and must complete");
+        ImGui::TextDisabled("free jobs to rebuild trust.");
+    } else if (node.price_usd_equivalent > 0) {
+        // Normal pricing - show hourly rate like cloud providers
+        ImGui::Text("Price: $%.2f/hr (%.2f CYX)", node.price_usd_equivalent, node.price_per_hour);
+
+        // Show discount info
+        ImGui::TextDisabled("10%% off for >1hr, 20%% off for >24hr");
+    } else if (node.price_per_hour > 0) {
+        ImGui::Text("Price: %.2f CYX/hr", node.price_per_hour);
     }
+
     if (node.staked_amount > 0) {
         ImGui::Text("Staked: %.2f CYX", node.staked_amount);
     }
@@ -706,11 +733,42 @@ void ConnectionDialog::RenderActiveReservationPanel() {
 
         // Action buttons
         if (p2p_connected) {
-            // Check if training is already streaming
+            // Check training state
             bool is_streaming = p2p_client_ && p2p_client_->IsStreaming();
+            bool is_waiting_for_new_job = p2p_client_ && p2p_client_->IsWaitingForNewJob();
 
-            if (!is_streaming) {
-                // Start Training button - sends job to Server Node via P2P
+            if (is_waiting_for_new_job) {
+                // Job complete - show "Ready for new job" state
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.6f, 1.0f));
+                ImGui::Text(ICON_FA_CIRCLE_CHECK " Job Complete - Ready for New Training");
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+
+                // Training configuration for new job
+                ImGui::Text("Configure Next Training:");
+                ImGui::SetNextItemWidth(100);
+                ImGui::InputInt("Epochs##new", &reservation_epochs_);
+                if (reservation_epochs_ < 1) reservation_epochs_ = 1;
+                if (reservation_epochs_ > 1000) reservation_epochs_ = 1000;
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(100);
+                ImGui::InputInt("Batch Size##new", &reservation_batch_size_);
+                if (reservation_batch_size_ < 1) reservation_batch_size_ = 1;
+                if (reservation_batch_size_ > 512) reservation_batch_size_ = 512;
+                ImGui::Spacing();
+
+                // Start New Training button
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.4f, 1.0f));
+                if (ImGui::Button(ICON_FA_PLAY " Start New Training", ImVec2(160, 28))) {
+                    StartNewP2PTraining();
+                }
+                ImGui::PopStyleColor(2);
+                ImGui::SameLine();
+            }
+            else if (!is_streaming) {
+                // Not streaming, not waiting - initial state
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
                 if (ImGui::Button(ICON_FA_PLAY " Start Training", ImVec2(140, 28))) {
@@ -767,6 +825,14 @@ void ConnectionDialog::RenderActiveReservationPanel() {
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f),
                 ICON_FA_CIRCLE_XMARK " Reservation has expired");
+
+            // Send reservation end signal to Server Node
+            if (p2p_client_ && p2p_client_->IsConnected()) {
+                spdlog::info("Reservation timer expired - sending reservation end signal");
+                p2p_client_->SendReservationEnd();
+                p2p_client_->Disconnect();
+            }
+
             has_active_reservation_ = false;
             if (reservation_client_) {
                 reservation_client_->StopHeartbeat();
@@ -1052,6 +1118,93 @@ void ConnectionDialog::StartP2PTraining() {
 
     spdlog::info("P2P training started successfully!");
     spdlog::info("  Job ID: {}", active_reservation_.job_id);
+    spdlog::info("  Training on Server Node: {}", active_reservation_.node_endpoint);
+
+    reservation_error_.clear();
+}
+
+void ConnectionDialog::StartNewP2PTraining() {
+    if (!p2p_client_ || !p2p_client_->IsConnected()) {
+        reservation_error_ = "Not connected to node. Please connect first.";
+        return;
+    }
+
+    if (!p2p_client_->IsWaitingForNewJob()) {
+        reservation_error_ = "Server Node is not ready for a new job.";
+        return;
+    }
+
+    if (!node_editor_) {
+        reservation_error_ = "Node editor not configured";
+        return;
+    }
+
+    // Get the model definition from NodeEditor
+    std::string graph_json = node_editor_->GetGraphJson();
+    if (graph_json.empty() || graph_json == "{}") {
+        reservation_error_ = "No model defined. Please create a model in the Node Editor.";
+        return;
+    }
+
+    spdlog::info("Starting NEW P2P training within existing reservation...");
+    spdlog::info("  Model definition: {} chars", graph_json.size());
+    spdlog::info("  Dataset URI: {}", dataset_uri_);
+    spdlog::info("  Epochs: {}", reservation_epochs_);
+    spdlog::info("  Batch Size: {}", reservation_batch_size_);
+
+    // Build new JobConfig for the new training run
+    // Generate a new job ID for this run (within same reservation)
+    std::string new_job_id = active_reservation_.job_id + "_" +
+        std::to_string(std::time(nullptr));
+
+    cyxwiz::protocol::JobConfig config;
+    config.set_job_id(new_job_id);
+    config.set_job_type(cyxwiz::protocol::JOB_TYPE_TRAINING);
+    config.set_priority(cyxwiz::protocol::PRIORITY_NORMAL);
+    config.set_model_definition(graph_json);
+    config.set_dataset_uri(dataset_uri_);
+    config.set_batch_size(reservation_batch_size_);
+    config.set_epochs(reservation_epochs_);
+    config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
+
+    // Send new job config via bidirectional stream
+    if (!p2p_client_->SendNewJobConfig(config)) {
+        reservation_error_ = "Failed to send new job config: " + p2p_client_->GetLastError();
+        spdlog::error("{}", reservation_error_);
+        return;
+    }
+
+    spdlog::info("New job config sent to Server Node successfully!");
+
+    // Reset waiting state
+    p2p_client_->SetWaitingForNewJob(false);
+
+    // Register dataset for lazy streaming if using remote://
+    std::string uri_str(dataset_uri_);
+    if (uri_str.find("remote://") == 0) {
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        auto dataset_names = registry.GetDatasetNames();
+        if (!dataset_names.empty()) {
+            auto dataset = registry.GetDataset(dataset_names[0]);
+            if (dataset.IsValid()) {
+                p2p_client_->RegisterDatasetForJob(new_job_id, dataset);
+                spdlog::info("Registered dataset '{}' for lazy streaming", dataset_names[0]);
+            }
+        }
+    }
+
+    // Update P2P training panel with new job ID
+    if (p2p_training_panel_) {
+        p2p_training_panel_->StartMonitoring(
+            new_job_id,
+            active_reservation_.node_endpoint
+        );
+        p2p_training_panel_->Show();
+        spdlog::info("P2P Training Panel: Started monitoring for new job {}", new_job_id);
+    }
+
+    spdlog::info("New P2P training started successfully!");
+    spdlog::info("  New Job ID: {}", new_job_id);
     spdlog::info("  Training on Server Node: {}", active_reservation_.node_endpoint);
 
     reservation_error_.clear();

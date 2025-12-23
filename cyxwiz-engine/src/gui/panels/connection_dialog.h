@@ -81,7 +81,8 @@ private:
     void StartReservation();
     void CancelReservation();
     void ConnectToReservedNode();
-    void StartP2PTraining();  // Send job directly to Server Node via P2P
+    void StartP2PTraining();     // Send job directly to Server Node via P2P
+    void StartNewP2PTraining();  // Start new job within same reservation
 
     network::GRPCClient* client_;
     network::JobManager* job_manager_;

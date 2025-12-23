@@ -59,12 +59,26 @@ void AllocationPanel::Update() {
         devices_initialized_ = true;
     }
 
-    // Check connection status from daemon
-    if (IsDaemonConnected()) {
-        auto* daemon = GetDaemonClient();
-        ipc::DaemonStatus status;
-        if (daemon && daemon->GetStatus(status)) {
-            is_connected_to_central_ = status.connected_to_central;
+    // Rate-limit daemon status checks to avoid excessive polling
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_status_check_).count();
+
+    // Only check daemon status every kStatusCheckIntervalMs (not every frame)
+    if (elapsed >= kStatusCheckIntervalMs) {
+        last_status_check_ = now;
+
+        // Check connection status from daemon
+        if (IsDaemonConnected()) {
+            auto* daemon = GetDaemonClient();
+            ipc::DaemonStatus status;
+            if (daemon && daemon->GetStatus(status)) {
+                is_connected_to_central_ = status.connected_to_central;
+            } else {
+                // GetStatus failed - connection might be lost
+                is_connected_to_central_ = false;
+            }
+        } else {
+            is_connected_to_central_ = false;
         }
     }
 }

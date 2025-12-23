@@ -10,6 +10,8 @@
 #include "node.pb.h"
 #include "node.grpc.pb.h"
 #include "common.pb.h"
+#include "reservation.pb.h"
+#include "reservation.grpc.pb.h"
 
 namespace cyxwiz {
 namespace servernode {
@@ -110,6 +112,31 @@ public:
         const std::string& error_message = ""
     );
 
+    // ========================================================================
+    // Reservation-Based Payment System (Server Node → Central Server)
+    // ========================================================================
+
+    // Report job completion WITHIN reservation (reputation only, no payment)
+    // Called when a training job finishes but reservation timer is still running
+    bool ReportJobCompleteFromNode(
+        const std::string& reservation_id,
+        const std::string& job_id,
+        bool success,
+        const std::string& model_hash = "",
+        const std::map<std::string, double>& final_metrics = {},
+        int64_t training_time_seconds = 0,
+        int32_t epochs_completed = 0
+    );
+
+    // Report reservation timer expired (triggers payment release)
+    // Called when the countdown timer reaches 0
+    bool ReportReservationEndFromNode(
+        const std::string& reservation_id,
+        int32_t jobs_completed,
+        int64_t total_compute_time = 0,
+        bool node_available = true
+    );
+
 private:
     void HeartbeatLoop();
     void AddAuthMetadata(grpc::ClientContext& context);
@@ -122,6 +149,7 @@ private:
 
     std::unique_ptr<protocol::NodeService::Stub> stub_;
     std::unique_ptr<protocol::JobStatusService::Stub> job_status_stub_;
+    std::unique_ptr<protocol::JobReservationService::Stub> reservation_stub_;
     std::shared_ptr<grpc::Channel> channel_;
 
     // Heartbeat thread

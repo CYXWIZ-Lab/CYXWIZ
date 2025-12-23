@@ -320,6 +320,7 @@ NodeClient::NodeClient(const std::string& central_server_address, const std::str
     channel_ = grpc::CreateChannel(central_server_address, grpc::InsecureChannelCredentials());
     stub_ = protocol::NodeService::NewStub(channel_);
     job_status_stub_ = protocol::JobStatusService::NewStub(channel_);
+    reservation_stub_ = protocol::JobReservationService::NewStub(channel_);
 }
 
 void NodeClient::AddAuthMetadata(grpc::ClientContext& context) {
@@ -743,6 +744,137 @@ bool NodeClient::ReportJobResult(
         }
     } else {
         spdlog::error("gRPC error during job result reporting: {} (code: {})",
+                     grpc_status.error_message(), static_cast<int>(grpc_status.error_code()));
+        return false;
+    }
+}
+
+// ============================================================================
+// Reservation-Based Payment System Implementation
+// ============================================================================
+
+bool NodeClient::ReportJobCompleteFromNode(
+    const std::string& reservation_id,
+    const std::string& job_id,
+    bool success,
+    const std::string& model_hash,
+    const std::map<std::string, double>& final_metrics,
+    int64_t training_time_seconds,
+    int32_t epochs_completed)
+{
+    if (!is_registered_) {
+        spdlog::error("Cannot report job complete: node not registered");
+        return false;
+    }
+
+    spdlog::info("Reporting job {} completion to Central Server (reputation only)", job_id);
+    spdlog::info("  Reservation: {}", reservation_id);
+    spdlog::info("  Success: {}", success);
+    spdlog::info("  Training time: {}s", training_time_seconds);
+    spdlog::info("  Epochs completed: {}", epochs_completed);
+
+    // Build request
+    protocol::ReportJobCompleteFromNodeRequest request;
+    request.set_reservation_id(reservation_id);
+    request.set_job_id(job_id);
+    request.set_node_id(node_id_);
+    request.set_success(success);
+    request.set_model_hash(model_hash);
+    request.set_training_time_seconds(training_time_seconds);
+    request.set_epochs_completed(epochs_completed);
+
+    // Add final metrics
+    auto* metrics_map = request.mutable_final_metrics();
+    for (const auto& [key, value] : final_metrics) {
+        (*metrics_map)[key] = value;
+    }
+
+    // Send request
+    protocol::ReportJobCompleteFromNodeResponse response;
+    grpc::ClientContext context;
+
+    auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(30);
+    context.set_deadline(deadline);
+    AddAuthMetadata(context);
+
+    grpc::Status grpc_status = reservation_stub_->ReportJobCompleteFromNode(&context, request, &response);
+
+    if (grpc_status.ok()) {
+        if (response.status() == protocol::STATUS_SUCCESS) {
+            spdlog::info("Job completion reported successfully (reputation only)");
+            spdlog::info("  New reputation: {:.1f}", response.new_reputation());
+            spdlog::info("  Reputation change: {:+.1f}", response.reputation_change());
+            spdlog::info("  Jobs in reservation: {}", response.jobs_in_reservation());
+            spdlog::info("  {}", response.message());
+            return true;
+        } else {
+            spdlog::error("Job completion reporting failed: {}",
+                         response.has_error() ? response.error().message() : "Unknown error");
+            return false;
+        }
+    } else {
+        spdlog::error("gRPC error during job completion reporting: {} (code: {})",
+                     grpc_status.error_message(), static_cast<int>(grpc_status.error_code()));
+        return false;
+    }
+}
+
+bool NodeClient::ReportReservationEndFromNode(
+    const std::string& reservation_id,
+    int32_t jobs_completed,
+    int64_t total_compute_time,
+    bool node_available)
+{
+    if (!is_registered_) {
+        spdlog::error("Cannot report reservation end: node not registered");
+        return false;
+    }
+
+    spdlog::info("========================================");
+    spdlog::info("[PAYMENT] Reporting reservation {} end to Central Server", reservation_id);
+    spdlog::info("  Jobs completed: {}", jobs_completed);
+    spdlog::info("  Total compute time: {}s", total_compute_time);
+    spdlog::info("  Node available: {}", node_available);
+    spdlog::info("========================================");
+
+    // Build request
+    protocol::ReportReservationEndFromNodeRequest request;
+    request.set_reservation_id(reservation_id);
+    request.set_node_id(node_id_);
+    request.set_jobs_completed(jobs_completed);
+    request.set_total_compute_time(total_compute_time);
+    request.set_node_available(node_available);
+
+    // Send request
+    protocol::ReportReservationEndFromNodeResponse response;
+    grpc::ClientContext context;
+
+    auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(60);  // Longer timeout for payment
+    context.set_deadline(deadline);
+    AddAuthMetadata(context);
+
+    grpc::Status grpc_status = reservation_stub_->ReportReservationEndFromNode(&context, request, &response);
+
+    if (grpc_status.ok()) {
+        if (response.status() == protocol::STATUS_SUCCESS) {
+            if (response.payment_released()) {
+                spdlog::info("========================================");
+                spdlog::info("[PAYMENT] Payment released successfully!");
+                spdlog::info("  Amount received: {} lamports", response.amount_received());
+                spdlog::info("  Transaction hash: {}", response.payment_tx_hash());
+                spdlog::info("========================================");
+            } else {
+                spdlog::info("Reservation end reported. Waiting for engine confirmation.");
+                spdlog::info("  {}", response.message());
+            }
+            return true;
+        } else {
+            spdlog::error("Reservation end reporting failed: {}",
+                         response.has_error() ? response.error().message() : "Unknown error");
+            return false;
+        }
+    } else {
+        spdlog::error("gRPC error during reservation end reporting: {} (code: {})",
                      grpc_status.error_message(), static_cast<int>(grpc_status.error_code()));
         return false;
     }

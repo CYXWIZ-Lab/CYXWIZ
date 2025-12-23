@@ -67,6 +67,11 @@ private:
     // Heartbeat timer
     std::chrono::steady_clock::time_point last_heartbeat_time_;
     static constexpr int kHeartbeatIntervalSeconds = 30;
+
+    // Rate limiting for daemon status checks (avoid polling every frame)
+    std::chrono::steady_clock::time_point last_status_check_time_;
+    static constexpr int kStatusCheckIntervalMs = 2000;  // Check every 2 seconds
+    bool cached_connected_to_central_ = false;
 };
 
 } // namespace cyxwiz::servernode::gui

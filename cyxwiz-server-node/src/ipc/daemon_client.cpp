@@ -248,6 +248,12 @@ bool DaemonClient::GetStatus(DaemonStatus& status) {
     auto grpc_status = stub_->stub->GetStatus(&context, request, &response);
     if (!grpc_status.ok()) {
         spdlog::error("GetStatus failed: {}", grpc_status.error_message());
+        // If connection is lost (not just a temporary error), mark as disconnected
+        if (grpc_status.error_code() == grpc::StatusCode::UNAVAILABLE ||
+            grpc_status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {
+            spdlog::warn("Daemon connection lost, marking as disconnected");
+            connected_.store(false);
+        }
         return false;
     }
 
@@ -312,6 +318,12 @@ bool DaemonClient::GetMetrics(SystemMetrics& metrics,
     auto status = stub_->stub->GetMetrics(&context, request, &response);
     if (!status.ok()) {
         spdlog::error("GetMetrics failed: {}", status.error_message());
+        // If connection is lost, mark as disconnected
+        if (status.error_code() == grpc::StatusCode::UNAVAILABLE ||
+            status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {
+            spdlog::warn("Daemon connection lost during GetMetrics, marking as disconnected");
+            connected_.store(false);
+        }
         return false;
     }
 

@@ -83,10 +83,11 @@ impl NodeDiscoveryServiceImpl {
             port: node.port,
             region: node.region.clone().unwrap_or_default(),
             compute_score: self.calculate_compute_score(&node, has_cuda, has_opencl),
-            reputation_score: node.reputation_score,
+            // Proto expects 0.0-1.0, DB stores 0-100 - convert for Engine display
+            reputation_score: node.reputation_score / 100.0,
             total_jobs_completed: node.total_jobs_completed,
             total_compute_hours: 0, // TODO: Track this
-            average_rating: node.reputation_score * 5.0, // Convert to 5-star rating
+            average_rating: (node.reputation_score / 100.0) * 5.0, // Convert to 5-star rating (0-5 stars)
             staked_amount: (node.stake_amount as f64) / 1_000_000_000.0, // Convert lamports to SOL
             wallet_address: node.wallet_address.clone(),
             is_online: node.status == crate::database::models::NodeStatus::Online,
@@ -96,24 +97,42 @@ impl NodeDiscoveryServiceImpl {
             max_model_size: 10 * 1024 * 1024 * 1024, // 10GB default
             supports_terminal_access: false,
             available_runtimes: vec![], // Runtime availability
+            // Pricing: Hourly model like cloud providers (AWS, GCP, Azure)
+            // Base rate scales with GPU capability
             pricing: Some(NodePricing {
                 billing_model: 0, // BILLING_HOURLY
-                price_per_hour: 0.10,  // Default price
+                // Price in CYX tokens per hour (competitive with cloud providers)
+                // AWS g4dn: $0.52/hr, GCP T4: $0.35/hr, Azure NC6: $0.90/hr
+                // CyxWiz decentralized: $0.25/hr base, scales with GPU
+                price_per_hour: if has_cuda {
+                    0.25 + (node.gpu_memory_gb.unwrap_or(0) as f64 * 0.02) // $0.25 base + $0.02 per GB VRAM
+                } else if has_opencl {
+                    0.15 + (node.gpu_memory_gb.unwrap_or(0) as f64 * 0.01) // $0.15 base + $0.01 per GB VRAM
+                } else {
+                    0.05 + (node.cpu_cores as f64 * 0.005) // CPU-only: $0.05 base + $0.005 per core
+                },
                 price_per_epoch: 0.01,
                 price_per_job_base: 0.0,
-                price_per_inference: 0.0,
-                minimum_charge: 0.01,
-                minimum_duration_minutes: 1,
-                discount_1h_plus: 0.05,
-                discount_24h_plus: 0.10,
-                discount_bulk: 0.0,
-                usd_equivalent: 0.10,
+                price_per_inference: 0.001, // $0.001 per inference request
+                minimum_charge: 0.05, // Minimum $0.05 charge
+                minimum_duration_minutes: 10, // Minimum 10 minutes
+                discount_1h_plus: 0.10,  // 10% discount for >1 hour
+                discount_24h_plus: 0.20, // 20% discount for >24 hours
+                discount_bulk: 0.05,
+                // USD equivalent (assuming 1 CYX = 1 USD for simplicity, should be fetched from oracle)
+                usd_equivalent: if has_cuda {
+                    0.25 + (node.gpu_memory_gb.unwrap_or(0) as f64 * 0.02)
+                } else if has_opencl {
+                    0.15 + (node.gpu_memory_gb.unwrap_or(0) as f64 * 0.01)
+                } else {
+                    0.05 + (node.cpu_cores as f64 * 0.005)
+                },
                 price_updated_at: chrono::Utc::now().timestamp(),
                 accepts_cyxwiz_token: true,
                 accepts_sol: true,
-                accepts_usdc: false,
-                free_tier_available: true, // For testing
-                free_tier_minutes: 60, // 1 hour free
+                accepts_usdc: true, // Accept USDC stablecoin
+                free_tier_available: false, // No free tier by default - real pricing
+                free_tier_minutes: 0,
             }),
         }
     }
@@ -140,8 +159,10 @@ impl NodeDiscoveryServiceImpl {
             }
         }
 
-        // Reputation multiplier
-        score *= 0.5 + node.reputation_score * 0.5;
+        // Reputation multiplier (DB stores 0-100, convert to 0.0-1.0 for calculation)
+        // A node with 75% reputation gets multiplier of 0.5 + 0.75 * 0.5 = 0.875
+        let rep_normalized = node.reputation_score / 100.0;
+        score *= 0.5 + rep_normalized * 0.5;
 
         score
     }

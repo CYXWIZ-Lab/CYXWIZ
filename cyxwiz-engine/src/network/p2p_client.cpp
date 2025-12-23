@@ -38,7 +38,7 @@ bool P2PClient::ConnectToNode(const std::string& node_address,
         return false;
     }
 
-    spdlog::info("P2PClient: Connecting to node at {} for job {}", node_address, job_id);
+    spdlog::debug("P2PClient: Connecting to node at {} for job {}", node_address, job_id);
 
     // Create gRPC channel
     channel_ = grpc::CreateChannel(node_address, grpc::InsecureChannelCredentials());
@@ -89,7 +89,7 @@ bool P2PClient::ConnectToNode(const std::string& node_address,
         capabilities_.supported_devices.push_back(caps.supported_devices(i));
     }
 
-    spdlog::info("P2PClient: Connected to node {} (max_memory={}MB, max_batch={})",
+    spdlog::debug("P2PClient: Connected to node {} (max_memory={}MB, max_batch={})",
                  node_id_,
                  capabilities_.max_memory / (1024 * 1024),
                  capabilities_.max_batch_size);
@@ -102,7 +102,7 @@ void P2PClient::Disconnect() {
         return;
     }
 
-    spdlog::info("P2PClient: Disconnecting from node {}", node_id_);
+    spdlog::debug("P2PClient: Disconnecting from node {}", node_id_);
 
     // Stop any active streaming
     StopTrainingStream();
@@ -115,7 +115,7 @@ void P2PClient::Disconnect() {
     stub_.reset();
     channel_.reset();
 
-    spdlog::info("P2PClient: Disconnected");
+    spdlog::debug("P2PClient: Disconnected");
 }
 
 bool P2PClient::SendJob(const cyxwiz::protocol::JobConfig& config,
@@ -126,7 +126,7 @@ bool P2PClient::SendJob(const cyxwiz::protocol::JobConfig& config,
         return false;
     }
 
-    spdlog::info("P2PClient: Sending job {} to node {}", config.job_id(), node_id_);
+    spdlog::debug("P2PClient: Sending job {} to node {}", config.job_id(), node_id_);
 
     cyxwiz::protocol::SendJobRequest request;
     request.set_job_id(config.job_id());
@@ -155,7 +155,7 @@ bool P2PClient::SendJob(const cyxwiz::protocol::JobConfig& config,
         return false;
     }
 
-    spdlog::info("P2PClient: Job {} accepted, estimated start time: {}",
+    spdlog::debug("P2PClient: Job {} accepted, estimated start time: {}",
                  config.job_id(),
                  response.estimated_start_time());
 
@@ -170,7 +170,7 @@ bool P2PClient::SendJobWithDatasetURI(const cyxwiz::protocol::JobConfig& config,
         return false;
     }
 
-    spdlog::info("P2PClient: Sending job {} with dataset URI: {}", config.job_id(), dataset_uri);
+    spdlog::debug("P2PClient: Sending job {} with dataset URI: {}", config.job_id(), dataset_uri);
 
     cyxwiz::protocol::SendJobRequest request;
     request.set_job_id(config.job_id());
@@ -195,7 +195,7 @@ bool P2PClient::SendJobWithDatasetURI(const cyxwiz::protocol::JobConfig& config,
         return false;
     }
 
-    spdlog::info("P2PClient: Job {} accepted", config.job_id());
+    spdlog::debug("P2PClient: Job {} accepted", config.job_id());
     return true;
 }
 
@@ -212,7 +212,7 @@ bool P2PClient::StartTrainingStream(const std::string& job_id) {
         return false;
     }
 
-    spdlog::info("P2PClient: Starting training stream for job {}", job_id);
+    spdlog::debug("P2PClient: Starting training stream for job {}", job_id);
 
     streaming_ = true;
     current_job_id_ = job_id;
@@ -228,7 +228,7 @@ void P2PClient::StopTrainingStream() {
         return;
     }
 
-    spdlog::info("P2PClient: Stopping training stream");
+    spdlog::debug("P2PClient: Stopping training stream");
 
     streaming_ = false;
 
@@ -245,7 +245,7 @@ void P2PClient::StopTrainingStream() {
     stream_.reset();
     stream_context_.reset();
 
-    spdlog::info("P2PClient: Training stream stopped");
+    spdlog::debug("P2PClient: Training stream stopped");
 }
 
 void P2PClient::StreamingThreadFunc(const std::string& job_id) {
@@ -322,9 +322,18 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
                 completion_callback_(complete);
             }
 
-            // Training complete, stop streaming
-            streaming_ = false;
-            break;
+            // Job complete, but reservation may still be active
+            // Set waiting flag - UI can submit new job or wait for timer
+            spdlog::debug("[RESERVATION] Job complete. Waiting for new job or reservation end.");
+            waiting_for_new_job_ = true;
+
+            // DON'T stop streaming - keep connection open for new jobs
+            // The stream will be closed when:
+            // 1. SendReservationEnd() is called (timer expires)
+            // 2. Server Node closes the stream
+            // 3. User explicitly disconnects
+
+            // Continue reading from stream (Server Node may send updates)
         }
         else if (update.has_error()) {
             const auto& err = update.error();
@@ -412,14 +421,48 @@ bool P2PClient::RequestCheckpoint() {
     return SendTrainingCommand(cmd);
 }
 
+bool P2PClient::SendNewJobConfig(const cyxwiz::protocol::JobConfig& config) {
+    spdlog::debug("P2PClient: Sending new job config - epochs={}, batch_size={}",
+                  config.epochs(), config.batch_size());
+
+    cyxwiz::protocol::TrainingCommand cmd;
+    *cmd.mutable_new_job_config() = config;
+
+    bool success = SendTrainingCommand(cmd);
+    if (success) {
+        waiting_for_new_job_ = false;
+        spdlog::debug("P2PClient: New job config sent successfully");
+    } else {
+        spdlog::error("P2PClient: Failed to send new job config");
+    }
+    return success;
+}
+
+bool P2PClient::SendReservationEnd() {
+    spdlog::debug("P2PClient: Sending reservation end signal");
+
+    cyxwiz::protocol::TrainingCommand cmd;
+    cmd.set_reservation_end(true);
+
+    bool success = SendTrainingCommand(cmd);
+    if (success) {
+        waiting_for_new_job_ = false;
+        streaming_ = false;
+        spdlog::debug("P2PClient: Reservation end sent successfully");
+    } else {
+        spdlog::error("P2PClient: Failed to send reservation end");
+    }
+    return success;
+}
+
 void P2PClient::RegisterDatasetForJob(const std::string& job_id, cyxwiz::DatasetHandle dataset) {
     dataset_provider_.RegisterDataset(job_id, dataset);
-    spdlog::info("P2PClient: Registered dataset for job {}", job_id);
+    spdlog::debug("P2PClient: Registered dataset for job {}", job_id);
 }
 
 void P2PClient::UnregisterDatasetForJob(const std::string& job_id) {
     dataset_provider_.UnregisterDataset(job_id);
-    spdlog::info("P2PClient: Unregistered dataset for job {}", job_id);
+    spdlog::debug("P2PClient: Unregistered dataset for job {}", job_id);
 }
 
 void P2PClient::HandleDatasetRequest(const cyxwiz::protocol::TrainingUpdate& update) {

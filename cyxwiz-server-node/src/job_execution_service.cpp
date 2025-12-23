@@ -1,5 +1,6 @@
 #include "job_execution_service.h"
 #include "job_executor.h"
+#include "node_client.h"
 #include "remote_data_loader.h"
 #include "core/backend_manager.h"
 #include "core/state_manager.h"
@@ -244,10 +245,20 @@ grpc::Status JobExecutionServiceImpl::SendJob(
         spdlog::info("Added job {} to StateManager for GUI display", request->job_id());
     }
 
-    // Notify Central Server about job acceptance
+    // Log node state change to BUSY
+    spdlog::info("========================================");
+    spdlog::info("[NODE STATE] Node is now BUSY");
+    spdlog::info("  Job ID: {}", request->job_id());
+    spdlog::info("  Engine: {}", context->peer());
+    spdlog::info("  Duration: {} epochs", request->config().epochs());
+    spdlog::info("========================================");
+
+    // Notify Central Server about job acceptance (marks node as BUSY)
     if (!NotifyCentralServer(request->job_id(), node_id_)) {
         spdlog::warn("Failed to notify Central Server about job acceptance");
         // Continue anyway - job can still run
+    } else {
+        spdlog::info("[CENTRAL SERVER] Notified: Node {} is BUSY with job {}", node_id_, request->job_id());
     }
 
     // Build response
@@ -340,16 +351,106 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         spdlog::info("Remote data loaders created (batch_size={})", batch_size);
     }
 
-    // Flag to track training completion
-    std::atomic<bool> training_complete{false};
-    std::atomic<bool> training_success{false};
-    std::string training_error;
-    std::mutex error_mutex;
+    // Flags for reservation-based multi-job flow
+    std::atomic<bool> reservation_ended{false};
+    std::atomic<bool> new_job_received{false};
+    std::atomic<bool> engine_disconnected{false};
+    std::mutex new_job_mutex;
+    std::condition_variable new_job_cv;
+    cyxwiz::protocol::JobConfig pending_job_config;
 
-    // Progress update queue for streaming to Engine
-    std::queue<cyxwiz::protocol::TrainingUpdate> update_queue;
-    std::mutex queue_mutex;
-    std::condition_variable queue_cv;
+    // Command thread runs for entire reservation, handles all commands
+    std::thread command_thread([&, job_id, session]() {
+        cyxwiz::protocol::TrainingCommand command;
+        while (stream->Read(&command)) {
+            if (command.has_pause()) {
+                session->is_paused = command.pause();
+                spdlog::info("Job {} {}", job_id, command.pause() ? "paused" : "resumed");
+            } else if (command.has_stop()) {
+                session->should_stop = true;
+                if (job_executor_) {
+                    job_executor_->CancelJob(job_id);
+                }
+                spdlog::info("Job {} stop requested", job_id);
+                // Don't break - keep reading for new_job_config or reservation_end
+            } else if (command.has_request_checkpoint()) {
+                spdlog::info("Job {} checkpoint requested", job_id);
+            } else if (command.has_update_params()) {
+                spdlog::info("Job {} hyperparameter update requested", job_id);
+            }
+            // Handle dataset streaming responses from Engine
+            else if (command.has_batch_response()) {
+                const auto& response = command.batch_response();
+                spdlog::debug("Job {} received BatchResponse, request_id={}",
+                              job_id, response.request_id());
+                if (session->train_loader) {
+                    session->train_loader->OnBatchResponse(response);
+                }
+                if (session->val_loader) {
+                    session->val_loader->OnBatchResponse(response);
+                }
+            }
+            else if (command.has_dataset_info_response()) {
+                const auto& response = command.dataset_info_response();
+                spdlog::debug("Job {} received DatasetInfoResponse, status={}",
+                             job_id, static_cast<int>(response.status()));
+                if (session->train_loader) {
+                    session->train_loader->OnDatasetInfoResponse(response);
+                }
+                if (session->val_loader) {
+                    session->val_loader->OnDatasetInfoResponse(response);
+                }
+            }
+            // Handle reservation-based commands
+            else if (command.has_new_job_config()) {
+                spdlog::info("[RESERVATION] New job config received!");
+                {
+                    std::lock_guard<std::mutex> lock(new_job_mutex);
+                    pending_job_config = command.new_job_config();
+                    new_job_received = true;
+                }
+                new_job_cv.notify_one();
+            }
+            else if (command.has_reservation_end()) {
+                spdlog::info("[RESERVATION] Reservation end signal received");
+                reservation_ended = true;
+                new_job_cv.notify_one();
+                break;
+            }
+        }
+        // Stream closed
+        if (!reservation_ended) {
+            spdlog::warn("Engine disconnected from stream");
+            engine_disconnected = true;
+            new_job_cv.notify_one();
+        }
+    });
+
+    // ========== MULTI-JOB TRAINING LOOP ==========
+    // This loop runs multiple training jobs within the same reservation
+    int job_number = 0;
+    bool start_new_job = false;  // Flag to continue loop for new jobs
+    do {
+        job_number++;
+        start_new_job = false;  // Reset at start of each iteration
+
+        // Get the CURRENT job's ID (may be different from original job_id for subsequent jobs)
+        std::string current_job_id = session->job_config.job_id();
+        spdlog::info("[RESERVATION] Starting training job #{} within reservation (job_id: {})",
+                     job_number, current_job_id);
+
+        // Reset training state for this job
+        std::atomic<bool> training_complete{false};
+        std::atomic<bool> training_success{false};
+        std::string training_error;
+        std::mutex error_mutex;
+        session->should_stop = false;
+        session->is_paused = false;
+
+        // Progress update queue for streaming to Engine
+        std::queue<cyxwiz::protocol::TrainingUpdate> update_queue;
+        std::mutex queue_mutex;
+        std::condition_variable queue_cv;
 
     // Check if JobExecutor is available for real training (only for LOCAL datasets)
     // Remote datasets use the built-in training with RemoteDataLoader
@@ -475,7 +576,8 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         auto job_exec = job_executor_;
         std::string model_def = session->job_config.model_definition();
 
-        std::thread training_thread([&, job_id, session, use_remote, train_loader, val_loader, learning_rate, job_exec, model_def]() {
+        // Use current_job_id (captured by value) for all training operations
+        std::thread training_thread([&, current_job_id, session, use_remote, train_loader, val_loader, learning_rate, job_exec, model_def]() {
             // Set up GPU device context for this thread (required for ArrayFire thread-safety)
             // ArrayFire operations must be performed in a thread with proper device context
             cyxwiz::servernode::core::ScopedDeviceContext device_ctx(0);
@@ -491,7 +593,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             size_t input_size = 0;
             int num_classes = 10;  // Default for MNIST
             if (use_remote && train_loader) {
-                spdlog::info("Requesting dataset info from Engine for job {}", job_id);
+                spdlog::info("Requesting dataset info from Engine for job {}", current_job_id);
                 if (train_loader->RequestDatasetInfo()) {
                     // Initialize loaders with received metadata
                     const auto& metadata = train_loader->GetMetadata();
@@ -516,7 +618,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                                  val_loader ? val_loader->NumSamples() : 0,
                                  input_size, num_classes);
                 } else {
-                    spdlog::error("Failed to get dataset info for job {}", job_id);
+                    spdlog::error("Failed to get dataset info for job {}", current_job_id);
                 }
             }
 
@@ -546,9 +648,15 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             }
 
             for (int epoch = 1; epoch <= total_epochs && !session->should_stop; ++epoch) {
-                // Check if paused
-                while (session->is_paused && !session->should_stop) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                // Check if paused at epoch boundary
+                if (session->is_paused) {
+                    spdlog::info("[TRAINING] Paused before epoch {}", epoch);
+                    while (session->is_paused && !session->should_stop) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    if (!session->should_stop) {
+                        spdlog::info("[TRAINING] Resumed training");
+                    }
                 }
 
                 double loss = 0.0;
@@ -565,6 +673,17 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                     constexpr int MAX_CONSECUTIVE_FAILURES = 3;
 
                     while (train_loader->HasNextBatch() && !session->should_stop) {
+                        // Check if paused - wait while paused
+                        if (session->is_paused) {
+                            spdlog::info("[TRAINING] Paused at batch {}", batches_processed);
+                            while (session->is_paused && !session->should_stop) {
+                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            }
+                            if (!session->should_stop) {
+                                spdlog::info("[TRAINING] Resumed training");
+                            }
+                        }
+
                         // Check if loader was cancelled (Engine disconnected)
                         if (train_loader->IsCancelled()) {
                             spdlog::warn("RemoteDataLoader cancelled - Engine may have disconnected");
@@ -758,7 +877,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
                         // Report batch progress
                         cyxwiz::protocol::TrainingUpdate batch_update;
-                        batch_update.set_job_id(job_id);
+                        batch_update.set_job_id(current_job_id);
                         batch_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
 
                         auto* log = batch_update.mutable_log();
@@ -784,7 +903,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
                 // Send epoch progress update
                 cyxwiz::protocol::TrainingUpdate update;
-                update.set_job_id(job_id);
+                update.set_job_id(current_job_id);
                 update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
 
                 auto* progress = update.mutable_progress();
@@ -819,7 +938,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 auto* sm = cyxwiz::servernode::core::BackendManager::Instance().GetStateManager();
                 if (sm) {
                     cyxwiz::servernode::core::JobState job_state;
-                    job_state.id = job_id;
+                    job_state.id = current_job_id;
                     job_state.type = "Training";
                     job_state.progress = static_cast<float>(epoch) / total_epochs;
                     job_state.current_epoch = epoch;
@@ -849,55 +968,6 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         });
         training_thread.detach();
     }
-
-    // Thread to read commands from Engine
-    std::thread command_thread([&, job_id, session]() {
-        cyxwiz::protocol::TrainingCommand command;
-        while (stream->Read(&command)) {
-            if (command.has_pause()) {
-                session->is_paused = command.pause();
-                spdlog::info("Job {} {}", job_id, command.pause() ? "paused" : "resumed");
-            } else if (command.has_stop()) {
-                session->should_stop = true;
-                if (job_executor_) {
-                    job_executor_->CancelJob(job_id);
-                }
-                spdlog::info("Job {} stop requested", job_id);
-                break;
-            } else if (command.has_request_checkpoint()) {
-                spdlog::info("Job {} checkpoint requested", job_id);
-            } else if (command.has_update_params()) {
-                spdlog::info("Job {} hyperparameter update requested", job_id);
-            }
-            // Handle dataset streaming responses from Engine
-            else if (command.has_batch_response()) {
-                const auto& response = command.batch_response();
-                spdlog::debug("Job {} received BatchResponse, request_id={}",
-                              job_id, response.request_id());
-
-                // Route to appropriate data loader
-                if (session->train_loader) {
-                    session->train_loader->OnBatchResponse(response);
-                }
-                if (session->val_loader) {
-                    session->val_loader->OnBatchResponse(response);
-                }
-            }
-            else if (command.has_dataset_info_response()) {
-                const auto& response = command.dataset_info_response();
-                spdlog::info("Job {} received DatasetInfoResponse, status={}",
-                             job_id, static_cast<int>(response.status()));
-
-                // Route to data loaders
-                if (session->train_loader) {
-                    session->train_loader->OnDatasetInfoResponse(response);
-                }
-                if (session->val_loader) {
-                    session->val_loader->OnDatasetInfoResponse(response);
-                }
-            }
-        }
-    });
 
     // Stream updates to Engine
     while (!training_complete || !update_queue.empty()) {
@@ -952,12 +1022,12 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     {
         spdlog::info("========================================");
         spdlog::info("[P2P WORKFLOW] STEP 6: Training complete! Sending results to Engine...");
-        spdlog::info("  Job ID: {}", job_id);
+        spdlog::info("  Job ID: {}", current_job_id);
         spdlog::info("  Success: {}", training_success ? "YES" : "NO");
         spdlog::info("========================================");
 
         cyxwiz::protocol::TrainingUpdate complete_update;
-        complete_update.set_job_id(job_id);
+        complete_update.set_job_id(current_job_id);
         complete_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
 
         if (training_success) {
@@ -970,7 +1040,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             complete->set_total_epochs_completed(session->job_config.epochs());
 
             // Set weights location (for download)
-            session->final_weights_path = "/tmp/models/" + job_id + ".pt";
+            session->final_weights_path = "/tmp/models/" + current_job_id + ".pt";
             complete->set_weights_location(session->final_weights_path);
         } else {
             // Send error message for failed training
@@ -989,22 +1059,165 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         }
     }
 
-    // Wait for command thread
-    session->should_stop = true;  // Signal command thread to exit
+    // ========== POST-TRAINING: WAIT FOR NEXT ACTION ==========
+    spdlog::info("[RESERVATION] Job #{} training finished. Waiting for next action...", job_number);
+
+    // Report job completion for reputation (NOT payment)
+    ReportJobComplete(current_job_id, training_success);
+
+    // Reset session state for potential new job
+    ResetJobSession(session);
+    session->jobs_completed_in_reservation++;
+
+    // Send "ready for new job" message to Engine
+    {
+        cyxwiz::protocol::TrainingUpdate ready_update;
+        ready_update.set_job_id(current_job_id);
+        ready_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
+        auto* status_msg = ready_update.mutable_log();
+        status_msg->set_level(cyxwiz::protocol::LogMessage::INFO);
+        status_msg->set_source("ServerNode");
+        status_msg->set_message("Training complete. Ready for new job or reservation end.");
+
+        std::lock_guard<std::mutex> stream_lock(*stream_mutex);
+        stream->Write(ready_update);
+    }
+
+    // Wait for new job config OR reservation end (handled by command_thread)
+    spdlog::info("Waiting for new job config or reservation end from Engine...");
+
+    // Keep waiting until we get a valid job or reservation ends
+    while (!reservation_ended && !engine_disconnected) {
+        std::unique_lock<std::mutex> lock(new_job_mutex);
+        new_job_cv.wait(lock, [&]() {
+            return new_job_received || reservation_ended || engine_disconnected;
+        });
+
+        if (reservation_ended || engine_disconnected) {
+            break;  // Exit wait loop
+        }
+
+        if (new_job_received) {
+            new_job_received = false;
+
+            // ========== VALIDATION ==========
+            // Check minimum epochs (basic sanity check)
+            if (pending_job_config.epochs() < MIN_EPOCHS_PER_JOB) {
+                spdlog::warn("[RESERVATION] Job has too few epochs ({}). Minimum is {}.",
+                            pending_job_config.epochs(), MIN_EPOCHS_PER_JOB);
+                cyxwiz::protocol::TrainingUpdate reject_update;
+                // Use the pending job's ID for the rejection message
+                reject_update.set_job_id(pending_job_config.job_id());
+                auto* err = reject_update.mutable_error();
+                err->set_error_code("INVALID_CONFIG");
+                err->set_error_message("Minimum epochs required: " + std::to_string(MIN_EPOCHS_PER_JOB));
+                err->set_recoverable(true);
+                {
+                    std::lock_guard<std::mutex> stream_lock(*stream_mutex);
+                    stream->Write(reject_update);
+                }
+                // Keep waiting for valid config
+                continue;
+            }
+
+            // Valid job - start training (no max limit - user paid for time)
+            spdlog::info("========================================");
+            spdlog::info("[RESERVATION] New job config received! Will start training...");
+            spdlog::info("  Job #{} within reservation", job_number + 1);
+            spdlog::info("  Epochs: {}", pending_job_config.epochs());
+            spdlog::info("  Batch Size: {}", pending_job_config.batch_size());
+            spdlog::info("========================================");
+
+            // Update session with new config
+            session->job_config = pending_job_config;
+            start_new_job = true;
+            break;  // Exit wait loop to start training
+        }
+    }
+
+    // If starting new job, send acknowledgement and prepare data loaders
+    if (start_new_job) {
+        // Send acknowledgement using the NEW job's ID (now in session->job_config)
+        {
+            cyxwiz::protocol::TrainingUpdate ack_update;
+            ack_update.set_job_id(session->job_config.job_id());
+            ack_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
+            auto* log = ack_update.mutable_log();
+            log->set_level(cyxwiz::protocol::LogMessage::INFO);
+            log->set_source("ServerNode");
+            log->set_message("Starting new training job...");
+
+            std::lock_guard<std::mutex> stream_lock(*stream_mutex);
+            stream->Write(ack_update);
+        }
+
+        // Recreate data loaders for new job if remote dataset
+        std::string new_dataset_uri = session->job_config.dataset_uri();
+        if (new_dataset_uri.find("remote://") == 0) {
+            auto write_func = [stream, stream_mutex](const cyxwiz::protocol::TrainingUpdate& update) -> bool {
+                std::lock_guard<std::mutex> lock(*stream_mutex);
+                return stream->Write(update);
+            };
+
+            int batch_size = session->job_config.batch_size();
+            if (batch_size <= 0) batch_size = 32;
+
+            // Use the NEW job's job_id from the config, not the original captured job_id
+            std::string new_job_id = session->job_config.job_id();
+            spdlog::info("Creating new data loaders with job_id: {}", new_job_id);
+
+            session->train_loader = std::make_shared<RemoteDataLoader>(
+                write_func, new_job_id, cyxwiz::protocol::SPLIT_TRAIN,
+                batch_size, /*shuffle=*/true);
+
+            session->val_loader = std::make_shared<RemoteDataLoader>(
+                write_func, new_job_id, cyxwiz::protocol::SPLIT_VALIDATION,
+                batch_size, /*shuffle=*/false);
+
+            is_remote_dataset = true;
+            spdlog::info("Recreated remote data loaders for new job {}", new_job_id);
+        }
+    }
+
+    // Continue loop if we received a new job, exit if reservation ended or disconnected
+    } while (start_new_job);
+
+    // ========== CLEANUP: RESERVATION ENDED ==========
+    spdlog::info("========================================");
+    spdlog::info("[RESERVATION] Reservation ending - cleanup starting");
+    spdlog::info("  Job ID: {}", job_id);
+    spdlog::info("  Reservation ID: {}", session->reservation_id);
+    spdlog::info("  Engine disconnected: {}", engine_disconnected ? "YES" : "NO");
+    spdlog::info("  Reservation timer ended: {}", reservation_ended ? "YES" : "NO");
+    spdlog::info("========================================");
+
+    session->should_stop = true;
     if (command_thread.joinable()) {
         command_thread.join();
     }
-
     session->is_running = false;
 
-    // Cleanup and notify Central Server
-    std::string reason = training_success ? "Training completed successfully" :
-                         (!training_error.empty() ? training_error : "Training ended");
-    spdlog::info("Notifying Central Server and cleaning up job {}...", job_id);
-    NotifyJobEnded(job_id, training_success, reason);
+    // Report reservation end and trigger payment
+    int jobs_completed = session->jobs_completed_in_reservation.load();
+    if (engine_disconnected) {
+        spdlog::warn("[ENGINE DISCONNECT] Engine disconnected from P2P stream.");
+        spdlog::warn("  Payment will still be released to node (no refund - user paid for time slot).");
+    }
+
+    spdlog::info("[CENTRAL SERVER] Reporting reservation end to Central Server...");
+    spdlog::info("  This will mark node as FREE and release payment");
+    ReportReservationEnd(session->reservation_id, jobs_completed);
+
+    // Final cleanup - removes job from StateManager so GUI shows node as idle
+    spdlog::info("[CLEANUP] Removing job from active tracking...");
     CleanupJob(job_id);
 
-    spdlog::info("Training metrics stream ended for job {}", job_id);
+    spdlog::info("========================================");
+    spdlog::info("[RESERVATION COMPLETE]");
+    spdlog::info("  Reservation: {}", session->reservation_id);
+    spdlog::info("  Jobs completed: {}", jobs_completed);
+    spdlog::info("  Node status: FREE (ready for new reservations)");
+    spdlog::info("========================================");
     return grpc::Status::OK;
 }
 
@@ -1187,15 +1400,11 @@ void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {
         session->pause_cv.notify_all();
     }
 
-    // Update StateManager to show job as ended
+    // Remove job from StateManager - Engine disconnected, no job should be shown
     auto* state_manager = cyxwiz::servernode::core::BackendManager::Instance().GetStateManager();
     if (state_manager) {
-        cyxwiz::servernode::core::JobState job_state;
-        job_state.id = job_id;
-        job_state.type = "Training";
-        job_state.is_running = false;
-        job_state.progress = 0.0f;
-        state_manager->UpdateJob(job_state);
+        state_manager->RemoveJob(job_id);
+        spdlog::info("[STATE] Removed job {} from StateManager - Engine disconnected, node is FREE", job_id);
     }
 
     // Remove from active jobs
@@ -1203,6 +1412,12 @@ void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
         active_jobs_.erase(job_id);
     }
+
+    spdlog::info("========================================");
+    spdlog::info("[NODE STATE] Node is now FREE");
+    spdlog::info("  Previous job: {}", job_id);
+    spdlog::info("  Ready for new reservations");
+    spdlog::info("========================================");
 
     // Remove connection tracking
     {
@@ -1218,6 +1433,163 @@ void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {
     }
 
     spdlog::info("Job {} cleanup complete. Server Node ready for new jobs.", job_id);
+}
+
+// ========== Reservation-Based Job Management ==========
+
+void JobExecutionServiceImpl::ResetJobSession(JobSession* session) {
+    if (!session) return;
+
+    spdlog::info("Resetting job session for reservation {}, ready for new job",
+                 session->reservation_id);
+
+    // Reset training state but keep reservation info
+    session->is_running = false;
+    session->should_stop = false;
+    session->is_paused = false;
+    session->paused_at_epoch = 0;
+    session->paused_at_batch = 0;
+
+    // Clear data loaders (will be recreated for new job)
+    if (session->train_loader) {
+        session->train_loader->Cancel();
+        session->train_loader.reset();
+    }
+    if (session->val_loader) {
+        session->val_loader->Cancel();
+        session->val_loader.reset();
+    }
+
+    // Clear paths
+    session->final_weights_path.clear();
+    session->checkpoint_path.clear();
+
+    // Increment jobs completed counter
+    session->jobs_completed_in_reservation++;
+
+    // Mark as waiting for new job
+    session->waiting_for_new_job = true;
+
+    // Update StateManager to show node as idle within reservation
+    auto* state_manager = cyxwiz::servernode::core::BackendManager::Instance().GetStateManager();
+    if (state_manager) {
+        cyxwiz::servernode::core::JobState job_state;
+        job_state.id = session->job_id;
+        job_state.type = "Idle (Reservation Active)";
+        job_state.is_running = false;
+        job_state.progress = 0.0f;
+        state_manager->UpdateJob(job_state);
+    }
+
+    spdlog::info("Job session reset. Jobs completed in reservation: {}",
+                 session->jobs_completed_in_reservation.load());
+}
+
+void JobExecutionServiceImpl::ReportJobComplete(const std::string& job_id, bool success) {
+    // Report job completion to Central Server for REPUTATION ONLY (no payment)
+    // Payment is released only when reservation expires
+
+    spdlog::info("Reporting job {} completion to Central Server (reputation update only)",
+                 job_id);
+
+    // Get job session to find reservation_id and metrics
+    std::string reservation_id;
+    std::map<std::string, double> final_metrics;
+    int64_t training_time_seconds = 0;
+    int32_t epochs_completed = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        auto it = active_jobs_.find(job_id);
+        if (it != active_jobs_.end()) {
+            auto* session = it->second.get();
+            reservation_id = session->reservation_id;
+            epochs_completed = session->completed_epochs.load();
+            // Calculate training time
+            auto now = std::chrono::steady_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::seconds>(
+                now - session->reservation_start);
+            training_time_seconds = duration.count();
+        }
+    }
+
+    // Call Central Server via NodeClient
+    if (node_client_) {
+        bool reported = node_client_->ReportJobCompleteFromNode(
+            reservation_id,
+            job_id,
+            success,
+            "",  // model_hash - TODO: compute hash of trained model
+            final_metrics,
+            training_time_seconds,
+            epochs_completed
+        );
+
+        if (reported) {
+            spdlog::info("[REPUTATION] Job {} completion reported successfully", job_id);
+        } else {
+            spdlog::warn("[REPUTATION] Failed to report job {} completion to Central Server", job_id);
+        }
+    } else {
+        spdlog::warn("[REPUTATION] NodeClient not set, cannot report to Central Server");
+        // Fallback logging
+        if (success) {
+            spdlog::info("[REPUTATION] Job {} completed successfully. +1.0 reputation (local only)",
+                         job_id);
+        } else {
+            spdlog::warn("[REPUTATION] Job {} failed. No reputation change.",
+                         job_id);
+        }
+    }
+}
+
+void JobExecutionServiceImpl::ReportReservationEnd(const std::string& reservation_id,
+                                                    int jobs_completed) {
+    // Report reservation end to Central Server - THIS triggers:
+    // 1. Payment release (90% node, 10% platform)
+    // 2. Node marked as FREE in Central Server's node registry
+
+    spdlog::info("========================================");
+    spdlog::info("[CENTRAL SERVER NOTIFICATION]");
+    spdlog::info("  Action: ReportReservationEndFromNode");
+    spdlog::info("  Reservation ID: {}", reservation_id);
+    spdlog::info("  Node ID: {}", node_id_);
+    spdlog::info("  Jobs completed: {}", jobs_completed);
+    spdlog::info("  node_available: true (move to FREE list)");
+    spdlog::info("  Expected Central Server actions:");
+    spdlog::info("    1. Release payment (90% node, 10% platform)");
+    spdlog::info("    2. Move node from BUSY list to FREE list");
+    spdlog::info("    3. Allow node to accept new reservations");
+    spdlog::info("========================================");
+
+    // Calculate total compute time (approximate from first job start)
+    int64_t total_compute_time = 0;
+    // TODO: Track actual compute time across all jobs in reservation
+
+    // Call Central Server via NodeClient
+    if (node_client_) {
+        spdlog::info("[CENTRAL SERVER] Sending ReportReservationEndFromNode RPC...");
+        bool reported = node_client_->ReportReservationEndFromNode(
+            reservation_id,
+            jobs_completed,
+            total_compute_time,
+            true  // node_available - we're ready for new reservations
+        );
+
+        if (reported) {
+            spdlog::info("[CENTRAL SERVER] SUCCESS - Node {} is now FREE on Central Server", node_id_);
+            spdlog::info("  Node can now accept new reservations from Engines");
+        } else {
+            spdlog::error("[CENTRAL SERVER] FAILED to report reservation end!");
+            spdlog::error("  Node may still be marked as BUSY on Central Server");
+            spdlog::error("  This is a critical error - manual intervention may be needed");
+        }
+    } else {
+        spdlog::error("[CENTRAL SERVER] NodeClient not set!");
+        spdlog::error("  Cannot notify Central Server that reservation ended");
+        spdlog::error("  Node will remain BUSY on Central Server indefinitely!");
+        spdlog::error("  Payment will NOT be released!");
+    }
 }
 
 std::string JobExecutionServiceImpl::SaveDatasetToFile(const std::string& job_id,

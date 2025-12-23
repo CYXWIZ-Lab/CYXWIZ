@@ -86,6 +86,10 @@ private:
     // Update timing
     std::chrono::steady_clock::time_point last_refresh_;
     bool devices_initialized_ = false;
+
+    // Rate limiting for daemon status checks
+    std::chrono::steady_clock::time_point last_status_check_;
+    static constexpr int kStatusCheckIntervalMs = 2000;  // Check every 2 seconds
 };
 
 } // namespace cyxwiz::servernode::gui

@@ -14,6 +14,7 @@
 namespace cyxwiz {
 namespace servernode {
 class JobExecutor;
+class NodeClient;  // For communicating with Central Server
 }
 namespace server_node {
 class RemoteDataLoader;
@@ -42,6 +43,11 @@ public:
                    const std::string& central_server_address,
                    const std::string& node_id,
                    const std::string& p2p_secret);
+
+    // Set the NodeClient for Central Server communication
+    void SetNodeClient(std::shared_ptr<cyxwiz::servernode::NodeClient> client) {
+        node_client_ = client;
+    }
 
     // Start the P2P server on the specified port
     bool StartServer(const std::string& listen_address = "0.0.0.0:50052");
@@ -127,15 +133,19 @@ private:
         bool is_authenticated;
     };
 
+    // Reservation limits (minimal - user paid for time, can use it freely)
+    static constexpr int MIN_EPOCHS_PER_JOB = 1;             // Minimum epochs per job
+    // NO max jobs limit - user paid for time, can submit unlimited jobs
+
     // Job tracking
     struct JobSession {
         std::string job_id;
         std::string reservation_id;
         std::string engine_address;
         cyxwiz::protocol::JobConfig job_config;
-        std::atomic<bool> is_running;
-        std::atomic<bool> is_paused;
-        std::atomic<bool> should_stop;
+        std::atomic<bool> is_running{false};
+        std::atomic<bool> is_paused{false};
+        std::atomic<bool> should_stop{false};
         std::string final_weights_path;
         std::mutex metrics_mutex;
         cyxwiz::protocol::TrainingProgress latest_progress;
@@ -153,6 +163,12 @@ private:
         // Condition variable for pause/resume synchronization
         std::condition_variable pause_cv;
         std::mutex pause_mutex;
+
+        // Reservation-based tracking (multiple jobs per reservation)
+        std::atomic<int> jobs_completed_in_reservation{0};
+        std::atomic<bool> waiting_for_new_job{false};
+        std::chrono::steady_clock::time_point reservation_start;
+        std::chrono::seconds reservation_duration{0};
     };
 
     // Helper methods
@@ -160,6 +176,15 @@ private:
     bool NotifyCentralServer(const std::string& job_id, const std::string& node_id);
     void NotifyJobEnded(const std::string& job_id, bool success, const std::string& reason);
     void CleanupJob(const std::string& job_id);
+
+    // Reservation-based job management
+    void ResetJobSession(JobSession* session);
+    void ReportJobComplete(const std::string& job_id, bool success);
+    void ReportReservationEnd(const std::string& reservation_id, int jobs_completed);
+    bool RunTrainingLoop(JobSession* session,
+                        grpc::ServerReaderWriter<cyxwiz::protocol::TrainingUpdate,
+                                                  cyxwiz::protocol::TrainingCommand>* stream,
+                        std::shared_ptr<std::mutex> stream_mutex);
     void UpdateJobMetrics(const std::string& job_id,
                          const cyxwiz::protocol::TrainingProgress& progress);
     std::string SaveDatasetToFile(const std::string& job_id,
@@ -191,6 +216,9 @@ private:
 
     // P2P JWT validator
     std::unique_ptr<P2PJwtValidator> jwt_validator_;
+
+    // Central Server communication client
+    std::shared_ptr<cyxwiz::servernode::NodeClient> node_client_;
 };
 
 } // namespace server_node

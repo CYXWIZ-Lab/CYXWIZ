@@ -213,6 +213,10 @@ message TrainingCommand {
     // Dataset streaming responses (Engine sends batch data to Server Node)
     BatchResponse batch_response = 10;
     DatasetInfoResponse dataset_info_response = 11;
+
+    // Reservation-based job management
+    JobConfig new_job_config = 20;    // Start new job within same reservation
+    bool reservation_end = 21;         // Signal reservation timer expired
   }
 }
 

@@ -109,6 +109,12 @@ public:
     bool StopTraining();
     bool RequestCheckpoint();
 
+    // Reservation-based job management
+    bool SendNewJobConfig(const cyxwiz::protocol::JobConfig& config);
+    bool SendReservationEnd();
+    bool IsWaitingForNewJob() const { return waiting_for_new_job_; }
+    void SetWaitingForNewJob(bool waiting) { waiting_for_new_job_ = waiting; }
+
     // Weights download
     bool DownloadWeights(const std::string& job_id,
                         const std::string& output_path,
@@ -157,6 +163,7 @@ private:
     // Connection state
     bool connected_;
     std::atomic<bool> streaming_;
+    std::atomic<bool> waiting_for_new_job_{false};  // Job complete, waiting for new config
     std::string node_address_;
     std::string node_id_;
     std::string current_job_id_;

@@ -83,6 +83,10 @@ public:
     bool IsLocalTrainingRunning() const;  // Implemented in cpp
     void StopLocalTraining();             // Implemented in cpp
 
+    // Training hyperparameters (for Node Editor training path)
+    int GetTrainEpochs() const { return train_epochs_; }
+    int GetTrainBatchSize() const { return train_batch_size_; }
+
     // Get raw data for job submission (from DataRegistry)
     const std::vector<size_t>& GetTrainIndices() const;
 
