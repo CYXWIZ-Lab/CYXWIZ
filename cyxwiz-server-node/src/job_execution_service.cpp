@@ -187,6 +187,10 @@ grpc::Status JobExecutionServiceImpl::SendJob(
         }
     }
 
+    // Cleanup any stale jobs before checking capacity
+    // This handles the case where an Engine disconnected after SendJob but before StreamTrainingMetrics
+    CleanupStaleJobs();
+
     // Check if we have too many active jobs (simple capacity check)
     {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
@@ -301,14 +305,18 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     }
 
     JobSession* session = nullptr;
+    std::string engine_address;
     {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
         auto it = active_jobs_.find(job_id);
         if (it == active_jobs_.end()) {
             spdlog::error("StreamTrainingMetrics: Job {} not in active_jobs_ (size={})", job_id, active_jobs_.size());
+            // Cleanup any stale jobs while we're at it
             return grpc::Status(grpc::StatusCode::NOT_FOUND, "Job not found");
         }
         session = it->second.get();
+        session->stream_started = true;  // Mark that stream has started
+        engine_address = session->engine_address;
     }
 
     spdlog::info("========================================");
@@ -1212,6 +1220,15 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     spdlog::info("[CLEANUP] Removing job from active tracking...");
     CleanupJob(job_id);
 
+    // Also cleanup any other jobs from this Engine that might be orphaned
+    // (e.g., if Engine submitted multiple jobs but only streamed one)
+    if (!engine_address.empty()) {
+        CleanupJobsFromEngine(engine_address);
+    }
+
+    // Cleanup any stale jobs from other engines that never started streaming
+    CleanupStaleJobs();
+
     spdlog::info("========================================");
     spdlog::info("[RESERVATION COMPLETE]");
     spdlog::info("  Reservation: {}", session->reservation_id);
@@ -1433,6 +1450,69 @@ void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {
     }
 
     spdlog::info("Job {} cleanup complete. Server Node ready for new jobs.", job_id);
+}
+
+void JobExecutionServiceImpl::CleanupJobsFromEngine(const std::string& engine_address) {
+    spdlog::info("[CLEANUP] Cleaning up all jobs from engine: {}", engine_address);
+
+    std::vector<std::string> jobs_to_cleanup;
+
+    // Find all jobs from this engine
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        for (const auto& [job_id, session] : active_jobs_) {
+            if (session->engine_address == engine_address) {
+                jobs_to_cleanup.push_back(job_id);
+            }
+        }
+    }
+
+    // Cleanup each job
+    for (const auto& job_id : jobs_to_cleanup) {
+        spdlog::info("[CLEANUP] Removing orphaned job {} from engine {}", job_id, engine_address);
+        CleanupJob(job_id);
+    }
+
+    if (!jobs_to_cleanup.empty()) {
+        spdlog::info("[CLEANUP] Cleaned up {} jobs from engine {}", jobs_to_cleanup.size(), engine_address);
+    }
+}
+
+void JobExecutionServiceImpl::CleanupStaleJobs() {
+    // Cleanup jobs that were created but never started training (stream never connected)
+    // Stale threshold: 60 seconds without StreamTrainingMetrics being called
+    static constexpr auto STALE_THRESHOLD = std::chrono::seconds(60);
+
+    auto now = std::chrono::steady_clock::now();
+    std::vector<std::string> stale_jobs;
+
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        for (const auto& [job_id, session] : active_jobs_) {
+            // Job is stale if:
+            // 1. Stream hasn't started (Engine never called StreamTrainingMetrics)
+            // 2. Job is not running
+            // 3. Created more than STALE_THRESHOLD ago
+            if (!session->stream_started && !session->is_running) {
+                auto age = now - session->created_at;
+                if (age > STALE_THRESHOLD) {
+                    stale_jobs.push_back(job_id);
+                    spdlog::warn("[STALE] Job {} is stale (age: {}s, stream never started)",
+                                job_id, std::chrono::duration_cast<std::chrono::seconds>(age).count());
+                }
+            }
+        }
+    }
+
+    // Cleanup stale jobs
+    for (const auto& job_id : stale_jobs) {
+        spdlog::info("[CLEANUP] Removing stale job {} (Engine never started stream)", job_id);
+        CleanupJob(job_id);
+    }
+
+    if (!stale_jobs.empty()) {
+        spdlog::info("[CLEANUP] Cleaned up {} stale jobs", stale_jobs.size());
+    }
 }
 
 // ========== Reservation-Based Job Management ==========

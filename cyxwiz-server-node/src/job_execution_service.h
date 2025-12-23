@@ -146,9 +146,13 @@ private:
         std::atomic<bool> is_running{false};
         std::atomic<bool> is_paused{false};
         std::atomic<bool> should_stop{false};
+        std::atomic<bool> stream_started{false};  // True when StreamTrainingMetrics is called
         std::string final_weights_path;
         std::mutex metrics_mutex;
         cyxwiz::protocol::TrainingProgress latest_progress;
+
+        // Timestamp for stale job detection
+        std::chrono::steady_clock::time_point created_at{std::chrono::steady_clock::now()};
 
         // Remote data loaders for lazy-loading datasets
         std::shared_ptr<RemoteDataLoader> train_loader;
@@ -176,6 +180,8 @@ private:
     bool NotifyCentralServer(const std::string& job_id, const std::string& node_id);
     void NotifyJobEnded(const std::string& job_id, bool success, const std::string& reason);
     void CleanupJob(const std::string& job_id);
+    void CleanupJobsFromEngine(const std::string& engine_address);  // Cleanup all jobs from disconnected engine
+    void CleanupStaleJobs();  // Cleanup jobs that were created but never started
 
     // Reservation-based job management
     void ResetJobSession(JobSession* session);
