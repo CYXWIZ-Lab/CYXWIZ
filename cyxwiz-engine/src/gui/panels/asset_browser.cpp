@@ -247,19 +247,8 @@ void AssetBrowserPanel::Refresh() {
             new_root->absolute_path = project_root;
             new_root->relative_path = "";
 
-            // Count total entries first for progress reporting
-            size_t total_entries = 0;
+            // Track processed entries for progress reporting (no pre-counting)
             size_t processed_entries = 0;
-
-            try {
-                for (auto it = fs::recursive_directory_iterator(project_root,
-                         fs::directory_options::skip_permission_denied);
-                     it != fs::recursive_directory_iterator(); ++it) {
-                    total_entries++;
-                }
-            } catch (...) {
-                // Ignore errors in counting
-            }
 
             if (task.ShouldStop()) return;
 
@@ -322,11 +311,11 @@ void AssetBrowserPanel::Refresh() {
 
                         parent.children.push_back(std::move(item));
 
-                        // Update progress
+                        // Update progress periodically (every 100 files) - indeterminate progress
                         processed_entries++;
-                        if (total_entries > 0 && processed_entries % 50 == 0) {
-                            float progress = static_cast<float>(processed_entries) / static_cast<float>(total_entries);
-                            task.ReportProgress(progress * 0.9f, "Scanning files...");
+                        if (processed_entries % 100 == 0) {
+                            // Use a pulsing progress without total (0.0 = indeterminate in UI)
+                            task.ReportProgress(-1.0f, fmt::format("Scanning files... ({} found)", processed_entries));
                         }
                     }
                 } catch (const std::exception& e) {

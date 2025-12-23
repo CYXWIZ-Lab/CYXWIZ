@@ -24,12 +24,22 @@ static bool CheckGPUAvailable() {
         af::Backend backend = af::getActiveBackend();
         s_use_gpu = (backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL);
         if (s_use_gpu) {
+#ifdef __APPLE__
+            // On macOS, af::deviceInfo() crashes in background threads with OpenCL backend
+            // This is a thread-safety issue specific to OpenCL context on macOS
+            spdlog::info("LinearLayer: GPU acceleration enabled");
+#else
+            // On other platforms (Windows/Linux), query device name normally
             char name[256];
             af::deviceInfo(name, nullptr, nullptr, nullptr);
             spdlog::info("LinearLayer: GPU acceleration enabled using {}", name);
+#endif
         }
     } catch (const af::exception& e) {
         spdlog::warn("LinearLayer: GPU check failed: {}, using CPU", e.what());
+        s_use_gpu = false;
+    } catch (...) {
+        spdlog::warn("LinearLayer: GPU check failed with unknown error, using CPU");
         s_use_gpu = false;
     }
 #endif
