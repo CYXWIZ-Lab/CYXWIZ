@@ -23,6 +23,9 @@ use crate::pb::{
     ReportJobCompleteFromNodeRequest, ReportJobCompleteFromNodeResponse,
     ReportReservationEndFromEngineRequest, ReportReservationEndFromEngineResponse,
     ReportReservationEndFromNodeRequest, ReportReservationEndFromNodeResponse,
+    // New reconnection RPCs (hotel room model)
+    GetActiveReservationsRequest, GetActiveReservationsResponse, ActiveReservationInfo,
+    GetReconnectionTokenRequest, GetReconnectionTokenResponse,
 };
 use chrono::{Duration, Utc};
 use std::collections::HashMap;
@@ -54,7 +57,10 @@ pub struct ActiveReservation {
     pub training_active: bool,       // Whether training is currently running
     pub job_progress: f64,           // 0.0 to 1.0
     pub current_metrics: HashMap<String, f64>,  // Current training metrics
-    // Reservation end tracking (payment released when both report)
+    // Connection tracking (hotel room model)
+    pub engine_connected: bool,      // Is Engine currently connected?
+    pub engine_disconnect_time: Option<i64>,  // When Engine disconnected (for logging)
+    // Reservation end tracking (payment released when timer expires)
     pub engine_reported_end: bool,   // Engine reported reservation timer expired
     pub node_reported_end: bool,     // Node reported reservation timer expired
     pub payment_released: bool,      // Payment has been released
@@ -357,6 +363,9 @@ impl JobReservationService for ReservationServiceImpl {
             training_active: false,
             job_progress: 0.0,
             current_metrics: HashMap::new(),
+            // Initialize connection tracking (hotel room model)
+            engine_connected: true,  // Engine is connected when reservation starts
+            engine_disconnect_time: None,
             // Initialize reservation end tracking
             engine_reported_end: false,
             node_reported_end: false,
@@ -735,6 +744,15 @@ impl JobReservationService for ReservationServiceImpl {
                 res.training_active = req.training_active;
                 res.job_progress = req.job_progress;
                 res.current_metrics = req.current_metrics.clone();
+
+                // HOTEL ROOM MODEL: Mark engine as connected (handles reconnection)
+                if !res.engine_connected {
+                    info!(
+                        "[RECONNECTION] Engine reconnected via heartbeat for reservation {}",
+                        req.reservation_id
+                    );
+                }
+                res.engine_connected = true;
 
                 // Update status to ACTIVE if it was PENDING
                 if res.status == ReservationStatus::ReservationPending as i32 {
@@ -1142,6 +1160,170 @@ impl JobReservationService for ReservationServiceImpl {
             amount_received: 0,
             payment_tx_hash: String::new(),
             message: "Waiting for engine to confirm reservation end.".to_string(),
+            error: None,
+        }))
+    }
+
+    /// Get active reservations for a user (for reconnection check)
+    /// HOTEL ROOM MODEL: Returns reservations where time hasn't expired yet
+    async fn get_active_reservations(
+        &self,
+        request: Request<GetActiveReservationsRequest>,
+    ) -> Result<Response<GetActiveReservationsResponse>, Status> {
+        let req = request.into_inner();
+        let now = Utc::now().timestamp();
+
+        info!(
+            "[RECONNECTION] GetActiveReservations for wallet: {}",
+            req.user_wallet
+        );
+
+        let reservations = self.active_reservations.read().await;
+        let active: Vec<ActiveReservationInfo> = reservations
+            .values()
+            .filter(|r| {
+                // Match user wallet and check if still active (time remaining)
+                let is_user = r.user_wallet == req.user_wallet;
+                let has_time = r.end_time > now;
+                let is_active = r.status == ReservationStatus::ReservationActive as i32
+                    || r.status == ReservationStatus::ReservationPending as i32;
+                is_user && has_time && is_active
+            })
+            .map(|r| {
+                let time_remaining = std::cmp::max(0, r.end_time - now);
+                ActiveReservationInfo {
+                    reservation_id: r.reservation_id.clone(),
+                    node_id: r.node_id.clone(),
+                    node_endpoint: r.node_endpoint.clone(),
+                    time_remaining_seconds: time_remaining,
+                    engine_connected: r.engine_connected,
+                    status: r.status,
+                    jobs_completed: r.jobs_completed,
+                }
+            })
+            .collect();
+
+        let count = active.len();
+        info!(
+            "[RECONNECTION] Found {} active reservations for wallet {}",
+            count, req.user_wallet
+        );
+
+        for res in &active {
+            info!(
+                "  - Reservation {}: {}s remaining, engine_connected={}",
+                res.reservation_id, res.time_remaining_seconds, res.engine_connected
+            );
+        }
+
+        Ok(Response::new(GetActiveReservationsResponse {
+            status: StatusCode::StatusSuccess as i32,
+            reservations: active,
+            error: None,
+        }))
+    }
+
+    /// Get new P2P token for reconnecting to an active reservation
+    /// HOTEL ROOM MODEL: Engine can reconnect if time hasn't expired
+    async fn get_reconnection_token(
+        &self,
+        request: Request<GetReconnectionTokenRequest>,
+    ) -> Result<Response<GetReconnectionTokenResponse>, Status> {
+        let req = request.into_inner();
+        let now = Utc::now().timestamp();
+
+        info!(
+            "[RECONNECTION] GetReconnectionToken for reservation: {}, wallet: {}",
+            req.reservation_id, req.user_wallet
+        );
+
+        // Find the reservation
+        let reservation = {
+            let reservations = self.active_reservations.read().await;
+            reservations.get(&req.reservation_id).cloned()
+        };
+
+        let reservation = match reservation {
+            Some(r) => r,
+            None => {
+                warn!("[RECONNECTION] Reservation not found: {}", req.reservation_id);
+                return Ok(Response::new(GetReconnectionTokenResponse {
+                    status: StatusCode::StatusFailed as i32,
+                    error: Some(Error {
+                        code: 404,
+                        message: "Reservation not found".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }));
+            }
+        };
+
+        // Verify user wallet matches
+        if reservation.user_wallet != req.user_wallet {
+            warn!(
+                "[RECONNECTION] Wallet mismatch: expected {}, got {}",
+                reservation.user_wallet, req.user_wallet
+            );
+            return Ok(Response::new(GetReconnectionTokenResponse {
+                status: StatusCode::StatusFailed as i32,
+                error: Some(Error {
+                    code: 403,
+                    message: "Wallet does not match reservation".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }));
+        }
+
+        // Check if reservation has expired
+        if reservation.end_time <= now {
+            warn!(
+                "[RECONNECTION] Reservation {} has expired (end_time: {}, now: {})",
+                req.reservation_id, reservation.end_time, now
+            );
+            return Ok(Response::new(GetReconnectionTokenResponse {
+                status: StatusCode::StatusFailed as i32,
+                error: Some(Error {
+                    code: 410,
+                    message: "Reservation has expired".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }));
+        }
+
+        // Generate new P2P token
+        let time_remaining = reservation.end_time - now;
+        let p2p_token_expires = reservation.end_time + 300; // Token valid 5 min after reservation ends
+
+        let p2p_auth_token = self.generate_p2p_token(
+            &reservation.reservation_id,
+            &reservation.user_wallet,
+            &reservation.node_id,
+            p2p_token_expires,
+        )?;
+
+        // Mark Engine as reconnected
+        {
+            let mut reservations = self.active_reservations.write().await;
+            if let Some(res) = reservations.get_mut(&req.reservation_id) {
+                res.engine_connected = true;
+                res.last_heartbeat = now;
+                info!(
+                    "[RECONNECTION] Engine reconnected to reservation {}. {}s remaining.",
+                    req.reservation_id, time_remaining
+                );
+            }
+        }
+
+        Ok(Response::new(GetReconnectionTokenResponse {
+            status: StatusCode::StatusSuccess as i32,
+            p2p_auth_token,
+            p2p_token_expires,
+            node_endpoint: reservation.node_endpoint,
+            time_remaining_seconds: time_remaining,
+            current_job_id: reservation.current_job_id.unwrap_or_default(),
             error: None,
         }))
     }

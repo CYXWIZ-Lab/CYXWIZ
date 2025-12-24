@@ -214,8 +214,25 @@ bool P2PClient::StartTrainingStream(const std::string& job_id) {
 
     spdlog::debug("P2PClient: Starting training stream for job {}", job_id);
 
+    // IMPORTANT: Ensure any previous streaming thread has finished before starting a new one.
+    // This handles the race condition where:
+    // 1. User stops training (sends stop command)
+    // 2. StreamingThreadFunc sets streaming_ = false
+    // 3. User immediately starts new training
+    // 4. Old thread is still in stream_->Finish() cleanup
+    if (streaming_thread_.joinable()) {
+        spdlog::debug("P2PClient: Waiting for previous streaming thread to finish...");
+        streaming_thread_.join();
+        spdlog::debug("P2PClient: Previous streaming thread finished");
+    }
+
+    // Reset stream state before starting new stream
+    stream_.reset();
+    stream_context_.reset();
+
     streaming_ = true;
     current_job_id_ = job_id;
+    waiting_for_new_job_ = false;
 
     // Start streaming thread
     streaming_thread_ = std::thread(&P2PClient::StreamingThreadFunc, this, job_id);

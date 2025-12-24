@@ -211,6 +211,18 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     session->is_paused = false;
     session->should_stop = false;
 
+    // HOTEL ROOM MODEL: Initialize reservation timing
+    // The reservation duration should come from the job config or the JWT token
+    // For now, use a default of 1 hour. In production, this would be parsed from the auth token.
+    session->reservation_start = std::chrono::steady_clock::now();
+    int reservation_minutes = request->config().reservation_duration_minutes();
+    if (reservation_minutes <= 0) {
+        reservation_minutes = 60;  // Default 1 hour if not specified
+    }
+    session->reservation_duration = std::chrono::seconds(reservation_minutes * 60);
+    session->engine_connected = true;
+    spdlog::info("[HOTEL ROOM] Reservation initialized: {} minutes", reservation_minutes);
+
     // Save dataset if provided inline
     if (!request->initial_dataset().empty()) {
         std::string dataset_path = SaveDatasetToFile(request->job_id(),
@@ -426,9 +438,36 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 break;
             }
         }
-        // Stream closed
+        // Stream closed - HOTEL ROOM MODEL
         if (!reservation_ended) {
-            spdlog::warn("Engine disconnected from stream");
+            spdlog::warn("========================================");
+            spdlog::warn("[HOTEL ROOM] Engine disconnected from stream");
+
+            // Calculate time remaining in reservation
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - session->reservation_start);
+            auto remaining = session->reservation_duration - elapsed;
+
+            if (remaining.count() > 0) {
+                spdlog::warn("[HOTEL ROOM] Reservation has {}s remaining", remaining.count());
+                spdlog::warn("[HOTEL ROOM] Waiting for timer to expire (no refund - user paid for time slot)");
+                spdlog::warn("[HOTEL ROOM] Engine can reconnect with valid token before timer expires");
+                spdlog::warn("========================================");
+
+                // Mark engine as disconnected
+                session->engine_connected = false;
+                session->engine_disconnect_time = now;
+
+                // Wait for reservation timer to expire
+                // In production, this would be a background task that checks periodically
+                // For now, we sleep until the timer expires
+                std::this_thread::sleep_for(remaining);
+
+                spdlog::info("[HOTEL ROOM] Reservation timer expired. Proceeding with cleanup.");
+            } else {
+                spdlog::info("[HOTEL ROOM] Reservation already expired. Proceeding with cleanup.");
+            }
+
             engine_disconnected = true;
             new_job_cv.notify_one();
         }

@@ -173,6 +173,10 @@ private:
         std::atomic<bool> waiting_for_new_job{false};
         std::chrono::steady_clock::time_point reservation_start;
         std::chrono::seconds reservation_duration{0};
+
+        // HOTEL ROOM MODEL: Track engine connection status
+        std::atomic<bool> engine_connected{true};
+        std::chrono::steady_clock::time_point engine_disconnect_time;
     };
 
     // Helper methods

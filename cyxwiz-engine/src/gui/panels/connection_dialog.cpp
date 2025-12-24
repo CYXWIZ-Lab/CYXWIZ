@@ -1167,8 +1167,51 @@ void ConnectionDialog::StartNewP2PTraining() {
     config.set_epochs(reservation_epochs_);
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
 
-    // Send new job config via bidirectional stream
-    if (!p2p_client_->SendNewJobConfig(config)) {
+    // Check if streaming is active - if not, we need to use SendJob + StartTrainingStream
+    // This happens when user stopped previous training and wants to start a new one
+    bool send_success = false;
+    if (p2p_client_->IsStreaming()) {
+        // Stream is active, use SendNewJobConfig to send via existing stream
+        spdlog::info("Stream active - sending new job config via existing stream");
+        send_success = p2p_client_->SendNewJobConfig(config);
+    } else {
+        // Stream is not active (was stopped), need to use SendJob + StartTrainingStream
+        spdlog::info("Stream not active - using SendJob + StartTrainingStream");
+
+        // First, send the job via RPC
+        std::string uri_str(dataset_uri_);
+        if (!uri_str.empty()) {
+            send_success = p2p_client_->SendJobWithDatasetURI(config, uri_str);
+        } else {
+            send_success = p2p_client_->SendJob(config);
+        }
+
+        if (send_success) {
+            // Set up callbacks for the new training session
+            p2p_client_->SetProgressCallback([this](const network::TrainingProgress& progress) {
+                if (p2p_training_panel_) {
+                    p2p_training_panel_->OnProgressUpdate(progress);
+                }
+            });
+
+            p2p_client_->SetErrorCallback([this](const std::string& error, bool is_fatal) {
+                spdlog::error("Training error (fatal={}): {}", is_fatal, error);
+                if (is_fatal) {
+                    reservation_error_ = "Training error: " + error;
+                }
+            });
+
+            // Start the training stream
+            if (!p2p_client_->StartTrainingStream(new_job_id)) {
+                reservation_error_ = "Failed to start training stream: " + p2p_client_->GetLastError();
+                spdlog::error("{}", reservation_error_);
+                return;
+            }
+            spdlog::info("Training stream restarted successfully");
+        }
+    }
+
+    if (!send_success) {
         reservation_error_ = "Failed to send new job config: " + p2p_client_->GetLastError();
         spdlog::error("{}", reservation_error_);
         return;

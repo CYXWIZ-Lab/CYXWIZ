@@ -438,6 +438,7 @@ impl JobScheduler {
             payment_amount: job.estimated_cost as f64 / 1_000_000.0, // Convert to CYXWIZ tokens
             payment_address: job.user_wallet.clone(),
             escrow_tx_hash: String::new(), // TODO: Get from payments table
+            reservation_duration_minutes: (job.estimated_duration_seconds / 60) as i32, // Convert seconds to minutes
         })
     }
 }

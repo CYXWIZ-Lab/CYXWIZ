@@ -150,11 +150,57 @@ message ListReservationsResponse {
 }
 
 // ============================================================================
+// Engine Reconnection Messages (HOTEL ROOM MODEL)
+// ============================================================================
+// If Engine disconnects, it can reconnect to an active reservation.
+// The reservation stays ACTIVE until the timer expires.
+// Payment is FULL to node (no refund - hotel room model).
+
+// Check if user has active reservations (for reconnection)
+message GetActiveReservationsRequest {
+  string user_wallet = 1;            // User's wallet address
+}
+
+message GetActiveReservationsResponse {
+  StatusCode status = 1;
+  repeated ActiveReservationInfo reservations = 2;
+  Error error = 10;
+}
+
+// Simplified reservation info for reconnection
+message ActiveReservationInfo {
+  string reservation_id = 1;
+  string node_id = 2;
+  string node_endpoint = 3;
+  int64 time_remaining_seconds = 4;
+  bool engine_connected = 5;         // Is engine currently connected?
+  ReservationStatus status = 6;
+  int32 jobs_completed = 7;
+}
+
+// Request new P2P token for reconnection
+message GetReconnectionTokenRequest {
+  string reservation_id = 1;
+  string user_wallet = 2;
+}
+
+message GetReconnectionTokenResponse {
+  StatusCode status = 1;
+  string p2p_auth_token = 2;         // New JWT for P2P authentication
+  int64 p2p_token_expires = 3;       // Unix timestamp when token expires
+  string node_endpoint = 4;          // Node address to reconnect to
+  int64 time_remaining_seconds = 5;  // Time left in reservation
+  string current_job_id = 6;         // Last job ID (if any)
+  Error error = 10;
+}
+
+// ============================================================================
 // Engine Heartbeat Messages
 // ============================================================================
 // The Engine must send periodic heartbeats to the Central Server during
-// an active reservation. If heartbeats stop (e.g., Engine crashes), the
-// Central Server will release the node and calculate proportional payment.
+// an active reservation. HOTEL ROOM MODEL: If heartbeats stop (Engine crashes),
+// the reservation stays ACTIVE and node stays BUSY. Payment is released
+// when timer expires (no refund). Engine can reconnect if time remains.
 
 message EngineHeartbeatRequest {
   string reservation_id = 1;
@@ -265,8 +311,16 @@ service JobReservationService {
   rpc ListReservations(ListReservationsRequest) returns (ListReservationsResponse);
 
   // Engine heartbeat - must be sent every 30 seconds during active reservation
-  // If heartbeat stops, node will be released with proportional payment
+  // HOTEL ROOM MODEL: If heartbeat stops, reservation stays ACTIVE until timer expires
   rpc EngineHeartbeat(EngineHeartbeatRequest) returns (EngineHeartbeatResponse);
+
+  // ========== Reconnection RPCs (HOTEL ROOM MODEL) ==========
+
+  // Get active reservations for a user (for reconnection check)
+  rpc GetActiveReservations(GetActiveReservationsRequest) returns (GetActiveReservationsResponse);
+
+  // Get new P2P token for reconnecting to an active reservation
+  rpc GetReconnectionToken(GetReconnectionTokenRequest) returns (GetReconnectionTokenResponse);
 
   // ========== NEW Reservation-Based Payment RPCs ==========
 

@@ -45,6 +45,9 @@ message JobConfig {
   double payment_amount = 12;     // CYXWIZ tokens
   string payment_address = 13;
   string escrow_tx_hash = 14;
+
+  // Reservation timing (HOTEL ROOM MODEL)
+  int32 reservation_duration_minutes = 15;  // How long the node is reserved for
 }
 
 // Job status

@@ -112,13 +112,24 @@ mod tests {
         reputation: f64,
         load: f64,
     ) -> Node {
+        #[cfg(feature = "sqlite-compat")]
+        let node_id = id.to_string();
+        #[cfg(not(feature = "sqlite-compat"))]
+        let node_id = Uuid::parse_str(id).unwrap();
+
         Node {
-            id: Uuid::parse_str(id).unwrap(),
+            id: node_id,
             wallet_address: format!("wallet_{}", id),
             name: format!("Node {}", id),
             status: NodeStatus::Online,
             reputation_score: reputation,
             stake_amount: 1000_000_000,
+            strike_count: 0,
+            banned_until: None,
+            total_bans: 0,
+            last_strike_at: None,
+            user_id: None,
+            device_id: None,
             cpu_cores: 16,
             ram_gb: ram,
             gpu_model: if gpu { Some("RTX 4090".to_string()) } else { None },
@@ -131,6 +142,8 @@ mod tests {
             current_load: load,
             country: Some("US".to_string()),
             region: Some("us-west".to_string()),
+            ip_address: "127.0.0.1".to_string(),
+            port: 50052,
             last_heartbeat: Utc::now(),
             registered_at: Utc::now(),
             updated_at: Utc::now(),
@@ -138,8 +151,13 @@ mod tests {
     }
 
     fn create_test_job(gpu_required: bool, gpu_mem: i32, ram: i32) -> Job {
+        #[cfg(feature = "sqlite-compat")]
+        let job_id = Uuid::new_v4().to_string();
+        #[cfg(not(feature = "sqlite-compat"))]
+        let job_id = Uuid::new_v4();
+
         Job {
-            id: Uuid::new_v4(),
+            id: job_id,
             user_wallet: "user_wallet".to_string(),
             status: crate::database::models::JobStatus::Pending,
             job_type: "training".to_string(),
