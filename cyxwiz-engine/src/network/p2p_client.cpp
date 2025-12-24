@@ -247,20 +247,28 @@ void P2PClient::StopTrainingStream() {
 
     spdlog::debug("P2PClient: Stopping training stream");
 
+    // Set streaming to false first to stop any pending operations
     streaming_ = false;
 
-    // Close the stream
-    if (stream_) {
-        stream_->WritesDone();
+    // Close the stream under lock
+    {
+        std::lock_guard<std::mutex> lock(stream_mutex_);
+        if (stream_) {
+            stream_->WritesDone();
+        }
     }
 
-    // Wait for streaming thread to finish
+    // Wait for streaming thread to finish (must be outside lock to avoid deadlock)
     if (streaming_thread_.joinable()) {
         streaming_thread_.join();
     }
 
-    stream_.reset();
-    stream_context_.reset();
+    // Reset under lock
+    {
+        std::lock_guard<std::mutex> lock(stream_mutex_);
+        stream_.reset();
+        stream_context_.reset();
+    }
 
     spdlog::debug("P2PClient: Training stream stopped");
 }
@@ -288,6 +296,7 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
     }
 
     // Read training updates from server
+    spdlog::info("P2PClient: Starting to read training updates from server...");
     cyxwiz::protocol::TrainingUpdate update;
     while (streaming_ && stream_->Read(&update)) {
         if (update.has_progress()) {
@@ -381,6 +390,9 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
         }
     }
 
+    // Stream reading loop exited
+    spdlog::warn("P2PClient: Stream reading loop exited! streaming_={}", streaming_.load());
+
     // Finish the stream
     grpc::Status status = stream_->Finish();
     if (!status.ok()) {
@@ -388,13 +400,18 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
         if (error_callback_) {
             error_callback_("Stream error: " + status.error_message(), true);
         }
+    } else {
+        spdlog::info("P2PClient: Stream finished successfully");
     }
 
     streaming_ = false;
-    spdlog::debug("P2PClient: Streaming thread finished");
+    spdlog::info("P2PClient: Streaming thread finished, streaming_ set to false");
 }
 
 bool P2PClient::SendTrainingCommand(const cyxwiz::protocol::TrainingCommand& command) {
+    // Lock mutex to ensure stream is valid during the entire write operation
+    std::lock_guard<std::mutex> lock(stream_mutex_);
+
     if (!streaming_ || !stream_) {
         last_error_ = "Not currently streaming";
         spdlog::error("P2PClient: {}", last_error_);
@@ -483,6 +500,9 @@ void P2PClient::UnregisterDatasetForJob(const std::string& job_id) {
 }
 
 void P2PClient::HandleDatasetRequest(const cyxwiz::protocol::TrainingUpdate& update) {
+    // Lock mutex to ensure stream is valid during write operations
+    std::lock_guard<std::mutex> lock(stream_mutex_);
+
     if (!stream_) {
         spdlog::error("P2PClient: Cannot handle dataset request - stream not active");
         return;

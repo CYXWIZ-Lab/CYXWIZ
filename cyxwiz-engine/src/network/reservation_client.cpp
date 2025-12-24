@@ -332,6 +332,105 @@ bool ReservationClient::GetReservation(
     return true;
 }
 
+bool ReservationClient::GetActiveReservations(
+    const std::string& user_wallet,
+    std::vector<cyxwiz::protocol::ActiveReservationInfo>& out_reservations) {
+
+    if (!connected_ || !stub_) {
+        last_error_ = "Not connected";
+        return false;
+    }
+
+    spdlog::info("Checking for active reservations for wallet: {}", user_wallet);
+
+    grpc::ClientContext context;
+    AddAuthMetadata(context);
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+
+    cyxwiz::protocol::GetActiveReservationsRequest request;
+    request.set_user_wallet(user_wallet);
+
+    cyxwiz::protocol::GetActiveReservationsResponse response;
+    grpc::Status status = stub_->GetActiveReservations(&context, request, &response);
+
+    if (!status.ok()) {
+        last_error_ = "gRPC error: " + status.error_message();
+        spdlog::error("GetActiveReservations failed: {}", last_error_);
+        return false;
+    }
+
+    if (response.status() != cyxwiz::protocol::STATUS_SUCCESS) {
+        last_error_ = response.error().message();
+        spdlog::warn("GetActiveReservations: {}", last_error_);
+        return false;
+    }
+
+    out_reservations.clear();
+    for (const auto& res : response.reservations()) {
+        out_reservations.push_back(res);
+        spdlog::info("Found active reservation: {} (node: {}, time left: {}s)",
+                     res.reservation_id(), res.node_id(), res.time_remaining_seconds());
+    }
+
+    spdlog::info("Found {} active reservation(s)", out_reservations.size());
+    return true;
+}
+
+bool ReservationClient::GetReconnectionToken(
+    const std::string& reservation_id,
+    const std::string& user_wallet,
+    std::string& out_p2p_token,
+    int64_t& out_token_expires,
+    std::string& out_node_endpoint,
+    int64_t& out_time_remaining) {
+
+    if (!connected_ || !stub_) {
+        last_error_ = "Not connected";
+        return false;
+    }
+
+    spdlog::info("Getting reconnection token for reservation: {}", reservation_id);
+
+    grpc::ClientContext context;
+    AddAuthMetadata(context);
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+
+    cyxwiz::protocol::GetReconnectionTokenRequest request;
+    request.set_reservation_id(reservation_id);
+    request.set_user_wallet(user_wallet);
+
+    cyxwiz::protocol::GetReconnectionTokenResponse response;
+    grpc::Status status = stub_->GetReconnectionToken(&context, request, &response);
+
+    if (!status.ok()) {
+        last_error_ = "gRPC error: " + status.error_message();
+        spdlog::error("GetReconnectionToken failed: {}", last_error_);
+        return false;
+    }
+
+    if (response.status() != cyxwiz::protocol::STATUS_SUCCESS) {
+        last_error_ = response.error().message();
+        spdlog::error("GetReconnectionToken rejected: {}", last_error_);
+        return false;
+    }
+
+    out_p2p_token = response.p2p_auth_token();
+    out_token_expires = response.p2p_token_expires();
+    out_node_endpoint = response.node_endpoint();
+    out_time_remaining = response.time_remaining_seconds();
+
+    // Update current reservation with reconnection info
+    current_reservation_.reservation_id = reservation_id;
+    current_reservation_.node_endpoint = out_node_endpoint;
+    current_reservation_.p2p_auth_token = out_p2p_token;
+    current_reservation_.p2p_token_expires = out_token_expires;
+
+    spdlog::info("Reconnection token obtained! Endpoint: {}, Time remaining: {}s",
+                 out_node_endpoint, out_time_remaining);
+
+    return true;
+}
+
 void ReservationClient::StartHeartbeat(
     const std::string& reservation_id,
     const std::string& job_id,

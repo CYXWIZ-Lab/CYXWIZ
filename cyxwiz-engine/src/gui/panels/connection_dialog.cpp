@@ -124,6 +124,14 @@ void ConnectionDialog::RenderConnectionPanel() {
                 spdlog::info("Successfully connected!");
                 connecting_ = false;
 
+                // Also connect reservation client
+                if (reservation_client_ && !reservation_client_->IsConnected()) {
+                    reservation_client_->Connect(server_address_);
+                }
+
+                // Check for active reservations (reconnection support)
+                CheckForActiveReservations();
+
                 if (connection_callback_) {
                     connection_callback_(true);
                 }
@@ -1004,6 +1012,11 @@ void ConnectionDialog::ConnectToReservedNode() {
 }
 
 void ConnectionDialog::StartP2PTraining() {
+    spdlog::info("[DEBUG] StartP2PTraining called (INITIAL training, not new job)");
+    spdlog::info("  IsConnected: {}", p2p_client_ ? p2p_client_->IsConnected() : false);
+    spdlog::info("  IsStreaming: {}", p2p_client_ ? p2p_client_->IsStreaming() : false);
+    spdlog::info("  IsWaitingForNewJob: {}", p2p_client_ ? p2p_client_->IsWaitingForNewJob() : false);
+
     if (!p2p_client_ || !p2p_client_->IsConnected()) {
         reservation_error_ = "Not connected to node. Please connect first.";
         return;
@@ -1124,6 +1137,11 @@ void ConnectionDialog::StartP2PTraining() {
 }
 
 void ConnectionDialog::StartNewP2PTraining() {
+    spdlog::info("[DEBUG] StartNewP2PTraining called");
+    spdlog::info("  IsConnected: {}", p2p_client_ ? p2p_client_->IsConnected() : false);
+    spdlog::info("  IsStreaming: {}", p2p_client_ ? p2p_client_->IsStreaming() : false);
+    spdlog::info("  IsWaitingForNewJob: {}", p2p_client_ ? p2p_client_->IsWaitingForNewJob() : false);
+
     if (!p2p_client_ || !p2p_client_->IsConnected()) {
         reservation_error_ = "Not connected to node. Please connect first.";
         return;
@@ -1167,7 +1185,7 @@ void ConnectionDialog::StartNewP2PTraining() {
     config.set_epochs(reservation_epochs_);
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
 
-    // Check if streaming is active - if not, we need to use SendJob + StartTrainingStream
+    // Check if streaming is active - if not, we need to reconnect and use SendJob + StartTrainingStream
     // This happens when user stopped previous training and wants to start a new one
     bool send_success = false;
     if (p2p_client_->IsStreaming()) {
@@ -1175,10 +1193,34 @@ void ConnectionDialog::StartNewP2PTraining() {
         spdlog::info("Stream active - sending new job config via existing stream");
         send_success = p2p_client_->SendNewJobConfig(config);
     } else {
-        // Stream is not active (was stopped), need to use SendJob + StartTrainingStream
-        spdlog::info("Stream not active - using SendJob + StartTrainingStream");
+        // Stream is not active (was stopped/closed), need to reconnect and use SendJob + StartTrainingStream
+        spdlog::info("Stream not active - need to reconnect to node first");
 
-        // First, send the job via RPC
+        // Reconnect to the node using the stored reservation info
+        if (!active_reservation_.node_endpoint.empty() && !active_reservation_.p2p_auth_token.empty()) {
+            spdlog::info("Reconnecting to node at {} for new training...", active_reservation_.node_endpoint);
+
+            // Disconnect existing connection if any
+            p2p_client_->Disconnect();
+
+            // Reconnect with the same auth token
+            if (!p2p_client_->ConnectToNode(
+                    active_reservation_.node_endpoint,
+                    new_job_id,
+                    active_reservation_.p2p_auth_token,
+                    "CyxWiz-Engine/1.0.0")) {
+                reservation_error_ = "Failed to reconnect to node: " + p2p_client_->GetLastError();
+                spdlog::error("{}", reservation_error_);
+                return;
+            }
+            spdlog::info("Reconnected to node successfully");
+        } else {
+            reservation_error_ = "Cannot reconnect: missing node endpoint or auth token";
+            spdlog::error("{}", reservation_error_);
+            return;
+        }
+
+        // Now send the job via RPC
         std::string uri_str(dataset_uri_);
         if (!uri_str.empty()) {
             send_success = p2p_client_->SendJobWithDatasetURI(config, uri_str);
@@ -1251,6 +1293,100 @@ void ConnectionDialog::StartNewP2PTraining() {
     spdlog::info("  Training on Server Node: {}", active_reservation_.node_endpoint);
 
     reservation_error_.clear();
+}
+
+void ConnectionDialog::CheckForActiveReservations() {
+    if (!reservation_client_ || !reservation_client_->IsConnected()) {
+        spdlog::debug("Cannot check active reservations: reservation client not connected");
+        return;
+    }
+
+    // Get wallet address from AuthClient user profile
+    std::string wallet_address;
+    auto& auth = cyxwiz::auth::AuthClient::Instance();
+    if (auth.IsAuthenticated()) {
+        wallet_address = auth.GetUserInfo().wallet_address;
+    }
+
+    if (wallet_address.empty()) {
+        spdlog::debug("Cannot check active reservations: no wallet address");
+        return;
+    }
+
+    spdlog::info("Checking for active reservations for wallet: {}", wallet_address);
+
+    std::vector<cyxwiz::protocol::ActiveReservationInfo> active_reservations;
+    if (reservation_client_->GetActiveReservations(wallet_address, active_reservations)) {
+        if (!active_reservations.empty()) {
+            // Found active reservations - use the first one (most recent)
+            const auto& active = active_reservations[0];
+
+            spdlog::info("Found active reservation: {} (node: {}, time left: {}s)",
+                         active.reservation_id(), active.node_id(), active.time_remaining_seconds());
+
+            // Reconnect to the reservation
+            ReconnectToReservation(active.reservation_id());
+        } else {
+            spdlog::info("No active reservations found");
+        }
+    } else {
+        spdlog::warn("Failed to check active reservations: {}", reservation_client_->GetLastError());
+    }
+}
+
+void ConnectionDialog::ReconnectToReservation(const std::string& reservation_id) {
+    if (!reservation_client_) {
+        reservation_error_ = "Reservation client not configured";
+        return;
+    }
+
+    // Get wallet address from AuthClient user profile
+    std::string wallet_address;
+    auto& auth = cyxwiz::auth::AuthClient::Instance();
+    if (auth.IsAuthenticated()) {
+        wallet_address = auth.GetUserInfo().wallet_address;
+    }
+
+    if (wallet_address.empty()) {
+        reservation_error_ = "No wallet address in profile";
+        return;
+    }
+
+    spdlog::info("Reconnecting to reservation: {}", reservation_id);
+
+    // Get new P2P token for reconnection
+    std::string p2p_token;
+    int64_t token_expires;
+    std::string node_endpoint;
+    int64_t time_remaining;
+
+    if (!reservation_client_->GetReconnectionToken(
+            reservation_id, wallet_address,
+            p2p_token, token_expires, node_endpoint, time_remaining)) {
+        reservation_error_ = "Failed to get reconnection token: " + reservation_client_->GetLastError();
+        spdlog::error("{}", reservation_error_);
+        return;
+    }
+
+    // Populate active_reservation_ with reconnection info
+    active_reservation_.reservation_id = reservation_id;
+    active_reservation_.job_id = reservation_id;  // Job ID is same as reservation ID
+    active_reservation_.node_endpoint = node_endpoint;
+    active_reservation_.p2p_auth_token = p2p_token;
+    active_reservation_.p2p_token_expires = token_expires;
+    active_reservation_.start_time = static_cast<int64_t>(std::time(nullptr)) - (3600 - time_remaining);  // Approximate
+    active_reservation_.end_time = static_cast<int64_t>(std::time(nullptr)) + time_remaining;
+
+    has_active_reservation_ = true;
+    reservation_error_.clear();
+
+    spdlog::info("Reconnected to reservation successfully!");
+    spdlog::info("  Reservation ID: {}", reservation_id);
+    spdlog::info("  Node endpoint: {}", node_endpoint);
+    spdlog::info("  Time remaining: {} seconds", time_remaining);
+
+    // Start heartbeat
+    reservation_client_->StartHeartbeat(reservation_id, reservation_id);
 }
 
 } // namespace cyxwiz

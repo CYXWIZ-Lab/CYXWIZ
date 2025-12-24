@@ -5,6 +5,9 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <filesystem>
+#include <thread>
+#include <cstring>
 
 namespace cyxwiz {
 
@@ -110,6 +113,14 @@ void P2PTrainingPanel::Clear() {
     memory_usage_history_.Clear();
     checkpoint_history_.clear();
     log_entries_.clear();
+
+    // Reset download state
+    model_weights_location_.clear();
+    model_available_ = false;
+    downloading_model_ = false;
+    download_progress_ = 0.0f;
+    download_error_.clear();
+    std::memset(download_path_, 0, sizeof(download_path_));
 }
 
 void P2PTrainingPanel::Render() {
@@ -255,6 +266,28 @@ void P2PTrainingPanel::RenderTrainingControls() {
     if (ImGui::Button("Stop", ImVec2(button_width, 0))) {
         if (stop_button_enabled_) {
             show_stop_confirm_popup_ = true;
+        }
+    }
+
+    // Model download section - shown when training is complete and model is available
+    if (model_available_ && training_complete_) {
+        ImGui::Separator();
+        ImGui::Text("Model Download");
+
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputText("##download_path", download_path_, sizeof(download_path_));
+        ImGui::SameLine();
+
+        if (downloading_model_) {
+            ImGui::ProgressBar(download_progress_, ImVec2(100, 0));
+        } else {
+            if (ImGui::Button("Download", ImVec2(100, 0))) {
+                DownloadModel(download_path_);
+            }
+        }
+
+        if (!download_error_.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", download_error_.c_str());
         }
     }
 }
@@ -527,7 +560,26 @@ void P2PTrainingPanel::OnComplete(const network::TrainingComplete& complete) {
             AddLogEntry("INFO", "Final accuracy: " + std::to_string(complete.final_metrics.at("accuracy") * 100.0) + "%");
         }
     } else {
-        AddLogEntry("ERROR", "Training failed");
+        // Check if stopped by user (not an error)
+        if (complete.final_metrics.count("stopped_by_user")) {
+            AddLogEntry("WARN", "Training stopped by user");
+        } else {
+            AddLogEntry("ERROR", "Training failed");
+        }
+    }
+
+    // Check if model weights are available for download
+    if (!complete.model_uri.empty()) {
+        model_weights_location_ = complete.model_uri;
+        model_available_ = true;
+        AddLogEntry("INFO", "Model weights available for download");
+
+        // Set default download path
+        if (strlen(download_path_) == 0) {
+            std::string default_path = "models/" + job_id_ + "_weights.pt";
+            strncpy(download_path_, default_path.c_str(), sizeof(download_path_) - 1);
+            download_path_[sizeof(download_path_) - 1] = '\0';
+        }
     }
 
     // Disable control buttons
@@ -612,6 +664,55 @@ std::string P2PTrainingPanel::FormatDuration(uint64_t seconds) {
     }
 
     return ss.str();
+}
+
+void P2PTrainingPanel::DownloadModel(const std::string& output_path) {
+    if (!p2p_client_ || !p2p_client_->IsConnected()) {
+        download_error_ = "Not connected to server";
+        return;
+    }
+
+    if (output_path.empty()) {
+        download_error_ = "Please specify a download path";
+        return;
+    }
+
+    download_error_.clear();
+    downloading_model_ = true;
+    download_progress_ = 0.0f;
+
+    // Start download in background thread
+    std::thread([this, output_path]() {
+        try {
+            spdlog::info("Starting model download to: {}", output_path);
+
+            // Create directory if needed
+            std::filesystem::path path(output_path);
+            if (path.has_parent_path()) {
+                std::filesystem::create_directories(path.parent_path());
+            }
+
+            // Use P2PClient's DownloadWeights method
+            bool success = p2p_client_->DownloadWeights(job_id_, output_path);
+
+            {
+                std::lock_guard<std::mutex> lock(data_mutex_);
+                downloading_model_ = false;
+                if (success) {
+                    download_progress_ = 1.0f;
+                    AddLogEntry("INFO", "Model downloaded successfully to: " + output_path);
+                } else {
+                    download_error_ = p2p_client_->GetLastError();
+                    AddLogEntry("ERROR", "Model download failed: " + download_error_);
+                }
+            }
+        } catch (const std::exception& e) {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            downloading_model_ = false;
+            download_error_ = e.what();
+            AddLogEntry("ERROR", "Model download exception: " + std::string(e.what()));
+        }
+    }).detach();
 }
 
 } // namespace cyxwiz

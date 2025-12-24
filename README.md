@@ -20,6 +20,29 @@ The platform consists of three main components:
 - **Cross-platform**: Windows, macOS, Linux support
 - **Android Backend**: Run compute backend on Android devices
 
+## 💖 Support Our Work
+
+<p align="center">
+  <a href="https://github.com/sponsors/cyxwiz-lab">
+    <img src="https://img.shields.io/badge/Sponsor-CyxWiz-EA4AAA?style=for-the-badge&logo=github-sponsors&logoColor=white" alt="Sponsor CyxWiz"/>
+  </a>
+</p>
+
+**Help us build the future of decentralized ML computing!**
+
+CyxWiz is an open-source project that aims to democratize access to machine learning compute resources. Your sponsorship helps us:
+
+- 🚀 **Accelerate Development** - More features, faster releases
+- 🔧 **Improve Infrastructure** - Better servers, CI/CD, testing
+- 📚 **Create Documentation** - Tutorials, guides, examples
+- 🌍 **Grow the Community** - Events, support, outreach
+
+**[Become a Sponsor →](https://github.com/sponsors/cyxwiz-lab)**
+
+Every contribution, no matter the size, makes a difference. Thank you for supporting open-source ML innovation! 🙏
+
+---
+
 ## 🏗️ Architecture
 
 ```
@@ -1189,6 +1212,7 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 - Documentation: https://docs.cyxwiz.io
 - Discord: https://discord.gg/cyxwiz
 - Twitter: https://twitter.com/cyxwiz
+- **💖 Sponsor**: https://github.com/sponsors/cyxwiz-lab
 
 ## 🙏 Acknowledgments
 

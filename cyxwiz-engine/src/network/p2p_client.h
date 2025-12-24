@@ -5,6 +5,7 @@
 #include <functional>
 #include <thread>
 #include <atomic>
+#include <mutex>
 #include <grpcpp/grpcpp.h>
 #include "execution.grpc.pb.h"
 #include "job.pb.h"
@@ -180,6 +181,7 @@ private:
     std::shared_ptr<grpc::ClientReaderWriter<cyxwiz::protocol::TrainingCommand,
                                              cyxwiz::protocol::TrainingUpdate>> stream_;
     std::thread streaming_thread_;
+    mutable std::mutex stream_mutex_;  // Protects stream_ access for thread safety
 
     // Event callbacks
     ProgressCallback progress_callback_;

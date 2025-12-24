@@ -180,7 +180,10 @@ grpc::Status JobExecutionServiceImpl::SendJob(
         std::lock_guard<std::mutex> lock(connections_mutex_);
         auto it = connections_.find(context->peer());
         if (it == connections_.end() || !it->second.is_authenticated) {
+            spdlog::warn("SendJob rejected: connection not found or not authenticated (peer={})", context->peer());
             response->set_status(cyxwiz::protocol::STATUS_ERROR);
+            response->set_accepted(false);
+            response->set_rejection_reason("Not authenticated - connection expired or not found. Please reconnect to node.");
             response->mutable_error()->set_code(401);
             response->mutable_error()->set_message("Not authenticated");
             return grpc::Status::OK;
@@ -1071,6 +1074,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         spdlog::info("[P2P WORKFLOW] STEP 6: Training complete! Sending results to Engine...");
         spdlog::info("  Job ID: {}", current_job_id);
         spdlog::info("  Success: {}", training_success ? "YES" : "NO");
+        spdlog::info("  Stopped by user: {}", session->should_stop ? "YES" : "NO");
         spdlog::info("========================================");
 
         cyxwiz::protocol::TrainingUpdate complete_update;
@@ -1078,6 +1082,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         complete_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
 
         if (training_success) {
+            // Normal completion - training ran to completion
             auto* complete = complete_update.mutable_complete();
             complete->set_success(true);
 
@@ -1089,15 +1094,34 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             // Set weights location (for download)
             session->final_weights_path = "/tmp/models/" + current_job_id + ".pt";
             complete->set_weights_location(session->final_weights_path);
+        } else if (session->should_stop) {
+            // User-initiated stop - send COMPLETE with success=false (NOT an error)
+            // This allows the Engine to continue with new training within the reservation
+            auto* complete = complete_update.mutable_complete();
+            complete->set_success(false);  // Indicates incomplete training
+
+            // Provide partial metrics if available
+            (*complete->mutable_final_metrics())["stopped_by_user"] = 1.0;
+            complete->set_total_epochs_completed(0);  // TODO: track actual epochs completed
+
+            // Save partial model and provide download location
+            std::string partial_model_path = SavePartialModel(current_job_id);
+            if (!partial_model_path.empty()) {
+                session->final_weights_path = partial_model_path;
+                complete->set_weights_location(partial_model_path);
+                spdlog::info("[TRAINING] Partial model saved: {}", partial_model_path);
+            }
+            spdlog::info("[TRAINING] Stopped by user - ready for new training within reservation");
         } else {
-            // Send error message for failed training
+            // Actual error during training - send ERROR message
             auto* error = complete_update.mutable_error();
             error->set_error_code("TRAINING_FAILED");
             {
                 std::lock_guard<std::mutex> lock(error_mutex);
                 error->set_error_message(training_error);
             }
-            error->set_recoverable(false);
+            // Errors are recoverable within the reservation - user can try again
+            error->set_recoverable(true);
         }
 
         {

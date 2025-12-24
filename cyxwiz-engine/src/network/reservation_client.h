@@ -6,6 +6,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <vector>
 #include <grpcpp/grpcpp.h>
 #include "reservation.grpc.pb.h"
 #include "job.pb.h"
@@ -109,6 +110,20 @@ public:
     bool GetReservation(
         const std::string& reservation_id,
         cyxwiz::protocol::ReservationInfo& out_info);
+
+    // Check for active reservations (for reconnection after Engine restart)
+    bool GetActiveReservations(
+        const std::string& user_wallet,
+        std::vector<cyxwiz::protocol::ActiveReservationInfo>& out_reservations);
+
+    // Get new P2P token for reconnecting to an active reservation
+    bool GetReconnectionToken(
+        const std::string& reservation_id,
+        const std::string& user_wallet,
+        std::string& out_p2p_token,
+        int64_t& out_token_expires,
+        std::string& out_node_endpoint,
+        int64_t& out_time_remaining);
 
     // Heartbeat management
     void StartHeartbeat(

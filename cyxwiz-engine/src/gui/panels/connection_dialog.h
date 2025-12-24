@@ -84,6 +84,10 @@ private:
     void StartP2PTraining();     // Send job directly to Server Node via P2P
     void StartNewP2PTraining();  // Start new job within same reservation
 
+    // Reconnection support (after Engine restart)
+    void CheckForActiveReservations();  // Check if user has active reservations
+    void ReconnectToReservation(const std::string& reservation_id);  // Reconnect to existing reservation
+
     network::GRPCClient* client_;
     network::JobManager* job_manager_;
     std::shared_ptr<network::ReservationClient> reservation_client_;

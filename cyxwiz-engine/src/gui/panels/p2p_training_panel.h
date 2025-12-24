@@ -160,8 +160,19 @@ private:
     bool stop_button_enabled_ = true;
     bool checkpoint_button_enabled_ = true;
 
+    // Model download state
+    std::string model_weights_location_;
+    bool model_available_ = false;
+    bool downloading_model_ = false;
+    float download_progress_ = 0.0f;
+    std::string download_error_;
+    char download_path_[512] = "";
+
     // Node capabilities
     network::NodeCapabilities node_capabilities_;
+
+    // Helper for model download
+    void DownloadModel(const std::string& output_path);
 };
 
 } // namespace cyxwiz
