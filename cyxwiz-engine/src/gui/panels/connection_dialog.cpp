@@ -74,6 +74,9 @@ void ConnectionDialog::Render() {
 
         // Render reservation confirmation dialog (modal popup)
         RenderReservationConfirmDialog();
+
+        // Render release confirmation popup (modal popup)
+        CancelReservation();
     }
     ImGui::End();
 }
@@ -816,7 +819,7 @@ void ConnectionDialog::RenderActiveReservationPanel() {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.3f, 0.3f, 1.0f));
         if (ImGui::Button(ICON_FA_XMARK " Release", ImVec2(100, 28))) {
-            CancelReservation();
+            show_release_confirm_ = true;  // Show confirmation popup
         }
         ImGui::PopStyleColor(2);
 
@@ -834,10 +837,19 @@ void ConnectionDialog::RenderActiveReservationPanel() {
             ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f),
                 ICON_FA_CIRCLE_XMARK " Reservation has expired");
 
+            // IMPORTANT: Stop training panel monitoring BEFORE disconnecting P2P client
+            // This prevents crash from panel accessing p2p_client_ during disconnect
+            if (p2p_training_panel_) {
+                p2p_training_panel_->StopMonitoring();
+            }
+
             // Send reservation end signal to Server Node
-            if (p2p_client_ && p2p_client_->IsConnected()) {
-                spdlog::info("Reservation timer expired - sending reservation end signal");
-                p2p_client_->SendReservationEnd();
+            if (p2p_client_) {
+                if (p2p_client_->IsConnected()) {
+                    spdlog::info("Reservation timer expired - sending reservation end signal");
+                    p2p_client_->SendReservationEnd();
+                }
+                p2p_client_->StopTrainingStream();
                 p2p_client_->Disconnect();
             }
 
@@ -929,6 +941,38 @@ void ConnectionDialog::StartReservation() {
 }
 
 void ConnectionDialog::CancelReservation() {
+    // Render release confirmation popup
+    if (show_release_confirm_) {
+        ImGui::OpenPopup("Release Reservation?");
+        show_release_confirm_ = false;
+    }
+
+    if (ImGui::BeginPopupModal("Release Reservation?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION " Are you sure you want to release this reservation?");
+        ImGui::Spacing();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::TextWrapped("Warning: Like a hotel reservation, there is NO REFUND for early checkout.");
+        ImGui::TextWrapped("The full reservation amount will be paid to the Server Node.");
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Yes, Release", ImVec2(120, 0))) {
+            DoReleaseReservation();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void ConnectionDialog::DoReleaseReservation() {
     if (!has_active_reservation_) {
         return;
     }
@@ -940,13 +984,26 @@ void ConnectionDialog::CancelReservation() {
 
     spdlog::info("Releasing reservation {}...", active_reservation_.reservation_id);
 
+    // IMPORTANT: Stop training panel monitoring BEFORE disconnecting P2P client
+    // This prevents crash from panel accessing p2p_client_ during disconnect
+    if (p2p_training_panel_) {
+        spdlog::debug("Stopping P2P training panel monitoring before disconnect");
+        p2p_training_panel_->StopMonitoring();
+    }
+
+    // Stop training stream first to prevent callbacks during disconnect
+    if (p2p_client_) {
+        spdlog::debug("Stopping training stream");
+        p2p_client_->StopTrainingStream();
+    }
+
     int64_t time_used = 0;
     int64_t payment_released = 0;
-    int64_t refund_amount = 0;
+    int64_t refund_amount = 0;  // No refund - like hotel reservation
 
     bool success = reservation_client_->ReleaseReservation(
         active_reservation_.reservation_id,
-        "User requested cancellation",
+        "User requested release",
         time_used,
         payment_released,
         refund_amount
@@ -955,11 +1012,11 @@ void ConnectionDialog::CancelReservation() {
     if (success) {
         spdlog::info("Reservation released!");
         spdlog::info("  Time used: {} seconds", time_used);
-        spdlog::info("  Payment to node: {} lamports", payment_released);
-        spdlog::info("  Refund: {} lamports", refund_amount);
+        spdlog::info("  Payment to node: {} lamports (full amount, no refund)", payment_released);
 
-        // Disconnect P2P if connected
+        // Disconnect P2P after stream is stopped
         if (p2p_client_ && p2p_client_->IsConnected()) {
+            spdlog::debug("Disconnecting P2P client");
             p2p_client_->Disconnect();
         }
 

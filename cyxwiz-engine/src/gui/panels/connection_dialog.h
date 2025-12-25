@@ -80,6 +80,7 @@ private:
     // Reservation actions
     void StartReservation();
     void CancelReservation();
+    void DoReleaseReservation();  // Actual release logic
     void ConnectToReservedNode();
     void StartP2PTraining();     // Send job directly to Server Node via P2P
     void StartNewP2PTraining();  // Start new job within same reservation
@@ -120,6 +121,7 @@ private:
 
     // Reservation state
     bool show_reservation_confirm_ = false;
+    bool show_release_confirm_ = false;   // Confirmation before releasing reservation
     int reservation_duration_minutes_ = 60;
     int reservation_epochs_ = 10;           // Default training epochs
     int reservation_batch_size_ = 32;       // Default batch size
