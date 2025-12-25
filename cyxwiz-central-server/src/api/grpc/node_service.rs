@@ -213,11 +213,12 @@ impl NodeService for NodeServiceImpl {
         let mut authenticated_wallet: Option<String> = None;
 
         // Try metadata-based authentication (Authorization: Bearer <token>)
+        // NOTE: Using no-expiry validation for long-running Server Nodes
         if let Some(auth_header) = metadata.get("authorization") {
             if let Ok(auth_str) = auth_header.to_str() {
                 if auth_str.starts_with("Bearer ") {
                     let token = &auth_str[7..];
-                    match self.jwt_manager.verify_user_token(token) {
+                    match self.jwt_manager.verify_user_token_no_expiry(token) {
                         Ok(claims) => {
                             authenticated_user_id = Some(claims.sub.clone());
 
@@ -245,6 +246,7 @@ impl NodeService for NodeServiceImpl {
         let node_info = req.info.ok_or_else(|| Status::invalid_argument("Node info is required"))?;
 
         // Fallback: try body-based authentication token
+        // NOTE: Using no-expiry validation for long-running Server Nodes
         if authenticated_user_id.is_none() {
             let auth_token = &req.authentication_token;
             if auth_token.is_empty() {
@@ -252,7 +254,7 @@ impl NodeService for NodeServiceImpl {
                 // For now, allow unauthenticated registrations but log warning
                 // In production, you may want to reject unauthenticated registrations
             } else {
-                match self.jwt_manager.verify_user_token(auth_token) {
+                match self.jwt_manager.verify_user_token_no_expiry(auth_token) {
                     Ok(claims) => {
                         info!("Node {} authenticated successfully for user {}",
                               node_info.name, claims.sub);

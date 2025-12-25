@@ -110,11 +110,19 @@ impl AuthInterceptor {
 
     /// Extract and validate JWT from gRPC metadata
     /// Returns AuthContext with user information
+    ///
+    /// NOTE: Token expiration is NOT checked here. Server Nodes and Engines
+    /// can stay connected indefinitely until:
+    /// - User explicitly logs out
+    /// - Server is restarted
+    /// - Admin revokes the session
+    ///
+    /// This allows Server Nodes to run for weeks without re-authentication.
     pub async fn authenticate(&self, metadata: &MetadataMap) -> std::result::Result<AuthContext, Status> {
         let token = self.extract_token(metadata)?;
 
-        // Try to validate as user token first
-        match self.jwt_manager.verify_user_token(&token) {
+        // Validate token without expiry check (for long-running Server Nodes)
+        match self.jwt_manager.verify_user_token_no_expiry(&token) {
             Ok(claims) => {
                 debug!("User token validated for user_id: {}", claims.sub);
 
@@ -131,7 +139,7 @@ impl AuthInterceptor {
             }
             Err(e) => {
                 debug!("User token validation failed: {}", e);
-                Err(Status::unauthenticated("Invalid or expired token"))
+                Err(Status::unauthenticated("Invalid token"))
             }
         }
     }
@@ -218,10 +226,10 @@ pub mod rest {
     ) -> std::result::Result<Response, StatusCode> {
         let token = extract_bearer_token(&request).map_err(|_| StatusCode::UNAUTHORIZED)?;
 
-        // Validate user token
+        // Validate user token (no expiry check for long-running nodes)
         let claims = state
             .jwt_manager
-            .verify_user_token(&token)
+            .verify_user_token_no_expiry(&token)
             .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
         // Look up user in MongoDB
@@ -380,14 +388,15 @@ pub mod grpc {
 
             let token = &auth_str[7..];
 
-            match jwt_manager.verify_user_token(token) {
+            // Use no-expiry validation for long-running Server Nodes
+            match jwt_manager.verify_user_token_no_expiry(token) {
                 Ok(claims) => {
                     debug!("gRPC request authenticated for user: {}", claims.sub);
                     Ok(request)
                 }
                 Err(e) => {
                     warn!("JWT validation failed: {}", e);
-                    Err(Status::unauthenticated("Invalid or expired token"))
+                    Err(Status::unauthenticated("Invalid token"))
                 }
             }
         }

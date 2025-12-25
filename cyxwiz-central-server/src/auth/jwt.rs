@@ -147,17 +147,36 @@ impl JWTManager {
     /// # Returns
     /// Decoded claims if valid, error otherwise
     pub fn verify_user_token(&self, token: &str) -> Result<UserAuthClaims> {
+        self.verify_user_token_with_options(token, true)
+    }
+
+    /// Verify user token with optional expiration check
+    ///
+    /// For Server Nodes that need to stay online for extended periods (weeks),
+    /// we can skip expiration check. The node will stay connected until:
+    /// - User explicitly logs out
+    /// - Server is restarted
+    /// - Admin revokes the session
+    pub fn verify_user_token_no_expiry(&self, token: &str) -> Result<UserAuthClaims> {
+        self.verify_user_token_with_options(token, false)
+    }
+
+    fn verify_user_token_with_options(&self, token: &str, check_expiry: bool) -> Result<UserAuthClaims> {
         let mut validation = Validation::new(Algorithm::HS256);
         // Don't require specific issuer, be flexible
         validation.validate_aud = false;
+        // Skip library-level expiry check - we'll do it manually if needed
+        validation.validate_exp = false;
 
         let token_data = decode::<UserAuthClaims>(token, &self.decoding_key, &validation)
             .map_err(|e| ServerError::AuthError(format!("Invalid user token: {}", e)))?;
 
-        // Check if token is expired
-        let now = Utc::now().timestamp();
-        if token_data.claims.exp < now {
-            return Err(ServerError::AuthError("Token has expired".to_string()));
+        // Check if token is expired (only if check_expiry is true)
+        if check_expiry {
+            let now = Utc::now().timestamp();
+            if token_data.claims.exp < now {
+                return Err(ServerError::AuthError("Token has expired".to_string()));
+            }
         }
 
         Ok(token_data.claims)
