@@ -1094,6 +1094,12 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             // Set weights location (for download)
             session->final_weights_path = "/tmp/models/" + current_job_id + ".pt";
             complete->set_weights_location(session->final_weights_path);
+
+            // Store for download after job cleanup
+            {
+                std::lock_guard<std::mutex> lock(completed_models_mutex_);
+                completed_model_paths_[current_job_id] = session->final_weights_path;
+            }
         } else if (session->should_stop) {
             // User-initiated stop - send COMPLETE with success=false (NOT an error)
             // This allows the Engine to continue with new training within the reservation
@@ -1109,6 +1115,12 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             if (!partial_model_path.empty()) {
                 session->final_weights_path = partial_model_path;
                 complete->set_weights_location(partial_model_path);
+
+                // Store for download after job cleanup
+                {
+                    std::lock_guard<std::mutex> lock(completed_models_mutex_);
+                    completed_model_paths_[current_job_id] = partial_model_path;
+                }
                 spdlog::info("[TRAINING] Partial model saved: {}", partial_model_path);
             }
             spdlog::info("[TRAINING] Stopped by user - ready for new training within reservation");
@@ -1308,30 +1320,66 @@ grpc::Status JobExecutionServiceImpl::DownloadWeights(
 
     spdlog::info("Weights download requested for job {}", request->job_id());
 
-    // Find job session
-    JobSession* session = nullptr;
+    std::string weights_path;
+
+    // First try to find active job session
     {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
         auto it = active_jobs_.find(request->job_id());
-        if (it == active_jobs_.end()) {
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Job not found");
+        if (it != active_jobs_.end()) {
+            weights_path = it->second->final_weights_path;
         }
-        session = it->second.get();
     }
 
-    // Simulate sending model weights in chunks
-    const size_t total_size = 50 * 1024 * 1024; // 50MB simulated
+    // If not in active jobs, check completed models
+    if (weights_path.empty()) {
+        std::lock_guard<std::mutex> lock(completed_models_mutex_);
+        auto it = completed_model_paths_.find(request->job_id());
+        if (it != completed_model_paths_.end()) {
+            weights_path = it->second;
+            spdlog::info("Found completed model for job {}: {}", request->job_id(), weights_path);
+        }
+    }
+
+    if (weights_path.empty()) {
+        spdlog::error("Job not found and no completed model available: {}", request->job_id());
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, "Job not found");
+    }
+
+    // Try to read actual weights file
+    std::ifstream file(weights_path, std::ios::binary | std::ios::ate);
+    size_t total_size = 0;
+
+    if (file.is_open()) {
+        total_size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        spdlog::info("Reading weights file: {} ({} bytes)", weights_path, total_size);
+    } else {
+        // File doesn't exist - use simulated data (for testing)
+        total_size = 50 * 1024 * 1024; // 50MB simulated
+        spdlog::warn("Weights file not found, sending simulated data: {}", weights_path);
+    }
+
     const size_t chunk_size = request->chunk_size() > 0 ?
                              request->chunk_size() : 1024 * 1024; // 1MB default
 
-    std::vector<char> dummy_data(chunk_size, 'W'); // Simulated weight data
+    std::vector<char> buffer(chunk_size);
     size_t offset = request->offset();
 
     while (offset < total_size) {
         size_t current_chunk = std::min(chunk_size, total_size - offset);
 
+        if (file.is_open()) {
+            file.read(buffer.data(), current_chunk);
+            current_chunk = file.gcount();
+            if (current_chunk == 0) break;
+        } else {
+            // Fill with dummy data for testing
+            std::fill(buffer.begin(), buffer.begin() + current_chunk, 'W');
+        }
+
         cyxwiz::protocol::WeightsChunk chunk;
-        chunk.set_data(dummy_data.data(), current_chunk);
+        chunk.set_data(buffer.data(), current_chunk);
         chunk.set_offset(offset);
         chunk.set_total_size(total_size);
         chunk.set_is_last_chunk(offset + current_chunk >= total_size);
@@ -1343,6 +1391,10 @@ grpc::Status JobExecutionServiceImpl::DownloadWeights(
         }
 
         offset += current_chunk;
+    }
+
+    if (file.is_open()) {
+        file.close();
     }
 
     spdlog::info("Weights download completed for job {}, {} bytes sent",

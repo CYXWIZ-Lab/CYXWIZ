@@ -1,4 +1,8 @@
 #include "p2p_training_panel.h"
+#include "../../core/model_format.h"
+#include "../../core/model_exporter.h"
+#include "../../core/formats/cyxmodel_format.h"
+#include "../../core/project_manager.h"
 #include <spdlog/spdlog.h>
 #include <imgui.h>
 #include <implot.h>
@@ -7,6 +11,7 @@
 #include <sstream>
 #include <filesystem>
 #include <thread>
+#include <fstream>
 #include <cstring>
 
 namespace cyxwiz {
@@ -94,6 +99,16 @@ void P2PTrainingPanel::StopMonitoring() {
     AddLogEntry("INFO", "Stopped monitoring");
 }
 
+void P2PTrainingPanel::SetTrainingConfig(const std::string& graph_json, int epochs, int batch_size, float learning_rate) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    graph_json_ = graph_json;
+    training_epochs_ = epochs;
+    training_batch_size_ = batch_size;
+    training_learning_rate_ = learning_rate;
+    spdlog::info("P2PTrainingPanel: Stored training config (graph_json size: {}, epochs: {}, batch: {}, lr: {})",
+                 graph_json.size(), epochs, batch_size, learning_rate);
+}
+
 void P2PTrainingPanel::Clear() {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
@@ -121,6 +136,13 @@ void P2PTrainingPanel::Clear() {
     download_progress_ = 0.0f;
     download_error_.clear();
     std::memset(download_path_, 0, sizeof(download_path_));
+    export_format_ = 0;
+
+    // Reset training config
+    graph_json_.clear();
+    training_epochs_ = 0;
+    training_batch_size_ = 32;
+    training_learning_rate_ = 0.001f;
 }
 
 void P2PTrainingPanel::Render() {
@@ -138,7 +160,7 @@ void P2PTrainingPanel::Render() {
 
     ImGui::Separator();
 
-    // Training controls
+    // Training controls (only during active training)
     if (is_monitoring_ && !training_complete_) {
         RenderTrainingControls();
         ImGui::Separator();
@@ -147,6 +169,12 @@ void P2PTrainingPanel::Render() {
     // Progress bar
     if (is_monitoring_) {
         RenderProgressBar();
+        ImGui::Separator();
+    }
+
+    // Model export section (shown when training is complete or stopped)
+    if (training_complete_) {
+        RenderModelExport();
         ImGui::Separator();
     }
 
@@ -268,27 +296,91 @@ void P2PTrainingPanel::RenderTrainingControls() {
             show_stop_confirm_popup_ = true;
         }
     }
+}
 
-    // Model download section - shown when training is complete and model is available
-    if (model_available_ && training_complete_) {
-        ImGui::Separator();
-        ImGui::Text("Model Download");
+void P2PTrainingPanel::RenderModelExport() {
+    ImGui::Text("Model Export");
 
-        ImGui::SetNextItemWidth(300);
-        ImGui::InputText("##download_path", download_path_, sizeof(download_path_));
-        ImGui::SameLine();
+    // Check if project is open
+    auto& project = ProjectManager::Instance();
+    if (!project.HasActiveProject()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+            "No project open.");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+            "Please create or open a project to export models.");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+            "File > New Project or File > Open Project");
+        return;
+    }
 
-        if (downloading_model_) {
-            ImGui::ProgressBar(download_progress_, ImVec2(100, 0));
-        } else {
-            if (ImGui::Button("Download", ImVec2(100, 0))) {
-                DownloadModel(download_path_);
-            }
+    // Check if model is available
+    if (!model_available_) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+            "No model weights available for export.");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+            "Training may have been stopped before any weights were saved.");
+        return;
+    }
+
+    // Initialize default path if empty (project was opened after training completed)
+    if (strlen(download_path_) == 0) {
+        std::string models_folder = project.GetModelsPath();
+        std::string ext = (export_format_ == 1) ? ".cyxmodel" : ".pt";
+        std::string default_path = models_folder + "/" + job_id_ + "_model" + ext;
+        strncpy(download_path_, default_path.c_str(), sizeof(download_path_) - 1);
+        download_path_[sizeof(download_path_) - 1] = '\0';
+    }
+
+    // Export format selection
+    ImGui::Text("Format:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(180);
+    const char* formats[] = { "Raw Weights (.pt)", "CyxModel (.cyxmodel)" };
+    ImGui::Combo("##export_format", &export_format_, formats, IM_ARRAYSIZE(formats));
+
+    // Adjust default path based on format
+    if (export_format_ == 1 && strlen(download_path_) > 0) {
+        std::string path(download_path_);
+        size_t dot_pos = path.rfind('.');
+        if (dot_pos != std::string::npos && path.substr(dot_pos) != ".cyxmodel") {
+            path = path.substr(0, dot_pos) + ".cyxmodel";
+            strncpy(download_path_, path.c_str(), sizeof(download_path_) - 1);
         }
-
-        if (!download_error_.empty()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", download_error_.c_str());
+    } else if (export_format_ == 0 && strlen(download_path_) > 0) {
+        std::string path(download_path_);
+        size_t dot_pos = path.rfind('.');
+        if (dot_pos != std::string::npos && path.substr(dot_pos) == ".cyxmodel") {
+            path = path.substr(0, dot_pos) + ".pt";
+            strncpy(download_path_, path.c_str(), sizeof(download_path_) - 1);
         }
+    }
+
+    ImGui::Text("Save to:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(350);
+    ImGui::InputText("##download_path", download_path_, sizeof(download_path_));
+    ImGui::SameLine();
+
+    if (downloading_model_) {
+        ImGui::ProgressBar(download_progress_, ImVec2(100, 0));
+    } else {
+        if (ImGui::Button("Export", ImVec2(80, 0))) {
+            DownloadModel(download_path_);
+        }
+    }
+
+    // Show info about .cyxmodel format
+    if (export_format_ == 1) {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+            "CyxModel includes: graph, weights, training config, and history");
+        if (graph_json_.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+                "Warning: Graph JSON not available. Export will include weights only.");
+        }
+    }
+
+    if (!download_error_.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", download_error_.c_str());
     }
 }
 
@@ -574,11 +666,17 @@ void P2PTrainingPanel::OnComplete(const network::TrainingComplete& complete) {
         model_available_ = true;
         AddLogEntry("INFO", "Model weights available for download");
 
-        // Set default download path
+        // Set default download path to project's models folder
         if (strlen(download_path_) == 0) {
-            std::string default_path = "models/" + job_id_ + "_weights.pt";
-            strncpy(download_path_, default_path.c_str(), sizeof(download_path_) - 1);
-            download_path_[sizeof(download_path_) - 1] = '\0';
+            auto& project = ProjectManager::Instance();
+            if (project.HasActiveProject()) {
+                std::string models_folder = project.GetModelsPath();
+                std::string default_path = models_folder + "/" + job_id_ + "_model.pt";
+                strncpy(download_path_, default_path.c_str(), sizeof(download_path_) - 1);
+                download_path_[sizeof(download_path_) - 1] = '\0';
+                AddLogEntry("INFO", "Default export path: " + default_path);
+            }
+            // If no project, leave empty - user will be prompted to create one in export UI
         }
     }
 
@@ -681,36 +779,169 @@ void P2PTrainingPanel::DownloadModel(const std::string& output_path) {
     downloading_model_ = true;
     download_progress_ = 0.0f;
 
-    // Start download in background thread
-    std::thread([this, output_path]() {
-        try {
-            spdlog::info("Starting model download to: {}", output_path);
+    // Capture export format (0 = raw weights, 1 = .cyxmodel)
+    int format = export_format_;
 
+    // Capture training config for .cyxmodel export
+    std::string graph_json = graph_json_;
+    int epochs = training_epochs_;
+    int batch_size = training_batch_size_;
+    float learning_rate = training_learning_rate_;
+
+    // Capture training history for .cyxmodel export
+    std::vector<float> loss_epochs, loss_values;
+    std::vector<float> acc_epochs, acc_values;
+    {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        loss_epochs = loss_history_.epochs;
+        loss_values = loss_history_.values;
+        acc_epochs = accuracy_history_.epochs;
+        acc_values = accuracy_history_.values;
+    }
+
+    std::string job_id = job_id_;
+
+    // Start download in background thread
+    std::thread([this, output_path, format, graph_json, epochs, batch_size, learning_rate,
+                 loss_epochs, loss_values, acc_epochs, acc_values, job_id]() {
+        try {
             // Create directory if needed
             std::filesystem::path path(output_path);
             if (path.has_parent_path()) {
                 std::filesystem::create_directories(path.parent_path());
             }
 
-            // Use P2PClient's DownloadWeights method
-            bool success = p2p_client_->DownloadWeights(job_id_, output_path);
+            if (format == 0) {
+                // Raw weights download
+                spdlog::info("Downloading raw weights to: {}", output_path);
 
-            {
-                std::lock_guard<std::mutex> lock(data_mutex_);
-                downloading_model_ = false;
-                if (success) {
-                    download_progress_ = 1.0f;
-                    AddLogEntry("INFO", "Model downloaded successfully to: " + output_path);
-                } else {
+                bool success = p2p_client_->DownloadWeights(job_id, output_path);
+
+                {
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    downloading_model_ = false;
+                    if (success) {
+                        download_progress_ = 1.0f;
+                        AddLogEntry("INFO", "Model weights downloaded to: " + output_path);
+                    } else {
+                        download_error_ = p2p_client_->GetLastError();
+                        AddLogEntry("ERROR", "Download failed: " + download_error_);
+                    }
+                }
+            } else {
+                // .cyxmodel export - download weights first to temp, then package
+                spdlog::info("Exporting as CyxModel to: {}", output_path);
+
+                // Download weights to temp file
+                std::filesystem::path temp_weights = std::filesystem::temp_directory_path() /
+                    ("cyxwiz_temp_" + job_id + ".weights");
+
+                bool success = p2p_client_->DownloadWeights(job_id, temp_weights.string());
+
+                if (!success) {
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    downloading_model_ = false;
                     download_error_ = p2p_client_->GetLastError();
-                    AddLogEntry("ERROR", "Model download failed: " + download_error_);
+                    AddLogEntry("ERROR", "Failed to download weights: " + download_error_);
+                    return;
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    download_progress_ = 0.5f;
+                }
+
+                // Package as .cyxmodel
+                spdlog::info("Packaging weights into .cyxmodel...");
+
+                // Read weights from temp file
+                std::ifstream weights_file(temp_weights, std::ios::binary);
+                if (!weights_file) {
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    downloading_model_ = false;
+                    download_error_ = "Failed to read downloaded weights";
+                    AddLogEntry("ERROR", download_error_);
+                    return;
+                }
+                std::vector<uint8_t> weights_data((std::istreambuf_iterator<char>(weights_file)),
+                                                   std::istreambuf_iterator<char>());
+                weights_file.close();
+
+                // Create model manifest
+                ModelManifest manifest;
+                manifest.version = "1.0";
+                manifest.format = "cyxmodel";
+                manifest.model_name = job_id;
+                manifest.description = "P2P trained model";
+                manifest.cyxwiz_version = "1.0.0";
+                manifest.has_graph = !graph_json.empty();
+                manifest.has_training_history = true;
+                manifest.has_optimizer_state = false;
+                manifest.num_parameters = static_cast<int>(weights_data.size() / sizeof(float));  // Rough estimate
+
+                // Create training config
+                TrainingConfig config;
+                config.epochs = epochs;
+                config.batch_size = batch_size;
+                config.learning_rate = learning_rate;
+                config.optimizer_type = "AdamW";
+
+                // Create training history from captured metrics
+                TrainingHistory history;
+                for (size_t i = 0; i < loss_values.size(); ++i) {
+                    history.loss_history.push_back(loss_values[i]);
+                }
+                for (size_t i = 0; i < acc_values.size(); ++i) {
+                    history.accuracy_history.push_back(acc_values[i]);
+                }
+
+                // Create weights map (single blob for now - can be refined)
+                std::map<std::string, std::vector<uint8_t>> weights_map;
+                std::map<std::string, std::vector<int64_t>> weight_shapes;
+                weights_map["model_weights"] = weights_data;
+                weight_shapes["model_weights"] = {static_cast<int64_t>(weights_data.size())};
+
+                // Export options
+                ExportOptions options;
+                options.format = ModelFormat::CyxModel;
+                options.include_graph = !graph_json.empty();
+                options.include_optimizer_state = false;
+                options.compress = true;
+
+                // Create .cyxmodel file
+                formats::CyxModelFormat exporter;
+                bool export_success = exporter.Create(
+                    output_path,
+                    manifest,
+                    graph_json,
+                    config,
+                    &history,
+                    weights_map,
+                    weight_shapes,
+                    nullptr,  // No optimizer state
+                    options
+                );
+
+                // Cleanup temp file
+                std::filesystem::remove(temp_weights);
+
+                {
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    downloading_model_ = false;
+                    if (export_success) {
+                        download_progress_ = 1.0f;
+                        AddLogEntry("INFO", "Model exported to: " + output_path);
+                    } else {
+                        download_error_ = exporter.GetLastError();
+                        AddLogEntry("ERROR", "Export failed: " + download_error_);
+                    }
                 }
             }
         } catch (const std::exception& e) {
             std::lock_guard<std::mutex> lock(data_mutex_);
             downloading_model_ = false;
             download_error_ = e.what();
-            AddLogEntry("ERROR", "Model download exception: " + std::string(e.what()));
+            AddLogEntry("ERROR", "Export exception: " + std::string(e.what()));
         }
     }).detach();
 }

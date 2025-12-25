@@ -39,6 +39,10 @@ public:
     void StopMonitoring();
     bool IsMonitoring() const { return is_monitoring_; }
 
+    // Training config (stored for .cyxmodel export)
+    void SetTrainingConfig(const std::string& graph_json, int epochs, int batch_size, float learning_rate = 0.001f);
+    const std::string& GetGraphJson() const { return graph_json_; }
+
     // Get current training state
     const std::string& GetJobId() const { return job_id_; }
     const std::string& GetNodeAddress() const { return node_address_; }
@@ -62,6 +66,7 @@ private:
     void RenderLogs();
     void RenderCheckpoints();
     void RenderStopConfirmPopup();
+    void RenderModelExport();
 
     // P2P callbacks (called from P2P client thread)
     void OnProgress(const network::TrainingProgress& progress);
@@ -167,12 +172,20 @@ private:
     float download_progress_ = 0.0f;
     std::string download_error_;
     char download_path_[512] = "";
+    int export_format_ = 0;  // 0 = raw weights, 1 = .cyxmodel
 
     // Node capabilities
     network::NodeCapabilities node_capabilities_;
 
-    // Helper for model download
+    // Training configuration (for .cyxmodel export)
+    std::string graph_json_;
+    int training_epochs_ = 0;
+    int training_batch_size_ = 32;
+    float training_learning_rate_ = 0.001f;
+
+    // Helper for model download/export
     void DownloadModel(const std::string& output_path);
+    void ExportAsCyxModel(const std::string& weights_path, const std::string& output_path);
 };
 
 } // namespace cyxwiz

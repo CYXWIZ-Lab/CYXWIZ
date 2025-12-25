@@ -220,6 +220,10 @@ private:
     std::mutex jobs_mutex_;
     std::unordered_map<std::string, std::unique_ptr<JobSession>> active_jobs_;  // job_id -> session
 
+    // Completed job weights (for download after job cleanup)
+    std::mutex completed_models_mutex_;
+    std::unordered_map<std::string, std::string> completed_model_paths_;  // job_id -> weights_path
+
     // Node information
     std::string node_id_;
     cyxwiz::protocol::NodeCapabilities capabilities_;

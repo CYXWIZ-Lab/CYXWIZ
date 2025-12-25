@@ -1088,6 +1088,14 @@ void ConnectionDialog::StartP2PTraining() {
         // Set the P2P client on the panel
         p2p_training_panel_->SetP2PClient(p2p_client_);
 
+        // Store training config for .cyxmodel export
+        p2p_training_panel_->SetTrainingConfig(
+            graph_json,
+            reservation_epochs_,
+            reservation_batch_size_,
+            0.001f  // Default learning rate
+        );
+
         // Start monitoring
         p2p_training_panel_->StartMonitoring(
             active_reservation_.job_id,
@@ -1280,6 +1288,14 @@ void ConnectionDialog::StartNewP2PTraining() {
 
     // Update P2P training panel with new job ID
     if (p2p_training_panel_) {
+        // Store training config for .cyxmodel export
+        p2p_training_panel_->SetTrainingConfig(
+            graph_json,
+            reservation_epochs_,
+            reservation_batch_size_,
+            0.001f  // Default learning rate
+        );
+
         p2p_training_panel_->StartMonitoring(
             new_job_id,
             active_reservation_.node_endpoint
