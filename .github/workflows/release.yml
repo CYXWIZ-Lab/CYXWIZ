@@ -1,0 +1,374 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.4.0)'
+        required: true
+        default: 'v0.4.0'
+
+env:
+  BUILD_TYPE: Release
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '594ad8871e1e8e45f8e626c015fd611163430207'
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install ArrayFire
+        shell: pwsh
+        run: |
+          $AF_VERSION = "3.9.0"
+          $AF_URL = "https://arrayfire.s3.amazonaws.com/3.9.0/ArrayFire-v3.9.0_Windows_x86_64.exe"
+          Invoke-WebRequest -Uri $AF_URL -OutFile "arrayfire-installer.exe"
+          Start-Process -FilePath "arrayfire-installer.exe" -ArgumentList "/S" -Wait
+          echo "ArrayFire_DIR=C:\Program Files\ArrayFire\v3\cmake" >> $env:GITHUB_ENV
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . `
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake `
+            -DCYXWIZ_BUILD_ENGINE=ON `
+            -DCYXWIZ_BUILD_SERVER_NODE=ON `
+            -DCYXWIZ_BUILD_TESTS=OFF `
+            -DCYXWIZ_BUILD_CENTRAL_SERVER=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Package Windows Release
+        shell: pwsh
+        run: |
+          $VERSION = "${{ github.ref_name }}"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $VERSION = "${{ github.event.inputs.version }}"
+          }
+
+          New-Item -ItemType Directory -Force -Path "release/cyxwiz-$VERSION-windows-x64"
+
+          # Copy executables
+          Copy-Item "build/bin/Release/*.exe" "release/cyxwiz-$VERSION-windows-x64/"
+          Copy-Item "build/bin/Release/*.dll" "release/cyxwiz-$VERSION-windows-x64/"
+
+          # Copy resources
+          if (Test-Path "cyxwiz-engine/resources") {
+            Copy-Item -Recurse "cyxwiz-engine/resources" "release/cyxwiz-$VERSION-windows-x64/"
+          }
+
+          # Create README
+          @"
+          CyxWiz $VERSION - Windows x64
+          ================================
+
+          REQUIREMENTS:
+          - ArrayFire 3.9.0: https://arrayfire.com/download
+          - CUDA Toolkit 12.x (for GPU support): https://developer.nvidia.com/cuda-downloads
+          - Visual C++ Redistributable 2022: https://aka.ms/vs/17/release/vc_redist.x64.exe
+
+          RUNNING:
+          1. Install ArrayFire to default location (C:\Program Files\ArrayFire\v3)
+          2. Add ArrayFire bin to PATH: C:\Program Files\ArrayFire\v3\lib
+          3. Run cyxwiz-engine.exe for the desktop client
+          4. Run cyxwiz-server-node.exe for the compute worker
+
+          For GPU support, ensure CUDA drivers are installed.
+          "@ | Out-File -FilePath "release/cyxwiz-$VERSION-windows-x64/README.txt"
+
+          Compress-Archive -Path "release/cyxwiz-$VERSION-windows-x64" -DestinationPath "release/cyxwiz-$VERSION-windows-x64.zip"
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-windows-x64
+          path: release/*.zip
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libgl1-mesa-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxext-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libgtk-3-dev \
+            python3-dev
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '594ad8871e1e8e45f8e626c015fd611163430207'
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install ArrayFire
+        run: |
+          AF_VERSION="3.9.0"
+          wget -q https://arrayfire.s3.amazonaws.com/3.9.0/ArrayFire-v3.9.0-Linux-x86_64.sh
+          chmod +x ArrayFire-v3.9.0-Linux-x86_64.sh
+          sudo ./ArrayFire-v3.9.0-Linux-x86_64.sh --prefix=/opt/arrayfire --skip-license
+          echo "ArrayFire_DIR=/opt/arrayfire/share/ArrayFire/cmake" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/opt/arrayfire/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DCYXWIZ_BUILD_ENGINE=ON \
+            -DCYXWIZ_BUILD_SERVER_NODE=ON \
+            -DCYXWIZ_BUILD_TESTS=OFF \
+            -DCYXWIZ_BUILD_CENTRAL_SERVER=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Package Linux Release
+        run: |
+          VERSION="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+
+          mkdir -p "release/cyxwiz-$VERSION-linux-x64"
+
+          # Copy executables
+          cp build/bin/* "release/cyxwiz-$VERSION-linux-x64/" 2>/dev/null || true
+
+          # Copy shared libraries
+          mkdir -p "release/cyxwiz-$VERSION-linux-x64/lib"
+          cp build/lib/*.so* "release/cyxwiz-$VERSION-linux-x64/lib/" 2>/dev/null || true
+
+          # Copy resources
+          if [ -d "cyxwiz-engine/resources" ]; then
+            cp -r cyxwiz-engine/resources "release/cyxwiz-$VERSION-linux-x64/"
+          fi
+
+          # Create README
+          cat > "release/cyxwiz-$VERSION-linux-x64/README.txt" << 'EOF'
+          CyxWiz - Linux x64
+          ==================
+
+          REQUIREMENTS:
+          - ArrayFire 3.9.0: https://arrayfire.com/download
+          - CUDA Toolkit 12.x (for NVIDIA GPU support)
+          - OpenCL drivers (for AMD/Intel GPU support)
+          - Python 3.8+
+
+          INSTALLATION:
+          1. Install ArrayFire:
+             wget https://arrayfire.s3.amazonaws.com/3.9.0/ArrayFire-v3.9.0-Linux-x86_64.sh
+             sudo ./ArrayFire-v3.9.0-Linux-x86_64.sh --prefix=/opt/arrayfire --skip-license
+
+          2. Add to your ~/.bashrc:
+             export LD_LIBRARY_PATH=/opt/arrayfire/lib:$LD_LIBRARY_PATH
+
+          RUNNING:
+          ./cyxwiz-engine     # Desktop client
+          ./cyxwiz-server-node # Compute worker
+          EOF
+
+          # Create launcher script
+          cat > "release/cyxwiz-$VERSION-linux-x64/run-engine.sh" << 'EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:/opt/arrayfire/lib:$LD_LIBRARY_PATH"
+          "$SCRIPT_DIR/cyxwiz-engine" "$@"
+          EOF
+          chmod +x "release/cyxwiz-$VERSION-linux-x64/run-engine.sh"
+
+          tar -czvf "release/cyxwiz-$VERSION-linux-x64.tar.gz" -C release "cyxwiz-$VERSION-linux-x64"
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-linux-x64
+          path: release/*.tar.gz
+
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install macOS Dependencies
+        run: |
+          brew install cmake ninja pkg-config python@3.11
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '594ad8871e1e8e45f8e626c015fd611163430207'
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install ArrayFire
+        run: |
+          brew install arrayfire
+          echo "ArrayFire_DIR=$(brew --prefix arrayfire)/share/ArrayFire/cmake" >> $GITHUB_ENV
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DCYXWIZ_BUILD_ENGINE=ON \
+            -DCYXWIZ_BUILD_SERVER_NODE=ON \
+            -DCYXWIZ_BUILD_TESTS=OFF \
+            -DCYXWIZ_BUILD_CENTRAL_SERVER=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Package macOS Release
+        run: |
+          VERSION="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+
+          mkdir -p "release/cyxwiz-$VERSION-macos-arm64"
+
+          # Copy executables
+          cp build/bin/* "release/cyxwiz-$VERSION-macos-arm64/" 2>/dev/null || true
+
+          # Copy shared libraries
+          mkdir -p "release/cyxwiz-$VERSION-macos-arm64/lib"
+          cp build/lib/*.dylib "release/cyxwiz-$VERSION-macos-arm64/lib/" 2>/dev/null || true
+
+          # Copy resources
+          if [ -d "cyxwiz-engine/resources" ]; then
+            cp -r cyxwiz-engine/resources "release/cyxwiz-$VERSION-macos-arm64/"
+          fi
+
+          # Create README
+          cat > "release/cyxwiz-$VERSION-macos-arm64/README.txt" << 'EOF'
+          CyxWiz - macOS ARM64 (Apple Silicon)
+          =====================================
+
+          REQUIREMENTS:
+          - ArrayFire: brew install arrayfire
+          - Python 3.8+: brew install python@3.11
+
+          RUNNING:
+          ./cyxwiz-engine      # Desktop client
+          ./cyxwiz-server-node # Compute worker
+
+          NOTE: On first run, macOS may block the app. Go to:
+          System Preferences > Security & Privacy > Allow
+          EOF
+
+          zip -r "release/cyxwiz-$VERSION-macos-arm64.zip" "release/cyxwiz-$VERSION-macos-arm64"
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-macos-arm64
+          path: release/*.zip
+
+  create-release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -la artifacts/*/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: CyxWiz ${{ github.ref_name }}
+          body: |
+            ## CyxWiz ${{ github.ref_name }}
+
+            ### Downloads
+            - **Windows x64**: `cyxwiz-*-windows-x64.zip`
+            - **Linux x64**: `cyxwiz-*-linux-x64.tar.gz`
+            - **macOS ARM64**: `cyxwiz-*-macos-arm64.zip`
+
+            ### Requirements
+
+            #### All Platforms
+            - [ArrayFire 3.9.0](https://arrayfire.com/download) - GPU acceleration library
+
+            #### Windows
+            - [Visual C++ Redistributable 2022](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+            - [CUDA Toolkit 12.x](https://developer.nvidia.com/cuda-downloads) (optional, for NVIDIA GPU)
+
+            #### Linux
+            - CUDA Toolkit 12.x (optional, for NVIDIA GPU)
+            - OpenCL drivers (optional, for AMD/Intel GPU)
+
+            #### macOS
+            - Install ArrayFire via Homebrew: `brew install arrayfire`
+
+            ### Quick Start
+            1. Download the package for your platform
+            2. Install ArrayFire
+            3. Run `cyxwiz-engine` for the desktop client
+            4. Run `cyxwiz-server-node` for the compute worker
+
+            See README.txt in each package for detailed instructions.
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
