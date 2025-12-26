@@ -801,10 +801,37 @@ void ConnectionDialog::RenderActiveReservationPanel() {
             }
 
             if (ImGui::Button(ICON_FA_LINK_SLASH " Disconnect", ImVec2(120, 28))) {
+                spdlog::info("[DISCONNECT] User clicked Disconnect button");
+
+                // Step 1: Cancel any pending download (must be before stopping monitoring)
+                if (p2p_training_panel_) {
+                    spdlog::info("[DISCONNECT] Step 1: Cancelling download...");
+                    p2p_training_panel_->CancelDownloadAndWait();
+                }
+
+                // Step 2: Stop training panel monitoring BEFORE disconnecting P2P client
+                // This prevents crash from panel accessing p2p_client_ during disconnect
+                if (p2p_training_panel_) {
+                    spdlog::info("[DISCONNECT] Step 2: Stopping panel monitoring...");
+                    p2p_training_panel_->StopMonitoring();
+                }
+
+                // Step 3: Tell Server Node to stop training (if streaming)
+                // This helps the server close the stream faster, reducing disconnect time
+                if (p2p_client_ && p2p_client_->IsStreaming()) {
+                    spdlog::info("[DISCONNECT] Step 3: Sending stop command to Server Node...");
+                    p2p_client_->StopTraining();
+                }
+
+                // Step 4: Stop training stream and disconnect
                 if (p2p_client_) {
+                    spdlog::info("[DISCONNECT] Step 4: Stopping training stream...");
                     p2p_client_->StopTrainingStream();
+                    spdlog::info("[DISCONNECT] Step 5: Disconnecting P2P client...");
                     p2p_client_->Disconnect();
                 }
+
+                spdlog::info("[DISCONNECT] Disconnect complete - reservation still active");
             }
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
@@ -982,25 +1009,56 @@ void ConnectionDialog::DoReleaseReservation() {
         return;
     }
 
-    spdlog::info("Releasing reservation {}...", active_reservation_.reservation_id);
+    spdlog::info("========================================");
+    spdlog::info("[RELEASE] Starting reservation release: {}", active_reservation_.reservation_id);
+    spdlog::info("========================================");
 
-    // IMPORTANT: Stop training panel monitoring BEFORE disconnecting P2P client
-    // This prevents crash from panel accessing p2p_client_ during disconnect
+    // Log current state
+    bool is_downloading = p2p_training_panel_ && p2p_training_panel_->IsDownloading();
+    bool is_connected = p2p_client_ && p2p_client_->IsConnected();
+    bool is_streaming = p2p_client_ && p2p_client_->IsStreaming();
+    spdlog::info("[RELEASE] Current state: downloading={}, connected={}, streaming={}",
+                 is_downloading, is_connected, is_streaming);
+
+    // Step 1: Cancel any pending download first
+    // The download thread captures p2p_client_ and will crash if we disconnect while it's running
     if (p2p_training_panel_) {
-        spdlog::debug("Stopping P2P training panel monitoring before disconnect");
-        p2p_training_panel_->StopMonitoring();
+        spdlog::info("[RELEASE] Step 1: Cancelling any pending model download...");
+        p2p_training_panel_->CancelDownloadAndWait();
+        spdlog::info("[RELEASE] Step 1: Download cancelled/completed");
     }
 
-    // Stop training stream first to prevent callbacks during disconnect
+    // Step 2: Stop training panel monitoring BEFORE disconnecting P2P client
+    // This prevents crash from panel accessing p2p_client_ during disconnect
+    if (p2p_training_panel_) {
+        spdlog::info("[RELEASE] Step 2: Stopping P2P training panel monitoring...");
+        p2p_training_panel_->StopMonitoring();
+        spdlog::info("[RELEASE] Step 2: Monitoring stopped");
+    }
+
+    // Step 3: Send reservation end signal to Server Node BEFORE stopping the stream
+    // This notifies the Server Node to clean up its state
+    if (p2p_client_ && p2p_client_->IsConnected() && p2p_client_->IsStreaming()) {
+        spdlog::info("[RELEASE] Step 3: Sending reservation end signal to Server Node...");
+        bool sent = p2p_client_->SendReservationEnd();
+        spdlog::info("[RELEASE] Step 3: Reservation end signal sent: {}", sent ? "SUCCESS" : "FAILED");
+    } else {
+        spdlog::info("[RELEASE] Step 3: Skipped (not streaming)");
+    }
+
+    // Step 4: Stop training stream to prevent callbacks during disconnect
     if (p2p_client_) {
-        spdlog::debug("Stopping training stream");
+        spdlog::info("[RELEASE] Step 4: Stopping training stream...");
         p2p_client_->StopTrainingStream();
+        spdlog::info("[RELEASE] Step 4: Training stream stopped");
     }
 
     int64_t time_used = 0;
     int64_t payment_released = 0;
     int64_t refund_amount = 0;  // No refund - like hotel reservation
 
+    // Step 5: Release reservation via Central Server
+    spdlog::info("[RELEASE] Step 5: Calling Central Server ReleaseReservation...");
     bool success = reservation_client_->ReleaseReservation(
         active_reservation_.reservation_id,
         "User requested release",
@@ -1010,26 +1068,50 @@ void ConnectionDialog::DoReleaseReservation() {
     );
 
     if (success) {
-        spdlog::info("Reservation released!");
-        spdlog::info("  Time used: {} seconds", time_used);
-        spdlog::info("  Payment to node: {} lamports (full amount, no refund)", payment_released);
+        spdlog::info("[RELEASE] Step 5: Central Server release SUCCESS");
+        spdlog::info("[RELEASE]   Time used: {} seconds", time_used);
+        spdlog::info("[RELEASE]   Payment to node: {} lamports (full amount, no refund)", payment_released);
 
-        // Disconnect P2P after stream is stopped
+        // Step 6: Notify Server Node and Disconnect P2P
         if (p2p_client_ && p2p_client_->IsConnected()) {
-            spdlog::debug("Disconnecting P2P client");
+            spdlog::info("[RELEASE] Step 6a: Notifying Server Node of disconnect...");
+            p2p_client_->NotifyDisconnect("user_release");
+            spdlog::info("[RELEASE] Step 6b: Disconnecting P2P client...");
             p2p_client_->Disconnect();
+            spdlog::info("[RELEASE] Step 6: P2P client disconnected");
+        } else {
+            spdlog::info("[RELEASE] Step 6: Skipped (not connected)");
         }
 
-        // Stop heartbeat
+        // Step 7: Stop heartbeat
+        spdlog::info("[RELEASE] Step 7: Stopping heartbeat...");
         reservation_client_->StopHeartbeat();
+        spdlog::info("[RELEASE] Step 7: Heartbeat stopped");
 
-        // Clear reservation state
+        // Step 8: Clear reservation state
+        spdlog::info("[RELEASE] Step 8: Clearing reservation state...");
         has_active_reservation_ = false;
         active_reservation_ = network::ReservationInfo{};
         reservation_error_.clear();
+        spdlog::info("[RELEASE] ========================================");
+        spdlog::info("[RELEASE] Reservation release COMPLETE");
+        spdlog::info("[RELEASE] ========================================");
     } else {
         reservation_error_ = reservation_client_->GetLastError();
-        spdlog::error("Failed to release reservation: {}", reservation_error_);
+        spdlog::error("[RELEASE] Step 5: Central Server release FAILED: {}", reservation_error_);
+        spdlog::error("[RELEASE] ========================================");
+        spdlog::error("[RELEASE] Reservation release FAILED - cleaning up anyway");
+        spdlog::error("[RELEASE] ========================================");
+
+        // Even if Central Server release fails, we should still disconnect P2P
+        // to avoid leaving orphaned connections
+        if (p2p_client_ && p2p_client_->IsConnected()) {
+            spdlog::info("[RELEASE] Cleanup: Notifying Server Node of disconnect...");
+            p2p_client_->NotifyDisconnect("release_failed");
+            spdlog::info("[RELEASE] Cleanup: Disconnecting P2P client...");
+            p2p_client_->Disconnect();
+        }
+        reservation_client_->StopHeartbeat();
     }
 }
 
@@ -1268,10 +1350,11 @@ void ConnectionDialog::StartNewP2PTraining() {
             // Disconnect existing connection if any
             p2p_client_->Disconnect();
 
-            // Reconnect with the same auth token
+            // Reconnect with the ORIGINAL job_id (the auth token was issued for this job_id)
+            // The new_job_id is only used for tracking this specific training session
             if (!p2p_client_->ConnectToNode(
                     active_reservation_.node_endpoint,
-                    new_job_id,
+                    active_reservation_.job_id,  // Use original job_id to match auth token
                     active_reservation_.p2p_auth_token,
                     "CyxWiz-Engine/1.0.0")) {
                 reservation_error_ = "Failed to reconnect to node: " + p2p_client_->GetLastError();

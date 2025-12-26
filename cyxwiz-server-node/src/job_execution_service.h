@@ -66,6 +66,14 @@ public:
         cyxwiz::protocol::ConnectResponse* response) override;
 
     /**
+     * DisconnectFromNode - Engine disconnects from node (cleanup)
+     */
+    grpc::Status DisconnectFromNode(
+        grpc::ServerContext* context,
+        const cyxwiz::protocol::DisconnectRequest* request,
+        cyxwiz::protocol::DisconnectResponse* response) override;
+
+    /**
      * SendJob - Engine sends job details and dataset
      */
     grpc::Status SendJob(

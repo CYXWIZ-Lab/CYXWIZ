@@ -9,6 +9,8 @@
 #include <string>
 #include <mutex>
 #include <deque>
+#include <thread>
+#include <atomic>
 
 namespace cyxwiz {
 
@@ -37,7 +39,9 @@ public:
     // Job control
     void StartMonitoring(const std::string& job_id, const std::string& node_address);
     void StopMonitoring();
+    void CancelDownloadAndWait();  // Cancel any pending download and wait for thread
     bool IsMonitoring() const { return is_monitoring_; }
+    bool IsDownloading() const { return downloading_model_; }
 
     // Training config (stored for .cyxmodel export)
     void SetTrainingConfig(const std::string& graph_json, int epochs, int batch_size, float learning_rate = 0.001f);
@@ -169,6 +173,8 @@ private:
     std::string model_weights_location_;
     bool model_available_ = false;
     bool downloading_model_ = false;
+    std::atomic<bool> cancel_download_{false};  // Signal download thread to stop
+    std::thread download_thread_;               // Track download thread for cleanup
     float download_progress_ = 0.0f;
     std::string download_error_;
     char download_path_[512] = "";

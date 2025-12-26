@@ -10,6 +10,9 @@ service JobExecutionService {
   // Engine establishes connection with auth token
   rpc ConnectToNode(ConnectRequest) returns (ConnectResponse);
 
+  // Engine disconnects from node (cleanup connection state)
+  rpc DisconnectFromNode(DisconnectRequest) returns (DisconnectResponse);
+
   // Engine sends job details and dataset
   rpc SendJob(SendJobRequest) returns (SendJobResponse);
 
@@ -101,6 +104,16 @@ message ConnectResponse {
   string node_id = 2;
   NodeCapabilities capabilities = 3;
   Error error = 4;
+}
+
+// Disconnect from node (cleanup)
+message DisconnectRequest {
+  string reason = 1;  // Optional reason (e.g., "user_release", "reservation_expired")
+}
+
+message DisconnectResponse {
+  StatusCode status = 1;
+  string message = 2;
 }
 
 // Node capabilities for Engine to understand what's supported

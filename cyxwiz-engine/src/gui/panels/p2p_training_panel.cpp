@@ -35,7 +35,24 @@ P2PTrainingPanel::P2PTrainingPanel()
 }
 
 P2PTrainingPanel::~P2PTrainingPanel() {
+    CancelDownloadAndWait();
     StopMonitoring();
+}
+
+void P2PTrainingPanel::CancelDownloadAndWait() {
+    // Signal download thread to stop
+    cancel_download_ = true;
+
+    // Wait for download thread to complete
+    if (download_thread_.joinable()) {
+        spdlog::debug("P2PTrainingPanel: Waiting for download thread to complete...");
+        download_thread_.join();
+        spdlog::debug("P2PTrainingPanel: Download thread completed");
+    }
+
+    // Reset state
+    cancel_download_ = false;
+    downloading_model_ = false;
 }
 
 void P2PTrainingPanel::SetP2PClient(std::shared_ptr<network::P2PClient> client) {
@@ -84,6 +101,12 @@ void P2PTrainingPanel::StartMonitoring(const std::string& job_id, const std::str
     memory_usage_history_.Clear();
     checkpoint_history_.clear();
     log_entries_.clear();
+
+    // Re-enable control buttons for new training
+    pause_button_enabled_ = true;
+    resume_button_enabled_ = false;
+    stop_button_enabled_ = true;
+    checkpoint_button_enabled_ = true;
 
     AddLogEntry("INFO", "Started monitoring job " + job_id);
 }
@@ -775,9 +798,16 @@ void P2PTrainingPanel::DownloadModel(const std::string& output_path) {
         return;
     }
 
+    // Wait for any previous download to complete
+    if (download_thread_.joinable()) {
+        spdlog::debug("Waiting for previous download to complete...");
+        download_thread_.join();
+    }
+
     download_error_.clear();
     downloading_model_ = true;
     download_progress_ = 0.0f;
+    cancel_download_ = false;  // Reset cancellation flag
 
     // Capture export format (0 = raw weights, 1 = .cyxmodel)
     int format = export_format_;
@@ -801,10 +831,18 @@ void P2PTrainingPanel::DownloadModel(const std::string& output_path) {
 
     std::string job_id = job_id_;
 
-    // Start download in background thread
-    std::thread([this, output_path, format, graph_json, epochs, batch_size, learning_rate,
+    // Start download in background thread (assigned to member for tracking)
+    download_thread_ = std::thread([this, output_path, format, graph_json, epochs, batch_size, learning_rate,
                  loss_epochs, loss_values, acc_epochs, acc_values, job_id]() {
         try {
+            // Check for cancellation before starting
+            if (cancel_download_) {
+                std::lock_guard<std::mutex> lock(data_mutex_);
+                downloading_model_ = false;
+                download_error_ = "Download cancelled";
+                return;
+            }
+
             // Create directory if needed
             std::filesystem::path path(output_path);
             if (path.has_parent_path()) {
@@ -815,16 +853,26 @@ void P2PTrainingPanel::DownloadModel(const std::string& output_path) {
                 // Raw weights download
                 spdlog::info("Downloading raw weights to: {}", output_path);
 
+                // Check for cancellation and connection before download
+                if (cancel_download_ || !p2p_client_ || !p2p_client_->IsConnected()) {
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    downloading_model_ = false;
+                    download_error_ = cancel_download_ ? "Download cancelled" : "Not connected";
+                    return;
+                }
+
                 bool success = p2p_client_->DownloadWeights(job_id, output_path);
 
                 {
                     std::lock_guard<std::mutex> lock(data_mutex_);
                     downloading_model_ = false;
-                    if (success) {
+                    if (cancel_download_) {
+                        download_error_ = "Download cancelled";
+                    } else if (success) {
                         download_progress_ = 1.0f;
                         AddLogEntry("INFO", "Model weights downloaded to: " + output_path);
                     } else {
-                        download_error_ = p2p_client_->GetLastError();
+                        download_error_ = p2p_client_ ? p2p_client_->GetLastError() : "Client disconnected";
                         AddLogEntry("ERROR", "Download failed: " + download_error_);
                     }
                 }
@@ -832,16 +880,33 @@ void P2PTrainingPanel::DownloadModel(const std::string& output_path) {
                 // .cyxmodel export - download weights first to temp, then package
                 spdlog::info("Exporting as CyxModel to: {}", output_path);
 
+                // Check for cancellation and connection before download
+                if (cancel_download_ || !p2p_client_ || !p2p_client_->IsConnected()) {
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    downloading_model_ = false;
+                    download_error_ = cancel_download_ ? "Download cancelled" : "Not connected";
+                    return;
+                }
+
                 // Download weights to temp file
                 std::filesystem::path temp_weights = std::filesystem::temp_directory_path() /
                     ("cyxwiz_temp_" + job_id + ".weights");
 
                 bool success = p2p_client_->DownloadWeights(job_id, temp_weights.string());
 
+                // Check for cancellation after download
+                if (cancel_download_) {
+                    std::filesystem::remove(temp_weights);  // Cleanup temp file
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    downloading_model_ = false;
+                    download_error_ = "Download cancelled";
+                    return;
+                }
+
                 if (!success) {
                     std::lock_guard<std::mutex> lock(data_mutex_);
                     downloading_model_ = false;
-                    download_error_ = p2p_client_->GetLastError();
+                    download_error_ = p2p_client_ ? p2p_client_->GetLastError() : "Client disconnected";
                     AddLogEntry("ERROR", "Failed to download weights: " + download_error_);
                     return;
                 }
@@ -849,6 +914,15 @@ void P2PTrainingPanel::DownloadModel(const std::string& output_path) {
                 {
                     std::lock_guard<std::mutex> lock(data_mutex_);
                     download_progress_ = 0.5f;
+                }
+
+                // Check for cancellation before packaging
+                if (cancel_download_) {
+                    std::filesystem::remove(temp_weights);  // Cleanup temp file
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    downloading_model_ = false;
+                    download_error_ = "Download cancelled";
+                    return;
                 }
 
                 // Package as .cyxmodel
@@ -943,7 +1017,7 @@ void P2PTrainingPanel::DownloadModel(const std::string& output_path) {
             download_error_ = e.what();
             AddLogEntry("ERROR", "Export exception: " + std::string(e.what()));
         }
-    }).detach();
+    });  // Thread is tracked via download_thread_ member, not detached
 }
 
 } // namespace cyxwiz

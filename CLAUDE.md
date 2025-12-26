@@ -55,6 +55,185 @@ CyxWiz Central Server (Orchestrator - Rust)
 3. **Cross-Platform**: All C++ code must work on Windows/macOS/Linux
 4. **Python Scripting**: Embedded Python interpreter in Engine (pybind11)
 5. **Debug vs Release**: Debug builds have extensive logging and memory tracking
+6. **Reservation-Based Payment**: Users pay for TIME, not per-job (see P2P Training Flow below)
+
+## P2P Training Flow (Reservation-Based)
+
+### Overview
+
+Training uses direct P2P communication between Engine and Server Node. The Central Server only handles:
+- Node discovery and listing
+- Reservation creation and escrow
+- Payment release when reservation ends
+
+**Key Principle**: User pays for TIME, can submit UNLIMITED jobs within their reserved time slot.
+
+### Flow Diagram
+
+```
+Engine                     Central Server                 Server Node
+  │                              │                              │
+  │  1. ListFreeNodes()          │                              │
+  ├─────────────────────────────>│                              │
+  │     [Available nodes]        │                              │
+  │<─────────────────────────────┤                              │
+  │                              │                              │
+  │  2. ReserveNode(duration)    │                              │
+  ├─────────────────────────────>│                              │
+  │     [Escrow created]         │                              │
+  │     [P2P auth token]         │                              │
+  │<─────────────────────────────┤                              │
+  │                              │                              │
+  │  3. P2P Connect(auth_token)  │                              │
+  ├──────────────────────────────────────────────────────────────>│
+  │                              │                              │
+  │  4. SendJob(config, dataset) │                              │
+  ├──────────────────────────────────────────────────────────────>│
+  │                              │                              │
+  │  5. StreamTrainingMetrics()  │    [Bidirectional stream]    │
+  │<═══════════════════════════════════════════════════════════>│
+  │     - Progress updates       │                              │
+  │     - Pause/Resume/Stop      │                              │
+  │     - Dataset batch requests │                              │
+  │                              │                              │
+  │  [Job #1 completes]          │                              │
+  │<─────────────────────────────────── "Ready for new job" ────│
+  │                              │                              │
+  │  6. SendNewJobConfig()       │    [Same stream continues]   │
+  ├──────────────────────────────────────────────────────────────>│
+  │                              │                              │
+  │  [Job #2 completes]          │                              │
+  │  ... repeat unlimited times within reservation ...          │
+  │                              │                              │
+  │  7. SendReservationEnd()     │                              │
+  ├──────────────────────────────────────────────────────────────>│
+  │                              │                              │
+  │                              │  8. ReportReservationEnd()   │
+  │                              │<─────────────────────────────┤
+  │                              │     [Payment released]       │
+```
+
+### Multi-Job Training Within Reservation
+
+Users can submit **unlimited jobs** within their reserved time:
+
+```
+1-Hour Reservation Example:
+───────────────────────────────────────────────────────────────
+00:00  Reserve Node, pay $X for 1 hour
+00:01  Start Job #1 (MNIST, 10 epochs) - 2 min
+00:03  Job #1 complete → UI shows "Ready for New Training"
+00:04  Start Job #2 (CIFAR, 5 epochs) - 3 min
+00:07  Job #2 complete → Ready for new training
+...
+00:58  Job #25 complete
+01:00  Timer expires → Payment released to Server Node
+───────────────────────────────────────────────────────────────
+Result: User ran 25 experiments for price of 1-hour reservation
+```
+
+### Key Files
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Engine | `src/network/p2p_client.cpp` | P2P connection, job submission, training control |
+| Engine | `src/gui/panels/connection_dialog.cpp` | UI for node connection and job submission |
+| Engine | `src/gui/panels/p2p_training_panel.cpp` | Real-time training metrics display |
+| Server Node | `src/job_execution_service.cpp` | P2P service, training execution, multi-job loop |
+| Server Node | `src/remote_data_loader.cpp` | Lazy dataset loading from Engine |
+| Central Server | `src/api/grpc/reservation_service.rs` | Reservation and payment management |
+| Proto | `proto/execution.proto` | P2P training messages (JobConfig, TrainingUpdate) |
+| Proto | `proto/reservation.proto` | Reservation RPCs |
+
+### Training Controls (P2P Direct - No Central Server)
+
+| Command | Engine Method | Server Node Behavior |
+|---------|--------------|---------------------|
+| Pause | `P2PClient::PauseTraining()` | Sets `is_paused` flag, training loop waits |
+| Resume | `P2PClient::ResumeTraining()` | Clears `is_paused` flag, training continues |
+| Stop | `P2PClient::StopTraining()` | Sets `should_stop` flag, exits training loop |
+| New Job | `P2PClient::SendNewJobConfig()` | Updates config, restarts training loop |
+
+### Validation (Server Node)
+
+Only minimal validation - user paid for time, can use it freely:
+- `MIN_EPOCHS_PER_JOB = 1` - Reject obviously invalid configs (0 epochs)
+- No max job limit - unlimited jobs within reservation time
+
+### Payment Flow
+
+1. **Reservation**: User pays upfront, funds held in escrow
+2. **Training**: Multiple jobs can run, no per-job cost
+3. **Completion**: When timer expires, full payment released to node (90% node, 10% platform)
+4. **Early disconnect**: User still pays full amount (reserved the time slot)
+5. **Node failure**: Full refund to user, reputation penalty to node
+
+### Disconnect vs Release (HOTEL ROOM Model)
+
+**CRITICAL**: There are TWO ways to end a P2P connection:
+
+| Action | Behavior | Reservation | Can Reconnect? |
+|--------|----------|-------------|----------------|
+| **Disconnect** | Closes P2P stream, keeps reservation | Still active | YES - within reservation time |
+| **Release** | Ends reservation, triggers payment | Ended | NO - must create new reservation |
+
+**HOTEL ROOM Analogy**: Like a hotel room:
+- **Disconnect** = Leave room temporarily (still have the key, can come back)
+- **Release** = Check out (room released to other guests)
+
+**Engine Disconnect/Reconnect Flow**:
+```
+1. User clicks "Disconnect" button
+   └─> p2p_client_->StopTrainingStream()  // Graceful close with WritesDone()
+   └─> p2p_client_->Disconnect()          // Reset local state
+   └─> Reservation still active!
+
+2. Server Node enters HOTEL ROOM mode:
+   └─> session->engine_connected = false
+   └─> Keeps session alive, waits for reconnect OR timer expiry
+
+3. User clicks "Connect to Node" (within reservation time)
+   └─> ConnectToReservedNode() uses same auth_token
+   └─> Server Node accepts (token still valid)
+   └─> User can continue training
+```
+
+**Engine Release Flow**:
+```
+1. User clicks "Release" button
+   └─> CancelDownloadAndWait()            // Stop any model download
+   └─> StopMonitoring()                   // Stop training panel
+   └─> SendReservationEnd()               // Tell Server Node reservation is ending
+   └─> StopTrainingStream()
+   └─> NotifyDisconnect("user_release")   // Tell Server Node to cleanup
+   └─> ReleaseReservation()               // Tell Central Server to release payment
+   └─> Disconnect()
+   └─> Clear reservation state (has_active_reservation_ = false)
+```
+
+### Critical Implementation Notes
+
+**DO NOT use `TryCancel()` in `StopTrainingStream()`!**
+
+```cpp
+// WRONG - breaks disconnect/reconnect flow:
+if (stream_context_) {
+    stream_context_->TryCancel();  // Forces CANCELLED status
+}
+
+// CORRECT - graceful close:
+if (stream_) {
+    stream_->WritesDone();  // Server closes its side gracefully
+}
+```
+
+`TryCancel()` sends CANCELLED status which triggers HOTEL ROOM mode on Server Node, causing auth token validation to fail on reconnect.
+
+**Stream Cleanup Order**:
+1. Set `streaming_ = false`
+2. Call `stream_->WritesDone()` (NOT `TryCancel()`)
+3. Wait for streaming thread to finish (`join()`)
+4. Reset stream and context
 
 ## Build System
 
@@ -614,16 +793,17 @@ High-priority tasks marked with `// TODO:` throughout codebase:
 
 1. ~~**ImNodes Integration**~~ - Visual node editor (DONE - full pipeline builder with code generation)
 2. ~~**ImPlot Integration**~~ - Real-time training plots (DONE - PlotWindow implemented)
-3. ~~**Training Controls**~~ - Start training with real-time feedback (DONE - Pause/Stop TODO)
-4. **btop Integration** - Server Node monitoring TUI
-5. **gRPC Services** - Full implementation of all services
-6. **Job Execution** - Complete job executor in Server Node
-7. **Blockchain Integration** - Solana payment processor
-8. **Authentication** - JWT tokens for gRPC (UI ready, API integration TODO)
-9. **Docker Support** - Containerized job execution
-10. **Model Marketplace** - NFT-based model sharing
-11. **Federated Learning** - Privacy-preserving training
-12. **Import/Export** - ONNX, PyTorch, TensorFlow model formats
+3. ~~**Training Controls**~~ - Start/Pause/Resume/Stop training (DONE - full P2P implementation)
+4. ~~**P2P Training**~~ - Direct Engine↔Node communication (DONE - bidirectional streaming)
+5. ~~**Multi-Job Training**~~ - Multiple jobs per reservation (DONE - unlimited jobs within reserved time)
+6. ~~**Job Execution**~~ - Complete job executor in Server Node (DONE - real training with RemoteDataLoader)
+7. ~~**Authentication**~~ - JWT tokens for gRPC (DONE - P2P auth tokens implemented)
+8. **btop Integration** - Server Node monitoring TUI
+9. **Blockchain Integration** - Solana payment processor (escrow/payment release)
+10. **Docker Support** - Containerized job execution
+11. **Model Marketplace** - NFT-based model sharing
+12. **Federated Learning** - Privacy-preserving training
+13. **Import/Export** - ONNX, PyTorch, TensorFlow model formats
 
 ## Quick Reference
 

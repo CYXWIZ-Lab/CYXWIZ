@@ -162,6 +162,40 @@ grpc::Status JobExecutionServiceImpl::ConnectToNode(
     return grpc::Status::OK;
 }
 
+grpc::Status JobExecutionServiceImpl::DisconnectFromNode(
+    grpc::ServerContext* context,
+    const cyxwiz::protocol::DisconnectRequest* request,
+    cyxwiz::protocol::DisconnectResponse* response) {
+
+    std::string peer = context->peer();
+    spdlog::info("========================================");
+    spdlog::info("[P2P WORKFLOW] Engine disconnecting");
+    spdlog::info("  Peer: {}", peer);
+    spdlog::info("  Reason: {}", request->reason().empty() ? "not specified" : request->reason());
+    spdlog::info("========================================");
+
+    // Clean up any jobs from this engine
+    CleanupJobsFromEngine(peer);
+
+    // Remove connection tracking
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto it = connections_.find(peer);
+        if (it != connections_.end()) {
+            spdlog::info("[DISCONNECT] Removed connection for peer: {}", peer);
+            connections_.erase(it);
+        } else {
+            spdlog::debug("[DISCONNECT] No connection found for peer: {}", peer);
+        }
+    }
+
+    response->set_status(cyxwiz::protocol::STATUS_SUCCESS);
+    response->set_message("Disconnected successfully");
+
+    spdlog::info("[P2P WORKFLOW] Engine disconnected - Node ready for new connections");
+    return grpc::Status::OK;
+}
+
 grpc::Status JobExecutionServiceImpl::SendJob(
     grpc::ServerContext* context,
     const cyxwiz::protocol::SendJobRequest* request,

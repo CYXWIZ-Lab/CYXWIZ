@@ -85,6 +85,7 @@ public:
                       const std::string& engine_version = "CyxWiz-Engine/1.0.0");
 
     void Disconnect();
+    bool NotifyDisconnect(const std::string& reason = "");  // Notify server before disconnect
     bool IsConnected() const { return connected_; }
 
     // Get node information
@@ -181,6 +182,7 @@ private:
     std::shared_ptr<grpc::ClientReaderWriter<cyxwiz::protocol::TrainingCommand,
                                              cyxwiz::protocol::TrainingUpdate>> stream_;
     std::thread streaming_thread_;
+    std::atomic<bool> streaming_thread_done_{true};  // Set when thread exits
     mutable std::mutex stream_mutex_;  // Protects stream_ access for thread safety
 
     // Event callbacks

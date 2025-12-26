@@ -118,6 +118,36 @@ void P2PClient::Disconnect() {
     spdlog::debug("P2PClient: Disconnected");
 }
 
+bool P2PClient::NotifyDisconnect(const std::string& reason) {
+    if (!connected_ || !stub_) {
+        spdlog::debug("P2PClient: Not connected, skipping disconnect notification");
+        return false;
+    }
+
+    spdlog::info("P2PClient: Notifying server of disconnect (reason: {})",
+                 reason.empty() ? "user_release" : reason);
+
+    grpc::ClientContext context;
+    AddAuthMetadata(context);
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+
+    cyxwiz::protocol::DisconnectRequest request;
+    request.set_reason(reason.empty() ? "user_release" : reason);
+
+    cyxwiz::protocol::DisconnectResponse response;
+    grpc::Status status = stub_->DisconnectFromNode(&context, request, &response);
+
+    if (!status.ok()) {
+        spdlog::warn("P2PClient: Failed to notify server of disconnect: {}",
+                     status.error_message());
+        // Don't fail - we're disconnecting anyway
+        return false;
+    }
+
+    spdlog::info("P2PClient: Server acknowledged disconnect: {}", response.message());
+    return true;
+}
+
 bool P2PClient::SendJob(const cyxwiz::protocol::JobConfig& config,
                        const std::string& initial_dataset) {
     if (!connected_) {
@@ -231,6 +261,7 @@ bool P2PClient::StartTrainingStream(const std::string& job_id) {
     stream_context_.reset();
 
     streaming_ = true;
+    streaming_thread_done_ = false;  // Will be set to true when thread exits
     current_job_id_ = job_id;
     waiting_for_new_job_ = false;
 
@@ -250,7 +281,7 @@ void P2PClient::StopTrainingStream() {
     // Set streaming to false first to stop any pending operations
     streaming_ = false;
 
-    // Close the stream under lock
+    // Close the write side gracefully with WritesDone()
     {
         std::lock_guard<std::mutex> lock(stream_mutex_);
         if (stream_) {
@@ -258,12 +289,38 @@ void P2PClient::StopTrainingStream() {
         }
     }
 
-    // Wait for streaming thread to finish (must be outside lock to avoid deadlock)
+    // Wait for streaming thread to finish
     if (streaming_thread_.joinable()) {
-        streaming_thread_.join();
+        spdlog::debug("P2PClient: Waiting for streaming thread (max 1 second)...");
+
+        // Wait up to 1 second for graceful close
+        auto start = std::chrono::steady_clock::now();
+        const auto timeout = std::chrono::seconds(1);
+
+        while (!streaming_thread_done_) {
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed >= timeout) {
+                spdlog::debug("P2PClient: Timeout waiting for stream, using TryCancel...");
+                // Use TryCancel to unblock the Read()
+                {
+                    std::lock_guard<std::mutex> lock(stream_mutex_);
+                    if (stream_context_) {
+                        stream_context_->TryCancel();
+                    }
+                }
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+
+        // Now join should complete
+        if (streaming_thread_.joinable()) {
+            streaming_thread_.join();
+        }
+        spdlog::debug("P2PClient: Streaming thread finished");
     }
 
-    // Reset under lock
+    // Reset stream state
     {
         std::lock_guard<std::mutex> lock(stream_mutex_);
         stream_.reset();
@@ -289,6 +346,7 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
     if (!stream_) {
         spdlog::error("P2PClient: Failed to create training stream");
         streaming_ = false;
+        streaming_thread_done_ = true;
         if (error_callback_) {
             error_callback_("Failed to create training stream", true);
         }
@@ -391,21 +449,35 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
     }
 
     // Stream reading loop exited
-    spdlog::warn("P2PClient: Stream reading loop exited! streaming_={}", streaming_.load());
+    spdlog::debug("P2PClient: Stream reading loop exited, streaming_={}", streaming_.load());
 
-    // Finish the stream
+    // Finish the stream (get final status)
+    // Note: stream_ should still be valid here since StopTrainingStream() waits for this thread
+    if (!stream_) {
+        spdlog::warn("P2PClient: Stream was null when trying to finish");
+        streaming_ = false;
+        streaming_thread_done_ = true;
+        return;
+    }
     grpc::Status status = stream_->Finish();
     if (!status.ok()) {
-        spdlog::error("P2PClient: Stream ended with error: {}", status.error_message());
-        if (error_callback_) {
-            error_callback_("Stream error: " + status.error_message(), true);
+        // CANCELLED is expected when we intentionally stop the stream
+        if (status.error_code() == grpc::StatusCode::CANCELLED) {
+            spdlog::debug("P2PClient: Stream was cancelled (expected during disconnect)");
+        } else {
+            spdlog::error("P2PClient: Stream ended with error: {}", status.error_message());
+            // Only report error if streaming wasn't intentionally stopped
+            if (streaming_ && error_callback_) {
+                error_callback_("Stream error: " + status.error_message(), true);
+            }
         }
     } else {
         spdlog::info("P2PClient: Stream finished successfully");
     }
 
     streaming_ = false;
-    spdlog::info("P2PClient: Streaming thread finished, streaming_ set to false");
+    streaming_thread_done_ = true;  // Signal that thread has exited
+    spdlog::debug("P2PClient: Streaming thread finished");
 }
 
 bool P2PClient::SendTrainingCommand(const cyxwiz::protocol::TrainingCommand& command) {
