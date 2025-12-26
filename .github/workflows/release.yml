@@ -24,7 +24,7 @@ jobs:
       - name: Install ArrayFire
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri https://arrayfire.s3.amazonaws.com/3.9.0/ArrayFire-v3.9.0_Windows_x86_64.exe -OutFile af.exe
+          Invoke-WebRequest -Uri https://arrayfire.gateway.scarf.sh/windows/3.10.0/ArrayFire.exe -OutFile af.exe
           Start-Process -FilePath af.exe -ArgumentList /S -Wait
 
       - name: Configure
@@ -60,12 +60,18 @@ jobs:
 
       - name: Install ArrayFire
         run: |
-          wget -q https://arrayfire.s3.amazonaws.com/3.9.0/ArrayFire-v3.9.0-Linux-x86_64.sh
-          chmod +x ArrayFire-v3.9.0-Linux-x86_64.sh
-          sudo ./ArrayFire-v3.9.0-Linux-x86_64.sh --prefix=/opt/arrayfire --skip-license
+          wget -q https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh -O ArrayFire.sh
+          chmod +x ArrayFire.sh
+          sudo ./ArrayFire.sh --prefix=/opt/arrayfire --skip-license
+          ls -la /opt/arrayfire/
+          ls -la /opt/arrayfire/lib64/ || ls -la /opt/arrayfire/lib/ || true
+          find /opt/arrayfire -name "ArrayFireConfig.cmake" 2>/dev/null || true
 
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DCYXWIZ_BUILD_ENGINE=ON -DCYXWIZ_BUILD_SERVER_NODE=ON -DCYXWIZ_BUILD_TESTS=OFF -DCYXWIZ_ENABLE_PYTHON=OFF -DArrayFire_DIR=/opt/arrayfire/share/ArrayFire/cmake
+        run: |
+          AF_DIR=$(find /opt/arrayfire -name "ArrayFireConfig.cmake" -exec dirname {} \; | head -1)
+          echo "Found ArrayFire at: $AF_DIR"
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DCYXWIZ_BUILD_ENGINE=ON -DCYXWIZ_BUILD_SERVER_NODE=ON -DCYXWIZ_BUILD_TESTS=OFF -DCYXWIZ_ENABLE_PYTHON=OFF -DArrayFire_DIR="$AF_DIR"
 
       - run: cmake --build build --parallel
 
