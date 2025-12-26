@@ -28,7 +28,8 @@ jobs:
           Start-Process -FilePath af.exe -ArgumentList /S -Wait
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DCYXWIZ_BUILD_ENGINE=ON -DCYXWIZ_BUILD_SERVER_NODE=ON -DCYXWIZ_BUILD_TESTS=OFF -DCYXWIZ_ENABLE_PYTHON=OFF
+        shell: pwsh
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DCYXWIZ_BUILD_ENGINE=ON -DCYXWIZ_BUILD_SERVER_NODE=ON -DCYXWIZ_BUILD_TESTS=OFF -DCYXWIZ_ENABLE_PYTHON=OFF
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -62,16 +63,17 @@ jobs:
         run: |
           wget -q https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh -O ArrayFire.sh
           chmod +x ArrayFire.sh
-          sudo ./ArrayFire.sh --prefix=/opt/arrayfire --skip-license
-          ls -la /opt/arrayfire/
-          ls -la /opt/arrayfire/lib64/ || ls -la /opt/arrayfire/lib/ || true
-          find /opt/arrayfire -name "ArrayFireConfig.cmake" 2>/dev/null || true
+          echo "Installing ArrayFire..."
+          yes | sudo ./ArrayFire.sh --prefix=/opt/arrayfire || true
+          echo "ArrayFire contents:"
+          ls -la /opt/arrayfire/ || echo "Directory not found"
+          find /opt/arrayfire -name "ArrayFireConfig.cmake" 2>/dev/null || echo "Config not found"
 
       - name: Configure
         run: |
-          AF_DIR=$(find /opt/arrayfire -name "ArrayFireConfig.cmake" -exec dirname {} \; | head -1)
+          AF_DIR=$(find /opt/arrayfire -name "ArrayFireConfig.cmake" -exec dirname {} \; 2>/dev/null | head -1)
           echo "Found ArrayFire at: $AF_DIR"
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DCYXWIZ_BUILD_ENGINE=ON -DCYXWIZ_BUILD_SERVER_NODE=ON -DCYXWIZ_BUILD_TESTS=OFF -DCYXWIZ_ENABLE_PYTHON=OFF -DArrayFire_DIR="$AF_DIR"
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DCYXWIZ_BUILD_ENGINE=ON -DCYXWIZ_BUILD_SERVER_NODE=ON -DCYXWIZ_BUILD_TESTS=OFF -DCYXWIZ_ENABLE_PYTHON=OFF ${AF_DIR:+-DArrayFire_DIR="$AF_DIR"}
 
       - run: cmake --build build --parallel
 
@@ -101,7 +103,7 @@ jobs:
           doNotCache: true
 
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DCYXWIZ_BUILD_ENGINE=ON -DCYXWIZ_BUILD_SERVER_NODE=ON -DCYXWIZ_BUILD_TESTS=OFF -DCYXWIZ_ENABLE_PYTHON=OFF
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DCYXWIZ_BUILD_ENGINE=ON -DCYXWIZ_BUILD_SERVER_NODE=ON -DCYXWIZ_BUILD_TESTS=OFF -DCYXWIZ_ENABLE_PYTHON=OFF
 
       - run: cmake --build build --parallel
 
