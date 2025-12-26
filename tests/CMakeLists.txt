@@ -7,6 +7,7 @@ add_executable(cyxwiz-tests
     unit/test_tensor.cpp
     unit/test_device.cpp
     unit/test_optimizer.cpp
+    unit/test_sequence_layers.cpp
 )
 
 target_link_libraries(cyxwiz-tests PRIVATE

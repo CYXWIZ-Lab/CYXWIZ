@@ -45,6 +45,9 @@
 // Data transformation (GPU-accelerated)
 #include "data_transform.h"
 
+// Data loading and batching (MNIST, etc.)
+#include "dataloader.h"
+
 // Model evaluation metrics (GPU-accelerated)
 #include "model_evaluation.h"
 

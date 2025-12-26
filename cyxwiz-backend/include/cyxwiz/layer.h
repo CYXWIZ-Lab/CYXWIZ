@@ -262,4 +262,278 @@ private:
     Tensor mask_;  // Dropout mask for backward pass
 };
 
+// ============================================================================
+// LSTM Layer - Long Short-Term Memory using ArrayFire
+// ============================================================================
+
+class CYXWIZ_API LSTMLayer : public Layer {
+public:
+    /**
+     * Create an LSTM layer
+     * @param input_size Number of input features
+     * @param hidden_size Number of hidden units
+     * @param num_layers Number of stacked LSTM layers (default: 1)
+     * @param batch_first If true, input shape is [batch, seq, features] (default: true)
+     * @param bidirectional If true, use bidirectional LSTM (default: false)
+     * @param dropout Dropout probability between layers (default: 0.0)
+     */
+    LSTMLayer(int input_size, int hidden_size, int num_layers = 1,
+              bool batch_first = true, bool bidirectional = false,
+              float dropout = 0.0f);
+
+    /**
+     * Forward pass
+     * @param input Input tensor [batch, seq_len, input_size] if batch_first
+     *              or [seq_len, batch, input_size] otherwise
+     * @return Output tensor [batch, seq_len, hidden_size * num_directions]
+     *
+     * Also updates internal hidden and cell states
+     */
+    Tensor Forward(const Tensor& input) override;
+
+    /**
+     * Backward pass (Backpropagation Through Time)
+     * @param grad_output Gradient from next layer
+     * @return Gradient w.r.t input
+     */
+    Tensor Backward(const Tensor& grad_output) override;
+
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "LSTM"; }
+
+    /**
+     * Reset hidden and cell states to zeros
+     * Call this at the start of each sequence/batch
+     */
+    void ResetState();
+
+    /**
+     * Set initial hidden state
+     * @param h0 Initial hidden state [num_layers * num_directions, batch, hidden_size]
+     */
+    void SetHiddenState(const Tensor& h0);
+
+    /**
+     * Set initial cell state
+     * @param c0 Initial cell state [num_layers * num_directions, batch, hidden_size]
+     */
+    void SetCellState(const Tensor& c0);
+
+    /**
+     * Get current hidden state
+     */
+    Tensor GetHiddenState() const { return h_n_; }
+
+    /**
+     * Get current cell state
+     */
+    Tensor GetCellState() const { return c_n_; }
+
+    // Accessors
+    int GetInputSize() const { return input_size_; }
+    int GetHiddenSize() const { return hidden_size_; }
+    int GetNumLayers() const { return num_layers_; }
+    bool IsBatchFirst() const { return batch_first_; }
+    bool IsBidirectional() const { return bidirectional_; }
+    int GetNumDirections() const { return bidirectional_ ? 2 : 1; }
+
+private:
+    int input_size_;
+    int hidden_size_;
+    int num_layers_;
+    bool batch_first_;
+    bool bidirectional_;
+    float dropout_;
+
+    // Combined weight matrices for efficiency
+    // W_ih: [4 * hidden_size, input_size] - input to hidden weights
+    // W_hh: [4 * hidden_size, hidden_size] - hidden to hidden weights
+    // b_ih: [4 * hidden_size] - input to hidden bias
+    // b_hh: [4 * hidden_size] - hidden to hidden bias
+    // Order: [input_gate, forget_gate, cell_gate, output_gate]
+    std::vector<Tensor> W_ih_;  // Per layer
+    std::vector<Tensor> W_hh_;  // Per layer
+    std::vector<Tensor> b_ih_;  // Per layer
+    std::vector<Tensor> b_hh_;  // Per layer
+
+    // Reverse direction weights (for bidirectional)
+    std::vector<Tensor> W_ih_reverse_;
+    std::vector<Tensor> W_hh_reverse_;
+    std::vector<Tensor> b_ih_reverse_;
+    std::vector<Tensor> b_hh_reverse_;
+
+    // Gradient accumulators
+    std::vector<Tensor> grad_W_ih_;
+    std::vector<Tensor> grad_W_hh_;
+    std::vector<Tensor> grad_b_ih_;
+    std::vector<Tensor> grad_b_hh_;
+    std::vector<Tensor> grad_W_ih_reverse_;
+    std::vector<Tensor> grad_W_hh_reverse_;
+    std::vector<Tensor> grad_b_ih_reverse_;
+    std::vector<Tensor> grad_b_hh_reverse_;
+
+    // Hidden and cell states
+    Tensor h_n_;  // Final hidden state
+    Tensor c_n_;  // Final cell state
+
+    // Cached values for backward pass
+    std::vector<Tensor> cached_inputs_;      // Input at each layer
+    std::vector<Tensor> cached_gates_;       // Gate activations [i, f, g, o]
+    std::vector<Tensor> cached_cell_states_; // Cell states over time
+    std::vector<Tensor> cached_hidden_states_; // Hidden states over time
+
+    // Initialize weights using Xavier initialization
+    void InitializeWeights();
+};
+
+// ============================================================================
+// Embedding Layer - Lookup table for token embeddings
+// ============================================================================
+
+class CYXWIZ_API EmbeddingLayer : public Layer {
+public:
+    /**
+     * Create an embedding layer (lookup table)
+     * @param num_embeddings Size of the vocabulary (number of unique tokens)
+     * @param embedding_dim Dimension of each embedding vector
+     * @param padding_idx If specified, embeddings at this index are always zero (default: -1 = none)
+     * @param max_norm If > 0, embeddings are normalized to this max norm (default: 0 = disabled)
+     */
+    EmbeddingLayer(int num_embeddings, int embedding_dim,
+                   int padding_idx = -1, float max_norm = 0.0f);
+
+    /**
+     * Forward pass - lookup embeddings for input indices
+     * @param input Integer tensor of indices [batch, seq_len] or [seq_len]
+     * @return Embedding tensor [batch, seq_len, embedding_dim] or [seq_len, embedding_dim]
+     */
+    Tensor Forward(const Tensor& input) override;
+
+    /**
+     * Backward pass - accumulate gradients for used embeddings
+     * @param grad_output Gradient from next layer [batch, seq_len, embedding_dim]
+     * @return Empty tensor (no gradient w.r.t. integer indices)
+     */
+    Tensor Backward(const Tensor& grad_output) override;
+
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "Embedding"; }
+
+    /**
+     * Get embedding for a specific index
+     * @param index Token index
+     * @return Embedding vector [embedding_dim]
+     */
+    Tensor GetEmbedding(int index) const;
+
+    /**
+     * Set embedding for a specific index
+     * @param index Token index
+     * @param embedding Embedding vector [embedding_dim]
+     */
+    void SetEmbedding(int index, const Tensor& embedding);
+
+    /**
+     * Initialize embeddings from pretrained weights
+     * @param weights Weight matrix [num_embeddings, embedding_dim]
+     * @param freeze If true, embeddings won't be updated during training
+     */
+    void LoadPretrainedWeights(const Tensor& weights, bool freeze = false);
+
+    // Accessors
+    int GetNumEmbeddings() const { return num_embeddings_; }
+    int GetEmbeddingDim() const { return embedding_dim_; }
+    int GetPaddingIdx() const { return padding_idx_; }
+    bool IsFrozen() const { return frozen_; }
+    void SetFrozen(bool frozen) { frozen_ = frozen; }
+
+private:
+    int num_embeddings_;
+    int embedding_dim_;
+    int padding_idx_;
+    float max_norm_;
+    bool frozen_ = false;
+
+    Tensor weight_;       // [num_embeddings, embedding_dim]
+    Tensor grad_weight_;  // Gradient accumulator
+
+    // Cached input indices for backward pass
+    Tensor cached_indices_;
+
+    void InitializeWeights();
+    void NormalizeEmbeddings();
+};
+
+// ============================================================================
+// GRU Layer - Gated Recurrent Unit using ArrayFire
+// ============================================================================
+
+class CYXWIZ_API GRULayer : public Layer {
+public:
+    /**
+     * Create a GRU layer
+     * @param input_size Number of input features
+     * @param hidden_size Number of hidden units
+     * @param num_layers Number of stacked GRU layers (default: 1)
+     * @param batch_first If true, input shape is [batch, seq, features] (default: true)
+     * @param bidirectional If true, use bidirectional GRU (default: false)
+     * @param dropout Dropout probability between layers (default: 0.0)
+     */
+    GRULayer(int input_size, int hidden_size, int num_layers = 1,
+             bool batch_first = true, bool bidirectional = false,
+             float dropout = 0.0f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "GRU"; }
+
+    void ResetState();
+    void SetHiddenState(const Tensor& h0);
+    Tensor GetHiddenState() const { return h_n_; }
+
+    int GetInputSize() const { return input_size_; }
+    int GetHiddenSize() const { return hidden_size_; }
+    int GetNumLayers() const { return num_layers_; }
+    bool IsBatchFirst() const { return batch_first_; }
+    bool IsBidirectional() const { return bidirectional_; }
+
+private:
+    int input_size_;
+    int hidden_size_;
+    int num_layers_;
+    bool batch_first_;
+    bool bidirectional_;
+    float dropout_;
+
+    // Combined weight matrices [reset_gate, update_gate, new_gate]
+    std::vector<Tensor> W_ih_;  // [3 * hidden_size, input_size]
+    std::vector<Tensor> W_hh_;  // [3 * hidden_size, hidden_size]
+    std::vector<Tensor> b_ih_;  // [3 * hidden_size]
+    std::vector<Tensor> b_hh_;  // [3 * hidden_size]
+
+    std::vector<Tensor> W_ih_reverse_;
+    std::vector<Tensor> W_hh_reverse_;
+    std::vector<Tensor> b_ih_reverse_;
+    std::vector<Tensor> b_hh_reverse_;
+
+    // Gradients
+    std::vector<Tensor> grad_W_ih_;
+    std::vector<Tensor> grad_W_hh_;
+    std::vector<Tensor> grad_b_ih_;
+    std::vector<Tensor> grad_b_hh_;
+
+    Tensor h_n_;
+
+    // Cached for backward
+    std::vector<Tensor> cached_inputs_;
+    std::vector<Tensor> cached_gates_;
+    std::vector<Tensor> cached_hidden_states_;
+
+    void InitializeWeights();
+};
+
 } // namespace cyxwiz
