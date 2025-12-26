@@ -42,10 +42,8 @@ cmake_install.cmake
 imgui.ini
 
 # Dependencies
+vcpkg/
 vcpkg_installed/
-vcpkg/buildtrees/
-vcpkg/downloads/
-vcpkg/packages/
 third_party/*/
 
 # External pre-built libraries (download via scripts/setup-*.ps1 or .sh)
