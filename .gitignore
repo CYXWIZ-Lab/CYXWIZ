@@ -123,8 +123,8 @@ ENGINE_*.md
 GUI_*.md
 WALLET_*.md
 
-# External dependencies (git repos)
-cyxwiz-engine/external/imnodes/
+# External dependencies (vendored - now included in repo)
+# cyxwiz-engine/external/imnodes/  # Included for CI builds
 
 # Central Server (Rust project - separate repo)
 cyxwiz-central-server/
