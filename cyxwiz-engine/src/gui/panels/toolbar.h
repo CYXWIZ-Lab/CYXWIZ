@@ -9,6 +9,12 @@
 #include <memory>
 #include <future>
 
+// Forward declarations to avoid including device.h (which pulls in CUDA/OpenCL headers)
+namespace cyxwiz {
+    enum class DeviceType;
+    struct DeviceInfo;
+}
+
 namespace cyxwiz {
 
 // Tool entry for command palette search
@@ -245,6 +251,9 @@ public:
     void SetEditorShowWhitespace(bool show) { editor_show_whitespace_ = show; }
     void SetEditorWordWrap(bool wrap) { editor_word_wrap_ = wrap; }
     void SetEditorAutoIndent(bool indent) { editor_auto_indent_ = indent; }
+
+    // Compute device selection callback
+    void SetComputeDeviceChangedCallback(std::function<void(DeviceType, int)> cb) { compute_device_changed_callback_ = cb; }
 
     // Access to created plot windows
     const std::vector<std::shared_ptr<PlotWindow>>& GetPlotWindows() const { return plot_windows_; }
@@ -595,6 +604,11 @@ private:
     int files_line_ending_ = 0;  // 0 = Auto, 1 = LF, 2 = CRLF
     bool files_trim_trailing_whitespace_ = false;
     bool files_insert_final_newline_ = true;
+// Performance/Compute preferences
+    int compute_device_index_ = 0;
+    std::vector<cyxwiz::DeviceInfo> compute_devices_;
+    bool compute_devices_initialized_ = false;
+    std::function<void(cyxwiz::DeviceType, int)> compute_device_changed_callback_;
 
     // Command Palette state
     bool show_command_palette_ = false;

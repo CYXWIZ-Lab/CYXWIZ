@@ -3,6 +3,7 @@
 #include "../theme.h"
 #include "../../auth/auth_client.h"
 #include "../../core/file_dialogs.h"
+#include "cyxwiz/device.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -2116,6 +2117,175 @@ void ToolbarPanel::Render() {
                     if (ImGui::Button("Reset to Defaults")) {
                         shortcuts_.clear();  // Will be re-initialized on next open
                     }
+
+                    ImGui::EndTabItem();
+                }
+
+                // ========== Device/Compute Tab ==========
+                if (ImGui::BeginTabItem(ICON_FA_MICROCHIP " Device")) {
+                    preferences_tab_ = 6;
+                    ImGui::Spacing();
+
+                    // Initialize device list if not already done
+                    if (!compute_devices_initialized_) {
+                        compute_devices_ = Device::GetAvailableDevices();
+                        compute_devices_initialized_ = true;
+                        spdlog::info("Found {} compute devices", compute_devices_.size());
+
+                        // Default to first CUDA device if available, otherwise first GPU
+                        compute_device_index_ = 0;  // Start with CPU
+                        for (int i = 0; i < static_cast<int>(compute_devices_.size()); ++i) {
+                            if (compute_devices_[i].type == DeviceType::CUDA) {
+                                compute_device_index_ = i;
+                                break;  // Prefer CUDA
+                            } else if (compute_devices_[i].type == DeviceType::OPENCL && compute_device_index_ == 0) {
+                                compute_device_index_ = i;  // Use OpenCL if no CUDA found yet
+                            }
+                        }
+
+                        // Set the default device active
+                        if (compute_device_index_ < static_cast<int>(compute_devices_.size())) {
+                            const auto& default_device = compute_devices_[compute_device_index_];
+                            if (compute_device_changed_callback_) {
+                                compute_device_changed_callback_(default_device.type, default_device.device_id);
+                            }
+                            spdlog::info("Default compute device set to: {} (index {})",
+                                default_device.name, compute_device_index_);
+                        }
+                    }
+
+                    ImGui::Text("Compute Device Selection");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::TextWrapped("Select the device to use for local training. GPU devices provide significantly faster training for large models.");
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+
+                    // Device list
+                    ImGui::Text("Available Devices:");
+                    ImGui::Spacing();
+
+                    if (ImGui::BeginChild("DeviceList", ImVec2(0, 280), true)) {
+                        for (int i = 0; i < static_cast<int>(compute_devices_.size()); ++i) {
+                            const auto& device = compute_devices_[i];
+
+                            // Determine device icon and type string
+                            const char* device_icon = ICON_FA_DESKTOP;
+                            const char* type_str = "CPU";
+                            ImVec4 type_color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);  // Gray for CPU
+
+                            switch (device.type) {
+                                case DeviceType::CUDA:
+                                    device_icon = ICON_FA_GPU_CARD;
+                                    type_str = "CUDA";
+                                    type_color = ImVec4(0.46f, 0.73f, 0.0f, 1.0f);  // NVIDIA green
+                                    break;
+                                case DeviceType::OPENCL:
+                                    device_icon = ICON_FA_GPU_CARD;
+                                    type_str = "OpenCL";
+                                    type_color = ImVec4(0.93f, 0.51f, 0.0f, 1.0f);  // Orange
+                                    break;
+                                case DeviceType::METAL:
+                                    device_icon = ICON_FA_GPU_CARD;
+                                    type_str = "Metal";
+                                    type_color = ImVec4(0.6f, 0.6f, 0.8f, 1.0f);  // Silver
+                                    break;
+                                case DeviceType::VULKAN:
+                                    device_icon = ICON_FA_GPU_CARD;
+                                    type_str = "Vulkan";
+                                    type_color = ImVec4(0.8f, 0.2f, 0.2f, 1.0f);  // Red
+                                    break;
+                                default:
+                                    break;
+                            }
+
+                            // Create selectable item
+                            ImGui::PushID(i);
+                            bool is_selected = (compute_device_index_ == i);
+
+                            // Draw selection background
+                            ImVec2 item_min = ImGui::GetCursorScreenPos();
+                            ImVec2 item_max = ImVec2(item_min.x + ImGui::GetContentRegionAvail().x, item_min.y + 60);
+
+                            if (is_selected) {
+                                ImGui::GetWindowDrawList()->AddRectFilled(
+                                    item_min, item_max,
+                                    ImGui::GetColorU32(ImGuiCol_Header),
+                                    4.0f);
+                            }
+
+                            // Make the whole area clickable
+                            ImGui::SetCursorScreenPos(item_min);
+                            if (ImGui::InvisibleButton("##device_select", ImVec2(item_max.x - item_min.x, 60))) {
+                                if (compute_device_index_ != i) {
+                                    compute_device_index_ = i;
+                                    if (compute_device_changed_callback_) {
+                                        compute_device_changed_callback_(device.type, device.device_id);
+                                    }
+                                    spdlog::info("Selected compute device: {} ({})", device.name, type_str);
+                                }
+                            }
+
+                            // Draw content
+                            ImGui::SetCursorScreenPos(ImVec2(item_min.x + 10, item_min.y + 5));
+
+                            // Icon and device name
+                            ImGui::PushStyleColor(ImGuiCol_Text, type_color);
+                            ImGui::Text("%s", device_icon);
+                            ImGui::PopStyleColor();
+                            ImGui::SameLine();
+                            ImGui::Text("%s", device.name.c_str());
+
+                            // Type badge
+                            ImGui::SameLine();
+                            ImGui::PushStyleColor(ImGuiCol_Text, type_color);
+                            ImGui::Text("[%s]", type_str);
+                            ImGui::PopStyleColor();
+
+                            // Selection indicator
+                            if (is_selected) {
+                                ImGui::SameLine();
+                                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), ICON_FA_CHECK);
+                            }
+
+                            // Memory info (second line)
+                            ImGui::SetCursorScreenPos(ImVec2(item_min.x + 30, item_min.y + 28));
+                            if (device.memory_total > 0) {
+                                float total_gb = device.memory_total / (1024.0f * 1024.0f * 1024.0f);
+                                float avail_gb = device.memory_available / (1024.0f * 1024.0f * 1024.0f);
+                                ImGui::TextDisabled("Memory: %.1f GB available / %.1f GB total", avail_gb, total_gb);
+                            } else if (device.type == DeviceType::CPU) {
+                                ImGui::TextDisabled("Uses system RAM");
+                            } else {
+                                ImGui::TextDisabled("Memory info not available");
+                            }
+
+                            // FP64/FP16 support info (third line)
+                            ImGui::SetCursorScreenPos(ImVec2(item_min.x + 30, item_min.y + 43));
+                            std::string features;
+                            if (device.supports_fp64) features += "FP64 ";
+                            if (device.supports_fp16) features += "FP16 ";
+                            if (!features.empty()) {
+                                ImGui::TextDisabled("Supports: %s", features.c_str());
+                            }
+
+                            ImGui::PopID();
+
+                            // Spacing between items
+                            ImGui::SetCursorScreenPos(ImVec2(item_min.x, item_max.y + 5));
+                        }
+                        ImGui::EndChild();
+                    }
+
+                    ImGui::Spacing();
+
+                    // Refresh button
+                    if (ImGui::Button(ICON_FA_ROTATE " Refresh Devices")) {
+                        compute_devices_initialized_ = false;
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Re-scan for available devices");
 
                     ImGui::EndTabItem();
                 }

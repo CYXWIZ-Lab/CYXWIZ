@@ -573,6 +573,24 @@ MainWindow::MainWindow()
         }
     });
 
+    // Set up Compute Device selection callback (Preferences -> Device tab)
+    toolbar_->SetComputeDeviceChangedCallback([](cyxwiz::DeviceType type, int device_id) {
+        // Create device and set it as active
+        cyxwiz::Device device(type, device_id);
+        device.SetActive();
+
+        // Log the change
+        const char* type_str = "Unknown";
+        switch (type) {
+            case cyxwiz::DeviceType::CPU: type_str = "CPU"; break;
+            case cyxwiz::DeviceType::CUDA: type_str = "CUDA"; break;
+            case cyxwiz::DeviceType::OPENCL: type_str = "OpenCL"; break;
+            case cyxwiz::DeviceType::METAL: type_str = "Metal"; break;
+            case cyxwiz::DeviceType::VULKAN: type_str = "Vulkan"; break;
+        }
+        spdlog::info("Compute device changed to {} device {}", type_str, device_id);
+    });
+
     // Set up Verbose Python Logging pointer (View menu - Developer Tools)
     if (scripting_engine_) {
         toolbar_->SetVerbosePythonLogPtr(scripting_engine_->GetVerboseLoggingPtr());

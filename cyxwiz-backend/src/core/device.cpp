@@ -85,65 +85,85 @@ DeviceInfo Device::GetInfo() const {
             info.memory_available = 0;
 #endif
         } else if (backend == AF_BACKEND_OPENCL) {
+            // For OpenCL, try to get memory info or estimate from device name
+            bool got_memory = false;
+
 #ifdef CYXWIZ_ENABLE_OPENCL
             // Use OpenCL API to get device memory
-            // ArrayFire stores device info that we can query directly
             try {
-                // Get the OpenCL device ID from ArrayFire's internal context
                 cl_device_id cl_device = afcl::getDeviceId();
+                if (cl_device != nullptr) {
+                    cl_ulong total_mem = 0;
+                    cl_int err = clGetDeviceInfo(cl_device, CL_DEVICE_GLOBAL_MEM_SIZE,
+                        sizeof(cl_ulong), &total_mem, nullptr);
 
-                cl_ulong total_mem = 0;
-                cl_int err = clGetDeviceInfo(cl_device, CL_DEVICE_GLOBAL_MEM_SIZE,
-                    sizeof(cl_ulong), &total_mem, nullptr);
+                    if (err == CL_SUCCESS && total_mem > 0) {
+                        size_t alloc_bytes, alloc_buffers, lock_bytes, lock_buffers;
+                        af::deviceMemInfo(&alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
 
-                if (err == CL_SUCCESS && total_mem > 0) {
-                    // OpenCL doesn't have a standard way to get available memory
-                    // We'll estimate it based on ArrayFire's memory manager
-                    size_t alloc_bytes, alloc_buffers, lock_bytes, lock_buffers;
-                    af::deviceMemInfo(&alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
+                        info.memory_total = total_mem;
+                        info.memory_available = total_mem - (alloc_bytes + lock_bytes);
+                        got_memory = true;
 
-                    info.memory_total = total_mem;
-                    // Estimate available as total minus what ArrayFire has allocated
-                    info.memory_available = total_mem - (alloc_bytes + lock_bytes);
-
-                    spdlog::debug("OpenCL device {}: {} GB total, ~{} GB available (AF allocated: {} MB)",
-                        device_id_,
-                        total_mem / (1024.0 * 1024.0 * 1024.0),
-                        info.memory_available / (1024.0 * 1024.0 * 1024.0),
-                        (alloc_bytes + lock_bytes) / (1024.0 * 1024.0));
+                        spdlog::info("OpenCL device {} memory: {:.2f} GB total, {:.2f} GB available",
+                            device_id_,
+                            total_mem / (1024.0 * 1024.0 * 1024.0),
+                            info.memory_available / (1024.0 * 1024.0 * 1024.0));
+                    } else {
+                        spdlog::warn("OpenCL clGetDeviceInfo failed with error: {}", err);
+                    }
                 } else {
-                    spdlog::warn("Failed to query OpenCL memory: clGetDeviceInfo returned error {}", err);
-                    info.memory_total = 0;
-                    info.memory_available = 0;
+                    spdlog::warn("OpenCL afcl::getDeviceId() returned null");
                 }
             } catch (const std::exception& e) {
-                spdlog::warn("Failed to query OpenCL memory: {}", e.what());
-                // Fallback: try to estimate from device name
-                // Many GPUs have standard memory sizes we can guess from
+                spdlog::warn("OpenCL memory query exception: {}", e.what());
+            }
+#endif
+            // Fallback: estimate memory from device name
+            if (!got_memory) {
                 std::string device_name = info.name;
-                info.memory_total = 0;
-                info.memory_available = 0;
 
-                // Try to extract memory size from device name (e.g., "GTX 1050 Ti 4GB")
-                if (device_name.find("1050") != std::string::npos) {
-                    info.memory_total = 4LL * 1024 * 1024 * 1024; // 4 GB
-                    info.memory_available = static_cast<size_t>(info.memory_total * 0.9); // Estimate 90% available
-                    spdlog::info("Using estimated memory for {}: {} GB", device_name,
-                        info.memory_total / (1024.0 * 1024.0 * 1024.0));
-                } else if (device_name.find("UHD") != std::string::npos ||
-                           device_name.find("Intel") != std::string::npos) {
-                    // Integrated Intel graphics typically share system RAM
-                    info.memory_total = 2LL * 1024 * 1024 * 1024; // 2 GB shared
+                // Intel integrated graphics
+                if (device_name.find("UHD") != std::string::npos ||
+                    device_name.find("Iris") != std::string::npos ||
+                    device_name.find("Intel(R) Graphics") != std::string::npos ||
+                    (device_name.find("Intel") != std::string::npos && device_name.find("Graphics") != std::string::npos)) {
+                    // Intel integrated GPUs share system RAM, typically allocate 2-8 GB
+                    info.memory_total = 4LL * 1024 * 1024 * 1024; // 4 GB shared estimate
                     info.memory_available = static_cast<size_t>(info.memory_total * 0.8);
-                    spdlog::info("Using estimated memory for {}: {} GB shared", device_name,
+                    spdlog::info("Estimated memory for Intel GPU '{}': {} GB shared", device_name,
                         info.memory_total / (1024.0 * 1024.0 * 1024.0));
                 }
+                // AMD integrated
+                else if (device_name.find("Radeon") != std::string::npos &&
+                         device_name.find("Vega") != std::string::npos) {
+                    info.memory_total = 2LL * 1024 * 1024 * 1024; // 2 GB shared
+                    info.memory_available = static_cast<size_t>(info.memory_total * 0.8);
+                }
+                // NVIDIA via OpenCL (shouldn't happen if CUDA is available)
+                else if (device_name.find("NVIDIA") != std::string::npos ||
+                         device_name.find("GeForce") != std::string::npos) {
+                    // Try to match common GPU models
+                    if (device_name.find("1050") != std::string::npos) {
+                        info.memory_total = 4LL * 1024 * 1024 * 1024;
+                    } else if (device_name.find("1060") != std::string::npos) {
+                        info.memory_total = 6LL * 1024 * 1024 * 1024;
+                    } else if (device_name.find("1070") != std::string::npos ||
+                               device_name.find("1080") != std::string::npos) {
+                        info.memory_total = 8LL * 1024 * 1024 * 1024;
+                    } else {
+                        info.memory_total = 4LL * 1024 * 1024 * 1024; // Default 4GB
+                    }
+                    info.memory_available = static_cast<size_t>(info.memory_total * 0.9);
+                }
+                else {
+                    // Unknown device, provide a reasonable estimate
+                    info.memory_total = 2LL * 1024 * 1024 * 1024;
+                    info.memory_available = static_cast<size_t>(info.memory_total * 0.8);
+                    spdlog::debug("Unknown OpenCL device '{}', using 2GB estimate", device_name);
+                }
             }
-#else
-            // OpenCL not available
-            info.memory_total = 0;
-            info.memory_available = 0;
-#endif
+
         } else {
             // Unknown backend, use ArrayFire's memory info as fallback
             size_t alloc_bytes, alloc_buffers, lock_bytes, lock_buffers;
@@ -174,8 +194,23 @@ DeviceInfo Device::GetInfo() const {
 
 void Device::SetActive() {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (type_ == DeviceType::CUDA || type_ == DeviceType::OPENCL) {
-        af::setDevice(device_id_);
+    try {
+        // Switch to the correct backend first
+        if (type_ == DeviceType::CUDA) {
+            af::setBackend(AF_BACKEND_CUDA);
+            af::setDevice(device_id_);
+            spdlog::info("Set active device: CUDA device {}", device_id_);
+        } else if (type_ == DeviceType::OPENCL) {
+            af::setBackend(AF_BACKEND_OPENCL);
+            af::setDevice(device_id_);
+            spdlog::info("Set active device: OpenCL device {}", device_id_);
+        } else if (type_ == DeviceType::CPU) {
+            af::setBackend(AF_BACKEND_CPU);
+            spdlog::info("Set active device: CPU");
+        }
+    } catch (const af::exception& e) {
+        spdlog::error("Failed to set active device: {}", e.what());
+        return;
     }
 #endif
     g_current_device = this;
@@ -188,46 +223,75 @@ bool Device::IsActive() const {
 std::vector<DeviceInfo> Device::GetAvailableDevices() {
     std::vector<DeviceInfo> devices;
 
-    // Always add CPU
+    // Always add CPU as first option
     Device cpu_device(DeviceType::CPU, 0);
     devices.push_back(cpu_device.GetInfo());
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        // Detect which backend ArrayFire is using
-        af::Backend backend = af::getActiveBackend();
-        DeviceType device_type = DeviceType::CPU;
+    // Save current backend to restore later
+    af::Backend original_backend = af::getActiveBackend();
+    int original_device = af::getDevice();
 
-        switch (backend) {
-            case AF_BACKEND_CUDA:
-                device_type = DeviceType::CUDA;
-                spdlog::debug("ArrayFire backend: CUDA");
-                break;
-            case AF_BACKEND_OPENCL:
-                device_type = DeviceType::OPENCL;
-                spdlog::debug("ArrayFire backend: OpenCL");
-                break;
-            case AF_BACKEND_CPU:
-                device_type = DeviceType::CPU;
-                spdlog::debug("ArrayFire backend: CPU");
-                break;
-            default:
-                spdlog::warn("Unknown ArrayFire backend: {}", static_cast<int>(backend));
-                device_type = DeviceType::CPU;
-                break;
+    // Get available backends bitmask
+    int available_backends = af::getAvailableBackends();
+    spdlog::debug("Available backends bitmask: {}", available_backends);
+
+    // Enumerate CUDA devices first (preferred)
+    if (available_backends & AF_BACKEND_CUDA) {
+        try {
+            af::setBackend(AF_BACKEND_CUDA);
+            int cuda_count = af::getDeviceCount();
+            spdlog::debug("Found {} CUDA device(s)", cuda_count);
+
+            for (int i = 0; i < cuda_count; i++) {
+                af::setDevice(i);
+                Device cuda_device(DeviceType::CUDA, i);
+                devices.push_back(cuda_device.GetInfo());
+            }
+        } catch (const af::exception& e) {
+            spdlog::warn("Failed to enumerate CUDA devices: {}", e.what());
         }
+    }
 
-        int device_count = af::getDeviceCount();
-        spdlog::debug("Enumerating {} device(s) with backend type: {}",
-            device_count, static_cast<int>(device_type));
+    // Enumerate OpenCL devices (includes Intel GPU, AMD GPU)
+    if (available_backends & AF_BACKEND_OPENCL) {
+        try {
+            af::setBackend(AF_BACKEND_OPENCL);
+            int opencl_count = af::getDeviceCount();
+            spdlog::debug("Found {} OpenCL device(s)", opencl_count);
 
-        for (int i = 0; i < device_count; i++) {
-            af::setDevice(i);
-            Device gpu_device(device_type, i);
-            devices.push_back(gpu_device.GetInfo());
+            for (int i = 0; i < opencl_count; i++) {
+                af::setDevice(i);
+                Device opencl_device(DeviceType::OPENCL, i);
+                DeviceInfo info = opencl_device.GetInfo();
+
+                // Skip if this is the same as a CUDA device (avoid duplicates)
+                bool is_duplicate = false;
+                for (const auto& existing : devices) {
+                    if (existing.type == DeviceType::CUDA &&
+                        info.name.find("NVIDIA") != std::string::npos) {
+                        is_duplicate = true;
+                        break;
+                    }
+                }
+
+                if (!is_duplicate) {
+                    devices.push_back(info);
+                }
+            }
+        } catch (const af::exception& e) {
+            spdlog::warn("Failed to enumerate OpenCL devices: {}", e.what());
+        }
+    }
+
+    // Restore original backend and device
+    try {
+        af::setBackend(original_backend);
+        if (af::getDeviceCount() > original_device) {
+            af::setDevice(original_device);
         }
     } catch (const af::exception& e) {
-        spdlog::warn("Failed to enumerate GPU devices: {}", e.what());
+        spdlog::warn("Failed to restore original backend: {}", e.what());
     }
 #endif
 

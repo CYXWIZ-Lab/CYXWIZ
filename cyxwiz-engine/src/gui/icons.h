@@ -170,6 +170,7 @@
 // ML/Training specific
 #define ICON_FA_BRAIN               "\xef\x97\x9c"  // U+F5DC
 #define ICON_FA_MICROCHIP           "\xef\x8b\x9b"  // U+F2DB
+#define ICON_FA_GPU_CARD            "\xef\x88\xb3"  // U+F233 (server icon used for GPU)
 #define ICON_FA_LAYER_GROUP         "\xef\x97\xbd"  // U+F5FD
 #define ICON_FA_SITEMAP             "\xef\x83\xa8"  // U+F0E8
 #define ICON_FA_SQUARE_ROOT_VARIABLE "\xef\x9a\x98" // U+F698
