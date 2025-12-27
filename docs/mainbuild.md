@@ -30,6 +30,31 @@ This guide provides detailed instructions for building the entire CyxWiz platfor
 - **Xcode** 14+ or Command Line Tools
 - **Homebrew** (recommended for dependencies)
 
+### ArrayFire (Required - All Platforms)
+
+ArrayFire is the GPU acceleration library used by CyxWiz. Install it **before** building.
+
+#### Windows
+1. Download from https://arrayfire.com/binaries
+2. Run the installer (default: `C:\Program Files\ArrayFire\v3`)
+3. Add to PATH: `C:\Program Files\ArrayFire\v3\lib`
+
+#### Linux
+```bash
+wget https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh
+chmod +x ArrayFire.sh
+sudo ./ArrayFire.sh --prefix=/opt/arrayfire --skip-license
+
+# Add to your shell profile (~/.bashrc or ~/.zshrc)
+export LD_LIBRARY_PATH=/opt/arrayfire/lib64:$LD_LIBRARY_PATH
+export ArrayFire_DIR=/opt/arrayfire/share/ArrayFire/cmake
+```
+
+#### macOS
+```bash
+brew install arrayfire
+```
+
 ---
 
 ## Option 1: Fast Build with Pre-built Binaries (Recommended)
@@ -446,6 +471,4 @@ ctest --output-on-failure
 | Clean build | `rm -rf build && cmake -B build ...` |
 | Rebuild single target | `cmake --build build --target cyxwiz-engine` |
 
----
 
-For more information about the project architecture and development workflow, see [CLAUDE.md](../CLAUDE.md).
