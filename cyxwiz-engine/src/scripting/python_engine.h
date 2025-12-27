@@ -1,4 +1,7 @@
 #pragma once
+
+#ifdef CYXWIZ_HAS_PYTHON
+
 #include <string>
 #include <Python.h>
 
@@ -27,3 +30,30 @@ private:
 };
 
 } // namespace scripting
+
+#else // !CYXWIZ_HAS_PYTHON
+
+// Stub implementation when Python is disabled
+namespace scripting {
+
+class PythonEngine {
+public:
+    PythonEngine() = default;
+    ~PythonEngine() = default;
+
+    bool Initialize() { return false; }
+    void Shutdown() {}
+
+    bool ExecuteScript(const std::string&) { return false; }
+    bool ExecuteFile(const std::string&) { return false; }
+
+    void ReleaseGIL() {}
+    void AcquireGIL() {}
+
+private:
+    bool initialized_ = false;
+};
+
+} // namespace scripting
+
+#endif // CYXWIZ_HAS_PYTHON

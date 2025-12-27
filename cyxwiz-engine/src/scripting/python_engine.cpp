@@ -1,4 +1,7 @@
 #include "python_engine.h"
+
+#ifdef CYXWIZ_HAS_PYTHON
+
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
 
@@ -100,3 +103,5 @@ bool PythonEngine::ExecuteFile(const std::string& filepath) {
 }
 
 } // namespace scripting
+
+#endif // CYXWIZ_HAS_PYTHON
