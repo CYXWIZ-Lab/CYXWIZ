@@ -11,7 +11,9 @@ find_package(Stb REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(pybind11 CONFIG REQUIRED)
+if(CYXWIZ_HAS_PYTHON)
+    find_package(pybind11 CONFIG QUIET)
+endif()
 find_package(httplib CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
@@ -403,7 +405,6 @@ target_link_libraries(cyxwiz-engine PRIVATE
     fmt::fmt
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    pybind11::embed
     httplib::httplib
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -416,6 +417,12 @@ target_link_libraries(cyxwiz-engine PRIVATE
 if(HighFive_FOUND)
     target_link_libraries(cyxwiz-engine PRIVATE HighFive)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_HDF5)
+endif()
+
+# Optional: Link pybind11 for Python scripting
+if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
+    target_link_libraries(cyxwiz-engine PRIVATE pybind11::embed)
+    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_PYTHON)
 endif()
 
 # Optional: Link OpenCV if found
@@ -496,79 +503,83 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
 )
 
 # Copy pycyxwiz Python module to engine directory (built by cyxwiz-backend)
-add_custom_command(TARGET cyxwiz-engine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    $<TARGET_FILE:pycyxwiz>
-    $<TARGET_FILE_DIR:cyxwiz-engine>/pycyxwiz.pyd
-    COMMENT "Copying pycyxwiz Python module..."
-)
-
-# ===== Python Bindings Module =====
-
-# Create Python module for plotting bindings
-pybind11_add_module(cyxwiz_plotting
-    python/plot_bindings.cpp
-    src/plotting/plot_manager.cpp
-    src/plotting/plot_dataset.cpp
-    src/plotting/plot_3d_generator.cpp
-    src/plotting/test_data_generator.cpp
-    src/plotting/backends/implot_backend.cpp
-    src/plotting/backends/matplotlib_backend.cpp
-    src/plotting/stb_image_impl.cpp
-    src/gui/panels/plot_window.cpp
-    src/gui/panels/plot_test_control.cpp
-    src/gui/panels/plot_test_panel.cpp
-    src/gui/panels/training_plot_panel.cpp
-    src/gui/panels/training_plot_panel_global.cpp
-)
-
-# Link the plotting module against necessary libraries
-target_link_libraries(cyxwiz_plotting PRIVATE
-    imgui::imgui
-    implot::implot
-    glad::glad
-    glfw
-    fmt::fmt
-    spdlog::spdlog
-)
-
-# Include directories for the Python module
-target_include_directories(cyxwiz_plotting PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-# Set output directory for Python module
-set_target_properties(cyxwiz_plotting PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
-)
-
-# Platform-specific module settings
-if(WIN32)
-    # Windows: .pyd extension
-    set_target_properties(cyxwiz_plotting PROPERTIES
-        SUFFIX ".pyd"
+if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
+    add_custom_command(TARGET cyxwiz-engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:pycyxwiz>
+        $<TARGET_FILE_DIR:cyxwiz-engine>/pycyxwiz.pyd
+        COMMENT "Copying pycyxwiz Python module..."
     )
-elseif(APPLE)
-    # macOS: .so extension
-    set_target_properties(cyxwiz_plotting PROPERTIES
-        SUFFIX ".so"
-    )
-else()
-    # Linux: .so extension (default)
 endif()
 
-# Install Python module
-install(TARGETS cyxwiz_plotting
-    LIBRARY DESTINATION lib/python/cyxwiz
-    RUNTIME DESTINATION lib/python/cyxwiz
-)
+# ===== Python Bindings Module (Optional) =====
 
-# Install Python examples
-install(DIRECTORY python/examples/
-    DESTINATION share/cyxwiz/python/examples
-    FILES_MATCHING PATTERN "*.py"
-)
+if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
+    # Create Python module for plotting bindings
+    pybind11_add_module(cyxwiz_plotting
+        python/plot_bindings.cpp
+        src/plotting/plot_manager.cpp
+        src/plotting/plot_dataset.cpp
+        src/plotting/plot_3d_generator.cpp
+        src/plotting/test_data_generator.cpp
+        src/plotting/backends/implot_backend.cpp
+        src/plotting/backends/matplotlib_backend.cpp
+        src/plotting/stb_image_impl.cpp
+        src/gui/panels/plot_window.cpp
+        src/gui/panels/plot_test_control.cpp
+        src/gui/panels/plot_test_panel.cpp
+        src/gui/panels/training_plot_panel.cpp
+        src/gui/panels/training_plot_panel_global.cpp
+    )
+
+    # Link the plotting module against necessary libraries
+    target_link_libraries(cyxwiz_plotting PRIVATE
+        imgui::imgui
+        implot::implot
+        glad::glad
+        glfw
+        fmt::fmt
+        spdlog::spdlog
+    )
+
+    # Include directories for the Python module
+    target_include_directories(cyxwiz_plotting PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    # Set output directory for Python module
+    set_target_properties(cyxwiz_plotting PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
+    )
+
+    # Platform-specific module settings
+    if(WIN32)
+        # Windows: .pyd extension
+        set_target_properties(cyxwiz_plotting PROPERTIES
+            SUFFIX ".pyd"
+        )
+    elseif(APPLE)
+        # macOS: .so extension
+        set_target_properties(cyxwiz_plotting PROPERTIES
+            SUFFIX ".so"
+        )
+    else()
+        # Linux: .so extension (default)
+    endif()
+
+    # Install Python module
+    install(TARGETS cyxwiz_plotting
+        LIBRARY DESTINATION lib/python/cyxwiz
+        RUNTIME DESTINATION lib/python/cyxwiz
+    )
+
+    # Install Python examples
+    install(DIRECTORY python/examples/
+        DESTINATION share/cyxwiz/python/examples
+        FILES_MATCHING PATTERN "*.py"
+    )
+endif()
 
 # Install
 install(TARGETS cyxwiz-engine

@@ -18,7 +18,11 @@ endif()
 # Find other packages
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
-find_package(pybind11 CONFIG REQUIRED)
+
+# pybind11 is optional - controlled by parent CYXWIZ_HAS_PYTHON
+if(CYXWIZ_HAS_PYTHON)
+    find_package(pybind11 CONFIG QUIET)
+endif()
 
 # Source files
 set(BACKEND_SOURCES
@@ -152,14 +156,16 @@ set_target_properties(cyxwiz-backend PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
-# Python bindings
-pybind11_add_module(pycyxwiz
-    python/bindings.cpp
-)
+# Python bindings (optional)
+if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
+    pybind11_add_module(pycyxwiz
+        python/bindings.cpp
+    )
 
-target_link_libraries(pycyxwiz PRIVATE
-    cyxwiz-backend
-)
+    target_link_libraries(pycyxwiz PRIVATE
+        cyxwiz-backend
+    )
+endif()
 
 # Install rules
 install(TARGETS cyxwiz-backend
@@ -172,6 +178,8 @@ install(DIRECTORY include/cyxwiz
     DESTINATION include
 )
 
-install(TARGETS pycyxwiz
-    LIBRARY DESTINATION python
-)
+if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
+    install(TARGETS pycyxwiz
+        LIBRARY DESTINATION python
+    )
+endif()
