@@ -1,0 +1,32 @@
+{
+  "name": "cyxwiz-ci",
+  "version": "0.1.0",
+  "description": "CyxWiz - Minimal CI build (no heavy ML dependencies)",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental",
+        "glfw-binding",
+        "opengl3-binding"
+      ]
+    },
+    "implot",
+    "glfw3",
+    "glad",
+    "stb",
+    "grpc",
+    "protobuf",
+    "spdlog",
+    "nlohmann-json",
+    "fmt",
+    "sqlite3",
+    "openssl",
+    "catch2",
+    "cpp-httplib",
+    "yaml-cpp",
+    "jwt-cpp",
+    "nativefiledialog-extended"
+  ],
+  "builtin-baseline": "594ad8871e1e8e45f8e626c015fd611163430207"
+}
