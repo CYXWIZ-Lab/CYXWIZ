@@ -1,8 +1,9 @@
 #pragma once
 
+#include <string>
+
 #ifdef CYXWIZ_HAS_PYTHON
 
-#include <string>
 #include <Python.h>
 
 namespace scripting {
