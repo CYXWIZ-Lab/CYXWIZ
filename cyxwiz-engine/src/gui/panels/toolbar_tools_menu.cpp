@@ -9,6 +9,27 @@ void ToolbarPanel::RenderToolsMenu() {
     if (ImGui::BeginMenu("Tools")) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 6));
 
+        // ==================== Advanced ====================
+        if (ImGui::BeginMenu(ICON_FA_WAND_MAGIC_SPARKLES " Advanced")) {
+            if (ImGui::MenuItem(ICON_FA_MAGNIFYING_GLASS_CHART " Hyperparameter Search")) {
+                if (open_hyperparam_search_callback_) open_hyperparam_search_callback_();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Grid, Random, or Bayesian hyperparameter optimization");
+            }
+
+            if (ImGui::MenuItem(ICON_FA_SERVER " Model Serving")) {
+                if (open_serving_callback_) open_serving_callback_();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Deploy and serve models as REST API endpoints");
+            }
+
+            ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
+
         // ==================== Model Export ====================
         if (ImGui::BeginMenu(ICON_FA_FILE_EXPORT " Model Export")) {
             if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save Trained Model...", "Ctrl+Shift+S")) {

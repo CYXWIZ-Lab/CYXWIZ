@@ -268,7 +268,7 @@ NodeDisplayInfo GRPCClient::ConvertNodeInfo(const cyxwiz::protocol::NodeInfo& pr
 
     // Network endpoint
     info.ip_address = proto.ip_address();
-    info.port = proto.port() > 0 ? proto.port() : core::EngineConfig::Instance().GetDefaultP2PPort();
+    info.port = proto.port() > 0 ? proto.port() : cyxwiz::core::EngineConfig::Instance().GetDefaultP2PPort();
 
     // Debug: Log device info
     spdlog::info("ConvertNodeInfo: node={}, endpoint={}:{}, devices_count={}",

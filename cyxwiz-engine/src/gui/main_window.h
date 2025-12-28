@@ -61,6 +61,8 @@ class DimReductionPanel;
 class GradCAMPanel;
 class FeatureImportancePanel;
 class NASPanel;
+class HyperparamSearchPanel;
+class ServingPanel;
 class KMeansPanel;
 class DBSCANPanel;
 class HierarchicalPanel;
@@ -253,6 +255,8 @@ private:
     std::unique_ptr<cyxwiz::GradCAMPanel> gradcam_panel_;
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
     std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
+    std::unique_ptr<cyxwiz::HyperparamSearchPanel> hyperparam_search_panel_;
+    std::unique_ptr<cyxwiz::ServingPanel> serving_panel_;
 
     // Clustering panels (Phase 6A)
     std::unique_ptr<cyxwiz::KMeansPanel> kmeans_panel_;

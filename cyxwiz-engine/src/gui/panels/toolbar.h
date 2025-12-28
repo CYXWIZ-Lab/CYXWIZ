@@ -58,6 +58,7 @@ public:
     void SetNewScriptCallback(std::function<void()> callback) { new_script_callback_ = callback; }
     void SetOpenScriptCallback(std::function<void()> callback) { open_script_callback_ = callback; }
     void SetOpenScriptInEditorCallback(std::function<void(const std::string&)> callback) { open_script_in_editor_callback_ = callback; }
+    void SetOpenPythonConsoleCallback(std::function<void()> callback) { open_python_console_callback_ = callback; }
     void SetSaveAllCallback(std::function<void()> callback) { save_all_callback_ = callback; }
     void SetAccountSettingsCallback(std::function<void()> callback) { account_settings_callback_ = callback; }
     void SetExitCallback(std::function<void()> callback) { exit_callback_ = callback; }
@@ -160,6 +161,8 @@ public:
     void SetOpenGradCAMCallback(std::function<void()> cb) { open_gradcam_callback_ = cb; }
     void SetOpenFeatureImportanceCallback(std::function<void()> cb) { open_feature_importance_callback_ = cb; }
     void SetOpenNASCallback(std::function<void()> cb) { open_nas_callback_ = cb; }
+    void SetOpenHyperparamSearchCallback(std::function<void()> cb) { open_hyperparam_search_callback_ = cb; }
+    void SetOpenServingCallback(std::function<void()> cb) { open_serving_callback_ = cb; }
 
     // Clustering callbacks (Phase 6A)
     void SetOpenKMeansCallback(std::function<void()> cb) { open_kmeans_callback_ = cb; }
@@ -331,6 +334,7 @@ private:
     std::function<void()> new_script_callback_;
     std::function<void()> open_script_callback_;
     std::function<void(const std::string&)> open_script_in_editor_callback_;
+    std::function<void()> open_python_console_callback_;
     std::function<void()> save_all_callback_;
     std::function<void()> account_settings_callback_;
     std::function<void()> exit_callback_;
@@ -435,6 +439,18 @@ private:
     int editing_shortcut_index_ = -1;
     char shortcut_edit_buffer_[64] = "";
 
+    // Device preferences
+    int selected_device_index_ = 0;  // Index into cached_devices_
+    bool devices_initialized_ = false;
+    struct CachedDevice {
+        int type;  // 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal, 4=Vulkan
+        int device_id;
+        std::string name;
+        size_t memory_total;
+        size_t memory_available;
+    };
+    std::vector<CachedDevice> cached_devices_;
+
     // Go to Line dialog state
     bool show_go_to_line_dialog_ = false;
     int go_to_line_number_ = 1;
@@ -501,6 +517,8 @@ private:
     std::function<void()> open_gradcam_callback_;
     std::function<void()> open_feature_importance_callback_;
     std::function<void()> open_nas_callback_;
+    std::function<void()> open_hyperparam_search_callback_;
+    std::function<void()> open_serving_callback_;
 
     // Clustering callbacks (Phase 6A)
     std::function<void()> open_kmeans_callback_;

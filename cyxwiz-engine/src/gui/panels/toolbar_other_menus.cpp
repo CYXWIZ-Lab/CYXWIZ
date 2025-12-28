@@ -145,24 +145,31 @@ void ToolbarPanel::RenderDatasetMenu() {
 
 void ToolbarPanel::RenderScriptMenu() {
     if (ImGui::BeginMenu("Script")) {
-        if (ImGui::MenuItem("Open Python Console", "F12")) {
-            // TODO: Show Python console
+        if (ImGui::MenuItem(ICON_FA_TERMINAL " Open Python Console", "F12")) {
+            if (open_python_console_callback_) {
+                open_python_console_callback_();
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open interactive Python command window");
         }
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("New Script...")) {
-            // TODO: Create new script
+        if (ImGui::MenuItem(ICON_FA_FILE_CODE " New Script...", "Ctrl+N")) {
+            if (new_script_callback_) {
+                new_script_callback_();
+            }
         }
 
-        if (ImGui::MenuItem("Run Script...", "Ctrl+R")) {
-            // TODO: Run script
+        if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Script...", "Ctrl+O")) {
+            if (open_script_callback_) {
+                open_script_callback_();
+            }
         }
 
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Script Editor...")) {
-            // TODO: Open script editor
+        if (ImGui::MenuItem(ICON_FA_PLAY " Run Script", "Ctrl+R")) {
+            // TODO: Run current script
         }
 
         ImGui::EndMenu();

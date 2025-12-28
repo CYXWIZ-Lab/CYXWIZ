@@ -6,6 +6,7 @@
 #include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
+#include <cyxwiz/cyxwiz.h>
 #include <filesystem>
 #include <fstream>
 #include <cstring>
@@ -2127,6 +2128,197 @@ void ToolbarPanel::Render() {
                     ImGui::EndTabItem();
                 }
 
+                // ========== Devices Tab ==========
+                if (ImGui::BeginTabItem(ICON_FA_MICROCHIP " Devices")) {
+                    preferences_tab_ = 6;
+                    ImGui::Spacing();
+
+                    // Show currently active backend
+                    ImGui::Text("Currently Active Backend:");
+                    ImGui::SameLine();
+                    try {
+                        auto* current_device = cyxwiz::Device::GetCurrentDevice();
+                        if (current_device) {
+                            const char* backend_name = "Unknown";
+                            ImVec4 backend_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                            switch (current_device->GetType()) {
+                                case cyxwiz::DeviceType::CPU:
+                                    backend_name = "CPU";
+                                    backend_color = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
+                                    break;
+                                case cyxwiz::DeviceType::CUDA:
+                                    backend_name = "CUDA (NVIDIA)";
+                                    backend_color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+                                    break;
+                                case cyxwiz::DeviceType::OPENCL:
+                                    backend_name = "OpenCL";
+                                    backend_color = ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
+                                    break;
+                                case cyxwiz::DeviceType::METAL:
+                                    backend_name = "Metal (Apple)";
+                                    backend_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                                    break;
+                                default:
+                                    break;
+                            }
+                            ImGui::TextColored(backend_color, "%s %s", ICON_FA_CIRCLE_CHECK, backend_name);
+                        } else {
+                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s Not Set (using default)", ICON_FA_CIRCLE_EXCLAMATION);
+                        }
+                    } catch (...) {
+                        ImGui::TextDisabled("Unable to query");
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Text("Available Compute Devices");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Select which device to use for training. CUDA devices are fastest for NVIDIA GPUs.");
+                    ImGui::Spacing();
+
+                    // Initialize device list if needed
+                    if (!devices_initialized_) {
+                        cached_devices_.clear();
+                        try {
+                            auto devices = cyxwiz::Device::GetAvailableDevices();
+                            for (const auto& dev : devices) {
+                                CachedDevice cached;
+                                cached.type = static_cast<int>(dev.type);
+                                cached.device_id = dev.device_id;
+                                cached.name = dev.name;
+                                cached.memory_total = dev.memory_total;
+                                cached.memory_available = dev.memory_available;
+                                cached_devices_.push_back(cached);
+                            }
+
+                            // Default to first CUDA device if available, otherwise keep CPU (index 0)
+                            selected_device_index_ = 0;
+                            for (size_t i = 0; i < cached_devices_.size(); ++i) {
+                                if (cached_devices_[i].type == 1) {  // 1 = CUDA
+                                    selected_device_index_ = static_cast<int>(i);
+                                    // Set CUDA as the active device
+                                    cyxwiz::Device cuda_device(cyxwiz::DeviceType::CUDA, cached_devices_[i].device_id);
+                                    cuda_device.SetActive();
+                                    spdlog::info("Default device set to CUDA: {}", cached_devices_[i].name);
+                                    break;
+                                }
+                            }
+                        } catch (...) {
+                            spdlog::warn("Failed to enumerate devices");
+                        }
+                        devices_initialized_ = true;
+                    }
+
+                    // Device selection list
+                    if (cached_devices_.empty()) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No compute devices found!");
+                    } else {
+                        for (size_t i = 0; i < cached_devices_.size(); ++i) {
+                            const auto& dev = cached_devices_[i];
+
+                            const char* type_icon = ICON_FA_MICROCHIP;
+                            const char* type_name = "Unknown";
+                            ImVec4 type_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+
+                            switch (dev.type) {
+                                case 0: // CPU
+                                    type_icon = ICON_FA_MICROCHIP;
+                                    type_name = "CPU";
+                                    type_color = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
+                                    break;
+                                case 1: // CUDA
+                                    type_icon = ICON_FA_BOLT;
+                                    type_name = "CUDA";
+                                    type_color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+                                    break;
+                                case 2: // OpenCL
+                                    type_icon = ICON_FA_DESKTOP;
+                                    type_name = "OpenCL";
+                                    type_color = ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
+                                    break;
+                                case 3: // Metal
+                                    type_icon = ICON_FA_MICROCHIP;
+                                    type_name = "Metal";
+                                    type_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                                    break;
+                            }
+
+                            ImGui::PushID(static_cast<int>(i));
+
+                            // Radio button for selection
+                            bool is_selected = (selected_device_index_ == static_cast<int>(i));
+                            if (ImGui::RadioButton("##device_select", is_selected)) {
+                                selected_device_index_ = static_cast<int>(i);
+                                // Apply device selection
+                                try {
+                                    cyxwiz::Device device(static_cast<cyxwiz::DeviceType>(dev.type), dev.device_id);
+                                    device.SetActive();
+                                    spdlog::info("Selected device: {} [{}]", dev.name, type_name);
+                                } catch (const std::exception& e) {
+                                    spdlog::error("Failed to set device: {}", e.what());
+                                }
+                            }
+                            ImGui::SameLine();
+
+                            // Device info
+                            ImGui::TextColored(type_color, "%s", type_icon);
+                            ImGui::SameLine();
+                            ImGui::Text("%s", dev.name.c_str());
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("[%s]", type_name);
+
+                            // Memory info on same line if available
+                            if (dev.memory_total > 0) {
+                                ImGui::SameLine();
+                                double mem_gb = dev.memory_total / (1024.0 * 1024.0 * 1024.0);
+                                ImGui::TextDisabled("(%.1f GB)", mem_gb);
+                            }
+
+                            // Show "Active" badge if this is the current device
+                            auto* current_device = cyxwiz::Device::GetCurrentDevice();
+                            if (current_device && 
+                                current_device->GetType() == static_cast<cyxwiz::DeviceType>(dev.type) &&
+                                current_device->GetDeviceId() == dev.device_id) {
+                                ImGui::SameLine();
+                                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s Active", ICON_FA_CIRCLE_CHECK);
+                            }
+
+                            ImGui::PopID();
+                        }
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+
+                    // Refresh button
+                    if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Refresh Devices")) {
+                        devices_initialized_ = false;
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    // Current device info
+                    if (selected_device_index_ >= 0 && selected_device_index_ < static_cast<int>(cached_devices_.size())) {
+                        const auto& dev = cached_devices_[selected_device_index_];
+                        ImGui::Text("Selected Device Details:");
+                        ImGui::Indent();
+                        ImGui::BulletText("Name: %s", dev.name.c_str());
+                        if (dev.memory_total > 0) {
+                            double total_gb = dev.memory_total / (1024.0 * 1024.0 * 1024.0);
+                            double avail_gb = dev.memory_available / (1024.0 * 1024.0 * 1024.0);
+                            ImGui::BulletText("Memory: %.2f GB total, %.2f GB available", total_gb, avail_gb);
+                        }
+                        ImGui::Unindent();
+                    }
+
+                    ImGui::EndTabItem();
+                }
+
                 ImGui::EndTabBar();
             }
 
@@ -2235,6 +2427,8 @@ void ToolbarPanel::InitializeToolEntries() {
     all_tools_.push_back({"GradCAM", "Advanced", "gradcam visualization explainability heatmap", ICON_FA_EYE, "", [this]() { if (open_gradcam_callback_) open_gradcam_callback_(); }});
     all_tools_.push_back({"Feature Importance", "Advanced", "feature importance shap permutation", ICON_FA_RANKING_STAR, "", [this]() { if (open_feature_importance_callback_) open_feature_importance_callback_(); }});
     all_tools_.push_back({"Neural Architecture Search", "Advanced", "nas automl neural architecture search", ICON_FA_MICROCHIP, "", [this]() { if (open_nas_callback_) open_nas_callback_(); }});
+    all_tools_.push_back({"Hyperparameter Search", "Advanced", "hyperparameter tuning grid random bayesian optimization", ICON_FA_MAGNIFYING_GLASS_CHART, "", [this]() { if (open_hyperparam_search_callback_) open_hyperparam_search_callback_(); }});
+    all_tools_.push_back({"Model Serving", "Advanced", "deploy serving api rest inference endpoint", ICON_FA_SERVER, "", [this]() { if (open_serving_callback_) open_serving_callback_(); }});
 
     // Clustering (Phase 6A)
     all_tools_.push_back({"K-Means Clustering", "Clustering", "kmeans clustering centroid", ICON_FA_OBJECT_GROUP, "", [this]() { if (open_kmeans_callback_) open_kmeans_callback_(); }});
@@ -2422,15 +2616,36 @@ void ToolbarPanel::UpdateSearchResults(const std::string& query) {
 void ToolbarPanel::RenderCommandPalette() {
     if (!show_command_palette_) return;
 
+    // Check ESC key globally (even before window is drawn)
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        show_command_palette_ = false;
+        return;
+    }
+
+    // Draw semi-transparent background overlay for click-outside detection
+    ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
+    ImVec2 viewport_pos = ImGui::GetMainViewport()->Pos;
+    ImVec2 viewport_size = ImGui::GetMainViewport()->Size;
+    draw_list->AddRectFilled(viewport_pos, ImVec2(viewport_pos.x + viewport_size.x, viewport_pos.y + viewport_size.y),
+                             IM_COL32(0, 0, 0, 100));
+
     // Center the modal
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.3f));
-    ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_Appearing);
+    ImVec2 window_size(500, 400);
+    ImVec2 window_pos(center.x - window_size.x * 0.5f, center.y - window_size.y * 0.3f);
+    ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(window_size, ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
 
     if (ImGui::Begin("##CommandPalette", &show_command_palette_, flags)) {
+        // Check for click outside the command palette window (must be inside Begin/End)
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows)) {
+            show_command_palette_ = false;
+            ImGui::End();
+            return;
+        }
         // Search input
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
         ImGui::PushItemWidth(-1);
@@ -2452,11 +2667,14 @@ void ToolbarPanel::RenderCommandPalette() {
         ImGui::Separator();
 
         // Handle keyboard navigation
+        bool selection_changed_by_keyboard = false;
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
             selected_index_ = std::min(selected_index_ + 1, static_cast<int>(filtered_tools_.size()) - 1);
+            selection_changed_by_keyboard = true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
             selected_index_ = std::max(selected_index_ - 1, 0);
+            selection_changed_by_keyboard = true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !filtered_tools_.empty()) {
             if (selected_index_ >= 0 && selected_index_ < static_cast<int>(filtered_tools_.size())) {
@@ -2490,8 +2708,10 @@ void ToolbarPanel::RenderCommandPalette() {
 
             if (isSelected) {
                 ImGui::PopStyleColor();
-                // Ensure selected item is visible
-                ImGui::SetScrollHereY();
+                // Only auto-scroll when selection changed via keyboard, not every frame
+                if (selection_changed_by_keyboard) {
+                    ImGui::SetScrollHereY();
+                }
             }
 
             // Draw content on top of selectable

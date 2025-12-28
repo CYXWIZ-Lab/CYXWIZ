@@ -48,6 +48,7 @@ set(ENGINE_SOURCES
     src/application.cpp
     src/auth/auth_client.cpp
     src/core/project_manager.cpp
+    src/core/engine_config.cpp
     src/core/data_registry.cpp
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
@@ -125,6 +126,10 @@ set(ENGINE_SOURCES
     src/gui/panels/gradcam_panel.cpp
     src/gui/panels/feature_importance_panel.cpp
     src/gui/panels/nas_panel.cpp
+    src/gui/panels/hyperparam_search_panel.cpp
+    src/core/hyperparam_search.cpp
+    src/gui/panels/serving_panel.cpp
+    src/serving/inference_server.cpp
     src/gui/panels/kmeans_panel.cpp
     src/gui/panels/dbscan_panel.cpp
     src/gui/panels/hierarchical_panel.cpp
@@ -217,6 +222,7 @@ set(ENGINE_HEADERS
     src/application.h
     src/auth/auth_client.h
     src/core/project_manager.h
+    src/core/engine_config.h
     src/core/data_registry.h
     src/core/texture_manager.h
     src/core/async_task_manager.h
@@ -281,6 +287,10 @@ set(ENGINE_HEADERS
     src/gui/panels/gradcam_panel.h
     src/gui/panels/feature_importance_panel.h
     src/gui/panels/nas_panel.h
+    src/gui/panels/hyperparam_search_panel.h
+    src/core/hyperparam_search.h
+    src/gui/panels/serving_panel.h
+    src/serving/inference_server.h
     src/gui/panels/kmeans_panel.h
     src/gui/panels/dbscan_panel.h
     src/gui/panels/hierarchical_panel.h

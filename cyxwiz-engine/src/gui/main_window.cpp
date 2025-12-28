@@ -1,3 +1,12 @@
+// Windows header order fix - must come first to prevent winsock conflicts
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include "main_window.h"
 #include "node_editor.h"
 #include "console.h"
@@ -47,6 +56,8 @@
 #include "panels/gradcam_panel.h"
 #include "panels/feature_importance_panel.h"
 #include "panels/nas_panel.h"
+#include "panels/hyperparam_search_panel.h"
+#include "panels/serving_panel.h"
 #include "panels/kmeans_panel.h"
 #include "panels/dbscan_panel.h"
 #include "panels/hierarchical_panel.h"
@@ -195,6 +206,8 @@ MainWindow::MainWindow()
     gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
     feature_importance_panel_ = std::make_unique<cyxwiz::FeatureImportancePanel>();
     nas_panel_ = std::make_unique<cyxwiz::NASPanel>();
+    hyperparam_search_panel_ = std::make_unique<cyxwiz::HyperparamSearchPanel>();
+    serving_panel_ = std::make_unique<cyxwiz::ServingPanel>();
 
     // Clustering panels (Phase 6A)
     kmeans_panel_ = std::make_unique<cyxwiz::KMeansPanel>();
@@ -694,6 +707,20 @@ MainWindow::MainWindow()
         }
     });
 
+    toolbar_->SetOpenHyperparamSearchCallback([this]() {
+        if (hyperparam_search_panel_) {
+            hyperparam_search_panel_->Toggle();
+            spdlog::info("Toggled Hyperparameter Search panel");
+        }
+    });
+
+    toolbar_->SetOpenServingCallback([this]() {
+        if (serving_panel_) {
+            serving_panel_->Toggle();
+            spdlog::info("Toggled Model Serving panel");
+        }
+    });
+
     // Clustering callbacks (Phase 6A)
     toolbar_->SetOpenKMeansCallback([this]() {
         if (kmeans_panel_) {
@@ -1035,6 +1062,14 @@ MainWindow::MainWindow()
         if (script_editor_) {
             script_editor_->OpenFile(file_path);
             spdlog::info("Opened script in editor: {}", file_path);
+        }
+    });
+
+    // Set up Open Python Console callback
+    toolbar_->SetOpenPythonConsoleCallback([this]() {
+        if (command_window_) {
+            command_window_->SetVisible(true);
+            spdlog::info("Opened Python Console (Command Window)");
         }
     });
 
@@ -1429,7 +1464,7 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
     if (connection_dialog_ && client) {
         auto reservation_client = std::make_shared<network::ReservationClient>();
         // Get server address from existing client (assuming same server hosts reservation service)
-        if (reservation_client->Connect(core::EngineConfig::Instance().GetCentralServerAddress())) {
+        if (reservation_client->Connect(cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress())) {
             // Set auth token from AuthClient if authenticated
             auto& auth = cyxwiz::auth::AuthClient::Instance();
             if (auth.IsAuthenticated()) {
@@ -1654,6 +1689,8 @@ void MainWindow::Render() {
     if (gradcam_panel_) gradcam_panel_->Render();
     if (feature_importance_panel_) feature_importance_panel_->Render();
     if (nas_panel_) nas_panel_->Render();
+    if (hyperparam_search_panel_) hyperparam_search_panel_->Render();
+    if (serving_panel_) serving_panel_->Render();
 
     // Render Clustering panels (Phase 6A)
     if (kmeans_panel_) kmeans_panel_->Render();
@@ -2314,6 +2351,14 @@ void MainWindow::HandleGlobalShortcuts() {
         if (toolbar_) {
             toolbar_->OpenCommandPalette();
             spdlog::info("Opened Command Palette via Ctrl+P");
+        }
+    }
+
+    // Python Console (F12)
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F12)) {
+        if (command_window_) {
+            command_window_->SetVisible(true);
+            spdlog::info("Opened Python Console via F12");
         }
     }
 
