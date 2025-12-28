@@ -29,9 +29,14 @@ jobs:
         shell: pwsh
         run: Copy-Item vcpkg-ci.json vcpkg.json -Force
 
-      - uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 594ad8871e1e8e45f8e626c015fd611163430207
+      - name: Setup vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          cd vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          .\bootstrap-vcpkg.bat
+          echo "VCPKG_ROOT=$PWD" >> $env:GITHUB_ENV
 
       - name: Install ArrayFire
         shell: pwsh
@@ -100,9 +105,13 @@ jobs:
       - name: Use CI vcpkg manifest
         run: cp vcpkg-ci.json vcpkg.json
 
-      - uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 594ad8871e1e8e45f8e626c015fd611163430207
+      - name: Setup vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          cd vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          ./bootstrap-vcpkg.sh
+          echo "VCPKG_ROOT=$PWD" >> $GITHUB_ENV
 
       - name: Install ArrayFire
         run: |
@@ -158,9 +167,13 @@ jobs:
       - name: Use CI vcpkg manifest
         run: cp vcpkg-ci.json vcpkg.json
 
-      - uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 594ad8871e1e8e45f8e626c015fd611163430207
+      - name: Setup vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          cd vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          ./bootstrap-vcpkg.sh
+          echo "VCPKG_ROOT=$PWD" >> $GITHUB_ENV
 
       - name: Configure
         run: |
