@@ -2405,6 +2405,31 @@ void ToolbarPanel::InitializeToolEntries() {
     // Clear any existing entries
     all_tools_.clear();
 
+    // ==================== File Commands ====================
+    all_tools_.push_back({"New Project", "File", "new project create", ICON_FA_FOLDER_PLUS, "Ctrl+Shift+N", [this]() { ShowNewProjectDialog(); }});
+    all_tools_.push_back({"Open Project", "File", "open project folder", ICON_FA_FOLDER_OPEN, "Ctrl+Shift+O", [this]() { if (open_project_callback_) open_project_callback_(); }});
+    all_tools_.push_back({"Save", "File", "save file", ICON_FA_FLOPPY_DISK, "Ctrl+S", [this]() { if (save_callback_) save_callback_(); }});
+    all_tools_.push_back({"Save All", "File", "save all files", ICON_FA_COPY, "Ctrl+Shift+S", [this]() { if (save_all_callback_) save_all_callback_(); }});
+    all_tools_.push_back({"Close Project", "File", "close project", ICON_FA_FOLDER_MINUS, "", [this]() { if (close_project_callback_) close_project_callback_(); }});
+
+    // ==================== Edit Commands ====================
+    all_tools_.push_back({"Undo", "Edit", "undo revert back", ICON_FA_ROTATE_LEFT, "Ctrl+Z", [this]() { if (undo_callback_) undo_callback_(); }});
+    all_tools_.push_back({"Redo", "Edit", "redo forward", ICON_FA_ROTATE_RIGHT, "Ctrl+Y", [this]() { if (redo_callback_) redo_callback_(); }});
+    all_tools_.push_back({"Find", "Edit", "find search text", ICON_FA_MAGNIFYING_GLASS, "Ctrl+F", [this]() { OpenFindDialog(); }});
+    all_tools_.push_back({"Replace", "Edit", "replace substitute text", ICON_FA_RIGHT_LEFT, "Ctrl+H", [this]() { OpenReplaceDialog(); }});
+    all_tools_.push_back({"Find in Files", "Edit", "find search files grep", ICON_FA_FOLDER_TREE, "Ctrl+Shift+F", [this]() { OpenFindInFilesDialog(); }});
+
+    // ==================== Script Commands ====================
+    all_tools_.push_back({"Python Console", "Script", "python console repl terminal command", ICON_FA_TERMINAL, "F12", [this]() { if (open_python_console_callback_) open_python_console_callback_(); }});
+    all_tools_.push_back({"New Script", "Script", "new script python file", ICON_FA_FILE_CODE, "Ctrl+N", [this]() { if (new_script_callback_) new_script_callback_(); }});
+    all_tools_.push_back({"Open Script", "Script", "open script python file", ICON_FA_FILE_IMPORT, "Ctrl+O", [this]() { if (open_script_callback_) open_script_callback_(); }});
+
+    // ==================== Training Commands ====================
+    all_tools_.push_back({"Connect to Server", "Training", "connect server network cloud", ICON_FA_PLUG, "", [this]() { if (connect_to_server_callback_) connect_to_server_callback_(); }});
+    all_tools_.push_back({"Export Model", "Training", "export model save onnx safetensors", ICON_FA_FILE_EXPORT, "", [this]() { if (open_export_dialog_callback_) open_export_dialog_callback_(); }});
+    all_tools_.push_back({"Import Model", "Training", "import model load onnx pytorch", ICON_FA_FILE_IMPORT, "", [this]() { if (open_import_dialog_callback_) open_import_dialog_callback_(); }});
+    all_tools_.push_back({"Deploy Model", "Training", "deploy model serve cloud", ICON_FA_CLOUD_ARROW_UP, "", [this]() { if (open_deployment_dialog_callback_) open_deployment_dialog_callback_(); }});
+
     // Model Analysis (Phase 2)
     all_tools_.push_back({"Model Summary", "Model Analysis", "model summary architecture layers parameters", ICON_FA_CUBES, "", [this]() { if (open_model_summary_callback_) open_model_summary_callback_(); }});
     all_tools_.push_back({"Architecture Diagram", "Model Analysis", "architecture diagram visual graph", ICON_FA_DIAGRAM_PROJECT, "", [this]() { if (open_architecture_diagram_callback_) open_architecture_diagram_callback_(); }});

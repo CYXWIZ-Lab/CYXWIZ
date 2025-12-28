@@ -5,7 +5,7 @@
 
 namespace gui {
 
-Viewport::Viewport() : show_window_(true) {
+Viewport::Viewport() : show_window_(true), devices_initialized_(false) {
 }
 
 Viewport::~Viewport() = default;
@@ -26,8 +26,25 @@ void Viewport::Render() {
         ImGui::Separator();
 
         try {
-            // Get available devices
-            auto devices = cyxwiz::Device::GetAvailableDevices();
+            // Use cached devices to avoid querying on every frame
+            if (!devices_initialized_) {
+                cached_devices_.clear();
+                auto raw_devices = cyxwiz::Device::GetAvailableDevices();
+                for (const auto& dev : raw_devices) {
+                    CachedDeviceInfo cached;
+                    cached.type = static_cast<int>(dev.type);
+                    cached.device_id = dev.device_id;
+                    cached.name = dev.name;
+                    cached.memory_total = dev.memory_total;
+                    cached.memory_available = dev.memory_available;
+                    cached.compute_units = dev.compute_units;
+                    cached.supports_fp64 = dev.supports_fp64;
+                    cached.supports_fp16 = dev.supports_fp16;
+                    cached_devices_.push_back(cached);
+                }
+                devices_initialized_ = true;
+            }
+            const auto& devices = cached_devices_;
 
             if (!devices.empty()) {
                 // Show first device info
@@ -35,11 +52,11 @@ void Viewport::Render() {
 
                 const char* type_name = "Unknown";
                 switch (info.type) {
-                    case cyxwiz::DeviceType::CPU: type_name = "CPU"; break;
-                    case cyxwiz::DeviceType::CUDA: type_name = "CUDA"; break;
-                    case cyxwiz::DeviceType::OPENCL: type_name = "OpenCL"; break;
-                    case cyxwiz::DeviceType::METAL: type_name = "Metal"; break;
-                    case cyxwiz::DeviceType::VULKAN: type_name = "Vulkan"; break;
+                    case 0: type_name = "CPU"; break;
+                    case 1: type_name = "CUDA"; break;
+                    case 2: type_name = "OpenCL"; break;
+                    case 3: type_name = "Metal"; break;
+                    case 4: type_name = "Vulkan"; break;
                 }
 
                 ImGui::Text("Backend: %s", type_name);
@@ -71,7 +88,15 @@ void Viewport::Render() {
                     ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Available Devices (%zu)", devices.size());
                     ImGui::Separator();
                     for (size_t i = 0; i < devices.size(); ++i) {
-                        ImGui::BulletText("%s (ID: %d)", devices[i].name.c_str(), devices[i].device_id);
+                        const char* dev_type = "Unknown";
+                        switch (devices[i].type) {
+                            case 0: dev_type = "CPU"; break;
+                            case 1: dev_type = "CUDA"; break;
+                            case 2: dev_type = "OpenCL"; break;
+                            case 3: dev_type = "Metal"; break;
+                            case 4: dev_type = "Vulkan"; break;
+                        }
+                        ImGui::BulletText("%s [%s] (ID: %d)", devices[i].name.c_str(), dev_type, devices[i].device_id);
                     }
                 }
             } else {
@@ -162,6 +187,10 @@ void Viewport::Render() {
         ImGui::TextColored(status_color, "%s", status);
     }
     ImGui::End();
+}
+
+void Viewport::RefreshDevices() {
+    devices_initialized_ = false;
 }
 
 } // namespace gui

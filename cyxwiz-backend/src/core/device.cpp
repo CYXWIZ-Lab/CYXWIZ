@@ -174,8 +174,26 @@ DeviceInfo Device::GetInfo() const {
 
 void Device::SetActive() {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (type_ == DeviceType::CUDA || type_ == DeviceType::OPENCL) {
-        af::setDevice(device_id_);
+    // Switch backend based on device type
+    switch (type_) {
+        case DeviceType::CUDA:
+            af::setBackend(AF_BACKEND_CUDA);
+            af::setDevice(device_id_);
+            spdlog::info("Switched to CUDA backend, device {}", device_id_);
+            break;
+        case DeviceType::OPENCL:
+            af::setBackend(AF_BACKEND_OPENCL);
+            af::setDevice(device_id_);
+            spdlog::info("Switched to OpenCL backend, device {}", device_id_);
+            break;
+        case DeviceType::CPU:
+            af::setBackend(AF_BACKEND_CPU);
+            spdlog::info("Switched to CPU backend");
+            break;
+        default:
+            spdlog::warn("Unknown device type, defaulting to CPU");
+            af::setBackend(AF_BACKEND_CPU);
+            break;
     }
 #endif
     g_current_device = this;
@@ -188,49 +206,77 @@ bool Device::IsActive() const {
 std::vector<DeviceInfo> Device::GetAvailableDevices() {
     std::vector<DeviceInfo> devices;
 
-    // Always add CPU
+    // Always add CPU first
     Device cpu_device(DeviceType::CPU, 0);
     devices.push_back(cpu_device.GetInfo());
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+    // Save current backend to restore later
+    af::Backend original_backend = af::getActiveBackend();
+    int original_device = 0;
     try {
-        // Detect which backend ArrayFire is using
-        af::Backend backend = af::getActiveBackend();
-        DeviceType device_type = DeviceType::CPU;
+        original_device = af::getDevice();
+    } catch (...) {
+        // Ignore if no device is set
+    }
 
-        switch (backend) {
-            case AF_BACKEND_CUDA:
-                device_type = DeviceType::CUDA;
-                spdlog::debug("ArrayFire backend: CUDA");
-                break;
-            case AF_BACKEND_OPENCL:
-                device_type = DeviceType::OPENCL;
-                spdlog::debug("ArrayFire backend: OpenCL");
-                break;
-            case AF_BACKEND_CPU:
-                device_type = DeviceType::CPU;
-                spdlog::debug("ArrayFire backend: CPU");
-                break;
-            default:
-                spdlog::warn("Unknown ArrayFire backend: {}", static_cast<int>(backend));
-                device_type = DeviceType::CPU;
-                break;
-        }
+    // Try CUDA backend
+#ifdef CYXWIZ_ENABLE_CUDA
+    try {
+        af::setBackend(AF_BACKEND_CUDA);
+        int cuda_count = af::getDeviceCount();
+        spdlog::debug("CUDA backend: {} device(s) found", cuda_count);
 
-        int device_count = af::getDeviceCount();
-        spdlog::debug("Enumerating {} device(s) with backend type: {}",
-            device_count, static_cast<int>(device_type));
-
-        for (int i = 0; i < device_count; i++) {
+        for (int i = 0; i < cuda_count; i++) {
             af::setDevice(i);
-            Device gpu_device(device_type, i);
-            devices.push_back(gpu_device.GetInfo());
+            Device cuda_device(DeviceType::CUDA, i);
+            devices.push_back(cuda_device.GetInfo());
         }
     } catch (const af::exception& e) {
-        spdlog::warn("Failed to enumerate GPU devices: {}", e.what());
+        spdlog::debug("CUDA backend not available: {}", e.what());
     }
 #endif
 
+    // Try OpenCL backend
+#ifdef CYXWIZ_ENABLE_OPENCL
+    try {
+        af::setBackend(AF_BACKEND_OPENCL);
+        int opencl_count = af::getDeviceCount();
+        spdlog::debug("OpenCL backend: {} device(s) found", opencl_count);
+
+        for (int i = 0; i < opencl_count; i++) {
+            af::setDevice(i);
+            Device opencl_device(DeviceType::OPENCL, i);
+            DeviceInfo info = opencl_device.GetInfo();
+
+            // Skip duplicate devices (e.g., NVIDIA GPU already listed via CUDA)
+            bool is_duplicate = false;
+            for (const auto& existing : devices) {
+                if (existing.name == info.name && existing.type == DeviceType::CUDA) {
+                    spdlog::debug("Skipping duplicate OpenCL device: {} (already listed as CUDA)", info.name);
+                    is_duplicate = true;
+                    break;
+                }
+            }
+            if (!is_duplicate) {
+                devices.push_back(info);
+            }
+        }
+    } catch (const af::exception& e) {
+        spdlog::debug("OpenCL backend not available: {}", e.what());
+    }
+#endif
+
+    // Restore original backend
+    try {
+        af::setBackend(original_backend);
+        af::setDevice(original_device);
+    } catch (const af::exception& e) {
+        spdlog::warn("Failed to restore original backend: {}", e.what());
+    }
+#endif
+
+    spdlog::info("Total devices found: {}", devices.size());
     return devices;
 }
 
