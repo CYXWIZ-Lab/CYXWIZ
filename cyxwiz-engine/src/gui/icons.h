@@ -20,6 +20,8 @@
 #define ICON_FA_FOLDER              "\xef\x81\xbb"  // U+F07B
 #define ICON_FA_FOLDER_OPEN         "\xef\x81\xbc"  // U+F07C
 #define ICON_FA_FOLDER_PLUS         "\xef\x99\x9e"  // U+F65E
+#define ICON_FA_FOLDER_MINUS        "\xef\x99\x9d"  // U+F65D
+#define ICON_FA_FOLDER_TREE         "\xef\xa0\x82"  // U+F802
 #define ICON_FA_FLOPPY_DISK         "\xef\x83\x87"  // U+F0C7
 #define ICON_FA_DOWNLOAD            "\xef\x80\x99"  // U+F019
 
@@ -299,6 +301,8 @@
 
 // Cloud/Network
 #define ICON_FA_CLOUD               "\xef\x83\x82"  // U+F0C2
+#define ICON_FA_CLOUD_ARROW_UP      "\xef\x83\xae"  // U+F0EE
+#define ICON_FA_CLOUD_ARROW_DOWN    "\xef\x83\xad"  // U+F0ED
 #define ICON_FA_GEM                 "ï¥"  // U+F3A5 - gem/diamond for SOL
 #define ICON_FA_PAPER_PLANE         "ï"  // U+F1D8 - paper plane for sending
 #define ICON_FA_UNLOCK              "ï"  // U+F09C - unlock
