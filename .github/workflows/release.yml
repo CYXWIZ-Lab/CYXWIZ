@@ -56,7 +56,9 @@ jobs:
             -DCYXWIZ_ENABLE_PYTHON=OFF `
             -DCYXWIZ_ENABLE_ONNX=OFF `
             -DCYXWIZ_ENABLE_GGUF=OFF `
-            -DCYXWIZ_ENABLE_PYTORCH=OFF
+            -DCYXWIZ_ENABLE_PYTORCH=OFF `
+            -DCYXWIZ_ENABLE_CUDA=OFF `
+            -DCYXWIZ_ENABLE_OPENCL=OFF
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -132,6 +134,8 @@ jobs:
             -DCYXWIZ_ENABLE_ONNX=OFF \
             -DCYXWIZ_ENABLE_GGUF=OFF \
             -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_ENABLE_CUDA=OFF \
+            -DCYXWIZ_ENABLE_OPENCL=OFF \
             ${AF_DIR:+-DArrayFire_DIR="$AF_DIR"}
 
       - run: cmake --build build --parallel
@@ -186,7 +190,9 @@ jobs:
             -DCYXWIZ_ENABLE_PYTHON=OFF \
             -DCYXWIZ_ENABLE_ONNX=OFF \
             -DCYXWIZ_ENABLE_GGUF=OFF \
-            -DCYXWIZ_ENABLE_PYTORCH=OFF
+            -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_ENABLE_CUDA=OFF \
+            -DCYXWIZ_ENABLE_OPENCL=OFF
 
       - run: cmake --build build --parallel
 
