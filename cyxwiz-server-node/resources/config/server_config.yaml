@@ -1,0 +1,72 @@
+# CyxWiz Server Node Configuration
+# This file configures the server node daemon and GUI client
+
+node:
+  id: "auto"  # Use "auto" to generate a unique ID
+  name: "CyxWiz Server Node"
+  region: "us-west-2"
+
+network:
+  # Central Server address (gRPC orchestrator)
+  central_server: "localhost:50051"
+
+  # Auth API URL (JWT login server)
+  auth_api_url: "http://127.0.0.1:3002/api"
+
+  # IPC address for daemon-GUI communication
+  ipc_address: "localhost:50054"
+
+  # P2P address for Engine connections (training jobs)
+  p2p_address: "0.0.0.0:50052"
+
+  # Terminal service address
+  terminal_address: "0.0.0.0:50053"
+
+  # Node service address
+  node_service_address: "0.0.0.0:50055"
+
+  # Deployment service address
+  deployment_address: "0.0.0.0:50056"
+
+  # Inference gRPC service address
+  inference_address: "0.0.0.0:50057"
+
+  # HTTP REST API port
+  http_api_port: 8082
+
+  # TLS settings
+  enable_tls: false
+  cert_path: ""
+  key_path: ""
+  ca_path: ""
+
+  # P2P authentication secret (must match Central Server)
+  p2p_secret: "your-super-secret-jwt-key-change-in-production"
+
+training:
+  enabled: true
+  max_concurrent_jobs: 2
+  gpu_allocation: 0.8
+
+deployment:
+  enabled: true
+  models_directory: "./models"
+  max_loaded_models: 3
+
+api:
+  require_authentication: true
+  default_rate_limit: 100
+
+pool_mining:
+  enabled: false
+  pool_address: "pool.cyxwiz.io:3333"
+  intensity: 0.5
+  mine_when_idle_only: true
+
+wallet:
+  address: ""
+  auto_withdraw_threshold: 100.0
+
+logging:
+  level: "info"
+  file: "./logs/server-node.log"

@@ -40,7 +40,6 @@ set(BACKEND_SOURCES
     src/algorithms/scheduler.cpp
     src/algorithms/clustering.cpp
     src/algorithms/data_transform.cpp
-    src/algorithms/dataloader.cpp
     src/algorithms/model_evaluation.cpp
     src/algorithms/dimensionality_reduction.cpp
     src/algorithms/feature_importance.cpp
@@ -74,7 +73,6 @@ set(BACKEND_HEADERS
     include/cyxwiz/scheduler.h
     include/cyxwiz/clustering.h
     include/cyxwiz/data_transform.h
-    include/cyxwiz/dataloader.h
     include/cyxwiz/model_evaluation.h
     include/cyxwiz/dimensionality_reduction.h
     include/cyxwiz/feature_importance.h

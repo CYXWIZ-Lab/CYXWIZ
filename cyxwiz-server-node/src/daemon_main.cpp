@@ -72,27 +72,40 @@ void PrintUsage(const char* program) {
               << std::endl;
 }
 
+// DaemonConfig - populated from config file + command-line overrides
 struct DaemonConfig {
-    std::string ipc_address = "localhost:50054";
-    std::string p2p_address = "0.0.0.0:50052";
-    std::string terminal_address = "0.0.0.0:50053";
-    std::string node_service_address = "0.0.0.0:50055";
-    std::string deployment_address = "0.0.0.0:50056";
-    std::string inference_address = "0.0.0.0:50057";
-    std::string central_server = "localhost:50051";
+    std::string ipc_address;
+    std::string p2p_address;
+    std::string terminal_address;
+    std::string node_service_address;
+    std::string deployment_address;
+    std::string inference_address;
+    std::string central_server;
     std::string config_path;
-    int http_port = 8082;  // HTTP REST API port
-
-    // P2P Authentication (must match Central Server's jwt.secret or jwt.p2p_secret)
-    // Default matches Central Server's config.toml for development
-    std::string p2p_secret = "your-super-secret-jwt-key-change-in-production";
-
-    // TLS settings
+    int http_port = 0;
+    std::string p2p_secret;
     bool enable_tls = false;
     std::string tls_cert_path;
     std::string tls_key_path;
     std::string tls_ca_path;
     bool tls_auto = false;
+
+    // Initialize from NodeConfig
+    void LoadFromNodeConfig(const cyxwiz::servernode::core::NodeConfig& cfg) {
+        ipc_address = cfg.ipc_address;
+        p2p_address = cfg.p2p_address;
+        terminal_address = cfg.terminal_address;
+        node_service_address = cfg.node_service_address;
+        deployment_address = cfg.deployment_address;
+        inference_address = cfg.inference_address;
+        central_server = cfg.central_server;
+        http_port = cfg.http_api_port;
+        p2p_secret = cfg.p2p_secret;
+        enable_tls = cfg.enable_tls;
+        tls_cert_path = cfg.cert_path;
+        tls_key_path = cfg.key_path;
+        tls_ca_path = cfg.ca_path;
+    }
 };
 
 // Node ID persistence helpers
@@ -199,8 +212,32 @@ int main(int argc, char** argv) {
     spdlog::info("CyxWiz Server Daemon v{}", cyxwiz::GetVersionString());
     spdlog::info("========================================");
 
-    // Parse arguments
-    DaemonConfig daemon_config = ParseArgs(argc, argv);
+    // Load config file first
+    cyxwiz::servernode::core::ConfigManager config_manager;
+    std::string config_path = cyxwiz::servernode::core::ConfigManager::FindConfigFile();
+    config_manager.Load(config_path);
+    const auto& node_config = config_manager.GetConfig();
+
+    // Initialize DaemonConfig from loaded config
+    DaemonConfig daemon_config;
+    daemon_config.LoadFromNodeConfig(node_config);
+    daemon_config.config_path = config_path;
+
+    // Parse command-line args (overrides config file)
+    DaemonConfig cli_config = ParseArgs(argc, argv);
+    if (!cli_config.ipc_address.empty()) daemon_config.ipc_address = cli_config.ipc_address;
+    if (!cli_config.central_server.empty()) daemon_config.central_server = cli_config.central_server;
+    if (cli_config.http_port > 0) daemon_config.http_port = cli_config.http_port;
+    if (!cli_config.inference_address.empty()) daemon_config.inference_address = cli_config.inference_address;
+    if (!cli_config.config_path.empty()) daemon_config.config_path = cli_config.config_path;
+    if (!cli_config.p2p_secret.empty()) daemon_config.p2p_secret = cli_config.p2p_secret;
+    if (cli_config.enable_tls) daemon_config.enable_tls = true;
+    if (!cli_config.tls_cert_path.empty()) daemon_config.tls_cert_path = cli_config.tls_cert_path;
+    if (!cli_config.tls_key_path.empty()) daemon_config.tls_key_path = cli_config.tls_key_path;
+    if (!cli_config.tls_ca_path.empty()) daemon_config.tls_ca_path = cli_config.tls_ca_path;
+    if (cli_config.tls_auto) daemon_config.tls_auto = true;
+
+    spdlog::info("Config loaded from: {}", daemon_config.config_path);
 
     // Install signal handlers
     std::signal(SIGINT, SignalHandler);

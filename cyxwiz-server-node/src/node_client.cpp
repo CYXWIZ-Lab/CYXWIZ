@@ -1,4 +1,5 @@
 #include "node_client.h"
+#include "core/backend_manager.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 #include <chrono>
@@ -73,7 +74,9 @@ protocol::NodeInfo HardwareDetector::DetectHardwareInfo(const std::string& node_
 
     // Network
     info.set_ip_address(GetLocalIPAddress());
-    info.set_port(50052);  // Deployment service port
+    auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
+    int p2p_port = backend.IsInitialized() ? backend.GetConfig().p2p_port : 50052;
+    info.set_port(p2p_port);
     info.set_region("unknown");  // TODO: Detect geographic region
 
     // Performance (initialize with defaults)
