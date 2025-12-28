@@ -1,0 +1,49 @@
+# CyxWiz Server Node Configuration
+# This file configures the Server Node daemon and GUI client
+
+node:
+  id: "auto"  # "auto" generates UUID on first run, or set a fixed ID
+  name: "CyxWiz Server Node"
+  region: "us-west-2"
+
+network:
+  central_server: "localhost:50051"
+  p2p_port: 50052
+  terminal_port: 50053
+  node_service_port: 50054
+  deployment_port: 50055
+  http_api_port: 8082
+  enable_tls: false
+  cert_path: ""
+  key_path: ""
+  # P2P JWT Secret - MUST match Central Server's jwt.secret
+  # This is used to validate tokens when Engines connect directly
+  p2p_secret: "your-super-secret-jwt-key-change-in-production"
+
+training:
+  enabled: true
+  max_concurrent_jobs: 2
+  gpu_allocation: 0.8
+
+deployment:
+  enabled: true
+  models_directory: "./models"
+  max_loaded_models: 3
+
+api:
+  require_authentication: true
+  default_rate_limit: 100
+
+pool_mining:
+  enabled: false
+  pool_address: "pool.cyxwiz.io:3333"
+  intensity: 0.5
+  mine_when_idle_only: true
+
+wallet:
+  address: ""
+  auto_withdraw_threshold: 100.0
+
+logging:
+  level: "debug"  # trace, debug, info, warn, error
+  file: "./logs/server-node.log"

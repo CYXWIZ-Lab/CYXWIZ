@@ -85,6 +85,7 @@ enum ConnectionStatus {
     CONNECTION_STATUS_DISCONNECTED = 1;
     CONNECTION_STATUS_CONNECTING = 2;
     CONNECTION_STATUS_CONNECTED = 3;
+    CONNECTION_STATUS_AUTH_REQUIRED = 4;  // Token invalid/revoked - user needs to re-login
 }
 
 enum JobStatus {

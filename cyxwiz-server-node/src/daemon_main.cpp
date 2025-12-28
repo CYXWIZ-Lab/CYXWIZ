@@ -501,6 +501,18 @@ int main(int argc, char** argv) {
             g_shutdown = true;
         });
 
+        // Set auth failure callback - notify GUI when re-login is needed
+        auto* daemon_service_ptr = daemon_service.get();
+        node_client->SetAuthFailedCallback([daemon_service_ptr](const std::string& reason) {
+            spdlog::error("========================================");
+            spdlog::error("Authentication failed - user needs to re-login!");
+            spdlog::error("Reason: {}", reason);
+            spdlog::error("========================================");
+            if (daemon_service_ptr) {
+                daemon_service_ptr->SetAuthFailed(true, reason);
+            }
+        });
+
         if (!daemon_service->Start(daemon_config.ipc_address)) {
             spdlog::error("Failed to start IPC daemon service");
             terminal_handler.Stop();

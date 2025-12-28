@@ -260,6 +260,7 @@ void LoginPanel::Update() {
 
             if (result.success) {
                 error_message_.clear();
+                cached_auth_required_ = false;  // Clear auth required state on successful login
                 spdlog::info("Login successful: {}", result.user_info.email);
 
                 // After successful login, check if node needs to be registered
@@ -327,6 +328,20 @@ void LoginPanel::Update() {
             ipc::DaemonStatus status;
             if (GetDaemonClient()->GetStatus(status)) {
                 cached_connected_to_central_ = status.connected_to_central;
+
+                // Check if auth failure occurred (token expired/revoked)
+                if (status.auth_required && !cached_auth_required_) {
+                    cached_auth_required_ = true;
+                    error_message_ = "Session expired. Please log in again.";
+                    success_message_.clear();
+                    spdlog::warn("Auth required detected - prompting user to re-login");
+
+                    // Force logout to show login screen
+                    auto& auth = auth::AuthManager::Instance();
+                    auth.Logout();
+                } else if (!status.auth_required) {
+                    cached_auth_required_ = false;
+                }
             } else {
                 // GetStatus failed - connection might be lost
                 cached_connected_to_central_ = false;

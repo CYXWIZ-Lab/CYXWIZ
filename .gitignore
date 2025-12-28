@@ -128,3 +128,4 @@ cyxwiz-engine/external/imnodes/
 
 # Central Server (Rust project - separate repo)
 cyxwiz-central-server/
+*.gguf

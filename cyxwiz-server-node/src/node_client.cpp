@@ -558,9 +558,23 @@ bool NodeClient::SendHeartbeat() {
 
     if (status.ok() && response.status() == protocol::STATUS_SUCCESS) {
         spdlog::debug("Heartbeat sent successfully");
+        auth_failed_ = false;  // Reset auth failed flag on success
         return response.keep_alive();
     } else {
-        spdlog::warn("Heartbeat failed: {}", status.error_message());
+        // Check if this is an authentication failure
+        if (status.error_code() == grpc::StatusCode::UNAUTHENTICATED) {
+            spdlog::error("Heartbeat failed: Authentication error - {}", status.error_message());
+
+            // Only call callback once to avoid spamming
+            if (!auth_failed_.exchange(true)) {
+                if (auth_failed_callback_) {
+                    spdlog::warn("Notifying listeners of authentication failure...");
+                    auth_failed_callback_(status.error_message());
+                }
+            }
+        } else {
+            spdlog::warn("Heartbeat failed: {}", status.error_message());
+        }
         return false;
     }
 }

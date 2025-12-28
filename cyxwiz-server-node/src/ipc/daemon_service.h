@@ -212,6 +212,21 @@ private:
     std::vector<std::pair<int64_t, std::string>> log_buffer_;
     std::mutex log_mutex_;
     static constexpr size_t MAX_LOG_BUFFER = 1000;
+
+    // Auth failure state - when true, GUI should prompt re-login
+    std::atomic<bool> auth_failed_{false};
+    std::string auth_failure_reason_;
+    std::mutex auth_mutex_;
+
+public:
+    // Called by NodeClient when auth fails
+    void SetAuthFailed(bool failed, const std::string& reason = "") {
+        std::lock_guard<std::mutex> lock(auth_mutex_);
+        auth_failed_ = failed;
+        auth_failure_reason_ = reason;
+    }
+
+    bool IsAuthFailed() const { return auth_failed_; }
 };
 
 } // namespace ipc
