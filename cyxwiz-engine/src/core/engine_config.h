@@ -59,6 +59,10 @@ public:
     std::string GetDefaultDeploymentAddress() const;
     void SetDefaultDeploymentAddress(const std::string& address);
 
+    // Default P2P port (used when server node doesn't specify port)
+    int GetDefaultP2PPort() const;
+    void SetDefaultP2PPort(int port);
+
     // ===== Feature Flags =====
 
     // Whether to use secure (TLS) connections
@@ -101,6 +105,7 @@ private:
     std::string central_server_address_;
     std::string auth_api_url_;
     std::string default_deployment_address_;
+    int default_p2p_port_ = 50052;
 
     // Feature flags
     bool use_secure_connection_ = false;

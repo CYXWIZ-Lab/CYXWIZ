@@ -1,4 +1,5 @@
 #include "grpc_client.h"
+#include "../core/engine_config.h"
 #include <spdlog/spdlog.h>
 
 namespace network {
@@ -267,7 +268,7 @@ NodeDisplayInfo GRPCClient::ConvertNodeInfo(const cyxwiz::protocol::NodeInfo& pr
 
     // Network endpoint
     info.ip_address = proto.ip_address();
-    info.port = proto.port() > 0 ? proto.port() : 50052;  // Default to 50052 if not set
+    info.port = proto.port() > 0 ? proto.port() : core::EngineConfig::Instance().GetDefaultP2PPort();
 
     // Debug: Log device info
     spdlog::info("ConvertNodeInfo: node={}, endpoint={}:{}, devices_count={}",

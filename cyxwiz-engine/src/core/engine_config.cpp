@@ -31,6 +31,7 @@ void EngineConfig::SetDefaults() {
     central_server_address_ = "localhost:50051";
     auth_api_url_ = "http://127.0.0.1:3002/api";
     default_deployment_address_ = "localhost:50056";
+    default_p2p_port_ = 50052;
     use_secure_connection_ = false;
     auto_connect_on_startup_ = false;
     connection_timeout_ = 10;
@@ -114,6 +115,9 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             if (servers.contains("deployment")) {
                 default_deployment_address_ = servers["deployment"].get<std::string>();
             }
+            if (servers.contains("default_p2p_port")) {
+                default_p2p_port_ = servers["default_p2p_port"].get<int>();
+            }
         }
 
         // Auth settings
@@ -148,6 +152,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         spdlog::debug("  Central Server: {}", central_server_address_);
         spdlog::debug("  Auth API: {}", auth_api_url_);
         spdlog::debug("  Default Deployment: {}", default_deployment_address_);
+        spdlog::debug("  Default P2P Port: {}", default_p2p_port_);
 
         return true;
 
@@ -182,7 +187,8 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         // Server addresses
         config["servers"] = {
             {"central", central_server_address_},
-            {"deployment", default_deployment_address_}
+            {"deployment", default_deployment_address_},
+            {"default_p2p_port", default_p2p_port_}
         };
 
         // Auth settings
@@ -316,6 +322,19 @@ void EngineConfig::SetRequestTimeout(int seconds) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (request_timeout_ != seconds) {
         request_timeout_ = seconds;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::GetDefaultP2PPort() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return default_p2p_port_;
+}
+
+void EngineConfig::SetDefaultP2PPort(int port) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (default_p2p_port_ != port) {
+        default_p2p_port_ = port;
         modified_ = true;
     }
 }

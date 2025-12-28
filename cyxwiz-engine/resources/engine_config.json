@@ -1,0 +1,16 @@
+{
+    "servers": {
+        "central": "localhost:50051",
+        "deployment": "localhost:50056",
+        "default_p2p_port": 50052
+    },
+    "auth": {
+        "api_url": "http://127.0.0.1:3002/api"
+    },
+    "connection": {
+        "use_tls": false,
+        "auto_connect": false,
+        "timeout": 10,
+        "request_timeout": 30
+    }
+}

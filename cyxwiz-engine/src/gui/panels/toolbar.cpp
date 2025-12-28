@@ -2,6 +2,7 @@
 #include "plot_window.h"
 #include "../theme.h"
 #include "../../auth/auth_client.h"
+#include "../../core/engine_config.h"
 #include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -1053,7 +1054,13 @@ void ToolbarPanel::Render() {
                 ImGui::Text("Default Server");
                 ImGui::SetCursorPos(ImVec2(12, 32));
 
-                static char server_address[256] = "localhost:50051";
+                static char server_address[256] = "";
+                static bool server_address_initialized = false;
+                if (!server_address_initialized) {
+                    std::strncpy(server_address, core::EngineConfig::Instance().GetCentralServerAddress().c_str(), sizeof(server_address) - 1);
+                    server_address[sizeof(server_address) - 1] = '\0';
+                    server_address_initialized = true;
+                }
                 ImGui::SetNextItemWidth(316);
                 ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
                 ImGui::InputText("##server", server_address, sizeof(server_address));

@@ -104,6 +104,7 @@
 #include "../network/p2p_client.h"
 #include "../auth/auth_client.h"
 #include "../core/project_manager.h"
+#include "../core/engine_config.h"
 #include "../core/data_registry.h"
 #include "../core/graph_compiler.h"
 #include "../core/training_executor.h"
@@ -1428,7 +1429,7 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
     if (connection_dialog_ && client) {
         auto reservation_client = std::make_shared<network::ReservationClient>();
         // Get server address from existing client (assuming same server hosts reservation service)
-        if (reservation_client->Connect("localhost:50051")) {
+        if (reservation_client->Connect(core::EngineConfig::Instance().GetCentralServerAddress())) {
             // Set auth token from AuthClient if authenticated
             auto& auth = cyxwiz::auth::AuthClient::Instance();
             if (auth.IsAuthenticated()) {
