@@ -20,6 +20,8 @@
 
 #ifdef _WIN32
 #include <shlobj.h>
+#else
+#include <sys/stat.h>  // For mkdir on POSIX
 #endif
 
 #include "deployment_handler.h"

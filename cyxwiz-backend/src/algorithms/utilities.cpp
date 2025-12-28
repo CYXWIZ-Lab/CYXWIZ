@@ -1221,9 +1221,8 @@ RegexResult Utilities::TestRegex(
         if (flags.find('i') != std::string::npos) {
             regex_flags |= std::regex_constants::icase;
         }
-        if (flags.find('m') != std::string::npos) {
-            regex_flags |= std::regex_constants::multiline;
-        }
+        // Note: multiline flag is not standard C++ (not in std::regex_constants)
+        // The 'm' flag is silently ignored for portability
 
         std::regex re(pattern, regex_flags);
         result.is_valid_pattern = true;
@@ -1282,9 +1281,8 @@ RegexResult Utilities::ReplaceRegex(
         if (flags.find('i') != std::string::npos) {
             regex_flags |= std::regex_constants::icase;
         }
-        if (flags.find('m') != std::string::npos) {
-            regex_flags |= std::regex_constants::multiline;
-        }
+        // Note: multiline flag is not standard C++ (not in std::regex_constants)
+        // The 'm' flag is silently ignored for portability
 
         std::regex re(pattern, regex_flags);
         result.replaced_text = std::regex_replace(text, re, replacement);
