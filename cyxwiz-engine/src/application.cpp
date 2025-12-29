@@ -209,14 +209,14 @@ bool CyxWizApp::Initialize() {
     // Load professional fonts
     LoadFonts(io);
 
-    // Initialize components
+    // Initialize components - UI loads immediately
     main_window_ = std::make_unique<gui::MainWindow>();
+
+    // Initialize Python and Network synchronously for now (fast enough)
+    // These will show in console log but UI is already visible
     python_engine_ = std::make_unique<scripting::PythonEngine>();
     grpc_client_ = std::make_unique<network::GRPCClient>();
     job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
-
-    // Connect network components to main window
-    main_window_->SetNetworkComponents(grpc_client_.get(), job_manager_.get());
 
     // Connect debug logging flags to main window (for View menu toggles)
     main_window_->SetIdleLogPtr(&log_idle_transitions_);
@@ -296,7 +296,8 @@ int CyxWizApp::Run() {
         // Check if user is trying to close the window
         if (glfwWindowShouldClose(window_)) {
             if (force_close_) {
-                // User confirmed force close
+                // User confirmed force close - hide immediately
+                glfwHideWindow(window_);
                 break;
             }
 
@@ -316,7 +317,8 @@ int CyxWizApp::Run() {
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
                 show_data_loaded_confirmation_ = true;
             } else {
-                // OK to close
+                // OK to close - hide window immediately for instant feedback
+                glfwHideWindow(window_);
                 break;
             }
         }
@@ -642,24 +644,63 @@ void CyxWizApp::Render() {
 void CyxWizApp::Shutdown() {
     spdlog::info("Shutting down application...");
 
-    // Cleanup components
+    // Stop any active training first (before destroying UI)
+    auto& training_mgr = cyxwiz::TrainingManager::Instance();
+    if (training_mgr.IsTrainingActive()) {
+        spdlog::info("Stopping active training...");
+        training_mgr.StopTraining();
+    }
+
+    // Shutdown async task manager (wait for worker threads)
+    spdlog::info("Shutting down async tasks...");
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+
+    // Cleanup components - with timing for debugging slow shutdown
+    auto start = std::chrono::steady_clock::now();
+    auto log_elapsed = [&start](const char* step) {
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+        spdlog::info("Shutdown: {} ({}ms)", step, ms);
+        start = now;
+    };
+
+    spdlog::info("Cleaning up job manager...");
     job_manager_.reset();
+    log_elapsed("job_manager_.reset()");
+
+    spdlog::info("Cleaning up gRPC client...");
     grpc_client_.reset();
+    log_elapsed("grpc_client_.reset()");
+
+    spdlog::info("Cleaning up Python engine...");
     python_engine_.reset();
+    log_elapsed("python_engine_.reset()");
+
+    spdlog::info("Cleaning up main window...");
     main_window_.reset();
+    log_elapsed("main_window_.reset()");
+
+    // Clear data registry (unload datasets from memory)
+    spdlog::info("Unloading datasets...");
+    cyxwiz::DataRegistry::Instance().UnloadAll();
+    log_elapsed("DataRegistry::UnloadAll()");
 
     // Cleanup ImGui
+    spdlog::info("Cleaning up ImGui...");
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
-    ImNodes::DestroyContext();  // Cleanup ImNodes context
-    ImPlot::DestroyContext();  // Cleanup ImPlot context
+    ImNodes::DestroyContext();
+    ImPlot::DestroyContext();
     ImGui::DestroyContext();
+    log_elapsed("ImGui shutdown");
 
     // Cleanup GLFW
+    spdlog::info("Cleaning up GLFW...");
     if (window_) {
         glfwDestroyWindow(window_);
     }
     glfwTerminate();
+    log_elapsed("GLFW shutdown");
 
     spdlog::info("Application shut down complete");
 }
