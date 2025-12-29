@@ -32,7 +32,11 @@ PythonSandbox::PythonSandbox(const Config& config)
 }
 
 PythonSandbox::~PythonSandbox() {
-    CleanupHooks();
+    // Skip CleanupHooks during shutdown - it calls Python code which can crash
+    // when Python interpreter is in an unstable state during process exit.
+    // Since we're not calling py::finalize_interpreter(), OS cleanup will
+    // handle everything anyway.
+    spdlog::info("~PythonSandbox: skipping CleanupHooks (OS will cleanup)");
 }
 
 void PythonSandbox::SetConfig(const Config& config) {

@@ -28,6 +28,7 @@
 #endif
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <thread>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -643,6 +644,18 @@ void CyxWizApp::Render() {
 
 void CyxWizApp::Shutdown() {
     spdlog::info("Shutting down application...");
+    spdlog::default_logger()->flush();
+
+    // Immediately exit to avoid crashes during static destructor cleanup
+    // (ArrayFire/CUDA have complex cleanup that can crash).
+    // All resources will be properly cleaned up by the OS on process exit.
+    //
+    // The window is already hidden at this point (see Run() method),
+    // so the user experience is still instant close.
+    std::quick_exit(0);
+
+    // ============== UNREACHABLE CODE BELOW ==============
+    // Keeping for documentation/reference of proper cleanup order
 
     // Stop any active training first (before destroying UI)
     auto& training_mgr = cyxwiz::TrainingManager::Instance();
@@ -697,22 +710,27 @@ void CyxWizApp::Shutdown() {
 
     // Cleanup ImGui
     spdlog::info("Cleaning up ImGui...");
+    spdlog::info("  ImGui_ImplOpenGL3_Shutdown...");
     ImGui_ImplOpenGL3_Shutdown();
+    spdlog::info("  ImGui_ImplGlfw_Shutdown...");
     ImGui_ImplGlfw_Shutdown();
+    spdlog::info("  ImNodes::DestroyContext...");
     ImNodes::DestroyContext();
+    spdlog::info("  ImPlot::DestroyContext...");
     ImPlot::DestroyContext();
+    spdlog::info("  ImGui::DestroyContext...");
     ImGui::DestroyContext();
+
+    // Force flush all loggers
+    spdlog::default_logger()->flush();
     log_elapsed("ImGui shutdown");
 
-    // Cleanup GLFW
-    spdlog::info("Cleaning up GLFW...");
-    if (window_) {
-        glfwDestroyWindow(window_);
-    }
-    glfwTerminate();
-    log_elapsed("GLFW shutdown");
-
-    spdlog::info("Application shut down complete");
+    // Exit immediately after ImGui cleanup to avoid crashes from CUDA/ArrayFire
+    // static destructor ordering issues. The OS will cleanup GLFW and all other
+    // resources during process termination anyway.
+    spdlog::info("Application shutdown complete (quick exit)");
+    spdlog::default_logger()->flush();
+    std::quick_exit(0);
 }
 
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
