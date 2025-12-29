@@ -15,6 +15,7 @@
 #include "dock_style.h"
 #include "icons.h"
 #include "theme.h"
+#include "../core/keyboard_shortcuts.h"
 #include "panels/dataset_panel.h"
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
@@ -2569,31 +2570,101 @@ void MainWindow::RenderSidebar() {
 }
 
 
-void MainWindow::HandleGlobalShortcuts() {
-    ImGuiIO& io = ImGui::GetIO();
+void MainWindow::DetectKeyboardContext() {
+    auto& kb = KeyboardShortcutManager::Instance();
 
-    bool ctrl = io.KeyCtrl;
-    bool shift = io.KeyShift;
-    bool alt = io.KeyAlt;
-
-    // Don't capture shortcuts if a dialog is already open
+    // Check for modal dialogs first (highest priority)
     if (toolbar_) {
         if (toolbar_->IsFindDialogOpen() || toolbar_->IsReplaceDialogOpen() ||
             toolbar_->IsFindInFilesDialogOpen() || toolbar_->IsReplaceInFilesDialogOpen() ||
             toolbar_->IsCommandPaletteOpen()) {
+            kb.SetActiveContext(KeyboardContext::ModalDialog);
             return;
         }
     }
 
-    // Command Palette (Ctrl+P)
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_P)) {
-        if (toolbar_) {
-            toolbar_->OpenCommandPalette();
-            spdlog::info("Opened Command Palette via Ctrl+P");
+    // Check for completion popup in script editor
+    if (script_editor_ && script_editor_->IsCompletionPopupOpen()) {
+        kb.SetActiveContext(KeyboardContext::CompletionPopup);
+        return;
+    }
+
+    // Check which panel is focused using panel-level focus tracking
+    // This is more reliable than window name matching since panels track child window focus
+
+    // Script Editor - uses IsFocused() which tracks child windows (TextEditor)
+    if (script_editor_ && script_editor_->IsFocused()) {
+        kb.SetActiveContext(KeyboardContext::ScriptEditor);
+        return;
+    }
+
+    // For other panels, fall back to window name matching
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow)) {
+        // Get the focused window name
+        ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow;
+        if (focused) {
+            std::string window_name = focused->Name ? focused->Name : "";
+
+            // Node Editor detection
+            if (window_name.find("Node Editor") != std::string::npos ||
+                window_name.find("##NodeEditor") != std::string::npos) {
+                kb.SetActiveContext(KeyboardContext::NodeEditor);
+                return;
+            }
+
+            // Console detection
+            if (window_name.find("Console") != std::string::npos ||
+                window_name.find("Python Console") != std::string::npos) {
+                kb.SetActiveContext(KeyboardContext::Console);
+                return;
+            }
+
+            // Asset Browser detection
+            if (window_name.find("Asset") != std::string::npos ||
+                window_name.find("Project") != std::string::npos) {
+                kb.SetActiveContext(KeyboardContext::AssetBrowser);
+                return;
+            }
+
+            // Table Viewer detection
+            if (window_name.find("Table") != std::string::npos) {
+                kb.SetActiveContext(KeyboardContext::TableViewer);
+                return;
+            }
         }
     }
 
-    // Python Console (F12)
+    // Default to main window context
+    kb.SetActiveContext(KeyboardContext::MainWindow);
+}
+
+void MainWindow::HandleGlobalShortcuts() {
+    // First, detect which context is active
+    DetectKeyboardContext();
+
+    auto& kb = KeyboardShortcutManager::Instance();
+    KeyboardContext context = kb.GetActiveContext();
+
+    ImGuiIO& io = ImGui::GetIO();
+    bool ctrl = io.KeyCtrl;
+    bool shift = io.KeyShift;
+    bool alt = io.KeyAlt;
+
+    // Modal dialogs block all shortcuts (except Escape which is handled by the dialog)
+    if (context == KeyboardContext::ModalDialog) {
+        return;
+    }
+
+    // Completion popup has its own keyboard handling in script_editor
+    if (context == KeyboardContext::CompletionPopup) {
+        return;
+    }
+
+    // ========================================================================
+    // GLOBAL SHORTCUTS - Work in any context
+    // ========================================================================
+
+    // Python Console (F12) - Always available
     if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F12)) {
         if (command_window_) {
             command_window_->SetVisible(true);
@@ -2601,98 +2672,130 @@ void MainWindow::HandleGlobalShortcuts() {
         }
     }
 
-    // Find (Ctrl+F)
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F)) {
-        if (toolbar_) {
-            toolbar_->OpenFindDialog();
-            spdlog::info("Opened Find dialog via Ctrl+F");
-        }
-    }
-
-    // Replace (Ctrl+H)
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_H)) {
-        if (toolbar_) {
-            toolbar_->OpenReplaceDialog();
-            spdlog::info("Opened Replace dialog via Ctrl+H");
-        }
-    }
-
-    // Find in Files (Ctrl+Shift+F)
-    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F)) {
-        if (toolbar_) {
-            toolbar_->OpenFindInFilesDialog();
-            spdlog::info("Opened Find in Files dialog via Ctrl+Shift+F");
-        }
-    }
-
-    // Replace in Files (Ctrl+Shift+H)
-    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_H)) {
-        if (toolbar_) {
-            toolbar_->OpenReplaceInFilesDialog();
-            spdlog::info("Opened Replace in Files dialog via Ctrl+Shift+H");
-        }
-    }
-
-    // Toggle Line Comment (Ctrl+/)
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Slash)) {
-        if (script_editor_) {
-            script_editor_->ToggleLineComment();
-            spdlog::info("Toggled line comment via Ctrl+/");
-        }
-    }
-
-    // Toggle Block Comment (Shift+Alt+A)
-    if (!ctrl && shift && alt && ImGui::IsKeyPressed(ImGuiKey_A)) {
-        if (script_editor_) {
-            script_editor_->ToggleBlockComment();
-            spdlog::info("Toggled block comment via Shift+Alt+A");
-        }
-    }
-
-    // Go to Line (Ctrl+G) - Opens dialog in toolbar
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_G)) {
-        // Note: This opens the Go to Line dialog in the toolbar
-        // The toolbar handles the dialog rendering
-    }
-
-    // Duplicate Line (Ctrl+D)
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_D)) {
-        if (script_editor_) {
-            script_editor_->DuplicateLine();
-            spdlog::info("Duplicated line via Ctrl+D");
-        }
-    }
-
-    // Move Line Up (Alt+Up)
-    if (!ctrl && !shift && alt && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-        if (script_editor_) {
-            script_editor_->MoveLineUp();
-            spdlog::info("Moved line up via Alt+Up");
-        }
-    }
-
-    // Move Line Down (Alt+Down)
-    if (!ctrl && !shift && alt && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
-        if (script_editor_) {
-            script_editor_->MoveLineDown();
-            spdlog::info("Moved line down via Alt+Down");
-        }
-    }
-
-    // Join Lines (Ctrl+J)
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_J)) {
-        if (script_editor_) {
-            script_editor_->JoinLines();
-            spdlog::info("Joined lines via Ctrl+J");
-        }
-    }
-
-    // Pattern Browser (Ctrl+Shift+P)
+    // Pattern Browser (Ctrl+Shift+P) - Always available
     if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_P)) {
         if (pattern_browser_) {
             pattern_browser_->Toggle();
             spdlog::info("Toggled Pattern Browser via Ctrl+Shift+P");
         }
+    }
+
+    // ========================================================================
+    // MAIN WINDOW CONTEXT - Only when no specific panel is focused
+    // ========================================================================
+    if (context == KeyboardContext::MainWindow) {
+        // Command Palette (Ctrl+P)
+        if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_P)) {
+            if (toolbar_) {
+                toolbar_->OpenCommandPalette();
+                spdlog::info("Opened Command Palette via Ctrl+P");
+            }
+        }
+
+        // Find in Files (Ctrl+Shift+F) - Project-wide search
+        if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F)) {
+            if (toolbar_) {
+                toolbar_->OpenFindInFilesDialog();
+                spdlog::info("Opened Find in Files dialog via Ctrl+Shift+F");
+            }
+        }
+
+        // Replace in Files (Ctrl+Shift+H)
+        if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_H)) {
+            if (toolbar_) {
+                toolbar_->OpenReplaceInFilesDialog();
+                spdlog::info("Opened Replace in Files dialog via Ctrl+Shift+H");
+            }
+        }
+    }
+
+    // ========================================================================
+    // SCRIPT EDITOR CONTEXT - Only when script editor is focused
+    // ========================================================================
+    if (context == KeyboardContext::ScriptEditor) {
+        // Find (Ctrl+F)
+        if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F)) {
+            if (toolbar_) {
+                toolbar_->OpenFindDialog();
+                spdlog::info("Opened Find dialog via Ctrl+F");
+            }
+        }
+
+        // Replace (Ctrl+H)
+        if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_H)) {
+            if (toolbar_) {
+                toolbar_->OpenReplaceDialog();
+                spdlog::info("Opened Replace dialog via Ctrl+H");
+            }
+        }
+
+        // Toggle Line Comment (Ctrl+/)
+        if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Slash)) {
+            if (script_editor_) {
+                script_editor_->ToggleLineComment();
+                spdlog::info("Toggled line comment via Ctrl+/");
+            }
+        }
+
+        // Toggle Block Comment (Shift+Alt+A)
+        if (!ctrl && shift && alt && ImGui::IsKeyPressed(ImGuiKey_A)) {
+            if (script_editor_) {
+                script_editor_->ToggleBlockComment();
+                spdlog::info("Toggled block comment via Shift+Alt+A");
+            }
+        }
+
+        // Go to Line (Ctrl+G)
+        if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_G)) {
+            // Opens the Go to Line dialog in the toolbar
+        }
+
+        // Duplicate Line (Ctrl+D)
+        if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_D)) {
+            if (script_editor_) {
+                script_editor_->DuplicateLine();
+                spdlog::info("Duplicated line via Ctrl+D");
+            }
+        }
+
+        // Move Line Up (Alt+Up)
+        if (!ctrl && !shift && alt && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+            if (script_editor_) {
+                script_editor_->MoveLineUp();
+                spdlog::info("Moved line up via Alt+Up");
+            }
+        }
+
+        // Move Line Down (Alt+Down)
+        if (!ctrl && !shift && alt && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            if (script_editor_) {
+                script_editor_->MoveLineDown();
+                spdlog::info("Moved line down via Alt+Down");
+            }
+        }
+
+        // Join Lines (Ctrl+J)
+        if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_J)) {
+            if (script_editor_) {
+                script_editor_->JoinLines();
+                spdlog::info("Joined lines via Ctrl+J");
+            }
+        }
+    }
+
+    // ========================================================================
+    // NODE EDITOR CONTEXT - Only when node editor is focused
+    // ========================================================================
+    if (context == KeyboardContext::NodeEditor) {
+        // Future: Add node editor specific shortcuts here
+        // e.g., Ctrl+N for new node, Del for delete, etc.
+    }
+
+    // ========================================================================
+    // CONSOLE CONTEXT - Only when console is focused
+    // ========================================================================
+    if (context == KeyboardContext::Console) {
+        // Console handles its own shortcuts internally
     }
 }
 

@@ -4,6 +4,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../scripting/cell_manager.h"
 #include "../../scripting/debugger.h"
+#include "../../scripting/script_manager.h"
 #include <TextEditor.h>
 #include <string>
 #include <vector>
@@ -120,6 +121,12 @@ public:
 
     // Callbacks for settings changes (Script Editor -> Preferences sync)
     void SetOnSettingsChangedCallback(std::function<void()> callback) { on_settings_changed_callback_ = callback; }
+
+    // Auto-completion state query
+    bool IsCompletionPopupOpen() const { return show_completion_popup_; }
+
+    // Check if this panel has focus (including child windows)
+    bool IsFocused() const { return is_focused_; }
 
 private:
     // Tab/File representation
@@ -269,6 +276,23 @@ private:
 
     // Settings changed callback (for syncing with Preferences)
     std::function<void()> on_settings_changed_callback_;
+
+    // Auto-completion state
+    scripting::ScriptManager script_manager_;
+    std::vector<scripting::CompletionItem> completion_items_;
+    bool show_completion_popup_ = false;
+    int selected_completion_ = 0;
+    std::string completion_prefix_;
+    TextEditor::Coordinates completion_start_pos_;
+
+    // Focus tracking
+    bool is_focused_ = false;
+
+    // Auto-completion helpers
+    void UpdateAutoCompletion();
+    void RenderCompletionPopup();
+    void ApplyCompletion(const scripting::CompletionItem& item);
+    void CloseCompletionPopup();
 };
 
 } // namespace cyxwiz

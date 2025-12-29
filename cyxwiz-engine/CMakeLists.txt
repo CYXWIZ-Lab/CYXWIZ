@@ -574,6 +574,14 @@ install(TARGETS cyxwiz_plotting
     RUNTIME DESTINATION lib/python/cyxwiz
 )
 
+# Copy cyxwiz_plotting Python module to engine directory after build
+add_custom_command(TARGET cyxwiz_plotting POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:cyxwiz_plotting>
+    $<TARGET_FILE_DIR:cyxwiz-engine>/cyxwiz_plotting$<TARGET_FILE_SUFFIX:cyxwiz_plotting>
+    COMMENT "Copying cyxwiz_plotting Python module..."
+)
+
 # Install Python examples
 install(DIRECTORY python/examples/
     DESTINATION share/cyxwiz/python/examples

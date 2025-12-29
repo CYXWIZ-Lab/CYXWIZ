@@ -195,6 +195,7 @@ private:
     void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
     void RenderSidebar();
     void RenderStatusBar();
+    void DetectKeyboardContext();
     void HandleGlobalShortcuts();
 
     // Training from node graph
