@@ -25,14 +25,26 @@ ScriptingEngine::ScriptingEngine()
 }
 
 ScriptingEngine::~ScriptingEngine() {
+    spdlog::info("~ScriptingEngine: starting destruction");
+
     // Stop any running script before destruction
     if (script_running_) {
+        spdlog::info("~ScriptingEngine: stopping running script");
         StopScript();
     }
     // Wait for thread to finish
     if (script_thread_ && script_thread_->joinable()) {
+        spdlog::info("~ScriptingEngine: joining script thread");
         script_thread_->join();
     }
+
+    // Explicitly destroy members before implicit destruction
+    // to control the order and log progress
+    spdlog::info("~ScriptingEngine: destroying sandbox_");
+    sandbox_.reset();
+    spdlog::info("~ScriptingEngine: destroying python_engine_");
+    python_engine_.reset();
+    spdlog::info("~ScriptingEngine: destruction complete");
 }
 
 void ScriptingEngine::EnableSandbox(bool enable) {
