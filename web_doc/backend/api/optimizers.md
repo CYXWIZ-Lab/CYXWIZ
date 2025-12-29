@@ -271,6 +271,201 @@ private:
 Adagrad adagrad(0.01);
 ```
 
+## NAdam (Nesterov-accelerated Adam)
+
+```cpp
+class CYXWIZ_API NAdam : public Optimizer {
+public:
+    NAdam(double learning_rate = 0.002,
+          double beta1 = 0.9,
+          double beta2 = 0.999,
+          double epsilon = 1e-8);
+
+    void Step(std::vector<Tensor*>& parameters,
+              std::vector<Tensor*>& gradients) override;
+};
+```
+
+### Algorithm
+
+```
+m_t = beta1 * m_{t-1} + (1 - beta1) * grad
+v_t = beta2 * v_{t-1} + (1 - beta2) * grad^2
+
+# Bias correction
+m_hat = m_t / (1 - beta1^t)
+v_hat = v_t / (1 - beta2^t)
+
+# Nesterov momentum term
+m_nesterov = beta1 * m_hat + (1 - beta1) * grad / (1 - beta1^t)
+
+param = param - lr * m_nesterov / (sqrt(v_hat) + epsilon)
+```
+
+### Usage
+
+```cpp
+// NAdam often converges faster than Adam
+NAdam nadam(0.002);
+```
+
+## Adadelta
+
+Adaptive learning rate method that doesn't require setting a learning rate.
+
+```cpp
+class CYXWIZ_API Adadelta : public Optimizer {
+public:
+    Adadelta(double rho = 0.9,
+             double epsilon = 1e-6);
+
+    void Step(std::vector<Tensor*>& parameters,
+              std::vector<Tensor*>& gradients) override;
+
+private:
+    double rho_;
+    double epsilon_;
+    std::vector<Tensor> acc_grad_;   // E[g²]
+    std::vector<Tensor> acc_delta_;  // E[Δx²]
+};
+```
+
+### Algorithm
+
+```
+# Accumulate squared gradient
+E[g²]_t = rho * E[g²]_{t-1} + (1 - rho) * grad²
+
+# Compute update using ratio of RMS
+delta = -sqrt(E[Δx²]_{t-1} + epsilon) / sqrt(E[g²]_t + epsilon) * grad
+
+# Accumulate squared update
+E[Δx²]_t = rho * E[Δx²]_{t-1} + (1 - rho) * delta²
+
+param = param + delta
+```
+
+### Usage
+
+```cpp
+// No learning rate required - adapts automatically
+Adadelta adadelta(0.9, 1e-6);
+```
+
+## LAMB (Layer-wise Adaptive Moments for Batch training)
+
+Designed for large batch training (e.g., BERT pre-training with batch size 32K).
+
+```cpp
+class CYXWIZ_API LAMB : public Optimizer {
+public:
+    LAMB(double learning_rate = 0.001,
+         double beta1 = 0.9,
+         double beta2 = 0.999,
+         double epsilon = 1e-6,
+         double weight_decay = 0.01);
+
+    void Step(std::vector<Tensor*>& parameters,
+              std::vector<Tensor*>& gradients) override;
+};
+```
+
+### Algorithm
+
+```
+# Adam moment computation
+m_t = beta1 * m_{t-1} + (1 - beta1) * grad
+v_t = beta2 * v_{t-1} + (1 - beta2) * grad²
+
+m_hat = m_t / (1 - beta1^t)
+v_hat = v_t / (1 - beta2^t)
+
+# Adam update direction
+adam_update = m_hat / (sqrt(v_hat) + epsilon) + weight_decay * param
+
+# Layer-wise trust ratio
+trust_ratio = ||param|| / ||adam_update||
+
+# Scaled update
+param = param - lr * trust_ratio * adam_update
+```
+
+### Usage
+
+```cpp
+// For large batch training (BERT, GPT, etc.)
+LAMB lamb(0.001, 0.9, 0.999, 1e-6, 0.01);
+
+// Can use much larger batch sizes than Adam
+// Typical: batch_size = 32768 with lr = 0.00176
+```
+
+## Learning Rate Warmup
+
+Wrapper class for gradual learning rate warmup at training start.
+
+```cpp
+class CYXWIZ_API LRWarmup {
+public:
+    enum class WarmupType { None, Linear, Cosine };
+
+    LRWarmup(std::unique_ptr<Optimizer> optimizer,
+             int warmup_steps,
+             WarmupType warmup_type = WarmupType::Linear,
+             double base_lr = -1.0);  // -1 = use optimizer's LR
+
+    void Step(std::vector<Tensor*>& parameters,
+              std::vector<Tensor*>& gradients);
+    void ZeroGrad();
+
+    double GetCurrentLR() const;
+    double GetWarmupProgress() const;  // 0.0 to 1.0
+    bool IsWarmupComplete() const;
+};
+```
+
+### Warmup Types
+
+- **Linear**: LR increases linearly from 0 to base_lr
+- **Cosine**: Smooth ramp-up using cosine curve: `lr = base_lr * 0.5 * (1 - cos(π * progress))`
+
+### Usage
+
+```cpp
+// Create optimizer with warmup
+auto adam = std::make_unique<Adam>(0.001);
+LRWarmup warmup(std::move(adam), 1000, LRWarmup::WarmupType::Linear);
+
+// Training loop
+for (int step = 0; step < total_steps; step++) {
+    warmup.Step(params, grads);
+
+    if (!warmup.IsWarmupComplete()) {
+        std::cout << "Warmup progress: "
+                  << warmup.GetWarmupProgress() * 100 << "%" << std::endl;
+    }
+}
+```
+
+### Python Usage
+
+```python
+import pycyxwiz as cx
+
+# Create optimizer with warmup
+warmup = cx.create_lr_warmup(
+    cx.OptimizerType.Adam,
+    learning_rate=0.001,
+    warmup_steps=1000,
+    warmup_type=cx.WarmupType.Linear
+)
+
+# Training loop
+for step in range(total_steps):
+    warmup.step(params, grads)
+    print(f"LR: {warmup.get_current_lr():.6f}")
+```
+
 ## Learning Rate Schedulers
 
 ### Base Scheduler
@@ -418,7 +613,10 @@ enum class OptimizerType {
     Adam,
     AdamW,
     RMSprop,
-    Adagrad
+    Adagrad,
+    NAdam,
+    Adadelta,
+    LAMB
 };
 
 struct OptimizerConfig {
@@ -511,7 +709,10 @@ for epoch in range(epochs):
 | **SGD+Momentum** | Computer vision, CNNs | lr=0.1, momentum=0.9 |
 | **Adam** | General purpose, NLP | lr=0.001 |
 | **AdamW** | Transformers, large models | lr=0.0001, wd=0.01 |
+| **NAdam** | Faster convergence than Adam | lr=0.002 |
 | **RMSprop** | RNNs, non-stationary | lr=0.001 |
+| **Adadelta** | No LR tuning needed | rho=0.9 |
+| **LAMB** | Large batch training (BERT, GPT) | lr=0.001, wd=0.01 |
 
 ### Learning Rate Guidelines
 

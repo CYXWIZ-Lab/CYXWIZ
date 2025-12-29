@@ -335,6 +335,51 @@ public:
 };
 ```
 
+### ContrastiveLoss
+
+For learning embeddings from pairs of samples (similarity learning).
+
+```cpp
+class CYXWIZ_API ContrastiveLoss : public Loss {
+public:
+    ContrastiveLoss(float margin = 1.0f,
+                    ReductionType reduction = ReductionType::Mean);
+
+    Tensor Forward(const Tensor& x1, const Tensor& x2) override;
+
+    void SetLabels(const Tensor& labels);  // 0=similar, 1=dissimilar
+
+private:
+    float margin_;
+    Tensor labels_;
+};
+```
+
+### Algorithm
+
+```
+# For each pair (x1, x2) with label y:
+distance = ||x1 - x2||²
+
+if y == 0:  # Similar pair
+    loss = 0.5 * distance²
+else:       # Dissimilar pair
+    loss = 0.5 * max(margin - distance, 0)²
+```
+
+### Usage
+
+```cpp
+ContrastiveLoss contrastive_loss(1.0f);
+
+Tensor x1 = ...;      // (N, embedding_dim)
+Tensor x2 = ...;      // (N, embedding_dim)
+Tensor labels = ...;  // (N,) with 0=similar, 1=dissimilar
+
+contrastive_loss.SetLabels(labels);
+Tensor loss = contrastive_loss(x1, x2);
+```
+
 ### InfoNCELoss (Contrastive Learning)
 
 ```cpp
@@ -452,8 +497,9 @@ enum class LossType {
     L1,
     SmoothL1,
     Focal,
-    Dice,
     Triplet,
+    Contrastive,
+    Dice,
     InfoNCE
 };
 

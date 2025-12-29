@@ -230,7 +230,25 @@ public:
 | `SGD` | Stochastic gradient descent | lr, momentum, weight_decay |
 | `Adam` | Adaptive moments | lr, betas, eps, weight_decay |
 | `AdamW` | Adam with decoupled decay | lr, betas, eps, weight_decay |
+| `NAdam` | Nesterov-accelerated Adam | lr, betas, eps |
 | `RMSprop` | Root mean square prop | lr, alpha, eps |
+| `AdaGrad` | Adaptive gradient | lr, eps |
+| `Adadelta` | Adaptive learning rate (no LR needed) | rho, eps |
+| `LAMB` | Large batch training | lr, betas, weight_decay |
+
+### Learning Rate Warmup
+
+```python
+import pycyxwiz as cx
+
+# Create optimizer with warmup
+warmup = cx.create_lr_warmup(
+    cx.OptimizerType.Adam,
+    learning_rate=0.001,
+    warmup_steps=1000,
+    warmup_type=cx.WarmupType.Linear  # or Cosine
+)
+```
 
 ## Available Loss Functions
 
@@ -241,6 +259,10 @@ public:
 | `BCELoss` | Binary cross entropy | Binary classification |
 | `BCEWithLogitsLoss` | BCE with sigmoid | Binary (logits) |
 | `L1Loss` | Mean absolute error | Robust regression |
+| `SmoothL1Loss` | Huber loss | Robust regression |
+| `FocalLoss` | Class imbalance handling | Object detection |
+| `TripletLoss` | Metric learning | Face recognition, retrieval |
+| `ContrastiveLoss` | Similarity learning | Embedding learning |
 
 ## GPU Acceleration
 

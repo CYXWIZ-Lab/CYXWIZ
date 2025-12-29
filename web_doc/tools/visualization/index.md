@@ -355,6 +355,109 @@ for epoch in range(epochs):
     plot.update()
 ```
 
+## cyxwiz_plotting Module
+
+A lightweight Python plotting module that integrates with the CyxWiz Engine for real-time training visualization.
+
+### Installation
+
+```python
+# Included with pycyxwiz
+import pycyxwiz.plotting as cxplt
+```
+
+### Quick Start
+
+```python
+import pycyxwiz.plotting as cxplt
+
+# Create a training monitor
+monitor = cxplt.TrainingMonitor()
+
+# During training
+for epoch in range(epochs):
+    loss = train_epoch()
+    acc = validate()
+
+    monitor.log('loss', loss, epoch)
+    monitor.log('accuracy', acc, epoch)
+    monitor.update()  # Refresh plots
+
+# Save plots
+monitor.save('training_results.png')
+```
+
+### Real-Time Dashboard
+
+```python
+# Create dashboard with multiple plots
+dashboard = cxplt.Dashboard(layout=(2, 2))
+
+# Add plot panels
+dashboard.add_plot('loss', row=0, col=0, title='Training Loss')
+dashboard.add_plot('accuracy', row=0, col=1, title='Accuracy')
+dashboard.add_plot('lr', row=1, col=0, title='Learning Rate')
+dashboard.add_plot('memory', row=1, col=1, title='GPU Memory')
+
+# Update during training
+for step in range(total_steps):
+    metrics = train_step()
+    dashboard.update({
+        'loss': (step, metrics['loss']),
+        'accuracy': (step, metrics['acc']),
+        'lr': (step, scheduler.get_lr()),
+        'memory': (step, get_gpu_memory())
+    })
+```
+
+### Plot Types
+
+| Plot | Function | Use Case |
+|------|----------|----------|
+| **Line** | `cxplt.line(x, y)` | Time series, metrics |
+| **Scatter** | `cxplt.scatter(x, y)` | Embeddings, distributions |
+| **Histogram** | `cxplt.hist(data)` | Weight distributions |
+| **Heatmap** | `cxplt.heatmap(matrix)` | Attention, correlations |
+| **Image** | `cxplt.imshow(img)` | Feature maps, samples |
+
+### Training Visualization Presets
+
+```python
+# Loss and accuracy curves
+cxplt.training_curves(
+    train_loss=train_losses,
+    val_loss=val_losses,
+    train_acc=train_accs,
+    val_acc=val_accs
+)
+
+# Learning rate schedule
+cxplt.lr_schedule(lr_history, warmup_steps=1000)
+
+# Gradient distribution
+cxplt.gradient_histogram(model.parameters())
+
+# Confusion matrix
+cxplt.confusion_matrix(y_true, y_pred, class_names)
+
+# t-SNE/UMAP embeddings
+cxplt.embeddings_2d(features, labels, method='tsne')
+```
+
+### Integration with CyxWiz Engine
+
+The plotting module seamlessly integrates with the Engine's training panel:
+
+```python
+# Connect to Engine's plot window
+engine_plot = cxplt.EngineConnection()
+
+# Stream metrics to Engine UI
+for epoch in range(epochs):
+    loss = train_epoch()
+    engine_plot.send_metric('loss', epoch, loss)
+```
+
 ## Integration with Node Editor
 
 ### Visualization Nodes
