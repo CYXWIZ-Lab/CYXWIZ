@@ -236,7 +236,16 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("AdamW", cyxwiz::OptimizerType::AdamW)
         .value("RMSprop", cyxwiz::OptimizerType::RMSprop)
         .value("AdaGrad", cyxwiz::OptimizerType::AdaGrad)
-        .value("NAdam", cyxwiz::OptimizerType::NAdam);
+        .value("NAdam", cyxwiz::OptimizerType::NAdam)
+        .value("Adadelta", cyxwiz::OptimizerType::Adadelta)
+        .value("LAMB", cyxwiz::OptimizerType::LAMB);
+
+    // WarmupType enum for learning rate warmup
+    py::enum_<cyxwiz::WarmupType>(m, "WarmupType")
+        .value("None_", cyxwiz::WarmupType::None)
+        .value("Linear", cyxwiz::WarmupType::Linear)
+        .value("Cosine", cyxwiz::WarmupType::Cosine)
+        .export_values();
 
     // Optimizer base class
     py::class_<cyxwiz::Optimizer>(m, "Optimizer")
@@ -255,6 +264,130 @@ PYBIND11_MODULE(pycyxwiz, m) {
     m.def("create_optimizer", &cyxwiz::CreateOptimizer,
           py::arg("type"), py::arg("learning_rate") = 0.001,
           "Create an optimizer instance");
+
+    // SGD Optimizer
+    py::class_<cyxwiz::SGDOptimizer, cyxwiz::Optimizer>(m, "SGD")
+        .def(py::init<double, double>(),
+             py::arg("learning_rate") = 0.01,
+             py::arg("momentum") = 0.0,
+             "SGD optimizer with optional momentum")
+        .def("step", &cyxwiz::SGDOptimizer::Step,
+             py::arg("parameters"), py::arg("gradients"))
+        .def("zero_grad", &cyxwiz::SGDOptimizer::ZeroGrad);
+
+    // Adam Optimizer
+    py::class_<cyxwiz::AdamOptimizer, cyxwiz::Optimizer>(m, "Adam")
+        .def(py::init<double, double, double, double>(),
+             py::arg("learning_rate") = 0.001,
+             py::arg("beta1") = 0.9,
+             py::arg("beta2") = 0.999,
+             py::arg("epsilon") = 1e-8,
+             "Adam optimizer")
+        .def("step", &cyxwiz::AdamOptimizer::Step,
+             py::arg("parameters"), py::arg("gradients"))
+        .def("zero_grad", &cyxwiz::AdamOptimizer::ZeroGrad);
+
+    // AdamW Optimizer
+    py::class_<cyxwiz::AdamWOptimizer, cyxwiz::AdamOptimizer>(m, "AdamW")
+        .def(py::init<double, double, double, double, double>(),
+             py::arg("learning_rate") = 0.001,
+             py::arg("beta1") = 0.9,
+             py::arg("beta2") = 0.999,
+             py::arg("epsilon") = 1e-8,
+             py::arg("weight_decay") = 0.01,
+             "AdamW optimizer (Adam with decoupled weight decay)")
+        .def("step", &cyxwiz::AdamWOptimizer::Step,
+             py::arg("parameters"), py::arg("gradients"));
+
+    // RMSprop Optimizer
+    py::class_<cyxwiz::RMSpropOptimizer, cyxwiz::Optimizer>(m, "RMSprop")
+        .def(py::init<double, double, double, double>(),
+             py::arg("learning_rate") = 0.001,
+             py::arg("alpha") = 0.99,
+             py::arg("epsilon") = 1e-8,
+             py::arg("momentum") = 0.0,
+             "RMSprop optimizer")
+        .def("step", &cyxwiz::RMSpropOptimizer::Step,
+             py::arg("parameters"), py::arg("gradients"))
+        .def("zero_grad", &cyxwiz::RMSpropOptimizer::ZeroGrad);
+
+    // AdaGrad Optimizer
+    py::class_<cyxwiz::AdaGradOptimizer, cyxwiz::Optimizer>(m, "AdaGrad")
+        .def(py::init<double, double>(),
+             py::arg("learning_rate") = 0.01,
+             py::arg("epsilon") = 1e-10,
+             "AdaGrad optimizer")
+        .def("step", &cyxwiz::AdaGradOptimizer::Step,
+             py::arg("parameters"), py::arg("gradients"))
+        .def("zero_grad", &cyxwiz::AdaGradOptimizer::ZeroGrad);
+
+    // NAdam Optimizer
+    py::class_<cyxwiz::NAdamOptimizer, cyxwiz::Optimizer>(m, "NAdam")
+        .def(py::init<double, double, double, double>(),
+             py::arg("learning_rate") = 0.002,
+             py::arg("beta1") = 0.9,
+             py::arg("beta2") = 0.999,
+             py::arg("epsilon") = 1e-8,
+             "NAdam optimizer (Nesterov-accelerated Adam)")
+        .def("step", &cyxwiz::NAdamOptimizer::Step,
+             py::arg("parameters"), py::arg("gradients"))
+        .def("zero_grad", &cyxwiz::NAdamOptimizer::ZeroGrad);
+
+    // Adadelta Optimizer
+    py::class_<cyxwiz::AdadeltaOptimizer, cyxwiz::Optimizer>(m, "Adadelta")
+        .def(py::init<double, double>(),
+             py::arg("rho") = 0.9,
+             py::arg("epsilon") = 1e-6,
+             "Adadelta optimizer - no learning rate required")
+        .def("step", &cyxwiz::AdadeltaOptimizer::Step,
+             py::arg("parameters"), py::arg("gradients"))
+        .def("zero_grad", &cyxwiz::AdadeltaOptimizer::ZeroGrad)
+        .def("get_rho", &cyxwiz::AdadeltaOptimizer::GetRho,
+             "Get decay rate (rho)");
+
+    // LAMB Optimizer
+    py::class_<cyxwiz::LAMBOptimizer, cyxwiz::Optimizer>(m, "LAMB")
+        .def(py::init<double, double, double, double, double>(),
+             py::arg("learning_rate") = 0.001,
+             py::arg("beta1") = 0.9,
+             py::arg("beta2") = 0.999,
+             py::arg("epsilon") = 1e-6,
+             py::arg("weight_decay") = 0.01,
+             "LAMB optimizer for large batch training (e.g., BERT)")
+        .def("step", &cyxwiz::LAMBOptimizer::Step,
+             py::arg("parameters"), py::arg("gradients"))
+        .def("zero_grad", &cyxwiz::LAMBOptimizer::ZeroGrad)
+        .def("get_beta1", &cyxwiz::LAMBOptimizer::GetBeta1)
+        .def("get_beta2", &cyxwiz::LAMBOptimizer::GetBeta2)
+        .def("get_weight_decay", &cyxwiz::LAMBOptimizer::GetWeightDecay);
+
+    // Learning Rate Warmup
+    // Note: Use create_lr_warmup() factory function to create instances
+    py::class_<cyxwiz::LRWarmup>(m, "LRWarmup",
+        "Learning rate warmup wrapper. Use create_lr_warmup() to create instances.")
+        .def("step", &cyxwiz::LRWarmup::Step,
+             py::arg("parameters"), py::arg("gradients"),
+             "Perform optimizer step with warmup-adjusted learning rate")
+        .def("zero_grad", &cyxwiz::LRWarmup::ZeroGrad,
+             "Clear optimizer state")
+        .def("get_current_lr", &cyxwiz::LRWarmup::GetCurrentLR,
+             "Get current learning rate (after warmup adjustment)")
+        .def("get_warmup_progress", &cyxwiz::LRWarmup::GetWarmupProgress,
+             "Get warmup progress (0.0 to 1.0)")
+        .def("is_warmup_complete", &cyxwiz::LRWarmup::IsWarmupComplete,
+             "Check if warmup phase is complete");
+
+    // Factory function for LRWarmup
+    m.def("create_lr_warmup", [](cyxwiz::OptimizerType type, double learning_rate,
+                                  int warmup_steps, cyxwiz::WarmupType warmup_type) {
+        auto optimizer = cyxwiz::CreateOptimizer(type, learning_rate);
+        return std::make_unique<cyxwiz::LRWarmup>(std::move(optimizer), warmup_steps, warmup_type);
+    },
+    py::arg("optimizer_type"),
+    py::arg("learning_rate") = 0.001,
+    py::arg("warmup_steps") = 1000,
+    py::arg("warmup_type") = cyxwiz::WarmupType::Linear,
+    "Create an optimizer with learning rate warmup");
 
     // Layer base class
     py::class_<cyxwiz::Layer>(m, "Layer")
@@ -812,54 +945,6 @@ PYBIND11_MODULE(pycyxwiz, m) {
              "Set labels: 0=similar (minimize distance), 1=dissimilar (push apart)")
         .def_property("margin", &cyxwiz::ContrastiveLoss::GetMargin, &cyxwiz::ContrastiveLoss::SetMargin,
                      "Margin for dissimilar pairs (default: 1.0)");
-
-    // ============================================================================
-    // DIRECT OPTIMIZER CLASSES
-    // ============================================================================
-
-    // SGD Optimizer
-    py::class_<cyxwiz::SGDOptimizer, cyxwiz::Optimizer>(m, "SGD")
-        .def(py::init<double, double>(),
-             py::arg("learning_rate") = 0.01,
-             py::arg("momentum") = 0.0,
-             "SGD optimizer with optional momentum")
-        .def("step", &cyxwiz::SGDOptimizer::Step,
-             py::arg("parameters"),
-             py::arg("gradients"),
-             "Update parameters using gradients")
-        .def("zero_grad", &cyxwiz::SGDOptimizer::ZeroGrad,
-             "Clear optimizer state");
-
-    // Adam Optimizer
-    py::class_<cyxwiz::AdamOptimizer, cyxwiz::Optimizer>(m, "Adam")
-        .def(py::init<double, double, double, double>(),
-             py::arg("learning_rate") = 0.001,
-             py::arg("beta1") = 0.9,
-             py::arg("beta2") = 0.999,
-             py::arg("epsilon") = 1e-8,
-             "Adam optimizer")
-        .def("step", &cyxwiz::AdamOptimizer::Step,
-             py::arg("parameters"),
-             py::arg("gradients"),
-             "Update parameters using gradients")
-        .def("zero_grad", &cyxwiz::AdamOptimizer::ZeroGrad,
-             "Clear optimizer state");
-
-    // AdamW Optimizer
-    py::class_<cyxwiz::AdamWOptimizer, cyxwiz::AdamOptimizer>(m, "AdamW")
-        .def(py::init<double, double, double, double, double>(),
-             py::arg("learning_rate") = 0.001,
-             py::arg("beta1") = 0.9,
-             py::arg("beta2") = 0.999,
-             py::arg("epsilon") = 1e-8,
-             py::arg("weight_decay") = 0.01,
-             "AdamW optimizer (Adam with decoupled weight decay)")
-        .def("step", &cyxwiz::AdamWOptimizer::Step,
-             py::arg("parameters"),
-             py::arg("gradients"),
-             "Update parameters using gradients")
-        .def("zero_grad", &cyxwiz::AdamWOptimizer::ZeroGrad,
-             "Clear optimizer state");
 
     // ============================================================================
     // FUNCTIONAL API (lowercase functions)

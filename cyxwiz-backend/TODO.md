@@ -29,9 +29,9 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 - [x] Contrastive Loss (similarity learning with margin)
 
 ### Optimizers
-- [ ] Adadelta optimizer
-- [ ] LAMB optimizer
-- [ ] Learning rate warmup support
+- [x] Adadelta optimizer
+- [x] LAMB optimizer (Layer-wise Adaptive Moments for large batch training)
+- [x] Learning rate warmup support (Linear and Cosine warmup)
 
 ## Medium Priority
 
@@ -132,7 +132,10 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 - [x] RMSprop optimizer (with ArrayFire GPU support)
 - [x] AdaGrad optimizer (with ArrayFire GPU support)
 - [x] NAdam optimizer (with ArrayFire GPU support)
+- [x] Adadelta optimizer (with ArrayFire GPU support)
+- [x] LAMB optimizer (Layer-wise Adaptive Moments for large batch training)
 - [x] Learning rate schedulers (Step, Exponential, Cosine)
+- [x] Learning rate warmup (Linear and Cosine warmup)
 
 ### Data
 - [x] MNIST DataLoader
@@ -147,7 +150,8 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 
 ### Python Bindings
 - [x] Complete pybind11 bindings for all classes
-- [x] All optimizers (SGD, Adam, AdamW, RMSprop, AdaGrad, NAdam)
+- [x] All optimizers (SGD, Adam, AdamW, RMSprop, AdaGrad, NAdam, Adadelta, LAMB)
+- [x] Learning rate warmup (LRWarmup class with Linear/Cosine warmup)
 - [x] All layers (Conv1D, LayerNorm, InstanceNorm2D, GroupNorm, etc.)
 - [x] All activations (SELU, PReLU, etc.)
 - [x] Embedding layer bindings
@@ -164,4 +168,4 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 
 ---
 
-*Last updated: 2024-12-29*
+*Last updated: 2025-12-29*
