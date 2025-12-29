@@ -23,10 +23,10 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 - [x] Embedding layer (with pretrained weight loading, padding_idx, max_norm)
 
 ### Loss Functions
-- [ ] Huber Loss
-- [ ] Focal Loss
-- [ ] Triplet Loss
-- [ ] Contrastive Loss
+- [x] Huber Loss (implemented as SmoothL1Loss alias)
+- [x] Focal Loss (for class imbalance, with alpha and gamma parameters)
+- [x] Triplet Loss (metric learning with Euclidean/Cosine distance)
+- [x] Contrastive Loss (similarity learning with margin)
 
 ### Optimizers
 - [ ] Adadelta optimizer
@@ -120,6 +120,10 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 
 ### Loss Functions
 - [x] MSE, CrossEntropy, BCE loss functions
+- [x] Huber/SmoothL1 Loss
+- [x] Focal Loss (class imbalance handling)
+- [x] Triplet Loss (metric learning)
+- [x] Contrastive Loss (similarity learning)
 
 ### Optimizers
 - [x] SGD optimizer (with momentum, Nesterov)

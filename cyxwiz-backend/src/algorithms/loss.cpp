@@ -157,6 +157,12 @@ std::unique_ptr<Loss> CreateLoss(LossType type, Reduction reduction, float delta
             return std::make_unique<KLDivLoss>(reduction);
         case LossType::CosineEmbedding:
             return std::make_unique<CosineEmbeddingLoss>(0.0f, reduction);
+        case LossType::Focal:
+            return std::make_unique<FocalLoss>(0.25f, 2.0f, reduction);
+        case LossType::Triplet:
+            return std::make_unique<TripletLoss>(1.0f, TripletLoss::DistanceType::Euclidean, reduction);
+        case LossType::Contrastive:
+            return std::make_unique<ContrastiveLoss>(1.0f, reduction);
         default:
             throw std::runtime_error("Unknown loss type");
     }
@@ -792,6 +798,260 @@ Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
     }
 #endif
     throw std::runtime_error("CosineEmbedding backward requires ArrayFire");
+}
+
+// ============================================================================
+// Focal Loss Implementation
+// ============================================================================
+
+Tensor FocalLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array pred = TensorToAf(predictions);
+        af::array target = TensorToAf(targets);
+
+        // Apply softmax to get probabilities
+        af::array max_val = af::max(pred, 1);
+        af::array pred_shifted = pred - af::tile(max_val, 1, pred.dims(1));
+        af::array exp_pred = af::exp(pred_shifted);
+        af::array sum_exp = af::sum(exp_pred, 1);
+        af::array probs = exp_pred / af::tile(sum_exp, 1, pred.dims(1));
+        cached_probs_ = AfToTensor(probs);
+
+        // Get probability of true class
+        dim_t batch_size = probs.dims(0);
+        af::array target_indices = target.as(af::dtype::s32);
+        af::array batch_indices = af::iota(af::dim4(batch_size), af::dim4(1), af::dtype::s32);
+        af::array pt = probs(af::seq(batch_size), target_indices.T());
+        pt = af::diag(pt);
+
+        // Focal loss: -alpha * (1 - pt)^gamma * log(pt)
+        af::array focal_weight = af::pow(1.0f - pt, gamma_);
+        af::array log_pt = af::log(af::max(pt, 1e-8f));
+        af::array loss = -alpha_ * focal_weight * log_pt;
+
+        loss = ApplyReduction(loss, reduction_);
+        return AfToTensor(loss);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire FocalLoss::Forward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("Focal forward requires ArrayFire");
+}
+
+Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array probs = TensorToAf(cached_probs_);
+        af::array target = TensorToAf(targets);
+
+        dim_t batch_size = probs.dims(0);
+        dim_t num_classes = probs.dims(1);
+
+        // Get probability of true class
+        af::array target_indices = target.as(af::dtype::s32);
+        af::array pt = probs(af::seq(batch_size), target_indices.T());
+        pt = af::diag(pt);
+
+        // Create one-hot target
+        af::array one_hot = af::constant(0.0f, batch_size, num_classes);
+        for (int i = 0; i < batch_size; ++i) {
+            int class_idx = target(i).scalar<int>();
+            one_hot(i, class_idx) = 1.0f;
+        }
+
+        // Focal loss gradient is complex - simplified version:
+        // d_loss/d_pred = alpha * (1-pt)^gamma * (gamma * pt * log(pt) / (1-pt) + 1) * (pt - 1_{y=c})
+        af::dim4 tile_dims(1, static_cast<unsigned int>(num_classes));
+        af::array focal_weight = af::pow(1.0f - pt, gamma_);
+        af::array log_pt = af::log(af::max(pt, 1e-8f));
+        af::array scale = alpha_ * focal_weight * (gamma_ * pt * log_pt / (1.0f - pt + 1e-8f) + 1.0f);
+
+        af::array grad = af::tile(scale, tile_dims) * (probs - one_hot);
+
+        if (reduction_ == Reduction::Mean) {
+            grad = grad / static_cast<float>(batch_size);
+        }
+
+        return AfToTensor(grad);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire FocalLoss::Backward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("Focal backward requires ArrayFire");
+}
+
+// ============================================================================
+// Triplet Loss Implementation
+// ============================================================================
+
+Tensor TripletLoss::Forward(const Tensor& anchor, const Tensor& positive) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array a = TensorToAf(anchor);
+        af::array p = TensorToAf(positive);
+        af::array n = TensorToAf(negative_);
+
+        af::array dist_ap, dist_an;
+
+        if (distance_type_ == DistanceType::Euclidean) {
+            // Euclidean distance
+            af::array diff_ap = a - p;
+            af::array diff_an = a - n;
+            dist_ap = af::sqrt(af::sum(diff_ap * diff_ap, 1));
+            dist_an = af::sqrt(af::sum(diff_an * diff_an, 1));
+        } else {
+            // Cosine distance: 1 - cosine_similarity
+            af::array norm_a = af::sqrt(af::sum(a * a, 1));
+            af::array norm_p = af::sqrt(af::sum(p * p, 1));
+            af::array norm_n = af::sqrt(af::sum(n * n, 1));
+            af::array cos_ap = af::sum(a * p, 1) / (norm_a * norm_p + 1e-8f);
+            af::array cos_an = af::sum(a * n, 1) / (norm_a * norm_n + 1e-8f);
+            dist_ap = 1.0f - cos_ap;
+            dist_an = 1.0f - cos_an;
+        }
+
+        cached_dist_ap_ = AfToTensor(dist_ap);
+        cached_dist_an_ = AfToTensor(dist_an);
+
+        // Triplet loss: max(d_ap - d_an + margin, 0)
+        af::array loss = af::max(dist_ap - dist_an + margin_, 0.0f);
+        loss = ApplyReduction(loss, reduction_);
+
+        return AfToTensor(loss);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire TripletLoss::Forward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("Triplet forward requires ArrayFire");
+}
+
+Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array a = TensorToAf(anchor);
+        af::array p = TensorToAf(positive);
+        af::array n = TensorToAf(negative_);
+        af::array dist_ap = TensorToAf(cached_dist_ap_);
+        af::array dist_an = TensorToAf(cached_dist_an_);
+
+        dim_t batch_size = a.dims(0);
+        dim_t embed_dim = a.dims(1);
+
+        // Gradient only non-zero where loss > 0
+        af::array margin_violated = (dist_ap - dist_an + margin_ > 0).as(af::dtype::f32);
+        af::dim4 tile_dims(1, static_cast<unsigned int>(embed_dim));
+
+        af::array grad_a;
+        if (distance_type_ == DistanceType::Euclidean) {
+            // d(d_ap)/da = (a-p) / d_ap
+            // d(d_an)/da = (a-n) / d_an
+            // d_loss/da = d(d_ap)/da - d(d_an)/da = (a-p)/d_ap - (a-n)/d_an
+            af::array safe_dist_ap = af::max(dist_ap, 1e-8f);
+            af::array safe_dist_an = af::max(dist_an, 1e-8f);
+
+            af::array grad_ap = (a - p) / af::tile(safe_dist_ap, tile_dims);
+            af::array grad_an = (a - n) / af::tile(safe_dist_an, tile_dims);
+            grad_a = (grad_ap - grad_an) * af::tile(margin_violated, tile_dims);
+        } else {
+            // Cosine distance gradient is more complex - simplified version
+            af::array norm_a = af::sqrt(af::sum(a * a, 1));
+            af::array norm_p = af::sqrt(af::sum(p * p, 1));
+            af::array norm_n = af::sqrt(af::sum(n * n, 1));
+
+            af::array grad_ap = -p / af::tile(norm_a * norm_p + 1e-8f, tile_dims);
+            af::array grad_an = -n / af::tile(norm_a * norm_n + 1e-8f, tile_dims);
+            grad_a = (grad_ap - grad_an) * af::tile(margin_violated, tile_dims);
+        }
+
+        if (reduction_ == Reduction::Mean) {
+            grad_a = grad_a / static_cast<float>(batch_size);
+        }
+
+        return AfToTensor(grad_a);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire TripletLoss::Backward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("Triplet backward requires ArrayFire");
+}
+
+// ============================================================================
+// Contrastive Loss Implementation
+// ============================================================================
+
+Tensor ContrastiveLoss::Forward(const Tensor& x1, const Tensor& x2) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array a1 = TensorToAf(x1);
+        af::array a2 = TensorToAf(x2);
+        af::array labels = TensorToAf(labels_);
+
+        // Compute pairwise Euclidean distance
+        af::array diff = a1 - a2;
+        af::array distances = af::sqrt(af::sum(diff * diff, 1));
+        cached_distances_ = AfToTensor(distances);
+
+        // Contrastive loss: y*d^2 + (1-y)*max(0, margin-d)^2
+        // where y=0 for similar, y=1 for dissimilar
+        af::array similar_loss = (1.0f - labels) * distances * distances;
+        af::array margin_diff = af::max(0.0f, margin_ - distances);
+        af::array dissimilar_loss = labels * margin_diff * margin_diff;
+
+        af::array loss = similar_loss + dissimilar_loss;
+        loss = ApplyReduction(loss, reduction_);
+
+        return AfToTensor(loss);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire ContrastiveLoss::Forward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("Contrastive forward requires ArrayFire");
+}
+
+Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array a1 = TensorToAf(x1);
+        af::array a2 = TensorToAf(x2);
+        af::array labels = TensorToAf(labels_);
+        af::array distances = TensorToAf(cached_distances_);
+
+        // Gradient w.r.t. x1
+        // For similar: d_loss/dx1 = 2*(x1-x2) = 2*diff
+        // For dissimilar: d_loss/dx1 = -2*(margin-d)/d * (x1-x2) if d < margin, else 0
+
+        af::array diff = a1 - a2;
+        dim_t batch_size = a1.dims(0);
+        dim_t embed_dim = a1.dims(1);
+
+        // Avoid division by zero
+        af::array safe_distances = af::max(distances, 1e-8f);
+        af::dim4 tile_dims(1, static_cast<unsigned int>(embed_dim));
+
+        // Similar pairs gradient: 2 * diff
+        af::array grad_similar = 2.0f * diff;
+
+        // Dissimilar pairs gradient: -2 * (margin - d) / d * diff (when d < margin)
+        af::array margin_diff = margin_ - safe_distances;
+        af::array mask_in_margin = (distances < margin_).as(af::dtype::f32);
+        af::array scale = -2.0f * margin_diff / safe_distances * mask_in_margin;
+        af::array grad_dissimilar = diff * af::tile(scale, tile_dims);
+
+        // Combine based on labels (0=similar, 1=dissimilar)
+        af::array labels_tiled = af::tile(labels, tile_dims);
+        af::array grad = (1.0f - labels_tiled) * grad_similar + labels_tiled * grad_dissimilar;
+
+        if (reduction_ == Reduction::Mean) {
+            grad = grad / static_cast<float>(batch_size);
+        }
+
+        return AfToTensor(grad);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire ContrastiveLoss::Backward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("Contrastive backward requires ArrayFire");
 }
 
 } // namespace cyxwiz

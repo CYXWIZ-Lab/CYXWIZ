@@ -751,6 +751,68 @@ PYBIND11_MODULE(pycyxwiz, m) {
              py::arg("targets"),
              "Backward: gradient w.r.t logits");
 
+    // Focal Loss (for class imbalance)
+    py::class_<cyxwiz::FocalLoss>(m, "FocalLoss")
+        .def(py::init<float, float>(),
+             py::arg("alpha") = 0.25f,
+             py::arg("gamma") = 2.0f,
+             "Create Focal Loss: FL(p_t) = -alpha * (1-p_t)^gamma * log(p_t)")
+        .def("forward", &cyxwiz::FocalLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute focal loss (predictions are logits)")
+        .def("backward", &cyxwiz::FocalLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t logits")
+        .def_property("alpha", &cyxwiz::FocalLoss::GetAlpha, &cyxwiz::FocalLoss::SetAlpha,
+                     "Class balance weight (default: 0.25)")
+        .def_property("gamma", &cyxwiz::FocalLoss::GetGamma, &cyxwiz::FocalLoss::SetGamma,
+                     "Focusing parameter - higher = more focus on hard examples (default: 2.0)");
+
+    // Triplet Loss (for metric learning)
+    py::enum_<cyxwiz::TripletLoss::DistanceType>(m, "TripletDistanceType")
+        .value("Euclidean", cyxwiz::TripletLoss::DistanceType::Euclidean)
+        .value("Cosine", cyxwiz::TripletLoss::DistanceType::Cosine);
+
+    py::class_<cyxwiz::TripletLoss>(m, "TripletLoss")
+        .def(py::init<float, cyxwiz::TripletLoss::DistanceType>(),
+             py::arg("margin") = 1.0f,
+             py::arg("distance_type") = cyxwiz::TripletLoss::DistanceType::Euclidean,
+             "Create Triplet Loss: L = max(d(a,p) - d(a,n) + margin, 0)")
+        .def("forward", &cyxwiz::TripletLoss::Forward,
+             py::arg("anchor"),
+             py::arg("positive"),
+             "Forward: compute triplet loss (set negative via set_negative first)")
+        .def("backward", &cyxwiz::TripletLoss::Backward,
+             py::arg("anchor"),
+             py::arg("positive"),
+             "Backward: gradient w.r.t anchor")
+        .def("set_negative", &cyxwiz::TripletLoss::SetNegative,
+             py::arg("negative"),
+             "Set negative samples for triplet computation")
+        .def_property("margin", &cyxwiz::TripletLoss::GetMargin, &cyxwiz::TripletLoss::SetMargin,
+                     "Margin for triplet loss (default: 1.0)");
+
+    // Contrastive Loss (for similarity learning)
+    py::class_<cyxwiz::ContrastiveLoss>(m, "ContrastiveLoss")
+        .def(py::init<float>(),
+             py::arg("margin") = 1.0f,
+             "Create Contrastive Loss: L = (1-y)*d^2 + y*max(margin-d,0)^2")
+        .def("forward", &cyxwiz::ContrastiveLoss::Forward,
+             py::arg("x1"),
+             py::arg("x2"),
+             "Forward: compute contrastive loss (set labels via set_labels first)")
+        .def("backward", &cyxwiz::ContrastiveLoss::Backward,
+             py::arg("x1"),
+             py::arg("x2"),
+             "Backward: gradient w.r.t x1")
+        .def("set_labels", &cyxwiz::ContrastiveLoss::SetLabels,
+             py::arg("labels"),
+             "Set labels: 0=similar (minimize distance), 1=dissimilar (push apart)")
+        .def_property("margin", &cyxwiz::ContrastiveLoss::GetMargin, &cyxwiz::ContrastiveLoss::SetMargin,
+                     "Margin for dissimilar pairs (default: 1.0)");
+
     // ============================================================================
     // DIRECT OPTIMIZER CLASSES
     // ============================================================================
