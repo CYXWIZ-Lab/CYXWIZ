@@ -2,7 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current Work Status (Updated: 2025-12-26)
+## Current Work Status (Updated: 2025-12-29)
+
+### CyxWiz Backend - Recently Completed
+
+**Transformer & RNN Layers:**
+- ✅ EmbeddingLayer (pretrained weights, padding_idx, max_norm)
+- ✅ LSTMLayer (multi-layer, bidirectional, dropout)
+- ✅ GRULayer (multi-layer, bidirectional, dropout)
+- ✅ MultiHeadAttentionLayer (self/cross attention)
+- ✅ TransformerEncoderLayer (Pre-LN and Post-LN)
+- ✅ TransformerDecoderLayer (cross-attention, causal masking)
+
+**Loss Functions:**
+- ✅ FocalLoss (class imbalance, alpha/gamma parameters)
+- ✅ TripletLoss (metric learning, Euclidean/Cosine distance)
+- ✅ ContrastiveLoss (similarity learning, margin-based)
+
+**Python Bindings:**
+- ✅ All new layers exposed via pybind11
+- ✅ All new losses exposed via pybind11
+- ✅ Python examples in `cyxwiz-backend/examples/python/`
+
+---
 
 ### CyxCloud - READY FOR DOCKER TESTING
 
