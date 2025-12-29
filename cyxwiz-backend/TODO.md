@@ -22,12 +22,6 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 - [ ] Attention / Transformer layers
 - [ ] Embedding layer
 
-### Activations
-- [ ] Softmax activation
-- [ ] LeakyReLU activation
-- [ ] GELU activation
-- [ ] Swish/SiLU activation
-
 ### Loss Functions
 - [ ] Huber Loss
 - [ ] Focal Loss
@@ -35,7 +29,6 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 - [ ] Contrastive Loss
 
 ### Optimizers
-- [ ] AdaGrad optimizer
 - [ ] Adadelta optimizer
 - [ ] LAMB optimizer
 - [ ] Learning rate warmup support
@@ -60,7 +53,6 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 - [ ] Mixed precision training (FP16/BF16)
 
 ### Python Bindings
-- [ ] Complete pybind11 bindings for all classes
 - [ ] NumPy array interoperability
 - [ ] PyTorch tensor conversion
 - [ ] Jupyter notebook integration
@@ -88,31 +80,69 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 
 ## Completed
 
+### Core
 - [x] Tensor class with ArrayFire backend
 - [x] Device abstraction (CPU/CUDA/OpenCL)
+- [x] Sequential model container
+
+### Layers
 - [x] Linear layer (Dense layer)
 - [x] Conv2D layer (2D convolution with im2col)
+- [x] Conv1D layer (1D convolution)
 - [x] MaxPool2D layer
 - [x] AvgPool2D layer
 - [x] GlobalAvgPool2D layer
 - [x] BatchNorm2D layer
+- [x] LayerNorm layer
+- [x] InstanceNorm2D layer
+- [x] GroupNorm layer
 - [x] Dropout layer
 - [x] Flatten layer
 - [x] LSTM layer (multi-layer, bidirectional, dropout)
 - [x] GRU layer (multi-layer, bidirectional, dropout)
+
+### Activations
 - [x] ReLU, Sigmoid, Tanh activations
+- [x] LeakyReLU activation
+- [x] ELU activation
+- [x] SELU activation
+- [x] PReLU activation (learnable)
+- [x] GELU activation
+- [x] Swish/SiLU activation
+- [x] Softmax activation
+- [x] Softplus, Softsign activations
+- [x] Hardtanh, Hardsigmoid, Hardswish activations
+- [x] Mish activation
+
+### Loss Functions
 - [x] MSE, CrossEntropy, BCE loss functions
-- [x] SGD, Adam, AdamW, RMSprop optimizers
-- [x] Sequential model container
+
+### Optimizers
+- [x] SGD optimizer (with momentum, Nesterov)
+- [x] Adam optimizer
+- [x] AdamW optimizer
+- [x] RMSprop optimizer (with ArrayFire GPU support)
+- [x] AdaGrad optimizer (with ArrayFire GPU support)
+- [x] NAdam optimizer (with ArrayFire GPU support)
 - [x] Learning rate schedulers (Step, Exponential, Cosine)
+
+### Data
 - [x] MNIST DataLoader
 - [x] Data normalization and standardization
+
+### Algorithms
 - [x] Clustering algorithms (K-Means, etc.)
 - [x] Dimensionality reduction (PCA, t-SNE, UMAP)
 - [x] Signal processing (FFT, Convolution, Filters)
 - [x] Time series analysis
 - [x] Text processing utilities
 
+### Python Bindings
+- [x] Complete pybind11 bindings for all classes
+- [x] All optimizers (SGD, Adam, AdamW, RMSprop, AdaGrad, NAdam)
+- [x] All layers (Conv1D, LayerNorm, InstanceNorm2D, GroupNorm, etc.)
+- [x] All activations (SELU, PReLU, etc.)
+
 ---
 
-*Last updated: 2024-12-26*
+*Last updated: 2024-12-29*
