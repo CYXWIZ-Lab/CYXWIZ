@@ -695,4 +695,210 @@ private:
     void InitializeWeights();
 };
 
+// ============================================================================
+// MultiHeadAttention Layer - Multi-Head Self/Cross Attention
+// ============================================================================
+
+class CYXWIZ_API MultiHeadAttentionLayer : public Layer {
+public:
+    /**
+     * Create a multi-head attention layer
+     * @param embed_dim Total embedding dimension (must be divisible by num_heads)
+     * @param num_heads Number of attention heads
+     * @param dropout Dropout probability on attention weights (default: 0.0)
+     * @param use_bias Whether to use bias in projections (default: true)
+     */
+    MultiHeadAttentionLayer(int embed_dim, int num_heads,
+                            float dropout = 0.0f, bool use_bias = true);
+
+    /**
+     * Self-attention forward pass
+     * @param input Input tensor [batch, seq_len, embed_dim]
+     * @return Output tensor [batch, seq_len, embed_dim]
+     */
+    Tensor Forward(const Tensor& input) override;
+
+    /**
+     * Full attention forward pass with separate Q, K, V
+     * @param query Query tensor [batch, seq_len_q, embed_dim]
+     * @param key Key tensor [batch, seq_len_kv, embed_dim]
+     * @param value Value tensor [batch, seq_len_kv, embed_dim]
+     * @param attn_mask Attention mask [seq_len_q, seq_len_kv] or nullptr (optional)
+     * @return Output tensor [batch, seq_len_q, embed_dim]
+     */
+    Tensor Forward(const Tensor& query, const Tensor& key, const Tensor& value,
+                   const Tensor* attn_mask = nullptr);
+
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "MultiHeadAttention"; }
+
+    // Get last computed attention weights (for visualization)
+    Tensor GetAttentionWeights() const { return cached_attn_weights_; }
+
+    // Accessors
+    int GetEmbedDim() const { return embed_dim_; }
+    int GetNumHeads() const { return num_heads_; }
+    int GetHeadDim() const { return head_dim_; }
+
+private:
+    int embed_dim_;
+    int num_heads_;
+    int head_dim_;
+    float dropout_;
+    bool use_bias_;
+    float scale_;  // 1/sqrt(head_dim)
+
+    // Projection weights [embed_dim, embed_dim]
+    Tensor W_q_, W_k_, W_v_, W_o_;
+    Tensor b_q_, b_k_, b_v_, b_o_;
+
+    // Gradients
+    Tensor grad_W_q_, grad_W_k_, grad_W_v_, grad_W_o_;
+    Tensor grad_b_q_, grad_b_k_, grad_b_v_, grad_b_o_;
+
+    // Cached for backward
+    Tensor cached_query_, cached_key_, cached_value_;
+    Tensor cached_Q_, cached_K_, cached_V_;  // After projection
+    Tensor cached_attn_weights_;  // After softmax
+    Tensor cached_context_;  // Before output projection
+    Tensor dropout_mask_;  // Dropout mask for attention weights
+
+    void InitializeWeights();
+};
+
+// ============================================================================
+// TransformerEncoderLayer - Single Transformer Encoder Block
+// ============================================================================
+
+class CYXWIZ_API TransformerEncoderLayer : public Layer {
+public:
+    /**
+     * Create a transformer encoder layer
+     * @param d_model Model dimension (embedding size)
+     * @param nhead Number of attention heads
+     * @param dim_feedforward Feedforward network dimension (default: 2048)
+     * @param dropout Dropout probability (default: 0.1)
+     * @param norm_first Apply LayerNorm before attention/FFN (Pre-LN, default: false)
+     */
+    TransformerEncoderLayer(int d_model, int nhead, int dim_feedforward = 2048,
+                            float dropout = 0.1f, bool norm_first = false);
+
+    /**
+     * Forward pass
+     * @param input Input tensor [batch, seq_len, d_model]
+     * @param src_mask Attention mask [seq_len, seq_len] or nullptr
+     * @return Output tensor [batch, seq_len, d_model]
+     */
+    Tensor Forward(const Tensor& input) override;
+    Tensor Forward(const Tensor& input, const Tensor* src_mask);
+
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "TransformerEncoderLayer"; }
+
+    void SetTraining(bool training) override;
+
+private:
+    int d_model_;
+    int nhead_;
+    int dim_feedforward_;
+    float dropout_;
+    bool norm_first_;
+
+    std::unique_ptr<MultiHeadAttentionLayer> self_attn_;
+    std::unique_ptr<LayerNormLayer> norm1_;
+    std::unique_ptr<LayerNormLayer> norm2_;
+    std::unique_ptr<DenseLayer> linear1_;
+    std::unique_ptr<DenseLayer> linear2_;
+    std::unique_ptr<DropoutLayer> dropout1_;
+    std::unique_ptr<DropoutLayer> dropout2_;
+
+    // Cached for backward
+    Tensor cached_attn_output_;
+    Tensor cached_ffn_mid_;
+    Tensor cached_residual1_;
+    Tensor cached_residual2_;
+};
+
+// ============================================================================
+// TransformerDecoderLayer - Single Transformer Decoder Block
+// ============================================================================
+
+class CYXWIZ_API TransformerDecoderLayer : public Layer {
+public:
+    /**
+     * Create a transformer decoder layer
+     * @param d_model Model dimension (embedding size)
+     * @param nhead Number of attention heads
+     * @param dim_feedforward Feedforward network dimension (default: 2048)
+     * @param dropout Dropout probability (default: 0.1)
+     * @param norm_first Apply LayerNorm before attention/FFN (Pre-LN, default: false)
+     */
+    TransformerDecoderLayer(int d_model, int nhead, int dim_feedforward = 2048,
+                            float dropout = 0.1f, bool norm_first = false);
+
+    /**
+     * Forward pass (self-attention only, no encoder memory)
+     * @param input Target tensor [batch, tgt_len, d_model]
+     * @return Output tensor [batch, tgt_len, d_model]
+     */
+    Tensor Forward(const Tensor& input) override;
+
+    /**
+     * Full forward pass with encoder memory
+     * @param tgt Target tensor [batch, tgt_len, d_model]
+     * @param memory Encoder output [batch, src_len, d_model]
+     * @param tgt_mask Target attention mask [tgt_len, tgt_len] or nullptr
+     * @param memory_mask Memory attention mask [tgt_len, src_len] or nullptr
+     * @return Output tensor [batch, tgt_len, d_model]
+     */
+    Tensor Forward(const Tensor& tgt, const Tensor& memory,
+                   const Tensor* tgt_mask = nullptr,
+                   const Tensor* memory_mask = nullptr);
+
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "TransformerDecoderLayer"; }
+
+    void SetTraining(bool training) override;
+
+    /**
+     * Generate causal mask for autoregressive decoding
+     * @param size Sequence length
+     * @return Upper triangular mask [size, size] with -inf above diagonal
+     */
+    static Tensor GenerateCausalMask(int size);
+
+private:
+    int d_model_;
+    int nhead_;
+    int dim_feedforward_;
+    float dropout_;
+    bool norm_first_;
+
+    std::unique_ptr<MultiHeadAttentionLayer> self_attn_;
+    std::unique_ptr<MultiHeadAttentionLayer> cross_attn_;
+    std::unique_ptr<LayerNormLayer> norm1_;
+    std::unique_ptr<LayerNormLayer> norm2_;
+    std::unique_ptr<LayerNormLayer> norm3_;
+    std::unique_ptr<DenseLayer> linear1_;
+    std::unique_ptr<DenseLayer> linear2_;
+    std::unique_ptr<DropoutLayer> dropout1_;
+    std::unique_ptr<DropoutLayer> dropout2_;
+    std::unique_ptr<DropoutLayer> dropout3_;
+
+    // Cached for backward
+    Tensor cached_self_attn_output_;
+    Tensor cached_cross_attn_output_;
+    Tensor cached_ffn_mid_;
+    Tensor cached_memory_;
+    Tensor cached_residual1_;
+    Tensor cached_residual2_;
+    Tensor cached_residual3_;
+};
+
 } // namespace cyxwiz

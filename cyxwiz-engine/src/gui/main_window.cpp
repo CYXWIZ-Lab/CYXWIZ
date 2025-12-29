@@ -1441,7 +1441,215 @@ MainWindow::MainWindow()
     spdlog::info("MainWindow initialized with docking layout system");
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+    spdlog::info("MainWindow destructor: starting cleanup");
+
+    // IMPORTANT: Destroy panels that use PlotManager/Python BEFORE scripting_engine_
+    // PlotWindow destructor calls PlotManager::DeletePlot() which may use Python
+    spdlog::info("~MainWindow: plot_test_control_ (before scripting_engine)");
+    plot_test_control_.reset();
+    spdlog::info("~MainWindow: training_plot_panel_ (before scripting_engine)");
+    training_plot_panel_.reset();
+    spdlog::info("~MainWindow: training_dashboard_ (before scripting_engine)");
+    training_dashboard_.reset();
+
+    // IMPORTANT: Destroy panels that hold shared_ptr<ScriptingEngine> BEFORE
+    // the MainWindow's scripting_engine_, so all references are released
+    // before we begin any Python cleanup
+    spdlog::info("~MainWindow: command_window_ (holds scripting_engine)");
+    command_window_.reset();
+    spdlog::info("~MainWindow: script_editor_ (holds scripting_engine)");
+    script_editor_.reset();
+    spdlog::info("~MainWindow: variable_explorer_ (holds scripting_engine)");
+    variable_explorer_.reset();
+    spdlog::info("~MainWindow: startup_script_manager_ (holds scripting_engine)");
+    startup_script_manager_.reset();
+
+    // NOW reset MainWindow's scripting_engine_ - it should be the last reference
+    spdlog::info("~MainWindow: scripting_engine_");
+    scripting_engine_.reset();
+    spdlog::info("~MainWindow: regex_tester_panel_");
+    regex_tester_panel_.reset();
+    spdlog::info("~MainWindow: json_viewer_panel_");
+    json_viewer_panel_.reset();
+    spdlog::info("~MainWindow: hash_generator_panel_");
+    hash_generator_panel_.reset();
+    spdlog::info("~MainWindow: random_generator_panel_");
+    random_generator_panel_.reset();
+    spdlog::info("~MainWindow: unit_converter_panel_");
+    unit_converter_panel_.reset();
+    spdlog::info("~MainWindow: calculator_panel_");
+    calculator_panel_.reset();
+    spdlog::info("~MainWindow: sentiment_panel_");
+    sentiment_panel_.reset();
+    spdlog::info("~MainWindow: embeddings_panel_");
+    embeddings_panel_.reset();
+    spdlog::info("~MainWindow: tfidf_panel_");
+    tfidf_panel_.reset();
+    spdlog::info("~MainWindow: word_frequency_panel_");
+    word_frequency_panel_.reset();
+    spdlog::info("~MainWindow: tokenization_panel_");
+    tokenization_panel_.reset();
+    spdlog::info("~MainWindow: forecasting_panel_");
+    forecasting_panel_.reset();
+    spdlog::info("~MainWindow: seasonality_panel_");
+    seasonality_panel_.reset();
+    spdlog::info("~MainWindow: stationarity_panel_");
+    stationarity_panel_.reset();
+    spdlog::info("~MainWindow: acf_pacf_panel_");
+    acf_pacf_panel_.reset();
+    spdlog::info("~MainWindow: decomposition_panel_");
+    decomposition_panel_.reset();
+    spdlog::info("~MainWindow: integration_panel_");
+    integration_panel_.reset();
+    spdlog::info("~MainWindow: differentiation_panel_");
+    differentiation_panel_.reset();
+    spdlog::info("~MainWindow: qp_panel_");
+    qp_panel_.reset();
+    spdlog::info("~MainWindow: lp_panel_");
+    lp_panel_.reset();
+    spdlog::info("~MainWindow: convexity_panel_");
+    convexity_panel_.reset();
+    spdlog::info("~MainWindow: gradient_descent_panel_");
+    gradient_descent_panel_.reset();
+    spdlog::info("~MainWindow: wavelet_panel_");
+    wavelet_panel_.reset();
+    spdlog::info("~MainWindow: convolution_panel_");
+    convolution_panel_.reset();
+    spdlog::info("~MainWindow: filter_designer_panel_");
+    filter_designer_panel_.reset();
+    spdlog::info("~MainWindow: spectrogram_panel_");
+    spectrogram_panel_.reset();
+    spdlog::info("~MainWindow: fft_panel_");
+    fft_panel_.reset();
+    spdlog::info("~MainWindow: cholesky_panel_");
+    cholesky_panel_.reset();
+    spdlog::info("~MainWindow: qr_panel_");
+    qr_panel_.reset();
+    spdlog::info("~MainWindow: svd_panel_");
+    svd_panel_.reset();
+    spdlog::info("~MainWindow: eigen_decomp_panel_");
+    eigen_decomp_panel_.reset();
+    spdlog::info("~MainWindow: matrix_calculator_panel_");
+    matrix_calculator_panel_.reset();
+    spdlog::info("~MainWindow: feature_scaling_panel_");
+    feature_scaling_panel_.reset();
+    spdlog::info("~MainWindow: boxcox_panel_");
+    boxcox_panel_.reset();
+    spdlog::info("~MainWindow: log_transform_panel_");
+    log_transform_panel_.reset();
+    spdlog::info("~MainWindow: standardization_panel_");
+    standardization_panel_.reset();
+    spdlog::info("~MainWindow: normalization_panel_");
+    normalization_panel_.reset();
+    spdlog::info("~MainWindow: learning_curves_panel_");
+    learning_curves_panel_.reset();
+    spdlog::info("~MainWindow: cross_validation_panel_");
+    cross_validation_panel_.reset();
+    spdlog::info("~MainWindow: pr_curve_panel_");
+    pr_curve_panel_.reset();
+    spdlog::info("~MainWindow: roc_auc_panel_");
+    roc_auc_panel_.reset();
+    spdlog::info("~MainWindow: confusion_matrix_panel_");
+    confusion_matrix_panel_.reset();
+    spdlog::info("~MainWindow: cluster_eval_panel_");
+    cluster_eval_panel_.reset();
+    spdlog::info("~MainWindow: gmm_panel_");
+    gmm_panel_.reset();
+    spdlog::info("~MainWindow: hierarchical_panel_");
+    hierarchical_panel_.reset();
+    spdlog::info("~MainWindow: dbscan_panel_");
+    dbscan_panel_.reset();
+    spdlog::info("~MainWindow: kmeans_panel_");
+    kmeans_panel_.reset();
+    spdlog::info("~MainWindow: serving_panel_");
+    serving_panel_.reset();
+    spdlog::info("~MainWindow: hyperparam_search_panel_");
+    hyperparam_search_panel_.reset();
+    spdlog::info("~MainWindow: nas_panel_");
+    nas_panel_.reset();
+    spdlog::info("~MainWindow: feature_importance_panel_");
+    feature_importance_panel_.reset();
+    spdlog::info("~MainWindow: gradcam_panel_");
+    gradcam_panel_.reset();
+    spdlog::info("~MainWindow: dim_reduction_panel_");
+    dim_reduction_panel_.reset();
+    spdlog::info("~MainWindow: regression_panel_");
+    regression_panel_.reset();
+    spdlog::info("~MainWindow: distribution_fitter_panel_");
+    distribution_fitter_panel_.reset();
+    spdlog::info("~MainWindow: hypothesis_test_panel_");
+    hypothesis_test_panel_.reset();
+    spdlog::info("~MainWindow: descriptive_stats_panel_");
+    descriptive_stats_panel_.reset();
+    spdlog::info("~MainWindow: outlier_detection_panel_");
+    outlier_detection_panel_.reset();
+    spdlog::info("~MainWindow: missing_value_panel_");
+    missing_value_panel_.reset();
+    spdlog::info("~MainWindow: correlation_matrix_panel_");
+    correlation_matrix_panel_.reset();
+    spdlog::info("~MainWindow: data_profiler_panel_");
+    data_profiler_panel_.reset();
+    spdlog::info("~MainWindow: lr_finder_panel_");
+    lr_finder_panel_.reset();
+    spdlog::info("~MainWindow: architecture_diagram_");
+    architecture_diagram_.reset();
+    spdlog::info("~MainWindow: model_summary_panel_");
+    model_summary_panel_.reset();
+    spdlog::info("~MainWindow: deployment_dialog_");
+    deployment_dialog_.reset();
+    spdlog::info("~MainWindow: import_dialog_");
+    import_dialog_.reset();
+    spdlog::info("~MainWindow: export_dialog_");
+    export_dialog_.reset();
+    spdlog::info("~MainWindow: test_results_panel_");
+    test_results_panel_.reset();
+    // variable_explorer_ already reset at the beginning
+    spdlog::info("~MainWindow: memory_monitor_");
+    memory_monitor_.reset();
+    spdlog::info("~MainWindow: memory_panel_");
+    memory_panel_.reset();
+    spdlog::info("~MainWindow: profiling_panel_");
+    profiling_panel_.reset();
+    spdlog::info("~MainWindow: theme_editor_");
+    theme_editor_.reset();
+    spdlog::info("~MainWindow: custom_node_editor_");
+    custom_node_editor_.reset();
+    spdlog::info("~MainWindow: query_console_");
+    query_console_.reset();
+    spdlog::info("~MainWindow: pattern_browser_");
+    pattern_browser_.reset();
+    spdlog::info("~MainWindow: task_progress_panel_");
+    task_progress_panel_.reset();
+    spdlog::info("~MainWindow: wallet_panel_");
+    wallet_panel_.reset();
+    spdlog::info("~MainWindow: p2p_training_panel_");
+    p2p_training_panel_.reset();
+    spdlog::info("~MainWindow: job_status_panel_");
+    job_status_panel_.reset();
+    spdlog::info("~MainWindow: connection_dialog_");
+    connection_dialog_.reset();
+    spdlog::info("~MainWindow: table_viewer_");
+    table_viewer_.reset();
+    // script_editor_, command_window_ already reset at the beginning (with scripting_engine panels)
+    // plot_test_control_, training_plot_panel_, training_dashboard_ already reset at the beginning
+    spdlog::info("~MainWindow: asset_browser_");
+    asset_browser_.reset();
+    spdlog::info("~MainWindow: toolbar_");
+    toolbar_.reset();
+    spdlog::info("~MainWindow: dataset_panel_");
+    dataset_panel_.reset();
+    spdlog::info("~MainWindow: properties_");
+    properties_.reset();
+    spdlog::info("~MainWindow: viewport_");
+    viewport_.reset();
+    spdlog::info("~MainWindow: console_");
+    console_.reset();
+    spdlog::info("~MainWindow: node_editor_");
+    node_editor_.reset();
+
+    spdlog::info("~MainWindow: all panels destroyed");
+}
 
 void MainWindow::SetIdleLogPtr(bool* ptr) {
     if (toolbar_) {

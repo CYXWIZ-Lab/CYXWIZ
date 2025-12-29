@@ -43,13 +43,16 @@ bool PythonEngine::Initialize() {
 
 void PythonEngine::Shutdown() {
     if (initialized_ && initialized_by_us_) {
-        // Only finalize if we were the ones who initialized Python
-        // Reacquire the GIL before finalizing
-        AcquireGIL();
-        py::finalize_interpreter();
+        // Skip Python finalization during shutdown.
+        // py::finalize_interpreter() can cause crashes if there are still
+        // pybind11 objects (lambdas, callbacks) that need to be cleaned up.
+        // The OS will clean up Python when the process exits.
+        //
+        // Note: This is safe because we're only called during process shutdown.
+        // If we needed to reinitialize Python, we would need to finalize properly.
+        spdlog::info("Python interpreter shutdown (not finalized - OS will cleanup)");
         initialized_ = false;
         main_thread_state_ = nullptr;
-        spdlog::info("Python interpreter finalized");
     } else if (initialized_) {
         // We're using a shared interpreter, just mark as not initialized
         initialized_ = false;

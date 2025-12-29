@@ -3043,4 +3043,1102 @@ void GRULayer::SetParameters(const std::map<std::string, Tensor>& params) {
     }
 }
 
+// ============================================================================
+// MultiHeadAttention Layer Implementation
+// ============================================================================
+
+MultiHeadAttentionLayer::MultiHeadAttentionLayer(int embed_dim, int num_heads,
+                                                   float dropout, bool use_bias)
+    : embed_dim_(embed_dim), num_heads_(num_heads), dropout_(dropout), use_bias_(use_bias) {
+
+    if (embed_dim % num_heads != 0) {
+        throw std::invalid_argument("embed_dim must be divisible by num_heads");
+    }
+
+    head_dim_ = embed_dim / num_heads;
+    scale_ = 1.0f / std::sqrt(static_cast<float>(head_dim_));
+
+    InitializeWeights();
+}
+
+void MultiHeadAttentionLayer::InitializeWeights() {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        // Xavier initialization for projection weights
+        float limit = std::sqrt(6.0f / (embed_dim_ + embed_dim_));
+
+        af::array w_q = af::randu(af::dim4(embed_dim_, embed_dim_)) * 2.0f * limit - limit;
+        af::array w_k = af::randu(af::dim4(embed_dim_, embed_dim_)) * 2.0f * limit - limit;
+        af::array w_v = af::randu(af::dim4(embed_dim_, embed_dim_)) * 2.0f * limit - limit;
+        af::array w_o = af::randu(af::dim4(embed_dim_, embed_dim_)) * 2.0f * limit - limit;
+
+        W_q_ = AfToTensor(w_q);
+        W_k_ = AfToTensor(w_k);
+        W_v_ = AfToTensor(w_v);
+        W_o_ = AfToTensor(w_o);
+
+        if (use_bias_) {
+            b_q_ = Tensor({static_cast<size_t>(embed_dim_)}, DataType::Float32);
+            b_k_ = Tensor({static_cast<size_t>(embed_dim_)}, DataType::Float32);
+            b_v_ = Tensor({static_cast<size_t>(embed_dim_)}, DataType::Float32);
+            b_o_ = Tensor({static_cast<size_t>(embed_dim_)}, DataType::Float32);
+            std::memset(b_q_.Data(), 0, embed_dim_ * sizeof(float));
+            std::memset(b_k_.Data(), 0, embed_dim_ * sizeof(float));
+            std::memset(b_v_.Data(), 0, embed_dim_ * sizeof(float));
+            std::memset(b_o_.Data(), 0, embed_dim_ * sizeof(float));
+        }
+
+        // Initialize gradient tensors
+        grad_W_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+        grad_W_k_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+        grad_W_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+        grad_W_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+
+        if (use_bias_) {
+            grad_b_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+            grad_b_k_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+            grad_b_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+            grad_b_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+        }
+
+        return;
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire init failed: {}, using CPU", e.what());
+    }
+#endif
+
+    // CPU fallback
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    float limit = std::sqrt(6.0f / (embed_dim_ + embed_dim_));
+    std::uniform_real_distribution<float> dist(-limit, limit);
+
+    W_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+    W_k_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+    W_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+    W_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+
+    float* wq = W_q_.Data<float>();
+    float* wk = W_k_.Data<float>();
+    float* wv = W_v_.Data<float>();
+    float* wo = W_o_.Data<float>();
+
+    for (int i = 0; i < embed_dim_ * embed_dim_; i++) {
+        wq[i] = dist(gen);
+        wk[i] = dist(gen);
+        wv[i] = dist(gen);
+        wo[i] = dist(gen);
+    }
+
+    if (use_bias_) {
+        b_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+        b_k_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+        b_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+        b_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+        std::memset(b_q_.Data(), 0, embed_dim_ * sizeof(float));
+        std::memset(b_k_.Data(), 0, embed_dim_ * sizeof(float));
+        std::memset(b_v_.Data(), 0, embed_dim_ * sizeof(float));
+        std::memset(b_o_.Data(), 0, embed_dim_ * sizeof(float));
+    }
+
+    grad_W_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+    grad_W_k_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+    grad_W_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+    grad_W_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
+
+    if (use_bias_) {
+        grad_b_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+        grad_b_k_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+        grad_b_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+        grad_b_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+    }
+}
+
+Tensor MultiHeadAttentionLayer::Forward(const Tensor& input) {
+    // Self-attention: Q = K = V = input
+    return Forward(input, input, input, nullptr);
+}
+
+Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
+                                         const Tensor& value, const Tensor* attn_mask) {
+    // Cache inputs for backward
+    cached_query_ = query;
+    cached_key_ = key;
+    cached_value_ = value;
+
+    const auto& q_shape = query.Shape();
+    if (q_shape.size() != 3) {
+        throw std::invalid_argument("Input must be 3D [batch, seq_len, embed_dim]");
+    }
+
+    int batch_size = static_cast<int>(q_shape[0]);
+    int seq_len_q = static_cast<int>(q_shape[1]);
+    int seq_len_kv = static_cast<int>(key.Shape()[1]);
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        // Load input tensors - [batch, seq, embed] stored as [embed, seq, batch] in AF
+        af::array q_in(af::dim4(embed_dim_, seq_len_q, batch_size), query.Data<float>());
+        af::array k_in(af::dim4(embed_dim_, seq_len_kv, batch_size), key.Data<float>());
+        af::array v_in(af::dim4(embed_dim_, seq_len_kv, batch_size), value.Data<float>());
+
+        // Load weights [embed_dim, embed_dim]
+        af::array wq = TensorToAf(W_q_);
+        af::array wk = TensorToAf(W_k_);
+        af::array wv = TensorToAf(W_v_);
+        af::array wo = TensorToAf(W_o_);
+
+        // Linear projections: Q, K, V
+        // For each batch, we do: proj = W @ x  (matmul along embed dimension)
+        // Using gfor for batched operations
+        af::array Q = af::constant(0.0f, af::dim4(embed_dim_, seq_len_q, batch_size));
+        af::array K = af::constant(0.0f, af::dim4(embed_dim_, seq_len_kv, batch_size));
+        af::array V = af::constant(0.0f, af::dim4(embed_dim_, seq_len_kv, batch_size));
+
+        for (int b = 0; b < batch_size; b++) {
+            af::array q_b = q_in(af::span, af::span, b);
+            af::array k_b = k_in(af::span, af::span, b);
+            af::array v_b = v_in(af::span, af::span, b);
+
+            Q(af::span, af::span, b) = af::matmul(wq, q_b);
+            K(af::span, af::span, b) = af::matmul(wk, k_b);
+            V(af::span, af::span, b) = af::matmul(wv, v_b);
+        }
+
+        // Add bias if enabled
+        if (use_bias_) {
+            af::array bq = af::array(af::dim4(embed_dim_), b_q_.Data<float>());
+            af::array bk = af::array(af::dim4(embed_dim_), b_k_.Data<float>());
+            af::array bv = af::array(af::dim4(embed_dim_), b_v_.Data<float>());
+
+            Q = Q + af::tile(bq, 1, seq_len_q, batch_size);
+            K = K + af::tile(bk, 1, seq_len_kv, batch_size);
+            V = V + af::tile(bv, 1, seq_len_kv, batch_size);
+        }
+
+        // Cache projected Q, K, V for backward
+        cached_Q_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_q),
+                            static_cast<size_t>(embed_dim_)});
+        cached_K_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_kv),
+                            static_cast<size_t>(embed_dim_)});
+        cached_V_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_kv),
+                            static_cast<size_t>(embed_dim_)});
+        Q.host(cached_Q_.Data());
+        K.host(cached_K_.Data());
+        V.host(cached_V_.Data());
+
+        // Reshape for multi-head: [embed, seq, batch] -> [head_dim, seq, num_heads, batch]
+        Q = af::moddims(Q, af::dim4(head_dim_, num_heads_, seq_len_q, batch_size));
+        K = af::moddims(K, af::dim4(head_dim_, num_heads_, seq_len_kv, batch_size));
+        V = af::moddims(V, af::dim4(head_dim_, num_heads_, seq_len_kv, batch_size));
+
+        // Reorder to [head_dim, seq, batch, num_heads] for batch matmul
+        Q = af::reorder(Q, 0, 2, 3, 1);  // [head_dim, seq_q, batch, num_heads]
+        K = af::reorder(K, 0, 2, 3, 1);  // [head_dim, seq_kv, batch, num_heads]
+        V = af::reorder(V, 0, 2, 3, 1);  // [head_dim, seq_kv, batch, num_heads]
+
+        // Scaled dot-product attention
+        // scores = Q^T @ K / sqrt(head_dim)  -> [seq_q, seq_kv, batch, num_heads]
+        af::array scores = af::constant(0.0f, af::dim4(seq_len_q, seq_len_kv, batch_size, num_heads_));
+
+        for (int h = 0; h < num_heads_; h++) {
+            for (int b = 0; b < batch_size; b++) {
+                af::array q_bh = Q(af::span, af::span, b, h);  // [head_dim, seq_q]
+                af::array k_bh = K(af::span, af::span, b, h);  // [head_dim, seq_kv]
+
+                // scores = Q^T @ K = [seq_q, head_dim] @ [head_dim, seq_kv] = [seq_q, seq_kv]
+                af::array s = af::matmul(af::transpose(q_bh), k_bh) * scale_;
+                scores(af::span, af::span, b, h) = s;
+            }
+        }
+
+        // Apply attention mask if provided
+        if (attn_mask != nullptr) {
+            af::array mask(af::dim4(seq_len_q, seq_len_kv), attn_mask->Data<float>());
+            scores = scores + af::tile(mask, 1, 1, batch_size, num_heads_);
+        }
+
+        // Softmax along seq_kv dimension (dim 1)
+        // ArrayFire doesn't have softmax, implement manually: softmax(x) = exp(x - max(x)) / sum(exp(x - max(x)))
+        af::array max_scores = af::max(scores, 1);
+        af::array scores_shifted = scores - af::tile(max_scores, 1, seq_len_kv, 1, 1);
+        af::array exp_scores = af::exp(scores_shifted);
+        af::array sum_exp = af::sum(exp_scores, 1);
+        af::array attn_weights = exp_scores / af::tile(sum_exp, 1, seq_len_kv, 1, 1);
+
+        // Cache attention weights for backward and visualization
+        cached_attn_weights_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(num_heads_),
+                                        static_cast<size_t>(seq_len_q), static_cast<size_t>(seq_len_kv)});
+        af::array attn_reordered = af::reorder(attn_weights, 0, 1, 3, 2);
+        attn_reordered.host(cached_attn_weights_.Data());
+
+        // Apply dropout if training
+        if (training_ && dropout_ > 0.0f) {
+            af::array mask = af::randu(attn_weights.dims()) > dropout_;
+            dropout_mask_ = Tensor(std::vector<size_t>{static_cast<size_t>(seq_len_q), static_cast<size_t>(seq_len_kv),
+                                     static_cast<size_t>(batch_size), static_cast<size_t>(num_heads_)});
+            mask.as(af::dtype::f32).host(dropout_mask_.Data());
+            attn_weights = attn_weights * mask.as(af::dtype::f32) / (1.0f - dropout_);
+        }
+
+        // Weighted sum: context = attn_weights @ V
+        // [seq_q, seq_kv] @ [head_dim, seq_kv]^T -> need [seq_q, head_dim]
+        af::array context = af::constant(0.0f, af::dim4(head_dim_, seq_len_q, batch_size, num_heads_));
+
+        for (int h = 0; h < num_heads_; h++) {
+            for (int b = 0; b < batch_size; b++) {
+                af::array a_bh = attn_weights(af::span, af::span, b, h);  // [seq_q, seq_kv]
+                af::array v_bh = V(af::span, af::span, b, h);             // [head_dim, seq_kv]
+
+                // context = V @ attn^T = [head_dim, seq_kv] @ [seq_kv, seq_q] = [head_dim, seq_q]
+                af::array c = af::matmul(v_bh, af::transpose(a_bh));
+                context(af::span, af::span, b, h) = c;
+            }
+        }
+
+        // Reshape back: [head_dim, seq_q, batch, num_heads] -> [embed, seq_q, batch]
+        context = af::reorder(context, 0, 3, 1, 2);  // [head_dim, num_heads, seq_q, batch]
+        context = af::moddims(context, af::dim4(embed_dim_, seq_len_q, batch_size));
+
+        // Cache context for backward
+        cached_context_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_q),
+                                   static_cast<size_t>(embed_dim_)});
+        context.host(cached_context_.Data());
+
+        // Output projection
+        af::array output = af::constant(0.0f, af::dim4(embed_dim_, seq_len_q, batch_size));
+        for (int b = 0; b < batch_size; b++) {
+            output(af::span, af::span, b) = af::matmul(wo, context(af::span, af::span, b));
+        }
+
+        if (use_bias_) {
+            af::array bo = af::array(af::dim4(embed_dim_), b_o_.Data<float>());
+            output = output + af::tile(bo, 1, seq_len_q, batch_size);
+        }
+
+        // Convert to output tensor [batch, seq, embed]
+        std::vector<size_t> result_shape = {static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_q),
+                       static_cast<size_t>(embed_dim_)};
+        Tensor result(result_shape, DataType::Float32);
+        output.host(result.Data());
+        return result;
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire MultiHeadAttention forward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("MultiHeadAttention forward requires ArrayFire");
+}
+
+Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
+    const auto& shape = grad_output.Shape();
+    int batch_size = static_cast<int>(shape[0]);
+    int seq_len_q = static_cast<int>(shape[1]);
+    int seq_len_kv = static_cast<int>(cached_key_.Shape()[1]);
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        // Load gradients [batch, seq, embed] -> [embed, seq, batch]
+        af::array grad_out(af::dim4(embed_dim_, seq_len_q, batch_size), grad_output.Data<float>());
+
+        // Load weights
+        af::array wq = TensorToAf(W_q_);
+        af::array wk = TensorToAf(W_k_);
+        af::array wv = TensorToAf(W_v_);
+        af::array wo = TensorToAf(W_o_);
+
+        // Load cached values
+        af::array context(af::dim4(embed_dim_, seq_len_q, batch_size), cached_context_.Data<float>());
+        af::array Q(af::dim4(embed_dim_, seq_len_q, batch_size), cached_Q_.Data<float>());
+        af::array K(af::dim4(embed_dim_, seq_len_kv, batch_size), cached_K_.Data<float>());
+        af::array V(af::dim4(embed_dim_, seq_len_kv, batch_size), cached_V_.Data<float>());
+
+        // Gradient through output projection
+        af::array grad_context = af::constant(0.0f, af::dim4(embed_dim_, seq_len_q, batch_size));
+        af::array dWo = af::constant(0.0f, wo.dims());
+        af::array dbo = af::constant(0.0f, af::dim4(embed_dim_));
+
+        for (int b = 0; b < batch_size; b++) {
+            af::array grad_b = grad_out(af::span, af::span, b);
+            af::array ctx_b = context(af::span, af::span, b);
+
+            grad_context(af::span, af::span, b) = af::matmul(af::transpose(wo), grad_b);
+            dWo = dWo + af::matmul(grad_b, af::transpose(ctx_b));
+        }
+
+        if (use_bias_) {
+            dbo = af::sum(af::sum(grad_out, 1), 2);
+        }
+
+        // Reshape for multi-head attention backward
+        Q = af::moddims(Q, af::dim4(head_dim_, num_heads_, seq_len_q, batch_size));
+        K = af::moddims(K, af::dim4(head_dim_, num_heads_, seq_len_kv, batch_size));
+        V = af::moddims(V, af::dim4(head_dim_, num_heads_, seq_len_kv, batch_size));
+        grad_context = af::moddims(grad_context, af::dim4(head_dim_, num_heads_, seq_len_q, batch_size));
+
+        Q = af::reorder(Q, 0, 2, 3, 1);
+        K = af::reorder(K, 0, 2, 3, 1);
+        V = af::reorder(V, 0, 2, 3, 1);
+        grad_context = af::reorder(grad_context, 0, 2, 3, 1);
+
+        // Load cached attention weights
+        af::array attn_weights(af::dim4(seq_len_q, seq_len_kv, batch_size, num_heads_),
+                               cached_attn_weights_.Data<float>());
+        attn_weights = af::reorder(attn_weights, 0, 1, 3, 2);  // Reorder to match
+
+        // Gradient through attention
+        af::array grad_Q = af::constant(0.0f, Q.dims());
+        af::array grad_K = af::constant(0.0f, K.dims());
+        af::array grad_V = af::constant(0.0f, V.dims());
+
+        for (int h = 0; h < num_heads_; h++) {
+            for (int b = 0; b < batch_size; b++) {
+                af::array v_bh = V(af::span, af::span, b, h);
+                af::array q_bh = Q(af::span, af::span, b, h);
+                af::array k_bh = K(af::span, af::span, b, h);
+                af::array a_bh = attn_weights(af::span, af::span, b, h);
+                af::array gc_bh = grad_context(af::span, af::span, b, h);
+
+                // Gradient w.r.t. V: dV = attn @ grad_context^T
+                af::array dV = af::matmul(gc_bh, a_bh);
+                grad_V(af::span, af::span, b, h) = dV;
+
+                // Gradient w.r.t. attention weights
+                af::array grad_attn = af::matmul(v_bh, af::transpose(gc_bh));
+                grad_attn = af::transpose(grad_attn);  // [seq_q, seq_kv]
+
+                // Softmax backward: d_scores = attn * (d_attn - sum(d_attn * attn))
+                af::array sum_grad = af::sum(grad_attn * a_bh, 1);
+                af::array grad_scores = a_bh * (grad_attn - af::tile(sum_grad, 1, seq_len_kv));
+
+                // Scale
+                grad_scores = grad_scores * scale_;
+
+                // Gradient w.r.t. Q and K from scores = Q^T @ K
+                // dQ = K @ grad_scores^T, dK = Q @ grad_scores
+                af::array dQ = af::matmul(k_bh, af::transpose(grad_scores));
+                af::array dK = af::matmul(q_bh, grad_scores);
+
+                grad_Q(af::span, af::span, b, h) = dQ;
+                grad_K(af::span, af::span, b, h) = dK;
+            }
+        }
+
+        // Reshape gradients back
+        grad_Q = af::reorder(grad_Q, 0, 3, 1, 2);
+        grad_K = af::reorder(grad_K, 0, 3, 1, 2);
+        grad_V = af::reorder(grad_V, 0, 3, 1, 2);
+
+        grad_Q = af::moddims(grad_Q, af::dim4(embed_dim_, seq_len_q, batch_size));
+        grad_K = af::moddims(grad_K, af::dim4(embed_dim_, seq_len_kv, batch_size));
+        grad_V = af::moddims(grad_V, af::dim4(embed_dim_, seq_len_kv, batch_size));
+
+        // Gradient through input projections
+        af::array query(af::dim4(embed_dim_, seq_len_q, batch_size), cached_query_.Data<float>());
+        af::array key(af::dim4(embed_dim_, seq_len_kv, batch_size), cached_key_.Data<float>());
+        af::array value(af::dim4(embed_dim_, seq_len_kv, batch_size), cached_value_.Data<float>());
+
+        af::array dWq = af::constant(0.0f, wq.dims());
+        af::array dWk = af::constant(0.0f, wk.dims());
+        af::array dWv = af::constant(0.0f, wv.dims());
+        af::array dbq = af::constant(0.0f, af::dim4(embed_dim_));
+        af::array dbk = af::constant(0.0f, af::dim4(embed_dim_));
+        af::array dbv = af::constant(0.0f, af::dim4(embed_dim_));
+
+        af::array grad_query = af::constant(0.0f, query.dims());
+        af::array grad_key = af::constant(0.0f, key.dims());
+        af::array grad_value = af::constant(0.0f, value.dims());
+
+        for (int b = 0; b < batch_size; b++) {
+            af::array gq_b = grad_Q(af::span, af::span, b);
+            af::array gk_b = grad_K(af::span, af::span, b);
+            af::array gv_b = grad_V(af::span, af::span, b);
+            af::array q_b = query(af::span, af::span, b);
+            af::array k_b = key(af::span, af::span, b);
+            af::array v_b = value(af::span, af::span, b);
+
+            dWq = dWq + af::matmul(gq_b, af::transpose(q_b));
+            dWk = dWk + af::matmul(gk_b, af::transpose(k_b));
+            dWv = dWv + af::matmul(gv_b, af::transpose(v_b));
+
+            grad_query(af::span, af::span, b) = af::matmul(af::transpose(wq), gq_b);
+            grad_key(af::span, af::span, b) = af::matmul(af::transpose(wk), gk_b);
+            grad_value(af::span, af::span, b) = af::matmul(af::transpose(wv), gv_b);
+        }
+
+        if (use_bias_) {
+            dbq = af::sum(af::sum(grad_Q, 1), 2);
+            dbk = af::sum(af::sum(grad_K, 1), 2);
+            dbv = af::sum(af::sum(grad_V, 1), 2);
+        }
+
+        // Store gradients
+        grad_W_q_ = AfToTensor(dWq);
+        grad_W_k_ = AfToTensor(dWk);
+        grad_W_v_ = AfToTensor(dWv);
+        grad_W_o_ = AfToTensor(dWo);
+
+        if (use_bias_) {
+            grad_b_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+            grad_b_k_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+            grad_b_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+            grad_b_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
+            dbq.host(grad_b_q_.Data());
+            dbk.host(grad_b_k_.Data());
+            dbv.host(grad_b_v_.Data());
+            dbo.host(grad_b_o_.Data());
+        }
+
+        // Return gradient w.r.t. query (for self-attention, this is the input gradient)
+        // For cross-attention, caller needs to handle key/value gradients separately
+        std::vector<size_t> result_shape = {static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_q),
+                       static_cast<size_t>(embed_dim_)};
+        Tensor result(result_shape, DataType::Float32);
+        grad_query.host(result.Data());
+        return result;
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire MultiHeadAttention backward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("MultiHeadAttention backward requires ArrayFire");
+}
+
+std::map<std::string, Tensor> MultiHeadAttentionLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+    params["W_q"] = W_q_;
+    params["W_k"] = W_k_;
+    params["W_v"] = W_v_;
+    params["W_o"] = W_o_;
+    params["grad_W_q"] = grad_W_q_;
+    params["grad_W_k"] = grad_W_k_;
+    params["grad_W_v"] = grad_W_v_;
+    params["grad_W_o"] = grad_W_o_;
+
+    if (use_bias_) {
+        params["b_q"] = b_q_;
+        params["b_k"] = b_k_;
+        params["b_v"] = b_v_;
+        params["b_o"] = b_o_;
+        params["grad_b_q"] = grad_b_q_;
+        params["grad_b_k"] = grad_b_k_;
+        params["grad_b_v"] = grad_b_v_;
+        params["grad_b_o"] = grad_b_o_;
+    }
+
+    return params;
+}
+
+void MultiHeadAttentionLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    if (params.count("W_q")) W_q_ = params.at("W_q");
+    if (params.count("W_k")) W_k_ = params.at("W_k");
+    if (params.count("W_v")) W_v_ = params.at("W_v");
+    if (params.count("W_o")) W_o_ = params.at("W_o");
+
+    if (use_bias_) {
+        if (params.count("b_q")) b_q_ = params.at("b_q");
+        if (params.count("b_k")) b_k_ = params.at("b_k");
+        if (params.count("b_v")) b_v_ = params.at("b_v");
+        if (params.count("b_o")) b_o_ = params.at("b_o");
+    }
+}
+
+// ============================================================================
+// TransformerEncoderLayer Implementation
+// ============================================================================
+
+TransformerEncoderLayer::TransformerEncoderLayer(int d_model, int nhead,
+                                                   int dim_feedforward, float dropout,
+                                                   bool norm_first)
+    : d_model_(d_model), nhead_(nhead), dim_feedforward_(dim_feedforward),
+      dropout_(dropout), norm_first_(norm_first) {
+
+    self_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout);
+    norm1_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
+    norm2_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
+    linear1_ = std::make_unique<DenseLayer>(d_model, dim_feedforward);
+    linear2_ = std::make_unique<DenseLayer>(dim_feedforward, d_model);
+    dropout1_ = std::make_unique<DropoutLayer>(dropout);
+    dropout2_ = std::make_unique<DropoutLayer>(dropout);
+}
+
+Tensor TransformerEncoderLayer::Forward(const Tensor& input) {
+    return Forward(input, nullptr);
+}
+
+Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_mask) {
+    cached_input_ = input;
+
+    if (norm_first_) {
+        // Pre-LN: x + attn(norm(x))
+        Tensor normed = norm1_->Forward(input);
+        Tensor attn_out = self_attn_->Forward(normed, normed, normed, src_mask);
+        attn_out = dropout1_->Forward(attn_out);
+        cached_residual1_ = input;
+
+        // Add residual
+        const auto& shape = input.Shape();
+        std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
+        Tensor x(tensor_shape, DataType::Float32);
+        const float* in_data = input.Data<float>();
+        const float* attn_data = attn_out.Data<float>();
+        float* out_data = x.Data<float>();
+        size_t total = shape[0] * shape[1] * shape[2];
+        for (size_t i = 0; i < total; i++) {
+            out_data[i] = in_data[i] + attn_data[i];
+        }
+        cached_attn_output_ = x;
+
+        // FFN
+        Tensor normed2 = norm2_->Forward(x);
+        Tensor ffn_out = linear1_->Forward(normed2);
+
+        // ReLU activation
+        float* ffn_data = ffn_out.Data<float>();
+        size_t ffn_total = ffn_out.NumElements();
+        for (size_t i = 0; i < ffn_total; i++) {
+            ffn_data[i] = std::max(0.0f, ffn_data[i]);
+        }
+        cached_ffn_mid_ = ffn_out;
+
+        ffn_out = linear2_->Forward(ffn_out);
+        ffn_out = dropout2_->Forward(ffn_out);
+        cached_residual2_ = x;
+
+        // Add residual
+        Tensor result(tensor_shape, DataType::Float32);
+        const float* x_data = x.Data<float>();
+        const float* ffn_out_data = ffn_out.Data<float>();
+        float* result_data = result.Data<float>();
+        for (size_t i = 0; i < total; i++) {
+            result_data[i] = x_data[i] + ffn_out_data[i];
+        }
+
+        return result;
+    } else {
+        // Post-LN: norm(x + attn(x))
+        Tensor attn_out = self_attn_->Forward(input, input, input, src_mask);
+        attn_out = dropout1_->Forward(attn_out);
+        cached_residual1_ = input;
+
+        // Add residual and norm
+        const auto& shape = input.Shape();
+        std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
+        Tensor x(tensor_shape, DataType::Float32);
+        const float* in_data = input.Data<float>();
+        const float* attn_data = attn_out.Data<float>();
+        float* out_data = x.Data<float>();
+        size_t total = shape[0] * shape[1] * shape[2];
+        for (size_t i = 0; i < total; i++) {
+            out_data[i] = in_data[i] + attn_data[i];
+        }
+
+        x = norm1_->Forward(x);
+        cached_attn_output_ = x;
+
+        // FFN
+        Tensor ffn_out = linear1_->Forward(x);
+
+        // ReLU activation
+        float* ffn_data = ffn_out.Data<float>();
+        size_t ffn_total = ffn_out.NumElements();
+        for (size_t i = 0; i < ffn_total; i++) {
+            ffn_data[i] = std::max(0.0f, ffn_data[i]);
+        }
+        cached_ffn_mid_ = ffn_out;
+
+        ffn_out = linear2_->Forward(ffn_out);
+        ffn_out = dropout2_->Forward(ffn_out);
+        cached_residual2_ = x;
+
+        // Add residual and norm
+        Tensor result(tensor_shape, DataType::Float32);
+        const float* x_data = x.Data<float>();
+        const float* ffn_out_data = ffn_out.Data<float>();
+        float* result_data = result.Data<float>();
+        for (size_t i = 0; i < total; i++) {
+            result_data[i] = x_data[i] + ffn_out_data[i];
+        }
+
+        return norm2_->Forward(result);
+    }
+}
+
+Tensor TransformerEncoderLayer::Backward(const Tensor& grad_output) {
+    // Simplified backward - full implementation would track all intermediate gradients
+    Tensor grad = grad_output;
+
+    if (!norm_first_) {
+        grad = norm2_->Backward(grad);
+    }
+
+    // FFN backward
+    Tensor grad_ffn = dropout2_->Backward(grad);
+    grad_ffn = linear2_->Backward(grad_ffn);
+
+    // ReLU backward
+    const float* mid_data = cached_ffn_mid_.Data<float>();
+    float* grad_ffn_data = grad_ffn.Data<float>();
+    size_t total = grad_ffn.NumElements();
+    for (size_t i = 0; i < total; i++) {
+        if (mid_data[i] <= 0.0f) {
+            grad_ffn_data[i] = 0.0f;
+        }
+    }
+
+    grad_ffn = linear1_->Backward(grad_ffn);
+
+    if (norm_first_) {
+        grad_ffn = norm2_->Backward(grad_ffn);
+    }
+
+    // Add residual gradient
+    const auto& shape = grad_output.Shape();
+    std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
+    Tensor grad_sum(tensor_shape, DataType::Float32);
+    const float* grad_data = grad.Data<float>();
+    const float* grad_ffn_ptr = grad_ffn.Data<float>();
+    float* sum_data = grad_sum.Data<float>();
+    size_t n = shape[0] * shape[1] * shape[2];
+    for (size_t i = 0; i < n; i++) {
+        sum_data[i] = grad_data[i] + grad_ffn_ptr[i];
+    }
+
+    // Attention backward
+    Tensor grad_attn = dropout1_->Backward(grad_sum);
+    grad_attn = self_attn_->Backward(grad_attn);
+
+    if (norm_first_) {
+        grad_attn = norm1_->Backward(grad_attn);
+    }
+
+    // Add residual gradient
+    Tensor result(tensor_shape, DataType::Float32);
+    const float* sum_ptr = grad_sum.Data<float>();
+    const float* attn_ptr = grad_attn.Data<float>();
+    float* result_data = result.Data<float>();
+    for (size_t i = 0; i < n; i++) {
+        result_data[i] = sum_ptr[i] + attn_ptr[i];
+    }
+
+    if (!norm_first_) {
+        result = norm1_->Backward(result);
+    }
+
+    return result;
+}
+
+std::map<std::string, Tensor> TransformerEncoderLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+
+    auto attn_params = self_attn_->GetParameters();
+    for (const auto& [key, val] : attn_params) {
+        params["self_attn." + key] = val;
+    }
+
+    auto norm1_params = norm1_->GetParameters();
+    for (const auto& [key, val] : norm1_params) {
+        params["norm1." + key] = val;
+    }
+
+    auto norm2_params = norm2_->GetParameters();
+    for (const auto& [key, val] : norm2_params) {
+        params["norm2." + key] = val;
+    }
+
+    auto linear1_params = linear1_->GetParameters();
+    for (const auto& [key, val] : linear1_params) {
+        params["linear1." + key] = val;
+    }
+
+    auto linear2_params = linear2_->GetParameters();
+    for (const auto& [key, val] : linear2_params) {
+        params["linear2." + key] = val;
+    }
+
+    return params;
+}
+
+void TransformerEncoderLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    std::map<std::string, Tensor> attn_params, norm1_params, norm2_params;
+    std::map<std::string, Tensor> linear1_params, linear2_params;
+
+    for (const auto& [key, val] : params) {
+        if (key.find("self_attn.") == 0) {
+            attn_params[key.substr(10)] = val;
+        } else if (key.find("norm1.") == 0) {
+            norm1_params[key.substr(6)] = val;
+        } else if (key.find("norm2.") == 0) {
+            norm2_params[key.substr(6)] = val;
+        } else if (key.find("linear1.") == 0) {
+            linear1_params[key.substr(8)] = val;
+        } else if (key.find("linear2.") == 0) {
+            linear2_params[key.substr(8)] = val;
+        }
+    }
+
+    self_attn_->SetParameters(attn_params);
+    norm1_->SetParameters(norm1_params);
+    norm2_->SetParameters(norm2_params);
+    linear1_->SetParameters(linear1_params);
+    linear2_->SetParameters(linear2_params);
+}
+
+void TransformerEncoderLayer::SetTraining(bool training) {
+    training_ = training;
+    self_attn_->SetTraining(training);
+    norm1_->SetTraining(training);
+    norm2_->SetTraining(training);
+    linear1_->SetTraining(training);
+    linear2_->SetTraining(training);
+    dropout1_->SetTraining(training);
+    dropout2_->SetTraining(training);
+}
+
+// ============================================================================
+// TransformerDecoderLayer Implementation
+// ============================================================================
+
+TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
+                                                   int dim_feedforward, float dropout,
+                                                   bool norm_first)
+    : d_model_(d_model), nhead_(nhead), dim_feedforward_(dim_feedforward),
+      dropout_(dropout), norm_first_(norm_first) {
+
+    self_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout);
+    cross_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout);
+    norm1_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
+    norm2_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
+    norm3_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
+    linear1_ = std::make_unique<DenseLayer>(d_model, dim_feedforward);
+    linear2_ = std::make_unique<DenseLayer>(dim_feedforward, d_model);
+    dropout1_ = std::make_unique<DropoutLayer>(dropout);
+    dropout2_ = std::make_unique<DropoutLayer>(dropout);
+    dropout3_ = std::make_unique<DropoutLayer>(dropout);
+}
+
+Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
+    // Self-attention only mode (no encoder memory)
+    return Forward(input, input, nullptr, nullptr);
+}
+
+Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
+                                         const Tensor* tgt_mask, const Tensor* memory_mask) {
+    cached_input_ = tgt;
+    cached_memory_ = memory;
+
+    const auto& shape = tgt.Shape();
+    size_t total = shape[0] * shape[1] * shape[2];
+    std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
+
+    if (norm_first_) {
+        // Pre-LN decoder
+
+        // Self-attention
+        Tensor normed = norm1_->Forward(tgt);
+        Tensor self_attn_out = self_attn_->Forward(normed, normed, normed, tgt_mask);
+        self_attn_out = dropout1_->Forward(self_attn_out);
+
+        // Residual
+        Tensor x(tensor_shape, DataType::Float32);
+        const float* tgt_data = tgt.Data<float>();
+        const float* sa_data = self_attn_out.Data<float>();
+        float* x_data = x.Data<float>();
+        for (size_t i = 0; i < total; i++) {
+            x_data[i] = tgt_data[i] + sa_data[i];
+        }
+        cached_self_attn_output_ = x;
+
+        // Cross-attention
+        Tensor normed2 = norm2_->Forward(x);
+        Tensor cross_attn_out = cross_attn_->Forward(normed2, memory, memory, memory_mask);
+        cross_attn_out = dropout2_->Forward(cross_attn_out);
+
+        // Residual
+        Tensor x2(tensor_shape, DataType::Float32);
+        const float* x_ptr = x.Data<float>();
+        const float* ca_data = cross_attn_out.Data<float>();
+        float* x2_data = x2.Data<float>();
+        for (size_t i = 0; i < total; i++) {
+            x2_data[i] = x_ptr[i] + ca_data[i];
+        }
+        cached_cross_attn_output_ = x2;
+
+        // FFN
+        Tensor normed3 = norm3_->Forward(x2);
+        Tensor ffn_out = linear1_->Forward(normed3);
+
+        // ReLU
+        float* ffn_data = ffn_out.Data<float>();
+        size_t ffn_total = ffn_out.NumElements();
+        for (size_t i = 0; i < ffn_total; i++) {
+            ffn_data[i] = std::max(0.0f, ffn_data[i]);
+        }
+        cached_ffn_mid_ = ffn_out;
+
+        ffn_out = linear2_->Forward(ffn_out);
+        ffn_out = dropout3_->Forward(ffn_out);
+
+        // Residual
+        Tensor result(tensor_shape, DataType::Float32);
+        const float* x2_ptr = x2.Data<float>();
+        const float* ffn_ptr = ffn_out.Data<float>();
+        float* result_data = result.Data<float>();
+        for (size_t i = 0; i < total; i++) {
+            result_data[i] = x2_ptr[i] + ffn_ptr[i];
+        }
+
+        return result;
+    } else {
+        // Post-LN decoder
+
+        // Self-attention
+        Tensor self_attn_out = self_attn_->Forward(tgt, tgt, tgt, tgt_mask);
+        self_attn_out = dropout1_->Forward(self_attn_out);
+
+        // Residual + norm
+        Tensor x(tensor_shape, DataType::Float32);
+        const float* tgt_data = tgt.Data<float>();
+        const float* sa_data = self_attn_out.Data<float>();
+        float* x_data = x.Data<float>();
+        for (size_t i = 0; i < total; i++) {
+            x_data[i] = tgt_data[i] + sa_data[i];
+        }
+        x = norm1_->Forward(x);
+        cached_self_attn_output_ = x;
+
+        // Cross-attention
+        Tensor cross_attn_out = cross_attn_->Forward(x, memory, memory, memory_mask);
+        cross_attn_out = dropout2_->Forward(cross_attn_out);
+
+        // Residual + norm
+        Tensor x2(tensor_shape, DataType::Float32);
+        const float* x_ptr = x.Data<float>();
+        const float* ca_data = cross_attn_out.Data<float>();
+        float* x2_data = x2.Data<float>();
+        for (size_t i = 0; i < total; i++) {
+            x2_data[i] = x_ptr[i] + ca_data[i];
+        }
+        x2 = norm2_->Forward(x2);
+        cached_cross_attn_output_ = x2;
+
+        // FFN
+        Tensor ffn_out = linear1_->Forward(x2);
+
+        // ReLU
+        float* ffn_data = ffn_out.Data<float>();
+        size_t ffn_total = ffn_out.NumElements();
+        for (size_t i = 0; i < ffn_total; i++) {
+            ffn_data[i] = std::max(0.0f, ffn_data[i]);
+        }
+        cached_ffn_mid_ = ffn_out;
+
+        ffn_out = linear2_->Forward(ffn_out);
+        ffn_out = dropout3_->Forward(ffn_out);
+
+        // Residual + norm
+        Tensor result(tensor_shape, DataType::Float32);
+        const float* x2_ptr = x2.Data<float>();
+        const float* ffn_ptr = ffn_out.Data<float>();
+        float* result_data = result.Data<float>();
+        for (size_t i = 0; i < total; i++) {
+            result_data[i] = x2_ptr[i] + ffn_ptr[i];
+        }
+
+        return norm3_->Forward(result);
+    }
+}
+
+Tensor TransformerDecoderLayer::Backward(const Tensor& grad_output) {
+    // Simplified backward - similar to encoder
+    Tensor grad = grad_output;
+
+    if (!norm_first_) {
+        grad = norm3_->Backward(grad);
+    }
+
+    // FFN backward
+    Tensor grad_ffn = dropout3_->Backward(grad);
+    grad_ffn = linear2_->Backward(grad_ffn);
+
+    // ReLU backward
+    const float* mid_data = cached_ffn_mid_.Data<float>();
+    float* grad_ffn_data = grad_ffn.Data<float>();
+    size_t total = grad_ffn.NumElements();
+    for (size_t i = 0; i < total; i++) {
+        if (mid_data[i] <= 0.0f) {
+            grad_ffn_data[i] = 0.0f;
+        }
+    }
+
+    grad_ffn = linear1_->Backward(grad_ffn);
+
+    if (norm_first_) {
+        grad_ffn = norm3_->Backward(grad_ffn);
+    }
+
+    // Add residual gradient
+    const auto& shape = grad_output.Shape();
+    size_t n = shape[0] * shape[1] * shape[2];
+    std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
+    Tensor grad_sum(tensor_shape, DataType::Float32);
+    const float* grad_data = grad.Data<float>();
+    const float* grad_ffn_ptr = grad_ffn.Data<float>();
+    float* sum_data = grad_sum.Data<float>();
+    for (size_t i = 0; i < n; i++) {
+        sum_data[i] = grad_data[i] + grad_ffn_ptr[i];
+    }
+
+    // Cross-attention backward
+    Tensor grad_cross = dropout2_->Backward(grad_sum);
+    grad_cross = cross_attn_->Backward(grad_cross);
+
+    if (norm_first_) {
+        grad_cross = norm2_->Backward(grad_cross);
+    } else {
+        grad_sum = norm2_->Backward(grad_sum);
+    }
+
+    // Add residual
+    Tensor grad_sum2(tensor_shape, DataType::Float32);
+    const float* sum_ptr = grad_sum.Data<float>();
+    const float* cross_ptr = grad_cross.Data<float>();
+    float* sum2_data = grad_sum2.Data<float>();
+    for (size_t i = 0; i < n; i++) {
+        sum2_data[i] = sum_ptr[i] + cross_ptr[i];
+    }
+
+    // Self-attention backward
+    Tensor grad_self = dropout1_->Backward(grad_sum2);
+    grad_self = self_attn_->Backward(grad_self);
+
+    if (norm_first_) {
+        grad_self = norm1_->Backward(grad_self);
+    }
+
+    // Add residual
+    std::vector<size_t> result_shape = {shape[0], shape[1], shape[2]};
+    Tensor result(result_shape, DataType::Float32);
+    const float* sum2_ptr = grad_sum2.Data<float>();
+    const float* self_ptr = grad_self.Data<float>();
+    float* result_data = result.Data<float>();
+    for (size_t i = 0; i < n; i++) {
+        result_data[i] = sum2_ptr[i] + self_ptr[i];
+    }
+
+    if (!norm_first_) {
+        result = norm1_->Backward(result);
+    }
+
+    return result;
+}
+
+std::map<std::string, Tensor> TransformerDecoderLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+
+    auto self_attn_params = self_attn_->GetParameters();
+    for (const auto& [key, val] : self_attn_params) {
+        params["self_attn." + key] = val;
+    }
+
+    auto cross_attn_params = cross_attn_->GetParameters();
+    for (const auto& [key, val] : cross_attn_params) {
+        params["cross_attn." + key] = val;
+    }
+
+    auto norm1_params = norm1_->GetParameters();
+    for (const auto& [key, val] : norm1_params) {
+        params["norm1." + key] = val;
+    }
+
+    auto norm2_params = norm2_->GetParameters();
+    for (const auto& [key, val] : norm2_params) {
+        params["norm2." + key] = val;
+    }
+
+    auto norm3_params = norm3_->GetParameters();
+    for (const auto& [key, val] : norm3_params) {
+        params["norm3." + key] = val;
+    }
+
+    auto linear1_params = linear1_->GetParameters();
+    for (const auto& [key, val] : linear1_params) {
+        params["linear1." + key] = val;
+    }
+
+    auto linear2_params = linear2_->GetParameters();
+    for (const auto& [key, val] : linear2_params) {
+        params["linear2." + key] = val;
+    }
+
+    return params;
+}
+
+void TransformerDecoderLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    std::map<std::string, Tensor> self_attn_params, cross_attn_params;
+    std::map<std::string, Tensor> norm1_params, norm2_params, norm3_params;
+    std::map<std::string, Tensor> linear1_params, linear2_params;
+
+    for (const auto& [key, val] : params) {
+        if (key.find("self_attn.") == 0) {
+            self_attn_params[key.substr(10)] = val;
+        } else if (key.find("cross_attn.") == 0) {
+            cross_attn_params[key.substr(11)] = val;
+        } else if (key.find("norm1.") == 0) {
+            norm1_params[key.substr(6)] = val;
+        } else if (key.find("norm2.") == 0) {
+            norm2_params[key.substr(6)] = val;
+        } else if (key.find("norm3.") == 0) {
+            norm3_params[key.substr(6)] = val;
+        } else if (key.find("linear1.") == 0) {
+            linear1_params[key.substr(8)] = val;
+        } else if (key.find("linear2.") == 0) {
+            linear2_params[key.substr(8)] = val;
+        }
+    }
+
+    self_attn_->SetParameters(self_attn_params);
+    cross_attn_->SetParameters(cross_attn_params);
+    norm1_->SetParameters(norm1_params);
+    norm2_->SetParameters(norm2_params);
+    norm3_->SetParameters(norm3_params);
+    linear1_->SetParameters(linear1_params);
+    linear2_->SetParameters(linear2_params);
+}
+
+void TransformerDecoderLayer::SetTraining(bool training) {
+    training_ = training;
+    self_attn_->SetTraining(training);
+    cross_attn_->SetTraining(training);
+    norm1_->SetTraining(training);
+    norm2_->SetTraining(training);
+    norm3_->SetTraining(training);
+    linear1_->SetTraining(training);
+    linear2_->SetTraining(training);
+    dropout1_->SetTraining(training);
+    dropout2_->SetTraining(training);
+    dropout3_->SetTraining(training);
+}
+
+Tensor TransformerDecoderLayer::GenerateCausalMask(int size) {
+    // Create upper triangular mask with -inf above diagonal
+    std::vector<size_t> shape = {static_cast<size_t>(size), static_cast<size_t>(size)};
+    Tensor mask(shape, DataType::Float32);
+    float* data = mask.Data<float>();
+
+    for (int i = 0; i < size; i++) {
+        for (int j = 0; j < size; j++) {
+            if (j > i) {
+                data[i * size + j] = -1e9f;  // Large negative for softmax
+            } else {
+                data[i * size + j] = 0.0f;
+            }
+        }
+    }
+
+    return mask;
+}
+
 } // namespace cyxwiz
