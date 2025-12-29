@@ -22,7 +22,9 @@ enum class ActivationType {
     Swish,
     SiLU,      // Same as Swish (x * sigmoid(x))
     Mish,      // x * tanh(softplus(x))
-    Hardswish  // PyTorch-style hardswish
+    Hardswish, // PyTorch-style hardswish
+    SELU,      // Scaled Exponential Linear Unit
+    PReLU      // Parametric ReLU (learnable alpha)
 };
 
 // ============================================================================
@@ -179,6 +181,52 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output, const Tensor& input) override;
     std::string GetName() const override { return "Hardswish"; }
+};
+
+
+// ============================================================================
+// SELU - Scaled Exponential Linear Unit
+// ============================================================================
+
+class CYXWIZ_API SELUActivation : public Activation {
+public:
+    SELUActivation() = default;
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output, const Tensor& input) override;
+    std::string GetName() const override { return "SELU"; }
+
+    // SELU constants (for self-normalization)
+    static constexpr float ALPHA = 1.6732632423543772848170429916717f;
+    static constexpr float SCALE = 1.0507009873554804934193349852946f;
+};
+
+// ============================================================================
+// PReLU - Parametric ReLU (Learnable slope)
+// ============================================================================
+
+class CYXWIZ_API PReLUActivation : public Activation {
+public:
+    /**
+     * Create PReLU activation with learnable parameters
+     * @param num_parameters Number of learnable alpha parameters (1 or num_channels)
+     * @param init Initial value for alpha (default: 0.25)
+     */
+    explicit PReLUActivation(int num_parameters = 1, float init = 0.25f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output, const Tensor& input) override;
+    std::string GetName() const override { return "PReLU"; }
+
+    // Access learnable parameters
+    Tensor GetAlpha() const { return alpha_; }
+    void SetAlpha(const Tensor& alpha) { alpha_ = alpha; }
+    Tensor GetAlphaGradient() const { return grad_alpha_; }
+
+private:
+    int num_parameters_;
+    Tensor alpha_;       // Learnable negative slope [num_parameters]
+    Tensor grad_alpha_;  // Gradient for alpha
 };
 
 } // namespace cyxwiz

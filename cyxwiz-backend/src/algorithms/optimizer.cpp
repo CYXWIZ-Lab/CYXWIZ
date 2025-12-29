@@ -270,6 +270,286 @@ void AdamWOptimizer::Step(std::map<std::string, Tensor>& parameters,
     AdamOptimizer::Step(parameters, gradients);
 }
 
+
+// ============================================================================
+// RMSprop Optimizer
+// ============================================================================
+
+RMSpropOptimizer::RMSpropOptimizer(double learning_rate, double alpha, double epsilon, double momentum)
+    : alpha_(alpha), epsilon_(epsilon), momentum_(momentum) {
+    learning_rate_ = learning_rate;
+    step_count_ = 0;
+    CheckGPUAvailable();
+}
+
+void RMSpropOptimizer::Step(std::map<std::string, Tensor>& parameters,
+                            const std::map<std::string, Tensor>& gradients) {
+    float lr = static_cast<float>(learning_rate_);
+    float alpha = static_cast<float>(alpha_);
+    float eps = static_cast<float>(epsilon_);
+    float mom = static_cast<float>(momentum_);
+
+    for (auto& param_pair : parameters) {
+        const std::string& name = param_pair.first;
+        Tensor& param = param_pair.second;
+
+        auto grad_it = gradients.find(name);
+        if (grad_it == gradients.end()) continue;
+
+        const Tensor& grad = grad_it->second;
+        size_t num_elements = param.NumElements();
+
+        // Initialize running average if needed
+        if (v_.find(name) == v_.end()) {
+            v_[name] = Tensor(param.Shape(), DataType::Float32);
+            std::memset(v_[name].Data<float>(), 0, num_elements * sizeof(float));
+            if (momentum_ > 0) {
+                buffer_[name] = Tensor(param.Shape(), DataType::Float32);
+                std::memset(buffer_[name].Data<float>(), 0, num_elements * sizeof(float));
+            }
+        }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        if (s_use_gpu && param.GetDataType() == DataType::Float32) {
+            try {
+                af::array param_gpu(static_cast<dim_t>(num_elements),
+                                    static_cast<const float*>(param.Data()));
+                af::array grad_gpu(static_cast<dim_t>(num_elements),
+                                   static_cast<const float*>(grad.Data()));
+                af::array v_gpu(static_cast<dim_t>(num_elements),
+                                static_cast<const float*>(v_[name].Data()));
+
+                // v = alpha * v + (1 - alpha) * grad^2
+                v_gpu = alpha * v_gpu + (1.0f - alpha) * grad_gpu * grad_gpu;
+
+                if (momentum_ > 0) {
+                    af::array buf_gpu(static_cast<dim_t>(num_elements),
+                                      static_cast<const float*>(buffer_[name].Data()));
+                    // buf = mom * buf + grad / sqrt(v + eps)
+                    buf_gpu = mom * buf_gpu + grad_gpu / (af::sqrt(v_gpu) + eps);
+                    param_gpu = param_gpu - lr * buf_gpu;
+                    buf_gpu.host(buffer_[name].Data<float>());
+                } else {
+                    param_gpu = param_gpu - lr * grad_gpu / (af::sqrt(v_gpu) + eps);
+                }
+
+                param_gpu.host(param.Data<float>());
+                v_gpu.host(v_[name].Data<float>());
+                continue;
+            } catch (const af::exception& e) {
+                spdlog::warn("RMSprop GPU step failed: {}, falling back to CPU", e.what());
+            }
+        }
+#endif
+
+        // CPU fallback
+        if (param.GetDataType() == DataType::Float32) {
+            float* param_data = param.Data<float>();
+            const float* grad_data = grad.Data<float>();
+            float* v_data = v_[name].Data<float>();
+
+            if (momentum_ > 0) {
+                float* buf_data = buffer_[name].Data<float>();
+                for (size_t i = 0; i < num_elements; ++i) {
+                    v_data[i] = alpha * v_data[i] + (1.0f - alpha) * grad_data[i] * grad_data[i];
+                    buf_data[i] = mom * buf_data[i] + grad_data[i] / (std::sqrt(v_data[i]) + eps);
+                    param_data[i] -= lr * buf_data[i];
+                }
+            } else {
+                for (size_t i = 0; i < num_elements; ++i) {
+                    v_data[i] = alpha * v_data[i] + (1.0f - alpha) * grad_data[i] * grad_data[i];
+                    param_data[i] -= lr * grad_data[i] / (std::sqrt(v_data[i]) + eps);
+                }
+            }
+        }
+    }
+    step_count_++;
+}
+
+void RMSpropOptimizer::ZeroGrad() {
+    v_.clear();
+    buffer_.clear();
+}
+
+// ============================================================================
+// AdaGrad Optimizer
+// ============================================================================
+
+AdaGradOptimizer::AdaGradOptimizer(double learning_rate, double epsilon)
+    : epsilon_(epsilon) {
+    learning_rate_ = learning_rate;
+    step_count_ = 0;
+    CheckGPUAvailable();
+}
+
+void AdaGradOptimizer::Step(std::map<std::string, Tensor>& parameters,
+                            const std::map<std::string, Tensor>& gradients) {
+    float lr = static_cast<float>(learning_rate_);
+    float eps = static_cast<float>(epsilon_);
+
+    for (auto& param_pair : parameters) {
+        const std::string& name = param_pair.first;
+        Tensor& param = param_pair.second;
+
+        auto grad_it = gradients.find(name);
+        if (grad_it == gradients.end()) continue;
+
+        const Tensor& grad = grad_it->second;
+        size_t num_elements = param.NumElements();
+
+        // Initialize cache if needed
+        if (cache_.find(name) == cache_.end()) {
+            cache_[name] = Tensor(param.Shape(), DataType::Float32);
+            std::memset(cache_[name].Data<float>(), 0, num_elements * sizeof(float));
+        }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        if (s_use_gpu && param.GetDataType() == DataType::Float32) {
+            try {
+                af::array param_gpu(static_cast<dim_t>(num_elements),
+                                    static_cast<const float*>(param.Data()));
+                af::array grad_gpu(static_cast<dim_t>(num_elements),
+                                   static_cast<const float*>(grad.Data()));
+                af::array cache_gpu(static_cast<dim_t>(num_elements),
+                                    static_cast<const float*>(cache_[name].Data()));
+
+                // cache += grad^2
+                cache_gpu = cache_gpu + grad_gpu * grad_gpu;
+                // param -= lr * grad / sqrt(cache + eps)
+                param_gpu = param_gpu - lr * grad_gpu / (af::sqrt(cache_gpu) + eps);
+
+                param_gpu.host(param.Data<float>());
+                cache_gpu.host(cache_[name].Data<float>());
+                continue;
+            } catch (const af::exception& e) {
+                spdlog::warn("AdaGrad GPU step failed: {}, falling back to CPU", e.what());
+            }
+        }
+#endif
+
+        // CPU fallback
+        if (param.GetDataType() == DataType::Float32) {
+            float* param_data = param.Data<float>();
+            const float* grad_data = grad.Data<float>();
+            float* cache_data = cache_[name].Data<float>();
+
+            for (size_t i = 0; i < num_elements; ++i) {
+                cache_data[i] += grad_data[i] * grad_data[i];
+                param_data[i] -= lr * grad_data[i] / (std::sqrt(cache_data[i]) + eps);
+            }
+        }
+    }
+    step_count_++;
+}
+
+void AdaGradOptimizer::ZeroGrad() {
+    cache_.clear();
+}
+
+// ============================================================================
+// NAdam Optimizer (Nesterov-accelerated Adam)
+// ============================================================================
+
+NAdamOptimizer::NAdamOptimizer(double learning_rate, double beta1, double beta2, double epsilon)
+    : beta1_(beta1), beta2_(beta2), epsilon_(epsilon) {
+    learning_rate_ = learning_rate;
+    step_count_ = 0;
+    CheckGPUAvailable();
+}
+
+void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
+                          const std::map<std::string, Tensor>& gradients) {
+    step_count_++;
+
+    float b1 = static_cast<float>(beta1_);
+    float b2 = static_cast<float>(beta2_);
+    float lr = static_cast<float>(learning_rate_);
+    float eps = static_cast<float>(epsilon_);
+
+    // Bias correction factors
+    float bias_correction1 = 1.0f - std::pow(b1, step_count_);
+    float bias_correction2 = 1.0f - std::pow(b2, step_count_);
+
+    for (auto& param_pair : parameters) {
+        const std::string& name = param_pair.first;
+        Tensor& param = param_pair.second;
+
+        auto grad_it = gradients.find(name);
+        if (grad_it == gradients.end()) continue;
+
+        const Tensor& grad = grad_it->second;
+        size_t num_elements = param.NumElements();
+
+        // Initialize moment vectors if needed
+        if (m_.find(name) == m_.end()) {
+            m_[name] = Tensor(param.Shape(), DataType::Float32);
+            v_[name] = Tensor(param.Shape(), DataType::Float32);
+            std::memset(m_[name].Data<float>(), 0, num_elements * sizeof(float));
+            std::memset(v_[name].Data<float>(), 0, num_elements * sizeof(float));
+        }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        if (s_use_gpu && param.GetDataType() == DataType::Float32) {
+            try {
+                af::array param_gpu(static_cast<dim_t>(num_elements),
+                                    static_cast<const float*>(param.Data()));
+                af::array grad_gpu(static_cast<dim_t>(num_elements),
+                                   static_cast<const float*>(grad.Data()));
+                af::array m_gpu(static_cast<dim_t>(num_elements),
+                                static_cast<const float*>(m_[name].Data()));
+                af::array v_gpu(static_cast<dim_t>(num_elements),
+                                static_cast<const float*>(v_[name].Data()));
+
+                // Update moments
+                m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
+                v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
+
+                // Bias-corrected estimates
+                af::array m_hat = m_gpu / bias_correction1;
+                af::array v_hat = v_gpu / bias_correction2;
+
+                // NAdam: Nesterov momentum term
+                af::array m_nesterov = b1 * m_hat + (1.0f - b1) * grad_gpu / bias_correction1;
+
+                // Update parameters
+                param_gpu = param_gpu - lr * m_nesterov / (af::sqrt(v_hat) + eps);
+
+                param_gpu.host(param.Data<float>());
+                m_gpu.host(m_[name].Data<float>());
+                v_gpu.host(v_[name].Data<float>());
+                continue;
+            } catch (const af::exception& e) {
+                spdlog::warn("NAdam GPU step failed: {}, falling back to CPU", e.what());
+            }
+        }
+#endif
+
+        // CPU fallback
+        if (param.GetDataType() == DataType::Float32) {
+            float* param_data = param.Data<float>();
+            const float* grad_data = grad.Data<float>();
+            float* m_data = m_[name].Data<float>();
+            float* v_data = v_[name].Data<float>();
+
+            for (size_t i = 0; i < num_elements; ++i) {
+                m_data[i] = b1 * m_data[i] + (1.0f - b1) * grad_data[i];
+                v_data[i] = b2 * v_data[i] + (1.0f - b2) * grad_data[i] * grad_data[i];
+
+                float m_hat = m_data[i] / bias_correction1;
+                float v_hat = v_data[i] / bias_correction2;
+                float m_nesterov = b1 * m_hat + (1.0f - b1) * grad_data[i] / bias_correction1;
+
+                param_data[i] -= lr * m_nesterov / (std::sqrt(v_hat) + eps);
+            }
+        }
+    }
+}
+
+void NAdamOptimizer::ZeroGrad() {
+    m_.clear();
+    v_.clear();
+}
+
 // ============================================================================
 // Factory
 // ============================================================================
@@ -282,6 +562,12 @@ std::unique_ptr<Optimizer> CreateOptimizer(OptimizerType type, double learning_r
             return std::make_unique<AdamOptimizer>(learning_rate);
         case OptimizerType::AdamW:
             return std::make_unique<AdamWOptimizer>(learning_rate);
+        case OptimizerType::RMSprop:
+            return std::make_unique<RMSpropOptimizer>(learning_rate);
+        case OptimizerType::AdaGrad:
+            return std::make_unique<AdaGradOptimizer>(learning_rate);
+        case OptimizerType::NAdam:
+            return std::make_unique<NAdamOptimizer>(learning_rate);
         default:
             return nullptr;
     }

@@ -466,6 +466,165 @@ private:
     void NormalizeEmbeddings();
 };
 
+
+// ============================================================================
+// LayerNorm Layer - Layer Normalization
+// ============================================================================
+
+class CYXWIZ_API LayerNormLayer : public Layer {
+public:
+    /**
+     * Create a layer normalization layer
+     * @param normalized_shape Shape of the normalized dimensions (last N dims)
+     * @param eps Small value for numerical stability (default: 1e-5)
+     * @param elementwise_affine Whether to use learnable affine parameters (default: true)
+     */
+    LayerNormLayer(const std::vector<int>& normalized_shape,
+                   float eps = 1e-5f, bool elementwise_affine = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "LayerNorm"; }
+
+private:
+    std::vector<int> normalized_shape_;
+    float eps_;
+    bool elementwise_affine_;
+
+    Tensor gamma_;      // Scale [normalized_shape]
+    Tensor beta_;       // Shift [normalized_shape]
+    Tensor grad_gamma_;
+    Tensor grad_beta_;
+
+    // Cached for backward
+    Tensor normalized_;
+    Tensor std_inv_;
+};
+
+// ============================================================================
+// InstanceNorm2D Layer - Instance Normalization for CNNs
+// ============================================================================
+
+class CYXWIZ_API InstanceNorm2DLayer : public Layer {
+public:
+    /**
+     * Create a 2D instance normalization layer
+     * @param num_features Number of features/channels
+     * @param eps Small value for numerical stability (default: 1e-5)
+     * @param affine Whether to use learnable affine parameters (default: false)
+     */
+    InstanceNorm2DLayer(int num_features, float eps = 1e-5f, bool affine = false);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "InstanceNorm2D"; }
+
+private:
+    int num_features_;
+    float eps_;
+    bool affine_;
+
+    Tensor gamma_;
+    Tensor beta_;
+    Tensor grad_gamma_;
+    Tensor grad_beta_;
+
+    // Cached for backward
+    Tensor normalized_;
+    Tensor std_inv_;
+};
+
+// ============================================================================
+// GroupNorm Layer - Group Normalization
+// ============================================================================
+
+class CYXWIZ_API GroupNormLayer : public Layer {
+public:
+    /**
+     * Create a group normalization layer
+     * @param num_groups Number of groups to divide channels into
+     * @param num_channels Number of channels
+     * @param eps Small value for numerical stability (default: 1e-5)
+     * @param affine Whether to use learnable affine parameters (default: true)
+     */
+    GroupNormLayer(int num_groups, int num_channels,
+                   float eps = 1e-5f, bool affine = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "GroupNorm"; }
+
+private:
+    int num_groups_;
+    int num_channels_;
+    float eps_;
+    bool affine_;
+
+    Tensor gamma_;      // [num_channels]
+    Tensor beta_;       // [num_channels]
+    Tensor grad_gamma_;
+    Tensor grad_beta_;
+
+    // Cached for backward
+    Tensor normalized_;
+    Tensor std_inv_;
+};
+
+// ============================================================================
+// Conv1D Layer - 1D Convolution using ArrayFire
+// ============================================================================
+
+class CYXWIZ_API Conv1DLayer : public Layer {
+public:
+    /**
+     * Create a 1D convolutional layer
+     * @param in_channels Number of input channels
+     * @param out_channels Number of output channels (filters)
+     * @param kernel_size Size of the convolution kernel
+     * @param stride Stride of the convolution (default: 1)
+     * @param padding Padding added to input (default: 0)
+     * @param dilation Dilation of the kernel (default: 1)
+     * @param use_bias Whether to include bias (default: true)
+     */
+    Conv1DLayer(int in_channels, int out_channels, int kernel_size,
+                int stride = 1, int padding = 0, int dilation = 1,
+                bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "Conv1D"; }
+
+    // Accessors
+    int GetInChannels() const { return in_channels_; }
+    int GetOutChannels() const { return out_channels_; }
+    int GetKernelSize() const { return kernel_size_; }
+    int GetStride() const { return stride_; }
+    int GetPadding() const { return padding_; }
+    int GetDilation() const { return dilation_; }
+
+private:
+    int in_channels_;
+    int out_channels_;
+    int kernel_size_;
+    int stride_;
+    int padding_;
+    int dilation_;
+    bool use_bias_;
+
+    Tensor weights_;      // [out_channels, in_channels, kernel_size]
+    Tensor bias_;         // [out_channels]
+    Tensor grad_weights_;
+    Tensor grad_bias_;
+};
+
 // ============================================================================
 // GRU Layer - Gated Recurrent Unit using ArrayFire
 // ============================================================================

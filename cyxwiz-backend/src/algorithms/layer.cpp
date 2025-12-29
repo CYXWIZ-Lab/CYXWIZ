@@ -1365,6 +1365,589 @@ void EmbeddingLayer::SetParameters(const std::map<std::string, Tensor>& params) 
     }
 }
 
+
+// ============================================================================
+// LayerNorm Layer Implementation
+// ============================================================================
+
+LayerNormLayer::LayerNormLayer(const std::vector<int>& normalized_shape,
+                               float eps, bool elementwise_affine)
+    : normalized_shape_(normalized_shape), eps_(eps),
+      elementwise_affine_(elementwise_affine) {
+
+    // Calculate total size of normalized dimensions
+    size_t norm_size = 1;
+    for (int dim : normalized_shape) {
+        norm_size *= static_cast<size_t>(dim);
+    }
+
+    if (elementwise_affine) {
+        gamma_ = Tensor::Ones({norm_size});
+        beta_ = Tensor::Zeros({norm_size});
+        grad_gamma_ = Tensor::Zeros({norm_size});
+        grad_beta_ = Tensor::Zeros({norm_size});
+    }
+}
+
+Tensor LayerNormLayer::Forward(const Tensor& input) {
+    cached_input_ = input;
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array x = TensorToAf(input);
+        const auto& shape = input.Shape();
+
+        // Calculate the size of normalized dimensions
+        size_t norm_size = 1;
+        for (int dim : normalized_shape_) {
+            norm_size *= static_cast<size_t>(dim);
+        }
+
+        // Reshape to [batch_dims, norm_size]
+        size_t batch_size = input.NumElements() / norm_size;
+        af::array x_reshaped = af::moddims(x, af::dim4(norm_size, batch_size));
+
+        // Compute mean and variance along normalized dimension (dim 0)
+        af::array mean = af::mean(x_reshaped, 0);
+        af::array var = af::var(x_reshaped, AF_VARIANCE_POPULATION, 0);
+
+        // Broadcast mean and var
+        af::array mean_bc = af::tile(mean, af::dim4(norm_size, 1));
+        af::array var_bc = af::tile(var, af::dim4(norm_size, 1));
+
+        // Normalize
+        af::array std_inv = 1.0f / af::sqrt(var_bc + eps_);
+        af::array normalized = (x_reshaped - mean_bc) * std_inv;
+
+        // Store for backward pass
+        normalized_ = AfToTensor(normalized);
+        std_inv_ = AfToTensor(std_inv);
+
+        // Apply affine transformation if enabled
+        if (elementwise_affine_) {
+            af::array gamma = TensorToAf(gamma_);
+            af::array beta = TensorToAf(beta_);
+            af::array gamma_bc = af::tile(gamma, af::dim4(1, batch_size));
+            af::array beta_bc = af::tile(beta, af::dim4(1, batch_size));
+            normalized = gamma_bc * normalized + beta_bc;
+        }
+
+        // Reshape back to original shape
+        af::array output = af::moddims(normalized, x.dims());
+        return AfToTensor(output);
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire LayerNormLayer::Forward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("LayerNorm forward requires ArrayFire");
+}
+
+Tensor LayerNormLayer::Backward(const Tensor& grad_output) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        size_t norm_size = 1;
+        for (int dim : normalized_shape_) {
+            norm_size *= static_cast<size_t>(dim);
+        }
+        size_t batch_size = grad_output.NumElements() / norm_size;
+
+        af::array grad_out = TensorToAf(grad_output);
+        af::array grad_reshaped = af::moddims(grad_out, af::dim4(norm_size, batch_size));
+
+        af::array normalized = TensorToAf(normalized_);
+        af::array std_inv = TensorToAf(std_inv_);
+
+        if (elementwise_affine_) {
+            af::array gamma = TensorToAf(gamma_);
+
+            // Compute gradients for gamma and beta
+            af::array grad_gamma_arr = af::sum(grad_reshaped * normalized, 1);
+            af::array grad_beta_arr = af::sum(grad_reshaped, 1);
+
+            grad_gamma_ = AfToTensor(grad_gamma_arr);
+            grad_beta_ = AfToTensor(grad_beta_arr);
+
+            // Scale grad by gamma for input gradient
+            af::array gamma_bc = af::tile(gamma, af::dim4(1, batch_size));
+            grad_reshaped = grad_reshaped * gamma_bc;
+        }
+
+        // Compute input gradient
+        float N = static_cast<float>(norm_size);
+        af::array sum_dy = af::tile(af::sum(grad_reshaped, 0), af::dim4(norm_size, 1));
+        af::array sum_dy_norm = af::tile(af::sum(grad_reshaped * normalized, 0), af::dim4(norm_size, 1));
+
+        af::array dx = (1.0f / N) * std_inv * (N * grad_reshaped - sum_dy - normalized * sum_dy_norm);
+
+        af::array dx_output = af::moddims(dx, grad_out.dims());
+        return AfToTensor(dx_output);
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire LayerNormLayer::Backward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("LayerNorm backward requires ArrayFire");
+}
+
+std::map<std::string, Tensor> LayerNormLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+    if (elementwise_affine_) {
+        params["gamma"] = gamma_;
+        params["beta"] = beta_;
+        params["grad_gamma"] = grad_gamma_;
+        params["grad_beta"] = grad_beta_;
+    }
+    return params;
+}
+
+void LayerNormLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    if (params.count("gamma")) gamma_ = params.at("gamma");
+    if (params.count("beta")) beta_ = params.at("beta");
+}
+
+// ============================================================================
+// InstanceNorm2D Layer Implementation
+// ============================================================================
+
+InstanceNorm2DLayer::InstanceNorm2DLayer(int num_features, float eps, bool affine)
+    : num_features_(num_features), eps_(eps), affine_(affine) {
+
+    if (affine) {
+        gamma_ = Tensor::Ones({static_cast<size_t>(num_features)});
+        beta_ = Tensor::Zeros({static_cast<size_t>(num_features)});
+        grad_gamma_ = Tensor::Zeros({static_cast<size_t>(num_features)});
+        grad_beta_ = Tensor::Zeros({static_cast<size_t>(num_features)});
+    }
+}
+
+Tensor InstanceNorm2DLayer::Forward(const Tensor& input) {
+    cached_input_ = input;
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array x = TensorToAf(input);
+        // Input shape: [N, C, H, W] -> AF: [W, H, C, N]
+        dim_t W = x.dims(0);
+        dim_t H = x.dims(1);
+        dim_t C = x.dims(2);
+        dim_t N = x.dims(3);
+
+        // Reshape to [H*W, C, N] for per-instance normalization
+        af::array x_reshaped = af::moddims(x, af::dim4(W * H, C, N));
+
+        // Compute mean and variance per (C, N) instance
+        af::array mean = af::mean(x_reshaped, 0);  // [1, C, N]
+        af::array var = af::var(x_reshaped, AF_VARIANCE_POPULATION, 0);
+
+        // Broadcast and normalize
+        af::array mean_bc = af::tile(mean, af::dim4(W * H, 1, 1));
+        af::array var_bc = af::tile(var, af::dim4(W * H, 1, 1));
+
+        af::array std_inv = 1.0f / af::sqrt(var_bc + eps_);
+        af::array normalized = (x_reshaped - mean_bc) * std_inv;
+
+        // Store for backward
+        normalized_ = AfToTensor(af::moddims(normalized, x.dims()));
+        std_inv_ = AfToTensor(std_inv);
+
+        // Apply affine if enabled
+        if (affine_) {
+            af::array gamma = TensorToAf(gamma_);
+            af::array beta = TensorToAf(beta_);
+            // Reshape to [1, C, 1] for broadcasting
+            af::array gamma_bc = af::tile(af::moddims(gamma, af::dim4(1, C, 1)), af::dim4(W * H, 1, N));
+            af::array beta_bc = af::tile(af::moddims(beta, af::dim4(1, C, 1)), af::dim4(W * H, 1, N));
+            normalized = gamma_bc * normalized + beta_bc;
+        }
+
+        af::array output = af::moddims(normalized, x.dims());
+        return AfToTensor(output);
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire InstanceNorm2DLayer::Forward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("InstanceNorm2D forward requires ArrayFire");
+}
+
+Tensor InstanceNorm2DLayer::Backward(const Tensor& grad_output) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array grad_out = TensorToAf(grad_output);
+        af::array x = TensorToAf(cached_input_);
+        af::array normalized = TensorToAf(normalized_);
+        af::array std_inv = TensorToAf(std_inv_);
+
+        dim_t W = grad_out.dims(0);
+        dim_t H = grad_out.dims(1);
+        dim_t C = grad_out.dims(2);
+        dim_t N = grad_out.dims(3);
+
+        af::array grad_reshaped = af::moddims(grad_out, af::dim4(W * H, C, N));
+        af::array norm_reshaped = af::moddims(normalized, af::dim4(W * H, C, N));
+
+        if (affine_) {
+            af::array gamma = TensorToAf(gamma_);
+
+            // Gradients for gamma and beta
+            af::array grad_gamma_arr = af::sum(af::sum(grad_reshaped * norm_reshaped, 0), 2);
+            af::array grad_beta_arr = af::sum(af::sum(grad_reshaped, 0), 2);
+
+            grad_gamma_ = AfToTensor(af::moddims(grad_gamma_arr, af::dim4(C)));
+            grad_beta_ = AfToTensor(af::moddims(grad_beta_arr, af::dim4(C)));
+
+            // Scale by gamma
+            af::array gamma_bc = af::tile(af::moddims(gamma, af::dim4(1, C, 1)), af::dim4(W * H, 1, N));
+            grad_reshaped = grad_reshaped * gamma_bc;
+        }
+
+        // Input gradient
+        float M = static_cast<float>(W * H);
+        af::array sum_dy = af::tile(af::sum(grad_reshaped, 0), af::dim4(W * H, 1, 1));
+        af::array sum_dy_norm = af::tile(af::sum(grad_reshaped * norm_reshaped, 0), af::dim4(W * H, 1, 1));
+
+        af::array dx = (1.0f / M) * std_inv * (M * grad_reshaped - sum_dy - norm_reshaped * sum_dy_norm);
+
+        return AfToTensor(af::moddims(dx, grad_out.dims()));
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire InstanceNorm2DLayer::Backward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("InstanceNorm2D backward requires ArrayFire");
+}
+
+std::map<std::string, Tensor> InstanceNorm2DLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+    if (affine_) {
+        params["gamma"] = gamma_;
+        params["beta"] = beta_;
+        params["grad_gamma"] = grad_gamma_;
+        params["grad_beta"] = grad_beta_;
+    }
+    return params;
+}
+
+void InstanceNorm2DLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    if (params.count("gamma")) gamma_ = params.at("gamma");
+    if (params.count("beta")) beta_ = params.at("beta");
+}
+
+// ============================================================================
+// GroupNorm Layer Implementation
+// ============================================================================
+
+GroupNormLayer::GroupNormLayer(int num_groups, int num_channels, float eps, bool affine)
+    : num_groups_(num_groups), num_channels_(num_channels), eps_(eps), affine_(affine) {
+
+    if (num_channels % num_groups != 0) {
+        throw std::invalid_argument("num_channels must be divisible by num_groups");
+    }
+
+    if (affine) {
+        gamma_ = Tensor::Ones({static_cast<size_t>(num_channels)});
+        beta_ = Tensor::Zeros({static_cast<size_t>(num_channels)});
+        grad_gamma_ = Tensor::Zeros({static_cast<size_t>(num_channels)});
+        grad_beta_ = Tensor::Zeros({static_cast<size_t>(num_channels)});
+    }
+}
+
+Tensor GroupNormLayer::Forward(const Tensor& input) {
+    cached_input_ = input;
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array x = TensorToAf(input);
+        // Input: [N, C, H, W] -> AF: [W, H, C, N]
+        dim_t W = x.dims(0);
+        dim_t H = x.dims(1);
+        dim_t C = x.dims(2);
+        dim_t N = x.dims(3);
+
+        int channels_per_group = num_channels_ / num_groups_;
+
+        // Reshape to [W*H*channels_per_group, num_groups, N]
+        af::array x_reshaped = af::moddims(x, af::dim4(W * H * channels_per_group, num_groups_, N));
+
+        // Normalize per group
+        af::array mean = af::mean(x_reshaped, 0);  // [1, num_groups, N]
+        af::array var = af::var(x_reshaped, AF_VARIANCE_POPULATION, 0);
+
+        af::array mean_bc = af::tile(mean, af::dim4(W * H * channels_per_group, 1, 1));
+        af::array var_bc = af::tile(var, af::dim4(W * H * channels_per_group, 1, 1));
+
+        af::array std_inv = 1.0f / af::sqrt(var_bc + eps_);
+        af::array normalized = (x_reshaped - mean_bc) * std_inv;
+
+        // Reshape back
+        normalized = af::moddims(normalized, x.dims());
+
+        // Store for backward
+        normalized_ = AfToTensor(normalized);
+        std_inv_ = AfToTensor(af::moddims(std_inv, af::dim4(W * H * channels_per_group, num_groups_, N)));
+
+        // Apply affine
+        if (affine_) {
+            af::array gamma = TensorToAf(gamma_);
+            af::array beta = TensorToAf(beta_);
+            // Reshape to [1, 1, C, 1] for proper broadcasting
+            af::array gamma_bc = af::tile(af::moddims(gamma, af::dim4(1, 1, C, 1)), af::dim4(W, H, 1, N));
+            af::array beta_bc = af::tile(af::moddims(beta, af::dim4(1, 1, C, 1)), af::dim4(W, H, 1, N));
+            normalized = gamma_bc * normalized + beta_bc;
+        }
+
+        return AfToTensor(normalized);
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire GroupNormLayer::Forward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("GroupNorm forward requires ArrayFire");
+}
+
+Tensor GroupNormLayer::Backward(const Tensor& grad_output) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array grad_out = TensorToAf(grad_output);
+        af::array normalized = TensorToAf(normalized_);
+
+        dim_t W = grad_out.dims(0);
+        dim_t H = grad_out.dims(1);
+        dim_t C = grad_out.dims(2);
+        dim_t N = grad_out.dims(3);
+
+        int channels_per_group = num_channels_ / num_groups_;
+
+        if (affine_) {
+            af::array gamma = TensorToAf(gamma_);
+
+            // Gradients for gamma and beta
+            af::array grad_gamma_arr = af::sum(af::sum(af::sum(grad_out * normalized, 0), 1), 3);
+            af::array grad_beta_arr = af::sum(af::sum(af::sum(grad_out, 0), 1), 3);
+
+            grad_gamma_ = AfToTensor(af::moddims(grad_gamma_arr, af::dim4(C)));
+            grad_beta_ = AfToTensor(af::moddims(grad_beta_arr, af::dim4(C)));
+
+            // Scale grad by gamma
+            af::array gamma_bc = af::tile(af::moddims(gamma, af::dim4(1, 1, C, 1)), af::dim4(W, H, 1, N));
+            grad_out = grad_out * gamma_bc;
+        }
+
+        // Reshape for group computation
+        af::array grad_reshaped = af::moddims(grad_out, af::dim4(W * H * channels_per_group, num_groups_, N));
+        af::array norm_reshaped = af::moddims(normalized, af::dim4(W * H * channels_per_group, num_groups_, N));
+        af::array std_inv = TensorToAf(std_inv_);
+
+        float M = static_cast<float>(W * H * channels_per_group);
+        af::array sum_dy = af::tile(af::sum(grad_reshaped, 0), af::dim4(W * H * channels_per_group, 1, 1));
+        af::array sum_dy_norm = af::tile(af::sum(grad_reshaped * norm_reshaped, 0), af::dim4(W * H * channels_per_group, 1, 1));
+
+        af::array dx = (1.0f / M) * std_inv * (M * grad_reshaped - sum_dy - norm_reshaped * sum_dy_norm);
+
+        return AfToTensor(af::moddims(dx, grad_out.dims()));
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire GroupNormLayer::Backward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("GroupNorm backward requires ArrayFire");
+}
+
+std::map<std::string, Tensor> GroupNormLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+    if (affine_) {
+        params["gamma"] = gamma_;
+        params["beta"] = beta_;
+        params["grad_gamma"] = grad_gamma_;
+        params["grad_beta"] = grad_beta_;
+    }
+    return params;
+}
+
+void GroupNormLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    if (params.count("gamma")) gamma_ = params.at("gamma");
+    if (params.count("beta")) beta_ = params.at("beta");
+}
+
+// ============================================================================
+// Conv1D Layer Implementation
+// ============================================================================
+
+Conv1DLayer::Conv1DLayer(int in_channels, int out_channels, int kernel_size,
+                         int stride, int padding, int dilation, bool use_bias)
+    : in_channels_(in_channels), out_channels_(out_channels),
+      kernel_size_(kernel_size), stride_(stride), padding_(padding),
+      dilation_(dilation), use_bias_(use_bias) {
+
+    // Xavier initialization for weights
+    float stddev = std::sqrt(2.0f / (in_channels * kernel_size + out_channels));
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::normal_distribution<float> dist(0.0f, stddev);
+
+    weights_ = Tensor({static_cast<size_t>(out_channels),
+                       static_cast<size_t>(in_channels),
+                       static_cast<size_t>(kernel_size)}, DataType::Float32);
+
+    float* w_data = weights_.Data<float>();
+    for (size_t i = 0; i < weights_.NumElements(); ++i) {
+        w_data[i] = dist(gen);
+    }
+
+    if (use_bias) {
+        bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
+    }
+
+    grad_weights_ = Tensor::Zeros(weights_.Shape());
+    grad_bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
+}
+
+Tensor Conv1DLayer::Forward(const Tensor& input) {
+    cached_input_ = input;
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        // Input: [batch, in_channels, length] -> AF: [length, in_channels, batch]
+        af::array x = TensorToAf(input);
+        af::array w = TensorToAf(weights_);
+
+        dim_t L = x.dims(0);
+        dim_t batch = x.dims(2);
+
+        // Apply padding if needed
+        if (padding_ > 0) {
+            af::array padded = af::constant(0.0f, L + 2 * padding_, x.dims(1), x.dims(2));
+            padded(af::seq(padding_, padding_ + L - 1), af::span, af::span) = x;
+            x = padded;
+            L = x.dims(0);
+        }
+
+        // Output length
+        dim_t L_out = (L - dilation_ * (kernel_size_ - 1) - 1) / stride_ + 1;
+
+        // Simple implementation: loop over output positions
+        af::array output = af::constant(0.0f, L_out, out_channels_, batch);
+
+        for (int oc = 0; oc < out_channels_; ++oc) {
+            for (int ic = 0; ic < in_channels_; ++ic) {
+                // Get kernel for this input-output channel pair
+                af::array kernel = w(af::span, ic, oc);  // [kernel_size]
+
+                // Convolve each batch sample
+                for (dim_t b = 0; b < batch; ++b) {
+                    af::array x_channel = x(af::span, ic, b);  // [L]
+
+                    // Use ArrayFire convolve1
+                    af::array conv_result = af::convolve1(x_channel, kernel, AF_CONV_DEFAULT);
+
+                    // Handle stride and dilation (simplified)
+                    if (stride_ > 1) {
+                        conv_result = conv_result(af::seq(0, L_out * stride_ - 1, stride_));
+                    }
+
+                    // Accumulate
+                    output(af::span, oc, b) += conv_result(af::seq(0, L_out - 1));
+                }
+            }
+        }
+
+        // Add bias
+        if (use_bias_) {
+            af::array b = TensorToAf(bias_);
+            for (int oc = 0; oc < out_channels_; ++oc) {
+                output(af::span, oc, af::span) += b(oc);
+            }
+        }
+
+        return AfToTensor(output);
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire Conv1DLayer::Forward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("Conv1D forward requires ArrayFire");
+}
+
+Tensor Conv1DLayer::Backward(const Tensor& grad_output) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array grad_out = TensorToAf(grad_output);
+        af::array x = TensorToAf(cached_input_);
+        af::array w = TensorToAf(weights_);
+
+        dim_t L_out = grad_out.dims(0);
+        dim_t batch = grad_out.dims(2);
+        dim_t L_in = x.dims(0);
+
+        // Gradient w.r.t. bias
+        if (use_bias_) {
+            af::array grad_b = af::sum(af::sum(grad_out, 0), 2);
+            grad_bias_ = AfToTensor(af::moddims(grad_b, af::dim4(out_channels_)));
+        }
+
+        // Gradient w.r.t. weights - convolution of input with grad_output
+        af::array grad_w = af::constant(0.0f, kernel_size_, in_channels_, out_channels_);
+
+        // Gradient w.r.t. input - transposed convolution
+        af::array grad_x = af::constant(0.0f, L_in, in_channels_, batch);
+
+        // Simplified gradient computation
+        for (int oc = 0; oc < out_channels_; ++oc) {
+            for (int ic = 0; ic < in_channels_; ++ic) {
+                af::array kernel = w(af::span, ic, oc);
+
+                for (dim_t b = 0; b < batch; ++b) {
+                    af::array grad_o = grad_out(af::span, oc, b);
+                    af::array x_channel = x(af::span, ic, b);
+
+                    // Grad w.r.t. weights
+                    af::array gw = af::convolve1(x_channel, grad_o, AF_CONV_DEFAULT);
+                    grad_w(af::span, ic, oc) += gw(af::seq(0, kernel_size_ - 1));
+
+                    // Grad w.r.t. input (transposed convolution)
+                    af::array flipped_kernel = af::flip(kernel, 0);
+                    af::array gx = af::convolve1(grad_o, flipped_kernel, AF_CONV_EXPAND);
+                    grad_x(af::span, ic, b) += gx(af::seq(0, L_in - 1));
+                }
+            }
+        }
+
+        grad_weights_ = AfToTensor(grad_w);
+        return AfToTensor(grad_x);
+
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire Conv1DLayer::Backward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("Conv1D backward requires ArrayFire");
+}
+
+std::map<std::string, Tensor> Conv1DLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+    params["weights"] = weights_;
+    params["grad_weights"] = grad_weights_;
+    if (use_bias_) {
+        params["bias"] = bias_;
+        params["grad_bias"] = grad_bias_;
+    }
+    return params;
+}
+
+void Conv1DLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    if (params.count("weights")) weights_ = params.at("weights");
+    if (params.count("bias")) bias_ = params.at("bias");
+}
+
 // ============================================================================
 // LSTM Layer Implementation
 // ============================================================================

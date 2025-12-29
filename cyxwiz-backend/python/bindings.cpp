@@ -235,6 +235,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("AdamW", cyxwiz::OptimizerType::AdamW)
         .value("RMSprop", cyxwiz::OptimizerType::RMSprop)
         .value("AdaGrad", cyxwiz::OptimizerType::AdaGrad)
+        .value("NAdam", cyxwiz::OptimizerType::NAdam)
         .export_values();
 
     // Optimizer base class
@@ -397,6 +398,94 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // BatchNorm alias (code generator uses cx.BatchNorm)
     m.attr("BatchNorm") = m.attr("BatchNorm2D");
+    // LayerNorm Layer
+    py::class_<cyxwiz::LayerNormLayer, cyxwiz::Layer>(m, "LayerNorm")
+        .def(py::init<const std::vector<int>&, float, bool>(),
+             py::arg("normalized_shape"),
+             py::arg("eps") = 1e-5f,
+             py::arg("elementwise_affine") = true,
+             "Create a Layer Normalization layer")
+        .def("forward", &cyxwiz::LayerNormLayer::Forward,
+             py::arg("input"),
+             "Forward pass: normalize across normalized dimensions")
+        .def("backward", &cyxwiz::LayerNormLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::LayerNormLayer::GetParameters,
+             "Get parameters {'gamma': Tensor, 'beta': Tensor}")
+        .def("set_parameters", &cyxwiz::LayerNormLayer::SetParameters,
+             py::arg("params"),
+             "Set parameters from dict");
+
+    // InstanceNorm2D Layer
+    py::class_<cyxwiz::InstanceNorm2DLayer, cyxwiz::Layer>(m, "InstanceNorm2D")
+        .def(py::init<int, float, bool>(),
+             py::arg("num_features"),
+             py::arg("eps") = 1e-5f,
+             py::arg("affine") = false,
+             "Create a 2D Instance Normalization layer")
+        .def("forward", &cyxwiz::InstanceNorm2DLayer::Forward,
+             py::arg("input"),
+             "Forward pass: normalize per instance")
+        .def("backward", &cyxwiz::InstanceNorm2DLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::InstanceNorm2DLayer::GetParameters,
+             "Get parameters {'gamma': Tensor, 'beta': Tensor} if affine=True")
+        .def("set_parameters", &cyxwiz::InstanceNorm2DLayer::SetParameters,
+             py::arg("params"),
+             "Set parameters from dict");
+
+    // GroupNorm Layer
+    py::class_<cyxwiz::GroupNormLayer, cyxwiz::Layer>(m, "GroupNorm")
+        .def(py::init<int, int, float, bool>(),
+             py::arg("num_groups"),
+             py::arg("num_channels"),
+             py::arg("eps") = 1e-5f,
+             py::arg("affine") = true,
+             "Create a Group Normalization layer")
+        .def("forward", &cyxwiz::GroupNormLayer::Forward,
+             py::arg("input"),
+             "Forward pass: normalize per group")
+        .def("backward", &cyxwiz::GroupNormLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::GroupNormLayer::GetParameters,
+             "Get parameters {'gamma': Tensor, 'beta': Tensor}")
+        .def("set_parameters", &cyxwiz::GroupNormLayer::SetParameters,
+             py::arg("params"),
+             "Set parameters from dict");
+
+    // Conv1D Layer
+    py::class_<cyxwiz::Conv1DLayer, cyxwiz::Layer>(m, "Conv1D")
+        .def(py::init<int, int, int, int, int, int, bool>(),
+             py::arg("in_channels"),
+             py::arg("out_channels"),
+             py::arg("kernel_size"),
+             py::arg("stride") = 1,
+             py::arg("padding") = 0,
+             py::arg("dilation") = 1,
+             py::arg("use_bias") = true,
+             "Create a 1D Convolutional layer")
+        .def("forward", &cyxwiz::Conv1DLayer::Forward,
+             py::arg("input"),
+             "Forward pass: apply 1D convolution")
+        .def("backward", &cyxwiz::Conv1DLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: compute gradients")
+        .def("get_parameters", &cyxwiz::Conv1DLayer::GetParameters,
+             "Get parameters {'weights': Tensor, 'bias': Tensor}")
+        .def("set_parameters", &cyxwiz::Conv1DLayer::SetParameters,
+             py::arg("params"),
+             "Set parameters from dict")
+        .def_property_readonly("in_channels", &cyxwiz::Conv1DLayer::GetInChannels)
+        .def_property_readonly("out_channels", &cyxwiz::Conv1DLayer::GetOutChannels)
+        .def_property_readonly("kernel_size", &cyxwiz::Conv1DLayer::GetKernelSize)
+        .def_property_readonly("stride", &cyxwiz::Conv1DLayer::GetStride)
+        .def_property_readonly("padding", &cyxwiz::Conv1DLayer::GetPadding)
+        .def_property_readonly("dilation", &cyxwiz::Conv1DLayer::GetDilation);
+
+
 
     // Flatten Layer
     py::class_<cyxwiz::FlattenLayer, cyxwiz::Layer>(m, "Flatten")
@@ -1121,4 +1210,135 @@ PYBIND11_MODULE(pycyxwiz, m) {
     timeseries.def("rolling_std", [](const std::vector<double>& data, int window) {
         return cyxwiz::TimeSeries::RollingStd(data, window);
     }, "Rolling standard deviation", py::arg("data"), py::arg("window"));
+
+    // ============================================================================
+    // Activation Functions
+    // ============================================================================
+
+    // ActivationType enum
+    py::enum_<cyxwiz::ActivationType>(m, "ActivationType")
+        .value("ReLU", cyxwiz::ActivationType::ReLU)
+        .value("Sigmoid", cyxwiz::ActivationType::Sigmoid)
+        .value("Tanh", cyxwiz::ActivationType::Tanh)
+        .value("Softmax", cyxwiz::ActivationType::Softmax)
+        .value("LeakyReLU", cyxwiz::ActivationType::LeakyReLU)
+        .value("ELU", cyxwiz::ActivationType::ELU)
+        .value("GELU", cyxwiz::ActivationType::GELU)
+        .value("Swish", cyxwiz::ActivationType::Swish)
+        .value("SiLU", cyxwiz::ActivationType::SiLU)
+        .value("Mish", cyxwiz::ActivationType::Mish)
+        .value("Hardswish", cyxwiz::ActivationType::Hardswish)
+        .value("SELU", cyxwiz::ActivationType::SELU)
+        .value("PReLU", cyxwiz::ActivationType::PReLU)
+        .export_values();
+
+    // Activation base class
+    py::class_<cyxwiz::Activation>(m, "Activation")
+        .def("forward", &cyxwiz::Activation::Forward,
+             py::arg("input"),
+             "Apply activation function")
+        .def("backward", &cyxwiz::Activation::Backward,
+             py::arg("grad_output"),
+             py::arg("input"),
+             "Compute gradient of activation")
+        .def("get_name", &cyxwiz::Activation::GetName,
+             "Get activation name");
+
+    // Factory function
+    m.def("create_activation", &cyxwiz::CreateActivation,
+          py::arg("type"), py::arg("alpha") = 0.01f,
+          "Create an activation function by type");
+
+    // ReLU Activation
+    py::class_<cyxwiz::ReLUActivation, cyxwiz::Activation>(m, "ReLU")
+        .def(py::init<>(), "Create ReLU activation")
+        .def("forward", &cyxwiz::ReLUActivation::Forward)
+        .def("backward", &cyxwiz::ReLUActivation::Backward);
+
+    // LeakyReLU Activation
+    py::class_<cyxwiz::LeakyReLUActivation, cyxwiz::Activation>(m, "LeakyReLU")
+        .def(py::init<float>(), py::arg("alpha") = 0.01f,
+             "Create LeakyReLU activation with negative slope alpha")
+        .def("forward", &cyxwiz::LeakyReLUActivation::Forward)
+        .def("backward", &cyxwiz::LeakyReLUActivation::Backward)
+        .def("get_alpha", &cyxwiz::LeakyReLUActivation::GetAlpha);
+
+    // ELU Activation
+    py::class_<cyxwiz::ELUActivation, cyxwiz::Activation>(m, "ELU")
+        .def(py::init<float>(), py::arg("alpha") = 1.0f,
+             "Create ELU activation")
+        .def("forward", &cyxwiz::ELUActivation::Forward)
+        .def("backward", &cyxwiz::ELUActivation::Backward)
+        .def("get_alpha", &cyxwiz::ELUActivation::GetAlpha);
+
+    // GELU Activation
+    py::class_<cyxwiz::GELUActivation, cyxwiz::Activation>(m, "GELU")
+        .def(py::init<>(), "Create GELU activation")
+        .def("forward", &cyxwiz::GELUActivation::Forward)
+        .def("backward", &cyxwiz::GELUActivation::Backward);
+
+    // Swish/SiLU Activation
+    py::class_<cyxwiz::SwishActivation, cyxwiz::Activation>(m, "Swish")
+        .def(py::init<>(), "Create Swish (SiLU) activation")
+        .def("forward", &cyxwiz::SwishActivation::Forward)
+        .def("backward", &cyxwiz::SwishActivation::Backward);
+
+    m.attr("SiLU") = m.attr("Swish");  // Alias
+
+    // Sigmoid Activation
+    py::class_<cyxwiz::SigmoidActivation, cyxwiz::Activation>(m, "Sigmoid")
+        .def(py::init<>(), "Create Sigmoid activation")
+        .def("forward", &cyxwiz::SigmoidActivation::Forward)
+        .def("backward", &cyxwiz::SigmoidActivation::Backward);
+
+    // Tanh Activation
+    py::class_<cyxwiz::TanhActivation, cyxwiz::Activation>(m, "Tanh")
+        .def(py::init<>(), "Create Tanh activation")
+        .def("forward", &cyxwiz::TanhActivation::Forward)
+        .def("backward", &cyxwiz::TanhActivation::Backward);
+
+    // Softmax Activation
+    py::class_<cyxwiz::SoftmaxActivation, cyxwiz::Activation>(m, "Softmax")
+        .def(py::init<int>(), py::arg("axis") = -1,
+             "Create Softmax activation")
+        .def("forward", &cyxwiz::SoftmaxActivation::Forward)
+        .def("backward", &cyxwiz::SoftmaxActivation::Backward);
+
+    // Mish Activation
+    py::class_<cyxwiz::MishActivation, cyxwiz::Activation>(m, "Mish")
+        .def(py::init<>(), "Create Mish activation")
+        .def("forward", &cyxwiz::MishActivation::Forward)
+        .def("backward", &cyxwiz::MishActivation::Backward);
+
+    // Hardswish Activation
+    py::class_<cyxwiz::HardswishActivation, cyxwiz::Activation>(m, "Hardswish")
+        .def(py::init<>(), "Create Hardswish activation")
+        .def("forward", &cyxwiz::HardswishActivation::Forward)
+        .def("backward", &cyxwiz::HardswishActivation::Backward);
+
+    // SELU Activation (Scaled Exponential Linear Unit)
+    py::class_<cyxwiz::SELUActivation, cyxwiz::Activation>(m, "SELU")
+        .def(py::init<>(), "Create SELU activation (self-normalizing)")
+        .def("forward", &cyxwiz::SELUActivation::Forward)
+        .def("backward", &cyxwiz::SELUActivation::Backward)
+        .def_readonly_static("ALPHA", &cyxwiz::SELUActivation::ALPHA)
+        .def_readonly_static("SCALE", &cyxwiz::SELUActivation::SCALE);
+
+    // PReLU Activation (Parametric ReLU)
+    py::class_<cyxwiz::PReLUActivation, cyxwiz::Activation>(m, "PReLU")
+        .def(py::init<int, float>(),
+             py::arg("num_parameters") = 1,
+             py::arg("init") = 0.25f,
+             "Create PReLU activation with learnable alpha")
+        .def("forward", &cyxwiz::PReLUActivation::Forward)
+        .def("backward", &cyxwiz::PReLUActivation::Backward)
+        .def("get_alpha", &cyxwiz::PReLUActivation::GetAlpha,
+             "Get learnable alpha parameter")
+        .def("set_alpha", &cyxwiz::PReLUActivation::SetAlpha,
+             py::arg("alpha"),
+             "Set alpha parameter")
+        .def("get_alpha_gradient", &cyxwiz::PReLUActivation::GetAlphaGradient,
+             "Get gradient for alpha parameter");
+
+
 }
