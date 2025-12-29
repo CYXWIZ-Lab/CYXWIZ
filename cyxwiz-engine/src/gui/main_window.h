@@ -166,6 +166,10 @@ public:
     // Get the scripting engine
     std::shared_ptr<scripting::ScriptingEngine> GetScriptingEngine() { return scripting_engine_; }
 
+    // Prepare for shutdown - stops all background threads before destruction
+    // Call this before destroying MainWindow for faster, cleaner shutdown
+    void PrepareForShutdown();
+
     // Exit request callback (set by Application to trigger window close)
     using ExitRequestCallback = std::function<void()>;
     void SetExitRequestCallback(ExitRequestCallback callback) { exit_request_callback_ = callback; }

@@ -122,6 +122,7 @@
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
 #include "../core/model_converter.h"
+#include "../serving/inference_server.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -1611,6 +1612,36 @@ void MainWindow::SaveAllFiles() {
     if (script_editor_) {
         script_editor_->SaveAllFiles();
     }
+}
+
+void MainWindow::PrepareForShutdown() {
+    spdlog::info("MainWindow: Preparing for shutdown...");
+
+    // Stop any running script first (this can take time to interrupt Python)
+    if (scripting_engine_ && scripting_engine_->IsScriptRunning()) {
+        spdlog::info("MainWindow: Stopping running script...");
+        scripting_engine_->StopScript();
+    }
+
+    // Stop P2P training monitoring and cancel any model downloads
+    if (p2p_training_panel_) {
+        if (p2p_training_panel_->IsDownloading()) {
+            spdlog::info("MainWindow: Cancelling model download...");
+            p2p_training_panel_->CancelDownloadAndWait();
+        }
+        if (p2p_training_panel_->IsMonitoring()) {
+            spdlog::info("MainWindow: Stopping P2P monitoring...");
+            p2p_training_panel_->StopMonitoring();
+        }
+    }
+
+    // Stop inference server if running
+    if (serving_panel_ && serving_panel_->GetServer()) {
+        spdlog::info("MainWindow: Stopping inference server...");
+        serving_panel_->GetServer()->Stop();
+    }
+
+    spdlog::info("MainWindow: Shutdown preparation complete");
 }
 
 void MainWindow::ResetDockLayout() {

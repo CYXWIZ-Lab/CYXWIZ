@@ -672,13 +672,23 @@ void CyxWizApp::Shutdown() {
     grpc_client_.reset();
     log_elapsed("grpc_client_.reset()");
 
-    spdlog::info("Cleaning up Python engine...");
-    python_engine_.reset();
-    log_elapsed("python_engine_.reset()");
+    // Prepare main window for shutdown (stop all background threads first)
+    if (main_window_) {
+        spdlog::info("Preparing main window for shutdown...");
+        main_window_->PrepareForShutdown();
+        log_elapsed("main_window_->PrepareForShutdown()");
+    }
 
+    // IMPORTANT: Destroy MainWindow BEFORE Python engine!
+    // MainWindow has ScriptingEngine which may use pybind11 objects during destruction.
+    // If Python is finalized first, those objects crash when they try to clean up.
     spdlog::info("Cleaning up main window...");
     main_window_.reset();
     log_elapsed("main_window_.reset()");
+
+    spdlog::info("Cleaning up Python engine...");
+    python_engine_.reset();
+    log_elapsed("python_engine_.reset()");
 
     // Clear data registry (unload datasets from memory)
     spdlog::info("Unloading datasets...");
