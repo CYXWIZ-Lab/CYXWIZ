@@ -19,8 +19,8 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 - [ ] Data augmentation pipeline integration
 
 ### Layers
-- [ ] Attention / Transformer layers
-- [ ] Embedding layer
+- [x] Attention / Transformer layers (MultiHeadAttention, TransformerEncoder, TransformerDecoder)
+- [x] Embedding layer (with pretrained weight loading, padding_idx, max_norm)
 
 ### Loss Functions
 - [ ] Huber Loss
@@ -100,6 +100,10 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 - [x] Flatten layer
 - [x] LSTM layer (multi-layer, bidirectional, dropout)
 - [x] GRU layer (multi-layer, bidirectional, dropout)
+- [x] Embedding layer (with pretrained weights, padding_idx, max_norm)
+- [x] MultiHeadAttention layer
+- [x] TransformerEncoderLayer (Pre-LN and Post-LN variants)
+- [x] TransformerDecoderLayer (with cross-attention and causal masking)
 
 ### Activations
 - [x] ReLU, Sigmoid, Tanh activations
@@ -142,6 +146,17 @@ This file tracks pending features and improvements for the cyxwiz-backend DLL.
 - [x] All optimizers (SGD, Adam, AdamW, RMSprop, AdaGrad, NAdam)
 - [x] All layers (Conv1D, LayerNorm, InstanceNorm2D, GroupNorm, etc.)
 - [x] All activations (SELU, PReLU, etc.)
+- [x] Embedding layer bindings
+- [x] LSTM and GRU layer bindings
+- [x] MultiHeadAttention layer bindings
+- [x] TransformerEncoderLayer and TransformerDecoderLayer bindings
+
+### Examples
+- [x] Python examples folder (examples/python/)
+- [x] Embedding layer example (embedding_example.py)
+- [x] LSTM layer example (lstm_example.py)
+- [x] GRU layer example (gru_example.py)
+- [x] Transformer layers example (transformer_example.py)
 
 ---
 

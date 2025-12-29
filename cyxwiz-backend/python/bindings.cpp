@@ -229,14 +229,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
         }, "Convert Tensor to NumPy array (Note: data must be on CPU)");
 
     // OptimizerType enum
+    // Note: Not using .export_values() to avoid conflicts with class names like SGD, Adam
     py::enum_<cyxwiz::OptimizerType>(m, "OptimizerType")
         .value("SGD", cyxwiz::OptimizerType::SGD)
         .value("Adam", cyxwiz::OptimizerType::Adam)
         .value("AdamW", cyxwiz::OptimizerType::AdamW)
         .value("RMSprop", cyxwiz::OptimizerType::RMSprop)
         .value("AdaGrad", cyxwiz::OptimizerType::AdaGrad)
-        .value("NAdam", cyxwiz::OptimizerType::NAdam)
-        .export_values();
+        .value("NAdam", cyxwiz::OptimizerType::NAdam);
 
     // Optimizer base class
     py::class_<cyxwiz::Optimizer>(m, "Optimizer")
@@ -485,7 +485,216 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_property_readonly("padding", &cyxwiz::Conv1DLayer::GetPadding)
         .def_property_readonly("dilation", &cyxwiz::Conv1DLayer::GetDilation);
 
+    // Embedding Layer
+    py::class_<cyxwiz::EmbeddingLayer, cyxwiz::Layer>(m, "Embedding")
+        .def(py::init<int, int, int, float>(),
+             py::arg("num_embeddings"),
+             py::arg("embedding_dim"),
+             py::arg("padding_idx") = -1,
+             py::arg("max_norm") = 0.0f,
+             "Create an Embedding layer (lookup table for token embeddings)")
+        .def("forward", &cyxwiz::EmbeddingLayer::Forward,
+             py::arg("input"),
+             "Forward pass: lookup embeddings for input indices")
+        .def("backward", &cyxwiz::EmbeddingLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: accumulate gradients for used embeddings")
+        .def("get_parameters", &cyxwiz::EmbeddingLayer::GetParameters,
+             "Get parameters {'weight': Tensor}")
+        .def("set_parameters", &cyxwiz::EmbeddingLayer::SetParameters,
+             py::arg("params"),
+             "Set parameters from dict")
+        .def("get_embedding", &cyxwiz::EmbeddingLayer::GetEmbedding,
+             py::arg("index"),
+             "Get embedding vector for a specific index")
+        .def("set_embedding", &cyxwiz::EmbeddingLayer::SetEmbedding,
+             py::arg("index"), py::arg("embedding"),
+             "Set embedding vector for a specific index")
+        .def("load_pretrained_weights", &cyxwiz::EmbeddingLayer::LoadPretrainedWeights,
+             py::arg("weights"), py::arg("freeze") = false,
+             "Load pretrained embedding weights")
+        .def_property_readonly("num_embeddings", &cyxwiz::EmbeddingLayer::GetNumEmbeddings)
+        .def_property_readonly("embedding_dim", &cyxwiz::EmbeddingLayer::GetEmbeddingDim)
+        .def_property_readonly("padding_idx", &cyxwiz::EmbeddingLayer::GetPaddingIdx)
+        .def_property("frozen", &cyxwiz::EmbeddingLayer::IsFrozen, &cyxwiz::EmbeddingLayer::SetFrozen,
+                     "Whether embeddings are frozen (not updated during training)");
 
+    // LSTM Layer
+    py::class_<cyxwiz::LSTMLayer, cyxwiz::Layer>(m, "LSTM")
+        .def(py::init<int, int, int, bool, bool, float>(),
+             py::arg("input_size"),
+             py::arg("hidden_size"),
+             py::arg("num_layers") = 1,
+             py::arg("batch_first") = true,
+             py::arg("bidirectional") = false,
+             py::arg("dropout") = 0.0f,
+             "Create an LSTM layer")
+        .def("forward", &cyxwiz::LSTMLayer::Forward,
+             py::arg("input"),
+             "Forward pass: process sequence through LSTM")
+        .def("backward", &cyxwiz::LSTMLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: backpropagation through time")
+        .def("get_parameters", &cyxwiz::LSTMLayer::GetParameters,
+             "Get LSTM parameters")
+        .def("set_parameters", &cyxwiz::LSTMLayer::SetParameters,
+             py::arg("params"),
+             "Set LSTM parameters")
+        .def("reset_state", &cyxwiz::LSTMLayer::ResetState,
+             "Reset hidden and cell states to zeros")
+        .def("set_hidden_state", &cyxwiz::LSTMLayer::SetHiddenState,
+             py::arg("h0"),
+             "Set initial hidden state")
+        .def("set_cell_state", &cyxwiz::LSTMLayer::SetCellState,
+             py::arg("c0"),
+             "Set initial cell state")
+        .def("get_hidden_state", &cyxwiz::LSTMLayer::GetHiddenState,
+             "Get current hidden state")
+        .def("get_cell_state", &cyxwiz::LSTMLayer::GetCellState,
+             "Get current cell state")
+        .def_property_readonly("input_size", &cyxwiz::LSTMLayer::GetInputSize)
+        .def_property_readonly("hidden_size", &cyxwiz::LSTMLayer::GetHiddenSize)
+        .def_property_readonly("num_layers", &cyxwiz::LSTMLayer::GetNumLayers)
+        .def_property_readonly("batch_first", &cyxwiz::LSTMLayer::IsBatchFirst)
+        .def_property_readonly("bidirectional", &cyxwiz::LSTMLayer::IsBidirectional)
+        .def_property_readonly("num_directions", &cyxwiz::LSTMLayer::GetNumDirections);
+
+    // GRU Layer
+    py::class_<cyxwiz::GRULayer, cyxwiz::Layer>(m, "GRU")
+        .def(py::init<int, int, int, bool, bool, float>(),
+             py::arg("input_size"),
+             py::arg("hidden_size"),
+             py::arg("num_layers") = 1,
+             py::arg("batch_first") = true,
+             py::arg("bidirectional") = false,
+             py::arg("dropout") = 0.0f,
+             "Create a GRU layer")
+        .def("forward", &cyxwiz::GRULayer::Forward,
+             py::arg("input"),
+             "Forward pass: process sequence through GRU")
+        .def("backward", &cyxwiz::GRULayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: backpropagation through time")
+        .def("get_parameters", &cyxwiz::GRULayer::GetParameters,
+             "Get GRU parameters")
+        .def("set_parameters", &cyxwiz::GRULayer::SetParameters,
+             py::arg("params"),
+             "Set GRU parameters")
+        .def("reset_state", &cyxwiz::GRULayer::ResetState,
+             "Reset hidden state to zeros")
+        .def("set_hidden_state", &cyxwiz::GRULayer::SetHiddenState,
+             py::arg("h0"),
+             "Set initial hidden state")
+        .def("get_hidden_state", &cyxwiz::GRULayer::GetHiddenState,
+             "Get current hidden state")
+        .def_property_readonly("input_size", &cyxwiz::GRULayer::GetInputSize)
+        .def_property_readonly("hidden_size", &cyxwiz::GRULayer::GetHiddenSize)
+        .def_property_readonly("num_layers", &cyxwiz::GRULayer::GetNumLayers)
+        .def_property_readonly("batch_first", &cyxwiz::GRULayer::IsBatchFirst)
+        .def_property_readonly("bidirectional", &cyxwiz::GRULayer::IsBidirectional);
+
+    // MultiHeadAttention Layer
+    py::class_<cyxwiz::MultiHeadAttentionLayer, cyxwiz::Layer>(m, "MultiHeadAttention")
+        .def(py::init<int, int, float, bool>(),
+             py::arg("embed_dim"),
+             py::arg("num_heads"),
+             py::arg("dropout") = 0.0f,
+             py::arg("use_bias") = true,
+             "Create a Multi-Head Attention layer")
+        .def("forward", static_cast<cyxwiz::Tensor (cyxwiz::MultiHeadAttentionLayer::*)(const cyxwiz::Tensor&)>(&cyxwiz::MultiHeadAttentionLayer::Forward),
+             py::arg("input"),
+             "Self-attention forward pass")
+        .def("forward_qkv", [](cyxwiz::MultiHeadAttentionLayer& self,
+                               const cyxwiz::Tensor& query,
+                               const cyxwiz::Tensor& key,
+                               const cyxwiz::Tensor& value,
+                               const cyxwiz::Tensor* attn_mask) {
+            return self.Forward(query, key, value, attn_mask);
+        },
+             py::arg("query"), py::arg("key"), py::arg("value"),
+             py::arg("attn_mask") = nullptr,
+             "Full attention forward with separate Q, K, V")
+        .def("backward", &cyxwiz::MultiHeadAttentionLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass")
+        .def("get_parameters", &cyxwiz::MultiHeadAttentionLayer::GetParameters,
+             "Get attention parameters (W_q, W_k, W_v, W_o, biases)")
+        .def("set_parameters", &cyxwiz::MultiHeadAttentionLayer::SetParameters,
+             py::arg("params"),
+             "Set attention parameters")
+        .def("get_attention_weights", &cyxwiz::MultiHeadAttentionLayer::GetAttentionWeights,
+             "Get last computed attention weights (for visualization)")
+        .def_property_readonly("embed_dim", &cyxwiz::MultiHeadAttentionLayer::GetEmbedDim)
+        .def_property_readonly("num_heads", &cyxwiz::MultiHeadAttentionLayer::GetNumHeads)
+        .def_property_readonly("head_dim", &cyxwiz::MultiHeadAttentionLayer::GetHeadDim);
+
+    // TransformerEncoderLayer
+    py::class_<cyxwiz::TransformerEncoderLayer, cyxwiz::Layer>(m, "TransformerEncoderLayer")
+        .def(py::init<int, int, int, float, bool>(),
+             py::arg("d_model"),
+             py::arg("nhead"),
+             py::arg("dim_feedforward") = 2048,
+             py::arg("dropout") = 0.1f,
+             py::arg("norm_first") = false,
+             "Create a Transformer Encoder layer")
+        .def("forward", static_cast<cyxwiz::Tensor (cyxwiz::TransformerEncoderLayer::*)(const cyxwiz::Tensor&)>(&cyxwiz::TransformerEncoderLayer::Forward),
+             py::arg("input"),
+             "Forward pass without mask")
+        .def("forward_with_mask", [](cyxwiz::TransformerEncoderLayer& self,
+                                     const cyxwiz::Tensor& input,
+                                     const cyxwiz::Tensor* src_mask) {
+            return self.Forward(input, src_mask);
+        },
+             py::arg("input"), py::arg("src_mask") = nullptr,
+             "Forward pass with optional attention mask")
+        .def("backward", &cyxwiz::TransformerEncoderLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass")
+        .def("get_parameters", &cyxwiz::TransformerEncoderLayer::GetParameters,
+             "Get all layer parameters")
+        .def("set_parameters", &cyxwiz::TransformerEncoderLayer::SetParameters,
+             py::arg("params"),
+             "Set layer parameters")
+        .def("set_training", &cyxwiz::TransformerEncoderLayer::SetTraining,
+             py::arg("training"),
+             "Set training mode (affects dropout)");
+
+    // TransformerDecoderLayer
+    py::class_<cyxwiz::TransformerDecoderLayer, cyxwiz::Layer>(m, "TransformerDecoderLayer")
+        .def(py::init<int, int, int, float, bool>(),
+             py::arg("d_model"),
+             py::arg("nhead"),
+             py::arg("dim_feedforward") = 2048,
+             py::arg("dropout") = 0.1f,
+             py::arg("norm_first") = false,
+             "Create a Transformer Decoder layer")
+        .def("forward", static_cast<cyxwiz::Tensor (cyxwiz::TransformerDecoderLayer::*)(const cyxwiz::Tensor&)>(&cyxwiz::TransformerDecoderLayer::Forward),
+             py::arg("input"),
+             "Self-attention only forward pass")
+        .def("forward_with_memory", [](cyxwiz::TransformerDecoderLayer& self,
+                                       const cyxwiz::Tensor& tgt,
+                                       const cyxwiz::Tensor& memory,
+                                       const cyxwiz::Tensor* tgt_mask,
+                                       const cyxwiz::Tensor* memory_mask) {
+            return self.Forward(tgt, memory, tgt_mask, memory_mask);
+        },
+             py::arg("tgt"), py::arg("memory"),
+             py::arg("tgt_mask") = nullptr, py::arg("memory_mask") = nullptr,
+             "Full decoder forward with encoder memory and masks")
+        .def("backward", &cyxwiz::TransformerDecoderLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass")
+        .def("get_parameters", &cyxwiz::TransformerDecoderLayer::GetParameters,
+             "Get all layer parameters")
+        .def("set_parameters", &cyxwiz::TransformerDecoderLayer::SetParameters,
+             py::arg("params"),
+             "Set layer parameters")
+        .def("set_training", &cyxwiz::TransformerDecoderLayer::SetTraining,
+             py::arg("training"),
+             "Set training mode (affects dropout)")
+        .def_static("generate_causal_mask", &cyxwiz::TransformerDecoderLayer::GenerateCausalMask,
+             py::arg("size"),
+             "Generate causal mask for autoregressive decoding");
 
     // Flatten Layer
     py::class_<cyxwiz::FlattenLayer, cyxwiz::Layer>(m, "Flatten")
@@ -515,146 +724,6 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("get_parameters", &cyxwiz::DropoutLayer::GetParameters)
         .def("set_parameters", &cyxwiz::DropoutLayer::SetParameters,
              py::arg("params"));
-
-    // Activation base class
-    py::class_<cyxwiz::Activation>(m, "Activation")
-        .def("forward", &cyxwiz::Activation::Forward,
-             py::arg("input"),
-             "Forward pass through activation")
-        .def("backward", &cyxwiz::Activation::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward pass (compute gradients)");
-
-    // ReLU activation
-    py::class_<cyxwiz::ReLU, cyxwiz::Activation>(m, "ReLU")
-        .def(py::init<>(),
-             "Create ReLU activation: f(x) = max(0, x)")
-        .def("forward", &cyxwiz::ReLU::Forward,
-             py::arg("input"),
-             "Forward: f(x) = max(0, x)")
-        .def("backward", &cyxwiz::ReLU::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: f'(x) = 1 if x > 0 else 0");
-
-    // Sigmoid activation
-    py::class_<cyxwiz::Sigmoid, cyxwiz::Activation>(m, "Sigmoid")
-        .def(py::init<>(),
-             "Create Sigmoid activation: f(x) = 1 / (1 + exp(-x))")
-        .def("forward", &cyxwiz::Sigmoid::Forward,
-             py::arg("input"),
-             "Forward: f(x) = 1 / (1 + exp(-x))")
-        .def("backward", &cyxwiz::Sigmoid::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: f'(x) = f(x) * (1 - f(x))");
-
-    // Tanh activation
-    py::class_<cyxwiz::Tanh, cyxwiz::Activation>(m, "Tanh")
-        .def(py::init<>(),
-             "Create Tanh activation: f(x) = tanh(x)")
-        .def("forward", &cyxwiz::Tanh::Forward,
-             py::arg("input"),
-             "Forward: f(x) = tanh(x)")
-        .def("backward", &cyxwiz::Tanh::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: f'(x) = 1 - tanh(x)^2");
-
-    // GELU activation
-    py::class_<cyxwiz::GELUActivation, cyxwiz::Activation>(m, "GELU")
-        .def(py::init<>(),
-             "Create GELU activation: Gaussian Error Linear Unit")
-        .def("forward", &cyxwiz::GELUActivation::Forward,
-             py::arg("input"),
-             "Forward: GELU(x)")
-        .def("backward", &cyxwiz::GELUActivation::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: compute gradients");
-
-    // LeakyReLU activation
-    py::class_<cyxwiz::LeakyReLUActivation, cyxwiz::Activation>(m, "LeakyReLU")
-        .def(py::init<float>(),
-             py::arg("negative_slope") = 0.01f,
-             "Create LeakyReLU activation: f(x) = x if x > 0 else negative_slope * x")
-        .def("forward", &cyxwiz::LeakyReLUActivation::Forward,
-             py::arg("input"),
-             "Forward: LeakyReLU(x)")
-        .def("backward", &cyxwiz::LeakyReLUActivation::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: compute gradients")
-        .def_property_readonly("alpha", &cyxwiz::LeakyReLUActivation::GetAlpha,
-                              "Negative slope value");
-
-    // ELU activation
-    py::class_<cyxwiz::ELUActivation, cyxwiz::Activation>(m, "ELU")
-        .def(py::init<float>(),
-             py::arg("alpha") = 1.0f,
-             "Create ELU activation: Exponential Linear Unit")
-        .def("forward", &cyxwiz::ELUActivation::Forward,
-             py::arg("input"),
-             "Forward: ELU(x)")
-        .def("backward", &cyxwiz::ELUActivation::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: compute gradients")
-        .def_property_readonly("alpha", &cyxwiz::ELUActivation::GetAlpha,
-                              "Alpha value");
-
-    // Swish activation
-    py::class_<cyxwiz::SwishActivation, cyxwiz::Activation>(m, "Swish")
-        .def(py::init<>(),
-             "Create Swish activation: f(x) = x * sigmoid(x)")
-        .def("forward", &cyxwiz::SwishActivation::Forward,
-             py::arg("input"),
-             "Forward: Swish(x)")
-        .def("backward", &cyxwiz::SwishActivation::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: compute gradients");
-
-    // SiLU alias for Swish (PyTorch naming)
-    m.attr("SiLU") = m.attr("Swish");
-
-    // Mish activation
-    py::class_<cyxwiz::MishActivation, cyxwiz::Activation>(m, "Mish")
-        .def(py::init<>(),
-             "Create Mish activation: f(x) = x * tanh(softplus(x))")
-        .def("forward", &cyxwiz::MishActivation::Forward,
-             py::arg("input"),
-             "Forward: Mish(x)")
-        .def("backward", &cyxwiz::MishActivation::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: compute gradients");
-
-    // Hardswish activation
-    py::class_<cyxwiz::HardswishActivation, cyxwiz::Activation>(m, "Hardswish")
-        .def(py::init<>(),
-             "Create Hardswish activation: efficient approximation of Swish")
-        .def("forward", &cyxwiz::HardswishActivation::Forward,
-             py::arg("input"),
-             "Forward: Hardswish(x)")
-        .def("backward", &cyxwiz::HardswishActivation::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: compute gradients");
-
-    // Softmax activation
-    py::class_<cyxwiz::SoftmaxActivation, cyxwiz::Activation>(m, "Softmax")
-        .def(py::init<int>(),
-             py::arg("dim") = -1,
-             "Create Softmax activation: normalizes to probability distribution")
-        .def("forward", &cyxwiz::SoftmaxActivation::Forward,
-             py::arg("input"),
-             "Forward: Softmax(x)")
-        .def("backward", &cyxwiz::SoftmaxActivation::Backward,
-             py::arg("grad_output"),
-             py::arg("input"),
-             "Backward: compute gradients");
 
     // MSE Loss (concrete implementation)
     py::class_<cyxwiz::MSELoss>(m, "MSELoss")
@@ -1216,6 +1285,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
     // ============================================================================
 
     // ActivationType enum
+    // Note: Not using .export_values() to avoid conflicts with class names like ReLU, Sigmoid
     py::enum_<cyxwiz::ActivationType>(m, "ActivationType")
         .value("ReLU", cyxwiz::ActivationType::ReLU)
         .value("Sigmoid", cyxwiz::ActivationType::Sigmoid)
@@ -1229,8 +1299,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("Mish", cyxwiz::ActivationType::Mish)
         .value("Hardswish", cyxwiz::ActivationType::Hardswish)
         .value("SELU", cyxwiz::ActivationType::SELU)
-        .value("PReLU", cyxwiz::ActivationType::PReLU)
-        .export_values();
+        .value("PReLU", cyxwiz::ActivationType::PReLU);
 
     // Activation base class
     py::class_<cyxwiz::Activation>(m, "Activation")
