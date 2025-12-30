@@ -2,6 +2,7 @@
 #include "scripting_engine.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <nlohmann/json.hpp>
 
 namespace scripting {
 
@@ -201,11 +202,34 @@ def _cyxwiz_get_locals():
     return json.dumps(result)
 
 def _cyxwiz_get_stack():
-    import traceback
+    import sys
     import json
     frames = []
-    for line in traceback.format_stack()[:-1]:
-        frames.append(line.strip())
+    frame = sys._getframe()
+    frame_id = 0
+    # Skip the _cyxwiz_get_stack frame itself
+    frame = frame.f_back
+    while frame is not None:
+        # Skip internal frames
+        filename = frame.f_code.co_filename
+        if not filename.startswith('<') or filename == '<string>':
+            frame_info = {
+                'id': frame_id,
+                'name': frame.f_code.co_name,
+                'filename': filename,
+                'line': frame.f_lineno,
+                'locals': {}
+            }
+            # Get local variables (limited repr)
+            for k, v in frame.f_locals.items():
+                if not k.startswith('_'):
+                    try:
+                        frame_info['locals'][k] = repr(v)[:100]
+                    except:
+                        frame_info['locals'][k] = '<error>'
+            frames.append(frame_info)
+            frame_id += 1
+        frame = frame.f_back
     return json.dumps(frames)
 )";
 
@@ -487,7 +511,51 @@ void DebuggerManager::NotifyStateChange(DebugState new_state) {
 }
 
 void DebuggerManager::UpdateCallStack() {
-    // TODO: Implement call stack update from Python
+    if (!scripting_engine_) {
+        return;
+    }
+
+    // Get call stack from Python
+    auto result = scripting_engine_->ExecuteCommand("print(_cyxwiz_get_stack())");
+    if (!result.success || result.output.empty()) {
+        spdlog::debug("Failed to get call stack from Python");
+        return;
+    }
+
+    // Parse JSON response
+    try {
+        std::lock_guard<std::mutex> lock(stack_mutex_);
+        call_stack_.clear();
+
+        // Trim whitespace from output
+        std::string json_str = result.output;
+        json_str.erase(0, json_str.find_first_not_of(" \t\n\r"));
+        json_str.erase(json_str.find_last_not_of(" \t\n\r") + 1);
+
+        auto frames_json = nlohmann::json::parse(json_str);
+
+        for (const auto& frame_json : frames_json) {
+            StackFrame frame;
+            frame.id = frame_json.value("id", 0);
+            frame.name = frame_json.value("name", "<unknown>");
+            frame.filename = frame_json.value("filename", "");
+            frame.line = frame_json.value("line", 0);
+
+            // Parse locals
+            if (frame_json.contains("locals") && frame_json["locals"].is_object()) {
+                for (auto& [key, value] : frame_json["locals"].items()) {
+                    frame.locals[key] = value.get<std::string>();
+                }
+            }
+
+            call_stack_.push_back(frame);
+        }
+
+        spdlog::debug("Updated call stack with {} frames", call_stack_.size());
+
+    } catch (const nlohmann::json::exception& e) {
+        spdlog::error("Failed to parse call stack JSON: {}", e.what());
+    }
 }
 
 bool DebuggerManager::CheckBreakpoint(const std::string& cell_id, int line) {
@@ -507,6 +575,9 @@ void DebuggerManager::HandlePause(const std::string& cell_id, int line) {
         current_cell_id_ = cell_id;
     }
     current_line_ = line;
+
+    // Update call stack when paused
+    UpdateCallStack();
 
     state_ = DebugState::Paused;
     NotifyStateChange(DebugState::Paused);

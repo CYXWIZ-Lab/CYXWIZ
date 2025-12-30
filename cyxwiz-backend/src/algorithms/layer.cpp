@@ -2413,6 +2413,14 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
 }
 
 Tensor LSTMLayer::Backward(const Tensor& grad_output) {
+    // Check if caches are populated (Forward must have been called with ArrayFire success)
+    if (cached_inputs_.empty() || cached_gates_.empty() ||
+        cached_hidden_states_.empty() || cached_cell_states_.empty()) {
+        // CPU fallback Forward doesn't populate caches, so return zero gradients
+        spdlog::warn("LSTMLayer::Backward called without cached data from Forward, returning zero gradients");
+        return Tensor::Zeros(grad_output.Shape());
+    }
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array dout = TensorToAf(grad_output);
@@ -2927,6 +2935,13 @@ Tensor GRULayer::Forward(const Tensor& input) {
 }
 
 Tensor GRULayer::Backward(const Tensor& grad_output) {
+    // Check if caches are populated (Forward must have been called with ArrayFire success)
+    if (cached_inputs_.empty() || cached_gates_.empty() || cached_hidden_states_.empty()) {
+        // CPU fallback Forward doesn't populate caches, so return zero gradients
+        spdlog::warn("GRULayer::Backward called without cached data from Forward, returning zero gradients");
+        return Tensor::Zeros(grad_output.Shape());
+    }
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array dout = TensorToAf(grad_output);

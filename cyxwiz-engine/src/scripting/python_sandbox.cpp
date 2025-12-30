@@ -9,7 +9,60 @@
 #include <future>
 #include <filesystem>
 
+// Platform-specific includes for memory monitoring
+#ifdef _WIN32
+    #include <windows.h>
+    #include <psapi.h>
+#else
+    #include <sys/resource.h>
+    #include <unistd.h>
+    #if defined(__APPLE__)
+        #include <mach/mach.h>
+    #endif
+#endif
+
 namespace py = pybind11;
+
+namespace {
+
+/**
+ * Get current process memory usage in bytes
+ * Cross-platform implementation
+ */
+size_t GetCurrentMemoryUsage() {
+#ifdef _WIN32
+    // Windows: Use GetProcessMemoryInfo
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+        return pmc.WorkingSetSize;  // Physical memory currently in use
+    }
+    return 0;
+#elif defined(__APPLE__)
+    // macOS: Use mach API
+    struct mach_task_basic_info info;
+    mach_msg_type_number_t size = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &size) == KERN_SUCCESS) {
+        return info.resident_size;
+    }
+    return 0;
+#else
+    // Linux: Read from /proc/self/status
+    std::ifstream status_file("/proc/self/status");
+    std::string line;
+    while (std::getline(status_file, line)) {
+        if (line.compare(0, 6, "VmRSS:") == 0) {
+            // Parse VmRSS value (in kB)
+            size_t kb = 0;
+            std::istringstream iss(line.substr(6));
+            iss >> kb;
+            return kb * 1024;  // Convert to bytes
+        }
+    }
+    return 0;
+#endif
+}
+
+} // anonymous namespace
 
 namespace scripting {
 
@@ -190,9 +243,141 @@ builtins.__import__ = SandboxImportHook(allowed_modules)
 }
 
 void PythonSandbox::SetupFileAccessHook() {
-    // TODO: Implement file access restrictions
-    // This would require monkey-patching the 'open' builtin and 'os' module
-    spdlog::debug("File access hook not yet implemented");
+    try {
+        // Build configuration for the hook
+        std::string allowed_dir_escaped = config_.allowed_directory;
+        // Escape backslashes for Python string
+        size_t pos = 0;
+        while ((pos = allowed_dir_escaped.find("\\", pos)) != std::string::npos) {
+            allowed_dir_escaped.replace(pos, 1, "\\\\");
+            pos += 2;
+        }
+
+        std::string file_hook_code = R"(
+import builtins
+import os
+import os.path
+
+class SandboxFileHook:
+    def __init__(self, original_open, allow_read, allow_write, allowed_dir):
+        self.original_open = original_open
+        self.allow_read = allow_read
+        self.allow_write = allow_write
+        self.allowed_dir = allowed_dir if allowed_dir else None
+
+    def is_path_allowed(self, filepath):
+        """Check if path is within allowed directory"""
+        if self.allowed_dir is None:
+            return True  # No restriction on directory
+        try:
+            abs_path = os.path.abspath(filepath)
+            abs_allowed = os.path.abspath(self.allowed_dir)
+            # Use commonpath to check containment
+            return os.path.commonpath([abs_path, abs_allowed]) == abs_allowed
+        except (ValueError, OSError):
+            return False
+
+    def is_write_mode(self, mode):
+        """Check if mode involves writing"""
+        write_chars = {'w', 'a', 'x', '+'}
+        return any(c in mode for c in write_chars)
+
+    def __call__(self, file, mode='r', *args, **kwargs):
+        filepath = str(file)
+
+        # Check path restriction
+        if not self.is_path_allowed(filepath):
+            raise PermissionError(f"[Sandbox] Access denied: '{filepath}' is outside allowed directory")
+
+        # Check read permission
+        if 'r' in mode and not self.allow_read:
+            raise PermissionError(f"[Sandbox] File reading is disabled")
+
+        # Check write permission
+        if self.is_write_mode(mode) and not self.allow_write:
+            raise PermissionError(f"[Sandbox] File writing is disabled")
+
+        return self.original_open(file, mode, *args, **kwargs)
+
+# Store original open
+_sandbox_original_open = builtins.open
+
+# Configuration from C++
+_sandbox_allow_read = __ALLOW_READ__
+_sandbox_allow_write = __ALLOW_WRITE__
+_sandbox_allowed_dir = __ALLOWED_DIR__
+
+# Install hook
+builtins.open = SandboxFileHook(_sandbox_original_open, _sandbox_allow_read, _sandbox_allow_write, _sandbox_allowed_dir)
+
+# Also restrict os module file operations
+if hasattr(os, 'remove') and not _sandbox_allow_write:
+    _sandbox_original_remove = os.remove
+    def _sandbox_remove(path):
+        raise PermissionError(f"[Sandbox] File deletion is disabled")
+    os.remove = _sandbox_remove
+
+if hasattr(os, 'unlink') and not _sandbox_allow_write:
+    _sandbox_original_unlink = os.unlink
+    def _sandbox_unlink(path):
+        raise PermissionError(f"[Sandbox] File deletion is disabled")
+    os.unlink = _sandbox_unlink
+
+if hasattr(os, 'rename') and not _sandbox_allow_write:
+    _sandbox_original_rename = os.rename
+    def _sandbox_rename(src, dst):
+        raise PermissionError(f"[Sandbox] File renaming is disabled")
+    os.rename = _sandbox_rename
+
+if hasattr(os, 'mkdir') and not _sandbox_allow_write:
+    _sandbox_original_mkdir = os.mkdir
+    def _sandbox_mkdir(path, *args, **kwargs):
+        raise PermissionError(f"[Sandbox] Directory creation is disabled")
+    os.mkdir = _sandbox_mkdir
+
+if hasattr(os, 'makedirs') and not _sandbox_allow_write:
+    _sandbox_original_makedirs = os.makedirs
+    def _sandbox_makedirs(path, *args, **kwargs):
+        raise PermissionError(f"[Sandbox] Directory creation is disabled")
+    os.makedirs = _sandbox_makedirs
+
+if hasattr(os, 'rmdir') and not _sandbox_allow_write:
+    _sandbox_original_rmdir = os.rmdir
+    def _sandbox_rmdir(path):
+        raise PermissionError(f"[Sandbox] Directory deletion is disabled")
+    os.rmdir = _sandbox_rmdir
+)";
+
+        // Replace placeholders with actual values
+        std::string allow_read_str = config_.allow_file_read ? "True" : "False";
+        std::string allow_write_str = config_.allow_file_write ? "True" : "False";
+        std::string allowed_dir_str = allowed_dir_escaped.empty() ? "None" : "'" + allowed_dir_escaped + "'";
+
+        pos = file_hook_code.find("__ALLOW_READ__");
+        if (pos != std::string::npos) {
+            file_hook_code.replace(pos, 14, allow_read_str);
+        }
+
+        pos = file_hook_code.find("__ALLOW_WRITE__");
+        if (pos != std::string::npos) {
+            file_hook_code.replace(pos, 15, allow_write_str);
+        }
+
+        pos = file_hook_code.find("__ALLOWED_DIR__");
+        if (pos != std::string::npos) {
+            file_hook_code.replace(pos, 15, allowed_dir_str);
+        }
+
+        // Execute the hook setup
+        py::exec(file_hook_code);
+
+        spdlog::info("File access hook installed (read={}, write={}, dir={})",
+            config_.allow_file_read, config_.allow_file_write,
+            config_.allowed_directory.empty() ? "<any>" : config_.allowed_directory);
+
+    } catch (const py::error_already_set& e) {
+        spdlog::error("Failed to setup file access hook: {}", e.what());
+    }
 }
 
 void PythonSandbox::CleanupHooks() {
@@ -201,18 +386,42 @@ void PythonSandbox::CleanupHooks() {
         // py::module_::import() uses Python C API and bypasses __import__ hook
         py::module_ builtins = py::module_::import("builtins");
 
-        // Get current __import__ function
+        // Cleanup import hook
         py::object current_import = builtins.attr("__import__");
-
-        // Check if our sandbox hook is installed (has original_import attribute)
         if (py::hasattr(current_import, "original_import")) {
-            // Restore the original __import__
             py::object original_import = current_import.attr("original_import");
             builtins.attr("__import__") = original_import;
             spdlog::debug("Sandbox import hook cleaned up");
-        } else {
-            spdlog::debug("No sandbox hook to clean up (already clean)");
         }
+
+        // Cleanup file access hook (open)
+        py::object current_open = builtins.attr("open");
+        if (py::hasattr(current_open, "original_open")) {
+            py::object original_open = current_open.attr("original_open");
+            builtins.attr("open") = original_open;
+            spdlog::debug("Sandbox file hook cleaned up");
+        }
+
+        // Cleanup os module hooks
+        py::module_ main = py::module_::import("__main__");
+        std::string cleanup_code = R"(
+import os
+# Restore os module functions if originals were saved
+if '_sandbox_original_remove' in dir():
+    os.remove = _sandbox_original_remove
+if '_sandbox_original_unlink' in dir():
+    os.unlink = _sandbox_original_unlink
+if '_sandbox_original_rename' in dir():
+    os.rename = _sandbox_original_rename
+if '_sandbox_original_mkdir' in dir():
+    os.mkdir = _sandbox_original_mkdir
+if '_sandbox_original_makedirs' in dir():
+    os.makedirs = _sandbox_original_makedirs
+if '_sandbox_original_rmdir' in dir():
+    os.rmdir = _sandbox_original_rmdir
+)";
+        py::exec(cleanup_code);
+        spdlog::debug("Sandbox os module hooks cleaned up");
 
     } catch (const py::error_already_set& e) {
         spdlog::error("Failed to cleanup hooks: {}", e.what());
@@ -298,8 +507,9 @@ bool PythonSandbox::CheckASTForDangerousPatterns(const std::string& code, std::s
 
 void PythonSandbox::StartMonitoring() {
     start_time_ = std::chrono::steady_clock::now();
-    initial_memory_ = 0;  // TODO: Get actual memory usage
+    initial_memory_ = GetCurrentMemoryUsage();
     monitoring_active_ = true;
+    spdlog::debug("Memory monitoring started (baseline: {} MB)", initial_memory_ / (1024 * 1024));
 }
 
 void PythonSandbox::StopMonitoring() {
@@ -322,7 +532,21 @@ bool PythonSandbox::CheckResourceLimits(ExecutionResult& result) {
         return false;
     }
 
-    // TODO: Check memory limit (requires platform-specific code)
+    // Check memory limit
+    size_t current_memory = GetCurrentMemoryUsage();
+    size_t memory_delta = (current_memory > initial_memory_) ? (current_memory - initial_memory_) : 0;
+    result.peak_memory_bytes = memory_delta;
+
+    size_t max_memory_bytes = config_.max_memory_mb * 1024 * 1024;
+    if (memory_delta > max_memory_bytes) {
+        result.memory_exceeded = true;
+        result.error_message = "Memory limit exceeded (" +
+            std::to_string(memory_delta / (1024 * 1024)) + " MB > " +
+            std::to_string(config_.max_memory_mb) + " MB limit)";
+        spdlog::warn("Memory limit exceeded: {} MB (limit: {} MB)",
+            memory_delta / (1024 * 1024), config_.max_memory_mb);
+        return false;
+    }
 
     return true;
 }
