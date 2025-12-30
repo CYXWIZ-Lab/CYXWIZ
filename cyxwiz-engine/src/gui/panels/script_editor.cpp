@@ -575,6 +575,12 @@ void ScriptEditorPanel::RenderEditor() {
     RenderScriptBreakpointGutter(available_height);
     ImGui::SameLine();
 
+    // Temporarily disable keyboard input if we just accepted a completion
+    // This prevents Tab/Enter from being passed to the editor
+    if (completion_just_accepted_) {
+        tab->editor.SetHandleKeyboardInputs(false);
+    }
+
     if (show_minimap_) {
         // Layout: Gutter | Editor | Minimap
         float editor_width = available_width - minimap_width_ - gutter_width - 8.0f;  // 8px for separators
@@ -596,6 +602,12 @@ void ScriptEditorPanel::RenderEditor() {
         tab->editor.Render("##editor", editor_size);
     }
 
+    // Re-enable keyboard input and clear the flag
+    if (completion_just_accepted_) {
+        tab->editor.SetHandleKeyboardInputs(true);
+        completion_just_accepted_ = false;
+    }
+
     ImGui::PopStyleColor(4);
 
     // Reset font scale
@@ -603,15 +615,19 @@ void ScriptEditorPanel::RenderEditor() {
         ImGui::SetWindowFontScale(1.0f);
     }
 
-    // Track modifications
+    // Track modifications and auto-completion
     if (tab->editor.IsTextChanged()) {
         tab->is_modified = true;
-        // Close completion popup when text changes (user keeps typing)
-        // Completion is triggered manually via Ctrl+Space
-        if (show_completion_popup_) {
-            CloseCompletionPopup();
+
+        // Skip auto-trigger if popup was just opened this frame (Ctrl+Space inserts space)
+        if (!completion_just_opened_) {
+            // Auto-trigger completion when typing (not forced, uses trigger char check)
+            UpdateAutoCompletion(false);
         }
     }
+
+    // Clear the just-opened flag after the first frame
+    completion_just_opened_ = false;
 
     // Render auto-completion popup (if open)
     RenderCompletionPopup();
@@ -842,15 +858,14 @@ void ScriptEditorPanel::RenderStatusBar() {
 }
 
 void ScriptEditorPanel::HandleKeyboardShortcuts() {
-    auto& kb = gui::KeyboardShortcutManager::Instance();
-    gui::KeyboardContext context = kb.GetActiveContext();
+    // Use is_focused_ directly instead of keyboard context to avoid timing issues
+    // (context is detected before Render() updates is_focused_)
+    if (!is_focused_ && !show_completion_popup_) {
+        return;  // Not focused and no popup, don't process shortcuts
+    }
 
-    // Only handle shortcuts when this panel is focused or completion popup is open
-    bool is_script_context = (context == gui::KeyboardContext::ScriptEditor);
-    bool is_completion_context = (context == gui::KeyboardContext::CompletionPopup);
-
-    // Handle debug shortcuts (F5, F9, F10, F11) - only in script editor context
-    if (is_script_context) {
+    // Handle debug shortcuts (F5, F9, F10, F11) - only when focused
+    if (is_focused_) {
         HandleDebugKeyboardShortcuts();
     }
 
@@ -861,31 +876,40 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     bool alt = io.KeyAlt;
 
     // ========================================================================
-    // COMPLETION POPUP CONTEXT - Highest priority when popup is open
+    // COMPLETION POPUP - Highest priority when popup is open
     // ========================================================================
-    if (is_completion_context && show_completion_popup_) {
+    if (show_completion_popup_) {
         // Escape closes completion popup
         if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             CloseCompletionPopup();
             return;  // Don't process other shortcuts
         }
-        // Tab applies selected completion
-        if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+        // Tab or Enter applies selected completion
+        if (!ctrl && !shift && !alt && (ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_Enter))) {
             if (selected_completion_ >= 0 && selected_completion_ < static_cast<int>(completion_items_.size())) {
                 ApplyCompletion(completion_items_[selected_completion_]);
             }
             CloseCompletionPopup();
+            // Set flag to disable editor keyboard input for this frame
+            completion_just_accepted_ = true;
+            // Also clear Tab/Enter/Newline characters from input queue
+            ImGuiIO& io = ImGui::GetIO();
+            for (int i = io.InputQueueCharacters.Size - 1; i >= 0; --i) {
+                ImWchar c = io.InputQueueCharacters[i];
+                if (c == '\t' || c == '\n' || c == '\r') {
+                    io.InputQueueCharacters.erase(io.InputQueueCharacters.Data + i);
+                }
+            }
             return;  // Don't process other shortcuts
         }
         // Let other keys pass through to editor (typing continues)
-        return;
     }
 
     // ========================================================================
-    // SCRIPT EDITOR CONTEXT - Only when script editor is focused
+    // SCRIPT EDITOR SHORTCUTS - Only when this panel is focused
     // ========================================================================
-    if (!is_script_context) {
-        return;  // Not our context, don't process shortcuts
+    if (!is_focused_) {
+        return;  // Not focused, don't process shortcuts
     }
 
     // File operations (script editor specific)
@@ -934,9 +958,9 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
         Debug();
     }
 
-    // Ctrl+Space triggers completion manually
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Space)) {
-        UpdateAutoCompletion();
+    // Ctrl+Space triggers completion manually (force = true bypasses trigger char check)
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+        UpdateAutoCompletion(true);
     }
 }
 
@@ -3427,7 +3451,19 @@ void ScriptEditorPanel::RenderCodeCell(Cell& cell, int index) {
         content_height = std::min(content_height, 400.0f);  // Cap height
 
         ImGui::PushID("code_editor");
+
+        // Temporarily disable keyboard input if we just accepted a completion
+        if (completion_just_accepted_) {
+            cell.editor.SetHandleKeyboardInputs(false);
+        }
+
         cell.editor.Render("##code", ImVec2(code_width, content_height));
+
+        // Re-enable keyboard input and clear the flag
+        if (completion_just_accepted_) {
+            cell.editor.SetHandleKeyboardInputs(true);
+            completion_just_accepted_ = false;
+        }
 
         // Sync changes back
         cell.SyncSourceFromEditor();
@@ -3487,8 +3523,20 @@ void ScriptEditorPanel::RenderMarkdownCell(Cell& cell, int index) {
         float content_height = std::max(80.0f, (line_count + 1) * line_height);
         content_height = std::min(content_height, 300.0f);
 
+        // Temporarily disable keyboard input if we just accepted a completion
+        if (completion_just_accepted_) {
+            cell.editor.SetHandleKeyboardInputs(false);
+        }
+
         // Render editor directly
         cell.editor.Render("##markdown_edit", ImVec2(content_width, content_height));
+
+        // Re-enable keyboard input and clear the flag
+        if (completion_just_accepted_) {
+            cell.editor.SetHandleKeyboardInputs(true);
+            completion_just_accepted_ = false;
+        }
+
         cell.SyncSourceFromEditor();
 
         if (cell.editor.IsTextChanged()) {
@@ -4170,7 +4218,7 @@ void ScriptEditorPanel::HandleDebugKeyboardShortcuts() {
 // Auto-Completion Implementation
 // ============================================================================
 
-void ScriptEditorPanel::UpdateAutoCompletion() {
+void ScriptEditorPanel::UpdateAutoCompletion(bool force) {
     if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
         CloseCompletionPopup();
         return;
@@ -4187,8 +4235,8 @@ void ScriptEditorPanel::UpdateAutoCompletion() {
     std::string current_line = tab->editor.GetCurrentLineText();
     int col = cursor_pos.mColumn;
 
-    // Check if we should show completions
-    if (col <= 0 || current_line.empty()) {
+    // Check if we should show completions (allow empty line/col=0 for force mode)
+    if (!force && (col <= 0 || current_line.empty())) {
         CloseCompletionPopup();
         return;
     }
@@ -4197,8 +4245,8 @@ void ScriptEditorPanel::UpdateAutoCompletion() {
     char last_char = (col > 0 && col <= static_cast<int>(current_line.length()))
                      ? current_line[col - 1] : '\0';
 
-    // Check if we should trigger completion
-    if (!script_manager_.ShouldTriggerCompletion(last_char)) {
+    // Check if we should trigger completion (skip check if forced via Ctrl+Space)
+    if (!force && !script_manager_.ShouldTriggerCompletion(last_char)) {
         // Only close if we're not in an identifier
         std::string word = scripting::ScriptManager::GetWordAtCursor(current_line, col);
         if (word.empty() && !show_completion_popup_) {
@@ -4232,6 +4280,7 @@ void ScriptEditorPanel::UpdateAutoCompletion() {
     completion_start_pos_.mColumn = col - static_cast<int>(completion_prefix_.length());
 
     show_completion_popup_ = true;
+    completion_just_opened_ = true;  // Prevent immediate close from Ctrl+Space inserting space
     selected_completion_ = 0;
 }
 
@@ -4365,17 +4414,18 @@ void ScriptEditorPanel::ApplyCompletion(const scripting::CompletionItem& item) {
 
     auto& tab = tabs_[active_tab_index_];
 
-    // Delete the prefix and insert the completion
+    // Get the text to insert
     std::string text_to_insert = item.insert_text.empty() ? item.label : item.insert_text;
 
     // Select the prefix text (from completion_start_pos_ to current cursor)
     auto cursor_pos = tab->editor.GetCursorPosition();
     tab->editor.SetSelection(completion_start_pos_, cursor_pos);
 
-    // Insert the completion text (replaces selection)
+    // Delete the selected prefix, then insert completion
+    if (tab->editor.HasSelection()) {
+        tab->editor.Delete();  // Deletes selected text
+    }
     tab->editor.InsertText(text_to_insert);
-
-    spdlog::debug("Applied completion: {}", text_to_insert);
 }
 
 void ScriptEditorPanel::CloseCompletionPopup() {

@@ -67,16 +67,34 @@ std::vector<CompletionItem> ScriptManager::GetCompletions(
     const std::string& code, size_t, const std::string& line, int col
 ) {
     std::vector<CompletionItem> results;
-    if (col > 0 && line[col-1] == '.') {
+    if (col > 0 && col <= static_cast<int>(line.length()) && line[col-1] == '.') {
         return GetAttributeCompletions(GetObjectBeforeDot(line, col-1));
     }
     std::string prefix = GetWordAtCursor(line, col);
-    if (prefix.empty()) return results;
 
+    // Get completions - if prefix is empty, show all keywords and builtins
+    // (useful for Ctrl+Space on empty line)
     auto kw = GetKeywordCompletions(prefix);
     auto bi = GetBuiltinCompletions(prefix);
+    auto sn = GetSnippetCompletions(prefix);
     results.insert(results.end(), kw.begin(), kw.end());
     results.insert(results.end(), bi.begin(), bi.end());
+    results.insert(results.end(), sn.begin(), sn.end());
+
+    // If still empty and prefix is empty, return common items
+    if (results.empty() && prefix.empty()) {
+        // Return most common keywords and builtins for empty prefix
+        for (const auto& k : keywords_) {
+            results.emplace_back(k, CompletionItem::Kind::Keyword, "keyword");
+        }
+        for (const auto& b : builtins_) {
+            CompletionItem item(b, CompletionItem::Kind::Builtin);
+            auto it = builtin_signatures_.find(b);
+            item.detail = (it != builtin_signatures_.end()) ? it->second : "builtin";
+            results.push_back(item);
+        }
+    }
+
     ScoreCompletions(results, prefix);
     std::sort(results.begin(), results.end(),
         [](const CompletionItem& a, const CompletionItem& b) { return a.score > b.score; });

@@ -281,6 +281,8 @@ private:
     scripting::ScriptManager script_manager_;
     std::vector<scripting::CompletionItem> completion_items_;
     bool show_completion_popup_ = false;
+    bool completion_just_opened_ = false;  // Skip close check for one frame after opening
+    bool completion_just_accepted_ = false;  // Skip editor keyboard input for one frame after accepting
     int selected_completion_ = 0;
     std::string completion_prefix_;
     TextEditor::Coordinates completion_start_pos_;
@@ -289,7 +291,7 @@ private:
     bool is_focused_ = false;
 
     // Auto-completion helpers
-    void UpdateAutoCompletion();
+    void UpdateAutoCompletion(bool force = false);
     void RenderCompletionPopup();
     void ApplyCompletion(const scripting::CompletionItem& item);
     void CloseCompletionPopup();
