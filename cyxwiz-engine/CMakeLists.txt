@@ -596,3 +596,33 @@ install(TARGETS cyxwiz-engine
 install(DIRECTORY resources/
     DESTINATION share/cyxwiz/resources
 )
+
+# ===== Test: Sandbox Timeout =====
+add_executable(test_sandbox_timeout
+    tests/test_sandbox_timeout.cpp
+    src/scripting/python_engine.cpp
+    src/scripting/python_sandbox.cpp
+)
+
+target_include_directories(test_sandbox_timeout PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_sandbox_timeout PRIVATE
+    pybind11::embed
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_sandbox_timeout PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+    target_link_libraries(test_sandbox_timeout PRIVATE psapi)
+endif()
+
+# Set output directory
+set_target_properties(test_sandbox_timeout PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)

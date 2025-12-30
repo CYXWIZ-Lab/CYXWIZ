@@ -3,6 +3,8 @@
 #include <pybind11/numpy.h>
 #include <pybind11/complex.h>
 #include "cyxwiz/cyxwiz.h"
+#include <pybind11/functional.h>
+#include "cyxwiz/sequential.h"
 
 using namespace pybind11::literals;  // For _a suffix
 
@@ -1556,5 +1558,245 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("get_alpha_gradient", &cyxwiz::PReLUActivation::GetAlphaGradient,
              "Get gradient for alpha parameter");
 
+    // ============================================================================
+    // SEQUENTIAL MODEL
+    // ============================================================================
+
+    // ModuleType enum
+    py::enum_<cyxwiz::ModuleType>(m, "ModuleType")
+        .value("Linear", cyxwiz::ModuleType::Linear)
+        .value("ReLU", cyxwiz::ModuleType::ReLU)
+        .value("Sigmoid", cyxwiz::ModuleType::Sigmoid)
+        .value("Tanh", cyxwiz::ModuleType::Tanh)
+        .value("Softmax", cyxwiz::ModuleType::Softmax)
+        .value("Dropout", cyxwiz::ModuleType::Dropout)
+        .value("BatchNorm", cyxwiz::ModuleType::BatchNorm)
+        .value("Flatten", cyxwiz::ModuleType::Flatten)
+        .value("LeakyReLU", cyxwiz::ModuleType::LeakyReLU)
+        .value("ELU", cyxwiz::ModuleType::ELU)
+        .value("GELU", cyxwiz::ModuleType::GELU)
+        .value("Swish", cyxwiz::ModuleType::Swish)
+        .value("Mish", cyxwiz::ModuleType::Mish)
+        .export_values();
+
+    // Module base class
+    py::class_<cyxwiz::Module>(m, "Module")
+        .def("forward", &cyxwiz::Module::Forward,
+             py::arg("input"),
+             "Forward pass through the module")
+        .def("backward", &cyxwiz::Module::Backward,
+             py::arg("grad_output"),
+             "Backward pass")
+        .def("get_parameters", &cyxwiz::Module::GetParameters,
+             "Get module parameters")
+        .def("set_parameters", &cyxwiz::Module::SetParameters,
+             py::arg("params"),
+             "Set module parameters")
+        .def("get_gradients", &cyxwiz::Module::GetGradients,
+             "Get parameter gradients")
+        .def("has_parameters", &cyxwiz::Module::HasParameters,
+             "Check if module has trainable parameters")
+        .def("get_name", &cyxwiz::Module::GetName,
+             "Get module name")
+        .def("set_training", &cyxwiz::Module::SetTraining,
+             py::arg("training"),
+             "Set training mode")
+        .def("is_training", &cyxwiz::Module::IsTraining,
+             "Check if in training mode")
+        .def("freeze", &cyxwiz::Module::Freeze,
+             "Freeze module (disable parameter updates)")
+        .def("unfreeze", &cyxwiz::Module::Unfreeze,
+             "Unfreeze module (enable parameter updates)")
+        .def("is_trainable", &cyxwiz::Module::IsTrainable,
+             "Check if module is trainable");
+
+    // LinearModule
+    py::class_<cyxwiz::LinearModule, cyxwiz::Module>(m, "LinearModule")
+        .def(py::init<size_t, size_t, bool>(),
+             py::arg("in_features"),
+             py::arg("out_features"),
+             py::arg("use_bias") = true,
+             "Create a Linear module");
+
+    // ReLUModule
+    py::class_<cyxwiz::ReLUModule, cyxwiz::Module>(m, "ReLUModule")
+        .def(py::init<>(), "Create a ReLU module");
+
+    // SigmoidModule
+    py::class_<cyxwiz::SigmoidModule, cyxwiz::Module>(m, "SigmoidModule")
+        .def(py::init<>(), "Create a Sigmoid module");
+
+    // TanhModule
+    py::class_<cyxwiz::TanhModule, cyxwiz::Module>(m, "TanhModule")
+        .def(py::init<>(), "Create a Tanh module");
+
+    // SoftmaxModule
+    py::class_<cyxwiz::SoftmaxModule, cyxwiz::Module>(m, "SoftmaxModule")
+        .def(py::init<int>(), py::arg("dim") = -1,
+             "Create a Softmax module");
+
+    // DropoutModule
+    py::class_<cyxwiz::DropoutModule, cyxwiz::Module>(m, "DropoutModule")
+        .def(py::init<float>(), py::arg("p") = 0.5f,
+             "Create a Dropout module");
+
+    // FlattenModule
+    py::class_<cyxwiz::FlattenModule, cyxwiz::Module>(m, "FlattenModule")
+        .def(py::init<int>(), py::arg("start_dim") = 1,
+             "Create a Flatten module");
+
+    // LeakyReLUModule
+    py::class_<cyxwiz::LeakyReLUModule, cyxwiz::Module>(m, "LeakyReLUModule")
+        .def(py::init<float>(), py::arg("negative_slope") = 0.01f,
+             "Create a LeakyReLU module");
+
+    // ELUModule
+    py::class_<cyxwiz::ELUModule, cyxwiz::Module>(m, "ELUModule")
+        .def(py::init<float>(), py::arg("alpha") = 1.0f,
+             "Create an ELU module");
+
+    // GELUModule
+    py::class_<cyxwiz::GELUModule, cyxwiz::Module>(m, "GELUModule")
+        .def(py::init<>(), "Create a GELU module");
+
+    // SwishModule
+    py::class_<cyxwiz::SwishModule, cyxwiz::Module>(m, "SwishModule")
+        .def(py::init<>(), "Create a Swish module");
+
+    // MishModule
+    py::class_<cyxwiz::MishModule, cyxwiz::Module>(m, "MishModule")
+        .def(py::init<>(), "Create a Mish module");
+
+    // SequentialModel - the main model class
+    py::class_<cyxwiz::SequentialModel>(m, "Sequential",
+        "Sequential model container for building neural networks")
+        .def(py::init<>(), "Create an empty Sequential model")
+
+        // Layer addition methods (since templates can't be directly exposed)
+        .def("add_linear", [](cyxwiz::SequentialModel& self, size_t in_features, size_t out_features, bool use_bias) {
+            self.Add<cyxwiz::LinearModule>(in_features, out_features, use_bias);
+        }, py::arg("in_features"), py::arg("out_features"), py::arg("use_bias") = true,
+           "Add a Linear layer")
+
+        .def("add_relu", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::ReLUModule>();
+        }, "Add a ReLU activation")
+
+        .def("add_sigmoid", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::SigmoidModule>();
+        }, "Add a Sigmoid activation")
+
+        .def("add_tanh", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::TanhModule>();
+        }, "Add a Tanh activation")
+
+        .def("add_softmax", [](cyxwiz::SequentialModel& self, int dim) {
+            self.Add<cyxwiz::SoftmaxModule>(dim);
+        }, py::arg("dim") = -1, "Add a Softmax activation")
+
+        .def("add_dropout", [](cyxwiz::SequentialModel& self, float p) {
+            self.Add<cyxwiz::DropoutModule>(p);
+        }, py::arg("p") = 0.5f, "Add a Dropout layer")
+
+        .def("add_flatten", [](cyxwiz::SequentialModel& self, int start_dim) {
+            self.Add<cyxwiz::FlattenModule>(start_dim);
+        }, py::arg("start_dim") = 1, "Add a Flatten layer")
+
+        .def("add_leaky_relu", [](cyxwiz::SequentialModel& self, float negative_slope) {
+            self.Add<cyxwiz::LeakyReLUModule>(negative_slope);
+        }, py::arg("negative_slope") = 0.01f, "Add a LeakyReLU activation")
+
+        .def("add_elu", [](cyxwiz::SequentialModel& self, float alpha) {
+            self.Add<cyxwiz::ELUModule>(alpha);
+        }, py::arg("alpha") = 1.0f, "Add an ELU activation")
+
+        .def("add_gelu", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::GELUModule>();
+        }, "Add a GELU activation")
+
+        .def("add_swish", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::SwishModule>();
+        }, "Add a Swish activation")
+
+        .def("add_mish", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::MishModule>();
+        }, "Add a Mish activation")
+
+        // Core methods
+        .def("forward", &cyxwiz::SequentialModel::Forward,
+             py::arg("input"),
+             "Forward pass through all layers")
+        .def("backward", &cyxwiz::SequentialModel::Backward,
+             py::arg("grad_output"),
+             "Backward pass through all layers (reverse order)")
+        .def("get_parameters", &cyxwiz::SequentialModel::GetParameters,
+             "Get all trainable parameters")
+        .def("set_parameters", &cyxwiz::SequentialModel::SetParameters,
+             py::arg("params"),
+             "Set all trainable parameters")
+        .def("get_gradients", &cyxwiz::SequentialModel::GetGradients,
+             "Get all parameter gradients")
+        .def("update_parameters", &cyxwiz::SequentialModel::UpdateParameters,
+             py::arg("optimizer"),
+             "Apply optimizer to all parameters")
+
+        // Training control
+        .def("set_training", &cyxwiz::SequentialModel::SetTraining,
+             py::arg("training"),
+             "Set training mode for all modules")
+        .def("train", [](cyxwiz::SequentialModel& self) {
+            self.SetTraining(true);
+        }, "Set model to training mode")
+        .def("eval", [](cyxwiz::SequentialModel& self) {
+            self.SetTraining(false);
+        }, "Set model to evaluation mode")
+
+        // Model info
+        .def("size", &cyxwiz::SequentialModel::Size,
+             "Get number of modules")
+        .def("summary", &cyxwiz::SequentialModel::Summary,
+             "Print model summary")
+        .def("__len__", &cyxwiz::SequentialModel::Size)
+
+        // Persistence
+        .def("save", &cyxwiz::SequentialModel::Save,
+             py::arg("path"),
+             "Save model to file")
+        .def("load", &cyxwiz::SequentialModel::Load,
+             py::arg("path"),
+             "Load model weights from file")
+
+        // Metadata
+        .def("set_name", &cyxwiz::SequentialModel::SetName,
+             py::arg("name"),
+             "Set model name")
+        .def("get_name", &cyxwiz::SequentialModel::GetName,
+             "Get model name")
+        .def("set_description", &cyxwiz::SequentialModel::SetDescription,
+             py::arg("description"),
+             "Set model description")
+        .def("get_description", &cyxwiz::SequentialModel::GetDescription,
+             "Get model description")
+
+        // Transfer learning
+        .def("freeze_layer", &cyxwiz::SequentialModel::FreezeLayer,
+             py::arg("layer_idx"),
+             "Freeze a specific layer by index")
+        .def("freeze_up_to", &cyxwiz::SequentialModel::FreezeUpTo,
+             py::arg("layer_idx"),
+             "Freeze all layers up to (not including) the given index")
+        .def("freeze_except_last", &cyxwiz::SequentialModel::FreezeExceptLast,
+             py::arg("n"),
+             "Freeze all layers except the last N layers")
+        .def("unfreeze_all", &cyxwiz::SequentialModel::UnfreezeAll,
+             "Unfreeze all layers")
+        .def("is_layer_trainable", &cyxwiz::SequentialModel::IsLayerTrainable,
+             py::arg("layer_idx"),
+             "Check if a layer is trainable");
+
+    // Factory function for creating modules from enum
+    m.def("create_module", &cyxwiz::CreateModule,
+          py::arg("type"), py::arg("params") = std::map<std::string, std::string>{},
+          "Create a module from type enum");
 
 }

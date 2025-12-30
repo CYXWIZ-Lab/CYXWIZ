@@ -1,4 +1,4 @@
-#include "python_sandbox.h"
+﻿#include "python_sandbox.h"
 #include "python_engine.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/eval.h>
@@ -181,6 +181,10 @@ class SandboxImportHook:
         self.original_import = builtins.__import__
 
     def __call__(self, name, *args, **kwargs):
+        # Allow empty module names (used by Python internals for relative imports)
+        if not name:
+            return self.original_import(name, *args, **kwargs)
+
         # Debug: Log import attempt
         print(f"[SANDBOX] Import request: {name}")
 
@@ -380,6 +384,142 @@ if hasattr(os, 'rmdir') and not _sandbox_allow_write:
     }
 }
 
+void PythonSandbox::SetupTimeoutWatchdog() {
+    try {
+        // Cross-platform timeout implementation:
+        // - Unix (Linux/macOS): Use signal.alarm (SIGALRM) for robust timeout
+        //   that can interrupt C extensions like numpy
+        // - Windows: Use sys.settrace (checks elapsed time on each line)
+        // - Fallback: sys.settrace works everywhere but can't interrupt C code
+
+        long timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(config_.timeout).count();
+
+        std::string timeout_code = R"PY(
+import sys
+import time
+
+class _SandboxTimeoutWatchdog:
+    """
+    Cross-platform timeout watchdog.
+
+    On Unix: Uses signal.alarm (SIGALRM) which can interrupt C extensions
+    On Windows: Uses sys.settrace which only works for pure Python code
+    """
+
+    def __init__(self, timeout_seconds):
+        self.timeout_seconds = timeout_seconds
+        self.start_time = None
+        self.original_trace = None
+        self.original_alarm_handler = None
+        self.timed_out = False
+        self._check_count = 0
+        self._check_interval = 100  # Check every N trace calls for performance
+        self._use_signal = False
+
+        # Check if signal.alarm is available (Unix only)
+        try:
+            import signal
+            if hasattr(signal, 'SIGALRM') and hasattr(signal, 'alarm'):
+                self._use_signal = True
+                self._signal = signal
+        except ImportError:
+            pass
+
+    def _alarm_handler(self, signum, frame):
+        """Signal handler for SIGALRM (Unix only)"""
+        self.timed_out = True
+        raise TimeoutError(f"Execution timeout exceeded ({self.timeout_seconds}s)")
+
+    def start(self):
+        self.start_time = time.time()
+        self.timed_out = False
+        self._check_count = 0
+
+        if self._use_signal:
+            # Unix: Use signal.alarm for robust timeout
+            self.original_alarm_handler = self._signal.signal(
+                self._signal.SIGALRM, self._alarm_handler
+            )
+            # signal.alarm only accepts integers, so we use setitimer for sub-second
+            if hasattr(self._signal, 'setitimer'):
+                self._signal.setitimer(
+                    self._signal.ITIMER_REAL,
+                    self.timeout_seconds
+                )
+            else:
+                # Fallback to alarm (integer seconds, rounded up)
+                import math
+                self._signal.alarm(math.ceil(self.timeout_seconds))
+
+        # Always also use sys.settrace as a backup/supplement
+        self.original_trace = sys.gettrace()
+        sys.settrace(self._trace_callback)
+
+    def stop(self):
+        # Stop sys.settrace
+        sys.settrace(self.original_trace)
+        self.original_trace = None
+
+        if self._use_signal:
+            # Cancel any pending alarm
+            if hasattr(self._signal, 'setitimer'):
+                self._signal.setitimer(self._signal.ITIMER_REAL, 0)
+            else:
+                self._signal.alarm(0)
+            # Restore original handler
+            if self.original_alarm_handler is not None:
+                self._signal.signal(self._signal.SIGALRM, self.original_alarm_handler)
+                self.original_alarm_handler = None
+
+    def _trace_callback(self, frame, event, arg):
+        """Called on each Python line execution (backup timeout check)"""
+        # Only check timeout periodically for performance
+        self._check_count += 1
+        if self._check_count >= self._check_interval:
+            self._check_count = 0
+            if time.time() - self.start_time > self.timeout_seconds:
+                self.timed_out = True
+                # Raise exception to interrupt execution
+                raise TimeoutError(f"Execution timeout exceeded ({self.timeout_seconds}s)")
+        return self._trace_callback
+
+# Create global watchdog instance
+_sandbox_timeout_watchdog = _SandboxTimeoutWatchdog(__TIMEOUT_SECONDS__)
+)PY";
+
+        // Replace placeholder with actual timeout value
+        double timeout_seconds = static_cast<double>(timeout_ms) / 1000.0;
+        size_t pos = timeout_code.find("__TIMEOUT_SECONDS__");
+        if (pos != std::string::npos) {
+            timeout_code.replace(pos, 19, std::to_string(timeout_seconds));
+        }
+
+        py::exec(timeout_code);
+        spdlog::info("Timeout watchdog configured ({}s)", timeout_seconds);
+
+    } catch (const py::error_already_set& e) {
+        spdlog::error("Failed to setup timeout watchdog: {}", e.what());
+    }
+}
+
+void PythonSandbox::RemoveTimeoutWatchdog() {
+    try {
+        // Stop the watchdog and restore original trace
+        // Use Python try/except to avoid import errors during exception formatting
+        py::exec(R"(
+try:
+    if "_sandbox_timeout_watchdog" in dir():
+        _sandbox_timeout_watchdog.stop()
+except:
+    pass  # Silently ignore cleanup errors
+)");
+        spdlog::debug("Timeout watchdog removed");
+    } catch (const py::error_already_set& e) {
+        // Silently ignore - cleanup is best-effort
+        spdlog::debug("Timeout watchdog cleanup: {}", e.what());
+    }
+}
+
 void PythonSandbox::CleanupHooks() {
     try {
         // Use pybind11 C++ API directly to avoid import issues
@@ -576,33 +716,48 @@ PythonSandbox::ExecutionResult PythonSandbox::Execute(const std::string& code) {
     SetupRestrictedBuiltins();
     SetupImportHook();
     SetupFileAccessHook();
+    SetupTimeoutWatchdog();
 
     // Start monitoring
     StartMonitoring();
 
+    // Objects for stdout/stderr capture (declared outside try for cleanup)
+    py::object sys;
+    py::object io;
+    py::object stdout_capture;
+    py::object stderr_capture;
+    py::object original_stdout;
+    py::object original_stderr;
+    bool streams_redirected = false;
+
     try {
-        // Execute code directly (async/timeout disabled due to Python GIL conflicts)
-        // TODO: Implement proper timeout using Python signal module or subprocess
-
         // Redirect stdout/stderr
-        py::object sys = py::module_::import("sys");
-        py::object io = py::module_::import("io");
+        sys = py::module_::import("sys");
+        io = py::module_::import("io");
 
-        py::object stdout_capture = io.attr("StringIO")();
-        py::object stderr_capture = io.attr("StringIO")();
+        stdout_capture = io.attr("StringIO")();
+        stderr_capture = io.attr("StringIO")();
 
-        py::object original_stdout = sys.attr("stdout");
-        py::object original_stderr = sys.attr("stderr");
+        original_stdout = sys.attr("stdout");
+        original_stderr = sys.attr("stderr");
 
         sys.attr("stdout") = stdout_capture;
         sys.attr("stderr") = stderr_capture;
+        streams_redirected = true;
 
-        // Execute code
+        // Start the timeout watchdog before execution
+        py::exec("_sandbox_timeout_watchdog.start()");
+
+        // Execute code with timeout protection via sys.settrace
         py::exec(code);
+
+        // Stop the timeout watchdog
+        py::exec("_sandbox_timeout_watchdog.stop()");
 
         // Restore stdout/stderr
         sys.attr("stdout") = original_stdout;
         sys.attr("stderr") = original_stderr;
+        streams_redirected = false;
 
         // Get captured output
         result.output = py::str(stdout_capture.attr("getvalue")());
@@ -615,9 +770,53 @@ PythonSandbox::ExecutionResult PythonSandbox::Execute(const std::string& code) {
         result.success = true;
 
     } catch (const py::error_already_set& e) {
-        result.error_message = e.what();
+        // Stop watchdog on error
+        try {
+            py::exec("if '_sandbox_timeout_watchdog' in dir(): _sandbox_timeout_watchdog.stop()");
+        } catch (...) {}
+
+        // Restore streams if redirected
+        if (streams_redirected) {
+            try {
+                sys.attr("stdout") = original_stdout;
+                sys.attr("stderr") = original_stderr;
+            } catch (...) {}
+        }
+
+        // Check if this was a timeout
+        std::string error_str = e.what();
+        if (error_str.find("TimeoutError") != std::string::npos ||
+            error_str.find("Execution timeout exceeded") != std::string::npos) {
+            result.timeout_exceeded = true;
+            result.error_message = "Execution timeout exceeded (" +
+                std::to_string(config_.timeout.count()) + "s)";
+            spdlog::warn("Script execution timed out after {}s", config_.timeout.count());
+        } else {
+            result.error_message = error_str;
+        }
         result.success = false;
+
+        // Try to get any captured output before the error
+        try {
+            if (stdout_capture) {
+                result.output = py::str(stdout_capture.attr("getvalue")());
+            }
+        } catch (...) {}
+
     } catch (const std::exception& e) {
+        // Stop watchdog on error
+        try {
+            py::exec("if '_sandbox_timeout_watchdog' in dir(): _sandbox_timeout_watchdog.stop()");
+        } catch (...) {}
+
+        // Restore streams if redirected
+        if (streams_redirected) {
+            try {
+                sys.attr("stdout") = original_stdout;
+                sys.attr("stderr") = original_stderr;
+            } catch (...) {}
+        }
+
         result.error_message = std::string("Execution error: ") + e.what();
         result.success = false;
     }
@@ -626,7 +825,8 @@ PythonSandbox::ExecutionResult PythonSandbox::Execute(const std::string& code) {
     StopMonitoring();
     CheckResourceLimits(result);
 
-    // Cleanup
+    // Cleanup (also removes timeout watchdog)
+    RemoveTimeoutWatchdog();
     CleanupHooks();
 
     return result;

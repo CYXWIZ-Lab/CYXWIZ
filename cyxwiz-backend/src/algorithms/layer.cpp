@@ -357,9 +357,7 @@ Tensor Conv2DLayer::Forward(const Tensor& input) {
             af::array b = TensorToAf(bias_);
             // Reshape bias for broadcasting: [1, 1, out_channels, 1]
             b = af::moddims(b, af::dim4(1, 1, out_channels_, 1));
-            output = output + af::tile(b, static_cast<unsigned int>(out_h),
-                                        static_cast<unsigned int>(out_w), 1,
-                                        static_cast<unsigned int>(batch_size));
+            output = output + af::tile(b, af::dim4(out_h, out_w, 1, batch_size));
         }
 
         return AfToTensor(output);
@@ -764,8 +762,7 @@ Tensor GlobalAvgPool2DLayer::Backward(const Tensor& grad_output) {
         af::array grad_reshaped = af::moddims(grad_out, af::dim4(1, 1, channels, batch_size));
 
         // Tile to match input shape and scale
-        af::array dx = af::tile(grad_reshaped, static_cast<unsigned int>(in_h),
-                                 static_cast<unsigned int>(in_w), 1, 1) * scale;
+        af::array dx = af::tile(grad_reshaped, af::dim4(in_h, in_w, 1, 1)) * scale;
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
@@ -857,18 +854,10 @@ Tensor BatchNorm2DLayer::Forward(const Tensor& input) {
         af::array beta_bc = af::moddims(beta, af::dim4(1, 1, channels, 1));
 
         // Tile for full shape
-        mean_bc = af::tile(mean_bc, static_cast<unsigned int>(height),
-                            static_cast<unsigned int>(width), 1,
-                            static_cast<unsigned int>(batch_size));
-        std_inv_bc = af::tile(std_inv_bc, static_cast<unsigned int>(height),
-                               static_cast<unsigned int>(width), 1,
-                               static_cast<unsigned int>(batch_size));
-        gamma_bc = af::tile(gamma_bc, static_cast<unsigned int>(height),
-                             static_cast<unsigned int>(width), 1,
-                             static_cast<unsigned int>(batch_size));
-        beta_bc = af::tile(beta_bc, static_cast<unsigned int>(height),
-                            static_cast<unsigned int>(width), 1,
-                            static_cast<unsigned int>(batch_size));
+        mean_bc = af::tile(mean_bc, af::dim4(height, width, 1, batch_size));
+        std_inv_bc = af::tile(std_inv_bc, af::dim4(height, width, 1, batch_size));
+        gamma_bc = af::tile(gamma_bc, af::dim4(height, width, 1, batch_size));
+        beta_bc = af::tile(beta_bc, af::dim4(height, width, 1, batch_size));
 
         // Normalize and scale
         normalized = (x - mean_bc) * std_inv_bc;
@@ -916,28 +905,20 @@ Tensor BatchNorm2DLayer::Backward(const Tensor& grad_output) {
 
         // Reshape gamma and std_inv for broadcasting
         af::array gamma_bc = af::moddims(gamma, af::dim4(1, 1, channels, 1));
-        gamma_bc = af::tile(gamma_bc, static_cast<unsigned int>(height),
-                             static_cast<unsigned int>(width), 1,
-                             static_cast<unsigned int>(batch_size));
+        gamma_bc = af::tile(gamma_bc, af::dim4(height, width, 1, batch_size));
 
         af::array std_inv_bc = af::moddims(std_inv, af::dim4(1, 1, channels, 1));
-        std_inv_bc = af::tile(std_inv_bc, static_cast<unsigned int>(height),
-                               static_cast<unsigned int>(width), 1,
-                               static_cast<unsigned int>(batch_size));
+        std_inv_bc = af::tile(std_inv_bc, af::dim4(height, width, 1, batch_size));
 
         // sum(dy) per channel
         af::array sum_dy = af::sum(af::sum(af::sum(grad_out, 0), 1), 3);
         sum_dy = af::moddims(sum_dy, af::dim4(1, 1, channels, 1));
-        sum_dy = af::tile(sum_dy, static_cast<unsigned int>(height),
-                           static_cast<unsigned int>(width), 1,
-                           static_cast<unsigned int>(batch_size));
+        sum_dy = af::tile(sum_dy, af::dim4(height, width, 1, batch_size));
 
         // sum(dy * normalized) per channel
         af::array sum_dy_norm = af::sum(af::sum(af::sum(grad_out * normalized, 0), 1), 3);
         sum_dy_norm = af::moddims(sum_dy_norm, af::dim4(1, 1, channels, 1));
-        sum_dy_norm = af::tile(sum_dy_norm, static_cast<unsigned int>(height),
-                                static_cast<unsigned int>(width), 1,
-                                static_cast<unsigned int>(batch_size));
+        sum_dy_norm = af::tile(sum_dy_norm, af::dim4(height, width, 1, batch_size));
 
         // Compute dx
         af::array dx = (1.0f / N) * gamma_bc * std_inv_bc *

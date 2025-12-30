@@ -50,6 +50,15 @@ public:
             // Text processing
             "re",
             "string",
+            "textwrap",  // Used by Python's traceback formatting
+            "enum",      // Used by re module
+            "copyreg",   // Used by pickle/copy
+            "types",     // Used internally by many modules
+            "_sre",      // C extension for re module
+            "sre_compile",  // re internals
+            "sre_parse",    // re internals
+            "sre_constants", // re internals
+            "_constants",    // Python 3.14+ re internals
 
             // File formats (safe reading)
             "pathlib",
@@ -127,6 +136,8 @@ private:
     void SetupRestrictedBuiltins();
     void SetupImportHook();
     void SetupFileAccessHook();
+    void SetupTimeoutWatchdog();
+    void RemoveTimeoutWatchdog();
     void CleanupHooks();
 
     // Execution monitoring
