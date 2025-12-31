@@ -109,6 +109,11 @@ public:
     bool IsVerboseLogging() const { return verbose_logging_; }
     bool* GetVerboseLoggingPtr() { return &verbose_logging_; }
 
+    // Console timeout configuration (for interactive commands)
+    void SetConsoleTimeout(double seconds) { console_timeout_seconds_ = seconds; }
+    double GetConsoleTimeout() const { return console_timeout_seconds_; }
+    double* GetConsoleTimeoutPtr() { return &console_timeout_seconds_; }
+
     // Check if engine is initialized
     bool IsInitialized() const;
 
@@ -122,6 +127,7 @@ private:
     CompletionCallback completion_callback_;
     bool sandbox_enabled_;
     bool verbose_logging_{false};  // Log all commands including internal ones
+    double console_timeout_seconds_{30.0};  // Console command timeout (default 30s)
 
     // ========== Async execution state ==========
     std::unique_ptr<std::thread> script_thread_;
@@ -167,6 +173,14 @@ private:
     // MATLAB-style aliases initialization
     bool matlab_aliases_initialized_{false};
     void InitializeMatlabAliases();
+
+    // Console command execution with timeout
+    std::mutex command_mutex_;
+    std::condition_variable command_cv_;
+    std::atomic<bool> command_finished_{false};
+    ExecutionResult command_result_;
+    ExecutionResult ExecuteCommandDirect(const std::string& command);
+    void ExecuteCommandWorker(const std::string& command);
 
 public:
     // Static method for Python to check cancellation (no GIL needed)

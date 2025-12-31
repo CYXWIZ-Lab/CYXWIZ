@@ -99,6 +99,75 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         InitializeMatlabAliases();
     }
 
+    // Debug: log commands (optionally skip internal Variable Explorer commands)
+    bool is_internal = command.find("_cyxwiz_") != std::string::npos;
+    if (verbose_logging_ || !is_internal) {
+        spdlog::info("Executing command: [{}] (length={})", command, command.length());
+    }
+
+    // Skip timeout for internal commands (fast operations)
+    if (is_internal || console_timeout_seconds_ <= 0) {
+        return ExecuteCommandDirect(command);
+    }
+
+    // Execute with timeout using a worker thread
+    command_finished_ = false;
+
+    // Start worker thread
+    std::thread worker(&ScriptingEngine::ExecuteCommandWorker, this, command);
+
+    // Wait for completion with timeout
+    {
+        std::unique_lock<std::mutex> lock(command_mutex_);
+        bool completed = command_cv_.wait_for(
+            lock,
+            std::chrono::milliseconds(static_cast<int>(console_timeout_seconds_ * 1000)),
+            [this] { return command_finished_.load(); }
+        );
+
+        if (!completed) {
+            // Timeout occurred - interrupt Python safely
+            spdlog::warn("Console command timed out after {} seconds, interrupting...", console_timeout_seconds_);
+
+            // PyErr_SetInterrupt() is the safe way to interrupt Python
+            // It sets a flag that Python checks and raises KeyboardInterrupt
+            PyErr_SetInterrupt();
+
+            // Wait a bit for Python to handle the interrupt
+            bool interrupted = command_cv_.wait_for(
+                lock,
+                std::chrono::milliseconds(2000),  // Give 2 more seconds for graceful interrupt
+                [this] { return command_finished_.load(); }
+            );
+
+            if (!interrupted) {
+                spdlog::error("Python did not respond to interrupt, command may still be running");
+            }
+        }
+    }
+
+    // Wait for thread to finish
+    if (worker.joinable()) {
+        worker.join();
+    }
+
+    // Get result
+    result = command_result_;
+
+    // Mark timeout if it occurred
+    if (!command_finished_) {
+        result.success = false;
+        result.timeout_exceeded = true;
+        result.error_message = "Command timed out after " + std::to_string(static_cast<int>(console_timeout_seconds_)) + " seconds";
+    }
+
+    return result;
+}
+
+ExecutionResult ScriptingEngine::ExecuteCommandDirect(const std::string& command) {
+    ExecutionResult result;
+    result.success = false;
+
     try {
         // Acquire GIL for this execution
         py::gil_scoped_acquire acquire;
@@ -122,12 +191,6 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         // Execute the command
         py::object py_result;
         bool has_result = false;
-
-        // Debug: log commands (optionally skip internal Variable Explorer commands)
-        bool is_internal = command.find("_cyxwiz_") != std::string::npos;
-        if (verbose_logging_ || !is_internal) {
-            spdlog::info("Executing command: [{}] (length={})", command, command.length());
-        }
 
         try {
             // Try exec first (for statements)
@@ -192,6 +255,151 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
     }
 
     return result;
+}
+
+void ScriptingEngine::ExecuteCommandWorker(const std::string& command) {
+    ExecutionResult result;
+    result.success = false;
+
+    try {
+        // Acquire GIL for this execution
+        py::gil_scoped_acquire acquire;
+
+        // Redirect stdout/stderr to capture output
+        py::object sys = py::module_::import("sys");
+        py::object io = py::module_::import("io");
+
+        // Create StringIO objects for stdout and stderr
+        py::object stdout_capture = io.attr("StringIO")();
+        py::object stderr_capture = io.attr("StringIO")();
+
+        // Save original stdout/stderr
+        py::object original_stdout = sys.attr("stdout");
+        py::object original_stderr = sys.attr("stderr");
+
+        // Redirect to our captures
+        sys.attr("stdout") = stdout_capture;
+        sys.attr("stderr") = stderr_capture;
+
+        // Execute the command
+        py::object py_result;
+        bool has_result = false;
+
+        try {
+            // Try exec first (for statements)
+            py::exec(command);
+        } catch (const py::error_already_set& e) {
+            // Check if this was a KeyboardInterrupt (from timeout)
+            if (e.matches(PyExc_KeyboardInterrupt)) {
+                result.success = false;
+                result.timeout_exceeded = true;
+                result.error_message = "Command interrupted (timeout)";
+                spdlog::info("Command interrupted via KeyboardInterrupt");
+
+                // Restore stdout/stderr
+                sys.attr("stdout") = original_stdout;
+                sys.attr("stderr") = original_stderr;
+
+                // Store result and signal completion
+                {
+                    std::lock_guard<std::mutex> lock(command_mutex_);
+                    command_result_ = result;
+                    command_finished_ = true;
+                }
+                command_cv_.notify_one();
+                return;
+            }
+
+            // If exec fails, try eval (for expressions)
+            try {
+                py_result = py::eval(command);
+                has_result = true;
+            } catch (const py::error_already_set& eval_e) {
+                // Check for KeyboardInterrupt again
+                if (eval_e.matches(PyExc_KeyboardInterrupt)) {
+                    result.success = false;
+                    result.timeout_exceeded = true;
+                    result.error_message = "Command interrupted (timeout)";
+
+                    sys.attr("stdout") = original_stdout;
+                    sys.attr("stderr") = original_stderr;
+
+                    {
+                        std::lock_guard<std::mutex> lock(command_mutex_);
+                        command_result_ = result;
+                        command_finished_ = true;
+                    }
+                    command_cv_.notify_one();
+                    return;
+                }
+
+                // Restore stdout/stderr before throwing
+                sys.attr("stdout") = original_stdout;
+                sys.attr("stderr") = original_stderr;
+                throw;
+            }
+        }
+
+        // Get captured output
+        stdout_capture.attr("seek")(0);
+        stderr_capture.attr("seek")(0);
+
+        std::string stdout_str = py::str(stdout_capture.attr("read")());
+        std::string stderr_str = py::str(stderr_capture.attr("read")());
+
+        // Restore original stdout/stderr
+        sys.attr("stdout") = original_stdout;
+        sys.attr("stderr") = original_stderr;
+
+        // Build result
+        result.success = true;
+
+        // Include eval result if present
+        if (has_result && !py_result.is_none()) {
+            result.output = py::str(py_result);
+            result.output += "\n";
+        }
+
+        // Append stdout
+        if (!stdout_str.empty()) {
+            result.output += stdout_str;
+        }
+
+        // Include stderr as error if present
+        if (!stderr_str.empty()) {
+            result.error_message = stderr_str;
+            result.success = false;
+        }
+
+        // Call output callback if set
+        if (output_callback_ && !result.output.empty()) {
+            output_callback_(result.output);
+        }
+
+    } catch (const py::error_already_set& e) {
+        // Check for KeyboardInterrupt
+        if (e.matches(PyExc_KeyboardInterrupt)) {
+            result.success = false;
+            result.timeout_exceeded = true;
+            result.error_message = "Command interrupted (timeout)";
+        } else {
+            result.success = false;
+            result.error_message = e.what();
+            spdlog::error("Python execution error: {}", e.what());
+        }
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = e.what();
+        spdlog::error("Execution error: {}", e.what());
+    }
+
+    // Store result and signal completion
+    {
+        std::lock_guard<std::mutex> lock(command_mutex_);
+        command_result_ = result;
+        command_finished_ = true;
+    }
+    command_cv_.notify_one();
 }
 
 ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {
