@@ -98,7 +98,8 @@ void DataLoader::Initialize() {
 void DataLoader::Cleanup() {
 #ifdef CYXWIZ_HAS_DUCKDB
     if (connection_) {
-        duckdb_disconnect(static_cast<duckdb_connection*>(&connection_));
+        duckdb_connection con = static_cast<duckdb_connection>(connection_);
+        duckdb_disconnect(&con);
         connection_ = nullptr;
     }
     if (database_) {
@@ -454,21 +455,21 @@ std::vector<ColumnInfo> DataLoader::GetSchema(const std::string& path) {
         info.index = i;
 
         // Get column name (column 0)
-        duckdb_value name_val = duckdb_value_varchar(&result, 0, i);
+        char* name_val = duckdb_value_varchar(&result, 0, i);
         if (name_val) {
             info.name = name_val;
             duckdb_free(name_val);
         }
 
         // Get column type (column 1)
-        duckdb_value type_val = duckdb_value_varchar(&result, 1, i);
+        char* type_val = duckdb_value_varchar(&result, 1, i);
         if (type_val) {
             info.type = type_val;
             duckdb_free(type_val);
         }
 
         // Get nullable (column 2) - YES or NO
-        duckdb_value null_val = duckdb_value_varchar(&result, 2, i);
+        char* null_val = duckdb_value_varchar(&result, 2, i);
         if (null_val) {
             info.nullable = (std::string(null_val) == "YES");
             duckdb_free(null_val);
