@@ -135,7 +135,11 @@
 #define ICON_FA_IMAGE               "\xef\x80\xbe"  // U+F03E - image
 #define ICON_FA_IMAGES              "\xef\x8c\x82"  // U+F302 - multiple images
 #define ICON_FA_DATABASE            "\xef\x87\x80"  // U+F1C0 - database
+#define ICON_FA_FILE_CSV            "\xef\x9b\x9d"  // U+F6DD - csv file
 #define ICON_FA_LIST_UL             "\xef\x83\x8a"  // U+F0CA - unordered list
+#define ICON_FA_CLOCK_ROTATE_LEFT   "\xef\x87\x9a"  // U+F1DA - history/undo
+#define ICON_FA_SPINNER             "\xef\x84\x90"  // U+F110 - spinner/loading
+#define ICON_FA_TRIANGLE_EXCLAMATION "\xef\x81\xb1" // U+F071 - warning triangle
 #define ICON_FA_WALLET              "\xef\x95\x95"  // U+F555 - wallet
 
 // Network/Connection
@@ -259,7 +263,6 @@
 #define ICON_FA_LOCK_OPEN           "\xef\x8f\x81"  // U+F3C1
 #define ICON_FA_KEY                 "\xef\x82\x84"  // U+F084
 #define ICON_FA_QUESTION            "\xef\x84\xa8"  // U+F128
-#define ICON_FA_LIGHTBULB           "\xef\x83\xab"  // U+F0EB
 #define ICON_FA_HOUSE               "\xef\x80\x95"  // U+F015
 #define ICON_FA_HOME                "\xef\x80\x95"  // U+F015
 #define ICON_FA_FONT                "\xef\x80\xb1"  // U+F031 - font

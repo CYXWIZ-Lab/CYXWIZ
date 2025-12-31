@@ -1,0 +1,157 @@
+#pragma once
+
+#include "../panel.h"
+#include "../icons.h"
+#include <imgui.h>
+#include <cyxwiz/data_loader.h>
+#include <string>
+#include <vector>
+#include <memory>
+#include <atomic>
+#include <mutex>
+#include <deque>
+#include <filesystem>
+
+namespace cyxwiz {
+
+/**
+ * DataExplorerPanel - All-in-one data analysis workspace
+ *
+ * Features:
+ * - File browser with recent files
+ * - Schema viewer with column types
+ * - SQL query editor with DuckDB backend
+ * - Results table with pagination and export
+ */
+class DataExplorerPanel : public Panel {
+public:
+    DataExplorerPanel();
+    ~DataExplorerPanel() override;
+
+    void Render() override;
+    const char* GetIcon() const override { return ICON_FA_DATABASE; }
+    void HandleKeyboardShortcuts() override;
+
+    // External API
+    void OpenFile(const std::string& path);
+    void ExecuteQuery(const std::string& sql);
+
+private:
+    // ===== Main Render Methods =====
+    void RenderFileBrowserPane();
+    void RenderSchemaViewerPane();
+    void RenderQueryEditorPane();
+    void RenderResultsPane();
+    void RenderStatusBar();
+
+    // ===== File Browser =====
+    struct FileItem {
+        std::string name;
+        std::string path;
+        bool is_directory = false;
+        bool is_expanded = false;
+        std::vector<std::unique_ptr<FileItem>> children;
+        std::uintmax_t file_size = 0;
+    };
+
+    void BuildFileTree(const std::string& root_path);
+    void RenderFileNode(FileItem& item, int depth = 0);
+    void AddRecentFile(const std::string& path);
+    void OpenFileDialog();
+    bool IsDataFile(const std::string& path) const;
+    const char* GetFileIcon(const std::string& ext) const;
+
+    std::unique_ptr<FileItem> file_tree_root_;
+    std::deque<std::string> recent_files_;
+    static constexpr size_t MAX_RECENT_FILES = 20;
+    std::string current_directory_;
+    char path_buffer_[512] = "";
+
+    // ===== Schema Viewer =====
+    struct SchemaInfo {
+        std::string file_path;
+        std::vector<ColumnInfo> columns;
+        size_t row_count = 0;
+        bool is_loaded = false;
+    };
+
+    void LoadSchema(const std::string& path);
+    ImVec4 GetTypeColor(const std::string& type) const;
+
+    SchemaInfo current_schema_;
+    std::atomic<bool> is_loading_schema_{false};
+    std::mutex schema_mutex_;
+    std::string schema_error_;
+
+    // ===== SQL Query Editor =====
+    struct QueryHistoryItem {
+        std::string query;
+        std::string timestamp;
+        bool success = false;
+        double execution_time_ms = 0.0;
+    };
+
+    struct ExampleQuery {
+        const char* name;
+        const char* query;
+        const char* description;
+    };
+
+    static constexpr size_t QUERY_BUFFER_SIZE = 16384;
+    char query_buffer_[QUERY_BUFFER_SIZE] = "";
+    std::deque<QueryHistoryItem> query_history_;
+    static constexpr size_t MAX_QUERY_HISTORY = 100;
+    int history_nav_index_ = -1;
+
+    void RenderQueryToolbar();
+    void RenderExamplesPopup();
+    void RenderHistoryPopup();
+    void InsertFilePath(const std::string& path);
+    std::string GetCurrentTimestamp() const;
+
+    bool show_examples_popup_ = false;
+    bool show_history_popup_ = false;
+    static const std::vector<ExampleQuery> example_queries_;
+
+    // ===== Results Table =====
+    struct QueryResult {
+        std::vector<std::string> column_names;
+        std::vector<std::vector<std::string>> rows;
+        size_t total_rows = 0;
+        double execution_time_ms = 0.0;
+        bool success = false;
+        std::string error_message;
+    };
+
+    void ExecuteCurrentQuery();
+    void RenderResultsToolbar();
+    void RenderResultsTable();
+    void RenderPagination();
+    void ExportResultsToCSV();
+    void CopyResultsToClipboard();
+
+    QueryResult current_result_;
+    std::atomic<bool> is_executing_query_{false};
+    std::mutex result_mutex_;
+
+    int current_page_ = 0;
+    int rows_per_page_ = 100;
+    int sort_column_ = -1;
+    bool sort_ascending_ = true;
+    bool show_row_numbers_ = true;
+
+    // ===== DataLoader Instance =====
+    std::unique_ptr<DataLoader> data_loader_;
+    bool duckdb_available_ = false;
+
+    // ===== Split Pane State =====
+    float left_pane_width_ = 220.0f;
+    float schema_pane_height_ = 180.0f;
+    float query_pane_height_ = 150.0f;
+
+    // ===== Utility =====
+    std::string FormatFileSize(std::uintmax_t bytes) const;
+    std::string FormatNumber(size_t num) const;
+};
+
+} // namespace cyxwiz

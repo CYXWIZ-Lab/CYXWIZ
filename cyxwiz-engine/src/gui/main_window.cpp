@@ -25,6 +25,7 @@
 #include "panels/command_window.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
+#include "panels/data_explorer_panel.h"
 #include "panels/connection_dialog.h"
 #include "panels/job_status_panel.h"
 #include "panels/p2p_training_panel.h"
@@ -159,6 +160,7 @@ MainWindow::MainWindow()
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
+    data_explorer_panel_ = std::make_unique<cyxwiz::DataExplorerPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
@@ -1632,6 +1634,8 @@ MainWindow::~MainWindow() {
     connection_dialog_.reset();
     spdlog::info("~MainWindow: table_viewer_");
     table_viewer_.reset();
+    spdlog::info("~MainWindow: data_explorer_panel_");
+    data_explorer_panel_.reset();
     // script_editor_, command_window_ already reset at the beginning (with scripting_engine panels)
     // plot_test_control_, training_plot_panel_, training_dashboard_ already reset at the beginning
     spdlog::info("~MainWindow: asset_browser_");
@@ -1889,6 +1893,7 @@ void MainWindow::Render() {
     if (command_window_) command_window_->Render();
     if (script_editor_) script_editor_->Render();
     if (table_viewer_) table_viewer_->Render();
+    if (data_explorer_panel_) data_explorer_panel_->Render();
     if (connection_dialog_) connection_dialog_->Render();
     if (job_status_panel_) job_status_panel_->Render();
     if (p2p_training_panel_) p2p_training_panel_->Render();
@@ -2241,6 +2246,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (table_viewer_) {
         dock_style.RegisterPanel("Table Viewer", ICON_FA_TABLE, table_viewer_->GetVisiblePtr());
+    }
+    if (data_explorer_panel_) {
+        dock_style.RegisterPanel("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_->GetVisiblePtr());
     }
     if (job_status_panel_) {
         dock_style.RegisterPanel("Jobs", ICON_FA_LIST_CHECK, job_status_panel_->GetVisiblePtr());

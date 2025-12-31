@@ -95,6 +95,7 @@ set(ENGINE_SOURCES
     src/gui/panels/command_window.cpp
     src/gui/panels/script_editor.cpp
     src/gui/panels/table_viewer.cpp
+    src/gui/panels/data_explorer_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/dataset_panel.cpp
     src/gui/panels/task_progress_panel.cpp
@@ -257,6 +258,7 @@ set(ENGINE_HEADERS
     src/gui/panels/command_window.h
     src/gui/panels/script_editor.h
     src/gui/panels/table_viewer.h
+    src/gui/panels/data_explorer_panel.h
     src/gui/panels/connection_dialog.h
     src/gui/panels/dataset_panel.h
     src/gui/panels/task_progress_panel.h

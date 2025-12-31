@@ -33,6 +33,7 @@ class PlotTestControlPanel;
 class CommandWindowPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
+class DataExplorerPanel;
 class ConnectionDialog;
 class JobStatusPanel;
 class P2PTrainingPanel;
@@ -220,6 +221,7 @@ private:
     std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
+    std::unique_ptr<cyxwiz::DataExplorerPanel> data_explorer_panel_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
     std::unique_ptr<cyxwiz::P2PTrainingPanel> p2p_training_panel_;
