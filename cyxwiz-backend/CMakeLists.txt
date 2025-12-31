@@ -14,11 +14,20 @@ else()
     message(STATUS "ArrayFire found: ${ArrayFire_DIR}")
     set(CYXWIZ_HAS_ARRAYFIRE TRUE)
 endif()
-
 # Find other packages
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
+
+# Find DuckDB (optional - for SQL-based data loading)
+find_package(duckdb CONFIG QUIET)
+if(duckdb_FOUND)
+    message(STATUS "DuckDB found - SQL data loading enabled")
+    set(CYXWIZ_HAS_DUCKDB TRUE)
+else()
+    message(WARNING "DuckDB not found - SQL data loading disabled")
+    set(CYXWIZ_HAS_DUCKDB FALSE)
+endif()
 
 # Source files
 set(BACKEND_SOURCES
@@ -50,6 +59,7 @@ set(BACKEND_SOURCES
     src/algorithms/time_series.cpp
     src/algorithms/text_processing.cpp
     src/algorithms/utilities.cpp
+    src/core/data_loader.cpp
 )
 
 # Header files
@@ -83,6 +93,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/time_series.h
     include/cyxwiz/text_processing.h
     include/cyxwiz/utilities.h
+    include/cyxwiz/data_loader.h
 )
 
 # Create shared library (DLL/SO)
@@ -140,6 +151,13 @@ if(CYXWIZ_HAS_ARRAYFIRE)
         )
         target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
     endif()
+endif()
+
+# Link DuckDB if available
+if(CYXWIZ_HAS_DUCKDB)
+    find_package(Threads REQUIRED)
+    target_link_libraries(cyxwiz-backend PRIVATE duckdb Threads::Threads)
+    target_compile_definitions(cyxwiz-backend PRIVATE CYXWIZ_HAS_DUCKDB)
 endif()
 
 # Set properties

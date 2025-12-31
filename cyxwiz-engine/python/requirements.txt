@@ -1,0 +1,15 @@
+# CyxWiz Engine Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Data Analysis (DuckDB + Polars)
+polars[pyarrow]>=1.3.0       # High-performance DataFrames with Apache Arrow support
+duckdb>=1.2.0                 # Embedded OLAP database
+pyarrow>=15.0.0               # Apache Arrow for efficient data interchange
+
+# Scientific Computing (optional but recommended)
+numpy>=1.24.0                 # Array operations
+pandas>=2.0.0                 # DataFrames (alternative to Polars)
+scipy>=1.11.0                 # Scientific algorithms
+
+# Visualization
+matplotlib>=3.7.0             # Plotting

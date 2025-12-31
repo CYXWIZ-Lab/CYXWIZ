@@ -70,6 +70,18 @@ public:
             "matplotlib",
             "scipy",
 
+            // Data analysis (DuckDB + Polars)
+            "polars",
+            "polars.functions",
+            "polars.datatypes",
+            "polars.io",
+            "polars.lazy",
+            "duckdb",
+            "pyarrow",
+            "pyarrow.parquet",
+            "pyarrow.csv",
+            "pyarrow.json",
+
             // CyxWiz modules
             "pycyxwiz",
             "cyxwiz_plotting"

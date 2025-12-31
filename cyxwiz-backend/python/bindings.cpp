@@ -5,6 +5,7 @@
 #include "cyxwiz/cyxwiz.h"
 #include <pybind11/functional.h>
 #include "cyxwiz/sequential.h"
+#include "cyxwiz/data_loader.h"
 
 using namespace pybind11::literals;  // For _a suffix
 
@@ -1798,5 +1799,189 @@ PYBIND11_MODULE(pycyxwiz, m) {
     m.def("create_module", &cyxwiz::CreateModule,
           py::arg("type"), py::arg("params") = std::map<std::string, std::string>{},
           "Create a module from type enum");
+
+    // ============================================================================
+    // DATA LOADER (DuckDB Integration)
+    // ============================================================================
+
+    // DataLoaderConfig struct
+    py::class_<cyxwiz::DataLoaderConfig>(m, "DataLoaderConfig",
+        "Configuration for DataLoader")
+        .def(py::init<>())
+        .def_readwrite("batch_size", &cyxwiz::DataLoaderConfig::batch_size,
+                       "Default batch size for iterators (default: 1024)")
+        .def_readwrite("memory_limit_mb", &cyxwiz::DataLoaderConfig::memory_limit_mb,
+                       "Memory limit in MB before warning (default: 4096)")
+        .def_readwrite("num_threads", &cyxwiz::DataLoaderConfig::num_threads,
+                       "Number of threads for parallel operations (default: 4)")
+        .def_readwrite("verbose", &cyxwiz::DataLoaderConfig::verbose,
+                       "Print verbose logging (default: false)");
+
+    // ColumnInfo struct
+    py::class_<cyxwiz::ColumnInfo>(m, "ColumnInfo",
+        "Information about a column in a dataset")
+        .def(py::init<>())
+        .def_readwrite("name", &cyxwiz::ColumnInfo::name)
+        .def_readwrite("type", &cyxwiz::ColumnInfo::type)
+        .def_readwrite("nullable", &cyxwiz::ColumnInfo::nullable)
+        .def_readwrite("index", &cyxwiz::ColumnInfo::index)
+        .def("__repr__", [](const cyxwiz::ColumnInfo& c) {
+            return "<ColumnInfo name='" + c.name + "' type='" + c.type + "'>";
+        });
+
+    // BatchIterator class
+    py::class_<cyxwiz::DataLoader::BatchIterator>(m, "BatchIterator",
+        "Iterator for streaming large datasets in batches")
+        .def("has_next", &cyxwiz::DataLoader::BatchIterator::HasNext,
+             "Check if more batches are available")
+        .def("next", [](cyxwiz::DataLoader::BatchIterator& self) {
+            py::gil_scoped_release release;
+            return self.Next();
+        }, "Get next batch as Tensor")
+        .def("reset", &cyxwiz::DataLoader::BatchIterator::Reset,
+             "Reset iterator to beginning")
+        .def("total_rows", &cyxwiz::DataLoader::BatchIterator::TotalRows,
+             "Get total number of rows")
+        .def("current_batch", &cyxwiz::DataLoader::BatchIterator::CurrentBatch,
+             "Get current batch index (0-based)")
+        .def("batch_size", &cyxwiz::DataLoader::BatchIterator::BatchSize,
+             "Get batch size")
+        // Python iterator protocol
+        .def("__iter__", [](cyxwiz::DataLoader::BatchIterator& self) -> cyxwiz::DataLoader::BatchIterator& {
+            return self;
+        })
+        .def("__next__", [](cyxwiz::DataLoader::BatchIterator& self) {
+            if (!self.HasNext()) {
+                throw py::stop_iteration();
+            }
+            py::gil_scoped_release release;
+            return self.Next();
+        });
+
+    // DataLoader class
+    py::class_<cyxwiz::DataLoader>(m, "DataLoader",
+        R"doc(High-performance data loader using DuckDB.
+
+Supports:
+- Loading Parquet, CSV, JSON files directly into Tensors
+- SQL queries on files (SELECT, JOIN, WHERE, etc.)
+- Batch iteration for large datasets
+- Schema inspection
+
+Example:
+    loader = DataLoader()
+    data = loader.load_csv("data.csv")
+    result = loader.query("SELECT * FROM 'data.parquet' WHERE x > 0")
+
+    # Batch iteration
+    for batch in loader.create_batch_iterator("SELECT * FROM 'large.parquet'", 1000):
+        process(batch)
+)doc")
+        .def(py::init<>(), "Create DataLoader with default configuration")
+        .def(py::init<const cyxwiz::DataLoaderConfig&>(),
+             py::arg("config"),
+             "Create DataLoader with custom configuration")
+
+        // Static methods
+        .def_static("is_available", &cyxwiz::DataLoader::IsAvailable,
+                    "Check if DuckDB is available")
+        .def_static("get_version", &cyxwiz::DataLoader::GetVersion,
+                    "Get DuckDB version string")
+
+        // File loading
+        .def("load_parquet", [](cyxwiz::DataLoader& self, const std::string& path,
+                                const std::vector<std::string>& columns) {
+            py::gil_scoped_release release;
+            return self.LoadParquet(path, columns);
+        }, py::arg("path"), py::arg("columns") = std::vector<std::string>{},
+           "Load Parquet file into Tensor")
+
+        .def("load_csv", [](cyxwiz::DataLoader& self, const std::string& path,
+                            const std::vector<std::string>& columns,
+                            char delimiter, bool has_header) {
+            py::gil_scoped_release release;
+            return self.LoadCSV(path, columns, delimiter, has_header);
+        }, py::arg("path"), py::arg("columns") = std::vector<std::string>{},
+           py::arg("delimiter") = ',', py::arg("has_header") = true,
+           "Load CSV file into Tensor")
+
+        .def("load_json", [](cyxwiz::DataLoader& self, const std::string& path,
+                             const std::vector<std::string>& columns) {
+            py::gil_scoped_release release;
+            return self.LoadJSON(path, columns);
+        }, py::arg("path"), py::arg("columns") = std::vector<std::string>{},
+           "Load JSON file into Tensor")
+
+        // SQL queries
+        .def("query", [](cyxwiz::DataLoader& self, const std::string& sql) {
+            py::gil_scoped_release release;
+            return self.Query(sql);
+        }, py::arg("sql"),
+           R"doc(Execute SQL query and return result as Tensor.
+
+Example queries:
+    "SELECT * FROM 'data.parquet'"
+    "SELECT a, b FROM 'data.csv' WHERE c > 10"
+    "SELECT * FROM 'a.parquet' JOIN 'b.parquet' ON a.id = b.id"
+)doc")
+
+        .def("query_columns", [](cyxwiz::DataLoader& self, const std::string& sql) {
+            py::gil_scoped_release release;
+            return self.QueryColumns(sql);
+        }, py::arg("sql"),
+           "Execute SQL query and return result as list of column Tensors")
+
+        // Batch iteration
+        .def("create_batch_iterator", [](cyxwiz::DataLoader& self, const std::string& sql,
+                                         size_t batch_size) {
+            return self.CreateBatchIterator(sql, batch_size);
+        }, py::arg("sql"), py::arg("batch_size") = 0,
+           "Create batch iterator for streaming large datasets")
+
+        // Schema inspection
+        .def("get_schema", &cyxwiz::DataLoader::GetSchema,
+             py::arg("path"),
+             "Get schema information for a file")
+        .def("get_columns", &cyxwiz::DataLoader::GetColumns,
+             py::arg("path"),
+             "Get column names for a file")
+        .def("get_row_count", [](cyxwiz::DataLoader& self, const std::string& path) {
+            py::gil_scoped_release release;
+            return self.GetRowCount(path);
+        }, py::arg("path"),
+           "Get row count for a file")
+
+        // File conversion
+        .def("convert_csv_to_parquet", [](cyxwiz::DataLoader& self,
+                                          const std::string& csv_path,
+                                          const std::string& parquet_path,
+                                          const std::string& compression) {
+            py::gil_scoped_release release;
+            self.ConvertCSVToParquet(csv_path, parquet_path, compression);
+        }, py::arg("csv_path"), py::arg("parquet_path"),
+           py::arg("compression") = "snappy",
+           "Convert CSV file to Parquet format")
+
+        .def("convert_json_to_parquet", [](cyxwiz::DataLoader& self,
+                                           const std::string& json_path,
+                                           const std::string& parquet_path,
+                                           const std::string& compression) {
+            py::gil_scoped_release release;
+            self.ConvertJSONToParquet(json_path, parquet_path, compression);
+        }, py::arg("json_path"), py::arg("parquet_path"),
+           py::arg("compression") = "snappy",
+           "Convert JSON file to Parquet format")
+
+        // Configuration
+        .def("get_config", &cyxwiz::DataLoader::GetConfig,
+             py::return_value_policy::reference_internal,
+             "Get current configuration")
+        .def("set_config", &cyxwiz::DataLoader::SetConfig,
+             py::arg("config"),
+             "Update configuration");
+
+    // Module-level check
+    m.def("duckdb_available", &cyxwiz::DataLoader::IsAvailable,
+          "Check if DuckDB is available for data loading");
 
 }
