@@ -7,6 +7,7 @@
 #include "outlier_detection_panel.h"
 #include "missing_value_panel.h"
 #include "data_profiler_panel.h"
+#include "visualization_panel.h"
 #include <cyxwiz/stats_utils.h>
 #include <imgui.h>
 #include <implot.h>
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <fstream>
 #include <cmath>
+#include <nlohmann/json.hpp>
 
 namespace cyxwiz {
 
@@ -213,6 +215,7 @@ void DataExplorerPanel::RenderFileBrowserPane() {
         ImGui::Text(ICON_FA_CLOCK_ROTATE_LEFT " Recent");
         ImGui::Separator();
 
+        int file_idx = 0;
         for (const auto& path : recent_files_) {
             std::filesystem::path fs_path(path);
             std::string filename = fs_path.filename().string();
@@ -220,23 +223,30 @@ void DataExplorerPanel::RenderFileBrowserPane() {
 
             const char* icon = GetFileIcon(ext);
 
-            ImGui::PushID(path.c_str());
-            if (ImGui::Selectable((std::string(icon) + " " + filename).c_str(),
-                                  current_schema_.file_path == path)) {
-                LoadSchema(path);
+            // Use index for unique ID to avoid conflicts with same filenames
+            ImGui::PushID(file_idx++);
+
+            bool is_selected = (current_schema_.file_path == path);
+            std::string label = std::string(icon) + " " + filename;
+
+            // Use AllowDoubleClick flag to distinguish single vs double click
+            if (ImGui::Selectable(label.c_str(), is_selected, ImGuiSelectableFlags_AllowDoubleClick)) {
+                if (ImGui::IsMouseDoubleClicked(0)) {
+                    // Double-click: load schema and insert path into query
+                    LoadSchema(path);
+                    InsertFilePath(path);
+                }
+                // Single-click: just visual selection (no action needed)
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", path.c_str());
-            }
-            if (ImGui::IsItemClicked() && ImGui::IsMouseDoubleClicked(0)) {
-                InsertFilePath(path);
+                ImGui::SetTooltip("%s\n(Double-click to load schema)", path.c_str());
             }
             ImGui::PopID();
         }
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Double-click to insert path into query");
+    ImGui::TextDisabled("Double-click to load schema");
 }
 
 void DataExplorerPanel::RenderSchemaViewerPane() {
@@ -620,7 +630,7 @@ void DataExplorerPanel::RenderStatusBar() {
 
 void DataExplorerPanel::OpenFile(const std::string& path) {
     AddRecentFile(path);
-    LoadSchema(path);
+    // Schema is loaded on double-click only, not on file open
 }
 
 void DataExplorerPanel::OpenFileDialog() {
@@ -838,6 +848,127 @@ void DataExplorerPanel::CopyResultsToClipboard() {
     spdlog::info("DataExplorerPanel: Copied {} rows to clipboard", end_row - start_row);
 }
 
+void DataExplorerPanel::ExportStatsToCSV() {
+    if (!quick_stats_cache_.is_valid) return;
+
+    nfdchar_t* outPath = nullptr;
+    nfdfilteritem_t filters[1] = {{"CSV Files", "csv"}};
+
+    // Generate default filename from column name
+    std::string default_name = "stats";
+    if (selected_stats_column_ >= 0 && selected_stats_column_ < (int)current_result_.column_names.size()) {
+        default_name = current_result_.column_names[selected_stats_column_] + "_stats";
+    }
+    default_name += ".csv";
+
+    nfdresult_t result = NFD_SaveDialog(&outPath, filters, 1, nullptr, default_name.c_str());
+
+    if (result == NFD_OKAY) {
+        std::string path(outPath);
+        NFD_FreePath(outPath);
+
+        try {
+            std::ofstream file(path);
+            const auto& s = quick_stats_cache_.stats;
+
+            // Header
+            file << "Column," << current_result_.column_names[selected_stats_column_] << "\n";
+            file << "\n";
+
+            // Statistics section
+            file << "Statistic,Value\n";
+            file << "Count," << s.count << "\n";
+            file << "Mean," << std::fixed << std::setprecision(6) << s.mean << "\n";
+            file << "Median," << s.median << "\n";
+            file << "Std Dev," << s.std_dev << "\n";
+            file << "Variance," << s.variance << "\n";
+            file << "Min," << s.min << "\n";
+            file << "Max," << s.max << "\n";
+            file << "Q1," << s.q1 << "\n";
+            file << "Q3," << s.q3 << "\n";
+            file << "IQR," << s.iqr << "\n";
+            file << "Skewness," << s.skewness << "\n";
+            file << "Kurtosis," << s.kurtosis << "\n";
+
+            // Correlations section (if available)
+            if (!quick_stats_cache_.top_correlations.empty()) {
+                file << "\n";
+                file << "Correlations\n";
+                file << "Column,Correlation\n";
+                for (const auto& [col_name, corr] : quick_stats_cache_.top_correlations) {
+                    file << col_name << "," << corr << "\n";
+                }
+            }
+
+            spdlog::info("DataExplorerPanel: Exported stats to {}", path);
+        } catch (const std::exception& e) {
+            spdlog::error("DataExplorerPanel: Stats export failed: {}", e.what());
+        }
+    }
+}
+
+void DataExplorerPanel::ExportStatsToJSON() {
+    if (!quick_stats_cache_.is_valid) return;
+
+    nfdchar_t* outPath = nullptr;
+    nfdfilteritem_t filters[1] = {{"JSON Files", "json"}};
+
+    // Generate default filename from column name
+    std::string default_name = "stats";
+    if (selected_stats_column_ >= 0 && selected_stats_column_ < (int)current_result_.column_names.size()) {
+        default_name = current_result_.column_names[selected_stats_column_] + "_stats";
+    }
+    default_name += ".json";
+
+    nfdresult_t result = NFD_SaveDialog(&outPath, filters, 1, nullptr, default_name.c_str());
+
+    if (result == NFD_OKAY) {
+        std::string path(outPath);
+        NFD_FreePath(outPath);
+
+        try {
+            nlohmann::json j;
+            const auto& s = quick_stats_cache_.stats;
+
+            // Column info
+            j["column"] = current_result_.column_names[selected_stats_column_];
+
+            // Statistics
+            j["statistics"]["count"] = s.count;
+            j["statistics"]["mean"] = s.mean;
+            j["statistics"]["median"] = s.median;
+            j["statistics"]["std_dev"] = s.std_dev;
+            j["statistics"]["variance"] = s.variance;
+            j["statistics"]["min"] = s.min;
+            j["statistics"]["max"] = s.max;
+            j["statistics"]["q1"] = s.q1;
+            j["statistics"]["q3"] = s.q3;
+            j["statistics"]["iqr"] = s.iqr;
+            j["statistics"]["skewness"] = s.skewness;
+            j["statistics"]["kurtosis"] = s.kurtosis;
+
+            // Correlations (if available)
+            if (!quick_stats_cache_.top_correlations.empty()) {
+                j["correlations"] = nlohmann::json::array();
+                for (const auto& [col_name, corr] : quick_stats_cache_.top_correlations) {
+                    j["correlations"].push_back({
+                        {"column", col_name},
+                        {"correlation", corr}
+                    });
+                }
+            }
+
+            // Write with pretty printing
+            std::ofstream file(path);
+            file << j.dump(2);
+
+            spdlog::info("DataExplorerPanel: Exported stats JSON to {}", path);
+        } catch (const std::exception& e) {
+            spdlog::error("DataExplorerPanel: Stats JSON export failed: {}", e.what());
+        }
+    }
+}
+
 void DataExplorerPanel::AddRecentFile(const std::string& path) {
     // Remove if already exists
     auto it = std::find(recent_files_.begin(), recent_files_.end(), path);
@@ -1020,6 +1151,18 @@ void DataExplorerPanel::RenderQuickStatsTab() {
     if (ImGui::Button(ICON_FA_CALCULATOR " Compute")) {
         ComputeQuickStats(selected_stats_column_);
     }
+
+    // Export buttons (only enabled when stats are valid)
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!quick_stats_cache_.is_valid);
+    if (ImGui::Button(ICON_FA_FILE_CSV " CSV")) {
+        ExportStatsToCSV();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_FILE_CODE " JSON")) {
+        ExportStatsToJSON();
+    }
+    ImGui::EndDisabled();
 
     ImGui::Separator();
 
@@ -1239,60 +1382,103 @@ void DataExplorerPanel::RenderVisualizeTab() {
         return;
     }
 
-    // Chart type selector and column selectors
+    // Compact toolbar area
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 4));
     RenderChartSelector();
 
-    ImGui::Separator();
-
-    // Render the selected chart
-    switch (chart_type_) {
-        case ChartType::Histogram: RenderHistogramChart(); break;
-        case ChartType::Scatter: RenderScatterChart(); break;
-        case ChartType::Bar: RenderBarChart(); break;
-        case ChartType::Box: RenderBoxChart(); break;
+    // Open in Visualizer button (right side)
+    if (visualization_panel_) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_CHART_SIMPLE " Open in Visualizer")) {
+            visualization_panel_->SetData(current_result_.column_names, current_result_.rows);
+            visualization_panel_->SetVisible(true);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open data in dockable Visualizer panel");
+        }
     }
+    ImGui::PopStyleVar();
+
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Calculate available space for chart (use most of the area)
+    float chart_height = ImGui::GetContentRegionAvail().y - 10.0f;
+    chart_height = std::max(chart_height, 300.0f);  // Minimum height
+
+    // Render the selected chart in a child region for proper sizing
+    ImGui::BeginChild("ChartArea", ImVec2(-1, chart_height), false);
+    {
+        switch (chart_type_) {
+            case ChartType::Histogram: RenderHistogramChart(); break;
+            case ChartType::Scatter: RenderScatterChart(); break;
+            case ChartType::Bar: RenderBarChart(); break;
+            case ChartType::Box: RenderBoxChart(); break;
+        }
+    }
+    ImGui::EndChild();
 }
 
 void DataExplorerPanel::RenderChartSelector() {
-    // Chart type radio buttons
-    ImGui::Text("Chart Type:");
+    // Chart type with icons
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text(ICON_FA_CHART_SIMPLE " Chart:");
     ImGui::SameLine();
-    if (ImGui::RadioButton("Histogram", chart_type_ == ChartType::Histogram)) chart_type_ = ChartType::Histogram;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Scatter", chart_type_ == ChartType::Scatter)) chart_type_ = ChartType::Scatter;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Bar", chart_type_ == ChartType::Bar)) chart_type_ = ChartType::Bar;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Box", chart_type_ == ChartType::Box)) chart_type_ = ChartType::Box;
 
-    ImGui::Spacing();
+    ImGui::PushID("ChartTypeSelector");
+    if (ImGui::RadioButton(ICON_FA_CHART_BAR " Histogram", chart_type_ == ChartType::Histogram))
+        chart_type_ = ChartType::Histogram;
+    ImGui::SameLine();
+    if (ImGui::RadioButton(ICON_FA_CHART_SCATTER " Scatter", chart_type_ == ChartType::Scatter))
+        chart_type_ = ChartType::Scatter;
+    ImGui::SameLine();
+    if (ImGui::RadioButton(ICON_FA_CHART_COLUMN " Bar", chart_type_ == ChartType::Bar))
+        chart_type_ = ChartType::Bar;
+    ImGui::SameLine();
+    if (ImGui::RadioButton(ICON_FA_CUBE " Box", chart_type_ == ChartType::Box))
+        chart_type_ = ChartType::Box;
+    ImGui::PopID();
 
-    // Column selectors based on chart type
-    auto ColumnCombo = [&](const char* label, int& selected) {
-        ImGui::SetNextItemWidth(150);
-        if (ImGui::BeginCombo(label,
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // Column selectors
+    auto ColumnCombo = [&](const char* label, int& selected, const char* combo_id) {
+        ImGui::SetNextItemWidth(180);
+        ImGui::PushID(combo_id);
+        if (ImGui::BeginCombo("##col",
             selected >= 0 && selected < (int)current_result_.column_names.size()
                 ? current_result_.column_names[selected].c_str()
-                : "Select...")) {
+                : "Select column...")) {
             for (int i = 0; i < (int)current_result_.column_names.size(); i++) {
+                ImGui::PushID(i);
                 if (ImGui::Selectable(current_result_.column_names[i].c_str(), selected == i)) {
                     selected = i;
                 }
+                ImGui::PopID();
             }
             ImGui::EndCombo();
         }
+        ImGui::PopID();
     };
 
     ImGui::Text("X:");
     ImGui::SameLine();
-    ColumnCombo("##XCol", viz_x_column_);
+    ColumnCombo("##XCol", viz_x_column_, "XColCombo");
 
     if (chart_type_ == ChartType::Scatter) {
         ImGui::SameLine();
         ImGui::Text("Y:");
         ImGui::SameLine();
-        ColumnCombo("##YCol", viz_y_column_);
+        ColumnCombo("##YCol", viz_y_column_, "YColCombo");
     }
+
+    // Show data info
+    ImGui::SameLine();
+    ImGui::TextDisabled("| %zu rows", current_result_.rows.size());
 }
 
 void DataExplorerPanel::RenderHistogramChart() {
@@ -1303,11 +1489,45 @@ void DataExplorerPanel::RenderHistogramChart() {
         return;
     }
 
-    if (ImPlot::BeginPlot("Histogram", ImVec2(-1, -1))) {
-        ImPlot::SetupAxes(current_result_.column_names[viz_x_column_].c_str(), "Count");
-        ImPlot::PlotHistogram("##hist", data.data(), (int)data.size(), 30);
+    // Compute statistics for display
+    double min_val = *std::min_element(data.begin(), data.end());
+    double max_val = *std::max_element(data.begin(), data.end());
+    double sum = std::accumulate(data.begin(), data.end(), 0.0);
+    double mean = sum / data.size();
+
+    std::string col_name = current_result_.column_names[viz_x_column_];
+    std::string title = "Distribution of " + col_name;
+
+    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.7f);
+
+    ImGui::PushID("HistogramPlot");
+    if (ImPlot::BeginPlot(title.c_str(), ImVec2(-1, -1), ImPlotFlags_NoMouseText)) {
+        ImPlot::SetupAxes(col_name.c_str(), "Frequency", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
+
+        // Plot histogram with column name as legend
+        ImPlot::SetNextFillStyle(ImVec4(0.3f, 0.5f, 0.9f, 0.7f));
+        ImPlot::PlotHistogram(col_name.c_str(), data.data(), (int)data.size(), 30);
+
+        // Add mean line
+        double mean_x[] = {mean, mean};
+        double mean_y[] = {0, (double)data.size() / 10.0};
+        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), 2.0f);
+        ImPlot::PlotLine("Mean", mean_x, mean_y, 2);
+
+        // Annotate
+        ImPlot::Annotation(mean, mean_y[1] * 0.8, ImVec4(1,1,1,1), ImVec2(5, -5), true,
+                          "Mean: %.2f", mean);
+
         ImPlot::EndPlot();
     }
+    ImGui::PopID();
+
+    ImPlot::PopStyleVar();
+
+    // Stats footer
+    ImGui::TextDisabled("Min: %.4g | Max: %.4g | Mean: %.4g | Count: %zu",
+                       min_val, max_val, mean, data.size());
 }
 
 void DataExplorerPanel::RenderScatterChart() {
@@ -1324,12 +1544,28 @@ void DataExplorerPanel::RenderScatterChart() {
     x_data.resize(n);
     y_data.resize(n);
 
-    if (ImPlot::BeginPlot("Scatter Plot", ImVec2(-1, -1))) {
-        ImPlot::SetupAxes(current_result_.column_names[viz_x_column_].c_str(),
-                          current_result_.column_names[viz_y_column_].c_str());
-        ImPlot::PlotScatter("Data", x_data.data(), y_data.data(), (int)n);
+    std::string x_name = current_result_.column_names[viz_x_column_];
+    std::string y_name = current_result_.column_names[viz_y_column_];
+    std::string title = y_name + " vs " + x_name;
+
+    // Compute correlation
+    double corr = cyxwiz::stats::PearsonCorrelation(x_data, y_data);
+
+    ImGui::PushID("ScatterPlot");
+    if (ImPlot::BeginPlot(title.c_str(), ImVec2(-1, -1), ImPlotFlags_None)) {
+        ImPlot::SetupAxes(x_name.c_str(), y_name.c_str(), ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
+
+        // Plot scatter with nice styling
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, ImVec4(0.2f, 0.6f, 1.0f, 0.8f), IMPLOT_AUTO, ImVec4(0.2f, 0.6f, 1.0f, 1.0f));
+        ImPlot::PlotScatter("Data Points", x_data.data(), y_data.data(), (int)n);
+
         ImPlot::EndPlot();
     }
+    ImGui::PopID();
+
+    // Stats footer with correlation
+    ImGui::TextDisabled("Points: %zu | Correlation (r): %.4f", n, corr);
 }
 
 void DataExplorerPanel::RenderBarChart() {
@@ -1341,13 +1577,28 @@ void DataExplorerPanel::RenderBarChart() {
     }
 
     // Limit bars for display
-    int n = std::min((int)data.size(), 50);
+    int n = std::min((int)data.size(), 100);
+    std::string col_name = current_result_.column_names[viz_x_column_];
+    std::string title = col_name + " Values";
 
-    if (ImPlot::BeginPlot("Bar Chart", ImVec2(-1, -1))) {
-        ImPlot::SetupAxes("Index", current_result_.column_names[viz_x_column_].c_str());
-        ImPlot::PlotBars("##bars", data.data(), n, 0.67);
+    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.8f);
+
+    ImGui::PushID("BarPlot");
+    if (ImPlot::BeginPlot(title.c_str(), ImVec2(-1, -1), ImPlotFlags_None)) {
+        ImPlot::SetupAxes("Row Index", col_name.c_str(), ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+
+        ImPlot::SetNextFillStyle(ImVec4(0.4f, 0.7f, 0.4f, 0.8f));
+        ImPlot::PlotBars(col_name.c_str(), data.data(), n, 0.67);
+
         ImPlot::EndPlot();
     }
+    ImGui::PopID();
+
+    ImPlot::PopStyleVar();
+
+    // Stats footer
+    double sum = std::accumulate(data.begin(), data.begin() + n, 0.0);
+    ImGui::TextDisabled("Showing: %d bars | Sum: %.4g | Avg: %.4g", n, sum, sum / n);
 }
 
 void DataExplorerPanel::RenderBoxChart() {
@@ -1358,7 +1609,7 @@ void DataExplorerPanel::RenderBoxChart() {
         return;
     }
 
-    // Compute box plot statistics manually
+    // Compute box plot statistics
     std::sort(data.begin(), data.end());
     size_t n = data.size();
 
@@ -1370,37 +1621,74 @@ void DataExplorerPanel::RenderBoxChart() {
     double iqr = q3 - q1;
     double lower_fence = q1 - 1.5 * iqr;
     double upper_fence = q3 + 1.5 * iqr;
+    double lower_whisker = std::max(min_val, lower_fence);
+    double upper_whisker = std::min(max_val, upper_fence);
 
-    if (ImPlot::BeginPlot("Box Plot", ImVec2(-1, -1))) {
-        ImPlot::SetupAxes("", current_result_.column_names[viz_x_column_].c_str());
+    std::string col_name = current_result_.column_names[viz_x_column_];
+    std::string title = "Box Plot of " + col_name;
+
+    // Count outliers
+    int outlier_count = 0;
+    std::vector<double> outlier_vals;
+    for (double v : data) {
+        if (v < lower_fence || v > upper_fence) {
+            outlier_count++;
+            if (outlier_vals.size() < 100) outlier_vals.push_back(v);
+        }
+    }
+
+    ImGui::PushID("BoxPlot");
+    if (ImPlot::BeginPlot(title.c_str(), ImVec2(-1, -1), ImPlotFlags_None)) {
+        ImPlot::SetupAxes("", col_name.c_str(), ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_AutoFit);
         ImPlot::SetupAxisLimits(ImAxis_X1, -1, 1);
+        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
 
-        // Draw box
-        double xs[] = {0, 0};
-        double box_lo[] = {q1, q1};
-        double box_hi[] = {q3, q3};
-
-        // IQR box
-        ImPlot::PushStyleColor(ImPlotCol_Fill, ImVec4(0.4f, 0.6f, 1.0f, 0.5f));
+        // IQR box (filled rectangle)
+        ImPlot::PushStyleColor(ImPlotCol_Fill, ImVec4(0.3f, 0.5f, 0.9f, 0.6f));
+        ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
         double box_x[] = {-0.3, 0.3, 0.3, -0.3, -0.3};
         double box_y[] = {q1, q1, q3, q3, q1};
-        ImPlot::PlotLine("Box", box_x, box_y, 5);
-        ImPlot::PopStyleColor();
+        ImPlot::PlotLine("IQR Box", box_x, box_y, 5);
+        ImPlot::PopStyleColor(2);
 
-        // Median line
+        // Median line (thicker, different color)
+        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), 3.0f);
         double med_x[] = {-0.3, 0.3};
         double med_y[] = {median, median};
         ImPlot::PlotLine("Median", med_x, med_y, 2);
 
         // Whiskers
+        ImPlot::SetNextLineStyle(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), 2.0f);
         double whisker_x[] = {0, 0};
-        double whisker_lo[] = {std::max(min_val, lower_fence), q1};
-        double whisker_hi[] = {q3, std::min(max_val, upper_fence)};
-        ImPlot::PlotLine("Lower", whisker_x, whisker_lo, 2);
-        ImPlot::PlotLine("Upper", whisker_x, whisker_hi, 2);
+        double whisker_lo[] = {lower_whisker, q1};
+        ImPlot::PlotLine("##LowerWhisker", whisker_x, whisker_lo, 2);
+
+        ImPlot::SetNextLineStyle(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), 2.0f);
+        double whisker_hi[] = {q3, upper_whisker};
+        ImPlot::PlotLine("##UpperWhisker", whisker_x, whisker_hi, 2);
+
+        // Whisker caps
+        ImPlot::SetNextLineStyle(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), 2.0f);
+        double cap_x[] = {-0.15, 0.15};
+        double cap_lo[] = {lower_whisker, lower_whisker};
+        double cap_hi[] = {upper_whisker, upper_whisker};
+        ImPlot::PlotLine("##LowerCap", cap_x, cap_lo, 2);
+        ImPlot::PlotLine("##UpperCap", cap_x, cap_hi, 2);
+
+        // Outliers as scatter points
+        if (!outlier_vals.empty()) {
+            std::vector<double> outlier_x(outlier_vals.size(), 0.0);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, ImVec4(1.0f, 0.3f, 0.3f, 0.8f));
+            ImPlot::PlotScatter("Outliers", outlier_x.data(), outlier_vals.data(), (int)outlier_vals.size());
+        }
 
         ImPlot::EndPlot();
     }
+    ImGui::PopID();
+
+    // Stats footer
+    ImGui::TextDisabled("Q1: %.4g | Median: %.4g | Q3: %.4g | IQR: %.4g | Outliers: %d",
+                       q1, median, q3, iqr, outlier_count);
 }
 
 // ===== Phase 4: Integration Hub Tab =====
@@ -1781,6 +2069,56 @@ void DataExplorerPanel::RenderMissingValueSection() {
         std::string sql = GenerateCleaningSQL();
         std::strcpy(query_buffer_, sql.c_str());
     }
+
+    // Preview display
+    if (cleaning_preview_.is_valid) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f),
+                           ICON_FA_EYE " Preview: %d rows with missing values",
+                           cleaning_preview_.affected_count);
+
+        // Show preview table (first 10 rows)
+        if (!cleaning_preview_.rows.empty() && !current_result_.column_names.empty()) {
+            int num_cols = std::min((int)current_result_.column_names.size(),
+                                    cleaning_preview_.rows.empty() ? 0 : (int)cleaning_preview_.rows[0].size());
+
+            if (num_cols > 0 && ImGui::BeginTable("PreviewTable", num_cols,
+                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit,
+                              ImVec2(0, 150))) {
+
+                // Headers
+                for (int i = 0; i < num_cols; i++) {
+                    ImGui::TableSetupColumn(current_result_.column_names[i].c_str());
+                }
+                ImGui::TableHeadersRow();
+
+                // Data rows (highlight the selected column)
+                for (const auto& row : cleaning_preview_.rows) {
+                    ImGui::TableNextRow();
+                    for (int i = 0; i < num_cols && i < (int)row.size(); i++) {
+                        ImGui::TableNextColumn();
+                        if (i == clean_selected_column_) {
+                            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
+                                               row[i].empty() ? "(empty)" : row[i].c_str());
+                        } else {
+                            ImGui::Text("%s", row[i].c_str());
+                        }
+                    }
+                }
+
+                ImGui::EndTable();
+            }
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button(ICON_FA_CHECK " Apply Fix")) {
+            ApplyMissingValueFix();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(Executes generated SQL and updates results)");
+    }
 }
 
 void DataExplorerPanel::RenderOutlierSection() {
@@ -1844,13 +2182,93 @@ void DataExplorerPanel::RenderTypeConversionSection() {
 }
 
 void DataExplorerPanel::PreviewMissingValueFix() {
-    // TODO: Show preview of rows that would be affected
-    spdlog::info("DataExplorerPanel: Preview missing value fix (TODO)");
+    if (!data_loader_ || current_schema_.file_path.empty()) {
+        spdlog::warn("DataExplorerPanel: No file loaded for preview");
+        return;
+    }
+
+    if (clean_selected_column_ < 0 ||
+        clean_selected_column_ >= (int)current_result_.column_names.size()) {
+        return;
+    }
+
+    // Reset preview
+    cleaning_preview_ = CleaningPreview{};
+
+    std::string col_name = current_result_.column_names[clean_selected_column_];
+    std::string file_path = current_schema_.file_path;
+    std::replace(file_path.begin(), file_path.end(), '\\', '/');
+
+    try {
+        // Count total affected rows
+        std::ostringstream count_sql;
+        count_sql << "SELECT COUNT(*) FROM '" << file_path << "' WHERE "
+                  << col_name << " IS NULL";
+
+        Tensor count_tensor = data_loader_->Query(count_sql.str());
+        if (count_tensor.NumElements() > 0) {
+            const float* count_data = count_tensor.Data<float>();
+            cleaning_preview_.affected_count = static_cast<int>(count_data[0]);
+        }
+
+        // Get sample of affected rows (first 10)
+        std::ostringstream preview_sql;
+        preview_sql << "SELECT * FROM '" << file_path << "' WHERE "
+                    << col_name << " IS NULL LIMIT 10";
+
+        Tensor preview_tensor = data_loader_->Query(preview_sql.str());
+        auto shape = preview_tensor.Shape();
+        size_t rows = shape.size() > 0 ? shape[0] : 0;
+        size_t cols = shape.size() > 1 ? shape[1] : (rows > 0 ? 1 : 0);
+
+        // Convert tensor to string rows for display
+        cleaning_preview_.rows.clear();
+        if (rows > 0 && cols > 0) {
+            const float* data_ptr = preview_tensor.Data<float>();
+            for (size_t r = 0; r < rows; r++) {
+                std::vector<std::string> row;
+                row.reserve(cols);
+                for (size_t c = 0; c < cols; c++) {
+                    size_t idx = r * cols + c;
+                    float val = data_ptr[idx];
+                    // Check for NaN which represents NULL
+                    if (std::isnan(val)) {
+                        row.push_back("");  // Show empty for NULL
+                    } else {
+                        std::ostringstream ss;
+                        ss << std::setprecision(6) << val;
+                        row.push_back(ss.str());
+                    }
+                }
+                cleaning_preview_.rows.push_back(std::move(row));
+            }
+        }
+
+        cleaning_preview_.is_valid = true;
+        spdlog::info("DataExplorerPanel: Preview shows {} affected rows (displaying {})",
+                     cleaning_preview_.affected_count, cleaning_preview_.rows.size());
+    } catch (const std::exception& e) {
+        spdlog::error("DataExplorerPanel: Preview query failed: {}", e.what());
+        cleaning_preview_.is_valid = false;
+    }
 }
 
 void DataExplorerPanel::ApplyMissingValueFix() {
-    // TODO: Apply the fix by executing generated SQL
-    spdlog::info("DataExplorerPanel: Apply missing value fix (TODO)");
+    std::string sql = GenerateCleaningSQL();
+    if (sql.empty() || sql.find("--") == 0) {
+        spdlog::warn("DataExplorerPanel: No valid SQL to apply");
+        return;
+    }
+
+    // Execute the cleaning SQL - this updates the current result
+    ExecuteQuery(sql);
+
+    // Re-analyze data quality after applying fix
+    if (current_result_.success) {
+        AnalyzeDataQuality();
+        cleaning_preview_.is_valid = false;  // Clear preview after apply
+        spdlog::info("DataExplorerPanel: Applied missing value fix, re-analyzed quality");
+    }
 }
 
 std::string DataExplorerPanel::GenerateCleaningSQL() const {
@@ -1858,28 +2276,40 @@ std::string DataExplorerPanel::GenerateCleaningSQL() const {
         return "";
     }
 
+    if (current_schema_.file_path.empty()) {
+        return "-- No file loaded. Load a file first.";
+    }
+
     std::string col_name = current_result_.column_names[clean_selected_column_];
+
+    // Normalize file path for SQL (use forward slashes)
+    std::string file_path = current_schema_.file_path;
+    std::replace(file_path.begin(), file_path.end(), '\\', '/');
+
     std::ostringstream sql;
 
     switch (missing_fill_method_) {
         case 0: // Mean
-            sql << "SELECT COALESCE(" << col_name << ", AVG(" << col_name << ") OVER()) AS " << col_name;
+            sql << "SELECT *, COALESCE(" << col_name << ", AVG(" << col_name << ") OVER()) AS "
+                << col_name << "_filled\nFROM '" << file_path << "'";
             break;
         case 1: // Median
-            sql << "SELECT COALESCE(" << col_name << ", MEDIAN(" << col_name << ") OVER()) AS " << col_name;
+            sql << "SELECT *, COALESCE(" << col_name << ", PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY "
+                << col_name << ") OVER()) AS " << col_name << "_filled\nFROM '" << file_path << "'";
             break;
         case 2: // Mode
-            sql << "SELECT COALESCE(" << col_name << ", MODE(" << col_name << ") OVER()) AS " << col_name;
+            sql << "SELECT *, COALESCE(" << col_name << ", MODE(" << col_name << ") OVER()) AS "
+                << col_name << "_filled\nFROM '" << file_path << "'";
             break;
-        case 3: // Drop
-            sql << "SELECT * FROM table_name WHERE " << col_name << " IS NOT NULL";
+        case 3: // Drop rows with missing values
+            sql << "SELECT * FROM '" << file_path << "' WHERE " << col_name << " IS NOT NULL";
             break;
-        case 4: // Custom
-            sql << "SELECT COALESCE(" << col_name << ", " << missing_custom_value_ << ") AS " << col_name;
+        case 4: // Custom value
+            sql << "SELECT *, COALESCE(" << col_name << ", "
+                << std::fixed << std::setprecision(6) << missing_custom_value_ << ") AS "
+                << col_name << "_filled\nFROM '" << file_path << "'";
             break;
     }
-
-    sql << "\n-- Replace 'table_name' with your actual table/file path";
 
     return sql.str();
 }

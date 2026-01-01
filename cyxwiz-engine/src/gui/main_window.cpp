@@ -26,6 +26,7 @@
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "panels/data_explorer_panel.h"
+#include "panels/visualization_panel.h"
 #include "panels/connection_dialog.h"
 #include "panels/job_status_panel.h"
 #include "panels/p2p_training_panel.h"
@@ -161,6 +162,7 @@ MainWindow::MainWindow()
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     data_explorer_panel_ = std::make_unique<cyxwiz::DataExplorerPanel>();
+    visualization_panel_ = std::make_unique<cyxwiz::VisualizationPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
@@ -215,6 +217,7 @@ MainWindow::MainWindow()
             missing_value_panel_.get(),
             data_profiler_panel_.get()
         );
+        data_explorer_panel_->SetVisualizationPanel(visualization_panel_.get());
     }
 
     // Advanced Tools panels (Phase 5)
@@ -1906,6 +1909,7 @@ void MainWindow::Render() {
     if (script_editor_) script_editor_->Render();
     if (table_viewer_) table_viewer_->Render();
     if (data_explorer_panel_) data_explorer_panel_->Render();
+    if (visualization_panel_) visualization_panel_->Render();
     if (connection_dialog_) connection_dialog_->Render();
     if (job_status_panel_) job_status_panel_->Render();
     if (p2p_training_panel_) p2p_training_panel_->Render();
@@ -2263,6 +2267,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (data_explorer_panel_) {
         dock_style.RegisterPanel("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_->GetVisiblePtr());
+    }
+    if (visualization_panel_) {
+        dock_style.RegisterPanel("Visualizer", ICON_FA_CHART_SIMPLE, visualization_panel_->GetVisiblePtr());
     }
     if (job_status_panel_) {
         dock_style.RegisterPanel("Jobs", ICON_FA_LIST_CHECK, job_status_panel_->GetVisiblePtr());

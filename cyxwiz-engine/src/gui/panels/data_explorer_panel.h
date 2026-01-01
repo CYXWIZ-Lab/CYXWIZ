@@ -24,6 +24,7 @@ class RegressionPanel;
 class OutlierDetectionPanel;
 class MissingValuePanel;
 class DataProfilerPanel;
+class VisualizationPanel;
 
 /**
  * DataExplorerPanel - All-in-one data analysis workspace for data science students
@@ -76,6 +77,9 @@ public:
         OutlierDetectionPanel* outlier,
         MissingValuePanel* missing,
         DataProfilerPanel* profiler);
+
+    // Set visualization panel reference
+    void SetVisualizationPanel(VisualizationPanel* viz) { visualization_panel_ = viz; }
 
 private:
     // ===== Main Render Methods =====
@@ -263,6 +267,10 @@ private:
     void ApplyMissingValueFix();
     std::string GenerateCleaningSQL() const;
 
+    // ===== Stats Export =====
+    void ExportStatsToCSV();
+    void ExportStatsToJSON();
+
     // ===== Integration Hub (Phase 4) =====
     void RenderHubButton(const char* icon, const char* label, const char* description,
                          std::function<void()> on_click);
@@ -285,6 +293,7 @@ private:
     OutlierDetectionPanel* outlier_panel_ = nullptr;
     MissingValuePanel* missing_panel_ = nullptr;
     DataProfilerPanel* profiler_panel_ = nullptr;
+    VisualizationPanel* visualization_panel_ = nullptr;
 
     // Helper to convert QueryResult to DataTable for panel integration
     std::shared_ptr<DataTable> ConvertResultToDataTable() const;

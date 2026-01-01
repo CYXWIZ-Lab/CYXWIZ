@@ -96,6 +96,7 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor.cpp
     src/gui/panels/table_viewer.cpp
     src/gui/panels/data_explorer_panel.cpp
+    src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/dataset_panel.cpp
     src/gui/panels/task_progress_panel.cpp
