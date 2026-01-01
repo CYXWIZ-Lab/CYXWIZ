@@ -32,10 +32,21 @@ ScriptingEngine::~ScriptingEngine() {
         spdlog::info("~ScriptingEngine: stopping running script");
         StopScript();
     }
-    // Wait for thread to finish
+    // Wait for script thread to finish
     if (script_thread_ && script_thread_->joinable()) {
         spdlog::info("~ScriptingEngine: joining script thread");
         script_thread_->join();
+    }
+
+    // Stop any running command before destruction
+    if (command_running_) {
+        spdlog::info("~ScriptingEngine: stopping running command");
+        StopCommand();
+    }
+    // Wait for command thread to finish
+    if (command_thread_ && command_thread_->joinable()) {
+        spdlog::info("~ScriptingEngine: joining command thread");
+        command_thread_->join();
     }
 
     // Explicitly destroy members before implicit destruction
@@ -110,58 +121,8 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         return ExecuteCommandDirect(command);
     }
 
-    // Execute with timeout using a worker thread
-    command_finished_ = false;
-
-    // Start worker thread
-    std::thread worker(&ScriptingEngine::ExecuteCommandWorker, this, command);
-
-    // Wait for completion with timeout
-    {
-        std::unique_lock<std::mutex> lock(command_mutex_);
-        bool completed = command_cv_.wait_for(
-            lock,
-            std::chrono::milliseconds(static_cast<int>(console_timeout_seconds_ * 1000)),
-            [this] { return command_finished_.load(); }
-        );
-
-        if (!completed) {
-            // Timeout occurred - interrupt Python safely
-            spdlog::warn("Console command timed out after {} seconds, interrupting...", console_timeout_seconds_);
-
-            // PyErr_SetInterrupt() is the safe way to interrupt Python
-            // It sets a flag that Python checks and raises KeyboardInterrupt
-            PyErr_SetInterrupt();
-
-            // Wait a bit for Python to handle the interrupt
-            bool interrupted = command_cv_.wait_for(
-                lock,
-                std::chrono::milliseconds(2000),  // Give 2 more seconds for graceful interrupt
-                [this] { return command_finished_.load(); }
-            );
-
-            if (!interrupted) {
-                spdlog::error("Python did not respond to interrupt, command may still be running");
-            }
-        }
-    }
-
-    // Wait for thread to finish
-    if (worker.joinable()) {
-        worker.join();
-    }
-
-    // Get result
-    result = command_result_;
-
-    // Mark timeout if it occurred
-    if (!command_finished_) {
-        result.success = false;
-        result.timeout_exceeded = true;
-        result.error_message = "Command timed out after " + std::to_string(static_cast<int>(console_timeout_seconds_)) + " seconds";
-    }
-
-    return result;
+    // Use Python's own threading for timeout (safer than C++ threading with pybind11)
+    return ExecuteCommandWithPythonTimeout(command);
 }
 
 ExecutionResult ScriptingEngine::ExecuteCommandDirect(const std::string& command) {
@@ -237,6 +198,115 @@ ExecutionResult ScriptingEngine::ExecuteCommandDirect(const std::string& command
         if (!stderr_str.empty()) {
             result.error_message = stderr_str;
             result.success = false; // Mark as failure if there's stderr output
+        }
+
+        // Call output callback if set
+        if (output_callback_ && !result.output.empty()) {
+            output_callback_(result.output);
+        }
+
+    } catch (const py::error_already_set& e) {
+        result.success = false;
+        result.error_message = e.what();
+        spdlog::error("Python execution error: {}", e.what());
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = e.what();
+        spdlog::error("Execution error: {}", e.what());
+    }
+
+    return result;
+}
+
+ExecutionResult ScriptingEngine::ExecuteCommandWithPythonTimeout(const std::string& command) {
+    ExecutionResult result;
+    result.success = false;
+
+    try {
+        py::gil_scoped_acquire acquire;
+
+        // Escape the command for embedding in Python triple-quoted string
+        std::string escaped_command = command;
+        // Replace backslashes first
+        size_t pos = 0;
+        while ((pos = escaped_command.find('\\', pos)) != std::string::npos) {
+            escaped_command.replace(pos, 1, "\\\\");
+            pos += 2;
+        }
+        // Escape triple quotes if they exist
+        pos = 0;
+        while ((pos = escaped_command.find("'''", pos)) != std::string::npos) {
+            escaped_command.replace(pos, 3, "\\'\\'\\'");
+            pos += 6;
+        }
+
+        int timeout_ms = static_cast<int>(console_timeout_seconds_ * 1000);
+
+        // Python code that runs the command with timeout using threading + trace
+        std::string timeout_code = R"(
+import sys
+import threading
+import io
+import ctypes
+
+_cmd_result = {'output': '', 'error': '', 'success': False, 'timeout': False}
+_cmd_cancel = [False]
+
+def _cmd_trace(frame, event, arg):
+    if _cmd_cancel[0]:
+        raise KeyboardInterrupt("Command timeout")
+    return _cmd_trace
+
+def _run_command():
+    global _cmd_result
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    sys.settrace(_cmd_trace)
+    try:
+        exec(''')" + escaped_command + R"(''')
+        _cmd_result['success'] = True
+    except KeyboardInterrupt:
+        _cmd_result['error'] = 'Command interrupted (timeout)'
+        _cmd_result['timeout'] = True
+    except Exception as e:
+        _cmd_result['error'] = str(e)
+    finally:
+        sys.settrace(None)
+        _cmd_result['output'] = sys.stdout.getvalue()
+        if sys.stderr.getvalue():
+            _cmd_result['error'] = sys.stderr.getvalue()
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
+_cmd_thread = threading.Thread(target=_run_command)
+_cmd_thread.start()
+_cmd_thread.join(timeout=)" + std::to_string(timeout_ms / 1000.0) + R"()
+
+if _cmd_thread.is_alive():
+    _cmd_cancel[0] = True
+    _cmd_thread.join(timeout=2.0)
+    if _cmd_thread.is_alive():
+        _cmd_result['error'] = 'Command timed out and could not be stopped'
+        _cmd_result['timeout'] = True
+    else:
+        _cmd_result['error'] = 'Command interrupted (timeout)'
+        _cmd_result['timeout'] = True
+)";
+
+        py::exec(timeout_code);
+
+        // Get the result from Python
+        py::dict cmd_result = py::eval("_cmd_result").cast<py::dict>();
+
+        result.success = cmd_result["success"].cast<bool>();
+        result.output = cmd_result["output"].cast<std::string>();
+        result.error_message = cmd_result["error"].cast<std::string>();
+        result.timeout_exceeded = cmd_result["timeout"].cast<bool>();
+
+        if (result.timeout_exceeded) {
+            spdlog::warn("Command timed out after {} seconds", console_timeout_seconds_);
         }
 
         // Call output callback if set
@@ -382,6 +452,7 @@ void ScriptingEngine::ExecuteCommandWorker(const std::string& command) {
             result.success = false;
             result.timeout_exceeded = true;
             result.error_message = "Command interrupted (timeout)";
+            spdlog::info("Command interrupted via KeyboardInterrupt");
         } else {
             result.success = false;
             result.error_message = e.what();
@@ -400,6 +471,193 @@ void ScriptingEngine::ExecuteCommandWorker(const std::string& command) {
         command_finished_ = true;
     }
     command_cv_.notify_one();
+}
+
+// ========== Async Command Execution ==========
+
+void ScriptingEngine::ExecuteCommandAsync(const std::string& command) {
+    // Don't start if already running
+    if (command_running_) {
+        spdlog::warn("ExecuteCommandAsync: command already running");
+        return;
+    }
+
+    // Wait for previous thread to finish
+    if (command_thread_ && command_thread_->joinable()) {
+        command_thread_->join();
+    }
+
+    // Reset state
+    command_stop_requested_ = false;
+    command_running_ = true;
+    {
+        std::lock_guard<std::mutex> lock(command_result_mutex_);
+        async_command_result_.reset();
+    }
+
+    spdlog::info("Starting async command execution");
+
+    // Start worker thread
+    command_thread_ = std::make_unique<std::thread>(&ScriptingEngine::CommandAsyncWorker, this, command);
+}
+
+void ScriptingEngine::StopCommand() {
+    if (!command_running_) {
+        return;
+    }
+
+    spdlog::info("Requesting command stop");
+    command_stop_requested_ = true;
+
+    // Set the shared cancel flag that Python trace function checks
+    shared_cancel_flag_.store(1);
+
+    // Also send interrupt signal
+    {
+        py::gil_scoped_acquire acquire;
+        PyErr_SetInterrupt();
+    }
+}
+
+std::optional<ExecutionResult> ScriptingEngine::GetCommandResult() {
+    std::lock_guard<std::mutex> lock(command_result_mutex_);
+    auto result = async_command_result_;
+    if (result) {
+        async_command_result_.reset();  // Clear after reading
+    }
+    return result;
+}
+
+void ScriptingEngine::CommandAsyncWorker(const std::string& command) {
+    spdlog::info("CommandAsyncWorker: starting for command length {}", command.length());
+
+    // Initialize MATLAB aliases if needed (must be done with GIL)
+    if (!matlab_aliases_initialized_) {
+        InitializeMatlabAliases();
+    }
+
+    // Reset cancel flag
+    shared_cancel_flag_.store(0);
+
+    ExecutionResult result;
+    result.success = false;
+
+    try {
+        py::gil_scoped_acquire acquire;
+
+        // Escape the command for embedding in Python triple-quoted string
+        std::string escaped_command = command;
+        size_t pos = 0;
+        while ((pos = escaped_command.find('\\', pos)) != std::string::npos) {
+            escaped_command.replace(pos, 1, "\\\\");
+            pos += 2;
+        }
+        pos = 0;
+        while ((pos = escaped_command.find("'''", pos)) != std::string::npos) {
+            escaped_command.replace(pos, 3, "\\'\\'\\'");
+            pos += 6;
+        }
+
+        double timeout_secs = console_timeout_seconds_;
+
+        // Python code that runs the command with timeout using threading + trace
+        std::string timeout_code = R"(
+import sys
+import threading
+import io
+
+_cmd_result = {'output': '', 'error': '', 'success': False, 'timeout': False}
+_cmd_cancel = [False]
+
+def _cmd_trace(frame, event, arg):
+    if _cmd_cancel[0]:
+        raise KeyboardInterrupt("Command timeout")
+    return _cmd_trace
+
+def _run_command():
+    global _cmd_result
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    sys.settrace(_cmd_trace)
+    try:
+        exec(''')" + escaped_command + R"(''')
+        _cmd_result['success'] = True
+    except KeyboardInterrupt:
+        _cmd_result['error'] = 'Command interrupted (timeout)'
+        _cmd_result['timeout'] = True
+    except Exception as e:
+        _cmd_result['error'] = str(e)
+    finally:
+        sys.settrace(None)
+        _cmd_result['output'] = sys.stdout.getvalue()
+        if sys.stderr.getvalue():
+            _cmd_result['error'] = sys.stderr.getvalue()
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
+_cmd_thread = threading.Thread(target=_run_command)
+_cmd_thread.start()
+_cmd_thread.join(timeout=)" + std::to_string(timeout_secs) + R"()
+
+if _cmd_thread.is_alive():
+    _cmd_cancel[0] = True
+    _cmd_thread.join(timeout=2.0)
+    if _cmd_thread.is_alive():
+        _cmd_result['error'] = 'Command timed out and could not be stopped'
+        _cmd_result['timeout'] = True
+    else:
+        _cmd_result['error'] = 'Command interrupted (timeout)'
+        _cmd_result['timeout'] = True
+)";
+
+        py::exec(timeout_code);
+
+        // Get the result from Python
+        py::dict cmd_result = py::eval("_cmd_result").cast<py::dict>();
+
+        result.success = cmd_result["success"].cast<bool>();
+        result.output = cmd_result["output"].cast<std::string>();
+        result.error_message = cmd_result["error"].cast<std::string>();
+        result.timeout_exceeded = cmd_result["timeout"].cast<bool>();
+
+        if (result.timeout_exceeded) {
+            spdlog::warn("Async command timed out after {} seconds", timeout_secs);
+        }
+
+        // Call output callback if set
+        if (output_callback_ && !result.output.empty()) {
+            output_callback_(result.output);
+        }
+
+    } catch (const py::error_already_set& e) {
+        result.success = false;
+        result.error_message = e.what();
+        spdlog::error("Async command Python error: {}", e.what());
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = e.what();
+        spdlog::error("Async command error: {}", e.what());
+    }
+
+    // Check if cancelled
+    if (command_stop_requested_) {
+        result.was_cancelled = true;
+        result.error_message = "Command cancelled by user";
+        spdlog::info("Async command was cancelled");
+    }
+
+    // Store result
+    {
+        std::lock_guard<std::mutex> lock(command_result_mutex_);
+        async_command_result_ = result;
+    }
+
+    command_running_ = false;
+    shared_cancel_flag_.store(0);  // Reset cancel flag
+
+    spdlog::info("CommandAsyncWorker: completed, success={}", result.success);
 }
 
 ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {

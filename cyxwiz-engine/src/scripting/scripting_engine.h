@@ -60,8 +60,21 @@ public:
     ~ScriptingEngine();
 
     // ========== Synchronous Execution (blocks caller) ==========
-    // Execute single command (REPL-style)
+    // Execute single command (REPL-style) - WARNING: blocks for timeout duration
     ExecutionResult ExecuteCommand(const std::string& command);
+
+    // ========== Async Command Execution (for console commands) ==========
+    // Start command execution in background (non-blocking)
+    void ExecuteCommandAsync(const std::string& command);
+
+    // Check if a console command is currently running
+    bool IsCommandRunning() const { return command_running_.load(); }
+
+    // Stop currently running console command
+    void StopCommand();
+
+    // Get result of async command (if finished)
+    std::optional<ExecutionResult> GetCommandResult();
 
     // Execute multi-line script
     ExecutionResult ExecuteScript(const std::string& script);
@@ -180,7 +193,16 @@ private:
     std::atomic<bool> command_finished_{false};
     ExecutionResult command_result_;
     ExecutionResult ExecuteCommandDirect(const std::string& command);
+    ExecutionResult ExecuteCommandWithPythonTimeout(const std::string& command);
     void ExecuteCommandWorker(const std::string& command);
+
+    // Async command execution (for non-blocking console)
+    std::unique_ptr<std::thread> command_thread_;
+    std::atomic<bool> command_running_{false};
+    std::atomic<bool> command_stop_requested_{false};
+    std::mutex command_result_mutex_;
+    std::optional<ExecutionResult> async_command_result_;
+    void CommandAsyncWorker(const std::string& command);
 
 public:
     // Static method for Python to check cancellation (no GIL needed)

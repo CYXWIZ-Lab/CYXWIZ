@@ -1,5 +1,7 @@
 #include "data_explorer_panel.h"
+#include "../../core/project_manager.h"
 #include <imgui.h>
+#include <implot.h>
 #include <spdlog/spdlog.h>
 #include <nfd.h>
 #include <chrono>
@@ -7,6 +9,7 @@
 #include <sstream>
 #include <algorithm>
 #include <fstream>
+#include <cmath>
 
 namespace cyxwiz {
 
@@ -403,6 +406,39 @@ void DataExplorerPanel::RenderHistoryPopup() {
 }
 
 void DataExplorerPanel::RenderResultsPane() {
+    // Tab bar for different result views
+    if (ImGui::BeginTabBar("ResultTabs", ImGuiTabBarFlags_None)) {
+        if (ImGui::BeginTabItem(ICON_FA_TABLE " Results")) {
+            current_tab_ = DataExplorerTab::Results;
+            RenderResultsTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(ICON_FA_CHART_SIMPLE " Quick Stats")) {
+            current_tab_ = DataExplorerTab::QuickStats;
+            RenderQuickStatsTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " Visualize")) {
+            current_tab_ = DataExplorerTab::Visualize;
+            RenderVisualizeTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(ICON_FA_ERASER " Clean")) {
+            current_tab_ = DataExplorerTab::Clean;
+            RenderCleanTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(ICON_FA_NETWORK_WIRED " Hub")) {
+            current_tab_ = DataExplorerTab::Hub;
+            RenderHubTab();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+// ===== Phase 1: Results Tab (Original Behavior) =====
+void DataExplorerPanel::RenderResultsTab() {
     RenderResultsToolbar();
     ImGui::Separator();
 
@@ -564,7 +600,13 @@ void DataExplorerPanel::RenderStatusBar() {
 
     if (!current_schema_.file_path.empty()) {
         ImGui::SameLine();
-        ImGui::TextDisabled("| %s", current_schema_.file_path.c_str());
+        // Use smart path formatting - shows relative path if in project
+        std::string display_path = SmartFormatPath(current_schema_.file_path);
+        if (IsInProjectFolder(current_schema_.file_path)) {
+            ImGui::TextDisabled("| %s (project)", display_path.c_str());
+        } else {
+            ImGui::TextDisabled("| %s", display_path.c_str());
+        }
     }
 }
 
@@ -898,6 +940,817 @@ std::string DataExplorerPanel::GetCurrentTimestamp() const {
     std::ostringstream ss;
     ss << std::put_time(&tm_buf, "%H:%M:%S");
     return ss.str();
+}
+
+// ===== Phase 1: Smart Path Methods =====
+
+std::string DataExplorerPanel::SmartFormatPath(const std::string& absolute_path) const {
+    auto& pm = ProjectManager::Instance();
+    if (pm.HasActiveProject() && IsInProjectFolder(absolute_path)) {
+        return pm.MakeRelativePath(absolute_path);
+    }
+    return absolute_path;
+}
+
+bool DataExplorerPanel::IsInProjectFolder(const std::string& path) const {
+    auto& pm = ProjectManager::Instance();
+    if (!pm.HasActiveProject()) return false;
+
+    std::string project_root = pm.GetProjectRoot();
+    // Normalize paths for comparison
+    std::filesystem::path fs_path(path);
+    std::filesystem::path fs_root(project_root);
+
+    try {
+        std::string norm_path = std::filesystem::weakly_canonical(fs_path).string();
+        std::string norm_root = std::filesystem::weakly_canonical(fs_root).string();
+
+        // Check if path starts with project root
+        return norm_path.find(norm_root) == 0;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::string DataExplorerPanel::GetProjectDatasetsPath() const {
+    auto& pm = ProjectManager::Instance();
+    if (pm.HasActiveProject()) {
+        return pm.GetDatasetsPath();
+    }
+    return "";
+}
+
+// ===== Phase 2: Quick Stats Tab =====
+
+void DataExplorerPanel::RenderQuickStatsTab() {
+    if (!current_result_.success || current_result_.rows.empty()) {
+        ImGui::TextDisabled("Run a query first to see statistics");
+        return;
+    }
+
+    // Column selector
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Column:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::BeginCombo("##StatsColumn",
+        selected_stats_column_ >= 0 && selected_stats_column_ < (int)current_result_.column_names.size()
+            ? current_result_.column_names[selected_stats_column_].c_str()
+            : "Select...")) {
+        for (int i = 0; i < (int)current_result_.column_names.size(); i++) {
+            if (ImGui::Selectable(current_result_.column_names[i].c_str(), selected_stats_column_ == i)) {
+                if (selected_stats_column_ != i) {
+                    selected_stats_column_ = i;
+                    ComputeQuickStats(i);
+                }
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_CALCULATOR " Compute")) {
+        ComputeQuickStats(selected_stats_column_);
+    }
+
+    ImGui::Separator();
+
+    if (quick_stats_cache_.is_computing) {
+        ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), ICON_FA_SPINNER " Computing statistics...");
+        return;
+    }
+
+    if (!quick_stats_cache_.is_valid) {
+        ImGui::TextDisabled("Select a column and click Compute to see statistics");
+        return;
+    }
+
+    // Three-column layout: Stats | Histogram | Correlations
+    float avail_width = ImGui::GetContentRegionAvail().x;
+    float col_width = avail_width / 3.0f - 10.0f;
+
+    // Statistics Table
+    ImGui::BeginChild("StatsTable", ImVec2(col_width, 0), true);
+    RenderStatsTable();
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    // Mini Histogram
+    ImGui::BeginChild("MiniHistogram", ImVec2(col_width, 0), true);
+    RenderMiniHistogram();
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    // Top Correlations
+    ImGui::BeginChild("TopCorrelations", ImVec2(col_width, 0), true);
+    RenderTopCorrelations();
+    ImGui::EndChild();
+}
+
+void DataExplorerPanel::ComputeQuickStats(int column_index) {
+    if (column_index < 0 || column_index >= (int)current_result_.column_names.size()) return;
+    if (!data_loader_) return;
+
+    quick_stats_cache_.is_computing = true;
+    quick_stats_cache_.is_valid = false;
+    quick_stats_cache_.column_index = column_index;
+
+    // Get column data as doubles
+    std::vector<double> col_data = GetColumnAsDoubles(column_index);
+
+    if (col_data.empty()) {
+        quick_stats_cache_.is_computing = false;
+        return;
+    }
+
+    // Compute statistics synchronously for now (usually fast)
+    try {
+        quick_stats_cache_.stats = DataAnalyzer::ComputeDescriptiveStats(col_data);
+        quick_stats_cache_.column_data = std::move(col_data);
+
+        // Compute correlations with other numeric columns
+        quick_stats_cache_.top_correlations.clear();
+        for (int i = 0; i < (int)current_result_.column_names.size(); i++) {
+            if (i == column_index) continue;
+
+            std::vector<double> other_col = GetColumnAsDoubles(i);
+            if (other_col.empty() || other_col.size() != quick_stats_cache_.column_data.size()) continue;
+
+            // Compute Pearson correlation inline
+            const auto& x = quick_stats_cache_.column_data;
+            const auto& y = other_col;
+            size_t n = x.size();
+
+            double sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0, sum_y2 = 0;
+            for (size_t j = 0; j < n; j++) {
+                sum_x += x[j];
+                sum_y += y[j];
+                sum_xy += x[j] * y[j];
+                sum_x2 += x[j] * x[j];
+                sum_y2 += y[j] * y[j];
+            }
+
+            double num = n * sum_xy - sum_x * sum_y;
+            double den = std::sqrt((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y));
+            double corr = (den != 0) ? num / den : std::nan("");
+
+            if (!std::isnan(corr)) {
+                quick_stats_cache_.top_correlations.push_back({current_result_.column_names[i], corr});
+            }
+        }
+
+        // Sort by absolute correlation value
+        std::sort(quick_stats_cache_.top_correlations.begin(),
+                  quick_stats_cache_.top_correlations.end(),
+                  [](const auto& a, const auto& b) {
+                      return std::abs(a.second) > std::abs(b.second);
+                  });
+
+        // Keep top 5
+        if (quick_stats_cache_.top_correlations.size() > 5) {
+            quick_stats_cache_.top_correlations.resize(5);
+        }
+
+        quick_stats_cache_.is_valid = true;
+    } catch (const std::exception& e) {
+        spdlog::error("DataExplorerPanel: Failed to compute stats: {}", e.what());
+    }
+
+    quick_stats_cache_.is_computing = false;
+}
+
+void DataExplorerPanel::RenderStatsTable() {
+    ImGui::Text(ICON_FA_CHART_COLUMN " Statistics");
+    ImGui::Separator();
+
+    const auto& stats = quick_stats_cache_.stats;
+
+    if (ImGui::BeginTable("StatsValues", 2, ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Stat", ImGuiTableColumnFlags_WidthFixed, 80);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+        auto AddRow = [](const char* label, double value, const char* fmt = "%.4f") {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", label);
+            ImGui::TableNextColumn();
+            ImGui::Text(fmt, value);
+        };
+
+        AddRow("Count", static_cast<double>(stats.count), "%.0f");
+        AddRow("Mean", stats.mean);
+        AddRow("Median", stats.median);
+        AddRow("Std Dev", stats.std_dev);
+        AddRow("Min", stats.min);
+        AddRow("Max", stats.max);
+        AddRow("Q1 (25%)", stats.q1);
+        AddRow("Q3 (75%)", stats.q3);
+        AddRow("Skewness", stats.skewness);
+        AddRow("Kurtosis", stats.kurtosis);
+
+        // Missing values
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("Missing");
+        ImGui::TableNextColumn();
+        size_t missing = current_result_.rows.size() - stats.count;
+        if (missing > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "%zu (%.1f%%)",
+                missing, 100.0 * missing / current_result_.rows.size());
+        } else {
+            ImGui::Text("0");
+        }
+
+        ImGui::EndTable();
+    }
+}
+
+void DataExplorerPanel::RenderMiniHistogram() {
+    ImGui::Text(ICON_FA_CHART_BAR " Distribution");
+    ImGui::Separator();
+
+    if (quick_stats_cache_.column_data.empty()) {
+        ImGui::TextDisabled("No data");
+        return;
+    }
+
+    // Create histogram using ImPlot
+    if (ImPlot::BeginPlot("##Histogram", ImVec2(-1, -1), ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect)) {
+        ImPlot::SetupAxes("Value", "Count", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+
+        // Use ImPlot's histogram
+        ImPlot::PlotHistogram("##hist", quick_stats_cache_.column_data.data(),
+                              (int)quick_stats_cache_.column_data.size(), 20);
+
+        // Draw mean line
+        double mean = quick_stats_cache_.stats.mean;
+        ImPlot::DragLineX(0, &mean, ImVec4(1, 0.5f, 0, 1), 1, ImPlotDragToolFlags_NoInputs);
+
+        ImPlot::EndPlot();
+    }
+}
+
+void DataExplorerPanel::RenderTopCorrelations() {
+    ImGui::Text(ICON_FA_LINK " Top Correlations");
+    ImGui::Separator();
+
+    if (quick_stats_cache_.top_correlations.empty()) {
+        ImGui::TextDisabled("No correlations computed");
+        return;
+    }
+
+    for (const auto& [name, corr] : quick_stats_cache_.top_correlations) {
+        // Color based on correlation strength
+        ImVec4 color;
+        if (corr > 0.7) color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f);      // Strong positive - green
+        else if (corr > 0.3) color = ImVec4(0.7f, 1.0f, 0.7f, 1.0f); // Moderate positive - light green
+        else if (corr < -0.7) color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); // Strong negative - red
+        else if (corr < -0.3) color = ImVec4(1.0f, 0.7f, 0.7f, 1.0f); // Moderate negative - light red
+        else color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);                  // Weak - gray
+
+        ImGui::TextColored(color, "%.3f", corr);
+        ImGui::SameLine();
+        ImGui::Text("%s", name.c_str());
+    }
+}
+
+std::vector<double> DataExplorerPanel::GetColumnAsDoubles(int col_index) const {
+    std::vector<double> result;
+    if (col_index < 0 || col_index >= (int)current_result_.column_names.size()) return result;
+
+    result.reserve(current_result_.rows.size());
+
+    for (const auto& row : current_result_.rows) {
+        if (col_index >= (int)row.size()) continue;
+
+        try {
+            double val = std::stod(row[col_index]);
+            if (!std::isnan(val) && !std::isinf(val)) {
+                result.push_back(val);
+            }
+        } catch (...) {
+            // Skip non-numeric values
+        }
+    }
+
+    return result;
+}
+
+// ===== Phase 3: Visualize Tab =====
+
+void DataExplorerPanel::RenderVisualizeTab() {
+    if (!current_result_.success || current_result_.rows.empty()) {
+        ImGui::TextDisabled("Run a query first to create visualizations");
+        return;
+    }
+
+    // Chart type selector and column selectors
+    RenderChartSelector();
+
+    ImGui::Separator();
+
+    // Render the selected chart
+    switch (chart_type_) {
+        case ChartType::Histogram: RenderHistogramChart(); break;
+        case ChartType::Scatter: RenderScatterChart(); break;
+        case ChartType::Bar: RenderBarChart(); break;
+        case ChartType::Box: RenderBoxChart(); break;
+    }
+}
+
+void DataExplorerPanel::RenderChartSelector() {
+    // Chart type radio buttons
+    ImGui::Text("Chart Type:");
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Histogram", chart_type_ == ChartType::Histogram)) chart_type_ = ChartType::Histogram;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Scatter", chart_type_ == ChartType::Scatter)) chart_type_ = ChartType::Scatter;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Bar", chart_type_ == ChartType::Bar)) chart_type_ = ChartType::Bar;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Box", chart_type_ == ChartType::Box)) chart_type_ = ChartType::Box;
+
+    ImGui::Spacing();
+
+    // Column selectors based on chart type
+    auto ColumnCombo = [&](const char* label, int& selected) {
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::BeginCombo(label,
+            selected >= 0 && selected < (int)current_result_.column_names.size()
+                ? current_result_.column_names[selected].c_str()
+                : "Select...")) {
+            for (int i = 0; i < (int)current_result_.column_names.size(); i++) {
+                if (ImGui::Selectable(current_result_.column_names[i].c_str(), selected == i)) {
+                    selected = i;
+                }
+            }
+            ImGui::EndCombo();
+        }
+    };
+
+    ImGui::Text("X:");
+    ImGui::SameLine();
+    ColumnCombo("##XCol", viz_x_column_);
+
+    if (chart_type_ == ChartType::Scatter) {
+        ImGui::SameLine();
+        ImGui::Text("Y:");
+        ImGui::SameLine();
+        ColumnCombo("##YCol", viz_y_column_);
+    }
+}
+
+void DataExplorerPanel::RenderHistogramChart() {
+    std::vector<double> data = GetColumnAsDoubles(viz_x_column_);
+
+    if (data.empty()) {
+        ImGui::TextDisabled("Selected column has no numeric data");
+        return;
+    }
+
+    if (ImPlot::BeginPlot("Histogram", ImVec2(-1, -1))) {
+        ImPlot::SetupAxes(current_result_.column_names[viz_x_column_].c_str(), "Count");
+        ImPlot::PlotHistogram("##hist", data.data(), (int)data.size(), 30);
+        ImPlot::EndPlot();
+    }
+}
+
+void DataExplorerPanel::RenderScatterChart() {
+    std::vector<double> x_data = GetColumnAsDoubles(viz_x_column_);
+    std::vector<double> y_data = GetColumnAsDoubles(viz_y_column_);
+
+    if (x_data.empty() || y_data.empty()) {
+        ImGui::TextDisabled("Selected columns have no numeric data");
+        return;
+    }
+
+    // Match sizes
+    size_t n = std::min(x_data.size(), y_data.size());
+    x_data.resize(n);
+    y_data.resize(n);
+
+    if (ImPlot::BeginPlot("Scatter Plot", ImVec2(-1, -1))) {
+        ImPlot::SetupAxes(current_result_.column_names[viz_x_column_].c_str(),
+                          current_result_.column_names[viz_y_column_].c_str());
+        ImPlot::PlotScatter("Data", x_data.data(), y_data.data(), (int)n);
+        ImPlot::EndPlot();
+    }
+}
+
+void DataExplorerPanel::RenderBarChart() {
+    std::vector<double> data = GetColumnAsDoubles(viz_x_column_);
+
+    if (data.empty()) {
+        ImGui::TextDisabled("Selected column has no numeric data");
+        return;
+    }
+
+    // Limit bars for display
+    int n = std::min((int)data.size(), 50);
+
+    if (ImPlot::BeginPlot("Bar Chart", ImVec2(-1, -1))) {
+        ImPlot::SetupAxes("Index", current_result_.column_names[viz_x_column_].c_str());
+        ImPlot::PlotBars("##bars", data.data(), n, 0.67);
+        ImPlot::EndPlot();
+    }
+}
+
+void DataExplorerPanel::RenderBoxChart() {
+    std::vector<double> data = GetColumnAsDoubles(viz_x_column_);
+
+    if (data.empty()) {
+        ImGui::TextDisabled("Selected column has no numeric data");
+        return;
+    }
+
+    // Compute box plot statistics manually
+    std::sort(data.begin(), data.end());
+    size_t n = data.size();
+
+    double min_val = data.front();
+    double max_val = data.back();
+    double q1 = data[n / 4];
+    double median = data[n / 2];
+    double q3 = data[3 * n / 4];
+    double iqr = q3 - q1;
+    double lower_fence = q1 - 1.5 * iqr;
+    double upper_fence = q3 + 1.5 * iqr;
+
+    if (ImPlot::BeginPlot("Box Plot", ImVec2(-1, -1))) {
+        ImPlot::SetupAxes("", current_result_.column_names[viz_x_column_].c_str());
+        ImPlot::SetupAxisLimits(ImAxis_X1, -1, 1);
+
+        // Draw box
+        double xs[] = {0, 0};
+        double box_lo[] = {q1, q1};
+        double box_hi[] = {q3, q3};
+
+        // IQR box
+        ImPlot::PushStyleColor(ImPlotCol_Fill, ImVec4(0.4f, 0.6f, 1.0f, 0.5f));
+        double box_x[] = {-0.3, 0.3, 0.3, -0.3, -0.3};
+        double box_y[] = {q1, q1, q3, q3, q1};
+        ImPlot::PlotLine("Box", box_x, box_y, 5);
+        ImPlot::PopStyleColor();
+
+        // Median line
+        double med_x[] = {-0.3, 0.3};
+        double med_y[] = {median, median};
+        ImPlot::PlotLine("Median", med_x, med_y, 2);
+
+        // Whiskers
+        double whisker_x[] = {0, 0};
+        double whisker_lo[] = {std::max(min_val, lower_fence), q1};
+        double whisker_hi[] = {q3, std::min(max_val, upper_fence)};
+        ImPlot::PlotLine("Lower", whisker_x, whisker_lo, 2);
+        ImPlot::PlotLine("Upper", whisker_x, whisker_hi, 2);
+
+        ImPlot::EndPlot();
+    }
+}
+
+// ===== Phase 4: Integration Hub Tab =====
+
+void DataExplorerPanel::RenderHubTab() {
+    ImGui::Text(ICON_FA_NETWORK_WIRED " Send Query Results to Analysis Panels");
+    ImGui::Separator();
+
+    if (!current_result_.success || current_result_.rows.empty()) {
+        ImGui::TextDisabled("Run a query first to send data to other panels");
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("Current dataset: %s rows x %zu columns",
+                FormatNumber(current_result_.total_rows).c_str(),
+                current_result_.column_names.size());
+    ImGui::Spacing();
+
+    // Grid of destination panels
+    float button_width = 180.0f;
+    float button_height = 80.0f;
+
+    ImGui::BeginGroup();
+
+    RenderHubButton(ICON_FA_CHART_COLUMN, "Descriptive Stats",
+                    "Detailed statistics for all columns",
+                    [this]() { SendToDescriptiveStats(); });
+
+    ImGui::SameLine();
+
+    RenderHubButton(ICON_FA_TABLE_CELLS, "Correlation Matrix",
+                    "Correlations between all numeric columns",
+                    [this]() { SendToCorrelationMatrix(); });
+
+    ImGui::SameLine();
+
+    RenderHubButton(ICON_FA_CHART_LINE, "Regression",
+                    "Linear/polynomial regression analysis",
+                    [this]() { SendToRegression(); });
+
+    ImGui::Spacing();
+
+    RenderHubButton(ICON_FA_MAGNIFYING_GLASS_CHART, "Outlier Detection",
+                    "Find outliers using IQR/Z-Score",
+                    [this]() { SendToOutlierDetection(); });
+
+    ImGui::SameLine();
+
+    RenderHubButton(ICON_FA_QUESTION, "Missing Values",
+                    "Analyze and impute missing data",
+                    [this]() { SendToMissingValuePanel(); });
+
+    ImGui::SameLine();
+
+    RenderHubButton(ICON_FA_TABLE, "Data Profiler",
+                    "Full data quality report",
+                    [this]() { SendToDataProfiler(); });
+
+    ImGui::EndGroup();
+}
+
+void DataExplorerPanel::RenderHubButton(const char* icon, const char* label,
+                                         const char* description,
+                                         std::function<void()> on_click) {
+    ImVec2 button_size(180.0f, 80.0f);
+
+    ImGui::BeginGroup();
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 10));
+
+    if (ImGui::Button((std::string(icon) + "\n" + label).c_str(), button_size)) {
+        if (on_click) on_click();
+    }
+
+    ImGui::PopStyleVar();
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", description);
+    }
+
+    ImGui::EndGroup();
+}
+
+void DataExplorerPanel::SendToDescriptiveStats() {
+    spdlog::info("DataExplorerPanel: Sending to Descriptive Stats panel (TODO: implement)");
+    // TODO: Use DataTableRegistry to share data with Stats panel
+}
+
+void DataExplorerPanel::SendToCorrelationMatrix() {
+    spdlog::info("DataExplorerPanel: Sending to Correlation Matrix panel (TODO: implement)");
+}
+
+void DataExplorerPanel::SendToRegression() {
+    spdlog::info("DataExplorerPanel: Sending to Regression panel (TODO: implement)");
+}
+
+void DataExplorerPanel::SendToOutlierDetection() {
+    spdlog::info("DataExplorerPanel: Sending to Outlier Detection panel (TODO: implement)");
+}
+
+void DataExplorerPanel::SendToMissingValuePanel() {
+    spdlog::info("DataExplorerPanel: Sending to Missing Value panel (TODO: implement)");
+}
+
+void DataExplorerPanel::SendToDataProfiler() {
+    spdlog::info("DataExplorerPanel: Sending to Data Profiler panel (TODO: implement)");
+}
+
+// ===== Phase 5: Data Cleaning Tab =====
+
+void DataExplorerPanel::RenderCleanTab() {
+    if (!current_result_.success || current_result_.rows.empty()) {
+        ImGui::TextDisabled("Run a query first to access cleaning tools");
+        return;
+    }
+
+    // Data quality summary bar
+    ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), ICON_FA_STETHOSCOPE " DATA QUALITY:");
+    ImGui::SameLine();
+    ImGui::Text("%d missing | %d potential outliers", missing_count_, outlier_count_);
+
+    if (ImGui::Button(ICON_FA_ROTATE " Analyze Quality")) {
+        AnalyzeDataQuality();
+    }
+
+    ImGui::Separator();
+
+    // Tabs for different cleaning operations
+    if (ImGui::BeginTabBar("CleaningTabs")) {
+        if (ImGui::BeginTabItem("Missing Values")) {
+            RenderMissingValueSection();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Outliers")) {
+            RenderOutlierSection();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Type Conversion")) {
+            RenderTypeConversionSection();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+void DataExplorerPanel::AnalyzeDataQuality() {
+    missing_count_ = 0;
+    outlier_count_ = 0;
+    columns_with_missing_.clear();
+
+    // Count missing values per column
+    for (int col = 0; col < (int)current_result_.column_names.size(); col++) {
+        int col_missing = 0;
+        for (const auto& row : current_result_.rows) {
+            if (col < (int)row.size()) {
+                const std::string& val = row[col];
+                if (val.empty() || val == "NULL" || val == "null" || val == "NaN" || val == "nan") {
+                    col_missing++;
+                }
+            }
+        }
+        if (col_missing > 0) {
+            columns_with_missing_.push_back(col);
+            missing_count_ += col_missing;
+        }
+    }
+
+    // Count potential outliers (using IQR method)
+    for (int col = 0; col < (int)current_result_.column_names.size(); col++) {
+        std::vector<double> data = GetColumnAsDoubles(col);
+        if (data.size() < 4) continue;
+
+        std::sort(data.begin(), data.end());
+        double q1 = data[data.size() / 4];
+        double q3 = data[3 * data.size() / 4];
+        double iqr = q3 - q1;
+        double lower = q1 - 1.5 * iqr;
+        double upper = q3 + 1.5 * iqr;
+
+        for (double v : data) {
+            if (v < lower || v > upper) outlier_count_++;
+        }
+    }
+
+    spdlog::info("DataExplorerPanel: Quality analysis - {} missing, {} outliers",
+                 missing_count_, outlier_count_);
+}
+
+void DataExplorerPanel::RenderMissingValueSection() {
+    ImGui::Text(ICON_FA_QUESTION " Missing Value Handling");
+    ImGui::Separator();
+
+    // Column selector
+    ImGui::Text("Column:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::BeginCombo("##MissingCol",
+        clean_selected_column_ >= 0 && clean_selected_column_ < (int)current_result_.column_names.size()
+            ? current_result_.column_names[clean_selected_column_].c_str()
+            : "Select...")) {
+        for (int i = 0; i < (int)current_result_.column_names.size(); i++) {
+            bool has_missing = std::find(columns_with_missing_.begin(),
+                                         columns_with_missing_.end(), i) != columns_with_missing_.end();
+            std::string label = current_result_.column_names[i];
+            if (has_missing) label += " (*)";
+
+            if (ImGui::Selectable(label.c_str(), clean_selected_column_ == i)) {
+                clean_selected_column_ = i;
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    ImGui::Spacing();
+
+    // Fill method
+    ImGui::Text("Fill with:");
+    ImGui::RadioButton("Mean", &missing_fill_method_, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("Median", &missing_fill_method_, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton("Mode", &missing_fill_method_, 2);
+    ImGui::SameLine();
+    ImGui::RadioButton("Drop rows", &missing_fill_method_, 3);
+    ImGui::SameLine();
+    ImGui::RadioButton("Custom", &missing_fill_method_, 4);
+
+    if (missing_fill_method_ == 4) {
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputDouble("##CustomValue", &missing_custom_value_, 0.0, 0.0, "%.4f");
+    }
+
+    ImGui::Spacing();
+
+    if (ImGui::Button(ICON_FA_EYE " Preview")) {
+        PreviewMissingValueFix();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Generate SQL")) {
+        std::string sql = GenerateCleaningSQL();
+        std::strcpy(query_buffer_, sql.c_str());
+    }
+}
+
+void DataExplorerPanel::RenderOutlierSection() {
+    ImGui::Text(ICON_FA_MAGNIFYING_GLASS_CHART " Outlier Detection");
+    ImGui::Separator();
+
+    // Method selector
+    ImGui::Text("Method:");
+    ImGui::RadioButton("IQR (1.5x)", &outlier_method_, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("Z-Score", &outlier_method_, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton("Modified Z", &outlier_method_, 2);
+
+    ImGui::SetNextItemWidth(100);
+    ImGui::SliderFloat("Threshold", &outlier_threshold_, 1.0f, 3.0f, "%.1f");
+
+    ImGui::Spacing();
+
+    // Action selector
+    ImGui::Text("Action:");
+    ImGui::RadioButton("Remove", &outlier_action_, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("Cap (Winsorize)", &outlier_action_, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton("Replace with Mean", &outlier_action_, 2);
+
+    ImGui::Spacing();
+
+    if (ImGui::Button(ICON_FA_EYE " Preview")) {
+        // TODO: Preview outlier handling
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Generate SQL")) {
+        // TODO: Generate SQL for outlier handling
+    }
+}
+
+void DataExplorerPanel::RenderTypeConversionSection() {
+    ImGui::Text(ICON_FA_REPEAT " Type Conversion");
+    ImGui::Separator();
+
+    ImGui::TextDisabled("Convert column types in your query using DuckDB CAST:");
+    ImGui::Spacing();
+
+    ImGui::BulletText("CAST(column AS INTEGER)");
+    ImGui::BulletText("CAST(column AS DOUBLE)");
+    ImGui::BulletText("CAST(column AS VARCHAR)");
+    ImGui::BulletText("CAST(column AS DATE)");
+    ImGui::BulletText("strptime(column, '%%Y-%%m-%%d') -- Parse date string");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    // Quick conversion buttons
+    if (ImGui::Button("Insert CAST template")) {
+        std::string current = query_buffer_;
+        current += "\n-- CAST(column_name AS NEW_TYPE)";
+        std::strncpy(query_buffer_, current.c_str(), QUERY_BUFFER_SIZE - 1);
+    }
+}
+
+void DataExplorerPanel::PreviewMissingValueFix() {
+    // TODO: Show preview of rows that would be affected
+    spdlog::info("DataExplorerPanel: Preview missing value fix (TODO)");
+}
+
+void DataExplorerPanel::ApplyMissingValueFix() {
+    // TODO: Apply the fix by executing generated SQL
+    spdlog::info("DataExplorerPanel: Apply missing value fix (TODO)");
+}
+
+std::string DataExplorerPanel::GenerateCleaningSQL() const {
+    if (clean_selected_column_ < 0 || clean_selected_column_ >= (int)current_result_.column_names.size()) {
+        return "";
+    }
+
+    std::string col_name = current_result_.column_names[clean_selected_column_];
+    std::ostringstream sql;
+
+    switch (missing_fill_method_) {
+        case 0: // Mean
+            sql << "SELECT COALESCE(" << col_name << ", AVG(" << col_name << ") OVER()) AS " << col_name;
+            break;
+        case 1: // Median
+            sql << "SELECT COALESCE(" << col_name << ", MEDIAN(" << col_name << ") OVER()) AS " << col_name;
+            break;
+        case 2: // Mode
+            sql << "SELECT COALESCE(" << col_name << ", MODE(" << col_name << ") OVER()) AS " << col_name;
+            break;
+        case 3: // Drop
+            sql << "SELECT * FROM table_name WHERE " << col_name << " IS NOT NULL";
+            break;
+        case 4: // Custom
+            sql << "SELECT COALESCE(" << col_name << ", " << missing_custom_value_ << ") AS " << col_name;
+            break;
+    }
+
+    sql << "\n-- Replace 'table_name' with your actual table/file path";
+
+    return sql.str();
 }
 
 } // namespace cyxwiz

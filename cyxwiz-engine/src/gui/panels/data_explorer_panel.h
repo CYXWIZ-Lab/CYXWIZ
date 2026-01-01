@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "../icons.h"
+#include "../../core/data_analyzer.h"
 #include <imgui.h>
 #include <cyxwiz/data_loader.h>
 #include <string>
@@ -11,18 +12,40 @@
 #include <mutex>
 #include <deque>
 #include <filesystem>
+#include <thread>
 
 namespace cyxwiz {
 
 /**
- * DataExplorerPanel - All-in-one data analysis workspace
+ * DataExplorerPanel - All-in-one data analysis workspace for data science students
  *
  * Features:
- * - File browser with recent files
+ * - File browser with recent files and project-aware paths
  * - Schema viewer with column types
  * - SQL query editor with DuckDB backend
  * - Results table with pagination and export
+ * - Quick Stats tab with descriptive statistics and histograms
+ * - Visualize tab with scatter, histogram, bar, box charts
+ * - Clean tab for missing values, outliers, type conversion
+ * - Hub tab to send data to other analysis panels
  */
+
+// Result area tabs
+enum class DataExplorerTab {
+    Results,
+    QuickStats,
+    Visualize,
+    Clean,
+    Hub
+};
+
+// Chart types for visualization
+enum class ChartType {
+    Histogram,
+    Scatter,
+    Bar,
+    Box
+};
 class DataExplorerPanel : public Panel {
 public:
     DataExplorerPanel();
@@ -152,6 +175,90 @@ private:
     // ===== Utility =====
     std::string FormatFileSize(std::uintmax_t bytes) const;
     std::string FormatNumber(size_t num) const;
+
+    // ===== Smart Path (Phase 1) =====
+    std::string SmartFormatPath(const std::string& absolute_path) const;
+    bool IsInProjectFolder(const std::string& path) const;
+    std::string GetProjectDatasetsPath() const;
+
+    // ===== Tab System (Phase 1) =====
+    DataExplorerTab current_tab_ = DataExplorerTab::Results;
+    void RenderResultsTab();
+    void RenderQuickStatsTab();
+    void RenderVisualizeTab();
+    void RenderCleanTab();
+    void RenderHubTab();
+
+    // ===== Quick Stats (Phase 2) =====
+    struct QuickStatsCache {
+        int column_index = -1;
+        DescriptiveStats stats;
+        std::vector<double> column_data;
+        std::vector<std::pair<std::string, double>> top_correlations;
+        bool is_valid = false;
+        bool is_computing = false;
+    };
+
+    QuickStatsCache quick_stats_cache_;
+    int selected_stats_column_ = 0;
+    std::unique_ptr<std::thread> stats_thread_;
+    std::mutex stats_mutex_;
+
+    void ComputeQuickStats(int column_index);
+    void RenderStatsTable();
+    void RenderMiniHistogram();
+    void RenderTopCorrelations();
+    std::vector<double> GetColumnAsDoubles(int col_index) const;
+
+    // ===== Visualize (Phase 3) =====
+    ChartType chart_type_ = ChartType::Histogram;
+    int viz_x_column_ = 0;
+    int viz_y_column_ = 1;
+    int viz_color_column_ = -1;
+
+    void RenderChartSelector();
+    void RenderHistogramChart();
+    void RenderScatterChart();
+    void RenderBarChart();
+    void RenderBoxChart();
+
+    // ===== Data Cleaning (Phase 5) =====
+    struct CleaningPreview {
+        std::vector<std::vector<std::string>> rows;
+        int affected_count = 0;
+        bool is_valid = false;
+    };
+
+    int clean_selected_column_ = 0;
+    int missing_fill_method_ = 0;  // 0=mean, 1=median, 2=mode, 3=drop, 4=custom
+    double missing_custom_value_ = 0.0;
+    int outlier_method_ = 0;  // 0=IQR, 1=ZScore, 2=ModifiedZ
+    float outlier_threshold_ = 1.5f;
+    int outlier_action_ = 0;  // 0=remove, 1=cap, 2=replace
+    CleaningPreview cleaning_preview_;
+
+    void AnalyzeDataQuality();
+    void RenderMissingValueSection();
+    void RenderOutlierSection();
+    void RenderTypeConversionSection();
+    void PreviewMissingValueFix();
+    void ApplyMissingValueFix();
+    std::string GenerateCleaningSQL() const;
+
+    // ===== Integration Hub (Phase 4) =====
+    void RenderHubButton(const char* icon, const char* label, const char* description,
+                         std::function<void()> on_click);
+    void SendToDescriptiveStats();
+    void SendToCorrelationMatrix();
+    void SendToRegression();
+    void SendToOutlierDetection();
+    void SendToMissingValuePanel();
+    void SendToDataProfiler();
+
+    // Data quality summary (computed on query)
+    int missing_count_ = 0;
+    int outlier_count_ = 0;
+    std::vector<int> columns_with_missing_;
 };
 
 } // namespace cyxwiz

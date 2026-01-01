@@ -2242,7 +2242,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
 
     // Additional panels (less commonly used)
     if (dataset_panel_) {
-        dock_style.RegisterPanel("Dataset", ICON_FA_DATABASE, dataset_panel_->GetVisiblePtr());
+        dock_style.RegisterPanel("Dataset", ICON_FA_DATABASE, dataset_panel_->GetVisiblePtr(), [this]() {
+            spdlog::info("Dataset panel toggled, visible={}", dataset_panel_->IsVisible());
+        });
     }
     if (table_viewer_) {
         dock_style.RegisterPanel("Table Viewer", ICON_FA_TABLE, table_viewer_->GetVisiblePtr());

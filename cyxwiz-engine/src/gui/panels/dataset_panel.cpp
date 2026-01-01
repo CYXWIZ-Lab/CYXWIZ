@@ -62,6 +62,10 @@ void DatasetPanel::StopLocalTraining() {
 void DatasetPanel::Render() {
     if (!visible_) return;
 
+    // Center window on screen when first opened
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 center = viewport->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(700, 750), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(name_.c_str(), &visible_)) {
 

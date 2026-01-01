@@ -1,13 +1,14 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../scripting/scripting_engine.h"
 #include <string>
 #include <vector>
 #include <memory>
-
-namespace scripting {
-    class ScriptingEngine;
-}
+#include <atomic>
+#include <thread>
+#include <mutex>
+#include <optional>
 
 namespace cyxwiz {
 
@@ -18,7 +19,7 @@ namespace cyxwiz {
 class CommandWindowPanel : public Panel {
 public:
     CommandWindowPanel();
-    ~CommandWindowPanel() override = default;
+    ~CommandWindowPanel() override;
 
     void Render() override;
 
@@ -74,6 +75,18 @@ private:
     char input_buffer_[4096];  // Larger buffer for multi-line input
     bool scroll_to_bottom_;
     bool focus_input_;
+
+    // Async command execution
+    void StartAsyncCommand(const std::string& command);
+    void CheckAsyncCompletion();
+    void StopAsyncCommand();
+
+    std::unique_ptr<std::thread> command_thread_;
+    std::atomic<bool> command_executing_{false};
+    std::atomic<bool> command_cancel_requested_{false};
+    std::mutex result_mutex_;
+    std::optional<scripting::ExecutionResult> async_result_;
+    std::string executing_command_;  // Command being executed (for display)
 };
 
 } // namespace cyxwiz
