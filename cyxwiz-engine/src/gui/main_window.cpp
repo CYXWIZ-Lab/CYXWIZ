@@ -205,6 +205,18 @@ MainWindow::MainWindow()
     distribution_fitter_panel_ = std::make_unique<cyxwiz::DistributionFitterPanel>();
     regression_panel_ = std::make_unique<cyxwiz::RegressionPanel>();
 
+    // Wire Data Explorer Hub to analysis panels
+    if (data_explorer_panel_) {
+        data_explorer_panel_->SetPanelReferences(
+            descriptive_stats_panel_.get(),
+            correlation_matrix_panel_.get(),
+            regression_panel_.get(),
+            outlier_detection_panel_.get(),
+            missing_value_panel_.get(),
+            data_profiler_panel_.get()
+        );
+    }
+
     // Advanced Tools panels (Phase 5)
     dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
     gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();

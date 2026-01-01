@@ -1,5 +1,13 @@
 #include "data_explorer_panel.h"
 #include "../../core/project_manager.h"
+#include "../../data/data_table.h"
+#include "descriptive_stats_panel.h"
+#include "correlation_matrix_panel.h"
+#include "regression_panel.h"
+#include "outlier_detection_panel.h"
+#include "missing_value_panel.h"
+#include "data_profiler_panel.h"
+#include <cyxwiz/stats_utils.h>
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -1078,23 +1086,8 @@ void DataExplorerPanel::ComputeQuickStats(int column_index) {
             std::vector<double> other_col = GetColumnAsDoubles(i);
             if (other_col.empty() || other_col.size() != quick_stats_cache_.column_data.size()) continue;
 
-            // Compute Pearson correlation inline
-            const auto& x = quick_stats_cache_.column_data;
-            const auto& y = other_col;
-            size_t n = x.size();
-
-            double sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0, sum_y2 = 0;
-            for (size_t j = 0; j < n; j++) {
-                sum_x += x[j];
-                sum_y += y[j];
-                sum_xy += x[j] * y[j];
-                sum_x2 += x[j] * x[j];
-                sum_y2 += y[j] * y[j];
-            }
-
-            double num = n * sum_xy - sum_x * sum_y;
-            double den = std::sqrt((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y));
-            double corr = (den != 0) ? num / den : std::nan("");
+            // Use stats_utils for correlation
+            double corr = stats::PearsonCorrelation(quick_stats_cache_.column_data, other_col);
 
             if (!std::isnan(corr)) {
                 quick_stats_cache_.top_correlations.push_back({current_result_.column_names[i], corr});
@@ -1428,9 +1421,6 @@ void DataExplorerPanel::RenderHubTab() {
     ImGui::Spacing();
 
     // Grid of destination panels
-    float button_width = 180.0f;
-    float button_height = 80.0f;
-
     ImGui::BeginGroup();
 
     RenderHubButton(ICON_FA_CHART_COLUMN, "Descriptive Stats",
@@ -1491,29 +1481,170 @@ void DataExplorerPanel::RenderHubButton(const char* icon, const char* label,
     ImGui::EndGroup();
 }
 
+void DataExplorerPanel::SetPanelReferences(
+    DescriptiveStatsPanel* stats,
+    CorrelationMatrixPanel* corr,
+    RegressionPanel* reg,
+    OutlierDetectionPanel* outlier,
+    MissingValuePanel* missing,
+    DataProfilerPanel* profiler) {
+    stats_panel_ = stats;
+    correlation_panel_ = corr;
+    regression_panel_ = reg;
+    outlier_panel_ = outlier;
+    missing_panel_ = missing;
+    profiler_panel_ = profiler;
+    spdlog::info("DataExplorerPanel: Panel references set");
+}
+
+std::shared_ptr<DataTable> DataExplorerPanel::ConvertResultToDataTable() const {
+    if (!current_result_.success || current_result_.rows.empty()) {
+        spdlog::warn("DataExplorerPanel: No valid result to convert");
+        return nullptr;
+    }
+
+    auto table = std::make_shared<DataTable>();
+    table->SetHeaders(current_result_.column_names);
+
+    for (const auto& row : current_result_.rows) {
+        DataTable::Row data_row;
+        for (const auto& cell : row) {
+            // Try to parse as number, fallback to string
+            if (cell.empty() || cell == "NULL" || cell == "null") {
+                data_row.push_back(std::monostate{});
+            } else {
+                try {
+                    // Check if it's an integer
+                    size_t pos;
+                    long long int_val = std::stoll(cell, &pos);
+                    if (pos == cell.size()) {
+                        data_row.push_back(static_cast<int64_t>(int_val));
+                        continue;
+                    }
+                } catch (...) {}
+
+                try {
+                    // Try double
+                    size_t pos;
+                    double dbl_val = std::stod(cell, &pos);
+                    if (pos == cell.size()) {
+                        data_row.push_back(dbl_val);
+                        continue;
+                    }
+                } catch (...) {}
+
+                // Fallback to string
+                data_row.push_back(cell);
+            }
+        }
+        table->AddRow(data_row);
+    }
+
+    return table;
+}
+
 void DataExplorerPanel::SendToDescriptiveStats() {
-    spdlog::info("DataExplorerPanel: Sending to Descriptive Stats panel (TODO: implement)");
-    // TODO: Use DataTableRegistry to share data with Stats panel
+    if (!stats_panel_) {
+        spdlog::warn("DataExplorerPanel: Descriptive Stats panel not available");
+        return;
+    }
+
+    auto table = ConvertResultToDataTable();
+    if (!table) return;
+
+    // Add to registry for persistence
+    DataTableRegistry::Instance().AddTable("explorer_result", table);
+
+    // Show panel and analyze
+    stats_panel_->SetVisible(true);
+    stats_panel_->AnalyzeTable(table);
+
+    spdlog::info("DataExplorerPanel: Sent {} rows to Descriptive Stats panel", table->GetRowCount());
 }
 
 void DataExplorerPanel::SendToCorrelationMatrix() {
-    spdlog::info("DataExplorerPanel: Sending to Correlation Matrix panel (TODO: implement)");
+    if (!correlation_panel_) {
+        spdlog::warn("DataExplorerPanel: Correlation Matrix panel not available");
+        return;
+    }
+
+    auto table = ConvertResultToDataTable();
+    if (!table) return;
+
+    DataTableRegistry::Instance().AddTable("explorer_result", table);
+
+    correlation_panel_->SetVisible(true);
+    correlation_panel_->AnalyzeTable(table);
+
+    spdlog::info("DataExplorerPanel: Sent {} rows to Correlation Matrix panel", table->GetRowCount());
 }
 
 void DataExplorerPanel::SendToRegression() {
-    spdlog::info("DataExplorerPanel: Sending to Regression panel (TODO: implement)");
+    if (!regression_panel_) {
+        spdlog::warn("DataExplorerPanel: Regression panel not available");
+        return;
+    }
+
+    auto table = ConvertResultToDataTable();
+    if (!table) return;
+
+    DataTableRegistry::Instance().AddTable("explorer_result", table);
+
+    regression_panel_->SetVisible(true);
+    regression_panel_->AnalyzeTable(table);
+
+    spdlog::info("DataExplorerPanel: Sent {} rows to Regression panel", table->GetRowCount());
 }
 
 void DataExplorerPanel::SendToOutlierDetection() {
-    spdlog::info("DataExplorerPanel: Sending to Outlier Detection panel (TODO: implement)");
+    if (!outlier_panel_) {
+        spdlog::warn("DataExplorerPanel: Outlier Detection panel not available");
+        return;
+    }
+
+    auto table = ConvertResultToDataTable();
+    if (!table) return;
+
+    DataTableRegistry::Instance().AddTable("explorer_result", table);
+
+    outlier_panel_->SetVisible(true);
+    outlier_panel_->AnalyzeTable(table);
+
+    spdlog::info("DataExplorerPanel: Sent {} rows to Outlier Detection panel", table->GetRowCount());
 }
 
 void DataExplorerPanel::SendToMissingValuePanel() {
-    spdlog::info("DataExplorerPanel: Sending to Missing Value panel (TODO: implement)");
+    if (!missing_panel_) {
+        spdlog::warn("DataExplorerPanel: Missing Value panel not available");
+        return;
+    }
+
+    auto table = ConvertResultToDataTable();
+    if (!table) return;
+
+    DataTableRegistry::Instance().AddTable("explorer_result", table);
+
+    missing_panel_->SetVisible(true);
+    missing_panel_->AnalyzeTable(table);
+
+    spdlog::info("DataExplorerPanel: Sent {} rows to Missing Value panel", table->GetRowCount());
 }
 
 void DataExplorerPanel::SendToDataProfiler() {
-    spdlog::info("DataExplorerPanel: Sending to Data Profiler panel (TODO: implement)");
+    if (!profiler_panel_) {
+        spdlog::warn("DataExplorerPanel: Data Profiler panel not available");
+        return;
+    }
+
+    auto table = ConvertResultToDataTable();
+    if (!table) return;
+
+    DataTableRegistry::Instance().AddTable("explorer_result", table);
+
+    profiler_panel_->SetVisible(true);
+    profiler_panel_->AnalyzeTable(table);
+
+    spdlog::info("DataExplorerPanel: Sent {} rows to Data Profiler panel", table->GetRowCount());
 }
 
 // ===== Phase 5: Data Cleaning Tab =====

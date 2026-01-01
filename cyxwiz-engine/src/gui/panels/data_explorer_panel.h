@@ -16,6 +16,15 @@
 
 namespace cyxwiz {
 
+// Forward declarations for panel integration
+class DataTable;
+class DescriptiveStatsPanel;
+class CorrelationMatrixPanel;
+class RegressionPanel;
+class OutlierDetectionPanel;
+class MissingValuePanel;
+class DataProfilerPanel;
+
 /**
  * DataExplorerPanel - All-in-one data analysis workspace for data science students
  *
@@ -58,6 +67,15 @@ public:
     // External API
     void OpenFile(const std::string& path);
     void ExecuteQuery(const std::string& sql);
+
+    // Panel integration for Hub
+    void SetPanelReferences(
+        DescriptiveStatsPanel* stats,
+        CorrelationMatrixPanel* corr,
+        RegressionPanel* reg,
+        OutlierDetectionPanel* outlier,
+        MissingValuePanel* missing,
+        DataProfilerPanel* profiler);
 
 private:
     // ===== Main Render Methods =====
@@ -259,6 +277,17 @@ private:
     int missing_count_ = 0;
     int outlier_count_ = 0;
     std::vector<int> columns_with_missing_;
+
+    // ===== Panel References (owned by MainWindow) =====
+    DescriptiveStatsPanel* stats_panel_ = nullptr;
+    CorrelationMatrixPanel* correlation_panel_ = nullptr;
+    RegressionPanel* regression_panel_ = nullptr;
+    OutlierDetectionPanel* outlier_panel_ = nullptr;
+    MissingValuePanel* missing_panel_ = nullptr;
+    DataProfilerPanel* profiler_panel_ = nullptr;
+
+    // Helper to convert QueryResult to DataTable for panel integration
+    std::shared_ptr<DataTable> ConvertResultToDataTable() const;
 };
 
 } // namespace cyxwiz
