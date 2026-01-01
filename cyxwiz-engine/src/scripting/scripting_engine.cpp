@@ -1264,7 +1264,7 @@ void ScriptingEngine::InitializeMatlabAliases() {
         py::gil_scoped_acquire acquire;
 
         // MATLAB-style aliases setup code
-        std::string matlab_setup = R"(
+        std::string matlab_setup = R"PYTHON(
 # ============================================================================
 # MATLAB-Style Command Window Functions (Flat Namespace)
 # ============================================================================
@@ -1386,7 +1386,114 @@ except AttributeError as e:
 except Exception as e:
     # Any other error
     print(f"[CyxWiz] Error loading MATLAB functions: {e}")
-)";
+
+# ============================================================================
+# DuckDB - Fast Analytics Database
+# ============================================================================
+try:
+    import duckdb
+
+    # Create default in-memory database connection
+    db = duckdb.connect(':memory:')
+
+    # Convenience function to run SQL and return result
+    def sql(query):
+        """Execute SQL query and return result as relation.
+
+        Examples:
+            sql("SELECT 1 + 1 AS result")
+            sql("SELECT * FROM 'data.csv'")
+            sql("SELECT * FROM 'data.parquet'")
+        """
+        return db.sql(query)
+
+    # Quick data loading functions
+    def read_csv(path, **kwargs):
+        """Read CSV file into DuckDB relation."""
+        return db.read_csv(path, **kwargs)
+
+    def read_parquet(path, **kwargs):
+        """Read Parquet file into DuckDB relation."""
+        return db.read_parquet(path, **kwargs)
+
+    def read_json(path, **kwargs):
+        """Read JSON file into DuckDB relation."""
+        return db.read_json(path, **kwargs)
+
+    print("[CyxWiz] DuckDB loaded - use sql(), read_csv(), read_parquet(), read_json()")
+
+except ImportError:
+    print("[CyxWiz] DuckDB not installed - run: pip install duckdb")
+except Exception as e:
+    print(f"[CyxWiz] DuckDB error: {e}")
+
+# ============================================================================
+# Polars - Fast DataFrame Library
+# ============================================================================
+try:
+    import polars as pl
+
+    # Convenience aliases for common operations
+    DataFrame = pl.DataFrame
+    LazyFrame = pl.LazyFrame
+    Series = pl.Series
+
+    # Quick constructors
+    def df(data=None, schema=None, **kwargs):
+        """Create a Polars DataFrame.
+
+        Examples:
+            df({'a': [1, 2, 3], 'b': [4, 5, 6]})
+            df([{'a': 1, 'b': 2}, {'a': 3, 'b': 4}])
+        """
+        if data is None:
+            return pl.DataFrame()
+        return pl.DataFrame(data, schema=schema, **kwargs)
+
+    def lf(data=None, schema=None, **kwargs):
+        """Create a Polars LazyFrame for deferred execution."""
+        if data is None:
+            return pl.LazyFrame()
+        return pl.DataFrame(data, schema=schema, **kwargs).lazy()
+
+    # File reading shortcuts
+    def pl_csv(path, **kwargs):
+        """Read CSV file into Polars DataFrame."""
+        return pl.read_csv(path, **kwargs)
+
+    def pl_parquet(path, **kwargs):
+        """Read Parquet file into Polars DataFrame."""
+        return pl.read_parquet(path, **kwargs)
+
+    def pl_json(path, **kwargs):
+        """Read JSON file into Polars DataFrame."""
+        return pl.read_json(path, **kwargs)
+
+    def pl_excel(path, **kwargs):
+        """Read Excel file into Polars DataFrame."""
+        return pl.read_excel(path, **kwargs)
+
+    # Scan (lazy) versions
+    def scan_csv(path, **kwargs):
+        """Lazily read CSV file."""
+        return pl.scan_csv(path, **kwargs)
+
+    def scan_parquet(path, **kwargs):
+        """Lazily read Parquet file."""
+        return pl.scan_parquet(path, **kwargs)
+
+    # Column expression shortcut
+    col = pl.col
+    lit = pl.lit
+    when = pl.when
+
+    print("[CyxWiz] Polars loaded - use pl, df(), col(), scan_csv(), etc.")
+
+except ImportError:
+    print("[CyxWiz] Polars not installed - run: pip install polars")
+except Exception as e:
+    print(f"[CyxWiz] Polars error: {e}")
+)PYTHON";
 
         py::exec(matlab_setup);
         matlab_aliases_initialized_ = true;

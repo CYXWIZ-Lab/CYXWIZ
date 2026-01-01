@@ -562,3 +562,103 @@ print("Next 4 predictions:", forecast['forecast'])
 | `stationarity` | `cyx.timeseries.*` | Testing |
 | `arima` | `cyx.timeseries.*` | Forecasting |
 | `diff`, `rolling_mean`, `rolling_std` | `cyx.timeseries.*` | Transforms |
+
+---
+
+## DuckDB (SQL Analytics)
+
+DuckDB provides fast SQL analytics directly on files.
+
+| Function | Syntax | Description |
+|----------|--------|-------------|
+| `sql` | `sql(query)` | Execute SQL query |
+| `read_csv` | `read_csv(path)` | Load CSV file |
+| `read_parquet` | `read_parquet(path)` | Load Parquet file |
+| `read_json` | `read_json(path)` | Load JSON file |
+| `db` | `db` | DuckDB connection object |
+
+```python
+# Simple SQL
+sql("SELECT 1 + 1 AS result")
+
+# Query files directly (no import needed!)
+sql("SELECT * FROM 'data.csv' LIMIT 10")
+sql("SELECT category, SUM(amount) FROM 'sales.parquet' GROUP BY category")
+
+# Load files
+data = read_csv('data.csv')
+data.show()
+
+# Advanced: joins, CTEs, window functions
+sql("""
+    WITH top_sales AS (
+        SELECT product, SUM(amount) as total
+        FROM 'orders.csv'
+        GROUP BY product
+        ORDER BY total DESC
+        LIMIT 10
+    )
+    SELECT * FROM top_sales
+""")
+```
+
+---
+
+## Polars (Fast DataFrames)
+
+Polars provides lightning-fast DataFrame operations.
+
+| Function | Syntax | Description |
+|----------|--------|-------------|
+| `pl` | `pl` | Polars module |
+| `df` | `df(data)` | Create DataFrame |
+| `lf` | `lf(data)` | Create LazyFrame |
+| `col` | `col('name')` | Column expression |
+| `lit` | `lit(value)` | Literal value |
+| `when` | `when(condition)` | Conditional expression |
+| `pl_csv` | `pl_csv(path)` | Read CSV |
+| `pl_parquet` | `pl_parquet(path)` | Read Parquet |
+| `pl_json` | `pl_json(path)` | Read JSON |
+| `pl_excel` | `pl_excel(path)` | Read Excel |
+| `scan_csv` | `scan_csv(path)` | Lazy CSV read |
+| `scan_parquet` | `scan_parquet(path)` | Lazy Parquet read |
+
+```python
+# Create DataFrame
+data = df({'name': ['Alice', 'Bob', 'Carol'], 'age': [25, 30, 28]})
+
+# Filter and select
+data.filter(col('age') > 25)
+data.select(['name', 'age'])
+
+# Transform
+data.with_columns([
+    (col('age') + 1).alias('next_year'),
+    col('name').str.to_uppercase().alias('NAME')
+])
+
+# Aggregation
+sales = pl_csv('sales.csv')
+sales.group_by('region').agg([
+    col('amount').sum().alias('total'),
+    col('amount').mean().alias('avg')
+])
+
+# Lazy evaluation (for large files)
+result = (scan_csv('huge_file.csv')
+    .filter(col('status') == 'active')
+    .group_by('category')
+    .agg(col('value').sum())
+    .collect())  # Execute here
+```
+
+### DuckDB + Polars Together
+
+```python
+# Use DuckDB for complex SQL
+result = sql("SELECT * FROM 'data.parquet' WHERE amount > 100")
+
+# Convert to Polars for further processing
+df_result = result.pl()
+df_result.with_columns(col('amount') * 1.1)
+```

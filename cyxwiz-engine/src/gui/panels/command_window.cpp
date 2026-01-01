@@ -271,32 +271,43 @@ COMMANDS:
   clear       - Clear output window
   help()      - Show this help message
 
-MATLAB-STYLE FUNCTIONS (auto-loaded):
+DUCKDB (SQL Analytics):
+  sql(query)       - Run SQL query on in-memory database
+  read_csv(path)   - Load CSV file
+  read_parquet(p)  - Load Parquet file
+  read_json(path)  - Load JSON file
+  db               - DuckDB connection object
+
+  Examples:
+    sql("SELECT 1 + 1 AS result")
+    sql("SELECT * FROM 'data.csv' LIMIT 10")
+    read_csv('data.csv').filter('age > 30')
+
+POLARS (Fast DataFrames):
+  pl               - Polars module
+  df(data)         - Create DataFrame
+  col('name')      - Column expression
+  pl_csv(path)     - Read CSV file
+  pl_parquet(p)    - Read Parquet file
+  scan_csv(path)   - Lazy CSV reader
+  scan_parquet(p)  - Lazy Parquet reader
+
+  Examples:
+    data = df({'a': [1, 2, 3], 'b': [4, 5, 6]})
+    data.filter(col('a') > 1)
+    pl_csv('data.csv').head(10)
+
+MATLAB-STYLE FUNCTIONS:
   Linear Algebra:  eye, zeros, ones, svd, eig, qr, chol, lu, det,
-                   rank, trace, norm, cond, inv, transpose, solve, lstsq, matmul
-  Signal:          fft, ifft, conv, conv2, spectrogram, lowpass, highpass,
-                   bandpass, filter, findpeaks, sine, square, noise
-  Statistics:      kmeans, dbscan, gmm, pca, tsne, silhouette,
-                   confusion_matrix, roc
-  Time Series:     acf, pacf, decompose, stationarity, arima, diff,
-                   rolling_mean, rolling_std
+                   rank, trace, norm, cond, inv, transpose, solve
+  Signal:          fft, ifft, conv, spectrogram, lowpass, highpass
+  Statistics:      kmeans, dbscan, gmm, pca, tsne
+  Time Series:     acf, pacf, decompose, stationarity, arima
 
-UTILITY FUNCTIONS:
-  printmat(A)      - Print matrix in aligned format (alias: pm)
-  pm(A, precision=4) - Print with custom decimal precision
-
-EXAMPLES:
-  I = eye(3)              # Create 3x3 identity matrix
-  pm(I)                   # Print matrix nicely
-  A = [[1,2],[3,4]]
-  U, S, V = svd(A)        # Singular value decomposition
-  spectrum = fft([1,2,3,4])  # FFT of signal
-
-GROUPED NAMESPACE (alternative):
-  cyx.linalg.svd(A)       # Same as svd(A)
-  cyx.signal.fft(x)       # Same as fft(x)
-  cyx.stats.kmeans(data, k=3)
-  cyx.timeseries.arima(data, horizon=5)
+  Examples:
+    I = eye(3)              # 3x3 identity matrix
+    pm(I)                   # Print matrix nicely
+    U, S, V = svd([[1,2],[3,4]])
 
 Type any Python code to execute.
 )";
