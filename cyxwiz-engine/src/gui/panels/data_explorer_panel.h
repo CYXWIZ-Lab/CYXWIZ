@@ -127,6 +127,9 @@ private:
     std::atomic<bool> is_loading_schema_{false};
     std::mutex schema_mutex_;
     std::string schema_error_;
+    std::unique_ptr<std::thread> schema_thread_;
+    std::string pending_recent_file_;  // Path to add to recent files (set by worker, consumed by main thread)
+    void SchemaLoaderWorker(const std::string& path);
 
     // ===== SQL Query Editor =====
     struct QueryHistoryItem {

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <fstream>
 #include <cmath>
+#include <regex>
 #include <nlohmann/json.hpp>
 
 namespace cyxwiz {
@@ -60,10 +61,28 @@ DataExplorerPanel::DataExplorerPanel()
     current_directory_ = std::filesystem::current_path().string();
 }
 
-DataExplorerPanel::~DataExplorerPanel() = default;
+DataExplorerPanel::~DataExplorerPanel() {
+    // Wait for any running schema loading thread
+    if (schema_thread_ && schema_thread_->joinable()) {
+        schema_thread_->join();
+    }
+    // Wait for any running stats thread
+    if (stats_thread_ && stats_thread_->joinable()) {
+        stats_thread_->join();
+    }
+}
 
 void DataExplorerPanel::Render() {
     if (!visible_) return;
+
+    // Handle pending recent file addition from async schema loading (main thread only)
+    {
+        std::lock_guard<std::mutex> lock(schema_mutex_);
+        if (!pending_recent_file_.empty()) {
+            AddRecentFile(pending_recent_file_);
+            pending_recent_file_.clear();
+        }
+    }
 
     ImGui::SetNextWindowSize(ImVec2(1000, 700), ImGuiCond_FirstUseEver);
 
@@ -653,13 +672,26 @@ void DataExplorerPanel::OpenFileDialog() {
 void DataExplorerPanel::LoadSchema(const std::string& path) {
     if (!data_loader_ || is_loading_schema_.load()) return;
 
-    current_schema_.file_path = path;
-    current_schema_.is_loaded = false;
-    current_schema_.columns.clear();
-    schema_error_.clear();
+    // Wait for any previous schema loading thread to finish
+    if (schema_thread_ && schema_thread_->joinable()) {
+        schema_thread_->join();
+    }
+
+    // Reset state
+    {
+        std::lock_guard<std::mutex> lock(schema_mutex_);
+        current_schema_.file_path = path;
+        current_schema_.is_loaded = false;
+        current_schema_.columns.clear();
+        schema_error_.clear();
+    }
     is_loading_schema_ = true;
 
-    // Load schema synchronously for now (usually fast)
+    // Load schema asynchronously to avoid blocking UI
+    schema_thread_ = std::make_unique<std::thread>(&DataExplorerPanel::SchemaLoaderWorker, this, path);
+}
+
+void DataExplorerPanel::SchemaLoaderWorker(const std::string& path) {
     try {
         auto columns = data_loader_->GetSchema(path);
         auto row_count = data_loader_->GetRowCount(path);
@@ -668,11 +700,12 @@ void DataExplorerPanel::LoadSchema(const std::string& path) {
         current_schema_.columns = columns;
         current_schema_.row_count = row_count;
         current_schema_.is_loaded = true;
+        pending_recent_file_ = path;  // Main thread will call AddRecentFile
 
-        AddRecentFile(path);
         spdlog::info("DataExplorerPanel: Loaded schema for {} ({} columns, {} rows)",
             path, columns.size(), row_count);
     } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lock(schema_mutex_);
         schema_error_ = e.what();
         spdlog::error("DataExplorerPanel: Failed to load schema: {}", e.what());
     }
@@ -698,6 +731,48 @@ void DataExplorerPanel::ExecuteCurrentQuery() {
     auto start = std::chrono::steady_clock::now();
 
     try {
+        // Replace 'data' placeholder and resolve relative paths if schema is loaded
+        std::string original_sql = sql;
+        {
+            std::lock_guard<std::mutex> lock(schema_mutex_);
+            if (current_schema_.is_loaded && !current_schema_.file_path.empty()) {
+                std::filesystem::path schema_dir = std::filesystem::path(current_schema_.file_path).parent_path();
+                std::string schema_dir_str = schema_dir.string();
+                std::replace(schema_dir_str.begin(), schema_dir_str.end(), '\\', '/');
+                if (!schema_dir_str.empty() && schema_dir_str.back() != '/') {
+                    schema_dir_str += '/';
+                }
+
+                // Replace standalone 'data' (case insensitive) with the file path
+                std::string file_path_escaped = current_schema_.file_path;
+                std::replace(file_path_escaped.begin(), file_path_escaped.end(), '\\', '/');
+                std::string quoted_path = "'" + file_path_escaped + "'";
+
+                // Replace FROM data (without quotes)
+                std::regex from_data_regex(R"(\bFROM\s+data\b)", std::regex_constants::icase);
+                sql = std::regex_replace(sql, from_data_regex, "FROM " + quoted_path);
+
+                // Replace FROM 'data' (with quotes)
+                std::regex from_data_quoted_regex(R"(\bFROM\s+'data')", std::regex_constants::icase);
+                sql = std::regex_replace(sql, from_data_quoted_regex, "FROM " + quoted_path);
+
+                // Replace JOIN data
+                std::regex join_data_regex(R"(\bJOIN\s+data\b)", std::regex_constants::icase);
+                sql = std::regex_replace(sql, join_data_regex, "JOIN " + quoted_path);
+
+                // Resolve relative filenames (no path separators) to schema directory
+                // Match 'filename.ext' patterns and prepend schema directory
+                std::regex relative_file_regex(R"('([^'/\\]+\.(csv|parquet|json|tsv|txt))')");
+                sql = std::regex_replace(sql, relative_file_regex, "'" + schema_dir_str + "$1'");
+
+                if (sql != original_sql) {
+                    spdlog::info("DataExplorerPanel: Resolved query paths relative to: {}", schema_dir_str);
+                }
+            }
+        }
+
+        spdlog::debug("DataExplorerPanel: Executing query: {}", sql);
+
         // Execute query
         Tensor result = data_loader_->Query(sql);
 
@@ -990,17 +1065,14 @@ void DataExplorerPanel::InsertFilePath(const std::string& path) {
     std::string normalized = path;
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
 
-    // Find cursor position and insert
-    std::string current = query_buffer_;
-    std::string insert_text = "'" + normalized + "'";
+    // Get just the filename for the query (relative path resolution will handle it)
+    std::filesystem::path fs_path(path);
+    std::string filename = fs_path.filename().string();
 
-    // Simple append for now
-    if (!current.empty() && current.back() != ' ' && current.back() != '\n') {
-        insert_text = " " + insert_text;
-    }
-    current += insert_text;
+    // Set a simple default query with the filename
+    std::string new_query = "SELECT * FROM '" + filename + "' LIMIT 100";
 
-    std::strncpy(query_buffer_, current.c_str(), QUERY_BUFFER_SIZE - 1);
+    std::strncpy(query_buffer_, new_query.c_str(), QUERY_BUFFER_SIZE - 1);
     query_buffer_[QUERY_BUFFER_SIZE - 1] = '\0';
 }
 
