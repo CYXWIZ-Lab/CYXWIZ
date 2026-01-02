@@ -867,8 +867,17 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("set_parameters", &cyxwiz::DropoutLayer::SetParameters,
              py::arg("params"));
 
+    // Base Loss class (abstract - for type hierarchy)
+    py::class_<cyxwiz::Loss>(m, "Loss")
+        .def("forward", &cyxwiz::Loss::Forward,
+             py::arg("predictions"), py::arg("targets"),
+             "Compute loss value")
+        .def("backward", &cyxwiz::Loss::Backward,
+             py::arg("predictions"), py::arg("targets"),
+             "Compute loss gradients");
+
     // MSE Loss (concrete implementation)
-    py::class_<cyxwiz::MSELoss>(m, "MSELoss")
+    py::class_<cyxwiz::MSELoss, cyxwiz::Loss>(m, "MSELoss")
         .def(py::init<>(),
              "Create MSE Loss: mean((predictions - targets)^2)")
         .def("forward", &cyxwiz::MSELoss::Forward,
@@ -881,7 +890,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
              "Backward: dL/dy = 2*(predictions - targets)/N");
 
     // CrossEntropy Loss (concrete implementation)
-    py::class_<cyxwiz::CrossEntropyLoss>(m, "CrossEntropyLoss")
+    py::class_<cyxwiz::CrossEntropyLoss, cyxwiz::Loss>(m, "CrossEntropyLoss")
         .def(py::init<>(),
              "Create CrossEntropy Loss with softmax for classification")
         .def("forward", &cyxwiz::CrossEntropyLoss::Forward,
@@ -894,7 +903,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
              "Backward: gradient w.r.t logits");
 
     // Focal Loss (for class imbalance)
-    py::class_<cyxwiz::FocalLoss>(m, "FocalLoss")
+    py::class_<cyxwiz::FocalLoss, cyxwiz::Loss>(m, "FocalLoss")
         .def(py::init<float, float>(),
              py::arg("alpha") = 0.25f,
              py::arg("gamma") = 2.0f,
@@ -917,7 +926,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("Euclidean", cyxwiz::TripletLoss::DistanceType::Euclidean)
         .value("Cosine", cyxwiz::TripletLoss::DistanceType::Cosine);
 
-    py::class_<cyxwiz::TripletLoss>(m, "TripletLoss")
+    py::class_<cyxwiz::TripletLoss, cyxwiz::Loss>(m, "TripletLoss")
         .def(py::init<float, cyxwiz::TripletLoss::DistanceType>(),
              py::arg("margin") = 1.0f,
              py::arg("distance_type") = cyxwiz::TripletLoss::DistanceType::Euclidean,
@@ -937,7 +946,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
                      "Margin for triplet loss (default: 1.0)");
 
     // Contrastive Loss (for similarity learning)
-    py::class_<cyxwiz::ContrastiveLoss>(m, "ContrastiveLoss")
+    py::class_<cyxwiz::ContrastiveLoss, cyxwiz::Loss>(m, "ContrastiveLoss")
         .def(py::init<float>(),
              py::arg("margin") = 1.0f,
              "Create Contrastive Loss: L = (1-y)*d^2 + y*max(margin-d,0)^2")
@@ -2198,10 +2207,37 @@ Example queries:
         .def_readonly("world_size", &cyxwiz::DistributedTrainingHistory::world_size,
             "Number of ranks used");
 
-    // DistributedTrainer
+    // ProcessGroup (abstract base class for type recognition)
+    py::class_<cyxwiz::ProcessGroup>(distributed, "ProcessGroup",
+        "Abstract base class for distributed communication")
+        .def("is_initialized", &cyxwiz::ProcessGroup::IsInitialized,
+            "Check if process group is initialized")
+        .def("get_rank", &cyxwiz::ProcessGroup::GetRank,
+            "Get global rank")
+        .def("get_world_size", &cyxwiz::ProcessGroup::GetWorldSize,
+            "Get world size")
+        .def("get_local_rank", &cyxwiz::ProcessGroup::GetLocalRank,
+            "Get local rank")
+        .def("barrier", &cyxwiz::ProcessGroup::Barrier,
+            "Synchronization barrier")
+        .def("get_backend_name", &cyxwiz::ProcessGroup::GetBackendName,
+            "Get backend name (CPU or NCCL)");
+
+    // Get default process group function
+    distributed.def("get_default_process_group", &cyxwiz::GetDefaultProcessGroup,
+        py::return_value_policy::reference,
+        "Get the default (global) process group, or None if not initialized");
+
+    // DistributedTrainer - using py::object for flexible type handling
     py::class_<cyxwiz::DistributedTrainer>(distributed, "DistributedTrainer",
         "High-level trainer for distributed data parallel training")
-        .def(py::init<cyxwiz::SequentialModel*, cyxwiz::Loss*, cyxwiz::Optimizer*, cyxwiz::ProcessGroup*>(),
+        .def(py::init([](cyxwiz::SequentialModel* model, py::object loss_obj,
+                         py::object optimizer_obj, cyxwiz::ProcessGroup* pg) {
+            // Cast through py::cast to properly handle inheritance
+            cyxwiz::Loss* loss = loss_obj.cast<cyxwiz::Loss*>();
+            cyxwiz::Optimizer* optimizer = optimizer_obj.cast<cyxwiz::Optimizer*>();
+            return new cyxwiz::DistributedTrainer(model, loss, optimizer, pg);
+        }),
             py::arg("model"), py::arg("loss"), py::arg("optimizer"),
             py::arg("process_group") = nullptr,
             py::keep_alive<1, 2>(),  // Keep model alive

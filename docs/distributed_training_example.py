@@ -78,7 +78,7 @@ def generate_synthetic_data(num_samples: int, input_dim: int, num_classes: int, 
 
 def print_rank(msg: str):
     """Print message with rank prefix (only useful info, not spam)."""
-    rank = cx.distributed.get_rank() if cx.distributed.is_initialized() else -1
+    rank = cx.distributed.get_rank()  # Returns -1 if not initialized
     print(f"[Rank {rank}] {msg}")
 
 
@@ -128,19 +128,20 @@ def example_high_level_api():
         print(f"Input dim: {input_dim}, Classes: {num_classes}")
 
     # Create model
-    model = cx.SequentialModel()
-    model.add(cx.LinearModule(input_dim, 512))
-    model.add(cx.ReLUModule())
-    model.add(cx.LinearModule(512, 256))
-    model.add(cx.ReLUModule())
-    model.add(cx.LinearModule(256, num_classes))
+    model = cx.Sequential()
+    model.add_linear(input_dim, 512)
+    model.add_relu()
+    model.add_linear(512, 256)
+    model.add_relu()
+    model.add_linear(256, num_classes)
 
     if is_master:
         print(f"Model: {input_dim} -> 512 -> 256 -> {num_classes}")
+        print(model.summary())
 
     # Create loss and optimizer
     loss_fn = cx.CrossEntropyLoss()
-    optimizer = cx.AdamOptimizer(learning_rate=0.001)
+    optimizer = cx.Adam(learning_rate=0.001)
 
     # Create distributed trainer
     trainer = cx.distributed.DistributedTrainer(model, loss_fn, optimizer)
@@ -248,10 +249,10 @@ def example_low_level_api():
     X_train, y_train, _ = generate_synthetic_data(num_samples, input_dim, num_classes)
 
     # Create model
-    model = cx.SequentialModel()
-    model.add(cx.LinearModule(input_dim, 256))
-    model.add(cx.ReLUModule())
-    model.add(cx.LinearModule(256, num_classes))
+    model = cx.Sequential()
+    model.add_linear(input_dim, 256)
+    model.add_relu()
+    model.add_linear(256, num_classes)
 
     # Wrap model in DDP
     ddp_config = cx.distributed.DDPConfig()
@@ -273,7 +274,7 @@ def example_low_level_api():
 
     # Setup training
     loss_fn = cx.CrossEntropyLoss()
-    optimizer = cx.AdamOptimizer(learning_rate=0.001)
+    optimizer = cx.Adam(learning_rate=0.001)
 
     batch_size = 32
     num_epochs = 3
@@ -501,7 +502,7 @@ def main():
 
         # Make sure to finalize even on error
         try:
-            if cx.distributed.is_initialized():
+            if cx.distributed.get_rank() >= 0:  # Check if initialized
                 cx.distributed.finalize()
         except:
             pass

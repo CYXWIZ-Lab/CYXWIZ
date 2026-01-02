@@ -95,16 +95,16 @@ import pycyxwiz as cx
 cx.distributed.init()
 
 # Create model
-model = cx.SequentialModel()
-model.add(cx.LinearModule(784, 256))
-model.add(cx.ReLUModule())
-model.add(cx.LinearModule(256, 10))
+model = cx.Sequential()
+model.add_linear(784, 256)
+model.add_relu()
+model.add_linear(256, 10)
 
 # Create trainer
 trainer = cx.distributed.DistributedTrainer(
     model,
     cx.CrossEntropyLoss(),
-    cx.AdamOptimizer(0.001)
+    cx.Adam(learning_rate=0.001)
 )
 
 # Configure and train
@@ -201,7 +201,7 @@ ddp.update_parameters(optimizer)          # Sync + update
 ddp.is_master()       # -> bool
 ddp.get_rank()        # -> int
 ddp.get_world_size()  # -> int
-ddp.get_model()       # -> SequentialModel
+ddp.get_model()       # -> Sequential
 ```
 
 ### DistributedSampler
