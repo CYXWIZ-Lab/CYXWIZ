@@ -60,6 +60,12 @@ set(BACKEND_SOURCES
     src/algorithms/text_processing.cpp
     src/algorithms/utilities.cpp
     src/core/data_loader.cpp
+    # Distributed training
+    src/algorithms/distributed/process_group.cpp
+    src/algorithms/distributed/cpu_backend.cpp
+    src/algorithms/distributed/ddp.cpp
+    src/algorithms/distributed/distributed_sampler.cpp
+    src/algorithms/distributed/distributed_trainer.cpp
 )
 
 # Header files
@@ -94,6 +100,12 @@ set(BACKEND_HEADERS
     include/cyxwiz/text_processing.h
     include/cyxwiz/utilities.h
     include/cyxwiz/data_loader.h
+    # Distributed training
+    include/cyxwiz/distributed/process_group.h
+    include/cyxwiz/distributed/cpu_backend.h
+    include/cyxwiz/distributed/ddp.h
+    include/cyxwiz/distributed/distributed_sampler.h
+    include/cyxwiz/distributed/distributed_trainer.h
 )
 
 # Create shared library (DLL/SO)
@@ -122,6 +134,11 @@ target_link_libraries(cyxwiz-backend PUBLIC
     spdlog::spdlog
     cyxwiz-protocol
 )
+
+# Platform-specific libraries for distributed training
+if(WIN32)
+    target_link_libraries(cyxwiz-backend PRIVATE ws2_32)
+endif()
 
 if(CYXWIZ_HAS_ARRAYFIRE)
     target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::af)

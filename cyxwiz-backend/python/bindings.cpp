@@ -6,6 +6,12 @@
 #include <pybind11/functional.h>
 #include "cyxwiz/sequential.h"
 #include "cyxwiz/data_loader.h"
+// Distributed training
+#include "cyxwiz/distributed/process_group.h"
+#include "cyxwiz/distributed/cpu_backend.h"
+#include "cyxwiz/distributed/ddp.h"
+#include "cyxwiz/distributed/distributed_sampler.h"
+#include "cyxwiz/distributed/distributed_trainer.h"
 
 using namespace pybind11::literals;  // For _a suffix
 
@@ -1983,5 +1989,254 @@ Example queries:
     // Module-level check
     m.def("duckdb_available", &cyxwiz::DataLoader::IsAvailable,
           "Check if DuckDB is available for data loading");
+
+    // ========== Distributed Training Submodule ==========
+    py::module_ distributed = m.def_submodule("distributed",
+        "Distributed training support for data parallel training");
+
+    // ReduceOp enum
+    py::enum_<cyxwiz::ReduceOp>(distributed, "ReduceOp",
+        "Reduction operations for collective communication")
+        .value("SUM", cyxwiz::ReduceOp::SUM, "Element-wise sum")
+        .value("PRODUCT", cyxwiz::ReduceOp::PRODUCT, "Element-wise product")
+        .value("MIN", cyxwiz::ReduceOp::MIN, "Element-wise minimum")
+        .value("MAX", cyxwiz::ReduceOp::MAX, "Element-wise maximum")
+        .value("AVERAGE", cyxwiz::ReduceOp::AVERAGE, "Element-wise average")
+        .export_values();
+
+    // BackendType enum
+    py::enum_<cyxwiz::BackendType>(distributed, "BackendType",
+        "Backend types for distributed communication")
+        .value("CPU", cyxwiz::BackendType::CPU, "TCP socket-based backend")
+        .value("NCCL", cyxwiz::BackendType::NCCL, "NVIDIA NCCL backend (GPU)")
+        .export_values();
+
+    // DistributedConfig
+    py::class_<cyxwiz::DistributedConfig>(distributed, "DistributedConfig",
+        "Configuration for distributed training")
+        .def(py::init<>())
+        .def_readwrite("backend", &cyxwiz::DistributedConfig::backend,
+            "Backend type (CPU or NCCL)")
+        .def_readwrite("rank", &cyxwiz::DistributedConfig::rank,
+            "Global rank (-1 = read from RANK env)")
+        .def_readwrite("world_size", &cyxwiz::DistributedConfig::world_size,
+            "Total number of processes (-1 = read from WORLD_SIZE env)")
+        .def_readwrite("local_rank", &cyxwiz::DistributedConfig::local_rank,
+            "Local rank for multi-GPU (-1 = read from LOCAL_RANK env)")
+        .def_readwrite("master_addr", &cyxwiz::DistributedConfig::master_addr,
+            "Master address (default: 127.0.0.1)")
+        .def_readwrite("master_port", &cyxwiz::DistributedConfig::master_port,
+            "Master port (default: 29500)")
+        .def_readwrite("timeout_ms", &cyxwiz::DistributedConfig::timeout_ms,
+            "Connection timeout in milliseconds")
+        .def_static("from_environment", &cyxwiz::DistributedConfig::FromEnvironment,
+            "Create config from environment variables (RANK, WORLD_SIZE, etc.)")
+        .def("is_valid", &cyxwiz::DistributedConfig::IsValid,
+            "Validate configuration")
+        .def("__repr__", &cyxwiz::DistributedConfig::ToString);
+
+    // Global distributed functions
+    distributed.def("init", &cyxwiz::init_distributed,
+        py::arg("config") = cyxwiz::DistributedConfig::FromEnvironment(),
+        "Initialize distributed training");
+    distributed.def("finalize", &cyxwiz::finalize_distributed,
+        "Finalize distributed training");
+    distributed.def("get_rank", &cyxwiz::get_rank,
+        "Get rank of current process (-1 if not initialized)");
+    distributed.def("get_world_size", &cyxwiz::get_world_size,
+        "Get total number of processes (1 if not initialized)");
+    distributed.def("get_local_rank", &cyxwiz::get_local_rank,
+        "Get local rank (0 if not initialized)");
+    distributed.def("is_distributed", &cyxwiz::is_distributed,
+        "Check if distributed training is active");
+    distributed.def("is_master", &cyxwiz::is_master,
+        "Check if this is the master rank (rank 0)");
+
+    // DDPConfig
+    py::class_<cyxwiz::DDPConfig>(distributed, "DDPConfig",
+        "Configuration for DistributedDataParallel")
+        .def(py::init<>())
+        .def_readwrite("broadcast_parameters", &cyxwiz::DDPConfig::broadcast_parameters,
+            "Broadcast parameters from rank 0 at initialization")
+        .def_readwrite("bucket_size_mb", &cyxwiz::DDPConfig::bucket_size_mb,
+            "Gradient bucket size in MB (default: 25)")
+        .def_readwrite("find_unused_parameters", &cyxwiz::DDPConfig::find_unused_parameters,
+            "Warn about unused parameters");
+
+    // DistributedDataParallel
+    py::class_<cyxwiz::DistributedDataParallel>(distributed, "DistributedDataParallel",
+        "Model wrapper for data parallel distributed training")
+        .def(py::init<cyxwiz::SequentialModel*, cyxwiz::DDPConfig>(),
+            py::arg("model"), py::arg("config") = cyxwiz::DDPConfig(),
+            py::keep_alive<1, 2>(),  // Keep model alive
+            "Wrap a model for distributed training")
+        .def("forward", &cyxwiz::DistributedDataParallel::Forward,
+            py::arg("input"),
+            "Forward pass (delegates to wrapped model)")
+        .def("backward", &cyxwiz::DistributedDataParallel::Backward,
+            py::arg("grad_output"),
+            "Backward pass (delegates to wrapped model)")
+        .def("sync_gradients", &cyxwiz::DistributedDataParallel::SyncGradients,
+            "Synchronize gradients across all ranks using AllReduce")
+        .def("update_parameters", &cyxwiz::DistributedDataParallel::UpdateParameters,
+            py::arg("optimizer"),
+            "Sync gradients and update parameters")
+        .def("broadcast_parameters", &cyxwiz::DistributedDataParallel::BroadcastParameters,
+            py::arg("src_rank") = 0,
+            "Broadcast parameters from source rank to all others")
+        .def("get_model",
+            static_cast<cyxwiz::SequentialModel* (cyxwiz::DistributedDataParallel::*)()>(&cyxwiz::DistributedDataParallel::GetModel),
+            py::return_value_policy::reference,
+            "Get the wrapped model")
+        .def("is_master", &cyxwiz::DistributedDataParallel::IsMaster,
+            "Check if this is the master rank")
+        .def("get_rank", &cyxwiz::DistributedDataParallel::GetRank,
+            "Get rank of this process")
+        .def("get_world_size", &cyxwiz::DistributedDataParallel::GetWorldSize,
+            "Get total number of processes");
+
+    // DistributedSampler
+    py::class_<cyxwiz::DistributedSampler>(distributed, "DistributedSampler",
+        "Sampler that shards dataset indices across distributed workers")
+        .def(py::init<size_t, bool, unsigned int, bool>(),
+            py::arg("dataset_size"),
+            py::arg("shuffle") = true,
+            py::arg("seed") = 0,
+            py::arg("drop_last") = false,
+            "Create a distributed sampler")
+        .def("set_epoch", &cyxwiz::DistributedSampler::SetEpoch,
+            py::arg("epoch"),
+            "Set epoch for deterministic shuffling")
+        .def("get_epoch", &cyxwiz::DistributedSampler::GetEpoch,
+            "Get current epoch")
+        .def("get_indices", &cyxwiz::DistributedSampler::GetIndices,
+            "Get indices for this rank's portion of the dataset")
+        .def("local_size", &cyxwiz::DistributedSampler::LocalSize,
+            "Get number of samples for this rank")
+        .def("total_size", &cyxwiz::DistributedSampler::TotalSize,
+            "Get total dataset size")
+        .def("padded_size", &cyxwiz::DistributedSampler::PaddedSize,
+            "Get padded size (divisible by world_size)")
+        .def("get_rank", &cyxwiz::DistributedSampler::GetRank,
+            "Get rank of this process")
+        .def("get_world_size", &cyxwiz::DistributedSampler::GetWorldSize,
+            "Get world size")
+        .def("__len__", &cyxwiz::DistributedSampler::LocalSize,
+            "Get number of samples for this rank");
+
+    // DistributedBatchIterator
+    py::class_<cyxwiz::DistributedBatchIterator>(distributed, "DistributedBatchIterator",
+        "Iterator for batches in distributed training")
+        .def(py::init<cyxwiz::DistributedSampler&, size_t>(),
+            py::arg("sampler"), py::arg("batch_size"),
+            py::keep_alive<1, 2>(),
+            "Create a batch iterator")
+        .def("reset", &cyxwiz::DistributedBatchIterator::Reset,
+            py::arg("epoch"),
+            "Reset iterator for new epoch")
+        .def("has_next", &cyxwiz::DistributedBatchIterator::HasNext,
+            "Check if there are more batches")
+        .def("next", &cyxwiz::DistributedBatchIterator::Next,
+            "Get next batch of indices")
+        .def("num_batches", &cyxwiz::DistributedBatchIterator::NumBatches,
+            "Get total number of batches")
+        .def("current_batch", &cyxwiz::DistributedBatchIterator::CurrentBatch,
+            "Get current batch index")
+        .def("__iter__", [](cyxwiz::DistributedBatchIterator& self) -> cyxwiz::DistributedBatchIterator& {
+            return self;
+        })
+        .def("__next__", [](cyxwiz::DistributedBatchIterator& self) {
+            if (!self.HasNext()) {
+                throw py::stop_iteration();
+            }
+            return self.Next();
+        });
+
+    // DistributedTrainingConfig
+    py::class_<cyxwiz::DistributedTrainingConfig>(distributed, "DistributedTrainingConfig",
+        "Configuration for distributed training")
+        .def(py::init<>())
+        .def_readwrite("epochs", &cyxwiz::DistributedTrainingConfig::epochs,
+            "Number of training epochs")
+        .def_readwrite("batch_size", &cyxwiz::DistributedTrainingConfig::batch_size,
+            "Per-GPU batch size")
+        .def_readwrite("shuffle", &cyxwiz::DistributedTrainingConfig::shuffle,
+            "Shuffle training data each epoch")
+        .def_readwrite("seed", &cyxwiz::DistributedTrainingConfig::seed,
+            "Random seed for shuffling")
+        .def_readwrite("save_on_master_only", &cyxwiz::DistributedTrainingConfig::save_on_master_only,
+            "Only rank 0 saves checkpoints")
+        .def_readwrite("checkpoint_every_n_epochs", &cyxwiz::DistributedTrainingConfig::checkpoint_every_n_epochs,
+            "Save checkpoint every N epochs (0 = disabled)")
+        .def_readwrite("checkpoint_dir", &cyxwiz::DistributedTrainingConfig::checkpoint_dir,
+            "Directory for checkpoints")
+        .def_readwrite("verbose", &cyxwiz::DistributedTrainingConfig::verbose,
+            "Print training progress")
+        .def_readwrite("log_every_n_batches", &cyxwiz::DistributedTrainingConfig::log_every_n_batches,
+            "Print progress every N batches")
+        .def_readwrite("validation_split", &cyxwiz::DistributedTrainingConfig::validation_split,
+            "Validation data ratio");
+
+    // DistributedTrainingHistory
+    py::class_<cyxwiz::DistributedTrainingHistory>(distributed, "DistributedTrainingHistory",
+        "Training history with metrics from distributed training")
+        .def(py::init<>())
+        .def_readonly("train_losses", &cyxwiz::DistributedTrainingHistory::train_losses,
+            "Training loss per epoch")
+        .def_readonly("train_accuracies", &cyxwiz::DistributedTrainingHistory::train_accuracies,
+            "Training accuracy per epoch")
+        .def_readonly("val_losses", &cyxwiz::DistributedTrainingHistory::val_losses,
+            "Validation loss per epoch")
+        .def_readonly("val_accuracies", &cyxwiz::DistributedTrainingHistory::val_accuracies,
+            "Validation accuracy per epoch")
+        .def_readonly("total_time_seconds", &cyxwiz::DistributedTrainingHistory::total_time_seconds,
+            "Total training time in seconds")
+        .def_readonly("samples_per_second", &cyxwiz::DistributedTrainingHistory::samples_per_second,
+            "Throughput: samples processed per second")
+        .def_readonly("effective_batch_size", &cyxwiz::DistributedTrainingHistory::effective_batch_size,
+            "Effective batch size (batch_size * world_size)")
+        .def_readonly("world_size", &cyxwiz::DistributedTrainingHistory::world_size,
+            "Number of ranks used");
+
+    // DistributedTrainer
+    py::class_<cyxwiz::DistributedTrainer>(distributed, "DistributedTrainer",
+        "High-level trainer for distributed data parallel training")
+        .def(py::init<cyxwiz::SequentialModel*, cyxwiz::Loss*, cyxwiz::Optimizer*, cyxwiz::ProcessGroup*>(),
+            py::arg("model"), py::arg("loss"), py::arg("optimizer"),
+            py::arg("process_group") = nullptr,
+            py::keep_alive<1, 2>(),  // Keep model alive
+            py::keep_alive<1, 3>(),  // Keep loss alive
+            py::keep_alive<1, 4>(),  // Keep optimizer alive
+            "Create a distributed trainer")
+        .def("fit", py::overload_cast<const cyxwiz::Tensor&, const cyxwiz::Tensor&,
+                                       const cyxwiz::DistributedTrainingConfig&>(
+            &cyxwiz::DistributedTrainer::Fit),
+            py::arg("X_train"), py::arg("y_train"), py::arg("config"),
+            "Train the model")
+        .def("fit", py::overload_cast<const cyxwiz::Tensor&, const cyxwiz::Tensor&,
+                                       const cyxwiz::Tensor&, const cyxwiz::Tensor&,
+                                       const cyxwiz::DistributedTrainingConfig&>(
+            &cyxwiz::DistributedTrainer::Fit),
+            py::arg("X_train"), py::arg("y_train"),
+            py::arg("X_val"), py::arg("y_val"), py::arg("config"),
+            "Train the model with validation data")
+        .def("evaluate", &cyxwiz::DistributedTrainer::Evaluate,
+            py::arg("X_test"), py::arg("y_test"),
+            "Evaluate model on test data, returns (loss, accuracy)")
+        .def("is_master", &cyxwiz::DistributedTrainer::IsMaster,
+            "Check if this is the master rank")
+        .def("get_rank", &cyxwiz::DistributedTrainer::GetRank,
+            "Get current rank")
+        .def("get_world_size", &cyxwiz::DistributedTrainer::GetWorldSize,
+            "Get world size")
+        .def("save_checkpoint", &cyxwiz::DistributedTrainer::SaveCheckpoint,
+            py::arg("path"),
+            "Save model checkpoint (only on master by default)")
+        .def("load_checkpoint", &cyxwiz::DistributedTrainer::LoadCheckpoint,
+            py::arg("path"),
+            "Load model checkpoint (all ranks load)")
+        .def("get_model", &cyxwiz::DistributedTrainer::GetModel,
+            py::return_value_policy::reference,
+            "Get the underlying model");
 
 }
