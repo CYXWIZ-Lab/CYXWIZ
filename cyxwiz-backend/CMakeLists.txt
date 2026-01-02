@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 
 project(cyxwiz-backend VERSION 0.1.0)
 
+# Add cmake module path for custom Find modules
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
 # Find ArrayFire (needs to be installed separately)
 # Download from: https://arrayfire.com/download
 find_package(ArrayFire QUIET)
@@ -103,6 +106,7 @@ set(BACKEND_HEADERS
     # Distributed training
     include/cyxwiz/distributed/process_group.h
     include/cyxwiz/distributed/cpu_backend.h
+    include/cyxwiz/distributed/nccl_backend.h
     include/cyxwiz/distributed/ddp.h
     include/cyxwiz/distributed/distributed_sampler.h
     include/cyxwiz/distributed/distributed_trainer.h
@@ -154,6 +158,28 @@ if(CYXWIZ_HAS_ARRAYFIRE)
                 CUDA::cudart  # CUDA runtime for cudaMemGetInfo()
             )
             target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
+
+            # NCCL for distributed GPU training (optional)
+            option(CYXWIZ_ENABLE_NCCL "Enable NCCL for distributed GPU training" ON)
+            if(CYXWIZ_ENABLE_NCCL)
+                find_package(NCCL QUIET)
+                if(NCCL_FOUND)
+                    message(STATUS "NCCL found: ${NCCL_LIBRARIES}")
+                    if(NCCL_VERSION)
+                        message(STATUS "  NCCL version: ${NCCL_VERSION}")
+                    endif()
+                    target_sources(cyxwiz-backend PRIVATE
+                        src/algorithms/distributed/nccl_backend.cpp
+                    )
+                    target_link_libraries(cyxwiz-backend PUBLIC NCCL::nccl)
+                    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_NCCL)
+                    set(CYXWIZ_HAS_NCCL TRUE)
+                else()
+                    message(WARNING "NCCL not found - distributed GPU training will use CPU fallback")
+                    message(STATUS "  NCCL can be installed from: https://developer.nvidia.com/nccl")
+                    set(CYXWIZ_HAS_NCCL FALSE)
+                endif()
+            endif()
         else()
             message(WARNING "CUDA Toolkit not found. Install from: https://developer.nvidia.com/cuda-downloads")
             message(WARNING "Building without CUDA memory query support")
