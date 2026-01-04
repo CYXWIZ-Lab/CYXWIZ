@@ -81,6 +81,18 @@ public:
     int GetRequestTimeout() const;
     void SetRequestTimeout(int seconds);
 
+    // ===== Python Settings =====
+
+    // Get Python interpreter path (empty = use system/global Python)
+    std::string GetPythonInterpreterPath() const;
+    void SetPythonInterpreterPath(const std::string& path);
+
+    // Check if a custom Python path is configured
+    bool HasCustomPythonPath() const;
+
+    // Get Python packages directory (derived from interpreter path)
+    std::string GetPythonPackagesDir() const;
+
     // Check if configuration has been modified
     bool IsModified() const { return modified_; }
 
@@ -114,6 +126,9 @@ private:
     // Timeouts
     int connection_timeout_ = 10;  // seconds
     int request_timeout_ = 30;     // seconds
+
+    // Python settings
+    std::string python_interpreter_path_;  // Empty = use system/global Python
 };
 
 } // namespace cyxwiz::core

@@ -36,6 +36,7 @@ void EngineConfig::SetDefaults() {
     auto_connect_on_startup_ = false;
     connection_timeout_ = 10;
     request_timeout_ = 30;
+    python_interpreter_path_ = "";  // Empty = use system/global Python
 }
 
 std::filesystem::path EngineConfig::GetUserConfigDir() const {
@@ -145,6 +146,14 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        // Python settings
+        if (config.contains("python")) {
+            const auto& python = config["python"];
+            if (python.contains("interpreter_path")) {
+                python_interpreter_path_ = python["interpreter_path"].get<std::string>();
+            }
+        }
+
         config_path_ = config_path;
         modified_ = false;
 
@@ -153,6 +162,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         spdlog::debug("  Auth API: {}", auth_api_url_);
         spdlog::debug("  Default Deployment: {}", default_deployment_address_);
         spdlog::debug("  Default P2P Port: {}", default_p2p_port_);
+        spdlog::debug("  Python Interpreter: {}", python_interpreter_path_.empty() ? "(system default)" : python_interpreter_path_);
 
         return true;
 
@@ -202,6 +212,11 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"auto_connect", auto_connect_on_startup_},
             {"timeout", connection_timeout_},
             {"request_timeout", request_timeout_}
+        };
+
+        // Python settings
+        config["python"] = {
+            {"interpreter_path", python_interpreter_path_}
         };
 
         std::ofstream file(config_path);
@@ -337,6 +352,54 @@ void EngineConfig::SetDefaultP2PPort(int port) {
         default_p2p_port_ = port;
         modified_ = true;
     }
+}
+
+
+// ===== Python Settings =====
+
+std::string EngineConfig::GetPythonInterpreterPath() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return python_interpreter_path_;
+}
+
+void EngineConfig::SetPythonInterpreterPath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (python_interpreter_path_ != path) {
+        python_interpreter_path_ = path;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::HasCustomPythonPath() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !python_interpreter_path_.empty();
+}
+
+std::string EngineConfig::GetPythonPackagesDir() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (python_interpreter_path_.empty()) {
+        return "";  // Use system default
+    }
+    
+    // Derive site-packages from interpreter path
+    // e.g., C:/Python311/python.exe -> C:/Python311/Lib/site-packages
+    // or /usr/bin/python3 -> (system site-packages)
+    std::filesystem::path interp(python_interpreter_path_);
+    auto parent = interp.parent_path();
+    
+#ifdef _WIN32
+    // Windows: python.exe is in the root, Lib/site-packages is a sibling
+    auto site_packages = parent / "Lib" / "site-packages";
+#else
+    // Unix: python is in bin/, lib/pythonX.Y/site-packages is a sibling
+    auto site_packages = parent.parent_path() / "lib" / "python3" / "site-packages";
+#endif
+    
+    if (std::filesystem::exists(site_packages)) {
+        return site_packages.string();
+    }
+    
+    return "";  // Fall back to system default
 }
 
 } // namespace cyxwiz::core

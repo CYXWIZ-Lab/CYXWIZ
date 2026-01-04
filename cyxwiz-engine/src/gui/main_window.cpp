@@ -2455,6 +2455,10 @@ void MainWindow::SetDefaultPanelVisibility() {
     if (hash_generator_panel_) hash_generator_panel_->SetVisible(false);
     if (json_viewer_panel_) json_viewer_panel_->SetVisible(false);
     if (regex_tester_panel_) regex_tester_panel_->SetVisible(false);
+    
+    // Cloud panels (hidden by default - access via sidebar/view menu)
+    if (cloud_browser_panel_) cloud_browser_panel_->SetVisible(false);
+    if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->SetVisible(false);
 
     spdlog::info("Default panel visibility set - showing only core panels");
 }
