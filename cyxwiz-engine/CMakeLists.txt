@@ -206,6 +206,12 @@ set(ENGINE_SOURCES
     src/network/p2p_client.cpp
     src/network/dataset_provider.cpp
     src/network/reservation_client.cpp
+    src/network/datastream_client.cpp
+    src/core/cloud_data_registry.cpp
+    src/gui/panels/cloud_browser.cpp
+    src/gui/panels/cloud_dataset_manager.cpp
+    src/gui/panels/cloud_upload_dialog.cpp
+    src/gui/panels/trust_badge.cpp
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/job_status_panel.cpp
     src/gui/panels/wallet_panel.cpp
@@ -366,6 +372,12 @@ set(ENGINE_HEADERS
     src/network/p2p_client.h
     src/network/dataset_provider.h
     src/network/reservation_client.h
+    src/network/datastream_client.h
+    src/core/cloud_data_registry.h
+    src/gui/panels/cloud_browser.h
+    src/gui/panels/cloud_dataset_manager.h
+    src/gui/panels/cloud_upload_dialog.h
+    src/gui/panels/trust_badge.h
     src/gui/panels/p2p_training_panel.h
     src/gui/panels/job_status_panel.h
     src/gui/panels/wallet_panel.h
