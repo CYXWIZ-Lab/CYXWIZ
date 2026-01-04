@@ -1,4 +1,7 @@
 #include "cloud_browser.h"
+#include "../../auth/auth_client.h"
+#include "../../core/engine_config.h"
+#include <spdlog/spdlog.h>
 #include "../icons.h"
 #include <imgui.h>
 #include <algorithm>
@@ -44,6 +47,9 @@ CloudBrowserPanel::~CloudBrowserPanel() = default;
 
 void CloudBrowserPanel::Render() {
     if (!visible_) return;
+    
+    // Try auto-connect on first render
+    TryAutoConnect();
 
     ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
 
@@ -55,8 +61,11 @@ void CloudBrowserPanel::Render() {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
                 ICON_FA_TRIANGLE_EXCLAMATION " Not connected to CyxCloud Gateway");
 
-            if (ImGui::Button(ICON_FA_PLUG " Connect...")) {
-                // TODO: Open connection dialog
+            if (ImGui::Button(ICON_FA_PLUG " Connect")) {
+                // Reset and try again
+                auto_connect_attempted_ = false;
+                TryAutoConnect();
+                
             }
             ImGui::End();
             return;
@@ -800,4 +809,45 @@ const network::CloudDatasetInfo* CloudBrowserPanel::GetSelectedDataset() const {
     return selected_dataset_;
 }
 
+
+void CloudBrowserPanel::TryAutoConnect() {
+    if (auto_connect_attempted_) return;
+    auto_connect_attempted_ = true;
+
+    auto& auth = cyxwiz::auth::AuthClient::Instance();
+    if (!auth.IsAuthenticated()) {
+        spdlog::debug("CloudBrowser: Not authenticated, skipping auto-connect");
+        return;
+    }
+
+    // Create owned client if needed
+    if (!owned_client_) {
+        owned_client_ = std::make_unique<network::DataStreamClient>();
+    }
+
+    // Get gateway address - use central server address with gRPC port
+    std::string gateway_addr = cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress();
+    // CyxCloud gateway uses port 50052 for DataStream, override if needed
+    if (gateway_addr.find(":50051") != std::string::npos) {
+        gateway_addr.replace(gateway_addr.find(":50051"), 6, ":50052");
+    };
+    if (gateway_addr.empty()) {
+        gateway_addr = "localhost:50052";  // CyxCloud gateway gRPC port  // Default
+    }
+
+    spdlog::info("CloudBrowser: Connecting to CyxCloud gateway at {}", gateway_addr);
+
+    if (owned_client_->Connect(gateway_addr)) {
+        // Set auth token
+        owned_client_->SetAuthToken(auth.GetJwtToken());
+        datastream_client_ = owned_client_.get();
+        spdlog::info("CloudBrowser: Connected to CyxCloud successfully");
+
+        // Auto-refresh datasets
+        RefreshDatasets();
+        RefreshPublicDatasets();
+    } else {
+        spdlog::warn("CloudBrowser: Failed to connect to CyxCloud gateway");
+    }
+}
 } // namespace gui

@@ -5,10 +5,10 @@ package cyxwiz.protocol;
 // DataStream service for zero-copy ML training data streaming from CyxCloud
 service DataStreamService {
     // Stream batches for training
-    rpc StreamBatches(StreamBatchesRequest) returns (stream BatchResponse);
+    rpc StreamBatches(StreamBatchesRequest) returns (stream StreamBatchResponse);
 
     // Get dataset metadata
-    rpc GetDatasetInfo(GetDatasetInfoRequest) returns (DatasetInfoResponse);
+    rpc GetDatasetInfo(GetDatasetInfoRequest) returns (CloudDatasetInfoResponse);
 
     // List user's datasets (owned + shared)
     rpc ListDatasets(ListDatasetsRequest) returns (ListDatasetsResponse);
@@ -62,7 +62,7 @@ message StreamBatchesRequest {
     int64 seed = 8;                 // For reproducible shuffling
 }
 
-message BatchResponse {
+message StreamBatchResponse {
     uint64 batch_index = 1;
     repeated bytes items = 2;       // Raw data for each item in batch
     repeated bytes item_hashes = 3; // Blake3 hash of each item for verification
@@ -79,7 +79,7 @@ message GetDatasetInfoRequest {
     string dataset_id = 1;
 }
 
-message DatasetInfoResponse {
+message CloudDatasetInfoResponse {
     DatasetInfo dataset = 1;
     repeated DatasetFileInfo files = 2;
 }

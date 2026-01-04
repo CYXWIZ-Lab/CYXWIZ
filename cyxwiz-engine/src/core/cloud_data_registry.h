@@ -11,6 +11,17 @@
 namespace cyxwiz {
 
 /**
+ * Data Loader Configuration
+ * Settings for loading batches from a dataset
+ */
+struct DataLoaderConfig {
+    int batch_size = 32;
+    bool shuffle = true;
+    int num_workers = 0;
+    bool drop_last = false;
+};
+
+/**
  * Cloud Data Registry
  *
  * Extends the local DataRegistry to support cloud-stored datasets.
@@ -39,17 +50,14 @@ public:
     // ========================================================================
 
     // Register a cloud dataset for use in training
-    // Returns a local handle that can be used with DataRegistry
-    DatasetHandle RegisterCloudDataset(const network::CloudDatasetInfo& cloud_dataset);
+    // Returns a dataset ID string for tracking
+    std::string RegisterCloudDataset(const network::CloudDatasetInfo& cloud_dataset);
 
-    // Get cloud info for a registered dataset
-    bool GetCloudDatasetInfo(DatasetHandle handle, network::CloudDatasetInfo& out_info) const;
+    // Get cloud info for a registered dataset by ID
+    bool GetCloudDatasetInfo(const std::string& dataset_id, network::CloudDatasetInfo& out_info) const;
 
-    // Check if a dataset handle refers to a cloud dataset
-    bool IsCloudDataset(DatasetHandle handle) const;
-
-    // Get dataset ID for a cloud dataset handle
-    std::string GetCloudDatasetId(DatasetHandle handle) const;
+    // Check if a dataset ID refers to a registered cloud dataset
+    bool IsCloudDataset(const std::string& dataset_id) const;
 
     // ========================================================================
     // Streaming Integration
@@ -57,7 +65,7 @@ public:
 
     // Start streaming a cloud dataset
     // This creates a streaming loader that can be used for training
-    bool StartCloudStreaming(DatasetHandle handle,
+    bool StartCloudStreaming(const std::string& dataset_id,
                              int batch_size,
                              network::BatchCallback on_batch,
                              network::StreamErrorCallback on_error = nullptr,
@@ -66,27 +74,27 @@ public:
                              int64_t seed = 0);
 
     // Stop streaming
-    void StopCloudStreaming(DatasetHandle handle);
+    void StopCloudStreaming(const std::string& dataset_id);
 
     // Check if streaming is active for a dataset
-    bool IsStreaming(DatasetHandle handle) const;
+    bool IsStreaming(const std::string& dataset_id) const;
 
     // Get streaming progress
-    float GetStreamingProgress(DatasetHandle handle) const;
+    float GetStreamingProgress(const std::string& dataset_id) const;
 
     // ========================================================================
     // Trust Level Management
     // ========================================================================
 
     // Get the trust level for a dataset
-    network::TrustLevel GetTrustLevel(DatasetHandle handle) const;
+    network::TrustLevel GetTrustLevel(const std::string& dataset_id) const;
 
     // Set minimum trust level requirement
     void SetMinTrustLevel(network::TrustLevel level) { min_trust_level_ = level; }
     network::TrustLevel GetMinTrustLevel() const { return min_trust_level_; }
 
     // Verify a cloud dataset
-    bool VerifyCloudDataset(DatasetHandle handle, network::DatasetVerificationResult& out_result);
+    bool VerifyCloudDataset(const std::string& dataset_id, network::DatasetVerificationResult& out_result);
 
     // ========================================================================
     // Public Dataset Integration
@@ -97,20 +105,20 @@ public:
                             const std::string& filter = "");
 
     // Use a public dataset (downloads/caches if needed)
-    DatasetHandle UsePublicDataset(const network::PublicDatasetInfo& public_dataset);
+    std::string UsePublicDataset(const network::PublicDatasetInfo& public_dataset);
 
     // ========================================================================
     // Caching
     // ========================================================================
 
     // Cache cloud data locally for offline use
-    bool CacheCloudDataset(DatasetHandle handle, const std::string& cache_path);
+    bool CacheCloudDataset(const std::string& dataset_id, const std::string& cache_path);
 
     // Check if a dataset is cached locally
-    bool IsCachedLocally(DatasetHandle handle) const;
+    bool IsCachedLocally(const std::string& dataset_id) const;
 
     // Clear cache for a dataset
-    void ClearCache(DatasetHandle handle);
+    void ClearCache(const std::string& dataset_id);
 
     // Get cache directory
     std::string GetCacheDirectory() const { return cache_directory_; }
@@ -119,7 +127,6 @@ public:
 private:
     // Cloud dataset entry
     struct CloudDatasetEntry {
-        DatasetHandle handle;
         network::CloudDatasetInfo info;
         std::string dataset_id;
         bool is_streaming = false;
@@ -128,9 +135,8 @@ private:
 
     network::DataStreamClient* datastream_client_ = nullptr;
 
-    // Mapping from DatasetHandle to cloud info
-    std::unordered_map<uint64_t, CloudDatasetEntry> cloud_datasets_;
-    uint64_t next_cloud_handle_id_ = 1000000;  // Start high to avoid conflicts with local
+    // Mapping from dataset_id to cloud info
+    std::unordered_map<std::string, CloudDatasetEntry> cloud_datasets_;
 
     // Trust level settings
     network::TrustLevel min_trust_level_ = network::TrustLevel::Verified;
@@ -147,8 +153,8 @@ private:
 class UnifiedDatasetHandle {
 public:
     UnifiedDatasetHandle() = default;
-    UnifiedDatasetHandle(DatasetHandle local_handle);
-    UnifiedDatasetHandle(const network::CloudDatasetInfo& cloud_info);
+    explicit UnifiedDatasetHandle(DatasetHandle local_handle);
+    explicit UnifiedDatasetHandle(const network::CloudDatasetInfo& cloud_info);
 
     bool IsLocal() const { return is_local_; }
     bool IsCloud() const { return !is_local_; }

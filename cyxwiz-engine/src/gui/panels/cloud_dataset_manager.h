@@ -100,6 +100,11 @@ private:
 
     // Error handling
     std::string last_error_;
+    
+    // Owned DataStreamClient for auto-connection
+    std::unique_ptr<network::DataStreamClient> owned_client_;
+    bool auto_connect_attempted_ = false;
+    void TryAutoConnect();
     float error_time_ = 0.0f;
 };
 

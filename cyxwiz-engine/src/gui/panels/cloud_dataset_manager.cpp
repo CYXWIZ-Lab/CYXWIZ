@@ -1,4 +1,7 @@
 #include "cloud_dataset_manager.h"
+#include "../../auth/auth_client.h"
+#include "../../core/engine_config.h"
+#include <spdlog/spdlog.h>
 #include "../icons.h"
 #include <imgui.h>
 #include <cstring>
@@ -26,6 +29,9 @@ CloudDatasetManagerPanel::~CloudDatasetManagerPanel() = default;
 
 void CloudDatasetManagerPanel::Render() {
     if (!visible_) return;
+    
+    // Try auto-connect on first render
+    TryAutoConnect();
 
     ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
 
@@ -540,4 +546,38 @@ void CloudDatasetManagerPanel::CreateDataset() {
     }
 }
 
+
+void CloudDatasetManagerPanel::TryAutoConnect() {
+    if (auto_connect_attempted_) return;
+    auto_connect_attempted_ = true;
+
+    auto& auth = cyxwiz::auth::AuthClient::Instance();
+    if (!auth.IsAuthenticated()) {
+        spdlog::debug("CloudDatasetManager: Not authenticated, skipping auto-connect");
+        return;
+    }
+
+    if (!owned_client_) {
+        owned_client_ = std::make_unique<network::DataStreamClient>();
+    }
+
+    std::string gateway_addr = cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress();
+    if (gateway_addr.empty()) {
+        gateway_addr = "localhost:50052";
+    }
+    // CyxCloud gateway uses port 50052 for DataStream
+    if (gateway_addr.find(":50051") != std::string::npos) {
+        gateway_addr.replace(gateway_addr.find(":50051"), 6, ":50052");
+    }
+
+    spdlog::info("CloudDatasetManager: Connecting to CyxCloud gateway at {}", gateway_addr);
+
+    if (owned_client_->Connect(gateway_addr)) {
+        owned_client_->SetAuthToken(auth.GetJwtToken());
+        datastream_client_ = owned_client_.get();
+        spdlog::info("CloudDatasetManager: Connected to CyxCloud successfully");
+    } else {
+        spdlog::warn("CloudDatasetManager: Failed to connect to CyxCloud gateway");
+    }
+}
 } // namespace gui

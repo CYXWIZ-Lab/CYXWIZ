@@ -19,6 +19,8 @@ class DatasetPanel;
 class WalletPanel;
 class CustomNodeEditorPanel;
 class ThemeEditorPanel;
+class CloudBrowserPanel;
+class CloudDatasetManagerPanel;
 struct MLNode;
 struct NodeLink;
 
@@ -128,6 +130,7 @@ class StartupScriptManager;
 } // namespace scripting
 
 namespace network {
+class DataStreamClient;
 class GRPCClient;
 class JobManager;
 } // namespace network
@@ -147,6 +150,9 @@ public:
 
     // Set network components (called by Application after construction)
     void SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager);
+    
+    // Set DataStream client for cloud panels
+    void SetDataStreamClient(network::DataStreamClient* client);
 
     // Get P2PTrainingPanel for job monitoring
     cyxwiz::P2PTrainingPanel* GetP2PTrainingPanel() { return p2p_training_panel_.get(); }
@@ -331,6 +337,10 @@ private:
     std::unique_ptr<cyxwiz::HashGeneratorPanel> hash_generator_panel_;
     std::unique_ptr<cyxwiz::JSONViewerPanel> json_viewer_panel_;
     std::unique_ptr<cyxwiz::RegexTesterPanel> regex_tester_panel_;
+    
+    // Cloud panels (DataStream)
+    std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
+    std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
@@ -344,6 +354,7 @@ private:
 
     // Network components
     network::JobManager* job_manager_ = nullptr;
+    network::DataStreamClient* datastream_client_ = nullptr;
     std::string monitoring_job_id_;
 
     // Exit request callback

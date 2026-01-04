@@ -109,6 +109,8 @@
 #include "panels/hash_generator_panel.h"
 #include "panels/json_viewer_panel.h"
 #include "panels/regex_tester_panel.h"
+#include "panels/cloud_browser.h"
+#include "panels/cloud_dataset_manager.h"
 #include "tutorial/tutorial_system.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
@@ -116,6 +118,7 @@
 #include "../network/grpc_client.h"
 #include "../network/reservation_client.h"
 #include "../network/p2p_client.h"
+#include "../network/datastream_client.h"
 #include "../auth/auth_client.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
@@ -292,6 +295,10 @@ MainWindow::MainWindow()
     hash_generator_panel_ = std::make_unique<cyxwiz::HashGeneratorPanel>();
     json_viewer_panel_ = std::make_unique<cyxwiz::JSONViewerPanel>();
     regex_tester_panel_ = std::make_unique<cyxwiz::RegexTesterPanel>();
+    
+    // Cloud panels (DataStream)
+    cloud_browser_panel_ = std::make_unique<gui::CloudBrowserPanel>();
+    cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();
 
     // Set NAS panel callbacks for node editor integration
     nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
@@ -1781,6 +1788,22 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
     spdlog::info("Network components set in MainWindow");
 }
 
+void MainWindow::SetDataStreamClient(network::DataStreamClient* client) {
+    datastream_client_ = client;
+
+    // Pass DataStreamClient to cloud panels
+    if (cloud_browser_panel_) {
+        cloud_browser_panel_->SetDataStreamClient(client);
+        spdlog::info("DataStreamClient set on CloudBrowserPanel");
+    }
+    if (cloud_dataset_manager_panel_) {
+        cloud_dataset_manager_panel_->SetDataStreamClient(client);
+        spdlog::info("DataStreamClient set on CloudDatasetManagerPanel");
+    }
+
+    spdlog::info("DataStreamClient set in MainWindow");
+}
+
 void MainWindow::StartJobMonitoring(const std::string& job_id) {
     spdlog::info("Starting P2P monitoring for job: {}", job_id);
 
@@ -2017,6 +2040,10 @@ void MainWindow::Render() {
     if (hash_generator_panel_) hash_generator_panel_->Render();
     if (json_viewer_panel_) json_viewer_panel_->Render();
     if (regex_tester_panel_) regex_tester_panel_->Render();
+    
+    // Cloud panels
+    if (cloud_browser_panel_) cloud_browser_panel_->Render();
+    if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->Render();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
@@ -2291,6 +2318,12 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (variable_explorer_) {
         dock_style.RegisterPanel("Variable Explorer", ICON_FA_LIST_UL, variable_explorer_->GetVisiblePtr());
+    }
+    if (cloud_browser_panel_) {
+        dock_style.RegisterPanel("Cloud Browser", ICON_FA_CLOUD, cloud_browser_panel_->GetVisiblePtr());
+    }
+    if (cloud_dataset_manager_panel_) {
+        dock_style.RegisterPanel("Cloud Manager", ICON_FA_DATABASE, cloud_dataset_manager_panel_->GetVisiblePtr());
     }
 
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());

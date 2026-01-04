@@ -306,6 +306,18 @@
 #define ICON_FA_CLOUD               "\xef\x83\x82"  // U+F0C2
 #define ICON_FA_CLOUD_ARROW_UP      "\xef\x83\xae"  // U+F0EE
 #define ICON_FA_CLOUD_ARROW_DOWN    "\xef\x83\xad"  // U+F0ED
+
+// Trust/Security
+#define ICON_FA_USER_CHECK          "\xef\x93\xbc"  // U+F4FC - user with checkmark
+#define ICON_FA_SIGNATURE           "\xef\x96\xb7"  // U+F5B7 - signature
+#define ICON_FA_SHIELD              "\xef\x84\xb2"  // U+F132 - shield
+#define ICON_FA_SHIELD_HALVED       "\xef\x8f\xad"  // U+F3ED - shield halved
+#define ICON_FA_CERTIFICATE         "\xef\x82\xa3"  // U+F0A3 - certificate
+#define ICON_FA_SHARE_NODES         "\xee\x90\x9d"  // U+E41D - share nodes (for sharing)
+#define ICON_FA_CIRCLE_PAUSE        "\xef\x82\x8b"  // U+F28B - circle pause
+
+// Aliases for common alternative names
+#define ICON_FA_SEARCH              ICON_FA_MAGNIFYING_GLASS
 #define ICON_FA_GEM                 "ï¥"  // U+F3A5 - gem/diamond for SOL
 #define ICON_FA_PAPER_PLANE         "ï"  // U+F1D8 - paper plane for sending
 #define ICON_FA_UNLOCK              "ï"  // U+F09C - unlock

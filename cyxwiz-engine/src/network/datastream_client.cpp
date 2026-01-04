@@ -229,7 +229,7 @@ bool DataStreamClient::GetDatasetInfo(const std::string& dataset_id,
     cyxwiz::protocol::GetDatasetInfoRequest request;
     request.set_dataset_id(dataset_id);
 
-    cyxwiz::protocol::DatasetInfoResponse response;
+    cyxwiz::protocol::CloudDatasetInfoResponse response;
     grpc::Status status = stub_->GetDatasetInfo(&context, request, &response);
 
     if (!status.ok()) {
@@ -700,7 +700,7 @@ void DataStreamClient::StreamingThread(const std::string& dataset_id,
         return;
     }
 
-    cyxwiz::protocol::BatchResponse proto_batch;
+    cyxwiz::protocol::StreamBatchResponse proto_batch;
     while (!should_stop_.load() && reader->Read(&proto_batch)) {
         // Update progress
         current_batch_.store(proto_batch.batch_index() + 1);

@@ -123,6 +123,13 @@ private:
 
     // Thread safety
     std::mutex datasets_mutex_;
+    
+    // Owned DataStreamClient for auto-connection
+    std::unique_ptr<network::DataStreamClient> owned_client_;
+    bool auto_connect_attempted_ = false;
+    
+    // Auto-connect to CyxCloud when authenticated
+    void TryAutoConnect();
 };
 
 } // namespace gui

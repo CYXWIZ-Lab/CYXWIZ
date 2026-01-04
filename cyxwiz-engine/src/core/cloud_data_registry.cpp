@@ -41,21 +41,20 @@ void CloudDataRegistry::SetDataStreamClient(network::DataStreamClient* client) {
     datastream_client_ = client;
 }
 
-DatasetHandle CloudDataRegistry::RegisterCloudDataset(const network::CloudDatasetInfo& cloud_dataset) {
+std::string CloudDataRegistry::RegisterCloudDataset(const network::CloudDatasetInfo& cloud_dataset) {
     // Create a cloud dataset entry
     CloudDatasetEntry entry;
-    entry.handle = DatasetHandle(next_cloud_handle_id_++);
     entry.info = cloud_dataset;
     entry.dataset_id = cloud_dataset.id;
     entry.is_streaming = false;
 
-    cloud_datasets_[entry.handle.GetId()] = entry;
+    cloud_datasets_[cloud_dataset.id] = entry;
 
-    return entry.handle;
+    return cloud_dataset.id;
 }
 
-bool CloudDataRegistry::GetCloudDatasetInfo(DatasetHandle handle, network::CloudDatasetInfo& out_info) const {
-    auto it = cloud_datasets_.find(handle.GetId());
+bool CloudDataRegistry::GetCloudDatasetInfo(const std::string& dataset_id, network::CloudDatasetInfo& out_info) const {
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) {
         return false;
     }
@@ -64,19 +63,11 @@ bool CloudDataRegistry::GetCloudDatasetInfo(DatasetHandle handle, network::Cloud
     return true;
 }
 
-bool CloudDataRegistry::IsCloudDataset(DatasetHandle handle) const {
-    return cloud_datasets_.find(handle.GetId()) != cloud_datasets_.end();
+bool CloudDataRegistry::IsCloudDataset(const std::string& dataset_id) const {
+    return cloud_datasets_.find(dataset_id) != cloud_datasets_.end();
 }
 
-std::string CloudDataRegistry::GetCloudDatasetId(DatasetHandle handle) const {
-    auto it = cloud_datasets_.find(handle.GetId());
-    if (it == cloud_datasets_.end()) {
-        return "";
-    }
-    return it->second.dataset_id;
-}
-
-bool CloudDataRegistry::StartCloudStreaming(DatasetHandle handle,
+bool CloudDataRegistry::StartCloudStreaming(const std::string& dataset_id,
                                              int batch_size,
                                              network::BatchCallback on_batch,
                                              network::StreamErrorCallback on_error,
@@ -87,7 +78,7 @@ bool CloudDataRegistry::StartCloudStreaming(DatasetHandle handle,
         return false;
     }
 
-    auto it = cloud_datasets_.find(handle.GetId());
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) {
         return false;
     }
@@ -101,7 +92,7 @@ bool CloudDataRegistry::StartCloudStreaming(DatasetHandle handle,
     }
 
     bool success = datastream_client_->StartStreaming(
-        it->second.dataset_id,
+        dataset_id,
         batch_size,
         on_batch,
         on_error,
@@ -120,8 +111,8 @@ bool CloudDataRegistry::StartCloudStreaming(DatasetHandle handle,
     return success;
 }
 
-void CloudDataRegistry::StopCloudStreaming(DatasetHandle handle) {
-    auto it = cloud_datasets_.find(handle.GetId());
+void CloudDataRegistry::StopCloudStreaming(const std::string& dataset_id) {
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) return;
 
     if (it->second.is_streaming && datastream_client_) {
@@ -130,14 +121,14 @@ void CloudDataRegistry::StopCloudStreaming(DatasetHandle handle) {
     }
 }
 
-bool CloudDataRegistry::IsStreaming(DatasetHandle handle) const {
-    auto it = cloud_datasets_.find(handle.GetId());
+bool CloudDataRegistry::IsStreaming(const std::string& dataset_id) const {
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) return false;
     return it->second.is_streaming;
 }
 
-float CloudDataRegistry::GetStreamingProgress(DatasetHandle handle) const {
-    auto it = cloud_datasets_.find(handle.GetId());
+float CloudDataRegistry::GetStreamingProgress(const std::string& dataset_id) const {
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) return 0.0f;
 
     if (!it->second.is_streaming || !datastream_client_) return 0.0f;
@@ -145,26 +136,26 @@ float CloudDataRegistry::GetStreamingProgress(DatasetHandle handle) const {
     return datastream_client_->GetStreamingProgress();
 }
 
-network::TrustLevel CloudDataRegistry::GetTrustLevel(DatasetHandle handle) const {
-    auto it = cloud_datasets_.find(handle.GetId());
+network::TrustLevel CloudDataRegistry::GetTrustLevel(const std::string& dataset_id) const {
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) {
         return network::TrustLevel::Untrusted;
     }
     return it->second.info.trust_level;
 }
 
-bool CloudDataRegistry::VerifyCloudDataset(DatasetHandle handle,
+bool CloudDataRegistry::VerifyCloudDataset(const std::string& dataset_id,
                                             network::DatasetVerificationResult& out_result) {
     if (!datastream_client_ || !datastream_client_->IsConnected()) {
         return false;
     }
 
-    auto it = cloud_datasets_.find(handle.GetId());
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) {
         return false;
     }
 
-    bool success = datastream_client_->VerifyDataset(it->second.dataset_id, out_result);
+    bool success = datastream_client_->VerifyDataset(dataset_id, out_result);
 
     if (success) {
         // Update trust level based on verification
@@ -183,7 +174,7 @@ bool CloudDataRegistry::ListPublicDatasets(std::vector<network::PublicDatasetInf
     return datastream_client_->ListPublicDatasets(out_datasets, filter);
 }
 
-DatasetHandle CloudDataRegistry::UsePublicDataset(const network::PublicDatasetInfo& public_dataset) {
+std::string CloudDataRegistry::UsePublicDataset(const network::PublicDatasetInfo& public_dataset) {
     // If already cached in CyxCloud, use the cached version
     if (public_dataset.cached && !public_dataset.cached_dataset_id.empty()) {
         network::CloudDatasetInfo info;
@@ -194,12 +185,12 @@ DatasetHandle CloudDataRegistry::UsePublicDataset(const network::PublicDatasetIn
     }
 
     // Otherwise, we'd need to trigger a download
-    // For now, return invalid handle
-    return DatasetHandle();
+    // For now, return empty string
+    return "";
 }
 
-bool CloudDataRegistry::CacheCloudDataset(DatasetHandle handle, const std::string& cache_path) {
-    auto it = cloud_datasets_.find(handle.GetId());
+bool CloudDataRegistry::CacheCloudDataset(const std::string& dataset_id, const std::string& cache_path) {
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) {
         return false;
     }
@@ -214,8 +205,8 @@ bool CloudDataRegistry::CacheCloudDataset(DatasetHandle handle, const std::strin
     return true;
 }
 
-bool CloudDataRegistry::IsCachedLocally(DatasetHandle handle) const {
-    auto it = cloud_datasets_.find(handle.GetId());
+bool CloudDataRegistry::IsCachedLocally(const std::string& dataset_id) const {
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) {
         return false;
     }
@@ -227,8 +218,8 @@ bool CloudDataRegistry::IsCachedLocally(DatasetHandle handle) const {
     return std::filesystem::exists(it->second.cache_path);
 }
 
-void CloudDataRegistry::ClearCache(DatasetHandle handle) {
-    auto it = cloud_datasets_.find(handle.GetId());
+void CloudDataRegistry::ClearCache(const std::string& dataset_id) {
+    auto it = cloud_datasets_.find(dataset_id);
     if (it == cloud_datasets_.end()) return;
 
     if (!it->second.cache_path.empty() && std::filesystem::exists(it->second.cache_path)) {
@@ -247,8 +238,7 @@ UnifiedDatasetHandle::UnifiedDatasetHandle(DatasetHandle local_handle)
     , is_local_(true)
     , local_handle_(local_handle) {
     if (is_valid_) {
-        const auto& info = DataRegistry::Instance().GetDatasetInfo(local_handle);
-        name_ = info.name;
+        name_ = local_handle.GetName();
     }
 }
 
@@ -260,7 +250,7 @@ UnifiedDatasetHandle::UnifiedDatasetHandle(const network::CloudDatasetInfo& clou
     , cloud_info_(cloud_info) {
 
     // Also register with CloudDataRegistry
-    local_handle_ = CloudDataRegistry::Instance().RegisterCloudDataset(cloud_info);
+    CloudDataRegistry::Instance().RegisterCloudDataset(cloud_info);
 }
 
 DataLoaderConfig UnifiedDatasetHandle::GetLoaderConfig(int batch_size, bool shuffle) const {

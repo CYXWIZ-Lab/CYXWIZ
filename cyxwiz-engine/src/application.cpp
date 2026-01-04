@@ -73,15 +73,34 @@ static void enable_dark_title_bar(GLFWwindow* window) {
 
 // Load window icon from resources
 static bool load_window_icon(GLFWwindow* window) {
-    // Try both possible locations
-    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz.png";
+    // Try multiple possible locations
+    std::vector<std::filesystem::path> icon_paths = {
+        "cyxwiz-engine/resources/cyxwiz.png",
+        "resources/cyxwiz.png"
+    };
 
-    if (!std::filesystem::exists(icon_path)) {
-        icon_path = "resources/cyxwiz.png";
-        if (!std::filesystem::exists(icon_path)) {
-            spdlog::warn("Window icon not found at either location");
-            return false;
+#ifdef _WIN32
+    // On Windows, check paths relative to the executable
+    char exec_path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, exec_path, MAX_PATH);
+    if (len > 0) {
+        std::filesystem::path exec_dir = std::filesystem::path(exec_path).parent_path();
+        icon_paths.insert(icon_paths.begin(), exec_dir / "resources" / "cyxwiz.png");
+        icon_paths.insert(icon_paths.begin(), exec_dir / ".." / ".." / ".." / "cyxwiz-engine" / "resources" / "cyxwiz.png");
+    }
+#endif
+
+    std::filesystem::path icon_path;
+    for (const auto& path : icon_paths) {
+        if (std::filesystem::exists(path)) {
+            icon_path = path;
+            break;
         }
+    }
+
+    if (icon_path.empty()) {
+        spdlog::warn("Window icon not found at any location");
+        return false;
     }
 
     int width, height, channels;
@@ -748,7 +767,19 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         "../Resources/fonts/"  // macOS app bundle
     };
 
-#ifdef __APPLE__
+#ifdef _WIN32
+    // On Windows, check paths relative to the executable
+    char exec_path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, exec_path, MAX_PATH);
+    if (len > 0) {
+        std::filesystem::path exec_dir = std::filesystem::path(exec_path).parent_path();
+        // From build/bin/Release/ back to cyxwiz-engine/resources/fonts/
+        font_paths.insert(font_paths.begin(), (exec_dir / "resources" / "fonts" / "").string());
+        font_paths.insert(font_paths.begin(), (exec_dir / ".." / "resources" / "fonts" / "").string());
+        font_paths.insert(font_paths.begin(), (exec_dir / ".." / ".." / ".." / "cyxwiz-engine" / "resources" / "fonts" / "").string());
+        spdlog::debug("Windows executable dir: {}", exec_dir.string());
+    }
+#elif defined(__APPLE__)
     // On macOS, also check paths relative to the executable
     char exec_path[PATH_MAX];
     uint32_t size = sizeof(exec_path);
