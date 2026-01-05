@@ -11,6 +11,7 @@
 #include <mutex>
 #include <queue>
 #include <condition_variable>
+#include <chrono>
 
 // Forward declarations
 namespace cyxwiz {
@@ -204,10 +205,19 @@ private:
     std::optional<ExecutionResult> async_command_result_;
     void CommandAsyncWorker(const std::string& command);
 
+    // Post-command cooldown tracking (to prevent racing with Python cleanup)
+    std::chrono::steady_clock::time_point last_command_end_time_;
+    std::atomic<bool> last_command_had_error_{false};
+    std::atomic<bool> python_busy_{false};  // True while any Python operation is in progress
+    static constexpr int POST_ERROR_COOLDOWN_MS = 500;  // Wait 500ms after error (increased)
+
 public:
     // Static method for Python to check cancellation (no GIL needed)
     static int GetCancelFlag() { return shared_cancel_flag_.load(); }
     static void SetCancelFlag(int val) { shared_cancel_flag_.store(val); }
+
+    // Check if it's safe to run commands (no async running, past cooldown period)
+    bool IsSafeForNewCommand() const;
 };
 
 } // namespace scripting

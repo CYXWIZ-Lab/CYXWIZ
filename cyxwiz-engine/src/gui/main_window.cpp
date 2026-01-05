@@ -40,6 +40,7 @@
 #include "panels/memory_panel.h"
 #include "panels/memory_monitor.h"
 #include "panels/variable_explorer.h"
+#include "panels/plot_output_panel.h"
 #include "panels/test_results_panel.h"
 #include "panels/export_dialog.h"
 #include "panels/import_dialog.h"
@@ -179,6 +180,10 @@ MainWindow::MainWindow()
     memory_monitor_ = std::make_unique<cyxwiz::MemoryMonitor>();
     variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
     variable_explorer_->SetScriptingEngine(scripting_engine_);
+
+    // Plot output panel (like MATLAB's figure window)
+    plot_output_panel_ = std::make_unique<cyxwiz::PlotOutputPanel>();
+    plot_output_panel_->SetScriptingEngine(scripting_engine_);
 
     // Test results panel
     test_results_panel_ = std::make_unique<cyxwiz::TestResultsPanel>();
@@ -1487,6 +1492,8 @@ MainWindow::~MainWindow() {
     script_editor_.reset();
     spdlog::info("~MainWindow: variable_explorer_ (holds scripting_engine)");
     variable_explorer_.reset();
+    spdlog::info("~MainWindow: plot_output_panel_ (holds scripting_engine)");
+    plot_output_panel_.reset();
     spdlog::info("~MainWindow: startup_script_manager_ (holds scripting_engine)");
     startup_script_manager_.reset();
 
@@ -1946,6 +1953,7 @@ void MainWindow::Render() {
     if (memory_panel_) memory_panel_->Render();
     if (memory_monitor_) memory_monitor_->Render();
     if (variable_explorer_) variable_explorer_->Render();
+    if (plot_output_panel_) plot_output_panel_->Render();
     if (test_results_panel_) test_results_panel_->Render();
     if (export_dialog_) export_dialog_->Render();
     if (import_dialog_) import_dialog_->Render();
@@ -2319,6 +2327,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     if (variable_explorer_) {
         dock_style.RegisterPanel("Variable Explorer", ICON_FA_LIST_UL, variable_explorer_->GetVisiblePtr());
     }
+    if (plot_output_panel_) {
+        dock_style.RegisterPanel("Plot Output", ICON_FA_CHART_LINE, plot_output_panel_->GetVisiblePtr());
+    }
     if (cloud_browser_panel_) {
         dock_style.RegisterPanel("Cloud Browser", ICON_FA_CLOUD, cloud_browser_panel_->GetVisiblePtr());
     }
@@ -2366,6 +2377,7 @@ void MainWindow::SetDefaultPanelVisibility() {
     if (memory_panel_) memory_panel_->SetVisible(false);
     if (memory_monitor_) memory_monitor_->SetVisible(false);
     if (variable_explorer_) variable_explorer_->SetVisible(false);
+    if (plot_output_panel_) plot_output_panel_->SetVisible(false);
     if (test_results_panel_) test_results_panel_->SetVisible(false);
 
     // Model Analysis panels (Phase 2)

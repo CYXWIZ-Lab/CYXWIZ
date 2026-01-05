@@ -194,9 +194,12 @@ void CommandWindowPanel::RenderInputArea() {
         return 0;
     };
 
-    // Always keep focus on input field when command window is visible
-    // This fixes the issue where Ctrl+Enter loses focus
-    ImGui::SetKeyboardFocusHere();
+    // Only set focus when explicitly requested (e.g., after command execution)
+    // Don't steal focus every frame - this breaks other GUI interactions
+    if (focus_input_) {
+        ImGui::SetKeyboardFocusHere();
+        focus_input_ = false;
+    }
 
     // Calculate input height (3 lines minimum, grows with content)
     float line_height = ImGui::GetTextLineHeight();

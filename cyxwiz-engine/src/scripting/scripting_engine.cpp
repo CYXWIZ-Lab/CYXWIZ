@@ -129,6 +129,14 @@ ExecutionResult ScriptingEngine::ExecuteCommandDirect(const std::string& command
     ExecutionResult result;
     result.success = false;
 
+    // Safety check: don't try to acquire GIL if Python is busy in another thread
+    // This prevents deadlock/freeze when async command is running
+    if (python_busy_ || command_running_ || script_running_) {
+        result.error_message = "Python interpreter is busy";
+        spdlog::debug("ExecuteCommandDirect: skipped - Python busy");
+        return result;
+    }
+
     try {
         // Acquire GIL for this execution
         py::gil_scoped_acquire acquire;
@@ -265,7 +273,7 @@ def _run_command():
     sys.stderr = io.StringIO()
     sys.settrace(_cmd_trace)
     try:
-        exec(''')" + escaped_command + R"(''')
+        exec(''')" + escaped_command + R"(''', __import__('__main__').__dict__)
         _cmd_result['success'] = True
     except KeyboardInterrupt:
         _cmd_result['error'] = 'Command interrupted (timeout)'
@@ -531,6 +539,9 @@ std::optional<ExecutionResult> ScriptingEngine::GetCommandResult() {
 void ScriptingEngine::CommandAsyncWorker(const std::string& command) {
     spdlog::info("CommandAsyncWorker: starting for command length {}", command.length());
 
+    // Mark Python as busy before any GIL operations
+    python_busy_ = true;
+
     // Initialize MATLAB aliases if needed (must be done with GIL)
     if (!matlab_aliases_initialized_) {
         InitializeMatlabAliases();
@@ -582,7 +593,7 @@ def _run_command():
     sys.stderr = io.StringIO()
     sys.settrace(_cmd_trace)
     try:
-        exec(''')" + escaped_command + R"(''')
+        exec(''')" + escaped_command + R"(''', __import__('__main__').__dict__)
         _cmd_result['success'] = True
     except KeyboardInterrupt:
         _cmd_result['error'] = 'Command interrupted (timeout)'
@@ -654,10 +665,42 @@ if _cmd_thread.is_alive():
         async_command_result_ = result;
     }
 
+    // Track command completion time and error status for cooldown
+    last_command_end_time_ = std::chrono::steady_clock::now();
+    last_command_had_error_ = !result.success;
+
+    // Clear Python busy flag - GIL is now fully released
+    python_busy_ = false;
+
     command_running_ = false;
     shared_cancel_flag_.store(0);  // Reset cancel flag
 
     spdlog::info("CommandAsyncWorker: completed, success={}", result.success);
+}
+
+bool ScriptingEngine::IsSafeForNewCommand() const {
+    // Not safe if a command or script is running
+    if (command_running_ || script_running_) {
+        return false;
+    }
+
+    // Not safe if Python is currently busy (even if command_running_ just turned false)
+    if (python_busy_) {
+        return false;
+    }
+
+    // After an error, wait for a short cooldown before allowing new commands
+    // This gives Python time to clean up exception state
+    if (last_command_had_error_) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_command_end_time_).count();
+        if (elapsed_ms < POST_ERROR_COOLDOWN_MS) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {

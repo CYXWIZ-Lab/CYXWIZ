@@ -92,6 +92,7 @@ set(ENGINE_SOURCES
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
+    src/gui/panels/plot_output_panel.cpp
     src/gui/panels/command_window.cpp
     src/gui/panels/script_editor.cpp
     src/gui/panels/table_viewer.cpp
@@ -262,6 +263,7 @@ set(ENGINE_HEADERS
     src/gui/panels/training_plot_panel.h
     src/gui/panels/plot_window.h
     src/gui/panels/plot_test_control.h
+    src/gui/panels/plot_output_panel.h
     src/gui/panels/command_window.h
     src/gui/panels/script_editor.h
     src/gui/panels/table_viewer.h

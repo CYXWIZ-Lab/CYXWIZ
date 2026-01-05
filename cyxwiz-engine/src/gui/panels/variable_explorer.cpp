@@ -213,8 +213,8 @@ void VariableExplorerPanel::RefreshVariables() {
         return;
     }
 
-    // Don't refresh while a script is running
-    if (scripting_engine_->IsScriptRunning()) {
+    // Don't refresh while a script or command is running, or during post-error cooldown
+    if (!scripting_engine_->IsSafeForNewCommand()) {
         return;
     }
 
@@ -225,6 +225,13 @@ std::vector<PythonVariable> VariableExplorerPanel::FetchVariablesFromPython() {
     std::vector<PythonVariable> result;
 
     if (!scripting_engine_) {
+        return result;
+    }
+
+    // Double-check that it's safe to run Python commands
+    // This is a safety check in addition to the one in RefreshVariables()
+    if (!scripting_engine_->IsSafeForNewCommand()) {
+        spdlog::debug("FetchVariablesFromPython: skipping - not safe for new command");
         return result;
     }
 
