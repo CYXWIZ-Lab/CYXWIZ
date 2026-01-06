@@ -148,6 +148,7 @@ set(ENGINE_SOURCES
     src/gui/panels/log_transform_panel.cpp
     src/gui/panels/boxcox_panel.cpp
     src/gui/panels/feature_scaling_panel.cpp
+    src/gui/panels/optimizer_settings_panel.cpp
     src/gui/panels/matrix_calculator_panel.cpp
     src/gui/panels/eigen_decomp_panel.cpp
     src/gui/panels/svd_panel.cpp
@@ -317,6 +318,7 @@ set(ENGINE_HEADERS
     src/gui/panels/log_transform_panel.h
     src/gui/panels/boxcox_panel.h
     src/gui/panels/feature_scaling_panel.h
+    src/gui/panels/optimizer_settings_panel.h
     src/gui/panels/matrix_calculator_panel.h
     src/gui/panels/eigen_decomp_panel.h
     src/gui/panels/svd_panel.h

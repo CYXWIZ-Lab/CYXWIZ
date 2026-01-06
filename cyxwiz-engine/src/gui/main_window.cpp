@@ -77,6 +77,7 @@
 #include "panels/log_transform_panel.h"
 #include "panels/boxcox_panel.h"
 #include "panels/feature_scaling_panel.h"
+#include "panels/optimizer_settings_panel.h"
 #include "panels/matrix_calculator_panel.h"
 #include "panels/eigen_decomp_panel.h"
 #include "panels/svd_panel.h"
@@ -256,6 +257,7 @@ MainWindow::MainWindow()
     log_transform_panel_ = std::make_unique<cyxwiz::LogTransformPanel>();
     boxcox_panel_ = std::make_unique<cyxwiz::BoxCoxPanel>();
     feature_scaling_panel_ = std::make_unique<cyxwiz::FeatureScalingPanel>();
+    optimizer_settings_panel_ = std::make_unique<cyxwiz::OptimizerSettingsPanel>();
 
     // Linear Algebra panels (Phase 7)
     matrix_calculator_panel_ = std::make_unique<cyxwiz::MatrixCalculatorPanel>();
@@ -481,11 +483,11 @@ MainWindow::MainWindow()
         }
     });
 
-    // Optimizer Settings - opens Training Dashboard (has hyperparameters section)
+    // Optimizer Settings - opens dedicated Optimizer Settings panel
     toolbar_->SetOptimizerSettingsCallback([this]() {
-        if (training_plot_panel_) {
-            training_plot_panel_->SetVisible(true);
-            spdlog::info("Opened Training Dashboard for optimizer settings");
+        if (optimizer_settings_panel_) {
+            optimizer_settings_panel_->SetVisible(true);
+            spdlog::info("Opened Optimizer Settings panel");
         }
     });
 
@@ -2099,6 +2101,7 @@ void MainWindow::Render() {
     if (log_transform_panel_) log_transform_panel_->Render();
     if (boxcox_panel_) boxcox_panel_->Render();
     if (feature_scaling_panel_) feature_scaling_panel_->Render();
+    if (optimizer_settings_panel_) optimizer_settings_panel_->Render();
 
     // Linear Algebra panels (Phase 7)
     if (matrix_calculator_panel_) matrix_calculator_panel_->Render();

@@ -85,6 +85,7 @@ class StandardizationPanel;
 class LogTransformPanel;
 class BoxCoxPanel;
 class FeatureScalingPanel;
+class OptimizerSettingsPanel;
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
 class EigenDecompPanel;
@@ -295,6 +296,7 @@ private:
     std::unique_ptr<cyxwiz::LogTransformPanel> log_transform_panel_;
     std::unique_ptr<cyxwiz::BoxCoxPanel> boxcox_panel_;
     std::unique_ptr<cyxwiz::FeatureScalingPanel> feature_scaling_panel_;
+    std::unique_ptr<cyxwiz::OptimizerSettingsPanel> optimizer_settings_panel_;
 
     // Linear Algebra panels (Phase 7)
     std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;
