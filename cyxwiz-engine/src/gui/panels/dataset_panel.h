@@ -26,6 +26,15 @@ namespace gui {
 
 class NodeEditor;
 
+// Tab indices for DatasetPanel
+enum class DatasetTab {
+    LoadDataset = 0,
+    LoadedDatasets = 1,
+    Preview = 2,
+    Augmentation = 3,
+    Training = 4
+};
+
 class DatasetPanel : public cyxwiz::Panel {
 public:
     DatasetPanel();
@@ -87,10 +96,15 @@ public:
     int GetTrainEpochs() const { return train_epochs_; }
     int GetTrainBatchSize() const { return train_batch_size_; }
 
+    // Tab selection for menu navigation
+    void SetActiveTab(DatasetTab tab) { pending_tab_ = static_cast<int>(tab); }
+
     // Get raw data for job submission (from DataRegistry)
     const std::vector<size_t>& GetTrainIndices() const;
 
 private:
+    int pending_tab_ = -1;  // -1 means no pending tab switch
+
     void RenderDatasetSelection();
     void RenderDatasetInfo();
     void RenderSplitConfiguration();

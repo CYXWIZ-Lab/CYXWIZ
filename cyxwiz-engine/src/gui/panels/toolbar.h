@@ -51,6 +51,11 @@ public:
     void SetConnectToServerCallback(std::function<void()> callback) { connect_to_server_callback_ = callback; }
     void SetDeployToServerCallback(std::function<void()> callback) { deploy_to_server_callback_ = callback; }
     void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
+    void SetCreateCustomDatasetCallback(std::function<void()> callback) { create_custom_dataset_callback_ = callback; }
+    void SetPreprocessDatasetCallback(std::function<void()> callback) { preprocess_dataset_callback_ = callback; }
+    void SetTokenizeDatasetCallback(std::function<void()> callback) { tokenize_dataset_callback_ = callback; }
+    void SetAugmentDatasetCallback(std::function<void()> callback) { augment_dataset_callback_ = callback; }
+    void SetDatasetStatisticsCallback(std::function<void()> callback) { dataset_statistics_callback_ = callback; }
     void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
     void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
@@ -327,6 +332,11 @@ private:
     std::function<void()> connect_to_server_callback_;
     std::function<void()> deploy_to_server_callback_;
     std::function<void()> import_dataset_callback_;
+    std::function<void()> create_custom_dataset_callback_;
+    std::function<void()> preprocess_dataset_callback_;
+    std::function<void()> tokenize_dataset_callback_;
+    std::function<void()> augment_dataset_callback_;
+    std::function<void()> dataset_statistics_callback_;
     std::function<void()> open_custom_node_editor_callback_;
     std::function<void()> open_theme_editor_callback_;
     std::function<void()> open_profiler_callback_;

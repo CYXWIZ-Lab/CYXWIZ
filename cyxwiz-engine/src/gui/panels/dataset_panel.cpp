@@ -129,7 +129,15 @@ void DatasetPanel::Render() {
 
         // Tab bar for different views
         if (ImGui::BeginTabBar("DatasetTabs")) {
-            if (ImGui::BeginTabItem("Load Dataset")) {
+            // Handle programmatic tab selection
+            ImGuiTabItemFlags load_flags = (pending_tab_ == 0) ? ImGuiTabItemFlags_SetSelected : 0;
+            ImGuiTabItemFlags loaded_flags = (pending_tab_ == 1) ? ImGuiTabItemFlags_SetSelected : 0;
+            ImGuiTabItemFlags preview_flags = (pending_tab_ == 2) ? ImGuiTabItemFlags_SetSelected : 0;
+            ImGuiTabItemFlags aug_flags = (pending_tab_ == 3) ? ImGuiTabItemFlags_SetSelected : 0;
+            ImGuiTabItemFlags train_flags = (pending_tab_ == 4) ? ImGuiTabItemFlags_SetSelected : 0;
+            pending_tab_ = -1;  // Reset after use
+
+            if (ImGui::BeginTabItem("Load Dataset", nullptr, load_flags)) {
                 ImGui::BeginChild("LoadPanel", ImVec2(0, 0), false);
 
                 // Single column clean layout
@@ -160,12 +168,12 @@ void DatasetPanel::Render() {
                 ImGui::EndTabItem();
             }
 
-            if (ImGui::BeginTabItem("Loaded Datasets")) {
+            if (ImGui::BeginTabItem("Loaded Datasets", nullptr, loaded_flags)) {
                 RenderLoadedDatasets();
                 ImGui::EndTabItem();
             }
 
-            if (ImGui::BeginTabItem("Preview")) {
+            if (ImGui::BeginTabItem("Preview", nullptr, preview_flags)) {
                 if (IsDatasetLoaded()) {
                     RenderDataPreview();
                 } else {
@@ -174,12 +182,12 @@ void DatasetPanel::Render() {
                 ImGui::EndTabItem();
             }
 
-            if (ImGui::BeginTabItem("Augmentation")) {
+            if (ImGui::BeginTabItem("Augmentation", nullptr, aug_flags)) {
                 RenderAugmentationTab();
                 ImGui::EndTabItem();
             }
 
-            if (ImGui::BeginTabItem("Training")) {
+            if (ImGui::BeginTabItem("Training", nullptr, train_flags)) {
                 if (IsDatasetLoaded()) {
                     RenderTrainingSection();
                 } else {

@@ -116,27 +116,37 @@ void ToolbarPanel::RenderDatasetMenu() {
         }
 
         if (ImGui::MenuItem("Create Custom Dataset...")) {
-            // TODO: Create dataset
+            if (create_custom_dataset_callback_) {
+                create_custom_dataset_callback_();
+            }
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem("Preprocess...")) {
-            // TODO: Preprocess dataset
+            if (preprocess_dataset_callback_) {
+                preprocess_dataset_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Tokenize...")) {
-            // TODO: Tokenize dataset
+            if (tokenize_dataset_callback_) {
+                tokenize_dataset_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Augment...")) {
-            // TODO: Data augmentation
+            if (augment_dataset_callback_) {
+                augment_dataset_callback_();
+            }
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem("Dataset Statistics")) {
-            // TODO: Show statistics
+            if (dataset_statistics_callback_) {
+                dataset_statistics_callback_();
+            }
         }
 
         ImGui::EndMenu();

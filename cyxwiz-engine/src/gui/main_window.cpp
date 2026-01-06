@@ -399,6 +399,49 @@ MainWindow::MainWindow()
         }
     });
 
+    // Create Custom Dataset - opens DatasetPanel to Load Dataset tab
+    toolbar_->SetCreateCustomDatasetCallback([this]() {
+        if (dataset_panel_) {
+            dataset_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
+            dataset_panel_->SetVisible(true);
+            spdlog::info("Opened Dataset panel for custom dataset creation");
+        }
+    });
+
+    // Preprocess - opens Feature Scaling panel
+    toolbar_->SetPreprocessDatasetCallback([this]() {
+        if (feature_scaling_panel_) {
+            feature_scaling_panel_->SetVisible(true);
+            spdlog::info("Opened Feature Scaling panel for preprocessing");
+        }
+    });
+
+    // Tokenize - opens existing TokenizationPanel
+    toolbar_->SetTokenizeDatasetCallback([this]() {
+        if (tokenization_panel_) {
+            tokenization_panel_->SetVisible(true);
+            spdlog::info("Opened Tokenization panel");
+        }
+    });
+
+    // Augment - opens DatasetPanel to Augmentation tab
+    toolbar_->SetAugmentDatasetCallback([this]() {
+        if (dataset_panel_) {
+            dataset_panel_->SetActiveTab(gui::DatasetTab::Augmentation);
+            dataset_panel_->SetVisible(true);
+            spdlog::info("Opened Dataset panel Augmentation tab");
+        }
+    });
+
+    // Dataset Statistics - opens DatasetPanel (stats shown in Load Dataset tab)
+    toolbar_->SetDatasetStatisticsCallback([this]() {
+        if (dataset_panel_) {
+            dataset_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
+            dataset_panel_->SetVisible(true);
+            spdlog::info("Opened Dataset panel for statistics");
+        }
+    });
+
     // Set up Run Test callback
     toolbar_->SetRunTestCallback([this]() {
         if (node_editor_) {
