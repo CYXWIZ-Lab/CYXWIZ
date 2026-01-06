@@ -1,5 +1,6 @@
 #include "node_editor.h"
 #include "properties.h"
+#include "icons.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -1419,6 +1420,175 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
 
         default:
             return IM_COL32(127, 140, 141, 255);
+    }
+}
+
+// ========== Icon Implementation ==========
+const char* NodeEditor::GetNodeIcon(NodeType type) {
+    switch (type) {
+        // Data Pipeline
+        case NodeType::DatasetInput:
+            return ICON_FA_DATABASE;
+        case NodeType::DataLoader:
+            return ICON_FA_SPINNER;
+        case NodeType::Augmentation:
+            return ICON_FA_WAND_MAGIC_SPARKLES;
+        case NodeType::DataSplit:
+            return ICON_FA_SITEMAP;
+        case NodeType::Normalize:
+            return ICON_FA_CHART_BAR;
+        case NodeType::OneHotEncode:
+            return ICON_FA_BORDER_ALL;
+
+        // Core Layers
+        case NodeType::Dense:
+            return ICON_FA_BARS;
+        case NodeType::Flatten:
+            return ICON_FA_LAYER_GROUP;
+
+        // Convolutional Layers
+        case NodeType::Conv1D:
+        case NodeType::Conv2D:
+        case NodeType::Conv3D:
+        case NodeType::DepthwiseConv2D:
+            return ICON_FA_TABLE;
+
+        // Pooling Layers
+        case NodeType::MaxPool2D:
+        case NodeType::AvgPool2D:
+        case NodeType::GlobalMaxPool:
+        case NodeType::GlobalAvgPool:
+        case NodeType::AdaptiveAvgPool:
+            return ICON_FA_COMPRESS;
+
+        // Normalization Layers
+        case NodeType::BatchNorm:
+        case NodeType::LayerNorm:
+        case NodeType::GroupNorm:
+        case NodeType::InstanceNorm:
+            return ICON_FA_CHART_BAR;
+
+        // Regularization
+        case NodeType::Dropout:
+            return ICON_FA_DICE;
+
+        // Recurrent Layers
+        case NodeType::RNN:
+        case NodeType::LSTM:
+        case NodeType::GRU:
+        case NodeType::Bidirectional:
+        case NodeType::TimeDistributed:
+            return ICON_FA_ROTATE;
+        case NodeType::Embedding:
+            return ICON_FA_FONT;
+
+        // Attention & Transformer
+        case NodeType::MultiHeadAttention:
+        case NodeType::SelfAttention:
+        case NodeType::CrossAttention:
+        case NodeType::LinearAttention:
+            return ICON_FA_BULLSEYE;
+        case NodeType::TransformerEncoder:
+        case NodeType::TransformerDecoder:
+            return ICON_FA_MICROCHIP;
+        case NodeType::PositionalEncoding:
+            return ICON_FA_HASHTAG;
+
+        // Activation Functions
+        case NodeType::ReLU:
+        case NodeType::LeakyReLU:
+        case NodeType::PReLU:
+        case NodeType::ELU:
+        case NodeType::SELU:
+        case NodeType::GELU:
+        case NodeType::Swish:
+        case NodeType::Mish:
+            return ICON_FA_BOLT;
+        case NodeType::Sigmoid:
+            return ICON_FA_SIGNAL;
+        case NodeType::Tanh:
+            return ICON_FA_WAVE_SQUARE;
+        case NodeType::Softmax:
+            return ICON_FA_CHART_PIE;
+
+        // Shape Operations
+        case NodeType::Reshape:
+        case NodeType::TensorReshape:
+        case NodeType::View:
+            return ICON_FA_EXPAND;
+        case NodeType::Permute:
+            return ICON_FA_SHUFFLE;
+        case NodeType::Squeeze:
+        case NodeType::Unsqueeze:
+            return ICON_FA_COMPRESS;
+        case NodeType::Split:
+            return ICON_FA_SITEMAP;
+
+        // Merge Operations
+        case NodeType::Concatenate:
+            return ICON_FA_LINK;
+        case NodeType::Add:
+            return ICON_FA_PLUS;
+        case NodeType::Multiply:
+            return ICON_FA_XMARK;
+        case NodeType::Average:
+            return ICON_FA_CHART_LINE;
+
+        // Output
+        case NodeType::Output:
+            return ICON_FA_CIRCLE_CHECK;
+
+        // Loss Functions
+        case NodeType::MSELoss:
+        case NodeType::L1Loss:
+        case NodeType::SmoothL1Loss:
+        case NodeType::HuberLoss:
+            return ICON_FA_CALCULATOR;
+        case NodeType::CrossEntropyLoss:
+        case NodeType::BCELoss:
+        case NodeType::BCEWithLogits:
+        case NodeType::NLLLoss:
+            return ICON_FA_SCALE_BALANCED;
+
+        // Optimizers
+        case NodeType::SGD:
+        case NodeType::Adam:
+        case NodeType::AdamW:
+        case NodeType::RMSprop:
+        case NodeType::Adagrad:
+        case NodeType::NAdam:
+            return ICON_FA_SLIDERS;
+
+        // Learning Rate Schedulers
+        case NodeType::StepLR:
+        case NodeType::CosineAnnealing:
+        case NodeType::ReduceOnPlateau:
+        case NodeType::ExponentialLR:
+        case NodeType::WarmupScheduler:
+            return ICON_FA_CHART_LINE;
+
+        // Regularization Nodes
+        case NodeType::L1Regularization:
+        case NodeType::L2Regularization:
+        case NodeType::ElasticNet:
+            return ICON_FA_SHIELD;
+
+        // Utility Nodes
+        case NodeType::Lambda:
+            return ICON_FA_CODE;
+        case NodeType::Identity:
+            return ICON_FA_EQUALS;
+        case NodeType::Constant:
+            return ICON_FA_CIRCLE;
+        case NodeType::Parameter:
+            return ICON_FA_GEAR;
+
+        // Subgraph
+        case NodeType::Subgraph:
+            return ICON_FA_OBJECT_GROUP;
+
+        default:
+            return ICON_FA_CIRCLE_NODES;
     }
 }
 

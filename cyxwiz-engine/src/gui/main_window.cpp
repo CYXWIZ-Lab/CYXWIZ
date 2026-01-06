@@ -686,6 +686,58 @@ MainWindow::MainWindow()
         }
     });
 
+    // Set up Node Editor operation callbacks (Nodes menu)
+    toolbar_->SetAddDenseNodeCallback([this]() {
+        if (node_editor_) {
+            node_editor_->AddNodeFromMenu(gui::NodeType::Dense, "Dense (128)");
+        }
+    });
+    toolbar_->SetAddConvNodeCallback([this]() {
+        if (node_editor_) {
+            node_editor_->AddNodeFromMenu(gui::NodeType::Conv2D, "Conv2D (32)");
+        }
+    });
+    toolbar_->SetAddPoolingNodeCallback([this]() {
+        if (node_editor_) {
+            node_editor_->AddNodeFromMenu(gui::NodeType::MaxPool2D, "MaxPool2D");
+        }
+    });
+    toolbar_->SetAddDropoutNodeCallback([this]() {
+        if (node_editor_) {
+            node_editor_->AddNodeFromMenu(gui::NodeType::Dropout, "Dropout (0.5)");
+        }
+    });
+    toolbar_->SetAddBatchNormNodeCallback([this]() {
+        if (node_editor_) {
+            node_editor_->AddNodeFromMenu(gui::NodeType::BatchNorm, "BatchNorm");
+        }
+    });
+    toolbar_->SetAddAttentionNodeCallback([this]() {
+        if (node_editor_) {
+            node_editor_->AddNodeFromMenu(gui::NodeType::MultiHeadAttention, "MultiHeadAttention");
+        }
+    });
+    toolbar_->SetDuplicateNodesCallback([this]() {
+        if (node_editor_) {
+            node_editor_->DuplicateSelectedNodes();
+        }
+    });
+    toolbar_->SetDeleteNodesCallback([this]() {
+        if (node_editor_) {
+            node_editor_->DeleteSelectedNodes();
+        }
+    });
+    toolbar_->SetGroupNodesCallback([this]() {
+        if (node_editor_) {
+            node_editor_->GroupSelectedNodes();
+        }
+    });
+    toolbar_->SetUngroupNodesCallback([this]() {
+        if (node_editor_) {
+            node_editor_->UngroupSelectedNodes();
+        }
+    });
+
     // Set up Theme Editor callback
     toolbar_->SetOpenThemeEditorCallback([this]() {
         if (theme_editor_) {

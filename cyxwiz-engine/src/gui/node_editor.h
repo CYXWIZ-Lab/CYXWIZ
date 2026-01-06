@@ -377,6 +377,23 @@ public:
     // Made public so PatternBrowser can use it via callback
     MLNode CreateNode(NodeType type, const std::string& name);
 
+    // ===== Menu Operations (Public API for Toolbar) =====
+
+    // Add a node at the center of the visible area
+    void AddNodeFromMenu(NodeType type, const std::string& name);
+
+    // Delete currently selected nodes
+    void DeleteSelectedNodes();
+
+    // Duplicate currently selected nodes
+    void DuplicateSelectedNodes();
+
+    // Group selected nodes with auto-generated name
+    void GroupSelectedNodes();
+
+    // Ungroup selected nodes
+    void UngroupSelectedNodes();
+
 private:
     void ShowToolbar();
     void RenderNodes();
@@ -386,6 +403,7 @@ private:
 
     // Helper functions
     unsigned int GetNodeColor(NodeType type);
+    const char* GetNodeIcon(NodeType type);
 
     // Node management
     void AddNode(NodeType type, const std::string& name);

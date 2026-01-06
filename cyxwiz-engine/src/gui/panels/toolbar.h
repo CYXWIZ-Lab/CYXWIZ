@@ -61,6 +61,19 @@ public:
     void SetStopTrainingCallback(std::function<void()> callback) { stop_training_callback_ = callback; }
     void SetTrainingSettingsCallback(std::function<void()> callback) { training_settings_callback_ = callback; }
     void SetOptimizerSettingsCallback(std::function<void()> callback) { optimizer_settings_callback_ = callback; }
+
+    // Node editor callbacks
+    void SetAddDenseNodeCallback(std::function<void()> cb) { add_dense_node_callback_ = cb; }
+    void SetAddConvNodeCallback(std::function<void()> cb) { add_conv_node_callback_ = cb; }
+    void SetAddPoolingNodeCallback(std::function<void()> cb) { add_pooling_node_callback_ = cb; }
+    void SetAddDropoutNodeCallback(std::function<void()> cb) { add_dropout_node_callback_ = cb; }
+    void SetAddBatchNormNodeCallback(std::function<void()> cb) { add_batchnorm_node_callback_ = cb; }
+    void SetAddAttentionNodeCallback(std::function<void()> cb) { add_attention_node_callback_ = cb; }
+    void SetDuplicateNodesCallback(std::function<void()> cb) { duplicate_nodes_callback_ = cb; }
+    void SetDeleteNodesCallback(std::function<void()> cb) { delete_nodes_callback_ = cb; }
+    void SetGroupNodesCallback(std::function<void()> cb) { group_nodes_callback_ = cb; }
+    void SetUngroupNodesCallback(std::function<void()> cb) { ungroup_nodes_callback_ = cb; }
+
     void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
     void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
@@ -347,6 +360,19 @@ private:
     std::function<void()> stop_training_callback_;
     std::function<void()> training_settings_callback_;
     std::function<void()> optimizer_settings_callback_;
+
+    // Node editor callbacks
+    std::function<void()> add_dense_node_callback_;
+    std::function<void()> add_conv_node_callback_;
+    std::function<void()> add_pooling_node_callback_;
+    std::function<void()> add_dropout_node_callback_;
+    std::function<void()> add_batchnorm_node_callback_;
+    std::function<void()> add_attention_node_callback_;
+    std::function<void()> duplicate_nodes_callback_;
+    std::function<void()> delete_nodes_callback_;
+    std::function<void()> group_nodes_callback_;
+    std::function<void()> ungroup_nodes_callback_;
+
     std::function<void()> open_custom_node_editor_callback_;
     std::function<void()> open_theme_editor_callback_;
     std::function<void()> open_profiler_callback_;

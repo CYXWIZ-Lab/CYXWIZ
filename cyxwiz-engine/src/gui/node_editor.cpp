@@ -834,19 +834,55 @@ void NodeEditor::RenderMinimap() {
     ImGui::SetNextWindowPos(minimap_pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(minimap_size_, ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.14f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.20f, 0.20f, 0.22f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.31f, 0.31f, 0.35f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.12f, 0.92f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.22f, 0.22f, 0.28f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.40f, 0.50f, 0.8f));
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
                                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                                     ImGuiWindowFlags_NoMove;  // We handle movement manually
 
-    
+
     if (ImGui::Begin("##MinimapWindow", &show_minimap_, window_flags)) {
+        // Draw subtle grid pattern on background
+        ImDrawList* bg_draw_list = ImGui::GetWindowDrawList();
+        ImVec2 win_pos = ImGui::GetWindowPos();
+        ImVec2 win_size = ImGui::GetWindowSize();
+        const float grid_step = 20.0f;
+        ImU32 grid_color = IM_COL32(60, 65, 75, 40);
+        for (float x = win_pos.x; x < win_pos.x + win_size.x; x += grid_step) {
+            bg_draw_list->AddLine(ImVec2(x, win_pos.y), ImVec2(x, win_pos.y + win_size.y), grid_color);
+        }
+        for (float y = win_pos.y; y < win_pos.y + win_size.y; y += grid_step) {
+            bg_draw_list->AddLine(ImVec2(win_pos.x, y), ImVec2(win_pos.x + win_size.x, y), grid_color);
+        }
+        
+        // Draw stats header bar at top
+        const float header_height = 16.0f;
+        bg_draw_list->AddRectFilled(
+            win_pos, 
+            ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
+            IM_COL32(30, 35, 45, 220)
+        );
+        bg_draw_list->AddLine(
+            ImVec2(win_pos.x, win_pos.y + header_height),
+            ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
+            IM_COL32(60, 70, 90, 200)
+        );
+        
+        // Draw stats text
+        char stats_text[64];
+        snprintf(stats_text, sizeof(stats_text), "%zu nodes | %zu links", nodes_.size(), links_.size());
+        ImVec2 text_size = ImGui::CalcTextSize(stats_text);
+        bg_draw_list->AddText(
+            ImVec2(win_pos.x + (win_size.x - text_size.x) * 0.5f, win_pos.y + 2.0f),
+            IM_COL32(160, 170, 190, 220),
+            stats_text
+        );
+        
         // Get the draw list for this window
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 window_pos = ImGui::GetWindowPos();
@@ -944,7 +980,11 @@ void NodeEditor::RenderMinimap() {
         if (from_node && to_node) {
             ImVec2 mm_from = gridToMinimap(from_pos);
             ImVec2 mm_to = gridToMinimap(to_pos);
-            draw_list->AddLine(mm_from, mm_to, IM_COL32(150, 150, 150, 150), 1.0f);
+            // Use a gradient-like effect: brighter in middle
+            ImU32 link_color = is_training_ ? 
+                IM_COL32(200, 220, 100, 180) :  // Amber-ish during training
+                IM_COL32(130, 160, 200, 160);   // Blue-gray normally
+            draw_list->AddLine(mm_from, mm_to, link_color, 1.5f);
         }
     }
 
@@ -968,13 +1008,30 @@ void NodeEditor::RenderMinimap() {
             200
         );
 
-        // Check if node is selected
-        bool is_selected = (node.id == selected_node_id_);
+        // Check if node is selected (support multi-selection)
+        bool is_selected = ImNodes::IsNodeSelected(node.id);
 
-        draw_list->AddRectFilled(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), fill_color, 2.0f);
+        // Draw node with rounded corners
+        draw_list->AddRectFilled(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), fill_color, 3.0f);
+        
+        // Draw subtle border for all nodes
+        draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), 
+            IM_COL32(255, 255, 255, 40), 3.0f, 0, 1.0f);
 
         if (is_selected) {
-            draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), IM_COL32(255, 255, 100, 255), 2.0f, 0, 2.0f);
+            // Blue glow effect matching main editor
+            for (int i = 2; i >= 0; --i) {
+                float offset = (i + 1) * 1.5f;
+                int alpha = 40 * (3 - i);  // 120, 80, 40
+                draw_list->AddRect(
+                    ImVec2(mm_pos.x - offset, mm_pos.y - offset),
+                    ImVec2(mm_pos.x + mm_size.x + offset, mm_pos.y + mm_size.y + offset),
+                    IM_COL32(100, 180, 255, alpha), 3.0f, 0, 1.5f
+                );
+            }
+            // Bright selection border
+            draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), 
+                IM_COL32(100, 180, 255, 255), 3.0f, 0, 2.0f);
         }
     }
 
@@ -995,9 +1052,40 @@ void NodeEditor::RenderMinimap() {
     viewport_mm_max.x = std::min(viewport_mm_max.x, window_pos.x + window_size.x);
     viewport_mm_max.y = std::min(viewport_mm_max.y, window_pos.y + window_size.y);
 
-    // Draw semi-transparent viewport indicator
-    draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, IM_COL32(100, 150, 255, 40));
-    draw_list->AddRect(viewport_mm_min, viewport_mm_max, IM_COL32(100, 150, 255, 200), 0.0f, 0, 1.5f);
+    // Draw semi-transparent viewport indicator with enhanced styling
+    draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, IM_COL32(80, 140, 255, 35));
+    
+    // Draw viewport border with rounded corners
+    draw_list->AddRect(viewport_mm_min, viewport_mm_max, IM_COL32(100, 160, 255, 220), 2.0f, 0, 2.0f);
+    
+    // Draw corner handles for visual emphasis
+    const float handle_size = 4.0f;
+    ImU32 handle_color = IM_COL32(130, 180, 255, 255);
+    
+    // Top-left corner
+    draw_list->AddRectFilled(
+        ImVec2(viewport_mm_min.x - 1, viewport_mm_min.y - 1),
+        ImVec2(viewport_mm_min.x + handle_size, viewport_mm_min.y + handle_size),
+        handle_color
+    );
+    // Top-right corner
+    draw_list->AddRectFilled(
+        ImVec2(viewport_mm_max.x - handle_size, viewport_mm_min.y - 1),
+        ImVec2(viewport_mm_max.x + 1, viewport_mm_min.y + handle_size),
+        handle_color
+    );
+    // Bottom-left corner
+    draw_list->AddRectFilled(
+        ImVec2(viewport_mm_min.x - 1, viewport_mm_max.y - handle_size),
+        ImVec2(viewport_mm_min.x + handle_size, viewport_mm_max.y + 1),
+        handle_color
+    );
+    // Bottom-right corner
+    draw_list->AddRectFilled(
+        ImVec2(viewport_mm_max.x - handle_size, viewport_mm_max.y - handle_size),
+        ImVec2(viewport_mm_max.x + 1, viewport_mm_max.y + 1),
+        handle_color
+    );
 
     // Handle mouse interaction with minimap using the window system
     // mouse_pos already declared above, just refresh it
@@ -1302,6 +1390,40 @@ void NodeEditor::RenderNodes() {
         int hovered_node_id = -1;
         if (ImNodes::IsNodeHovered(&hovered_node_id) && hovered_node_id == node.id) {
             NodeDocumentationManager::Instance().RenderTooltip(node.type);
+        }
+
+        // Draw selection glow effect for selected nodes
+        if (ImNodes::IsNodeSelected(node.id)) {
+            ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
+            ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+            // Draw multi-layered glow effect (outer to inner)
+            float glow_size = 8.0f * zoom_;
+
+            for (int i = 3; i >= 0; --i) {
+                float offset = glow_size * (i + 1) * 0.4f;
+                int alpha = 15 * (4 - i);  // Fade out: 60, 45, 30, 15
+                ImU32 glow_color = IM_COL32(100, 180, 255, alpha);
+                draw_list->AddRect(
+                    ImVec2(node_pos.x - offset, node_pos.y - offset),
+                    ImVec2(node_pos.x + node_dims.x + offset, node_pos.y + node_dims.y + offset),
+                    glow_color,
+                    8.0f * zoom_,  // Corner rounding
+                    0,
+                    2.0f + i * 0.5f  // Thicker outer lines
+                );
+            }
+
+            // Draw bright inner border
+            draw_list->AddRect(
+                ImVec2(node_pos.x - 1, node_pos.y - 1),
+                ImVec2(node_pos.x + node_dims.x + 1, node_pos.y + node_dims.y + 1),
+                IM_COL32(100, 180, 255, 180),
+                6.0f * zoom_,
+                0,
+                2.0f
+            );
         }
 
         // Apply any pending position AFTER the node has been created
@@ -2228,6 +2350,44 @@ SubgraphData* NodeEditor::GetSubgraphData(int node_id) {
         }
     }
     return nullptr;
+}
+
+
+// ========== Menu Operations Implementation ==========
+
+void NodeEditor::AddNodeFromMenu(NodeType type, const std::string& name) {
+    // Get center of the visible area for node placement
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    ImVec2 visible_center(-panning.x + 400, -panning.y + 300);
+    
+    // Queue the node for addition (deferred to avoid modifying nodes_ during rendering)
+    PendingNode pending;
+    pending.type = type;
+    pending.name = name;
+    pending.position = visible_center;
+    pending_nodes_.push_back(pending);
+    
+    spdlog::info("Menu: Adding {} node at center of view", name);
+}
+
+void NodeEditor::DeleteSelectedNodes() {
+    // Reuse existing DeleteSelected logic
+    DeleteSelected();
+}
+
+void NodeEditor::DuplicateSelectedNodes() {
+    // Reuse existing DuplicateSelection logic
+    DuplicateSelection();
+}
+
+void NodeEditor::GroupSelectedNodes() {
+    // TODO: Implement node grouping
+    spdlog::info("Group selected nodes - not yet implemented");
+}
+
+void NodeEditor::UngroupSelectedNodes() {
+    // TODO: Implement node ungrouping
+    spdlog::info("Ungroup selected nodes - not yet implemented");
 }
 
 } // namespace gui

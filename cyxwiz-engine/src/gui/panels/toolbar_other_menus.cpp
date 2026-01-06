@@ -23,53 +23,51 @@ namespace cyxwiz {
 
 void ToolbarPanel::RenderNodesMenu() {
     if (ImGui::BeginMenu("Nodes")) {
-        if (ImGui::BeginMenu("Add Layer")) {
-            if (ImGui::MenuItem("Dense/Linear")) {
-                // TODO: Add dense layer
+        if (ImGui::BeginMenu(ICON_FA_LAYER_GROUP " Add Layer")) {
+            if (ImGui::MenuItem(ICON_FA_BARS " Dense/Linear")) {
+                if (add_dense_node_callback_) add_dense_node_callback_();
             }
-            if (ImGui::MenuItem("Convolutional")) {
-                // TODO: Add conv layer
+            if (ImGui::MenuItem(ICON_FA_TABLE " Convolutional")) {
+                if (add_conv_node_callback_) add_conv_node_callback_();
             }
-            if (ImGui::MenuItem("Pooling")) {
-                // TODO: Add pooling layer
+            if (ImGui::MenuItem(ICON_FA_COMPRESS " Pooling")) {
+                if (add_pooling_node_callback_) add_pooling_node_callback_();
             }
-            if (ImGui::MenuItem("Dropout")) {
-                // TODO: Add dropout
+            if (ImGui::MenuItem(ICON_FA_DICE " Dropout")) {
+                if (add_dropout_node_callback_) add_dropout_node_callback_();
             }
-            if (ImGui::MenuItem("Batch Normalization")) {
-                // TODO: Add batch norm
+            if (ImGui::MenuItem(ICON_FA_CHART_BAR " Batch Normalization")) {
+                if (add_batchnorm_node_callback_) add_batchnorm_node_callback_();
             }
-            if (ImGui::MenuItem("Attention")) {
-                // TODO: Add attention
+            if (ImGui::MenuItem(ICON_FA_BULLSEYE " Attention")) {
+                if (add_attention_node_callback_) add_attention_node_callback_();
             }
             ImGui::EndMenu();
         }
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Group Selected", "Ctrl+G")) {
-            // TODO: Group nodes
+        if (ImGui::MenuItem(ICON_FA_OBJECT_GROUP " Group Selected", "Ctrl+G")) {
+            if (group_nodes_callback_) group_nodes_callback_();
         }
 
-        if (ImGui::MenuItem("Ungroup", "Ctrl+Shift+G")) {
-            // TODO: Ungroup nodes
+        if (ImGui::MenuItem(ICON_FA_OBJECT_UNGROUP " Ungroup", "Ctrl+Shift+G")) {
+            if (ungroup_nodes_callback_) ungroup_nodes_callback_();
         }
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
-            // TODO: Duplicate selected
+        if (ImGui::MenuItem(ICON_FA_COPY " Duplicate", "Ctrl+D")) {
+            if (duplicate_nodes_callback_) duplicate_nodes_callback_();
         }
 
-        if (ImGui::MenuItem("Delete Selected", "Delete")) {
-            // TODO: Delete selected nodes
+        if (ImGui::MenuItem(ICON_FA_TRASH " Delete Selected", "Delete")) {
+            if (delete_nodes_callback_) delete_nodes_callback_();
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem(ICON_FA_WAND_MAGIC_SPARKLES " Custom Node Editor...")) {
-            // Signal to open Custom Node Editor panel
-            // This is handled via callback in MainWindow
             if (open_custom_node_editor_callback_) {
                 open_custom_node_editor_callback_();
             }
