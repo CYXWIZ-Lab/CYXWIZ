@@ -655,53 +655,96 @@ void NodeEditor::Render() {
 }
 
 void NodeEditor::ShowToolbar() {
-    // File operations
-    if (ImGui::Button("Save Graph")) {
+    // Enhanced toolbar styling
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
+
+    // File operations with icons
+    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
         ShowSaveDialog();
     }
     ImGui::SameLine();
 
-    if (ImGui::Button("Load Graph")) {
+    if (ImGui::Button(ICON_FA_FOLDER_OPEN " Load")) {
         ShowLoadDialog();
     }
     ImGui::SameLine();
 
-    ImGui::Text("|");
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
     ImGui::SameLine();
 
-    if (ImGui::Button("Add Dense Layer")) {
-        // Use special sentinel position - will be replaced by FindEmptyPosition after EndNodeEditor
-        context_menu_pos_ = ImVec2(-99999.0f, -99999.0f);
-        AddNode(NodeType::Dense, "Dense Layer");
+    // Zoom controls
+    if (ImGui::Button(ICON_FA_MINUS)) {
+        zoom_ = std::max(ZOOM_MIN, zoom_ - 0.1f);
+    }
+    ImGui::SameLine();
+    ImGui::Text("%.0f%%", zoom_ * 100.0f);
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_PLUS)) {
+        zoom_ = std::min(ZOOM_MAX, zoom_ + 0.1f);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_EXPAND " Fit")) {
+        zoom_ = 1.0f; ImNodes::EditorContextResetPanning(ImVec2(0, 0));
     }
     ImGui::SameLine();
 
-    if (ImGui::Button("Add ReLU")) {
-        // Use special sentinel position - will be replaced by FindEmptyPosition after EndNodeEditor
-        context_menu_pos_ = ImVec2(-99999.0f, -99999.0f);
-        AddNode(NodeType::ReLU, "ReLU");
-    }
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
     ImGui::SameLine();
 
-    // Delete selected nodes (Clear)
-    if (ImGui::Button("Clear")) {
+    // Selection tools
+    if (ImGui::Button(ICON_FA_OBJECT_GROUP " Select All")) {
+        SelectAll();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_TRASH " Delete")) {
         DeleteSelected();
     }
     ImGui::SameLine();
-
-    if (ImGui::Button("Clear All")) {
+    if (ImGui::Button(ICON_FA_COPY " Duplicate")) {
+        DuplicateSelection();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_ERASER " Clear All")) {
         ClearGraph();
     }
     ImGui::SameLine();
 
-    ImGui::Text("|");
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
     ImGui::SameLine();
 
-    ImGui::Text("Nodes: %zu | Links: %zu", nodes_.size(), links_.size());
+    // Minimap toggle
+    if (ImGui::Button(show_minimap_ ? ICON_FA_SITEMAP " Minimap" : ICON_FA_SITEMAP)) {
+        show_minimap_ = !show_minimap_;
+    }
+    ImGui::SameLine();
 
-    // Code generation controls on a new line for better visibility
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+    ImGui::SameLine();
+
+    // Stats display
+    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_CIRCLE_NODES " %zu", nodes_.size());
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_LINK " %zu", links_.size());
+    
+    int num_selected = ImNodes::NumSelectedNodes();
+    if (num_selected > 0) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), ICON_FA_SQUARE_CHECK " %d", num_selected);
+    }
+
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+
+    // Code generation controls - second toolbar row
     ImGui::Separator();
-    ImGui::Text("Code Generation:");
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
+    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_CODE " Code:");
     ImGui::SameLine();
 
     // Framework selection
@@ -714,18 +757,18 @@ void NodeEditor::ShowToolbar() {
     }
     ImGui::SameLine();
 
-    if (ImGui::Button("Generate Code")) {
+    if (ImGui::Button(ICON_FA_GEARS " Generate")) {
         GeneratePythonCode();
     }
     ImGui::SameLine();
 
-    if (ImGui::Button("Export Code")) {
+    if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
         ShowExportDialog();
     }
 
     // Training controls
     ImGui::SameLine();
-    ImGui::Text("|");
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
     ImGui::SameLine();
 
     // Check training state from TrainingManager
@@ -735,12 +778,15 @@ void NodeEditor::ShowToolbar() {
     if (training_active) {
         // Show training progress and stop button
         auto metrics = training_mgr.GetCurrentMetrics();
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Training... Epoch %d/%d",
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_SPINNER " Epoch %d/%d",
             metrics.current_epoch, metrics.total_epochs);
         ImGui::SameLine();
-        if (ImGui::Button("Stop Training")) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+        if (ImGui::Button(ICON_FA_STOP " Stop")) {
             training_mgr.StopTraining();
         }
+        ImGui::PopStyleColor(2);
     } else {
         // Train button - green when valid, disabled when invalid
         bool can_train = IsGraphValid() && train_callback_;
@@ -751,7 +797,7 @@ void NodeEditor::ShowToolbar() {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
-        if (ImGui::Button("Train Model")) {
+        if (ImGui::Button(ICON_FA_PLAY " Train")) {
             if (train_callback_) {
                 spdlog::info("NodeEditor: Starting training from graph");
                 train_callback_(nodes_, links_);
@@ -771,26 +817,8 @@ void NodeEditor::ShowToolbar() {
         }
     }
 
-    // Zoom controls
-    ImGui::SameLine();
-    ImGui::Text("|");
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_PLUS)) {
-        zoom_ = std::min(zoom_ * 1.2f, ZOOM_MAX);
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom In");
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_MINUS)) {
-        zoom_ = std::max(zoom_ / 1.2f, ZOOM_MIN);
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom Out");
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_EXPAND)) {
-        zoom_ = 1.0f;
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Zoom (100%)");
-    ImGui::SameLine();
-    ImGui::Text("%.0f%%", zoom_ * 100.0f);
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
 }
 
 void NodeEditor::RenderMinimap() {
