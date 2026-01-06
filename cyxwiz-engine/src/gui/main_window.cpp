@@ -1081,10 +1081,14 @@ MainWindow::MainWindow()
         this->OnProjectClosed(project_root);
     });
 
-    // Set up New Script callback (called after script is created to refresh asset browser)
+    // Set up New Script callback - creates new untitled script and opens editor
     toolbar_->SetNewScriptCallback([this]() {
-        if (asset_browser_) {
-            asset_browser_->Refresh();
+        if (script_editor_) {
+            if (!script_editor_->HasEmptyNewTab()) {
+                script_editor_->NewFile();
+            }
+            script_editor_->SetVisible(true);
+            spdlog::info("Created new script in editor");
         }
     });
 
@@ -1092,6 +1096,7 @@ MainWindow::MainWindow()
     toolbar_->SetOpenScriptInEditorCallback([this](const std::string& file_path) {
         if (script_editor_) {
             script_editor_->OpenFile(file_path);
+            script_editor_->SetVisible(true);  // Show the Script Editor panel
             spdlog::info("Opened script in editor: {}", file_path);
         }
     });

@@ -59,6 +59,7 @@ public:
     bool HasUnsavedFiles() const;
     std::vector<std::string> GetUnsavedFileNames() const;
     void SaveAllFiles();  // Save all unsaved files
+    bool HasEmptyNewTab() const;  // Check if there's an empty untitled tab
 
     // Find/Replace operations
     bool FindInEditor(const std::string& search_text, bool case_sensitive, bool whole_word, bool use_regex);

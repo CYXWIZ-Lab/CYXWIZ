@@ -1977,6 +1977,15 @@ void ScriptEditorPanel::SaveAllFiles() {
     }
 }
 
+bool ScriptEditorPanel::HasEmptyNewTab() const {
+    for (const auto& tab : tabs_) {
+        if (tab->is_new && !tab->is_modified) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ==================== Save Confirmation Dialogs ====================
 
 void ScriptEditorPanel::RenderSaveBeforeRunDialog() {
