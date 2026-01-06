@@ -370,7 +370,6 @@ void SpectrogramPanel::RenderSignalPreview() {
             sum += v;
             sum_sq += v * v;
         }
-        double mean = sum / signal_.size();
         double rms = std::sqrt(sum_sq / signal_.size());
 
         ImGui::Text("Samples: %d | Duration: %.3f s | RMS: %.4f",

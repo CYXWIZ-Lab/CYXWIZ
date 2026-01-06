@@ -9,6 +9,7 @@
 
 // Use GLAD for cross-platform OpenGL loading
 #include <glad/glad.h>
+#include <imgui.h>  // For ImVec2
 
 namespace cyxwiz {
 
@@ -55,6 +56,13 @@ private:
     bool show_thumbnails_ = true;
     float thumbnail_size_ = 80.0f;
 
+    // Zoom and pan state
+    float zoom_level_ = 1.0f;           // 1.0 = 100%, 2.0 = 200%
+    ImVec2 pan_offset_ = ImVec2(0, 0);  // Pan offset in normalized coords (0-1)
+    float min_zoom_ = 0.25f;            // 25% minimum
+    float max_zoom_ = 10.0f;            // 1000% maximum
+    bool is_panning_ = false;           // Currently dragging to pan
+
     // For polling script results
     bool was_script_running_ = false;
 
@@ -78,6 +86,14 @@ private:
 
     // Context menu for plot actions
     void RenderPlotContextMenu(int plot_index);
+
+    // Zoom/pan controls
+    void ResetZoom();
+    void ZoomIn();
+    void ZoomOut();
+    void FitToWindow();
+    void ActualSize();
+    void HandleZoomPan();  // Mouse scroll/drag handling
 
     // Copy plot to clipboard
     bool CopyToClipboard(int plot_index);

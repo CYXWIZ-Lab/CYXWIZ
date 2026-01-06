@@ -170,7 +170,7 @@ bool TrainingExecutor::BuildModelFromConfig() {
     return true;
 }
 
-bool TrainingExecutor::Initialize(int batch_size) {
+bool TrainingExecutor::Initialize(int /*batch_size*/) {
     // Build model from configuration
     if (!BuildModelFromConfig()) {
         spdlog::error("TrainingExecutor: Failed to build model from config");
@@ -651,7 +651,7 @@ void TrainingExecutor::WaitWhilePaused() {
     }
 }
 
-void TrainingExecutor::PreprocessBatch(Batch& batch) {
+void TrainingExecutor::PreprocessBatch(Batch& /*batch*/) {
     // Preprocessing is handled by DatasetBatcher
 }
 

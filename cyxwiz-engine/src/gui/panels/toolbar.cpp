@@ -997,8 +997,7 @@ void ToolbarPanel::Render() {
                         show_wallet_connect_dialog_ = true;
                         show_account_settings_dialog_ = false;
                 if (on_login_success_callback_) {
-                    auto& auth = auth::AuthClient::Instance();
-                    on_login_success_callback_(auth.GetJwtToken());
+                    on_login_success_callback_(auth::AuthClient::Instance().GetJwtToken());
                 }
                         wallet_connect_step_ = 0;
                         memset(wallet_address_buffer_, 0, sizeof(wallet_address_buffer_));
@@ -1022,8 +1021,7 @@ void ToolbarPanel::Render() {
                         show_wallet_connect_dialog_ = true;
                         show_account_settings_dialog_ = false;
                 if (on_login_success_callback_) {
-                    auto& auth = auth::AuthClient::Instance();
-                    on_login_success_callback_(auth.GetJwtToken());
+                    on_login_success_callback_(auth::AuthClient::Instance().GetJwtToken());
                 }
                         wallet_connect_step_ = 0;
                         memset(wallet_address_buffer_, 0, sizeof(wallet_address_buffer_));

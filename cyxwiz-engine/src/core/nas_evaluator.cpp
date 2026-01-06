@@ -165,7 +165,6 @@ int64_t NASEvaluator::EstimateLayerParams(
         }
         case gui::NodeType::MultiHeadAttention:
         case gui::NodeType::SelfAttention: {
-            int heads = GetParam("num_heads", 8);
             int dim = GetParam("embed_dim", 64);
             param_count = 4 * static_cast<int64_t>(dim) * dim;  // Q, K, V, O projections
             break;

@@ -277,7 +277,6 @@ void ModelSummaryPanel::RenderShapeFlow() {
     float box_width = 100.0f;
     float box_height = 50.0f;
     float spacing = 30.0f;
-    float arrow_size = 10.0f;
 
     // Draw input shape
     ImVec2 pos = canvas_pos;

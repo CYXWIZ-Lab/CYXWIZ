@@ -717,8 +717,8 @@ bool GGUFLoader::Load(const std::string& model_path) {
 }
 
 bool GGUFLoader::Infer(
-    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
-    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+    [[maybe_unused]] const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    [[maybe_unused]] std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
 
     if (!impl_->loaded) {
         spdlog::error("GGUF model not loaded");
@@ -755,8 +755,8 @@ bool GGUFLoader::Infer(
 
 // Text generation inference
 bool GGUFLoader::InferTextGeneration(
-    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
-    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+    [[maybe_unused]] const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    [[maybe_unused]] std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
 
 #ifndef CYXWIZ_HAS_GGUF
     return false;
@@ -863,8 +863,8 @@ bool GGUFLoader::InferTextGeneration(
 
 // Embeddings inference
 bool GGUFLoader::InferEmbeddings(
-    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
-    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+    [[maybe_unused]] const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    [[maybe_unused]] std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
 
 #ifndef CYXWIZ_HAS_GGUF
     return false;
@@ -931,8 +931,8 @@ bool GGUFLoader::InferEmbeddings(
 
 // Token-based inference (raw token IDs)
 bool GGUFLoader::InferTokens(
-    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
-    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+    [[maybe_unused]] const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    [[maybe_unused]] std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
 
 #ifndef CYXWIZ_HAS_GGUF
     return false;
@@ -1031,25 +1031,25 @@ bool GGUFLoader::IsLoaded() const {
 
 // ========== Configuration Methods ==========
 
-void GGUFLoader::SetContextSize(int n_ctx) {
+void GGUFLoader::SetContextSize([[maybe_unused]] int n_ctx) {
 #ifdef CYXWIZ_HAS_GGUF
     impl_->n_ctx = n_ctx;
 #endif
 }
 
-void GGUFLoader::SetGPULayers(int n_gpu_layers) {
+void GGUFLoader::SetGPULayers([[maybe_unused]] int n_gpu_layers) {
 #ifdef CYXWIZ_HAS_GGUF
     impl_->n_gpu_layers = n_gpu_layers;
 #endif
 }
 
-void GGUFLoader::SetThreads(int n_threads) {
+void GGUFLoader::SetThreads([[maybe_unused]] int n_threads) {
 #ifdef CYXWIZ_HAS_GGUF
     impl_->n_threads = n_threads;
 #endif
 }
 
-void GGUFLoader::SetTemperature(float temp) {
+void GGUFLoader::SetTemperature([[maybe_unused]] float temp) {
 #ifdef CYXWIZ_HAS_GGUF
     impl_->temperature = temp;
     if (impl_->loaded && impl_->sampler) {
@@ -1058,13 +1058,13 @@ void GGUFLoader::SetTemperature(float temp) {
 #endif
 }
 
-void GGUFLoader::SetMaxTokens(int max_tokens) {
+void GGUFLoader::SetMaxTokens([[maybe_unused]] int max_tokens) {
 #ifdef CYXWIZ_HAS_GGUF
     impl_->max_tokens = max_tokens;
 #endif
 }
 
-void GGUFLoader::SetTopP(float top_p) {
+void GGUFLoader::SetTopP([[maybe_unused]] float top_p) {
 #ifdef CYXWIZ_HAS_GGUF
     impl_->top_p = top_p;
     if (impl_->loaded && impl_->sampler) {
@@ -1073,7 +1073,7 @@ void GGUFLoader::SetTopP(float top_p) {
 #endif
 }
 
-void GGUFLoader::SetTopK(int top_k) {
+void GGUFLoader::SetTopK([[maybe_unused]] int top_k) {
 #ifdef CYXWIZ_HAS_GGUF
     impl_->top_k = top_k;
     if (impl_->loaded && impl_->sampler) {
@@ -1082,7 +1082,7 @@ void GGUFLoader::SetTopK(int top_k) {
 #endif
 }
 
-void GGUFLoader::SetRepeatPenalty(float penalty) {
+void GGUFLoader::SetRepeatPenalty([[maybe_unused]] float penalty) {
 #ifdef CYXWIZ_HAS_GGUF
     impl_->repeat_penalty = penalty;
     if (impl_->loaded && impl_->sampler) {
@@ -1214,8 +1214,8 @@ bool PyTorchLoader::Load(const std::string& model_path) {
 }
 
 bool PyTorchLoader::Infer(
-    const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
-    std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
+    [[maybe_unused]] const std::unordered_map<std::string, cyxwiz::Tensor>& inputs,
+    [[maybe_unused]] std::unordered_map<std::string, cyxwiz::Tensor>& outputs) {
 
     if (!impl_->loaded) {
         spdlog::error("Model not loaded");
@@ -1816,7 +1816,6 @@ bool CyxWizLoader::LoadWeightsFromDirectory(const std::string& weights_dir) {
     std::sort(weight_layer_names.begin(), weight_layer_names.end());
 
     // Map model layer indices to weight file indices
-    int linear_layer_idx = 0;
     for (const auto& [name, tensor] : expected_params) {
         // Try multiple file naming conventions
         std::vector<fs::path> candidates;

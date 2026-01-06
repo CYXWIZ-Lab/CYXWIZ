@@ -67,7 +67,7 @@ public:
      * @brief Set trainable parameters
      * @param params Map of parameter name -> tensor
      */
-    virtual void SetParameters(const std::map<std::string, Tensor>& params) {}
+    virtual void SetParameters(const std::map<std::string, Tensor>& /*params*/) {}
 
     /**
      * @brief Get parameter gradients

@@ -75,8 +75,11 @@ void ScriptEditorPanel::Render() {
                 } else if (!r.success) {
                     command_window_->DisplayScriptOutput("Script", "Error: " + r.error_message, true);
                 } else {
-                    // Script completed successfully - don't print redundant "completed" message
-                    // since output was already displayed above
+                    // Script completed successfully
+                    if (remaining_output.empty()) {
+                        // No output was produced, show completion message
+                        command_window_->DisplayScriptOutput("Script", "Completed successfully", false);
+                    }
                     spdlog::info("Script completed successfully");
                 }
             }
@@ -893,7 +896,6 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
             // Set flag to disable editor keyboard input for this frame
             completion_just_accepted_ = true;
             // Also clear Tab/Enter/Newline characters from input queue
-            ImGuiIO& io = ImGui::GetIO();
             for (int i = io.InputQueueCharacters.Size - 1; i >= 0; --i) {
                 ImWchar c = io.InputQueueCharacters[i];
                 if (c == '\t' || c == '\n' || c == '\r') {
@@ -1399,30 +1401,40 @@ void ScriptEditorPanel::DoRunScript() {
     spdlog::info("Running script asynchronously: {}", tab->filename);
 
     // Get script text - prefer file if it exists
-    std::string script;
+    std::string script_text;
     if (!tab->filepath.empty() && std::filesystem::exists(tab->filepath)) {
         // Read file content
         std::ifstream file(tab->filepath);
         if (file.is_open()) {
             std::stringstream buffer;
             buffer << file.rdbuf();
-            script = buffer.str();
+            script_text = buffer.str();
             file.close();
         }
     }
 
-    if (script.empty()) {
+    if (script_text.empty()) {
         // Use text from editor
-        std::string script_text = tab->editor.GetText();
+        script_text = tab->editor.GetText();
+    }
 
-        // Strip out %% markers before executing
-        std::istringstream stream(script_text);
-        std::string line;
-        while (std::getline(stream, line)) {
-            // Skip lines containing only %% markers
-            if (line.find("%%") == std::string::npos) {
-                script += line + "\n";
-            }
+    // Strip out %% section markers before executing (always, regardless of source)
+    std::string script;
+    std::istringstream stream(script_text);
+    std::string line;
+    while (std::getline(stream, line)) {
+        // Only skip lines that are ONLY a %% marker (with optional whitespace)
+        std::string trimmed = line;
+        size_t start = trimmed.find_first_not_of(" \t");
+        size_t end = trimmed.find_last_not_of(" \t\r\n");
+        if (start != std::string::npos && end != std::string::npos) {
+            trimmed = trimmed.substr(start, end - start + 1);
+        } else {
+            trimmed = "";
+        }
+        // Keep the line unless it's exactly "%%"
+        if (trimmed != "%%") {
+            script += line + "\n";
         }
     }
 
@@ -1437,8 +1449,57 @@ void ScriptEditorPanel::DoRunScript() {
     running_indicator_time_ = 0.0f;
 }
 
+std::string ScriptEditorPanel::DedentCode(const std::string& code) {
+    std::vector<std::string> lines;
+    std::istringstream stream(code);
+    std::string line;
+
+    // Split into lines
+    while (std::getline(stream, line)) {
+        lines.push_back(line);
+    }
+
+    if (lines.empty()) return code;
+
+    // Find minimum indentation (ignoring empty lines and whitespace-only lines)
+    size_t min_indent = std::string::npos;
+    for (const auto& l : lines) {
+        if (l.empty()) continue;
+        size_t first_non_space = l.find_first_not_of(" \t");
+        if (first_non_space == std::string::npos) continue;  // Whitespace-only line
+        if (first_non_space < min_indent) min_indent = first_non_space;
+    }
+
+    // No dedent needed
+    if (min_indent == 0 || min_indent == std::string::npos) return code;
+
+    // Remove common indentation
+    std::string result;
+    for (const auto& l : lines) {
+        if (l.empty()) {
+            result += "\n";
+        } else {
+            size_t first_non_space = l.find_first_not_of(" \t");
+            if (first_non_space == std::string::npos) {
+                // Whitespace-only line, keep it empty
+                result += "\n";
+            } else {
+                result += l.substr(min_indent) + "\n";
+            }
+        }
+    }
+
+    // Remove trailing newline if original didn't have one
+    if (!code.empty() && code.back() != '\n' && !result.empty() && result.back() == '\n') {
+        result.pop_back();
+    }
+
+    return result;
+}
+
 void ScriptEditorPanel::RunSelection() {
     if (active_tab_index_ < 0 || !scripting_engine_) return;
+    if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
     std::string selected_text = tab->editor.GetSelectedText();
@@ -1455,36 +1516,22 @@ void ScriptEditorPanel::RunSelection() {
         return;
     }
 
-    spdlog::info("Running selection");
-    auto result = scripting_engine_->ExecuteCommand(selected_text);
-
-    // Send output to Command Window if available
+    spdlog::info("Running selection asynchronously");
     if (command_window_) {
-        if (!result.success) {
-            command_window_->DisplayScriptOutput(tab->filename + " (selection)", "Error: " + result.error_message, true);
-        } else {
-            std::string output = result.output.empty() ? "Selection executed successfully (no output)" : result.output;
-            command_window_->DisplayScriptOutput(tab->filename + " (selection)", output, false);
-        }
-    } else {
-        // Fallback to notification
-        if (!result.success) {
-            spdlog::error("Execution error: {}", result.error_message);
-            last_execution_output_ = "Error: " + result.error_message;
-            printf("[Selection Error] %s\n", result.error_message.c_str());
-        } else {
-            last_execution_output_ = result.output.empty() ? "Selection executed successfully" : result.output;
-            if (!result.output.empty()) {
-                printf("[Selection Output]\n%s\n", result.output.c_str());
-            }
-        }
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
+        command_window_->DisplayScriptOutput(tab->filename + " (selection)", "Running...", false);
     }
+
+    // Dedent and execute asynchronously for plot capture support
+    std::string dedented = DedentCode(selected_text);
+    spdlog::debug("Dedented selection:\n{}", dedented);
+    scripting_engine_->ExecuteScriptAsync(dedented);
+    script_running_ = true;
+    running_indicator_time_ = 0.0f;
 }
 
 void ScriptEditorPanel::RunCurrentSection() {
     if (active_tab_index_ < 0 || !scripting_engine_) return;
+    if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
     Section section = GetCurrentSection();
@@ -1501,39 +1548,21 @@ void ScriptEditorPanel::RunCurrentSection() {
         return;
     }
 
-    spdlog::info("Running section (lines {}-{})", section.start_line, section.end_line);
-    auto result = scripting_engine_->ExecuteScript(section.code);
-
-    // Send output to Command Window if available
     std::string section_name = tab->filename + " (lines " +
                               std::to_string(section.start_line) + "-" +
                               std::to_string(section.end_line) + ")";
 
+    spdlog::info("Running section {} asynchronously", section_name);
     if (command_window_) {
-        if (!result.success) {
-            command_window_->DisplayScriptOutput(section_name, "Error: " + result.error_message, true);
-        } else {
-            std::string output = result.output.empty() ? "Section executed successfully (no output)" : result.output;
-            command_window_->DisplayScriptOutput(section_name, output, false);
-        }
-    } else {
-        // Fallback to notification
-        if (!result.success) {
-            spdlog::error("Section execution error: {}", result.error_message);
-            last_execution_output_ = "Section Error: " + result.error_message;
-            printf("[Section Error] %s\n", result.error_message.c_str());
-        } else {
-            last_execution_output_ = "Section executed successfully (lines " +
-                                    std::to_string(section.start_line) + "-" +
-                                    std::to_string(section.end_line) + ")";
-            if (!result.output.empty()) {
-                last_execution_output_ += "\nOutput: " + result.output;
-                printf("[Section Output]\n%s\n", result.output.c_str());
-            }
-        }
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
+        command_window_->DisplayScriptOutput(section_name, "Running...", false);
     }
+
+    // Dedent and execute asynchronously for plot capture support
+    std::string dedented = DedentCode(section.code);
+    spdlog::debug("Dedented section:\n{}", dedented);
+    scripting_engine_->ExecuteScriptAsync(dedented);
+    script_running_ = true;
+    running_indicator_time_ = 0.0f;
 }
 
 void ScriptEditorPanel::Debug() {
@@ -1646,19 +1675,17 @@ std::vector<ScriptEditorPanel::Section> ScriptEditorPanel::ParseSections(const s
 
     while (std::getline(stream, line)) {
         // Check for section delimiter %%
+        // Each %% both ENDS the previous section AND STARTS the next one (MATLAB-style)
         if (line.find("%%") != std::string::npos) {
-            if (in_section) {
-                // End of section
+            if (in_section && !current_section.code.empty()) {
+                // End current section (only if it has content)
                 current_section.end_line = line_num - 1;
                 sections.push_back(current_section);
-                current_section = Section();
-                current_section.start_line = line_num + 1;
-                in_section = false;
-            } else {
-                // Start of section
-                current_section.start_line = line_num + 1;
-                in_section = true;
             }
+            // Start new section after this %%
+            current_section = Section();
+            current_section.start_line = line_num + 1;
+            in_section = true;
         } else if (in_section) {
             current_section.code += line + "\n";
         }
@@ -2857,12 +2884,9 @@ void ScriptEditorPanel::MoveLineUp() {
     std::string above_line = lines[line - 1];
 
     // Select and delete both lines
-    int above_len = static_cast<int>(above_line.size());
-    int current_len = static_cast<int>(current_line.size());
-
     editor.SetSelection(
         TextEditor::Coordinates(line - 1, 0),
-        TextEditor::Coordinates(line, current_len)
+        TextEditor::Coordinates(line, static_cast<int>(current_line.size()))
     );
 
     // Replace with swapped content
@@ -2894,12 +2918,9 @@ void ScriptEditorPanel::MoveLineDown() {
     std::string current_line = lines[line];
     std::string below_line = lines[line + 1];
 
-    int current_len = static_cast<int>(current_line.size());
-    int below_len = static_cast<int>(below_line.size());
-
     editor.SetSelection(
         TextEditor::Coordinates(line, 0),
-        TextEditor::Coordinates(line + 1, below_len)
+        TextEditor::Coordinates(line + 1, static_cast<int>(below_line.size()))
     );
 
     // Replace with swapped content
@@ -4081,7 +4102,7 @@ void ScriptEditorPanel::RenderDebugToolbar() {
     ImGui::PopStyleColor();
 }
 
-void ScriptEditorPanel::RenderBreakpointGutter(Cell& cell, int cell_index) {
+void ScriptEditorPanel::RenderBreakpointGutter(Cell& cell, int /*cell_index*/) {
     if (cell.type != CellType::Code) return;
 
     int line_count = cell.editor.GetTotalLines();
@@ -4500,7 +4521,6 @@ void ScriptEditorPanel::RenderCompletionPopup() {
 
             // Kind icon
             const char* icon = scripting::GetCompletionKindIcon(item.kind);
-            ImU32 icon_color = scripting::GetCompletionKindColor(item.kind);
 
             ImGui::PushID(i);
 

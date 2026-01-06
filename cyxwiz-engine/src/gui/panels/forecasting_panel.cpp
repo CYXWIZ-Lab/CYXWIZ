@@ -478,7 +478,6 @@ void ForecastingPanel::RenderParameters() {
 
 void ForecastingPanel::GenerateData() {
     time_series_.clear();
-    constexpr double TWO_PI = 6.28318530718;
 
     switch (signal_type_) {
         case SignalType::TrendSeasonal:

@@ -1518,7 +1518,7 @@ void DataExplorerPanel::RenderChartSelector() {
     ImGui::SameLine();
 
     // Column selectors
-    auto ColumnCombo = [&](const char* label, int& selected, const char* combo_id) {
+    auto ColumnCombo = [&](const char* /*label*/, int& selected, const char* combo_id) {
         ImGui::SetNextItemWidth(180);
         ImGui::PushID(combo_id);
         if (ImGui::BeginCombo("##col",

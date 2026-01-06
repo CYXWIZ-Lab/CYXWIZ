@@ -666,8 +666,9 @@ ResultValue Executor::evaluateExpression(const ASTNodePtr& expr, const BindingCo
                     return ResultValue::makeFloat(arg);
                 } else if constexpr (std::is_same_v<T, std::string>) {
                     return ResultValue::makeString(arg);
+                } else {
+                    return ResultValue::makeNull();
                 }
-                return ResultValue::makeNull();
             }, expr->literal);
 
         case ASTNodeType::Identifier: {

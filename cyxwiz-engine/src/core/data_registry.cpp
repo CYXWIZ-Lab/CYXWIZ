@@ -429,7 +429,7 @@ private:
             if (first_line) {
                 first_line = false;
                 try {
-                    std::stof(tokens[0]);
+                    (void)std::stof(tokens[0]);  // Just checking if it's numeric
                 } catch (...) {
                     // First line is header
                     column_names_ = tokens;
@@ -543,7 +543,7 @@ private:
             if (first_line) {
                 first_line = false;
                 try {
-                    std::stof(tokens[0]);
+                    (void)std::stof(tokens[0]);  // Just checking if it's numeric
                 } catch (...) {
                     column_names_ = tokens;
                     continue;
@@ -3593,7 +3593,7 @@ DatasetPreview DataRegistry::GetPreview(const std::string& path, int max_samples
                 if (line_count == 0) {
                     // Check if header
                     try {
-                        std::stof(tokens[0]);
+                        (void)std::stof(tokens[0]);  // Just checking if it's numeric
                         preview.rows.push_back(tokens);
                     } catch (...) {
                         preview.columns = tokens;

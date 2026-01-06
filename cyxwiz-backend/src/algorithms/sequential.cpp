@@ -529,9 +529,9 @@ void SequentialModel::SetParameters(const std::map<std::string, Tensor>& params)
     }
 
     // Set parameters for each layer
-    for (auto& [layer_idx, params] : layer_params) {
+    for (auto& [layer_idx, layer_param_map] : layer_params) {
         if (layer_idx < modules_.size()) {
-            modules_[layer_idx]->SetParameters(params);
+            modules_[layer_idx]->SetParameters(layer_param_map);
         }
     }
 }

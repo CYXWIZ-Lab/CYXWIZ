@@ -236,7 +236,7 @@ void TrainingPlotPanel::ExportToCSV(const std::string& filepath) {
     file.close();
 }
 
-void TrainingPlotPanel::ExportPlotImage(const std::string& filepath) {
+void TrainingPlotPanel::ExportPlotImage(const std::string& /*filepath*/) {
     // TODO: Implement screenshot/export functionality
     // This would require rendering to a framebuffer and saving as image
 }

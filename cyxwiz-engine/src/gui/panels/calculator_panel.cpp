@@ -32,7 +32,6 @@ void CalculatorPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
             float panel_height = ImGui::GetContentRegionAvail().y;
 
             // Top section: Expression + Result

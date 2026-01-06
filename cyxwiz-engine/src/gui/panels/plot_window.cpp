@@ -126,7 +126,8 @@ void PlotWindow::RenderMenuBar() {
         if (ImGui::BeginMenu("Tools")) {
             if (ImGui::MenuItem("Data Statistics")) {
                 // Show statistics
-                auto& plot_mgr = plotting::PlotManager::GetInstance();
+                // TODO: Use PlotManager to calculate statistics
+                // auto& plot_mgr = plotting::PlotManager::GetInstance();
                 // auto stats = plot_mgr.CalculateStatistics(plot_id_, "default");
                 spdlog::info("Show statistics (not implemented yet)");
             }

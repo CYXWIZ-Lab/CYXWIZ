@@ -14,12 +14,12 @@ HyperparamSearchPanel::HyperparamSearchPanel()
     search_engine_ = std::make_unique<HyperparamSearch>();
 
     // Set up callbacks
-    search_engine_->SetOnTrialStart([this](int trial_id, const std::map<std::string, float>& params) {
+    search_engine_->SetOnTrialStart([this](int trial_id, const std::map<std::string, float>& /*params*/) {
         current_trial_ = trial_id + 1;
         spdlog::info("HPO: Trial {} started", trial_id + 1);
     });
 
-    search_engine_->SetOnTrialProgress([this](int trial_id, int epoch, float loss, float acc) {
+    search_engine_->SetOnTrialProgress([this](int /*trial_id*/, int /*epoch*/, float /*loss*/, float /*acc*/) {
         // Could update real-time plots here
     });
 

@@ -164,7 +164,6 @@ void SentimentPanel::RenderScoreView() {
     }
 
     ImGui::PushFont(nullptr);  // Use default font
-    float old_scale = ImGui::GetFontSize();
     ImGui::SetWindowFontScale(1.5f);
     ImGui::TextColored(label_color, "%s %s", icon, result_.label.c_str());
     ImGui::SetWindowFontScale(1.0f);

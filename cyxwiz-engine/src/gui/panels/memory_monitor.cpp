@@ -104,7 +104,6 @@ void MemoryMonitor::Render() {
         ImGui::Text(ICON_FA_SERVER " System Memory");
         ImGui::Separator();
 
-        float system_used_percent = ((cpu_total_mb_ - (cpu_total_mb_ * 0.3f)) / cpu_total_mb_) * 100.0f; // Approximation
         ImGui::Text("Total: %.1f GB", cpu_total_mb_ / 1024.0f);
 
         ImGui::Spacing();

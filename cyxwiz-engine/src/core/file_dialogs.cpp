@@ -19,7 +19,7 @@ void FileDialogs::EnsureInitialized() {
 }
 
 std::optional<std::string> FileDialogs::OpenFile(
-    const char* title,
+    const char* /*title*/,
     const FilterList& filters,
     const char* default_path
 ) {
@@ -54,7 +54,7 @@ std::optional<std::string> FileDialogs::OpenFile(
 }
 
 std::vector<std::string> FileDialogs::OpenMultiple(
-    const char* title,
+    const char* /*title*/,
     const FilterList& filters,
     const char* default_path
 ) {
@@ -99,7 +99,7 @@ std::vector<std::string> FileDialogs::OpenMultiple(
 }
 
 std::optional<std::string> FileDialogs::SaveFile(
-    const char* title,
+    const char* /*title*/,
     const FilterList& filters,
     const char* default_path,
     const char* default_name
@@ -136,7 +136,7 @@ std::optional<std::string> FileDialogs::SaveFile(
 }
 
 std::optional<std::string> FileDialogs::SelectFolder(
-    const char* title,
+    const char* /*title*/,
     const char* default_path
 ) {
     EnsureInitialized();

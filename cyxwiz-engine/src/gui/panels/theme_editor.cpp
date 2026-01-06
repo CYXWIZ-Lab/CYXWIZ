@@ -248,8 +248,6 @@ void ThemeEditorPanel::RenderPresetSelector() {
     ImGui::Text(ICON_FA_PALETTE " Theme Preset:");
     ImGui::SameLine();
 
-    int current_preset = static_cast<int>(theme.GetCurrentPreset());
-
     if (ImGui::BeginCombo("##PresetCombo", Theme::GetPresetName(theme.GetCurrentPreset()))) {
         for (const auto& preset : presets) {
             bool is_selected = (preset == theme.GetCurrentPreset());

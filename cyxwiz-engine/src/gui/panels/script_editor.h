@@ -199,6 +199,7 @@ private:
     };
     std::vector<Section> ParseSections(const std::string& text);
     Section GetCurrentSection();
+    std::string DedentCode(const std::string& code);  // Remove common leading whitespace
 
     // Python language definition for syntax highlighting
     static TextEditor::LanguageDefinition CreatePythonLanguage();

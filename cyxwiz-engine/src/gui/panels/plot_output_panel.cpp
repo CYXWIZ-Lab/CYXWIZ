@@ -130,6 +130,7 @@ void PlotOutputPanel::RenderToolbar() {
         ImGui::BeginDisabled(selected_plot_index_ <= 0);
         if (ImGui::Button(ICON_FA_CHEVRON_LEFT "##prev")) {
             selected_plot_index_--;
+            ResetZoom();  // Reset zoom/pan when switching plots
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Previous plot");
@@ -144,9 +145,50 @@ void PlotOutputPanel::RenderToolbar() {
         ImGui::BeginDisabled(selected_plot_index_ >= static_cast<int>(plots_.size()) - 1);
         if (ImGui::Button(ICON_FA_CHEVRON_RIGHT "##next")) {
             selected_plot_index_++;
+            ResetZoom();  // Reset zoom/pan when switching plots
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Next plot");
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+
+        // Zoom controls
+        ImGui::BeginDisabled(zoom_level_ <= min_zoom_);
+        if (ImGui::Button(ICON_FA_MINUS "##zoom_out")) {
+            ZoomOut();
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out");
+
+        ImGui::SameLine();
+
+        // Zoom level display
+        ImGui::Text("%.0f%%", zoom_level_ * 100.0f);
+
+        ImGui::SameLine();
+
+        ImGui::BeginDisabled(zoom_level_ >= max_zoom_);
+        if (ImGui::Button(ICON_FA_PLUS "##zoom_in")) {
+            ZoomIn();
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Fit##fit")) {
+            FitToWindow();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit to window");
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("100%##actual")) {
+            ActualSize();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Actual size (100%)");
 
         ImGui::SameLine();
         ImGui::TextDisabled("|");
@@ -233,14 +275,49 @@ void PlotOutputPanel::RenderSelectedPlot() {
     float y_offset = (avail.y - display_height) / 2;
     ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + x_offset, ImGui::GetCursorPosY() + y_offset));
 
-    // Render the image
+    // Calculate UV coordinates based on zoom and pan
+    float visible_w = 1.0f / zoom_level_;
+    float visible_h = 1.0f / zoom_level_;
+
+    // Clamp pan offset to valid range
+    float max_pan_x = std::max(0.0f, 1.0f - visible_w);
+    float max_pan_y = std::max(0.0f, 1.0f - visible_h);
+    pan_offset_.x = std::clamp(pan_offset_.x, 0.0f, max_pan_x);
+    pan_offset_.y = std::clamp(pan_offset_.y, 0.0f, max_pan_y);
+
+    ImVec2 uv0(pan_offset_.x, pan_offset_.y);
+    ImVec2 uv1(pan_offset_.x + visible_w, pan_offset_.y + visible_h);
+
+    // Render the image with zoom/pan UV coordinates
     ImGui::Image((ImTextureID)(uintptr_t)plot.texture_id,
-                 ImVec2(display_width, display_height));
+                 ImVec2(display_width, display_height),
+                 uv0, uv1);
+
+    // Handle zoom/pan mouse interactions
+    HandleZoomPan();
 
     // Context menu
     if (ImGui::BeginPopupContextItem("##plot_context")) {
         RenderPlotContextMenu(selected_plot_index_);
         ImGui::EndPopup();
+    }
+
+    // Show zoom indicator overlay when zoomed
+    if (zoom_level_ != 1.0f) {
+        ImVec2 image_max = ImGui::GetItemRectMax();
+        char zoom_text[16];
+        snprintf(zoom_text, sizeof(zoom_text), "%.0f%%", zoom_level_ * 100.0f);
+        ImVec2 text_size = ImGui::CalcTextSize(zoom_text);
+        ImVec2 text_pos(image_max.x - text_size.x - 8, image_max.y - text_size.y - 8);
+
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        // Background
+        draw_list->AddRectFilled(
+            ImVec2(text_pos.x - 4, text_pos.y - 2),
+            ImVec2(text_pos.x + text_size.x + 4, text_pos.y + text_size.y + 2),
+            IM_COL32(0, 0, 0, 150), 4.0f);
+        // Text
+        draw_list->AddText(text_pos, IM_COL32(255, 255, 255, 200), zoom_text);
     }
 }
 
@@ -270,11 +347,17 @@ void PlotOutputPanel::RenderThumbnails() {
             if (ImGui::ImageButton("##thumb",
                                    (ImTextureID)(uintptr_t)plot.texture_id,
                                    ImVec2(thumb_w, thumb_h))) {
-                selected_plot_index_ = i;
+                if (selected_plot_index_ != i) {
+                    selected_plot_index_ = i;
+                    ResetZoom();  // Reset zoom/pan when switching plots
+                }
             }
         } else {
             if (ImGui::Button("?##thumb", ImVec2(thumbnail_size_, thumbnail_size_))) {
-                selected_plot_index_ = i;
+                if (selected_plot_index_ != i) {
+                    selected_plot_index_ = i;
+                    ResetZoom();  // Reset zoom/pan when switching plots
+                }
             }
         }
 
@@ -431,6 +514,153 @@ void PlotOutputPanel::DeleteTexture(GLuint texture_id) {
     if (texture_id != 0) {
         glDeleteTextures(1, &texture_id);
     }
+}
+
+void PlotOutputPanel::HandleZoomPan() {
+    // Only handle if mouse is over the image
+    if (!ImGui::IsItemHovered()) {
+        is_panning_ = false;
+        return;
+    }
+
+    // Mouse scroll for zoom (centered on mouse position)
+    float scroll = ImGui::GetIO().MouseWheel;
+    if (scroll != 0.0f) {
+        ImVec2 mouse_pos = ImGui::GetMousePos();
+        ImVec2 image_min = ImGui::GetItemRectMin();
+        ImVec2 image_size = ImGui::GetItemRectSize();
+
+        // Mouse position relative to image (0-1 normalized)
+        float mx = (mouse_pos.x - image_min.x) / image_size.x;
+        float my = (mouse_pos.y - image_min.y) / image_size.y;
+
+        // Clamp mouse position to image bounds
+        mx = std::clamp(mx, 0.0f, 1.0f);
+        my = std::clamp(my, 0.0f, 1.0f);
+
+        // Calculate the texture coordinate under the mouse before zoom
+        float visible_w = 1.0f / zoom_level_;
+        float visible_h = 1.0f / zoom_level_;
+        float tex_x = pan_offset_.x + mx * visible_w;
+        float tex_y = pan_offset_.y + my * visible_h;
+
+        // Apply zoom
+        zoom_level_ *= (scroll > 0) ? 1.15f : 0.87f;  // ~15% per scroll tick
+        zoom_level_ = std::clamp(zoom_level_, min_zoom_, max_zoom_);
+
+        // Adjust pan to keep the same texture point under the mouse
+        float new_visible_w = 1.0f / zoom_level_;
+        float new_visible_h = 1.0f / zoom_level_;
+        pan_offset_.x = tex_x - mx * new_visible_w;
+        pan_offset_.y = tex_y - my * new_visible_h;
+
+        // Clamp pan to valid range
+        float max_pan_x = std::max(0.0f, 1.0f - new_visible_w);
+        float max_pan_y = std::max(0.0f, 1.0f - new_visible_h);
+        pan_offset_.x = std::clamp(pan_offset_.x, 0.0f, max_pan_x);
+        pan_offset_.y = std::clamp(pan_offset_.y, 0.0f, max_pan_y);
+    }
+
+    // Middle mouse button or left mouse button for panning when zoomed
+    bool pan_button = ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
+                      (zoom_level_ > 1.0f && ImGui::IsMouseDown(ImGuiMouseButton_Left));
+
+    if (pan_button) {
+        ImVec2 delta = ImGui::GetIO().MouseDelta;
+        if (delta.x != 0.0f || delta.y != 0.0f) {
+            ImVec2 image_size = ImGui::GetItemRectSize();
+
+            // Convert pixel delta to normalized texture coords
+            // Negative because dragging right should show more to the left
+            float visible_w = 1.0f / zoom_level_;
+            float visible_h = 1.0f / zoom_level_;
+            pan_offset_.x -= (delta.x / image_size.x) * visible_w;
+            pan_offset_.y -= (delta.y / image_size.y) * visible_h;
+
+            // Clamp pan to valid range
+            float max_pan_x = std::max(0.0f, 1.0f - visible_w);
+            float max_pan_y = std::max(0.0f, 1.0f - visible_h);
+            pan_offset_.x = std::clamp(pan_offset_.x, 0.0f, max_pan_x);
+            pan_offset_.y = std::clamp(pan_offset_.y, 0.0f, max_pan_y);
+
+            is_panning_ = true;
+        }
+    } else {
+        is_panning_ = false;
+    }
+
+    // Show cursor hint when zoomed
+    if (zoom_level_ > 1.0f) {
+        ImGui::SetMouseCursor(is_panning_ ? ImGuiMouseCursor_ResizeAll : ImGuiMouseCursor_Hand);
+    }
+}
+
+void PlotOutputPanel::ResetZoom() {
+    zoom_level_ = 1.0f;
+    pan_offset_ = ImVec2(0.0f, 0.0f);
+}
+
+void PlotOutputPanel::ZoomIn() {
+    zoom_level_ *= 1.25f;  // 25% increase
+    zoom_level_ = std::clamp(zoom_level_, min_zoom_, max_zoom_);
+}
+
+void PlotOutputPanel::ZoomOut() {
+    zoom_level_ *= 0.8f;  // 20% decrease
+    zoom_level_ = std::clamp(zoom_level_, min_zoom_, max_zoom_);
+
+    // Adjust pan if we've zoomed out past valid pan range
+    float visible_w = 1.0f / zoom_level_;
+    float visible_h = 1.0f / zoom_level_;
+    float max_pan_x = std::max(0.0f, 1.0f - visible_w);
+    float max_pan_y = std::max(0.0f, 1.0f - visible_h);
+    pan_offset_.x = std::clamp(pan_offset_.x, 0.0f, max_pan_x);
+    pan_offset_.y = std::clamp(pan_offset_.y, 0.0f, max_pan_y);
+}
+
+void PlotOutputPanel::FitToWindow() {
+    zoom_level_ = 1.0f;
+    pan_offset_ = ImVec2(0.0f, 0.0f);
+}
+
+void PlotOutputPanel::ActualSize() {
+    // Set zoom so 1 image pixel = 1 screen pixel
+    if (selected_plot_index_ < 0 || selected_plot_index_ >= static_cast<int>(plots_.size())) {
+        return;
+    }
+
+    auto& plot = plots_[selected_plot_index_];
+
+    // Get the display size that would be used at 1.0 zoom
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    float aspect_ratio = static_cast<float>(plot.width) / static_cast<float>(plot.height);
+
+    float display_width = avail.x;
+    float display_height = display_width / aspect_ratio;
+
+    if (display_height > avail.y) {
+        display_height = avail.y;
+        display_width = display_height * aspect_ratio;
+    }
+
+    // Calculate zoom needed for 1:1 pixel mapping
+    // At zoom_level_ = X, we show 1/X of the image
+    // We want: display_width = plot.width / zoom_level_
+    // So: zoom_level_ = plot.width / display_width
+    zoom_level_ = static_cast<float>(plot.width) / display_width;
+    zoom_level_ = std::clamp(zoom_level_, min_zoom_, max_zoom_);
+
+    // Center the view
+    float visible_w = 1.0f / zoom_level_;
+    float visible_h = 1.0f / zoom_level_;
+    pan_offset_.x = (1.0f - visible_w) / 2.0f;
+    pan_offset_.y = (1.0f - visible_h) / 2.0f;
+
+    // Clamp pan to valid range
+    float max_pan_x = std::max(0.0f, 1.0f - visible_w);
+    float max_pan_y = std::max(0.0f, 1.0f - visible_h);
+    pan_offset_.x = std::clamp(pan_offset_.x, 0.0f, max_pan_x);
+    pan_offset_.y = std::clamp(pan_offset_.y, 0.0f, max_pan_y);
 }
 
 } // namespace cyxwiz

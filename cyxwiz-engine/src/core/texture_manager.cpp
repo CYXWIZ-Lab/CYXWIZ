@@ -149,11 +149,11 @@ void TextureManager::DeleteTexture(uint32_t texture_id) {
     }
 
     // Remove from cache if present
-    for (auto it = texture_cache_.begin(); it != texture_cache_.end(); ) {
-        if (it->second == texture_id) {
-            it = texture_cache_.erase(it);
+    for (auto cache_it = texture_cache_.begin(); cache_it != texture_cache_.end(); ) {
+        if (cache_it->second == texture_id) {
+            cache_it = texture_cache_.erase(cache_it);
         } else {
-            ++it;
+            ++cache_it;
         }
     }
 }

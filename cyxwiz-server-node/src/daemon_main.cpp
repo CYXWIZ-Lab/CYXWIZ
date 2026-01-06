@@ -2,8 +2,12 @@
 // Headless service that runs training, deployment, and provides IPC for GUI
 
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #endif
 
 #include <cyxwiz/cyxwiz.h>
@@ -356,11 +360,11 @@ int main(int argc, char** argv) {
         // Get references from BackendManager (they're now managed by it)
         auto* metrics_collector = backend.GetMetricsCollector();
         auto* state_manager = backend.GetStateManager();
-        auto* config_manager = backend.GetConfigManager();
+        auto* backend_config_mgr = backend.GetConfigManager();
 
         // Load config if specified
-        if (!daemon_config.config_path.empty() && config_manager) {
-            config_manager->Load(daemon_config.config_path);
+        if (!daemon_config.config_path.empty() && backend_config_mgr) {
+            backend_config_mgr->Load(daemon_config.config_path);
         }
 
         // Get current device for job execution
@@ -529,7 +533,7 @@ int main(int argc, char** argv) {
             node_client.get(),
             metrics_collector,
             state_manager,
-            config_manager
+            backend_config_mgr
         );
 
         // Set shutdown callback

@@ -133,9 +133,16 @@ CyxWizApp::CyxWizApp(int argc, char** argv)
     }
 }
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4722)  // destructor never returns - intentional (Shutdown calls quick_exit)
+#endif
 CyxWizApp::~CyxWizApp() {
     Shutdown();
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
@@ -601,7 +608,7 @@ void CyxWizApp::HandleInput() {
     }
 }
 
-void CyxWizApp::Update(float delta_time) {
+void CyxWizApp::Update(float /*delta_time*/) {
     // Update components
     if (job_manager_) {
         job_manager_->Update();
@@ -661,7 +668,7 @@ void CyxWizApp::Render() {
     glfwSwapBuffers(window_);
 }
 
-void CyxWizApp::Shutdown() {
+[[noreturn]] void CyxWizApp::Shutdown() {
     spdlog::info("Shutting down application...");
     spdlog::default_logger()->flush();
 
@@ -673,8 +680,7 @@ void CyxWizApp::Shutdown() {
     // so the user experience is still instant close.
     std::quick_exit(0);
 
-    // ============== UNREACHABLE CODE BELOW ==============
-    // Keeping for documentation/reference of proper cleanup order
+#if 0  // Documentation of proper cleanup order (not executed due to quick_exit above)
 
     // Stop any active training first (before destroying UI)
     auto& training_mgr = cyxwiz::TrainingManager::Instance();
@@ -750,6 +756,7 @@ void CyxWizApp::Shutdown() {
     spdlog::info("Application shutdown complete (quick exit)");
     spdlog::default_logger()->flush();
     std::quick_exit(0);
+#endif  // End of documentation-only cleanup code
 }
 
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
