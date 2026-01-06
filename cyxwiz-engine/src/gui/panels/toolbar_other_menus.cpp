@@ -82,25 +82,35 @@ void ToolbarPanel::RenderNodesMenu() {
 void ToolbarPanel::RenderTrainMenu() {
     if (ImGui::BeginMenu("Train")) {
         if (ImGui::MenuItem("Start Training", "F5")) {
-            // TODO: Start training
+            if (start_training_callback_) {
+                start_training_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Pause", "F6")) {
-            // TODO: Pause training
+            if (pause_training_callback_) {
+                pause_training_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Stop", "Shift+F5")) {
-            // TODO: Stop training
+            if (stop_training_callback_) {
+                stop_training_callback_();
+            }
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem("Training Settings...")) {
-            // TODO: Open training settings
+            if (training_settings_callback_) {
+                training_settings_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Optimizer Settings...")) {
-            // TODO: Open optimizer settings
+            if (optimizer_settings_callback_) {
+                optimizer_settings_callback_();
+            }
         }
 
         ImGui::EndMenu();

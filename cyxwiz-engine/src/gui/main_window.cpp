@@ -442,6 +442,53 @@ MainWindow::MainWindow()
         }
     });
 
+    // Start Training - compiles and runs training from node editor graph
+    toolbar_->SetStartTrainingCallback([this]() {
+        if (node_editor_) {
+            auto nodes = node_editor_->GetNodes();
+            auto links = node_editor_->GetLinks();
+            StartTrainingFromGraph(nodes, links);
+            if (training_dashboard_) {
+                training_dashboard_->SetVisible(true);
+            }
+            spdlog::info("Started training from Train menu");
+        }
+    });
+
+    // Pause Training
+    toolbar_->SetPauseTrainingCallback([this]() {
+        auto& tm = cyxwiz::TrainingManager::Instance();
+        if (tm.IsTrainingActive()) {
+            tm.PauseTraining();
+            spdlog::info("Paused training");
+        }
+    });
+
+    // Stop Training
+    toolbar_->SetStopTrainingCallback([this]() {
+        auto& tm = cyxwiz::TrainingManager::Instance();
+        if (tm.IsTrainingActive()) {
+            tm.StopTraining();
+            spdlog::info("Stopped training");
+        }
+    });
+
+    // Training Settings - opens Training Dashboard
+    toolbar_->SetTrainingSettingsCallback([this]() {
+        if (training_dashboard_) {
+            training_dashboard_->SetVisible(true);
+            spdlog::info("Opened Training Dashboard");
+        }
+    });
+
+    // Optimizer Settings - opens Training Dashboard (has hyperparameters section)
+    toolbar_->SetOptimizerSettingsCallback([this]() {
+        if (training_dashboard_) {
+            training_dashboard_->SetVisible(true);
+            spdlog::info("Opened Training Dashboard for optimizer settings");
+        }
+    });
+
     // Set up Run Test callback
     toolbar_->SetRunTestCallback([this]() {
         if (node_editor_) {
