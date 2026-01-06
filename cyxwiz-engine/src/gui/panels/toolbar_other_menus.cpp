@@ -17,6 +17,7 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <commdlg.h>
+#include <shellapi.h>
 #endif
 
 namespace cyxwiz {
@@ -419,7 +420,13 @@ void ToolbarPanel::RenderHelpMenu() {
         ImGui::Separator();
 
         if (ImGui::MenuItem(ICON_FA_BUG " Report Issue...")) {
-            // TODO: Open issue tracker
+#ifdef _WIN32
+            ShellExecuteA(NULL, "open", "https://github.com/CYXWIZ-Lab/CYXWIZ/issues", NULL, NULL, SW_SHOWNORMAL);
+#elif __APPLE__
+            system("open "https://github.com/CYXWIZ-Lab/CYXWIZ/issues"");
+#else
+            system("xdg-open "https://github.com/CYXWIZ-Lab/CYXWIZ/issues"");
+#endif
         }
 
         if (ImGui::MenuItem(ICON_FA_DOWNLOAD " Check for Updates...")) {
