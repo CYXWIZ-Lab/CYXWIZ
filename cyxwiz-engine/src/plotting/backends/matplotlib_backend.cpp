@@ -43,6 +43,10 @@ bool MatplotlibBackend::Initialize(int width, int height) {
     height_ = height;
 
     try {
+        // Acquire GIL before making any Python calls
+        // The ScriptingEngine releases GIL for multi-threaded use, so we must acquire it
+        py::gil_scoped_acquire acquire;
+
         // Import matplotlib and set non-interactive backend BEFORE importing pyplot
         // This prevents matplotlib from trying to create Tk GUI windows
         py::module_ mpl = py::module_::import("matplotlib");
@@ -543,6 +547,8 @@ void MatplotlibBackend::ExecutePythonCommand(const std::string& cmd) {
     }
 
     try {
+        // Acquire GIL before executing Python code
+        py::gil_scoped_acquire acquire;
         py::exec(cmd);
         spdlog::debug("Executed Python command:\n{}", cmd);
     } catch (const py::error_already_set& e) {
