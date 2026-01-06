@@ -448,8 +448,8 @@ MainWindow::MainWindow()
             auto nodes = node_editor_->GetNodes();
             auto links = node_editor_->GetLinks();
             StartTrainingFromGraph(nodes, links);
-            if (training_dashboard_) {
-                training_dashboard_->SetVisible(true);
+            if (training_plot_panel_) {
+                training_plot_panel_->SetVisible(true);
             }
             spdlog::info("Started training from Train menu");
         }
@@ -475,16 +475,16 @@ MainWindow::MainWindow()
 
     // Training Settings - opens Training Dashboard
     toolbar_->SetTrainingSettingsCallback([this]() {
-        if (training_dashboard_) {
-            training_dashboard_->SetVisible(true);
+        if (training_plot_panel_) {
+            training_plot_panel_->SetVisible(true);
             spdlog::info("Opened Training Dashboard");
         }
     });
 
     // Optimizer Settings - opens Training Dashboard (has hyperparameters section)
     toolbar_->SetOptimizerSettingsCallback([this]() {
-        if (training_dashboard_) {
-            training_dashboard_->SetVisible(true);
+        if (training_plot_panel_) {
+            training_plot_panel_->SetVisible(true);
             spdlog::info("Opened Training Dashboard for optimizer settings");
         }
     });
