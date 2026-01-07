@@ -162,6 +162,13 @@ MainWindow::MainWindow()
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     // training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();  // Removed - merged into TrainingPlotPanel
     training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
+
+    // Wire up TrainingPlotPanel to DatasetPanel for local training visualization
+    if (dataset_panel_ && training_plot_panel_) {
+        dataset_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
+        dataset_panel_->SetNodeEditor(node_editor_.get());
+    }
+
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();

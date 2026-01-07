@@ -39,8 +39,14 @@ public:
     void ShowAccuracyPlot(bool show) { show_accuracy_plot_ = show; }
     void SetAutoScale(bool auto_scale) { auto_scale_ = auto_scale; }
 
+    // Training state updates (thread-safe) - call from TrainingManager
+    void SetTrainingState(bool is_training, int current_epoch, int total_epochs,
+                          float epoch_time_seconds, float samples_per_second);
+    void SetTrainingComplete(float total_time_seconds);
+
     // Getters for live metrics (thread-safe)
     bool HasData() const { return !train_loss_.values.empty(); }
+    bool IsTraining() const { return is_training_; }
     int GetCurrentEpoch() const;
     double GetCurrentTrainLoss() const;
     double GetCurrentValLoss() const;
@@ -75,10 +81,21 @@ private:
     bool auto_scale_ = true;
     size_t max_points_ = 1000;
 
+    // Training state
+    bool is_training_ = false;
+    int current_epoch_ = 0;
+    int total_epochs_ = 0;
+    float last_epoch_time_ = 0.0f;
+    float avg_epoch_time_ = 0.0f;
+    float samples_per_second_ = 0.0f;
+    float total_training_time_ = 0.0f;
+    std::vector<float> epoch_times_;  // For averaging
+
     // Thread safety
     mutable std::mutex data_mutex_;
 
     // Helper methods
+    void RenderTrainingStatus();
     void RenderLossPlot();
     void RenderAccuracyPlot();
     void RenderCustomMetricsPlot();

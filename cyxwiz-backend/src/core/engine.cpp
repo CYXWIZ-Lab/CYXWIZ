@@ -31,7 +31,6 @@ bool Initialize() {
         try {
             af::setBackend(AF_BACKEND_CUDA);
             af::setDevice(0);
-            // ArrayFire 3.9 API: deviceInfo requires output parameters
             char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
             af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
             spdlog::info("CUDA backend active - Device: {}", d_name);

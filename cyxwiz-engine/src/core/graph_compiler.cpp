@@ -74,6 +74,15 @@ TrainingConfiguration GraphCompiler::Compile(
     // Check if we're using CrossEntropyLoss (which applies softmax internally)
     bool using_cross_entropy = (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss);
 
+    // Log all nodes in the graph for debugging
+    spdlog::info("GraphCompiler: Processing {} nodes (using_cross_entropy={})", sorted_ids.size(), using_cross_entropy);
+    for (int node_id : sorted_ids) {
+        const gui::MLNode* n = FindNodeById(node_id, nodes);
+        if (n) {
+            spdlog::debug("GraphCompiler: Node[{}] '{}' type={}", n->id, n->name, static_cast<int>(n->type));
+        }
+    }
+
     // Extract model layers and preprocessing in execution order
     std::vector<size_t> current_shape = config.input_shape;
 

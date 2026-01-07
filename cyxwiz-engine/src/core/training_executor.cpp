@@ -111,6 +111,15 @@ bool TrainingExecutor::BuildModelFromConfig() {
                 break;
             }
 
+            case gui::NodeType::BatchNorm: {
+                // BatchNorm uses current feature size (output of previous Dense layer)
+                float eps = layer_cfg.eps > 0 ? layer_cfg.eps : 1e-5f;
+                float momentum = layer_cfg.momentum > 0 ? layer_cfg.momentum : 0.1f;
+                model_->Add<BatchNormModule>(current_input_size, eps, momentum);
+                spdlog::info("  [{}] BatchNorm({})", i, current_input_size);
+                break;
+            }
+
             case gui::NodeType::Output: {
                 // Output node is just a marker, not an actual layer
                 // The actual output transformation is done by the preceding Dense layer
@@ -148,7 +157,6 @@ bool TrainingExecutor::BuildModelFromConfig() {
             case gui::NodeType::AvgPool2D:
             case gui::NodeType::GlobalMaxPool:
             case gui::NodeType::GlobalAvgPool:
-            case gui::NodeType::BatchNorm:
                 spdlog::warn("  [{}] CNN layer {} not yet supported in SequentialModel",
                              i, static_cast<int>(layer_cfg.type));
                 break;

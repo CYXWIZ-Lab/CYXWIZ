@@ -49,6 +49,11 @@ void TrainingPlotPanel::Render() {
 
     ImGui::Separator();
 
+    // Render training status (always visible)
+    RenderTrainingStatus();
+
+    ImGui::Separator();
+
     // Check if we have any training data
     bool has_data = !train_loss_.values.empty() || !train_accuracy_.values.empty() || !custom_metrics_.empty();
 
@@ -188,6 +193,42 @@ void TrainingPlotPanel::Clear() {
     val_accuracy_.epochs.clear();
     val_accuracy_.values.clear();
     custom_metrics_.clear();
+
+    // Reset training state
+    is_training_ = false;
+    current_epoch_ = 0;
+    total_epochs_ = 0;
+    last_epoch_time_ = 0.0f;
+    avg_epoch_time_ = 0.0f;
+    samples_per_second_ = 0.0f;
+    total_training_time_ = 0.0f;
+    epoch_times_.clear();
+}
+
+void TrainingPlotPanel::SetTrainingState(bool is_training, int current_epoch, int total_epochs,
+                                          float epoch_time_seconds, float samples_per_second) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+
+    is_training_ = is_training;
+    current_epoch_ = current_epoch;
+    total_epochs_ = total_epochs;
+    last_epoch_time_ = epoch_time_seconds;
+    samples_per_second_ = samples_per_second;
+
+    if (epoch_time_seconds > 0) {
+        epoch_times_.push_back(epoch_time_seconds);
+        // Calculate moving average of epoch times
+        float sum = 0.0f;
+        for (float t : epoch_times_) sum += t;
+        avg_epoch_time_ = sum / epoch_times_.size();
+    }
+}
+
+void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+
+    is_training_ = false;
+    total_training_time_ = total_time_seconds;
 }
 
 void TrainingPlotPanel::ResetPlots() {
@@ -401,6 +442,118 @@ void TrainingPlotPanel::RenderControls() {
         ImGui::BulletText("Disable 'Auto Scale' for manual control");
         ImGui::EndTooltip();
     }
+}
+
+void TrainingPlotPanel::RenderTrainingStatus() {
+    // Training status header with colored indicator
+    ImGui::BeginChild("TrainingStatus", ImVec2(0, 100), true);
+
+    // Debug info (temporary)
+    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+        "[Debug: training=%d, epoch=%d/%d, avg_time=%.1f]",
+        is_training_ ? 1 : 0, current_epoch_, total_epochs_, avg_epoch_time_);
+
+    // Status indicator
+    if (is_training_) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
+        ImGui::Text("TRAINING");
+        ImGui::PopStyleColor();
+    } else if (total_training_time_ > 0) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+        ImGui::Text("COMPLETED");
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::Text("IDLE");
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::SameLine(120);
+
+    // Progress info
+    if (total_epochs_ > 0) {
+        float progress = static_cast<float>(current_epoch_) / total_epochs_;
+        ImGui::Text("Epoch %d / %d", current_epoch_, total_epochs_);
+        ImGui::SameLine(280);
+        ImGui::ProgressBar(progress, ImVec2(200, 0));
+    }
+
+    // Second row: timing info
+    ImGui::Spacing();
+
+    if (is_training_ && avg_epoch_time_ > 0) {
+        int remaining_epochs = total_epochs_ - current_epoch_;
+        float eta_seconds = remaining_epochs * avg_epoch_time_;
+
+        // Format ETA nicely
+        int eta_hours = static_cast<int>(eta_seconds / 3600);
+        int eta_mins = static_cast<int>((eta_seconds - eta_hours * 3600) / 60);
+        int eta_secs = static_cast<int>(eta_seconds) % 60;
+
+        ImGui::Text("Last Epoch: %.1fs", last_epoch_time_);
+        ImGui::SameLine(150);
+        ImGui::Text("Avg: %.1fs/epoch", avg_epoch_time_);
+        ImGui::SameLine(300);
+
+        if (eta_hours > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
+                "ETA: %dh %dm %ds", eta_hours, eta_mins, eta_secs);
+        } else if (eta_mins > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
+                "ETA: %dm %ds", eta_mins, eta_secs);
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
+                "ETA: %ds", eta_secs);
+        }
+
+        ImGui::SameLine(480);
+        if (samples_per_second_ > 0) {
+            ImGui::Text("%.0f samples/sec", samples_per_second_);
+        }
+    } else if (total_training_time_ > 0) {
+        // Training completed
+        int total_hours = static_cast<int>(total_training_time_ / 3600);
+        int total_mins = static_cast<int>((total_training_time_ - total_hours * 3600) / 60);
+        int total_secs = static_cast<int>(total_training_time_) % 60;
+
+        if (total_hours > 0) {
+            ImGui::Text("Total Time: %dh %dm %ds", total_hours, total_mins, total_secs);
+        } else if (total_mins > 0) {
+            ImGui::Text("Total Time: %dm %ds", total_mins, total_secs);
+        } else {
+            ImGui::Text("Total Time: %ds", total_secs);
+        }
+    }
+
+    // Third row: current metrics
+    if (!train_loss_.values.empty() || !train_accuracy_.values.empty()) {
+        ImGui::Spacing();
+
+        if (!train_loss_.values.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                "Loss: %.6f", train_loss_.values.back());
+        }
+
+        if (!train_accuracy_.values.empty()) {
+            ImGui::SameLine(180);
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
+                "Accuracy: %.2f%%", train_accuracy_.values.back());
+        }
+
+        if (!val_loss_.values.empty()) {
+            ImGui::SameLine(360);
+            ImGui::TextColored(ImVec4(0.3f, 0.5f, 1.0f, 1.0f),
+                "Val Loss: %.6f", val_loss_.values.back());
+        }
+
+        if (!val_accuracy_.values.empty()) {
+            ImGui::SameLine(540);
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
+                "Val Acc: %.2f%%", val_accuracy_.values.back());
+        }
+    }
+
+    ImGui::EndChild();
 }
 
 void TrainingPlotPanel::RenderStatistics() {

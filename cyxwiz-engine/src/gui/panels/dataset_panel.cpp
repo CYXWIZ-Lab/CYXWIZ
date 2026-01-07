@@ -2339,7 +2339,13 @@ void DatasetPanel::StartLocalTraining() {
         node_editor_callback
     );
 
-    if (!started) {
+    if (started) {
+        // Show Training Dashboard when training starts
+        if (training_plot_panel_) {
+            training_plot_panel_->SetVisible(true);
+            spdlog::info("Showing Training Dashboard");
+        }
+    } else {
         spdlog::warn("Could not start training - another training session may be in progress");
     }
 }

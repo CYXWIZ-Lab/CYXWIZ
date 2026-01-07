@@ -54,9 +54,11 @@ bool TrainingManager::StartTraining(
         node_editor_callback(true);
     }
 
-    // Clear plot panel
+    // Clear plot panel and set initial training state
     if (plot_panel) {
         plot_panel->Clear();
+        // Set initial training state so UI shows "TRAINING" immediately
+        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
         plot_panel->SetVisible(true);
     }
 
@@ -173,10 +175,14 @@ void TrainingManager::TrainingThreadFunc(
         cached_metrics_.is_training = true;
     }
 
+    // Track training start time for total duration
+    auto training_start_time = std::chrono::steady_clock::now();
+
     // Set up callbacks
-    auto epoch_callback = [this, plot_panel](int epoch, float train_loss, float train_acc,
+    auto epoch_callback = [this, plot_panel, epochs, batch_size](int epoch, float train_loss, float train_acc,
                                                float val_loss, float val_acc, float epoch_time) {
         // Update cached metrics
+        float samples_per_sec = 0.0f;
         {
             std::lock_guard<std::mutex> lock(metrics_mutex_);
             cached_metrics_.current_epoch = epoch;
@@ -187,13 +193,24 @@ void TrainingManager::TrainingThreadFunc(
             cached_metrics_.epoch_time_seconds = epoch_time;
             cached_metrics_.loss_history.push_back(train_loss);
             cached_metrics_.accuracy_history.push_back(train_acc);
+
+            // Calculate samples/sec from cached metrics
+            if (epoch_time > 0) {
+                samples_per_sec = cached_metrics_.samples_per_second;
+            }
         }
 
-        // Update plot panel
+        // Update plot panel with metrics and training state
         if (plot_panel) {
             plot_panel->AddLossPoint(epoch, static_cast<double>(train_loss), static_cast<double>(val_loss));
             // Convert accuracy from fraction (0-1) to percentage (0-100) for display
             plot_panel->AddAccuracyPoint(epoch, static_cast<double>(train_acc) * 100.0, static_cast<double>(val_acc) * 100.0);
+            // Update training state with timing info
+            plot_panel->SetTrainingState(true, epoch, epochs, epoch_time, samples_per_sec);
+            spdlog::info("TrainingPlotPanel: Updated state - epoch={}/{}, time={:.1f}s, sps={:.0f}",
+                         epoch, epochs, epoch_time, samples_per_sec);
+        } else {
+            spdlog::warn("TrainingPlotPanel: plot_panel is null!");
         }
 
         // Notify progress callback
@@ -231,12 +248,21 @@ void TrainingManager::TrainingThreadFunc(
         }
     }
 
+    // Calculate total training time
+    auto training_end_time = std::chrono::steady_clock::now();
+    float total_training_time = std::chrono::duration<float>(training_end_time - training_start_time).count();
+
     // Get final metrics
     {
         std::lock_guard<std::mutex> lock(metrics_mutex_);
         final_metrics = cached_metrics_;
         cached_metrics_.is_training = false;
         cached_metrics_.is_complete = !stop_requested_.load();
+    }
+
+    // Update plot panel with completion status
+    if (plot_panel) {
+        plot_panel->SetTrainingComplete(total_training_time);
     }
 
     // Cleanup
