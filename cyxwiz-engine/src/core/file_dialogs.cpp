@@ -206,21 +206,27 @@ std::optional<std::string> FileDialogs::SaveScript(const char* default_path) {
 
 std::optional<std::string> FileDialogs::OpenModel(const char* default_path) {
     return OpenFile("Open Model", {
+        {"CyxWiz Models", "cyxmodel"},
         {"ONNX Models", "onnx"},
+        {"Safetensors", "safetensors"},
+        {"GGUF Models", "gguf"},
         {"PyTorch Models", "pt,pth"},
         {"TensorFlow Models", "pb,h5"},
         {"Keras Models", "keras,h5"},
-        {"All Models", "onnx,pt,pth,pb,h5,keras"},
+        {"All Models", "cyxmodel,onnx,safetensors,gguf,pt,pth,pb,h5,keras"},
         {"All Files", "*"}
     }, default_path);
 }
 
 std::optional<std::string> FileDialogs::SaveModel(const char* default_path) {
     return SaveFile("Save Model", {
+        {"CyxWiz Models", "cyxmodel"},
         {"ONNX Models", "onnx"},
+        {"Safetensors", "safetensors"},
+        {"GGUF Models", "gguf"},
         {"PyTorch Models", "pt"},
         {"All Files", "*"}
-    }, default_path, "model.onnx");
+    }, default_path, "model.cyxmodel");
 }
 
 std::optional<std::string> FileDialogs::OpenDataset(const char* default_path) {
