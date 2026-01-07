@@ -48,6 +48,7 @@ void PatternLibrary::LoadBuiltinPatterns() {
     // Try multiple possible locations for builtin patterns
     std::vector<std::string> search_paths = {
         builtin_patterns_dir_,
+        "cyxwiz-engine/resources/patterns",  // From project root
         "../resources/patterns",
         "../../resources/patterns",
         "../../../cyxwiz-engine/resources/patterns"

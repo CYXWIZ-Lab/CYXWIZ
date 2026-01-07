@@ -365,6 +365,10 @@ MainWindow::MainWindow()
     // Set up training callback for Node Editor
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
+        // Show Training Dashboard when training starts
+        if (training_plot_panel_) {
+            training_plot_panel_->SetVisible(true);
+        }
     });
 
     // Set up callbacks in the toolbar
