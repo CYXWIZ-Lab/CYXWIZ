@@ -400,7 +400,12 @@ void TrainingExecutor::RunTrainingEpoch(
 
             // Log input data range
             float min_input = input_data[0], max_input = input_data[0];
-            size_t input_size = batch.data.Shape()[0] * batch.data.Shape()[1];
+            const auto& input_shape = batch.data.Shape();
+            if (input_shape.size() < 2) {
+                spdlog::error("TrainingExecutor: Expected 2D input, got {}D", input_shape.size());
+                break;
+            }
+            size_t input_size = input_shape[0] * input_shape[1];
             for (size_t i = 1; i < std::min(input_size, size_t(1000)); ++i) {
                 min_input = std::min(min_input, input_data[i]);
                 max_input = std::max(max_input, input_data[i]);
@@ -441,7 +446,8 @@ void TrainingExecutor::RunTrainingEpoch(
             float max_pred = pred_data[b * config_.output_size];
             float max_target = target_data[b * config_.output_size];
 
-            for (size_t c = 1; c < config_.output_size; ++c) {
+            // Start from c=0 to properly compare all classes including class 0
+            for (size_t c = 0; c < config_.output_size; ++c) {
                 if (pred_data[b * config_.output_size + c] > max_pred) {
                     max_pred = pred_data[b * config_.output_size + c];
                     pred_class = static_cast<int>(c);
@@ -519,7 +525,8 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
             float max_pred = pred_data[b * config_.output_size];
             float max_target = target_data[b * config_.output_size];
 
-            for (size_t c = 1; c < config_.output_size; ++c) {
+            // Start from c=0 to properly compare all classes including class 0
+            for (size_t c = 0; c < config_.output_size; ++c) {
                 if (pred_data[b * config_.output_size + c] > max_pred) {
                     max_pred = pred_data[b * config_.output_size + c];
                     pred_class = static_cast<int>(c);
@@ -580,7 +587,8 @@ float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor&
         float max_pred = pred_data[b * num_classes];
         float max_target = target_data[b * num_classes];
 
-        for (size_t c = 1; c < num_classes; ++c) {
+        // Start from c=0 to properly compare all classes including class 0
+        for (size_t c = 0; c < num_classes; ++c) {
             if (pred_data[b * num_classes + c] > max_pred) {
                 max_pred = pred_data[b * num_classes + c];
                 pred_class = static_cast<int>(c);

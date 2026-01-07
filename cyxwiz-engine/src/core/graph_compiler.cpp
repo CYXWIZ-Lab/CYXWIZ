@@ -95,7 +95,7 @@ TrainingConfiguration GraphCompiler::Compile(
         // Skip Softmax when using CrossEntropyLoss (it applies softmax internally)
         // This prevents double-softmax which kills gradients
         if (node->type == gui::NodeType::Softmax && using_cross_entropy) {
-            spdlog::debug("GraphCompiler: Skipping Softmax (CrossEntropyLoss applies it internally)");
+            spdlog::warn("GraphCompiler: Softmax layer skipped - CrossEntropyLoss applies softmax internally");
             continue;
         }
 
@@ -144,7 +144,28 @@ TrainingConfiguration GraphCompiler::Compile(
     // Set one-hot encoding if we have classification (CrossEntropy loss)
     if (config.loss_type == gui::NodeType::CrossEntropyLoss) {
         config.preprocessing.has_onehot = true;
-        config.preprocessing.num_classes = config.output_size;
+
+        // Try to get num_classes from Output node's "classes" parameter
+        const gui::MLNode* output_node = FindOutputNode(nodes);
+        if (output_node) {
+            auto it = output_node->parameters.find("classes");
+            if (it != output_node->parameters.end() && !it->second.empty()) {
+                try {
+                    config.preprocessing.num_classes = std::stoul(it->second);
+                    spdlog::info("GraphCompiler: num_classes={} from Output node",
+                                 config.preprocessing.num_classes);
+                } catch (...) {
+                    config.preprocessing.num_classes = 0;  // Will fall back below
+                }
+            }
+        }
+
+        // Fallback to output_size if Output node doesn't specify classes
+        if (config.preprocessing.num_classes == 0) {
+            config.preprocessing.num_classes = config.output_size;
+            spdlog::warn("GraphCompiler: num_classes not specified in Output node, using output_size={}",
+                         config.output_size);
+        }
     }
 
     config.is_valid = true;
