@@ -359,6 +359,9 @@ MainWindow::MainWindow()
     // Connect Query Console to Node Editor for graph queries
     query_console_->SetNodeEditor(node_editor_.get());
 
+    // Connect Dataset Panel to Node Editor for graph validation
+    dataset_panel_->SetNodeEditor(node_editor_.get());
+
     // Set up training callback for Node Editor
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
