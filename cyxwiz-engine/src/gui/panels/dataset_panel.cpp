@@ -7,6 +7,8 @@
 #include "../../core/training_manager.h"
 #include "../../core/graph_compiler.h"
 #include "../../core/file_dialogs.h"
+#include "../../preprocessing/preprocessing_config.h"
+#include "../../preprocessing/statistics_calculator.h"
 #include "job.pb.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -134,7 +136,8 @@ void DatasetPanel::Render() {
             ImGuiTabItemFlags loaded_flags = (pending_tab_ == 1) ? ImGuiTabItemFlags_SetSelected : 0;
             ImGuiTabItemFlags preview_flags = (pending_tab_ == 2) ? ImGuiTabItemFlags_SetSelected : 0;
             ImGuiTabItemFlags aug_flags = (pending_tab_ == 3) ? ImGuiTabItemFlags_SetSelected : 0;
-            ImGuiTabItemFlags train_flags = (pending_tab_ == 4) ? ImGuiTabItemFlags_SetSelected : 0;
+            ImGuiTabItemFlags preprocessing_flags = (pending_tab_ == 4) ? ImGuiTabItemFlags_SetSelected : 0;
+            ImGuiTabItemFlags train_flags = (pending_tab_ == 5) ? ImGuiTabItemFlags_SetSelected : 0;
             pending_tab_ = -1;  // Reset after use
 
             if (ImGui::BeginTabItem("Load Dataset", nullptr, load_flags)) {
@@ -184,6 +187,15 @@ void DatasetPanel::Render() {
 
             if (ImGui::BeginTabItem("Augmentation", nullptr, aug_flags)) {
                 RenderAugmentationTab();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Preprocessing", nullptr, preprocessing_flags)) {
+                if (IsDatasetLoaded()) {
+                    RenderPreprocessingTab();
+                } else {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a dataset to configure preprocessing");
+                }
                 ImGui::EndTabItem();
             }
 

@@ -9,6 +9,11 @@
 #include <optional>
 #include <chrono>
 
+// Forward declaration for preprocessing config
+namespace cyxwiz {
+    struct PreprocessingConfig;
+}
+
 namespace cyxwiz {
 
 // Forward declarations
@@ -419,6 +424,12 @@ public:
     std::vector<DatasetVersion> GetVersionHistory(const std::string& name) const;
     bool SaveVersion(const std::string& name, const std::string& description = "");
 
+    // Preprocessing configuration management
+    void SetPreprocessingConfig(const std::string& dataset_id, const PreprocessingConfig& config);
+    PreprocessingConfig GetPreprocessingConfig(const std::string& dataset_id) const;
+    bool HasPreprocessingConfig(const std::string& dataset_id) const;
+    void ClearPreprocessingConfig(const std::string& dataset_id);
+
 private:
     DataRegistry() = default;
 
@@ -454,6 +465,9 @@ private:
 
     // Version history storage (in-memory, could be persisted)
     std::map<std::string, std::vector<DatasetVersion>> version_history_;
+
+    // Preprocessing configurations per dataset
+    mutable std::map<std::string, PreprocessingConfig> preprocessing_configs_;
 };
 
 } // namespace cyxwiz

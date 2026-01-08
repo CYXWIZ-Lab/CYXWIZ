@@ -12,6 +12,9 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <future>
+#include "../../preprocessing/preprocessing_config.h"
+#include "../../preprocessing/statistics_calculator.h"
 
 namespace cyxwiz {
     class Tensor;
@@ -32,7 +35,8 @@ enum class DatasetTab {
     LoadedDatasets = 1,
     Preview = 2,
     Augmentation = 3,
-    Training = 4
+    Preprocessing = 4,
+    Training = 5
 };
 
 class DatasetPanel : public cyxwiz::Panel {
@@ -114,6 +118,14 @@ private:
     void RenderAugmentationTab();
     void RenderAugmentationPipeline();
     void RenderAugmentationPreview();
+
+    // Preprocessing tab
+    void RenderPreprocessingTab();
+    void RenderDatasetStatistics();
+    void RenderNormalizationSection();
+    void RenderScalingSection();
+    void RenderImagePreprocessingSection();
+    void RenderPreprocessingPreview();
 
     // File browser dialogs
     void ShowFileBrowser();
@@ -223,6 +235,25 @@ private:
         bool expanded = false;
     };
     std::vector<TransformUIState> transform_ui_states_;
+
+    // Preprocessing state
+    cyxwiz::PreprocessingConfig current_preprocessing_config_;
+    cyxwiz::DatasetStatistics current_stats_;
+    bool stats_computed_ = false;
+    bool computing_stats_ = false;
+    float stats_computation_progress_ = 0.0f;
+    std::future<cyxwiz::DatasetStatistics> stats_future_;
+
+    // Preprocessing preview
+    bool show_preprocessing_preview_ = false;
+    cyxwiz::Tensor preview_preprocessed_;
+    unsigned int preview_texture_preprocessed_ = 0;
+    int preview_tex_prep_w_ = 0, preview_tex_prep_h_ = 0, preview_tex_prep_c_ = 0;
+    bool preprocessing_preview_needs_update_ = true;
+
+    // Preprocessing helper methods
+    void ComputeStatistics();
+    void ApplyPreprocessingConfig();
 
     // Notification state (for "Set as Active" feedback)
     bool show_notification_ = false;

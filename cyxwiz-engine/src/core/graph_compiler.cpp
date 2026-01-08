@@ -468,7 +468,7 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
 
 void GraphCompiler::ExtractPreprocessing(
     const gui::MLNode& node,
-    PreprocessingConfig& config) const
+    GraphPreprocessingConfig& config) const
 {
     switch (node.type) {
         case gui::NodeType::Normalize:

@@ -1,4 +1,9 @@
 #include "dataset_batcher.h"
+#include "../preprocessing/preprocessing_config.h"
+#include "../preprocessing/statistics_calculator.h"
+#include "../preprocessing/normalization_transform.h"
+#include "../preprocessing/scaling_transform.h"
+#include "../preprocessing/image_transform.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
@@ -33,6 +38,11 @@ DatasetBatcher::DatasetBatcher(
     if (shuffle_) {
         ShuffleIndices();
     }
+}
+
+DatasetBatcher::~DatasetBatcher() {
+    // Clean up preprocessing resources
+    ClearPreprocessing();
 }
 
 Batch DatasetBatcher::GetNextBatch() {
@@ -80,11 +90,6 @@ Batch DatasetBatcher::GetNextBatch() {
         batch_labels.push_back(label);
     }
 
-    // Apply normalization if enabled
-    if (normalize_) {
-        NormalizeData(batch_data);
-    }
-
     // Determine data shape
     std::vector<size_t> data_shape;
     if (flatten_) {
@@ -98,6 +103,21 @@ Batch DatasetBatcher::GetNextBatch() {
 
     // Convert to tensors
     batch.data = VectorToTensor(batch_data, data_shape);
+
+    // Apply preprocessing pipeline (BEFORE old normalization)
+    if (preprocessing_enabled_) {
+        ApplyPreprocessing(batch.data);
+    }
+
+    // Apply old normalization if enabled (DEPRECATED - use preprocessing instead)
+    if (normalize_ && !preprocessing_enabled_) {
+        size_t num_elements = batch.data.NumElements();
+        float* data_ptr = batch.data.Data<float>();
+        std::vector<float> data_vec(data_ptr, data_ptr + num_elements);
+        NormalizeData(data_vec);
+        batch.data = VectorToTensor(data_vec, data_shape);
+        spdlog::warn("DatasetBatcher: Using deprecated SetNormalization(). Consider using preprocessing pipeline instead.");
+    }
 
     if (one_hot_) {
         batch.labels = LabelsToOneHot(batch_labels);
@@ -199,6 +219,127 @@ void DatasetBatcher::NormalizeData(std::vector<float>& data) {
 
 void DatasetBatcher::ShuffleIndices() {
     std::shuffle(indices_.begin(), indices_.end(), rng_);
+}
+
+// Preprocessing pipeline methods
+
+void DatasetBatcher::SetPreprocessingConfig(const PreprocessingConfig& config) {
+    // Clean up old pipeline
+    ClearPreprocessing();
+
+    // Create new config
+    preprocessing_config_ = new PreprocessingConfig(config);
+    spdlog::info("DatasetBatcher: Set preprocessing config (enabled={})", config.enabled);
+}
+
+const PreprocessingConfig& DatasetBatcher::GetPreprocessingConfig() const {
+    static PreprocessingConfig empty_config;
+    if (!preprocessing_config_) {
+        return empty_config;
+    }
+    return *preprocessing_config_;
+}
+
+void DatasetBatcher::InitializePreprocessing(const DatasetStatistics& stats) {
+    if (!preprocessing_config_ || !preprocessing_config_->enabled) {
+        spdlog::warn("DatasetBatcher: Cannot initialize preprocessing - config not set or disabled");
+        return;
+    }
+
+    // Clear existing transforms
+    ClearPreprocessing();
+
+    const auto& config = *preprocessing_config_;
+
+    // Build preprocessing pipeline in order:
+    // 1. Image preprocessing (resize, format conversion)
+    // 2. Normalization (MNIST/CIFAR/ImageNet/Custom)
+    // 3. Scaling (MinMax/Standard/Robust/PCA)
+
+    // 1. Image preprocessing
+    if (config.image_config.resize_mode != ResizeMode::None ||
+        config.image_config.convert_to_grayscale ||
+        config.image_config.convert_to_rgb) {
+
+        auto* transform = new ImageTransform(config.image_config);
+        image_transforms_.push_back(transform);
+        spdlog::info("DatasetBatcher: Added ImageTransform to pipeline");
+    }
+
+    // 2. Normalization
+    if (config.normalization_config.strategy != NormalizationStrategy::None) {
+        auto* transform = new NormalizationTransform(config.normalization_config);
+        transform->Initialize(stats);
+        normalization_transforms_.push_back(transform);
+        spdlog::info("DatasetBatcher: Added NormalizationTransform to pipeline (strategy={})",
+                     static_cast<int>(config.normalization_config.strategy));
+    }
+
+    // 3. Scaling
+    if (config.scaling_config.strategy != ScalingStrategy::None) {
+        auto* transform = new ScalingTransform(config.scaling_config);
+        transform->Initialize(stats);
+        scaling_transforms_.push_back(transform);
+        spdlog::info("DatasetBatcher: Added ScalingTransform to pipeline (strategy={})",
+                     static_cast<int>(config.scaling_config.strategy));
+    }
+
+    preprocessing_enabled_ = !image_transforms_.empty() ||
+                             !normalization_transforms_.empty() ||
+                             !scaling_transforms_.empty();
+
+    spdlog::info("DatasetBatcher: Preprocessing pipeline initialized with {} transforms",
+                 image_transforms_.size() + normalization_transforms_.size() + scaling_transforms_.size());
+}
+
+void DatasetBatcher::ClearPreprocessing() {
+    // Clean up image transforms
+    for (auto* transform : image_transforms_) {
+        delete transform;
+    }
+    image_transforms_.clear();
+
+    // Clean up normalization transforms
+    for (auto* transform : normalization_transforms_) {
+        delete transform;
+    }
+    normalization_transforms_.clear();
+
+    // Clean up scaling transforms
+    for (auto* transform : scaling_transforms_) {
+        delete transform;
+    }
+    scaling_transforms_.clear();
+
+    // Clean up config
+    if (preprocessing_config_) {
+        delete preprocessing_config_;
+        preprocessing_config_ = nullptr;
+    }
+
+    preprocessing_enabled_ = false;
+}
+
+void DatasetBatcher::ApplyPreprocessing(Tensor& batch) {
+    if (!preprocessing_enabled_) {
+        return;
+    }
+
+    // Apply transforms in order:
+    // 1. Image preprocessing
+    for (auto* transform : image_transforms_) {
+        batch = transform->Apply(batch);
+    }
+
+    // 2. Normalization
+    for (auto* transform : normalization_transforms_) {
+        batch = transform->Apply(batch);
+    }
+
+    // 3. Scaling
+    for (auto* transform : scaling_transforms_) {
+        batch = transform->Apply(batch);
+    }
 }
 
 // DatasetIterator implementation

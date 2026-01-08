@@ -1,0 +1,622 @@
+// Preprocessing tab implementation for Dataset Panel
+// This file contains all preprocessing UI rendering methods
+
+#include "dataset_panel.h"
+#include "../../preprocessing/preprocessing_config.h"
+#include "../../preprocessing/statistics_calculator.h"
+#include "../../preprocessing/normalization_transform.h"
+#include "../../preprocessing/scaling_transform.h"
+#include "../../preprocessing/image_transform.h"
+#include "../../core/texture_manager.h"
+#include <imgui.h>
+#include <spdlog/spdlog.h>
+#include <future>
+#include <cmath>
+
+namespace gui {
+
+// ============================================================================
+// Main Preprocessing Tab
+// ============================================================================
+
+void DatasetPanel::RenderPreprocessingTab() {
+    ImGui::BeginChild("PreprocessingPanel", ImVec2(0, 0), false);
+
+    // Header
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Data Preprocessing");
+    ImGui::Text("Configure normalization, scaling, and image transformations");
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Main layout: Configuration on left (60%), Preview on right (40%)
+    ImGui::Columns(2, "PreprocessingColumns", true);
+    ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.60f);
+
+    // Left column: Configuration sections
+    {
+        RenderDatasetStatistics();
+        ImGui::Spacing();
+
+        RenderNormalizationSection();
+        ImGui::Spacing();
+
+        RenderScalingSection();
+        ImGui::Spacing();
+
+        RenderImagePreprocessingSection();
+        ImGui::Spacing();
+
+        // Action buttons
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Apply to Dataset", ImVec2(-1, 0))) {
+            ApplyPreprocessingConfig();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Apply preprocessing configuration to the dataset.\n"
+                            "This will be used during training.");
+        }
+
+        ImGui::Spacing();
+
+        if (ImGui::Button("Save Preset", ImVec2(-1, 0))) {
+            // TODO: Implement preset saving
+            spdlog::info("Save preprocessing preset not yet implemented");
+        }
+
+        if (ImGui::Button("Load Preset", ImVec2(-1, 0))) {
+            // TODO: Implement preset loading
+            spdlog::info("Load preprocessing preset not yet implemented");
+        }
+    }
+
+    ImGui::NextColumn();
+
+    // Right column: Preview
+    {
+        RenderPreprocessingPreview();
+    }
+
+    ImGui::Columns(1);
+    ImGui::EndChild();
+}
+
+// ============================================================================
+// Dataset Statistics Section
+// ============================================================================
+
+void DatasetPanel::RenderDatasetStatistics() {
+    // Collapsing header for statistics
+    if (ImGui::CollapsingHeader("Dataset Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10.0f);
+
+        if (!stats_computed_ && !computing_stats_) {
+            // Not computed yet - show compute button
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                             "Statistics not computed yet");
+            ImGui::Spacing();
+
+            if (ImGui::Button("Compute Statistics", ImVec2(200, 0))) {
+                ComputeStatistics();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Compute mean, std, min, max for the dataset.\n"
+                                "Required for normalization and scaling.");
+            }
+
+        } else if (computing_stats_) {
+            // Computing in progress
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+                             "Computing statistics...");
+            ImGui::ProgressBar(stats_computation_progress_, ImVec2(-1, 0));
+
+            // Check if computation is complete
+            if (stats_future_.valid() &&
+                stats_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                current_stats_ = stats_future_.get();
+                stats_computed_ = current_stats_.is_valid;
+                computing_stats_ = false;
+
+                if (stats_computed_) {
+                    spdlog::info("Dataset statistics computed successfully");
+                } else {
+                    spdlog::error("Failed to compute dataset statistics");
+                }
+            }
+
+        } else if (stats_computed_) {
+            // Statistics computed - display them
+            auto& stats = current_stats_;
+
+            // Basic info
+            ImGui::Text("Shape:");
+            ImGui::SameLine(100);
+            ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f), "[");
+            for (size_t i = 0; i < stats.shape.size(); ++i) {
+                if (i > 0) {
+                    ImGui::SameLine(0, 0);
+                    ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f), ", ");
+                }
+                ImGui::SameLine(0, 0);
+                ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f), "%zu", stats.shape[i]);
+            }
+            ImGui::SameLine(0, 0);
+            ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f), "]");
+
+            ImGui::Text("Samples:");
+            ImGui::SameLine(100);
+            ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f), "%zu", stats.num_samples);
+
+            ImGui::Text("Channels:");
+            ImGui::SameLine(100);
+            ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f), "%zu", stats.GetNumChannels());
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Per-channel statistics
+            for (size_t ch = 0; ch < stats.GetNumChannels(); ++ch) {
+                if (stats.GetNumChannels() > 1) {
+                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 1.0f, 1.0f), "Channel %zu:", ch);
+                }
+
+                ImGui::Text("  Mean:");
+                ImGui::SameLine(100);
+                ImGui::Text("%.4f", stats.mean[ch]);
+
+                ImGui::Text("  Std:");
+                ImGui::SameLine(100);
+                ImGui::Text("%.4f", stats.std[ch]);
+
+                ImGui::Text("  Range:");
+                ImGui::SameLine(100);
+                ImGui::Text("[%.2f, %.2f]", stats.min[ch], stats.max[ch]);
+
+                if (ch < stats.GetNumChannels() - 1) {
+                    ImGui::Spacing();
+                }
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Helper indicators
+            if (stats.IsNormalized()) {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                                 "✓ Data appears normalized [0, 1]");
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
+                                 "⚠ Data not normalized");
+            }
+
+            ImGui::Spacing();
+
+            // Action buttons
+            if (ImGui::Button("Recompute", ImVec2(120, 0))) {
+                ComputeStatistics();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Export CSV", ImVec2(120, 0))) {
+                // TODO: Export statistics to CSV
+                spdlog::info("Export statistics not yet implemented");
+            }
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+}
+
+// ============================================================================
+// Normalization Section
+// ============================================================================
+
+void DatasetPanel::RenderNormalizationSection() {
+    if (ImGui::CollapsingHeader("Normalization", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10.0f);
+
+        auto& config = current_preprocessing_config_.normalization_config;
+
+        // Strategy selection
+        ImGui::Text("Strategy:");
+        ImGui::SameLine(120);
+        ImGui::SetNextItemWidth(-1);
+
+        const char* strategies[] = {
+            "None",
+            "Auto-Detect",
+            "MNIST (0.1307, 0.3081)",
+            "CIFAR-10 (per-channel)",
+            "ImageNet (per-channel)",
+            "Custom (use computed stats)"
+        };
+
+        int current_strategy = static_cast<int>(config.strategy);
+        if (ImGui::Combo("##NormStrategy", &current_strategy, strategies, IM_ARRAYSIZE(strategies))) {
+            config.strategy = static_cast<cyxwiz::NormalizationStrategy>(current_strategy);
+        }
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::Text("Normalization strategies:");
+            ImGui::BulletText("None: No normalization");
+            ImGui::BulletText("Auto-Detect: Detect based on dataset name");
+            ImGui::BulletText("MNIST: mean=0.1307, std=0.3081");
+            ImGui::BulletText("CIFAR-10: Per-channel ImageNet-like stats");
+            ImGui::BulletText("ImageNet: RGB mean/std for pretrained models");
+            ImGui::BulletText("Custom: Use computed dataset statistics");
+            ImGui::EndTooltip();
+        }
+
+        // Per-channel option
+        ImGui::Checkbox("Per-channel normalization", &config.per_channel);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Apply normalization independently to each channel\n"
+                            "(e.g., R, G, B for color images)");
+        }
+
+        // Show current values for reference
+        if (config.strategy != cyxwiz::NormalizationStrategy::None) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Preview values:");
+
+            // Get preview values based on strategy
+            std::vector<float> preview_mean, preview_std;
+            switch (config.strategy) {
+                case cyxwiz::NormalizationStrategy::MNIST:
+                    preview_mean = {0.1307f};
+                    preview_std = {0.3081f};
+                    break;
+                case cyxwiz::NormalizationStrategy::CIFAR10:
+                    preview_mean = {0.4914f, 0.4822f, 0.4465f};
+                    preview_std = {0.2470f, 0.2435f, 0.2616f};
+                    break;
+                case cyxwiz::NormalizationStrategy::ImageNet:
+                    preview_mean = {0.485f, 0.456f, 0.406f};
+                    preview_std = {0.229f, 0.224f, 0.225f};
+                    break;
+                case cyxwiz::NormalizationStrategy::Custom:
+                    if (stats_computed_) {
+                        preview_mean = current_stats_.mean;
+                        preview_std = current_stats_.std;
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            if (!preview_mean.empty()) {
+                ImGui::Text("  Mean: ");
+                ImGui::SameLine();
+                for (size_t i = 0; i < preview_mean.size(); ++i) {
+                    if (i > 0) ImGui::SameLine(0, 5);
+                    ImGui::Text("%.4f", preview_mean[i]);
+                }
+
+                ImGui::Text("  Std:  ");
+                ImGui::SameLine();
+                for (size_t i = 0; i < preview_std.size(); ++i) {
+                    if (i > 0) ImGui::SameLine(0, 5);
+                    ImGui::Text("%.4f", preview_std[i]);
+                }
+            }
+        }
+
+        // Warning for Custom without computed stats
+        if (config.strategy == cyxwiz::NormalizationStrategy::Custom && !stats_computed_) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.4f, 1.0f),
+                             "⚠ Compute statistics first for Custom strategy");
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+}
+
+// ============================================================================
+// Scaling Section
+// ============================================================================
+
+void DatasetPanel::RenderScalingSection() {
+    if (ImGui::CollapsingHeader("Scaling", ImGuiTreeNodeFlags_None)) {
+        ImGui::Indent(10.0f);
+
+        auto& config = current_preprocessing_config_.scaling_config;
+
+        // Strategy selection
+        ImGui::Text("Strategy:");
+        ImGui::SameLine(120);
+        ImGui::SetNextItemWidth(-1);
+
+        const char* strategies[] = {
+            "None",
+            "MinMax [0, 1]",
+            "Standard (z-score)",
+            "Robust (IQR-based)",
+            "PCA Whitening (TODO)"
+        };
+
+        int current_strategy = static_cast<int>(config.strategy);
+        if (ImGui::Combo("##ScalingStrategy", &current_strategy, strategies, IM_ARRAYSIZE(strategies))) {
+            config.strategy = static_cast<cyxwiz::ScalingStrategy>(current_strategy);
+        }
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::Text("Scaling strategies:");
+            ImGui::BulletText("None: No scaling");
+            ImGui::BulletText("MinMax: Scale to [min, max] range");
+            ImGui::BulletText("Standard: (x - mean) / std");
+            ImGui::BulletText("Robust: (x - median) / IQR (outlier-resistant)");
+            ImGui::BulletText("PCA Whitening: Decorrelate and normalize");
+            ImGui::EndTooltip();
+        }
+
+        // MinMax specific options
+        if (config.strategy == cyxwiz::ScalingStrategy::MinMax) {
+            ImGui::Spacing();
+            ImGui::Text("Target Range:");
+
+            ImGui::Text("  Min:");
+            ImGui::SameLine(120);
+            ImGui::SetNextItemWidth(80);
+            ImGui::InputFloat("##MinValue", &config.min_value, 0.0f, 0.0f, "%.2f");
+
+            ImGui::Text("  Max:");
+            ImGui::SameLine(120);
+            ImGui::SetNextItemWidth(80);
+            ImGui::InputFloat("##MaxValue", &config.max_value, 0.0f, 0.0f, "%.2f");
+        }
+
+        // Warning for strategies requiring stats
+        if (config.strategy != cyxwiz::ScalingStrategy::None && !stats_computed_) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.4f, 1.0f),
+                             "⚠ Compute statistics first for scaling");
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+}
+
+// ============================================================================
+// Image Preprocessing Section
+// ============================================================================
+
+void DatasetPanel::RenderImagePreprocessingSection() {
+    if (ImGui::CollapsingHeader("Image Preprocessing", ImGuiTreeNodeFlags_None)) {
+        ImGui::Indent(10.0f);
+
+        auto& config = current_preprocessing_config_.image_config;
+
+        // Resize mode
+        ImGui::Text("Resize Mode:");
+        ImGui::SameLine(140);
+        ImGui::SetNextItemWidth(-1);
+
+        const char* resize_modes[] = {
+            "None",
+            "Exact (may distort)",
+            "Aspect Fit (pad)",
+            "Aspect Fill (crop)",
+            "Center Crop"
+        };
+
+        int current_mode = static_cast<int>(config.resize_mode);
+        if (ImGui::Combo("##ResizeMode", &current_mode, resize_modes, IM_ARRAYSIZE(resize_modes))) {
+            config.resize_mode = static_cast<cyxwiz::ResizeMode>(current_mode);
+        }
+
+        // Target size (if resizing)
+        if (config.resize_mode != cyxwiz::ResizeMode::None) {
+            ImGui::Spacing();
+            ImGui::Text("Target Size:");
+
+            ImGui::Text("  Width:");
+            ImGui::SameLine(140);
+            ImGui::SetNextItemWidth(100);
+            ImGui::InputInt("##TargetWidth", &config.target_width, 1, 10);
+            if (config.target_width < 1) config.target_width = 1;
+
+            ImGui::Text("  Height:");
+            ImGui::SameLine(140);
+            ImGui::SetNextItemWidth(100);
+            ImGui::InputInt("##TargetHeight", &config.target_height, 1, 10);
+            if (config.target_height < 1) config.target_height = 1;
+
+            // Quick size presets
+            ImGui::Spacing();
+            ImGui::Text("Quick Sizes:");
+            ImGui::SameLine(140);
+            if (ImGui::SmallButton("28x28")) {
+                config.target_width = 28;
+                config.target_height = 28;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("32x32")) {
+                config.target_width = 32;
+                config.target_height = 32;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("224x224")) {
+                config.target_width = 224;
+                config.target_height = 224;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("256x256")) {
+                config.target_width = 256;
+                config.target_height = 256;
+            }
+        }
+
+        ImGui::Spacing();
+
+        // Color conversion
+        ImGui::Checkbox("Convert to Grayscale", &config.convert_to_grayscale);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Convert RGB images to single-channel grayscale");
+        }
+
+        ImGui::Checkbox("Convert to RGB", &config.convert_to_rgb);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Convert grayscale images to 3-channel RGB\n"
+                            "(duplicates the grayscale values)");
+        }
+
+        // Mutual exclusion warning
+        if (config.convert_to_grayscale && config.convert_to_rgb) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                             "⚠ Cannot convert to both grayscale and RGB");
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+}
+
+// ============================================================================
+// Preview Section
+// ============================================================================
+
+void DatasetPanel::RenderPreprocessingPreview() {
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Preview");
+    ImGui::Spacing();
+
+    if (!IsDatasetLoaded()) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No dataset loaded");
+        return;
+    }
+
+    // Preview controls
+    ImGui::Text("Sample:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    int max_preview = static_cast<int>(current_dataset_.Size()) - 1;
+    ImGui::SliderInt("##PreviewSample", &preview_sample_idx_, 0, max_preview);
+
+    ImGui::SameLine();
+    if (ImGui::Button("◄", ImVec2(30, 0))) {
+        preview_sample_idx_ = std::max(0, preview_sample_idx_ - 1);
+        preprocessing_preview_needs_update_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("►", ImVec2(30, 0))) {
+        preview_sample_idx_ = std::min(max_preview, preview_sample_idx_ + 1);
+        preprocessing_preview_needs_update_ = true;
+    }
+
+    ImGui::Spacing();
+
+    if (ImGui::Button("Update Preview", ImVec2(-1, 0))) {
+        show_preprocessing_preview_ = true;
+        preprocessing_preview_needs_update_ = true;
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Show preview images
+    if (show_preprocessing_preview_) {
+        // TODO: Implement actual preprocessing preview
+        // For now, show placeholder
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                         "Preview visualization will be implemented\n"
+                         "when all preprocessing methods are ready.");
+
+        ImGui::Spacing();
+        ImGui::Text("Before:  [Original Data]");
+        ImGui::Text("After:   [Preprocessed Data]");
+    } else {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                         "Click 'Update Preview' to see\n"
+                         "preprocessing results");
+    }
+}
+
+// ============================================================================
+// Helper Methods
+// ============================================================================
+
+void DatasetPanel::ComputeStatistics() {
+    if (!IsDatasetLoaded()) {
+        spdlog::warn("No dataset loaded to compute statistics");
+        return;
+    }
+
+    if (computing_stats_) {
+        spdlog::warn("Statistics computation already in progress");
+        return;
+    }
+
+    spdlog::info("Starting statistics computation for dataset '{}'",
+                 current_dataset_.GetName());
+
+    computing_stats_ = true;
+    stats_computation_progress_ = 0.0f;
+
+    // Launch async computation
+    stats_future_ = std::async(std::launch::async, [this]() {
+        auto progress_callback = [this](float progress) {
+            stats_computation_progress_ = progress;
+        };
+
+        return cyxwiz::StatisticsCalculator::Compute(
+            current_dataset_.GetName(),
+            &cyxwiz::DataRegistry::Instance(),
+            progress_callback
+        );
+    });
+}
+
+void DatasetPanel::ApplyPreprocessingConfig() {
+    if (!IsDatasetLoaded()) {
+        spdlog::warn("No dataset loaded to apply preprocessing");
+        return;
+    }
+
+    // Validation
+    if (current_preprocessing_config_.normalization_config.strategy ==
+        cyxwiz::NormalizationStrategy::Custom && !stats_computed_) {
+        spdlog::error("Cannot apply Custom normalization without computed statistics");
+        // TODO: Show error message to user
+        return;
+    }
+
+    if (current_preprocessing_config_.scaling_config.strategy !=
+        cyxwiz::ScalingStrategy::None && !stats_computed_) {
+        spdlog::error("Cannot apply scaling without computed statistics");
+        // TODO: Show error message to user
+        return;
+    }
+
+    // Validate image preprocessing
+    auto& img_config = current_preprocessing_config_.image_config;
+    if (img_config.convert_to_grayscale && img_config.convert_to_rgb) {
+        spdlog::error("Cannot convert to both grayscale and RGB");
+        // TODO: Show error message to user
+        return;
+    }
+
+    // Set the config in DataRegistry
+    current_preprocessing_config_.enabled = true;
+    current_preprocessing_config_.dataset_id = current_dataset_.GetName();
+
+    cyxwiz::DataRegistry::Instance().SetPreprocessingConfig(
+        current_dataset_.GetName(),
+        current_preprocessing_config_
+    );
+
+    spdlog::info("Preprocessing configuration applied to dataset '{}'",
+                 current_dataset_.GetName());
+
+    // Show success notification
+    notification_message_ = "Preprocessing configuration applied successfully!";
+    notification_time_ = static_cast<float>(ImGui::GetTime());
+    show_notification_ = true;
+}
+
+} // namespace gui

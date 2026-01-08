@@ -44,6 +44,11 @@ public:
     );
 
     /**
+     * Destructor - cleans up preprocessing resources
+     */
+    ~DatasetBatcher();
+
+    /**
      * Get the next batch
      * @return Batch with data and labels tensors
      */
@@ -79,6 +84,13 @@ public:
     void SetOneHotEncoding(size_t num_classes);
     void SetFlatten(bool flatten) { flatten_ = flatten; }
 
+    // New preprocessing pipeline
+    void SetPreprocessingConfig(const struct PreprocessingConfig& config);
+    const struct PreprocessingConfig& GetPreprocessingConfig() const;
+    void InitializePreprocessing(const struct DatasetStatistics& stats);
+    void ClearPreprocessing();
+    bool HasPreprocessing() const { return preprocessing_enabled_; }
+
 private:
     DatasetHandle dataset_;
     size_t batch_size_;
@@ -102,6 +114,13 @@ private:
 
     bool flatten_ = false;
 
+    // Preprocessing pipeline
+    struct PreprocessingConfig* preprocessing_config_ = nullptr;
+    std::vector<class NormalizationTransform*> normalization_transforms_;
+    std::vector<class ScalingTransform*> scaling_transforms_;
+    std::vector<class ImageTransform*> image_transforms_;
+    bool preprocessing_enabled_ = false;
+
     // Convert float vector to Tensor
     Tensor VectorToTensor(const std::vector<float>& data, const std::vector<size_t>& shape);
 
@@ -113,6 +132,9 @@ private:
 
     // Apply normalization to data
     void NormalizeData(std::vector<float>& data);
+
+    // Apply preprocessing pipeline
+    void ApplyPreprocessing(Tensor& batch);
 
     // Shuffle indices
     void ShuffleIndices();

@@ -52,7 +52,7 @@ struct CompiledLayer {
 /**
  * Preprocessing configuration extracted from graph
  */
-struct PreprocessingConfig {
+struct GraphPreprocessingConfig {
     bool has_normalization = false;
     float norm_mean = 0.0f;
     float norm_std = 1.0f;
@@ -83,7 +83,7 @@ struct TrainingConfiguration {
     float test_ratio = 0.1f;
 
     // Preprocessing
-    PreprocessingConfig preprocessing;
+    GraphPreprocessingConfig preprocessing;
 
     // Loss function
     gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;
@@ -212,7 +212,7 @@ private:
     // Extract preprocessing config
     void ExtractPreprocessing(
         const gui::MLNode& node,
-        PreprocessingConfig& config
+        GraphPreprocessingConfig& config
     ) const;
 
     // Shape inference

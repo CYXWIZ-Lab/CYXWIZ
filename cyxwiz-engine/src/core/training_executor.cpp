@@ -1,4 +1,7 @@
 #include "training_executor.h"
+#include "data_registry.h"
+#include "../preprocessing/preprocessing_config.h"
+#include "../preprocessing/statistics_calculator.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
 #include <cmath>
@@ -271,7 +274,47 @@ void TrainingExecutor::Train(
     DatasetBatcher train_batcher(dataset_, batch_size, DatasetSplit::Train, true, false);
     DatasetBatcher val_batcher(dataset_, batch_size, DatasetSplit::Validation, false, false);
 
-    // Apply preprocessing settings
+    // Apply NEW preprocessing pipeline (if configured)
+    std::string dataset_name = dataset_.GetName();
+    DataRegistry& registry = DataRegistry::Instance();
+
+    if (registry.HasPreprocessingConfig(dataset_name)) {
+        spdlog::info("TrainingExecutor: Found preprocessing config for dataset '{}'", dataset_name);
+
+        PreprocessingConfig preprocessing_config = registry.GetPreprocessingConfig(dataset_name);
+
+        if (preprocessing_config.enabled) {
+            // Set config on batchers
+            train_batcher.SetPreprocessingConfig(preprocessing_config);
+            val_batcher.SetPreprocessingConfig(preprocessing_config);
+
+            // Compute statistics (with progress callback)
+            spdlog::info("TrainingExecutor: Computing dataset statistics...");
+            DatasetStatistics stats = StatisticsCalculator::Compute(
+                dataset_name,
+                &registry,
+                [](float progress) {
+                    // Optional: Update progress UI
+                    spdlog::debug("Statistics computation: {:.1f}%", progress * 100.0f);
+                }
+            );
+
+            if (stats.is_valid) {
+                // Initialize preprocessing pipeline with statistics
+                train_batcher.InitializePreprocessing(stats);
+                val_batcher.InitializePreprocessing(stats);
+                spdlog::info("TrainingExecutor: Preprocessing pipeline initialized successfully");
+            } else {
+                spdlog::error("TrainingExecutor: Failed to compute statistics, preprocessing disabled");
+            }
+        } else {
+            spdlog::info("TrainingExecutor: Preprocessing config exists but is disabled");
+        }
+    } else {
+        spdlog::info("TrainingExecutor: No preprocessing config found for dataset '{}'", dataset_name);
+    }
+
+    // Apply OLD preprocessing settings (DEPRECATED - for backward compatibility)
     if (config_.preprocessing.has_normalization) {
         spdlog::info("TrainingExecutor: Applying normalization (mean={}, std={})",
                      config_.preprocessing.norm_mean, config_.preprocessing.norm_std);

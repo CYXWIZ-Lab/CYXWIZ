@@ -57,6 +57,12 @@ set(ENGINE_SOURCES
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
+    # Preprocessing system
+    src/preprocessing/preprocessing_config.cpp
+    src/preprocessing/statistics_calculator.cpp
+    src/preprocessing/normalization_transform.cpp
+    src/preprocessing/scaling_transform.cpp
+    src/preprocessing/image_transform.cpp
     src/core/test_manager.cpp
     src/core/checkpoint_manager.cpp
     src/core/model_exporter.cpp
@@ -100,6 +106,7 @@ set(ENGINE_SOURCES
     src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/dataset_panel.cpp
+    src/gui/panels/dataset_panel_preprocessing.cpp
     src/gui/panels/task_progress_panel.cpp
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp
@@ -403,6 +410,12 @@ set(ENGINE_HEADERS
     src/transforms/noise.h
     src/transforms/advanced.h
     src/transforms/transforms.h
+    # Preprocessing system
+    src/preprocessing/preprocessing_config.h
+    src/preprocessing/statistics_calculator.h
+    src/preprocessing/normalization_transform.h
+    src/preprocessing/scaling_transform.h
+    src/preprocessing/image_transform.h
 )
 
 # Create executable

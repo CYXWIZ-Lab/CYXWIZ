@@ -1,4 +1,5 @@
 #include "data_registry.h"
+#include "../preprocessing/preprocessing_config.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
@@ -4122,6 +4123,39 @@ bool DataRegistry::SaveVersion(const std::string& name, const std::string& descr
 
     spdlog::info("Saved version {} for dataset '{}'", version.version_id, name);
     return true;
+}
+
+// =============================================================================
+// Preprocessing Configuration Management
+// =============================================================================
+
+void DataRegistry::SetPreprocessingConfig(const std::string& dataset_id, const PreprocessingConfig& config) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    preprocessing_configs_[dataset_id] = config;
+    spdlog::info("DataRegistry: Set preprocessing config for dataset '{}'", dataset_id);
+}
+
+PreprocessingConfig DataRegistry::GetPreprocessingConfig(const std::string& dataset_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = preprocessing_configs_.find(dataset_id);
+    if (it != preprocessing_configs_.end()) {
+        return it->second;
+    }
+    // Return empty config if not found
+    PreprocessingConfig empty_config;
+    empty_config.dataset_id = dataset_id;
+    return empty_config;
+}
+
+bool DataRegistry::HasPreprocessingConfig(const std::string& dataset_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return preprocessing_configs_.find(dataset_id) != preprocessing_configs_.end();
+}
+
+void DataRegistry::ClearPreprocessingConfig(const std::string& dataset_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    preprocessing_configs_.erase(dataset_id);
+    spdlog::info("DataRegistry: Cleared preprocessing config for dataset '{}'", dataset_id);
 }
 
 } // namespace cyxwiz
