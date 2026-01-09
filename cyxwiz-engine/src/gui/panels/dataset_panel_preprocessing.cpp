@@ -336,12 +336,15 @@ void DatasetPanel::RenderScalingSection() {
             "MinMax [0, 1]",
             "Standard (z-score)",
             "Robust (IQR-based)",
+            "MaxAbs [-1, 1]",
+            "Quantile Transform",
             "PCA Whitening (TODO)"
         };
 
         int current_strategy = static_cast<int>(config.strategy);
         if (ImGui::Combo("##ScalingStrategy", &current_strategy, strategies, IM_ARRAYSIZE(strategies))) {
             config.strategy = static_cast<cyxwiz::ScalingStrategy>(current_strategy);
+            preprocessing_preview_needs_update_ = true;
         }
 
         if (ImGui::IsItemHovered()) {
@@ -351,6 +354,8 @@ void DatasetPanel::RenderScalingSection() {
             ImGui::BulletText("MinMax: Scale to [min, max] range");
             ImGui::BulletText("Standard: (x - mean) / std");
             ImGui::BulletText("Robust: (x - median) / IQR (outlier-resistant)");
+            ImGui::BulletText("MaxAbs: x / max(|x|) to [-1, 1]");
+            ImGui::BulletText("Quantile: Map to uniform or normal distribution");
             ImGui::BulletText("PCA Whitening: Decorrelate and normalize");
             ImGui::EndTooltip();
         }
@@ -369,6 +374,42 @@ void DatasetPanel::RenderScalingSection() {
             ImGui::SameLine(120);
             ImGui::SetNextItemWidth(80);
             ImGui::InputFloat("##MaxValue", &config.max_value, 0.0f, 0.0f, "%.2f");
+        }
+
+        // MaxAbs specific info
+        if (config.strategy == cyxwiz::ScalingStrategy::MaxAbs) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("Scales data by maximum absolute value to [-1, 1] range.");
+            ImGui::BulletText("Formula: x_scaled = x / max(|x|)");
+            ImGui::BulletText("Preserves zero values");
+            ImGui::BulletText("Useful for sparse data");
+        }
+
+        // Quantile specific options
+        if (config.strategy == cyxwiz::ScalingStrategy::Quantile) {
+            ImGui::Spacing();
+            ImGui::Text("Output Distribution:");
+
+            if (ImGui::RadioButton("Uniform [0, 1]", !config.quantile_use_normal)) {
+                config.quantile_use_normal = false;
+                preprocessing_preview_needs_update_ = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Maps data to uniform distribution in [0, 1] range");
+            }
+
+            if (ImGui::RadioButton("Normal (Gaussian)", config.quantile_use_normal)) {
+                config.quantile_use_normal = true;
+                preprocessing_preview_needs_update_ = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Maps data to standard normal distribution N(0, 1)");
+            }
+
+            ImGui::Spacing();
+            ImGui::TextWrapped("Quantile transform is non-linear and robust to outliers.");
+            ImGui::BulletText("Preserves rank order of values");
+            ImGui::BulletText("Handles outliers well");
         }
 
         // Warning for strategies requiring stats

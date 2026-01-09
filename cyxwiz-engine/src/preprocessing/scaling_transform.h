@@ -49,6 +49,7 @@ private:
     std::vector<float> data_median_;
     std::vector<float> data_q25_;
     std::vector<float> data_q75_;
+    std::vector<float> data_max_abs_;  // For MaxAbs scaling
 
     // PCA whitening parameters (not implemented yet - placeholder)
     // TODO: Implement PCA whitening using ArrayFire or Eigen
@@ -70,6 +71,19 @@ private:
      * Apply Robust scaling (median-based)
      */
     Tensor ApplyRobust(const Tensor& input);
+
+    /**
+     * Apply MaxAbs scaling (scale by max absolute value)
+     * Formula: x_scaled = x / max(|x|)
+     * Result range: [-1, 1]
+     */
+    Tensor ApplyMaxAbs(const Tensor& input);
+
+    /**
+     * Apply Quantile transform
+     * Maps data to uniform [0, 1] or normal N(0, 1) distribution
+     */
+    Tensor ApplyQuantile(const Tensor& input);
 
     /**
      * Apply PCA Whitening (TODO: implement)

@@ -37,6 +37,8 @@ std::string ScalingStrategyToString(ScalingStrategy strategy) {
         case ScalingStrategy::MinMax: return "MinMax";
         case ScalingStrategy::Standard: return "Standard";
         case ScalingStrategy::Robust: return "Robust";
+        case ScalingStrategy::MaxAbs: return "MaxAbs";
+        case ScalingStrategy::Quantile: return "Quantile";
         case ScalingStrategy::PCAWhitening: return "PCAWhitening";
         default: return "None";
     }
@@ -47,6 +49,8 @@ ScalingStrategy StringToScalingStrategy(const std::string& str) {
     if (str == "MinMax") return ScalingStrategy::MinMax;
     if (str == "Standard") return ScalingStrategy::Standard;
     if (str == "Robust") return ScalingStrategy::Robust;
+    if (str == "MaxAbs") return ScalingStrategy::MaxAbs;
+    if (str == "Quantile") return ScalingStrategy::Quantile;
     if (str == "PCAWhitening") return ScalingStrategy::PCAWhitening;
     return ScalingStrategy::None;
 }
@@ -145,6 +149,8 @@ json ScalingConfig::ToJson() const {
     j["min_value"] = min_value;
     j["max_value"] = max_value;
     j["epsilon"] = epsilon;
+    j["quantile_use_normal"] = quantile_use_normal;
+    j["quantile_n_quantiles"] = quantile_n_quantiles;
     return j;
 }
 
@@ -161,6 +167,12 @@ ScalingConfig ScalingConfig::FromJson(const json& j) {
     }
     if (j.contains("epsilon")) {
         config.epsilon = j["epsilon"].get<float>();
+    }
+    if (j.contains("quantile_use_normal")) {
+        config.quantile_use_normal = j["quantile_use_normal"].get<bool>();
+    }
+    if (j.contains("quantile_n_quantiles")) {
+        config.quantile_n_quantiles = j["quantile_n_quantiles"].get<int>();
     }
     return config;
 }

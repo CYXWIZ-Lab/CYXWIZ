@@ -26,6 +26,8 @@ enum class ScalingStrategy {
     MinMax,         // Scale to [min, max] range
     Standard,       // Z-score normalization (mean=0, std=1)
     Robust,         // Median-based scaling (outlier-resistant)
+    MaxAbs,         // Scale by max absolute value to [-1, 1]
+    Quantile,       // Transform to uniform or normal distribution
     PCAWhitening    // Decorrelate and normalize variance
 };
 
@@ -91,6 +93,10 @@ struct ScalingConfig {
     float max_value = 1.0f;           // Target max for MinMax
     float epsilon = 1e-8f;            // Numerical stability
 
+    // Quantile transform options
+    bool quantile_use_normal = false; // true=normal, false=uniform distribution
+    int quantile_n_quantiles = 1000;  // Number of quantiles (not used in simple implementation)
+
     nlohmann::json ToJson() const;
     static ScalingConfig FromJson(const nlohmann::json& j);
 
@@ -98,7 +104,9 @@ struct ScalingConfig {
         return strategy == other.strategy &&
                min_value == other.min_value &&
                max_value == other.max_value &&
-               epsilon == other.epsilon;
+               epsilon == other.epsilon &&
+               quantile_use_normal == other.quantile_use_normal &&
+               quantile_n_quantiles == other.quantile_n_quantiles;
     }
 };
 
