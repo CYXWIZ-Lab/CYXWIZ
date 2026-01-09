@@ -338,7 +338,7 @@ void DatasetPanel::RenderScalingSection() {
             "Robust (IQR-based)",
             "MaxAbs [-1, 1]",
             "Quantile Transform",
-            "PCA Whitening (TODO)"
+            "PCA Whitening"
         };
 
         int current_strategy = static_cast<int>(config.strategy);
@@ -690,7 +690,9 @@ void DatasetPanel::RenderPreprocessingPreview() {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(100);
     int max_preview = static_cast<int>(current_dataset_.Size()) - 1;
-    ImGui::SliderInt("##PreviewSample", &preview_sample_idx_, 0, max_preview);
+    if (ImGui::SliderInt("##PreviewSample", &preview_sample_idx_, 0, max_preview)) {
+        preprocessing_preview_needs_update_ = true;
+    }
 
     ImGui::SameLine();
     if (ImGui::Button("◄", ImVec2(30, 0))) {
@@ -707,7 +709,8 @@ void DatasetPanel::RenderPreprocessingPreview() {
 
     if (ImGui::Button("Update Preview", ImVec2(-1, 0))) {
         show_preprocessing_preview_ = true;
-        preprocessing_preview_needs_update_ = true;
+        UpdatePreprocessingPreview();  // Actually update the preview
+        preprocessing_preview_needs_update_ = false;
     }
 
     ImGui::Spacing();
@@ -715,16 +718,35 @@ void DatasetPanel::RenderPreprocessingPreview() {
     ImGui::Spacing();
 
     // Show preview images
-    if (show_preprocessing_preview_) {
-        // TODO: Implement actual preprocessing preview
-        // For now, show placeholder
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                         "Preview visualization will be implemented\n"
-                         "when all preprocessing methods are ready.");
+    if (show_preprocessing_preview_ && preview_texture_before_ != 0 && preview_texture_after_ != 0) {
+        // Calculate display sizes (scale up small images)
+        float scale = 1.0f;
+        if (preview_tex_before_w_ < 64 || preview_tex_before_h_ < 64) {
+            scale = std::max(2.0f, 128.0f / std::max(preview_tex_before_w_, preview_tex_before_h_));
+        }
+
+        float display_w = preview_tex_before_w_ * scale;
+        float display_h = preview_tex_before_h_ * scale;
+
+        // BEFORE image
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Before:");
+        ImGui::Image((ImTextureID)(intptr_t)preview_texture_before_,
+                     ImVec2(display_w, display_h));
 
         ImGui::Spacing();
-        ImGui::Text("Before:  [Original Data]");
-        ImGui::Text("After:   [Preprocessed Data]");
+
+        // AFTER image (may have different dimensions)
+        float after_display_w = preview_tex_after_w_ * scale;
+        float after_display_h = preview_tex_after_h_ * scale;
+
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "After:");
+        ImGui::Image((ImTextureID)(intptr_t)preview_texture_after_,
+                     ImVec2(after_display_w, after_display_h));
+
+        ImGui::Spacing();
+        ImGui::Text("Dimensions: %dx%dx%d → %dx%dx%d",
+                   preview_tex_before_w_, preview_tex_before_h_, preview_tex_before_c_,
+                   preview_tex_after_w_, preview_tex_after_h_, preview_tex_after_c_);
     } else {
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
                          "Click 'Update Preview' to see\n"
@@ -812,6 +834,112 @@ void DatasetPanel::ApplyPreprocessingConfig() {
     notification_message_ = "Preprocessing configuration applied successfully!";
     notification_time_ = static_cast<float>(ImGui::GetTime());
     show_notification_ = true;
+}
+
+void DatasetPanel::UpdatePreprocessingPreview() {
+    if (!IsDatasetLoaded()) {
+        spdlog::warn("No dataset loaded for preprocessing preview");
+        return;
+    }
+
+    try {
+        // 1. Get sample from dataset
+        auto [sample_data, label] = current_dataset_.GetSample(preview_sample_idx_);
+
+        // 2. Get dataset shape info
+        auto shape_info = current_dataset_.GetInfo().shape;  // e.g., [28, 28, 1]
+        int height = shape_info[0];
+        int width = shape_info[1];
+        int channels = shape_info.size() >= 3 ? shape_info[2] : 1;
+
+        // 3. Create BEFORE tensor (original sample)
+        std::vector<size_t> tensor_shape = {static_cast<size_t>(height),
+                                              static_cast<size_t>(width),
+                                              static_cast<size_t>(channels)};
+        cyxwiz::Tensor before_tensor(tensor_shape, sample_data.data(), cyxwiz::DataType::Float32);
+
+        // 4. Apply preprocessing pipeline to create AFTER tensor
+        cyxwiz::Tensor after_tensor = before_tensor;
+
+        // Apply Image Preprocessing
+        if (current_preprocessing_config_.image_config.resize_mode != cyxwiz::ResizeMode::None ||
+            current_preprocessing_config_.image_config.enable_clahe ||
+            current_preprocessing_config_.image_config.enable_denoise ||
+            current_preprocessing_config_.image_config.enable_sharpen ||
+            current_preprocessing_config_.image_config.enable_edge_detection) {
+
+            cyxwiz::ImageTransform img_transform(current_preprocessing_config_.image_config);
+            after_tensor = img_transform.Apply(after_tensor);
+        }
+
+        // Apply Normalization
+        if (current_preprocessing_config_.normalization_config.strategy !=
+            cyxwiz::NormalizationStrategy::None && stats_computed_) {
+
+            cyxwiz::NormalizationTransform norm_transform(
+                current_preprocessing_config_.normalization_config
+            );
+            norm_transform.Initialize(current_stats_);
+            after_tensor = norm_transform.Apply(after_tensor);
+        }
+
+        // Apply Scaling
+        if (current_preprocessing_config_.scaling_config.strategy !=
+            cyxwiz::ScalingStrategy::None && stats_computed_) {
+
+            cyxwiz::ScalingTransform scale_transform(
+                current_preprocessing_config_.scaling_config
+            );
+            scale_transform.Initialize(current_stats_);
+            after_tensor = scale_transform.Apply(after_tensor);
+        }
+
+        // 5. Create textures using TextureManager
+        auto& tm = cyxwiz::TextureManager::Instance();
+
+        // BEFORE texture
+        preview_tex_before_w_ = width;
+        preview_tex_before_h_ = height;
+        preview_tex_before_c_ = channels;
+
+        if (preview_texture_before_ != 0) {
+            tm.UpdateTexture(preview_texture_before_,
+                           before_tensor.Data<float>(),
+                           width, height, channels);
+        } else {
+            preview_texture_before_ = tm.CreateTextureFromFloatData(
+                before_tensor.Data<float>(),
+                width, height, channels
+            );
+        }
+
+        // AFTER texture (might have different dimensions after resize)
+        auto after_shape = after_tensor.Shape();
+        int after_h = after_shape[0];
+        int after_w = after_shape[1];
+        int after_c = after_shape.size() >= 3 ? after_shape[2] : 1;
+
+        preview_tex_after_w_ = after_w;
+        preview_tex_after_h_ = after_h;
+        preview_tex_after_c_ = after_c;
+
+        if (preview_texture_after_ != 0) {
+            tm.UpdateTexture(preview_texture_after_,
+                           after_tensor.Data<float>(),
+                           after_w, after_h, after_c);
+        } else {
+            preview_texture_after_ = tm.CreateTextureFromFloatData(
+                after_tensor.Data<float>(),
+                after_w, after_h, after_c
+            );
+        }
+
+        spdlog::info("Updated preprocessing preview (sample {}, label {})",
+                     preview_sample_idx_, label);
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to update preprocessing preview: {}", e.what());
+    }
 }
 
 } // namespace gui

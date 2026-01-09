@@ -5,6 +5,10 @@
 #include <numeric>
 #include <cctype>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
+
 namespace cyxwiz {
 
 // Static member initialization
@@ -126,6 +130,102 @@ DatasetStatistics StatisticsCalculator::Compute(
         // Compute histogram
         stats.histograms[ch] = ComputeHistogram(data, 256);
     }
+
+    // Compute PCA for whitening using ArrayFire SVD
+    spdlog::info("Computing PCA components for whitening...");
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        // 1. Calculate total features per sample from shape
+        size_t n_features = 1;
+        for (size_t dim : stats.shape) {
+            n_features *= dim;
+        }
+        size_t n_samples = num_samples;
+
+        // 2. Build data matrix [n_samples x n_features]
+        std::vector<float> data_flat;
+        data_flat.reserve(n_samples * n_features);
+
+        for (size_t i = 0; i < n_samples; ++i) {
+            auto [sample_data, label] = dataset.GetSample(i);
+
+            for (size_t j = 0; j < n_features; ++j) {
+                data_flat.push_back(sample_data[j]);
+            }
+
+            // Update progress every 10% during data loading
+            if (progress_callback && i % std::max(1ULL, n_samples / 10) == 0) {
+                progress_callback(0.75f + 0.1f * (float(i) / n_samples));
+            }
+        }
+
+        // 3. Create ArrayFire matrix [n_samples x n_features]
+        af::array data_af(n_features, n_samples, data_flat.data());  // Column-major
+        data_af = af::transpose(data_af);  // Now [n_samples x n_features]
+
+        // 4. Center the data (subtract mean)
+        af::array mean_af = af::mean(data_af, 0);  // Mean along rows (per feature)
+        af::array centered = data_af - af::tile(mean_af, static_cast<unsigned>(n_samples), 1);
+
+        // 5. Perform SVD: X = U Σ V^T
+        //    - Eigenvectors of covariance = columns of V
+        //    - Eigenvalues = (σ² / n_samples)
+        af::array U, S, Vt;
+        af::svd(U, S, Vt, centered);
+
+        // 6. Extract results to CPU
+        // Eigenvectors (columns of V = rows of Vt transposed)
+        af::array V = af::transpose(Vt);
+        std::vector<float> V_host(n_features * n_features);
+        V.host(V_host.data());
+
+        // Singular values
+        std::vector<float> S_host(n_features);
+        S.host(S_host.data());
+
+        // Mean vector
+        std::vector<float> mean_host(n_features);
+        mean_af.host(mean_host.data());
+
+        // 7. Store in stats structure
+        stats.pca_components.resize(n_features);
+        for (size_t i = 0; i < n_features; ++i) {
+            stats.pca_components[i].resize(n_features);
+            for (size_t j = 0; j < n_features; ++j) {
+                // V is column-major from ArrayFire
+                stats.pca_components[i][j] = V_host[j * n_features + i];
+            }
+        }
+
+        // Eigenvalues = (σ² / n_samples)
+        stats.pca_eigenvalues.resize(n_features);
+        for (size_t i = 0; i < n_features; ++i) {
+            float sigma = S_host[i];
+            stats.pca_eigenvalues[i] = (sigma * sigma) / n_samples;
+        }
+
+        // Store mean for centering
+        stats.pca_mean.resize(n_features);
+        for (size_t i = 0; i < n_features; ++i) {
+            stats.pca_mean[i] = mean_host[i];
+        }
+
+        stats.pca_computed = true;
+
+        spdlog::info("PCA computed (GPU-accelerated): {} components", n_features);
+
+    } catch (const af::exception& e) {
+        spdlog::error("ArrayFire PCA computation failed: {}", e.what());
+        stats.pca_computed = false;
+    } catch (const std::exception& e) {
+        spdlog::error("PCA computation failed: {}", e.what());
+        stats.pca_computed = false;
+    }
+#else
+    spdlog::warn("PCA computation requires ArrayFire (GPU support not available)");
+    stats.pca_computed = false;
+#endif
 
     stats.is_valid = true;
 

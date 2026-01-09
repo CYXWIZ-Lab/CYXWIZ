@@ -59,9 +59,18 @@ void ScalingTransform::Initialize(const DatasetStatistics& stats) {
             break;
 
         case ScalingStrategy::PCAWhitening:
-            spdlog::warn("ScalingTransform: PCA Whitening not yet implemented, falling back to Standard scaling");
-            data_mean_ = stats.mean;
-            data_std_ = stats.std;
+            if (stats.pca_computed) {
+                pca_components_ = stats.pca_components;
+                pca_eigenvalues_ = stats.pca_eigenvalues;
+                pca_mean_ = stats.pca_mean;
+                pca_computed_ = true;
+                spdlog::info("ScalingTransform: Initialized PCA Whitening ({} components)", pca_components_.size());
+            } else {
+                spdlog::warn("ScalingTransform: PCA not computed, falling back to Standard scaling");
+                data_mean_ = stats.mean;
+                data_std_ = stats.std;
+                pca_computed_ = false;
+            }
             break;
 
         default:
@@ -367,11 +376,80 @@ Tensor ScalingTransform::ApplyQuantile(const Tensor& input) {
 }
 
 Tensor ScalingTransform::ApplyPCAWhitening(const Tensor& input) {
-    // TODO: Implement PCA Whitening
-    // Requires eigenvalue decomposition and matrix operations
-    // For now, fall back to Standard scaling
-    spdlog::warn("ScalingTransform: PCA Whitening not implemented, using Standard scaling");
-    return ApplyStandard(input);
+    if (!pca_computed_) {
+        spdlog::warn("PCA not computed, falling back to Standard scaling");
+        return ApplyStandard(input);
+    }
+
+    const auto& shape = input.Shape();
+    size_t num_elements = input.NumElements();
+    const float* input_data = input.Data<float>();
+
+    if (!input_data) {
+        spdlog::error("ScalingTransform: Failed to get input tensor data");
+        return input;
+    }
+
+    std::vector<float> output_data(num_elements);
+
+    // Get PCA parameters from cached member variables
+    int n_features = pca_components_.size();
+    const auto& mean = pca_mean_;
+    const auto& eigenvalues = pca_eigenvalues_;
+    const auto& eigenvectors = pca_components_;
+
+    // Determine batch size
+    size_t batch_size = 1;
+    size_t features_per_sample = n_features;
+
+    if (shape.size() == 4) {
+        // Batch format: [batch, H, W, C]
+        batch_size = shape[0];
+        features_per_sample = shape[1] * shape[2] * shape[3];
+    } else if (shape.size() == 3) {
+        // Single image: [H, W, C]
+        features_per_sample = shape[0] * shape[1] * shape[2];
+    } else if (shape.size() == 2) {
+        // Batch of vectors: [batch, features]
+        batch_size = shape[0];
+        features_per_sample = shape[1];
+    } else if (shape.size() == 1) {
+        // Single vector: [features]
+        features_per_sample = shape[0];
+    }
+
+    if (features_per_sample != static_cast<size_t>(n_features)) {
+        spdlog::error("PCA whitening: Feature size mismatch (got {}, expected {})",
+                      features_per_sample, n_features);
+        return input;
+    }
+
+    // Process each sample in batch
+    for (size_t b = 0; b < batch_size; ++b) {
+        size_t offset = b * n_features;
+
+        // 1. Center the data: x_centered = x - mean
+        std::vector<float> centered(n_features);
+        for (int i = 0; i < n_features; ++i) {
+            centered[i] = input_data[offset + i] - mean[i];
+        }
+
+        // 2. Project onto principal components: x_pca = x_centered × V
+        std::vector<float> projected(n_features, 0.0f);
+        for (int i = 0; i < n_features; ++i) {
+            for (int j = 0; j < n_features; ++j) {
+                projected[i] += centered[j] * eigenvectors[j][i];
+            }
+        }
+
+        // 3. Whiten: x_white = x_pca / sqrt(eigenvalue + epsilon)
+        for (int i = 0; i < n_features; ++i) {
+            float scale = std::sqrt(std::abs(eigenvalues[i]) + config_.epsilon);
+            output_data[offset + i] = projected[i] / scale;
+        }
+    }
+
+    return Tensor(shape, output_data.data(), input.GetDataType());
 }
 
 } // namespace cyxwiz

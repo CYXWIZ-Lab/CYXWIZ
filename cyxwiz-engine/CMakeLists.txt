@@ -109,6 +109,7 @@ set(ENGINE_SOURCES
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/dataset_panel.cpp
     src/gui/panels/dataset_panel_preprocessing.cpp
+    src/gui/panels/dataset_panel_datapipeline.cpp
     src/gui/panels/task_progress_panel.cpp
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp

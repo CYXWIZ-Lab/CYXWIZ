@@ -26,6 +26,12 @@ struct DatasetStatistics {
     // Histograms (per-channel, 256 bins for images)
     std::vector<std::vector<int>> histograms;
 
+    // PCA whitening components
+    std::vector<std::vector<float>> pca_components;  // Eigenvectors [n_features, n_components]
+    std::vector<float> pca_eigenvalues;              // Eigenvalues (variance explained)
+    std::vector<float> pca_mean;                     // Mean to center data before PCA
+    bool pca_computed = false;
+
     size_t num_samples = 0;
     std::vector<size_t> shape;      // Data shape (e.g., [H, W, C])
 

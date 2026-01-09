@@ -440,12 +440,12 @@ MainWindow::MainWindow()
         }
     });
 
-    // Augment - opens DatasetPanel to Augmentation tab
+    // Augment - opens DatasetPanel to Data Pipeline tab
     toolbar_->SetAugmentDatasetCallback([this]() {
         if (dataset_panel_) {
-            dataset_panel_->SetActiveTab(gui::DatasetTab::Augmentation);
+            dataset_panel_->SetActiveTab(gui::DatasetTab::DataPipeline);
             dataset_panel_->SetVisible(true);
-            spdlog::info("Opened Dataset panel Augmentation tab");
+            spdlog::info("Opened Dataset panel Data Pipeline tab");
         }
     });
 

@@ -51,8 +51,10 @@ private:
     std::vector<float> data_q75_;
     std::vector<float> data_max_abs_;  // For MaxAbs scaling
 
-    // PCA whitening parameters (not implemented yet - placeholder)
-    // TODO: Implement PCA whitening using ArrayFire or Eigen
+    // PCA whitening parameters
+    std::vector<std::vector<float>> pca_components_;  // Eigenvectors
+    std::vector<float> pca_eigenvalues_;              // Eigenvalues
+    std::vector<float> pca_mean_;                     // Mean for centering
     bool pca_computed_ = false;
 
     bool initialized_ = false;
@@ -86,7 +88,8 @@ private:
     Tensor ApplyQuantile(const Tensor& input);
 
     /**
-     * Apply PCA Whitening (TODO: implement)
+     * Apply PCA Whitening
+     * Decorrelates features using eigenvalue decomposition
      */
     Tensor ApplyPCAWhitening(const Tensor& input);
 };

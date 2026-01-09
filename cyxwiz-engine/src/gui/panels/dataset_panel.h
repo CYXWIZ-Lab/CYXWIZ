@@ -37,9 +37,8 @@ enum class DatasetTab {
     LoadDataset = 0,
     LoadedDatasets = 1,
     Preview = 2,
-    Augmentation = 3,
-    Preprocessing = 4,
-    Training = 5
+    DataPipeline = 3,      // MERGED: Augmentation + Preprocessing
+    Training = 4           // Shifted down from 5
 };
 
 class DatasetPanel : public cyxwiz::Panel {
@@ -122,8 +121,17 @@ private:
     void RenderAugmentationPipeline();
     void RenderAugmentationPreview();
 
-    // Preprocessing tab
-    void RenderPreprocessingTab();
+    // Data Pipeline tab (unified Augmentation + Preprocessing)
+    void RenderDataPipelineTab();
+    void RenderUnifiedPreview();
+
+    // Preview display methods (extracted for unified preview)
+    void RenderPreprocessingPreviewDisplay();
+    void RenderAugmentationPreviewDisplay();
+    void UpdateAugmentationPreview();
+
+    // Preprocessing methods (used by Data Pipeline tab)
+    void RenderPreprocessingTab();  // Deprecated - kept for reference
     void RenderDatasetStatistics();
     void RenderNormalizationSection();
     void RenderScalingSection();
@@ -257,9 +265,16 @@ private:
     int preview_tex_prep_w_ = 0, preview_tex_prep_h_ = 0, preview_tex_prep_c_ = 0;
     bool preprocessing_preview_needs_update_ = true;
 
+    // Preprocessing preview textures (before/after)
+    unsigned int preview_texture_before_ = 0;  // Original sample texture
+    unsigned int preview_texture_after_ = 0;   // Preprocessed sample texture
+    int preview_tex_before_w_ = 0, preview_tex_before_h_ = 0, preview_tex_before_c_ = 0;
+    int preview_tex_after_w_ = 0, preview_tex_after_h_ = 0, preview_tex_after_c_ = 0;
+
     // Preprocessing helper methods
     void ComputeStatistics();
     void ApplyPreprocessingConfig();
+    void UpdatePreprocessingPreview();  // Apply preprocessing to preview sample
 
     // Dataset Analytics
     void RenderDatasetAnalyticsSection();
