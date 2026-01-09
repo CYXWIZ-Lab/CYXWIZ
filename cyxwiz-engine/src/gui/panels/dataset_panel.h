@@ -136,6 +136,9 @@ private:
     void ApplySplit();
     void UpdateClassCounts();
 
+    // Augmentation configuration
+    void ApplyAugmentationConfig();
+
     // Visualization
     void RenderImagePreview(const float* image_data, int width, int height, int channels);
     void RenderSingleSamplePreview(size_t dataset_size, bool is_image_data);
@@ -218,7 +221,7 @@ private:
     std::atomic<float> loading_progress_{0.0f};
 
     // Augmentation pipeline
-    std::unique_ptr<cyxwiz::transforms::Compose> augmentation_pipeline_;
+    std::shared_ptr<cyxwiz::transforms::Compose> augmentation_pipeline_;
     bool show_augmented_preview_ = false;
     int augmentation_preset_ = 0;  // 0=None, 1=ImageNet, 2=CIFAR10, 3=Medical, 4=Custom
     cyxwiz::transforms::Image preview_original_;

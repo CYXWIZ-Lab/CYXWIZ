@@ -1913,6 +1913,30 @@ void DatasetPanel::ApplySplit() {
         cached_info_.train_count, cached_info_.val_count, cached_info_.test_count);
 }
 
+void DatasetPanel::ApplyAugmentationConfig() {
+    if (!current_dataset_.IsValid()) {
+        spdlog::warn("DatasetPanel: No dataset loaded, cannot apply augmentation");
+        return;
+    }
+
+    if (!augmentation_pipeline_) {
+        spdlog::warn("DatasetPanel: No augmentation pipeline configured");
+        return;
+    }
+
+    // Store augmentation pipeline in DataRegistry
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    registry.SetAugmentationPipeline(current_dataset_.GetName(), augmentation_pipeline_);
+
+    // Show notification (if notification system is implemented)
+    show_notification_ = true;
+    notification_message_ = "Augmentation pipeline applied to dataset";
+    notification_time_ = 3.0f;
+
+    spdlog::info("DatasetPanel: Augmentation pipeline applied to dataset '{}'",
+                 current_dataset_.GetName());
+}
+
 void DatasetPanel::ClearDataset() {
     if (current_dataset_.IsValid()) {
         auto& registry = cyxwiz::DataRegistry::Instance();
@@ -2423,7 +2447,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 4:  // RandAugment - strong augmentation
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<RandomResizedCrop>(224));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<RandAugment>(2, 9));
@@ -2435,7 +2459,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 5:  // AutoAugment - learned policies
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<RandomResizedCrop>(224));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<AutoAugment>(AutoAugmentPolicy::ImageNet));
@@ -2447,7 +2471,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 6:  // Aggressive - heavy regularization
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<RandomResizedCrop>(224, 0.08f, 1.0f));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<RandomVerticalFlip>(0.2f));
@@ -2464,7 +2488,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 7:  // Light - minimal transforms
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(224, 224));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<ColorJitter>(0.1f, 0.1f, 0.0f, 0.0f));
@@ -2476,7 +2500,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 8:  // Object Detection
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(416, 416));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<ColorJitter>(0.3f, 0.3f, 0.2f, 0.1f));
@@ -2489,7 +2513,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 9:  // Satellite/Aerial
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(256, 256));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<RandomVerticalFlip>(0.5f));
@@ -2503,7 +2527,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 10:  // Text/OCR
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(224, 224));
                     // Conservative for text - no flips, minimal distortion
                     pipeline->add(std::make_unique<RandomRotation>(5.0f));
@@ -2517,7 +2541,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 11:  // Grayscale (MNIST-style)
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(28, 28));
                     pipeline->add(std::make_unique<Grayscale>(1));
                     pipeline->add(std::make_unique<RandomRotation>(15.0f));
@@ -2528,7 +2552,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 }
                 break;
             case 12:  // Custom - start empty
-                augmentation_pipeline_ = std::make_unique<Compose>();
+                augmentation_pipeline_ = std::make_shared<Compose>();
                 break;
         }
         preview_needs_update_ = true;
@@ -2699,6 +2723,22 @@ void DatasetPanel::RenderAugmentationPipeline() {
 
             ImGui::EndPopup();
         }
+    }
+
+    // Apply Augmentation button
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::Button("Apply Augmentation to Training", ImVec2(-1, 30))) {
+        ApplyAugmentationConfig();
+    }
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Store this augmentation pipeline for use during training.\n"
+            "Augmentation will be applied per-batch during training only."
+        );
     }
 }
 

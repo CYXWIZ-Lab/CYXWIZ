@@ -4,6 +4,7 @@
 #include "../preprocessing/normalization_transform.h"
 #include "../preprocessing/scaling_transform.h"
 #include "../preprocessing/image_transform.h"
+#include "../transforms/transform.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
@@ -81,9 +82,31 @@ Batch DatasetBatcher::GetNextBatch() {
     batch_data.reserve(actual_batch_size * sample_size);
     batch_labels.reserve(actual_batch_size);
 
+    // Check if augmentation should be applied
+    bool should_augment = augmentation_pipeline_ != nullptr &&
+                          apply_augmentation_on_train_ &&
+                          split_ == DatasetSplit::Train;
+
     for (size_t i = batch_start; i < batch_end; ++i) {
         size_t sample_idx = indices_[i];
         auto [sample, label] = dataset_.GetSample(sample_idx);
+
+        // Apply augmentation if enabled (BEFORE preprocessing)
+        if (should_augment) {
+            // Convert sample to transforms::Image
+            // Assume image format: [height, width, channels] or [width, height, channels]
+            size_t height = info.shape[0];
+            size_t width = info.shape[1];
+            size_t channels = info.shape.size() > 2 ? info.shape[2] : 1;
+
+            transforms::Image img(sample, width, height, channels);
+
+            // Apply augmentation pipeline
+            transforms::Image augmented = augmentation_pipeline_->apply(img);
+
+            // Use augmented data
+            sample = augmented.data;
+        }
 
         // Append sample data
         batch_data.insert(batch_data.end(), sample.begin(), sample.end());
@@ -342,7 +365,23 @@ void DatasetBatcher::ApplyPreprocessing(Tensor& batch) {
     }
 }
 
+// =============================================================================
+// Augmentation Pipeline Management
+// =============================================================================
+
+void DatasetBatcher::SetAugmentationPipeline(std::shared_ptr<transforms::Compose> pipeline) {
+    augmentation_pipeline_ = pipeline;
+    if (pipeline) {
+        spdlog::info("DatasetBatcher: Augmentation pipeline enabled for split={}",
+                     static_cast<int>(split_));
+    } else {
+        spdlog::info("DatasetBatcher: Augmentation pipeline disabled");
+    }
+}
+
+// =============================================================================
 // DatasetIterator implementation
+// =============================================================================
 
 DatasetIterator::DatasetIterator(
     DatasetHandle dataset,

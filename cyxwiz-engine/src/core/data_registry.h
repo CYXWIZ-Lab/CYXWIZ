@@ -9,9 +9,13 @@
 #include <optional>
 #include <chrono>
 
-// Forward declaration for preprocessing config
+// Forward declarations for preprocessing and augmentation
 namespace cyxwiz {
     struct PreprocessingConfig;
+
+    namespace transforms {
+        class Compose;
+    }
 }
 
 namespace cyxwiz {
@@ -430,6 +434,14 @@ public:
     bool HasPreprocessingConfig(const std::string& dataset_id) const;
     void ClearPreprocessingConfig(const std::string& dataset_id);
 
+    // Augmentation pipeline management
+    void SetAugmentationPipeline(const std::string& dataset_id,
+                                  std::shared_ptr<transforms::Compose> pipeline);
+    std::shared_ptr<transforms::Compose> GetAugmentationPipeline(
+        const std::string& dataset_id) const;
+    bool HasAugmentationPipeline(const std::string& dataset_id) const;
+    void ClearAugmentationPipeline(const std::string& dataset_id);
+
 private:
     DataRegistry() = default;
 
@@ -468,6 +480,9 @@ private:
 
     // Preprocessing configurations per dataset
     mutable std::map<std::string, PreprocessingConfig> preprocessing_configs_;
+
+    // Augmentation pipelines per dataset
+    mutable std::map<std::string, std::shared_ptr<transforms::Compose>> augmentation_pipelines_;
 };
 
 } // namespace cyxwiz

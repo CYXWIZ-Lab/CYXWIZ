@@ -314,6 +314,25 @@ void TrainingExecutor::Train(
         spdlog::info("TrainingExecutor: No preprocessing config found for dataset '{}'", dataset_name);
     }
 
+    // Load augmentation pipeline (NEW - applied BEFORE preprocessing, only on training split)
+    if (registry.HasAugmentationPipeline(dataset_name)) {
+        auto aug_pipeline = registry.GetAugmentationPipeline(dataset_name);
+
+        if (aug_pipeline) {
+            train_batcher.SetAugmentationPipeline(aug_pipeline);
+            train_batcher.SetApplyAugmentationOnTrain(true);
+
+            // Don't apply augmentation to validation - we want clean metrics
+            // val_batcher does NOT get augmentation
+
+            spdlog::info("TrainingExecutor: Augmentation pipeline enabled for training split");
+        } else {
+            spdlog::warn("TrainingExecutor: Augmentation pipeline registered but is null");
+        }
+    } else {
+        spdlog::debug("TrainingExecutor: No augmentation pipeline found for dataset '{}'", dataset_name);
+    }
+
     // Apply OLD preprocessing settings (DEPRECATED - for backward compatibility)
     if (config_.preprocessing.has_normalization) {
         spdlog::info("TrainingExecutor: Applying normalization (mean={}, std={})",
