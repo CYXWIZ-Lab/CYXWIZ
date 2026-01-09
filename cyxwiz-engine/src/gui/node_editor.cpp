@@ -1,5 +1,6 @@
 #include "node_editor.h"
 #include "node_documentation.h"
+#include "node_editor_shape_inference.h"
 #include "panels/script_editor.h"
 #include "properties.h"
 #include "patterns/pattern_library.h"
@@ -55,6 +56,9 @@ NodeEditor::NodeEditor()
 
     ImNodesStyle& style = ImNodes::GetStyle();
     style.Flags |= ImNodesStyleFlags_GridLines;
+
+    // Initialize shape inference engine
+    shape_inference_ = std::make_unique<ShapeInferenceEngine>();
 
     // Create a Linear Attention Transformer showcase model
     // This demonstrates the O(n) Linear Attention node for efficient sequence processing
@@ -647,6 +651,105 @@ void NodeEditor::Render() {
 
         if (ImGui::Button("OK", ImVec2(button_width, 0))) {
             show_empty_graph_warning_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // Auto-Insert Flatten Dialog
+    if (show_auto_insert_flatten_dialog_) {
+        ImGui::OpenPopup("Shape Mismatch Detected");
+    }
+
+    if (ImGui::BeginPopupModal("Shape Mismatch Detected",
+                              &show_auto_insert_flatten_dialog_,
+                              ImGuiWindowFlags_AlwaysAutoResize)) {
+
+        ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.03f, 1.0f),
+                         ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Find source and target nodes for display
+        MLNode* from_node = nullptr;
+        MLNode* to_node = nullptr;
+        for (auto& node : nodes_) {
+            if (node.id == pending_flatten_from_node_) from_node = &node;
+            if (node.id == pending_flatten_to_node_) to_node = &node;
+        }
+
+        if (from_node && to_node) {
+            ImGui::Text("Source: %s (4D tensor output)", from_node->name.c_str());
+            ImGui::Text("Target: %s (expects 2D input)", to_node->name.c_str());
+        } else {
+            ImGui::Text("Connection requires shape transformation");
+        }
+
+        ImGui::Spacing();
+        ImGui::TextWrapped("Dense layers require flattened 2D input [batch, features]. "
+                        "The source node outputs a 4D tensor [batch, height, width, channels]. "
+                        "Insert a Flatten node to convert the shape?");
+        ImGui::Spacing();
+
+        // Button 1: Auto-Insert Flatten
+        if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Auto-Insert Flatten", ImVec2(210, 0))) {
+            if (from_node && to_node) {
+                // Create Flatten node
+                MLNode flatten_node = CreateNode(NodeType::Flatten, "Flatten");
+
+                // Calculate position at midpoint between nodes
+                ImVec2 from_pos = ImNodes::GetNodeGridSpacePos(from_node->id);
+                ImVec2 to_pos = ImNodes::GetNodeGridSpacePos(to_node->id);
+                ImVec2 flatten_pos = ImVec2(
+                    (from_pos.x + to_pos.x) / 2.0f,
+                    (from_pos.y + to_pos.y) / 2.0f
+                );
+
+                // Add to graph
+                nodes_.push_back(flatten_node);
+                pending_positions_[flatten_node.id] = flatten_pos;
+                pending_positions_frames_ = 3;  // Apply position for 3 frames
+
+                // Get flatten node's pin IDs
+                int flatten_in = flatten_node.inputs[0].id;
+                int flatten_out = flatten_node.outputs[0].id;
+
+                // Create connections: from → flatten → to
+                CreateLink(pending_flatten_from_pin_, flatten_in,
+                         pending_flatten_from_node_, flatten_node.id);
+                CreateLink(flatten_out, pending_flatten_to_pin_,
+                         flatten_node.id, pending_flatten_to_node_);
+
+                // Invalidate shape cache
+                if (shape_inference_) {
+                    shape_inference_->InvalidateShapes();
+                }
+
+                // Save undo state
+                SaveUndoState();
+
+                spdlog::info("Auto-inserted Flatten node between {} and {}",
+                           from_node->name, to_node->name);
+            }
+
+            show_auto_insert_flatten_dialog_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        // Button 2: Manual
+        if (ImGui::Button(ICON_FA_HAND " Manual", ImVec2(95, 0))) {
+            show_auto_insert_flatten_dialog_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        // Button 3: Cancel
+        if (ImGui::Button(ICON_FA_XMARK " Cancel", ImVec2(95, 0))) {
+            show_auto_insert_flatten_dialog_ = false;
             ImGui::CloseCurrentPopup();
         }
 
@@ -1463,6 +1566,59 @@ void NodeEditor::RenderNodes() {
             // Only erase if we're done applying (frame counter reached 0)
             if (pending_positions_frames_ <= 0) {
                 pending_positions_.erase(pos_it);
+            }
+        }
+
+        // Render warning icon if node has warnings
+        for (const auto& warning : validation_warnings_) {
+            if (warning.node_id == node.id) {
+                // Get node position and dimensions
+                ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
+                ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+
+                // Position warning icon in top-right corner of node
+                ImVec2 icon_pos = ImVec2(node_pos.x + node_dims.x - 30, node_pos.y + 5);
+
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+                // Draw warning icon (yellow triangle with exclamation mark)
+                ImU32 warning_color = IM_COL32(255, 193, 7, 255);  // Amber/yellow
+                draw_list->AddText(icon_pos, warning_color, ICON_FA_TRIANGLE_EXCLAMATION);
+
+                // Show tooltip when hovering over icon area
+                ImVec2 icon_size = ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION);
+                ImVec2 mouse_pos = ImGui::GetMousePos();
+                bool is_hovering = (mouse_pos.x >= icon_pos.x && mouse_pos.x <= icon_pos.x + icon_size.x &&
+                                  mouse_pos.y >= icon_pos.y && mouse_pos.y <= icon_pos.y + icon_size.y);
+
+                if (is_hovering) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+
+                    // Warning header
+                    ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.03f, 1.0f),
+                                     ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
+                    ImGui::Separator();
+
+                    // Warning message
+                    ImGui::TextWrapped("%s", warning.message.c_str());
+
+                    // Suggested fix
+                    if (warning.has_auto_fix && !warning.suggested_fix.empty()) {
+                        ImGui::Spacing();
+                        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
+                                         ICON_FA_LIGHTBULB " Suggestion:");
+                        ImGui::TextWrapped("%s", warning.suggested_fix.c_str());
+                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                                         "(Try connecting the nodes to see auto-fix dialog)");
+                    }
+
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+
+                // Only show one warning per node
+                break;
             }
         }
 

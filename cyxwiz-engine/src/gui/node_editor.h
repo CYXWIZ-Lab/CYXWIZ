@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <memory>
 #include <functional>
 #include <imgui.h>
 #include <nlohmann/json_fwd.hpp>
@@ -17,6 +18,7 @@ class ScriptEditorPanel;
 
 namespace gui {
 class Properties;
+class ShapeInferenceEngine;
 
 
 // Node types for ML model building
@@ -172,6 +174,10 @@ struct NodePin {
 
     // Visual indicators
     bool is_required = true;         // Visual indicator for required pins
+
+    // Shape information (for smart validation and inference)
+    std::vector<size_t> shape;       // Tensor shape flowing through pin
+    bool shape_valid = false;        // Whether shape has been computed
 };
 
 // Visual node structure
@@ -273,6 +279,24 @@ struct NodeGroup {
     ImVec4 color;           // RGBA color for group box
     bool collapsed = false;
     float padding = 20.0f;  // Padding around contained nodes
+};
+
+// Validation warning severity levels
+enum class ValidationSeverity {
+    Error,    // Blocking errors (prevent training)
+    Warning,  // Non-blocking warnings (suggest improvements)
+    Info      // Informational messages
+};
+
+// Validation warning for shape mismatches and other issues
+struct ValidationWarning {
+    int node_id;                      // Node with the issue
+    ValidationSeverity severity;      // Warning severity
+    std::string message;              // User-facing message
+    std::string suggested_fix;        // Suggested action
+    bool has_auto_fix = false;        // Whether auto-fix is available
+    int from_node_id = -1;            // Source node (for connection issues)
+    int to_node_id = -1;              // Target node (for connection issues)
 };
 
 // Subgraph data for encapsulated node groups
@@ -441,6 +465,11 @@ private:
     void GenerateCodeForFramework(CodeFramework framework);
     bool ValidateGraph(std::string& error_message);
 
+    // Shape validation (non-blocking warnings)
+    std::vector<ValidationWarning> ValidateShapes();
+    bool Is4DOutputNode(NodeType type) const;
+    bool Expects2DInput(NodeType type) const;
+
     // Graph validation helpers
     bool HasCycle();
     bool AllNodesReachable();
@@ -605,6 +634,17 @@ private:
     bool show_save_pattern_dialog_ = false;
     char save_pattern_name_[256] = "";
     char save_pattern_description_[1024] = "";
+
+    // Auto-insert Flatten dialog state
+    bool show_auto_insert_flatten_dialog_ = false;
+    int pending_flatten_from_node_ = -1;
+    int pending_flatten_to_node_ = -1;
+    int pending_flatten_from_pin_ = -1;
+    int pending_flatten_to_pin_ = -1;
+
+    // Shape inference engine and validation warnings
+    std::unique_ptr<ShapeInferenceEngine> shape_inference_;
+    std::vector<ValidationWarning> validation_warnings_;
 
     // Deferred clear flag (to call ImNodes clear inside BeginNodeEditor scope)
     bool pending_clear_imnodes_ = false;

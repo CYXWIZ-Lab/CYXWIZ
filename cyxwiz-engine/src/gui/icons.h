@@ -28,6 +28,7 @@
 // Edit operations
 #define ICON_FA_COPY                "\xef\x83\x85"  // U+F0C5
 #define ICON_FA_PASTE               "\xef\x83\xaa"  // U+F0EA
+#define ICON_FA_HAND                "\xef\x89\x96"  // U+F256
 #define ICON_FA_CLIPBOARD           "\xef\x8c\xa8"  // U+F328 - clipboard
 #define ICON_FA_SCISSORS            "\xef\x83\x84"  // U+F0C4
 #define ICON_FA_TRASH               "\xef\x87\xb8"  // U+F1F8
