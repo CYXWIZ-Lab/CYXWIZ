@@ -52,6 +52,17 @@ struct ImagePreprocessingConfig {
     bool convert_to_grayscale = false;
     bool convert_to_rgb = false;  // For grayscale→RGB conversion
 
+    // Image enhancement (applied before normalization/scaling)
+    bool enable_clahe = false;
+    float clahe_clip_limit = 2.0f;
+    int clahe_tile_size = 8;
+
+    bool enable_denoise = false;
+    float denoise_strength = 10.0f;
+
+    bool enable_sharpen = false;
+    float sharpen_amount = 1.0f;
+
     nlohmann::json ToJson() const;
     static ImagePreprocessingConfig FromJson(const nlohmann::json& j);
 
@@ -60,7 +71,14 @@ struct ImagePreprocessingConfig {
                target_width == other.target_width &&
                target_height == other.target_height &&
                convert_to_grayscale == other.convert_to_grayscale &&
-               convert_to_rgb == other.convert_to_rgb;
+               convert_to_rgb == other.convert_to_rgb &&
+               enable_clahe == other.enable_clahe &&
+               clahe_clip_limit == other.clahe_clip_limit &&
+               clahe_tile_size == other.clahe_tile_size &&
+               enable_denoise == other.enable_denoise &&
+               denoise_strength == other.denoise_strength &&
+               enable_sharpen == other.enable_sharpen &&
+               sharpen_amount == other.sharpen_amount;
     }
 };
 

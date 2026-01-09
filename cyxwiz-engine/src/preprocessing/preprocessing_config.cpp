@@ -86,6 +86,13 @@ json ImagePreprocessingConfig::ToJson() const {
     j["target_height"] = target_height;
     j["convert_to_grayscale"] = convert_to_grayscale;
     j["convert_to_rgb"] = convert_to_rgb;
+    j["enable_clahe"] = enable_clahe;
+    j["clahe_clip_limit"] = clahe_clip_limit;
+    j["clahe_tile_size"] = clahe_tile_size;
+    j["enable_denoise"] = enable_denoise;
+    j["denoise_strength"] = denoise_strength;
+    j["enable_sharpen"] = enable_sharpen;
+    j["sharpen_amount"] = sharpen_amount;
     return j;
 }
 
@@ -105,6 +112,27 @@ ImagePreprocessingConfig ImagePreprocessingConfig::FromJson(const json& j) {
     }
     if (j.contains("convert_to_rgb")) {
         config.convert_to_rgb = j["convert_to_rgb"].get<bool>();
+    }
+    if (j.contains("enable_clahe")) {
+        config.enable_clahe = j["enable_clahe"].get<bool>();
+    }
+    if (j.contains("clahe_clip_limit")) {
+        config.clahe_clip_limit = j["clahe_clip_limit"].get<float>();
+    }
+    if (j.contains("clahe_tile_size")) {
+        config.clahe_tile_size = j["clahe_tile_size"].get<int>();
+    }
+    if (j.contains("enable_denoise")) {
+        config.enable_denoise = j["enable_denoise"].get<bool>();
+    }
+    if (j.contains("denoise_strength")) {
+        config.denoise_strength = j["denoise_strength"].get<float>();
+    }
+    if (j.contains("enable_sharpen")) {
+        config.enable_sharpen = j["enable_sharpen"].get<bool>();
+    }
+    if (j.contains("sharpen_amount")) {
+        config.sharpen_amount = j["sharpen_amount"].get<float>();
     }
     return config;
 }

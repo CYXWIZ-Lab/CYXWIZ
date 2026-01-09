@@ -1,5 +1,6 @@
 #include "image_transform.h"
 #include "../core/image_utils.h"
+#include "../utils/image_enhancer.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -103,6 +104,49 @@ Tensor ImageTransform::Apply(const Tensor& input) {
         out_height = target_h;
         out_width = target_w;
         spdlog::debug("ImageTransform: Resized to {}x{}", target_w, target_h);
+    }
+
+    // 3. Image Enhancement (CLAHE, Denoise, Sharpen)
+    // Apply per-image in the batch
+    if (config_.enable_clahe || config_.enable_denoise || config_.enable_sharpen) {
+        for (int b = 0; b < batch_size; ++b) {
+            size_t offset = b * out_height * out_width * out_channels;
+            std::vector<float> image_data(
+                transformed_data.begin() + offset,
+                transformed_data.begin() + offset + out_height * out_width * out_channels
+            );
+
+            // Apply CLAHE
+            if (config_.enable_clahe) {
+                if (ImageEnhancer::ApplyCLAHE(image_data, out_width, out_height, out_channels,
+                                               config_.clahe_clip_limit, config_.clahe_tile_size)) {
+                    spdlog::debug("ImageTransform: Applied CLAHE (clip={}, tile={})",
+                                config_.clahe_clip_limit, config_.clahe_tile_size);
+                }
+            }
+
+            // Apply Denoising
+            if (config_.enable_denoise) {
+                if (ImageEnhancer::ApplyDenoise(image_data, out_width, out_height, out_channels,
+                                                 config_.denoise_strength)) {
+                    spdlog::debug("ImageTransform: Applied denoise (strength={})",
+                                config_.denoise_strength);
+                }
+            }
+
+            // Apply Sharpening
+            if (config_.enable_sharpen) {
+                if (ImageEnhancer::ApplySharpen(image_data, out_width, out_height, out_channels,
+                                                 config_.sharpen_amount)) {
+                    spdlog::debug("ImageTransform: Applied sharpen (amount={})",
+                                config_.sharpen_amount);
+                }
+            }
+
+            // Copy enhanced image back to batch
+            std::copy(image_data.begin(), image_data.end(),
+                     transformed_data.begin() + offset);
+        }
     }
 
     // Create output tensor with new shape

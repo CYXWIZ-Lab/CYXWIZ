@@ -15,6 +15,9 @@
 #include <future>
 #include "../../preprocessing/preprocessing_config.h"
 #include "../../preprocessing/statistics_calculator.h"
+#include "../../utils/dataset_analyzer.h"
+#include "../../utils/image_quality_analyzer.h"
+#include "../../utils/image_deduplicator.h"
 
 namespace cyxwiz {
     class Tensor;
@@ -257,6 +260,34 @@ private:
     // Preprocessing helper methods
     void ComputeStatistics();
     void ApplyPreprocessingConfig();
+
+    // Dataset Analytics
+    void RenderDatasetAnalyticsSection();
+    void StartAnalyticsComputation();
+    std::atomic<bool> analytics_computing_{false};
+    uint64_t analytics_task_id_ = 0;
+    cyxwiz::DatasetAnalytics analytics_results_;
+    bool show_analytics_outliers_popup_ = false;
+    bool show_histogram_popup_ = false;
+
+    // Image Quality Analysis
+    void RenderQualityAnalysisSection();
+    void StartQualityAnalysis();
+    std::atomic<bool> quality_analysis_running_{false};
+    uint64_t quality_analysis_task_id_ = 0;
+    std::vector<cyxwiz::QualityMetrics> quality_results_;
+    cyxwiz::ImageQualityAnalyzer::Thresholds quality_thresholds_;
+    bool show_quality_issues_popup_ = false;
+
+    // Duplicate Detection
+    void RenderDuplicateDetectionSection();
+    void StartDuplicateDetection();
+    std::atomic<bool> duplicate_detection_running_{false};
+    uint64_t duplicate_detection_task_id_ = 0;
+    std::vector<cyxwiz::DuplicateGroup> duplicate_groups_;
+    int duplicate_hash_type_ = 0;  // 0=pHash, 1=aHash, 2=dHash
+    int duplicate_threshold_ = 5;   // Hamming distance threshold
+    bool show_duplicate_groups_popup_ = false;
 
     // Notification state (for "Set as Active" feedback)
     bool show_notification_ = false;

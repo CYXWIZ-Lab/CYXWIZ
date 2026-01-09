@@ -11,6 +11,7 @@
 #include "../../preprocessing/statistics_calculator.h"
 #include "job.pb.h"
 #include <imgui.h>
+#include <implot.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -772,6 +773,37 @@ void DatasetPanel::RenderLoadedDatasets() {
                 notification_message_ = "Active dataset: " + info.name;
             }
         }
+
+        // Dataset Analytics Section
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::CollapsingHeader("Dataset Analytics")) {
+            RenderDatasetAnalyticsSection();
+        }
+
+        // Image Quality Analysis Section
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::CollapsingHeader("Image Quality Analysis")) {
+            RenderQualityAnalysisSection();
+        }
+
+        // Duplicate Detection Section
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::CollapsingHeader("Duplicate Detection")) {
+            RenderDuplicateDetectionSection();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
 
         if (ImGui::Button("Unload", ImVec2(-1, 0))) {
             if (current_dataset_.IsValid() && current_dataset_.GetName() == info.name) {
@@ -2936,6 +2968,890 @@ void DatasetPanel::RenderAugmentationPreview() {
         } else {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No augmentation pipeline");
         }
+    }
+}
+
+// ============================================================================
+// Dataset Analytics
+// ============================================================================
+
+void DatasetPanel::StartAnalyticsComputation() {
+    if (analytics_computing_) {
+        spdlog::warn("Analytics computation already running");
+        return;
+    }
+
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("No dataset loaded for analytics");
+        return;
+    }
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    std::string dataset_name = current_dataset_.GetName();
+
+    analytics_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Computing Dataset Analytics",
+        [this, dataset_name, &registry](cyxwiz::LambdaTask& task) {
+            analytics_results_ = cyxwiz::DatasetAnalyzer::ComputeAnalytics(
+                dataset_name,
+                &registry,
+                [&task](float progress, const std::string& msg) {
+                    task.ReportProgress(progress, msg);
+                }
+            );
+            task.MarkCompleted();
+        }
+    );
+
+    analytics_computing_ = true;
+}
+
+void DatasetPanel::RenderDatasetAnalyticsSection() {
+    // Check if async task is done
+    if (analytics_computing_) {
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(analytics_task_id_);
+        if (task && task->GetState() == cyxwiz::TaskState::Completed) {
+            analytics_computing_ = false;
+            spdlog::info("Analytics computation completed");
+        }
+    }
+
+    // Compute Analytics button
+    if (!analytics_computing_) {
+        if (ImGui::Button("Compute Analytics", ImVec2(-1, 0))) {
+            StartAnalyticsComputation();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Analyze dataset:\n"
+                            "- Color histograms\n"
+                            "- Class distribution\n"
+                            "- Brightness/contrast stats\n"
+                            "- Outlier detection");
+        }
+    } else {
+        // Show progress
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(analytics_task_id_);
+        if (task) {
+            float progress = task->GetProgress();
+            std::string status = task->GetStatusMessage();
+
+            ImGui::ProgressBar(progress);
+            ImGui::TextWrapped("%s", status.c_str());
+
+            if (ImGui::Button("Cancel", ImVec2(-1, 0))) {
+                task_mgr.Cancel(analytics_task_id_);
+                analytics_computing_ = false;
+            }
+        }
+        return;
+    }
+
+    // Show results if available
+    if (!analytics_results_.success) {
+        if (!analytics_results_.error_message.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", analytics_results_.error_message.c_str());
+        }
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Class Distribution
+    if (ImGui::CollapsingHeader("Class Distribution", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10.0f);
+
+        auto& dist = analytics_results_.class_distribution;
+        ImGui::Text("Total Samples: %zu", dist.total_samples);
+        ImGui::Text("Number of Classes: %d", dist.num_classes);
+        ImGui::Text("Imbalance Ratio: %.2f", dist.GetImbalanceRatio());
+
+        if (dist.IsBalanced()) {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "\u2713 Balanced dataset");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "\u26a0 Imbalanced dataset");
+        }
+
+        ImGui::Spacing();
+
+        // Bar chart with ImPlot
+        if (ImPlot::BeginPlot("Class Distribution", ImVec2(-1, 200))) {
+            // Prepare data for bar chart
+            std::vector<double> x_data, y_data;
+            for (const auto& [label, count] : dist.counts) {
+                x_data.push_back(static_cast<double>(label));
+                y_data.push_back(static_cast<double>(count));
+            }
+
+            ImPlot::SetupAxes("Class Label", "Sample Count");
+            ImPlot::PlotBars("Samples", x_data.data(), y_data.data(), static_cast<int>(x_data.size()), 0.67);
+
+            ImPlot::EndPlot();
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Color Histogram
+    if (ImGui::CollapsingHeader("Color Histogram")) {
+        ImGui::Indent(10.0f);
+
+        auto& hist = analytics_results_.color_histogram;
+
+        if (hist.is_grayscale) {
+            // Grayscale histogram
+            if (ImPlot::BeginPlot("Grayscale Histogram", ImVec2(-1, 200))) {
+                std::vector<double> x_data(256), gray_data(256);
+                for (int i = 0; i < 256; ++i) {
+                    x_data[i] = static_cast<double>(i);
+                    gray_data[i] = static_cast<double>(hist.gray_bins[i]);
+                }
+
+                ImPlot::SetupAxes("Intensity", "Frequency");
+                ImPlot::PlotLine("Gray", x_data.data(), gray_data.data(), 256);
+
+                ImPlot::EndPlot();
+            }
+        } else {
+            // RGB histogram
+            if (ImPlot::BeginPlot("RGB Histogram", ImVec2(-1, 200))) {
+                std::vector<double> x_data(256);
+                std::vector<double> red_data(256), green_data(256), blue_data(256);
+
+                for (int i = 0; i < 256; ++i) {
+                    x_data[i] = static_cast<double>(i);
+                    red_data[i] = static_cast<double>(hist.red_bins[i]);
+                    green_data[i] = static_cast<double>(hist.green_bins[i]);
+                    blue_data[i] = static_cast<double>(hist.blue_bins[i]);
+                }
+
+                ImPlot::SetupAxes("Intensity", "Frequency");
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+                ImPlot::PlotLine("Red", x_data.data(), red_data.data(), 256);
+                ImPlot::PopStyleColor();
+
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
+                ImPlot::PlotLine("Green", x_data.data(), green_data.data(), 256);
+                ImPlot::PopStyleColor();
+
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.0f, 0.0f, 1.0f, 1.0f));
+                ImPlot::PlotLine("Blue", x_data.data(), blue_data.data(), 256);
+                ImPlot::PopStyleColor();
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Brightness/Contrast Statistics
+    if (ImGui::CollapsingHeader("Brightness & Contrast")) {
+        ImGui::Indent(10.0f);
+
+        ImGui::Text("Mean Brightness: %.3f", analytics_results_.mean_brightness);
+        ImGui::Text("Std Brightness: %.3f", analytics_results_.std_brightness);
+        ImGui::Text("Mean Contrast: %.3f", analytics_results_.mean_contrast);
+        ImGui::Text("Std Contrast: %.3f", analytics_results_.std_contrast);
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Outlier Detection
+    if (ImGui::CollapsingHeader("Outlier Detection")) {
+        ImGui::Indent(10.0f);
+
+        auto& outliers = analytics_results_.outliers;
+        ImGui::Text("Outliers Detected: %zu", outliers.GetCount());
+
+        if (outliers.GetCount() > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
+                             "\u26a0 Found %zu potential outliers", outliers.GetCount());
+
+            if (ImGui::Button("View Outliers", ImVec2(-1, 0))) {
+                show_analytics_outliers_popup_ = true;
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "\u2713 No outliers detected");
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Outliers Popup
+    if (show_analytics_outliers_popup_) {
+        ImGui::OpenPopup("Outlier Viewer");
+    }
+
+    if (ImGui::BeginPopupModal("Outlier Viewer", &show_analytics_outliers_popup_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        auto& outliers = analytics_results_.outliers;
+
+        ImGui::Text("Total Outliers: %zu", outliers.GetCount());
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Table of outliers
+        if (ImGui::BeginTable("OutliersTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Index");
+            ImGui::TableSetupColumn("Score");
+            ImGui::TableSetupColumn("Reason");
+            ImGui::TableHeadersRow();
+
+            for (size_t i = 0; i < outliers.outlier_indices.size(); ++i) {
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%zu", outliers.outlier_indices[i]);
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%.2f", outliers.outlier_scores[i]);
+
+                ImGui::TableSetColumnIndex(2);
+                auto reason_it = outliers.outlier_reasons.find(outliers.outlier_indices[i]);
+                if (reason_it != outliers.outlier_reasons.end()) {
+                    switch (reason_it->second) {
+                        case cyxwiz::OutlierInfo::OutlierReason::Brightness:
+                            ImGui::Text("Brightness");
+                            break;
+                        case cyxwiz::OutlierInfo::OutlierReason::Contrast:
+                            ImGui::Text("Contrast");
+                            break;
+                        case cyxwiz::OutlierInfo::OutlierReason::Size:
+                            ImGui::Text("Size");
+                            break;
+                        case cyxwiz::OutlierInfo::OutlierReason::ChannelCount:
+                            ImGui::Text("Channels");
+                            break;
+                    }
+                }
+            }
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(-1, 0))) {
+            show_analytics_outliers_popup_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+// ============================================================================
+// Image Quality Analysis
+// ============================================================================
+
+void DatasetPanel::StartQualityAnalysis() {
+    if (quality_analysis_running_) {
+        spdlog::warn("Quality analysis already running");
+        return;
+    }
+
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("No dataset loaded");
+        return;
+    }
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    std::string dataset_name = current_dataset_.GetName();
+
+    quality_analysis_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Analyzing Image Quality",
+        [this, dataset_name, &registry](cyxwiz::LambdaTask& task) {
+            auto handle = registry.GetDataset(dataset_name);
+            if (!handle) {
+                task.ReportProgress(1.0f, "Error: Dataset not found");
+                task.MarkCompleted();
+                return;
+            }
+
+            size_t total_samples = handle.Size();
+            quality_results_.clear();
+            quality_results_.reserve(total_samples);
+
+            auto info = handle.GetInfo();
+
+            // Extract dimensions from shape
+            int height = 0, width = 0, channels = 1;
+            if (info.shape.size() >= 3) {
+                height = static_cast<int>(info.shape[0]);
+                width = static_cast<int>(info.shape[1]);
+                channels = static_cast<int>(info.shape[2]);
+            } else if (info.shape.size() == 2) {
+                height = static_cast<int>(info.shape[0]);
+                width = static_cast<int>(info.shape[1]);
+                channels = 1;
+            } else if (info.shape.size() == 1) {
+                size_t total = info.shape[0];
+                height = width = static_cast<int>(std::sqrt(total));
+                channels = 1;
+            }
+
+            for (size_t i = 0; i < total_samples; ++i) {
+                if (task.ShouldStop()) {
+                    task.ReportProgress(1.0f, "Cancelled");
+                    task.MarkCompleted();
+                    return;
+                }
+
+                auto [sample, label] = handle.GetSample(i);
+                cyxwiz::QualityMetrics metrics = cyxwiz::ImageQualityAnalyzer::Analyze(
+                    sample, width, height, channels
+                );
+                quality_results_.push_back(metrics);
+
+                if (i % 10 == 0 || i == total_samples - 1) {
+                    float progress = static_cast<float>(i + 1) / total_samples;
+                    std::string msg = std::format("Analyzed {}/{} images", i + 1, total_samples);
+                    task.ReportProgress(progress, msg);
+                }
+            }
+
+            task.ReportProgress(1.0f, "Quality analysis complete!");
+            task.MarkCompleted();
+        }
+    );
+
+    quality_analysis_running_ = true;
+}
+
+void DatasetPanel::RenderQualityAnalysisSection() {
+    // Check if async task is done
+    if (quality_analysis_running_) {
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(quality_analysis_task_id_);
+        if (task && task->GetState() == cyxwiz::TaskState::Completed) {
+            quality_analysis_running_ = false;
+            spdlog::info("Quality analysis completed");
+        }
+    }
+
+    // Analyze Quality button
+    if (!quality_analysis_running_) {
+        if (ImGui::Button("Analyze Quality", ImVec2(-1, 0))) {
+            StartQualityAnalysis();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Analyze image quality:\n"
+                            "- Blur detection (Laplacian variance)\n"
+                            "- Sharpness measurement (Canny edges)\n"
+                            "- Exposure analysis (histogram)\n"
+                            "- Brightness/contrast issues");
+        }
+    } else {
+        // Show progress
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(quality_analysis_task_id_);
+        if (task) {
+            float progress = task->GetProgress();
+            std::string status = task->GetStatusMessage();
+
+            ImGui::ProgressBar(progress);
+            ImGui::TextWrapped("%s", status.c_str());
+
+            if (ImGui::Button("Cancel", ImVec2(-1, 0))) {
+                task_mgr.Cancel(quality_analysis_task_id_);
+                quality_analysis_running_ = false;
+            }
+        }
+        return;
+    }
+
+    // Show results if available
+    if (quality_results_.empty()) {
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Summary statistics
+    if (ImGui::CollapsingHeader("Quality Summary", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10.0f);
+
+        size_t total_images = quality_results_.size();
+        size_t images_with_issues = 0;
+        size_t blurry_count = 0;
+        size_t overexposed_count = 0;
+        size_t underexposed_count = 0;
+        size_t low_sharpness_count = 0;
+        size_t corrupted_count = 0;
+
+        for (const auto& metrics : quality_results_) {
+            if (metrics.HasIssues()) {
+                images_with_issues++;
+            }
+            if (metrics.IsBlurry()) blurry_count++;
+            if (metrics.IsOverexposed()) overexposed_count++;
+            if (metrics.IsUnderexposed()) underexposed_count++;
+            if (metrics.HasLowSharpness()) low_sharpness_count++;
+            if (metrics.IsCorrupted()) corrupted_count++;
+        }
+
+        ImGui::Text("Total Images: %zu", total_images);
+        ImGui::Text("Images with Issues: %zu (%.1f%%)",
+                    images_with_issues,
+                    100.0f * images_with_issues / total_images);
+
+        ImGui::Spacing();
+
+        if (images_with_issues == 0) {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "\u2713 All images passed quality checks");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "\u26a0 Found %zu images with quality issues", images_with_issues);
+
+            ImGui::Spacing();
+
+            // Issue breakdown
+            if (blurry_count > 0) {
+                ImGui::BulletText("Blurry: %zu (%.1f%%)", blurry_count, 100.0f * blurry_count / total_images);
+            }
+            if (overexposed_count > 0) {
+                ImGui::BulletText("Overexposed: %zu (%.1f%%)", overexposed_count, 100.0f * overexposed_count / total_images);
+            }
+            if (underexposed_count > 0) {
+                ImGui::BulletText("Underexposed: %zu (%.1f%%)", underexposed_count, 100.0f * underexposed_count / total_images);
+            }
+            if (low_sharpness_count > 0) {
+                ImGui::BulletText("Low Sharpness: %zu (%.1f%%)", low_sharpness_count, 100.0f * low_sharpness_count / total_images);
+            }
+            if (corrupted_count > 0) {
+                ImGui::BulletText("Corrupted: %zu (%.1f%%)", corrupted_count, 100.0f * corrupted_count / total_images);
+            }
+
+            ImGui::Spacing();
+
+            if (ImGui::Button("View Issues", ImVec2(-1, 0))) {
+                show_quality_issues_popup_ = true;
+            }
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Threshold Configuration
+    if (ImGui::CollapsingHeader("Detection Thresholds")) {
+        ImGui::Indent(10.0f);
+
+        bool thresholds_changed = false;
+
+        thresholds_changed |= ImGui::SliderFloat("Blur Threshold", &quality_thresholds_.blur_threshold, 50.0f, 200.0f, "%.1f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Laplacian variance (lower = more sensitive)");
+        }
+
+        thresholds_changed |= ImGui::SliderFloat("Sharpness Threshold", &quality_thresholds_.sharpness_threshold, 0.1f, 0.5f, "%.2f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Edge strength ratio (higher = stricter)");
+        }
+
+        thresholds_changed |= ImGui::SliderFloat("Overexposure %", &quality_thresholds_.overexposure_pct, 0.5f, 0.95f, "%.2f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Percentage of bright pixels (lower = more sensitive)");
+        }
+
+        thresholds_changed |= ImGui::SliderFloat("Underexposure %", &quality_thresholds_.underexposure_pct, 0.5f, 0.95f, "%.2f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Percentage of dark pixels (lower = more sensitive)");
+        }
+
+        thresholds_changed |= ImGui::SliderFloat("Min Brightness", &quality_thresholds_.brightness_low, 10.0f, 50.0f, "%.1f");
+        thresholds_changed |= ImGui::SliderFloat("Max Brightness", &quality_thresholds_.brightness_high, 200.0f, 245.0f, "%.1f");
+
+        if (thresholds_changed) {
+            cyxwiz::ImageQualityAnalyzer::SetThresholds(quality_thresholds_);
+        }
+
+        ImGui::Spacing();
+
+        if (ImGui::Button("Reset to Defaults", ImVec2(-1, 0))) {
+            quality_thresholds_ = cyxwiz::ImageQualityAnalyzer::Thresholds();
+            cyxwiz::ImageQualityAnalyzer::SetThresholds(quality_thresholds_);
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Quality Issues Popup
+    if (show_quality_issues_popup_) {
+        ImGui::OpenPopup("Quality Issues Viewer");
+    }
+
+    if (ImGui::BeginPopupModal("Quality Issues Viewer", &show_quality_issues_popup_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Images with Quality Issues");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Filter options
+        static bool filter_blurry = true;
+        static bool filter_overexposed = true;
+        static bool filter_underexposed = true;
+        static bool filter_low_sharpness = true;
+        static bool filter_corrupted = true;
+
+        ImGui::Text("Filter:");
+        ImGui::SameLine();
+        ImGui::Checkbox("Blurry", &filter_blurry);
+        ImGui::SameLine();
+        ImGui::Checkbox("Overexposed", &filter_overexposed);
+        ImGui::SameLine();
+        ImGui::Checkbox("Underexposed", &filter_underexposed);
+        ImGui::SameLine();
+        ImGui::Checkbox("Low Sharpness", &filter_low_sharpness);
+        ImGui::SameLine();
+        ImGui::Checkbox("Corrupted", &filter_corrupted);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Table of issues
+        if (ImGui::BeginTable("QualityIssuesTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 400))) {
+            ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 60);
+            ImGui::TableSetupColumn("Issues", ImGuiTableColumnFlags_WidthFixed, 150);
+            ImGui::TableSetupColumn("Blur Score", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableSetupColumn("Sharpness", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableSetupColumn("Exposure", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableSetupColumn("Brightness", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableHeadersRow();
+
+            for (size_t i = 0; i < quality_results_.size(); ++i) {
+                const auto& metrics = quality_results_[i];
+
+                if (!metrics.HasIssues()) continue;
+
+                // Apply filters
+                bool show = false;
+                if (filter_blurry && metrics.IsBlurry()) show = true;
+                if (filter_overexposed && metrics.IsOverexposed()) show = true;
+                if (filter_underexposed && metrics.IsUnderexposed()) show = true;
+                if (filter_low_sharpness && metrics.HasLowSharpness()) show = true;
+                if (filter_corrupted && metrics.IsCorrupted()) show = true;
+
+                if (!show) continue;
+
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%zu", i);
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%s", metrics.GetIssueDescription().c_str());
+
+                ImGui::TableSetColumnIndex(2);
+                if (metrics.IsBlurry()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%.1f", metrics.blur_score);
+                } else {
+                    ImGui::Text("%.1f", metrics.blur_score);
+                }
+
+                ImGui::TableSetColumnIndex(3);
+                if (metrics.HasLowSharpness()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%.3f", metrics.sharpness_score);
+                } else {
+                    ImGui::Text("%.3f", metrics.sharpness_score);
+                }
+
+                ImGui::TableSetColumnIndex(4);
+                if (metrics.IsOverexposed() || metrics.IsUnderexposed()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%.3f", metrics.exposure_score);
+                } else {
+                    ImGui::Text("%.3f", metrics.exposure_score);
+                }
+
+                ImGui::TableSetColumnIndex(5);
+                ImGui::Text("%.1f", metrics.mean_brightness);
+            }
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(-1, 0))) {
+            show_quality_issues_popup_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+// ============================================================================
+// Duplicate Detection
+// ============================================================================
+
+void DatasetPanel::StartDuplicateDetection() {
+    if (duplicate_detection_running_) {
+        spdlog::warn("Duplicate detection already running");
+        return;
+    }
+
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("No dataset loaded");
+        return;
+    }
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    std::string dataset_name = current_dataset_.GetName();
+
+    // Convert hash type index to enum
+    cyxwiz::HashType hash_type = static_cast<cyxwiz::HashType>(duplicate_hash_type_);
+
+    duplicate_detection_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Detecting Duplicates",
+        [this, dataset_name, &registry, hash_type](cyxwiz::LambdaTask& task) {
+            auto handle = registry.GetDataset(dataset_name);
+            if (!handle) {
+                task.ReportProgress(1.0f, "Error: Dataset not found");
+                task.MarkCompleted();
+                return;
+            }
+
+            size_t total_samples = handle.Size();
+            auto info = handle.GetInfo();
+
+            // Extract dimensions from shape
+            int height = 0, width = 0, channels = 1;
+            if (info.shape.size() >= 3) {
+                height = static_cast<int>(info.shape[0]);
+                width = static_cast<int>(info.shape[1]);
+                channels = static_cast<int>(info.shape[2]);
+            } else if (info.shape.size() == 2) {
+                height = static_cast<int>(info.shape[0]);
+                width = static_cast<int>(info.shape[1]);
+                channels = 1;
+            } else if (info.shape.size() == 1) {
+                size_t total = info.shape[0];
+                height = width = static_cast<int>(std::sqrt(total));
+                channels = 1;
+            }
+
+            // Load all images for hashing
+            task.ReportProgress(0.1f, "Loading images...");
+            std::vector<std::vector<float>> images;
+            images.reserve(total_samples);
+
+            for (size_t i = 0; i < total_samples; ++i) {
+                if (task.ShouldStop()) {
+                    task.ReportProgress(1.0f, "Cancelled");
+                    task.MarkCompleted();
+                    return;
+                }
+
+                auto [sample, label] = handle.GetSample(i);
+                images.push_back(sample);
+
+                if (i % 100 == 0) {
+                    float progress = 0.1f + 0.3f * (static_cast<float>(i + 1) / total_samples);
+                    task.ReportProgress(progress, std::format("Loaded {}/{} images", i + 1, total_samples));
+                }
+            }
+
+            // Compute hashes
+            task.ReportProgress(0.4f, "Computing perceptual hashes...");
+            std::vector<cyxwiz::ImageHash> hashes = cyxwiz::ImageDeduplicator::ComputeHashes(
+                images,
+                width, height, channels,
+                hash_type,
+                [&task](float hash_progress, const std::string& msg) {
+                    float total_progress = 0.4f + 0.4f * hash_progress;
+                    task.ReportProgress(total_progress, msg);
+                }
+            );
+
+            // Find duplicates
+            task.ReportProgress(0.8f, "Finding duplicate groups...");
+            duplicate_groups_ = cyxwiz::ImageDeduplicator::FindDuplicates(hashes, duplicate_threshold_);
+
+            task.ReportProgress(1.0f, std::format("Found {} duplicate groups!", duplicate_groups_.size()));
+            task.MarkCompleted();
+        }
+    );
+
+    duplicate_detection_running_ = true;
+}
+
+void DatasetPanel::RenderDuplicateDetectionSection() {
+    // Check if async task is done
+    if (duplicate_detection_running_) {
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(duplicate_detection_task_id_);
+        if (task && task->GetState() == cyxwiz::TaskState::Completed) {
+            duplicate_detection_running_ = false;
+            spdlog::info("Duplicate detection completed");
+        }
+    }
+
+    // Configuration
+    ImGui::Text("Hash Algorithm:");
+    const char* hash_types[] = {"pHash (DCT)", "aHash (Average)", "dHash (Difference)"};
+    ImGui::Combo("##HashType", &duplicate_hash_type_, hash_types, 3);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("pHash: Most robust, slower\n"
+                        "aHash: Fastest, less accurate\n"
+                        "dHash: Good for crops/resizes");
+    }
+
+    ImGui::Text("Hamming Threshold:");
+    ImGui::SliderInt("##HammingThreshold", &duplicate_threshold_, 0, 15);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("0 = Exact duplicates only\n"
+                        "5 = Near-duplicates (recommended)\n"
+                        "10 = Very similar images\n"
+                        "15 = Loosely similar");
+    }
+
+    ImGui::Spacing();
+
+    // Detect Duplicates button
+    if (!duplicate_detection_running_) {
+        if (ImGui::Button("Detect Duplicates", ImVec2(-1, 0))) {
+            StartDuplicateDetection();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Find duplicate and near-duplicate images:\n"
+                            "- Perceptual hashing (robust to minor changes)\n"
+                            "- Hamming distance comparison\n"
+                            "- Group similar images");
+        }
+    } else {
+        // Show progress
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(duplicate_detection_task_id_);
+        if (task) {
+            float progress = task->GetProgress();
+            std::string status = task->GetStatusMessage();
+
+            ImGui::ProgressBar(progress);
+            ImGui::TextWrapped("%s", status.c_str());
+
+            if (ImGui::Button("Cancel", ImVec2(-1, 0))) {
+                task_mgr.Cancel(duplicate_detection_task_id_);
+                duplicate_detection_running_ = false;
+            }
+        }
+        return;
+    }
+
+    // Show results if available
+    if (duplicate_groups_.empty()) {
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Summary statistics
+    if (ImGui::CollapsingHeader("Duplicate Summary", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10.0f);
+
+        size_t total_groups = duplicate_groups_.size();
+        size_t total_duplicates = 0;
+        size_t exact_duplicates = 0;
+
+        for (const auto& group : duplicate_groups_) {
+            total_duplicates += group.indices.size();
+            if (group.exact_duplicate) {
+                exact_duplicates += group.indices.size();
+            }
+        }
+
+        ImGui::Text("Duplicate Groups: %zu", total_groups);
+        ImGui::Text("Total Duplicate Images: %zu", total_duplicates);
+        ImGui::Text("Exact Duplicates: %zu", exact_duplicates);
+
+        ImGui::Spacing();
+
+        if (total_groups == 0) {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "\u2713 No duplicates found!");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
+                             "\u26a0 Found %zu groups with %zu duplicate images",
+                             total_groups, total_duplicates);
+
+            ImGui::Spacing();
+
+            if (ImGui::Button("View Groups", ImVec2(-1, 0))) {
+                show_duplicate_groups_popup_ = true;
+            }
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Duplicate Groups Popup
+    if (show_duplicate_groups_popup_) {
+        ImGui::OpenPopup("Duplicate Groups Viewer");
+    }
+
+    if (ImGui::BeginPopupModal("Duplicate Groups Viewer", &show_duplicate_groups_popup_,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Duplicate Image Groups");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Table of duplicate groups
+        if (ImGui::BeginTable("DuplicateGroupsTable", 4,
+                             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+                             ImVec2(0, 400))) {
+            ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 60);
+            ImGui::TableSetupColumn("Images", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableSetupColumn("Similarity", ImGuiTableColumnFlags_WidthFixed, 100);
+            ImGui::TableSetupColumn("Indices", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+
+            for (size_t g = 0; g < duplicate_groups_.size(); ++g) {
+                const auto& group = duplicate_groups_[g];
+
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%zu", g + 1);
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%zu", group.indices.size());
+
+                ImGui::TableSetColumnIndex(2);
+                if (group.exact_duplicate) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "EXACT (%.0f%%)", group.similarity * 100.0f);
+                } else {
+                    ImGui::Text("%.1f%%", group.similarity * 100.0f);
+                }
+
+                ImGui::TableSetColumnIndex(3);
+                // Show first few indices
+                std::string indices_str;
+                for (size_t i = 0; i < std::min(size_t(10), group.indices.size()); ++i) {
+                    if (i > 0) indices_str += ", ";
+                    indices_str += std::to_string(group.indices[i]);
+                }
+                if (group.indices.size() > 10) {
+                    indices_str += ", ...";
+                }
+                ImGui::TextWrapped("%s", indices_str.c_str());
+            }
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
+                         "Note: To remove duplicates, use your dataset tools or file manager.");
+
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(-1, 0))) {
+            show_duplicate_groups_popup_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
     }
 }
 

@@ -59,6 +59,11 @@ set(ENGINE_SOURCES
     src/preprocessing/normalization_transform.cpp
     src/preprocessing/scaling_transform.cpp
     src/preprocessing/image_transform.cpp
+    # Image utilities
+    src/utils/image_enhancer.cpp
+    src/utils/dataset_analyzer.cpp
+    src/utils/image_quality_analyzer.cpp
+    src/utils/image_deduplicator.cpp
     src/core/test_manager.cpp
     src/core/checkpoint_manager.cpp
     src/core/model_exporter.cpp
@@ -412,6 +417,9 @@ set(ENGINE_HEADERS
     src/preprocessing/normalization_transform.h
     src/preprocessing/scaling_transform.h
     src/preprocessing/image_transform.h
+    # Image utilities
+    src/utils/image_enhancer.h
+    src/utils/dataset_analyzer.h
 )
 
 # Create executable

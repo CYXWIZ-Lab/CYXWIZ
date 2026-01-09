@@ -514,6 +514,92 @@ void DatasetPanel::RenderImagePreprocessingSection() {
                              "⚠ Cannot convert to both grayscale and RGB");
         }
 
+        // Image Enhancement Section
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Image Enhancement");
+        ImGui::Spacing();
+
+        // CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        ImGui::Checkbox("Apply CLAHE", &config.enable_clahe);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Contrast Limited Adaptive Histogram Equalization\n"
+                            "Improves local contrast in low-contrast images");
+        }
+
+        if (config.enable_clahe) {
+            ImGui::Indent(20.0f);
+
+            ImGui::Text("Clip Limit:");
+            ImGui::SameLine(140);
+            ImGui::SetNextItemWidth(200);
+            ImGui::SliderFloat("##CLAHEClipLimit", &config.clahe_clip_limit, 1.0f, 10.0f, "%.1f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Threshold for contrast limiting (1.0-10.0)\n"
+                                "Higher = more contrast enhancement");
+            }
+
+            ImGui::Text("Tile Size:");
+            ImGui::SameLine(140);
+            ImGui::SetNextItemWidth(200);
+            ImGui::SliderInt("##CLAHETileSize", &config.clahe_tile_size, 4, 16);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Grid size for histogram equalization\n"
+                                "Smaller = more local contrast (but may introduce artifacts)");
+            }
+
+            ImGui::Unindent(20.0f);
+        }
+
+        ImGui::Spacing();
+
+        // Denoise
+        ImGui::Checkbox("Apply Denoising", &config.enable_denoise);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Non-local Means Denoising\n"
+                            "Removes Gaussian noise while preserving edges");
+        }
+
+        if (config.enable_denoise) {
+            ImGui::Indent(20.0f);
+
+            ImGui::Text("Strength:");
+            ImGui::SameLine(140);
+            ImGui::SetNextItemWidth(200);
+            ImGui::SliderFloat("##DenoiseStrength", &config.denoise_strength, 1.0f, 30.0f, "%.1f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Filter strength (1.0-30.0)\n"
+                                "Recommended: 10.0 for moderate noise");
+            }
+
+            ImGui::Unindent(20.0f);
+        }
+
+        ImGui::Spacing();
+
+        // Sharpen
+        ImGui::Checkbox("Apply Sharpening", &config.enable_sharpen);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Unsharp Masking\n"
+                            "Enhances edges and fine details");
+        }
+
+        if (config.enable_sharpen) {
+            ImGui::Indent(20.0f);
+
+            ImGui::Text("Amount:");
+            ImGui::SameLine(140);
+            ImGui::SetNextItemWidth(200);
+            ImGui::SliderFloat("##SharpenAmount", &config.sharpen_amount, 0.1f, 3.0f, "%.1f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Sharpening strength (0.1-3.0)\n"
+                                "Recommended: 1.0 for balanced sharpening");
+            }
+
+            ImGui::Unindent(20.0f);
+        }
+
         ImGui::Unindent(10.0f);
     }
 }
