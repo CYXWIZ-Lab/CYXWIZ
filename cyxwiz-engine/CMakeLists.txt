@@ -29,15 +29,10 @@ else()
 endif()
 
 
-# Optional: OpenCV for image processing and augmentation
-find_package(OpenCV CONFIG)
-if(OpenCV_FOUND)
-    message(STATUS "OpenCV ${OpenCV_VERSION} found - Image processing enabled")
-    set(CYXWIZ_HAS_OPENCV ON)
-else()
-    message(WARNING "OpenCV not found - Image augmentation disabled (using STB fallback)")
-    set(CYXWIZ_HAS_OPENCV OFF)
-endif()
+# OpenCV for image processing and augmentation (REQUIRED)
+find_package(OpenCV CONFIG REQUIRED)
+message(STATUS "OpenCV ${OpenCV_VERSION} found - Image processing enabled")
+set(CYXWIZ_HAS_OPENCV ON)
 
 # ImNodes for visual node editor - integrated manually
 # Source: https://github.com/Nelarius/imnodes
