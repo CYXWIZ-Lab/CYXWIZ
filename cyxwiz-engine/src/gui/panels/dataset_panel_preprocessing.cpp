@@ -600,6 +600,74 @@ void DatasetPanel::RenderImagePreprocessingSection() {
             ImGui::Unindent(20.0f);
         }
 
+        ImGui::Spacing();
+
+        // Edge Detection
+        ImGui::Checkbox("Apply Edge Detection", &config.enable_edge_detection);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Detect edges in images\n"
+                            "Useful for computer vision tasks");
+        }
+
+        if (config.enable_edge_detection) {
+            ImGui::Indent(20.0f);
+
+            ImGui::Text("Algorithm:");
+            ImGui::SameLine(140);
+            ImGui::SetNextItemWidth(200);
+            const char* edge_types[] = {"Canny", "Sobel", "Laplacian", "Scharr"};
+            int current_type = static_cast<int>(config.edge_detector_type);
+            if (ImGui::Combo("##EdgeType", &current_type, edge_types, 4)) {
+                config.edge_detector_type = static_cast<cyxwiz::EdgeDetectorType>(current_type);
+                preprocessing_preview_needs_update_ = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Canny: Best general-purpose\n"
+                                "Sobel: Gradient-based\n"
+                                "Laplacian: Second derivative\n"
+                                "Scharr: High-precision gradient");
+            }
+
+            // Show parameters based on algorithm type
+            if (config.edge_detector_type == cyxwiz::EdgeDetectorType::Canny) {
+                ImGui::Text("Low Threshold:");
+                ImGui::SameLine(140);
+                ImGui::SetNextItemWidth(200);
+                ImGui::SliderFloat("##EdgeThresh1", &config.edge_threshold1, 10.0f, 200.0f, "%.0f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Lower threshold for edge detection\n"
+                                    "Recommended: 50");
+                }
+
+                ImGui::Text("High Threshold:");
+                ImGui::SameLine(140);
+                ImGui::SetNextItemWidth(200);
+                ImGui::SliderFloat("##EdgeThresh2", &config.edge_threshold2, 10.0f, 300.0f, "%.0f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Upper threshold for edge detection\n"
+                                    "Recommended: 150 (3x low threshold)");
+                }
+            } else {
+                // Sobel, Laplacian, Scharr use kernel size
+                ImGui::Text("Kernel Size:");
+                ImGui::SameLine(140);
+                ImGui::SetNextItemWidth(200);
+                int kernel_size = config.edge_kernel_size;
+                if (ImGui::SliderInt("##EdgeKernel", &kernel_size, 1, 7)) {
+                    // Ensure odd values only
+                    if (kernel_size % 2 == 0) kernel_size++;
+                    config.edge_kernel_size = kernel_size;
+                    preprocessing_preview_needs_update_ = true;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Kernel size (must be odd: 1, 3, 5, 7)\n"
+                                    "Recommended: 3");
+                }
+            }
+
+            ImGui::Unindent(20.0f);
+        }
+
         ImGui::Unindent(10.0f);
     }
 }

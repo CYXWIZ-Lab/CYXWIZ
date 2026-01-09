@@ -43,6 +43,16 @@ enum class ResizeMode {
 };
 
 /**
+ * Edge detection algorithms
+ */
+enum class EdgeDetectorType {
+    Canny,          // Canny edge detector (multi-stage, best general-purpose)
+    Sobel,          // Sobel operator (gradient-based)
+    Laplacian,      // Laplacian operator (second derivative)
+    Scharr          // Scharr operator (high-precision gradient)
+};
+
+/**
  * Image preprocessing configuration
  */
 struct ImagePreprocessingConfig {
@@ -63,6 +73,12 @@ struct ImagePreprocessingConfig {
     bool enable_sharpen = false;
     float sharpen_amount = 1.0f;
 
+    bool enable_edge_detection = false;
+    EdgeDetectorType edge_detector_type = EdgeDetectorType::Canny;
+    float edge_threshold1 = 50.0f;   // Canny: low threshold, Sobel/Scharr: not used
+    float edge_threshold2 = 150.0f;  // Canny: high threshold, Sobel/Scharr: not used
+    int edge_kernel_size = 3;        // Sobel/Laplacian/Scharr kernel size (3, 5, 7)
+
     nlohmann::json ToJson() const;
     static ImagePreprocessingConfig FromJson(const nlohmann::json& j);
 
@@ -78,7 +94,12 @@ struct ImagePreprocessingConfig {
                enable_denoise == other.enable_denoise &&
                denoise_strength == other.denoise_strength &&
                enable_sharpen == other.enable_sharpen &&
-               sharpen_amount == other.sharpen_amount;
+               sharpen_amount == other.sharpen_amount &&
+               enable_edge_detection == other.enable_edge_detection &&
+               edge_detector_type == other.edge_detector_type &&
+               edge_threshold1 == other.edge_threshold1 &&
+               edge_threshold2 == other.edge_threshold2 &&
+               edge_kernel_size == other.edge_kernel_size;
     }
 };
 
@@ -162,5 +183,8 @@ ScalingStrategy StringToScalingStrategy(const std::string& str);
 
 std::string ResizeModeToString(ResizeMode mode);
 ResizeMode StringToResizeMode(const std::string& str);
+
+std::string EdgeDetectorTypeToString(EdgeDetectorType type);
+EdgeDetectorType StringToEdgeDetectorType(const std::string& str);
 
 } // namespace cyxwiz

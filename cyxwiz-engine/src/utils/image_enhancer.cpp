@@ -266,4 +266,117 @@ bool ImageEnhancer::ApplyPreset(
     }
 }
 
+bool ImageEnhancer::ApplyEdgeDetection(
+    std::vector<float>& image_data,
+    int width, int height, int channels,
+    EdgeDetectorType detector_type,
+    float threshold1, float threshold2, int kernel_size
+) {
+    if (!ValidateInput(image_data, width, height, channels)) {
+        return false;
+    }
+
+    try {
+        // Convert to grayscale if needed (edge detection works on single channel)
+        cv::Mat gray;
+        if (channels == 1) {
+            cv::Mat input(height, width, CV_32FC1, image_data.data());
+            input.convertTo(gray, CV_8UC1, 255.0);
+        } else if (channels == 3) {
+            cv::Mat rgb(height, width, CV_32FC3, image_data.data());
+            cv::Mat uint8_rgb;
+            rgb.convertTo(uint8_rgb, CV_8UC3, 255.0);
+            cv::cvtColor(uint8_rgb, gray, cv::COLOR_RGB2GRAY);
+        } else {
+            spdlog::error("ImageEnhancer: Edge detection only supports 1 or 3 channels, got {}",
+                          channels);
+            return false;
+        }
+
+        cv::Mat edges;
+
+        switch (detector_type) {
+            case EdgeDetectorType::Canny: {
+                cv::Canny(gray, edges, threshold1, threshold2);
+                spdlog::debug("ImageEnhancer: Applied Canny edge detection (t1={}, t2={})",
+                              threshold1, threshold2);
+                break;
+            }
+
+            case EdgeDetectorType::Sobel: {
+                cv::Mat grad_x, grad_y;
+                cv::Mat abs_grad_x, abs_grad_y;
+
+                // Sobel gradient in X and Y directions
+                cv::Sobel(gray, grad_x, CV_16S, 1, 0, kernel_size);
+                cv::Sobel(gray, grad_y, CV_16S, 0, 1, kernel_size);
+
+                // Convert to absolute values
+                cv::convertScaleAbs(grad_x, abs_grad_x);
+                cv::convertScaleAbs(grad_y, abs_grad_y);
+
+                // Combine gradients
+                cv::addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0, edges);
+                spdlog::debug("ImageEnhancer: Applied Sobel edge detection (kernel_size={})",
+                              kernel_size);
+                break;
+            }
+
+            case EdgeDetectorType::Laplacian: {
+                cv::Mat laplacian;
+                cv::Laplacian(gray, laplacian, CV_16S, kernel_size);
+                cv::convertScaleAbs(laplacian, edges);
+                spdlog::debug("ImageEnhancer: Applied Laplacian edge detection (kernel_size={})",
+                              kernel_size);
+                break;
+            }
+
+            case EdgeDetectorType::Scharr: {
+                cv::Mat grad_x, grad_y;
+                cv::Mat abs_grad_x, abs_grad_y;
+
+                // Scharr gradient in X and Y directions
+                cv::Scharr(gray, grad_x, CV_16S, 1, 0);
+                cv::Scharr(gray, grad_y, CV_16S, 0, 1);
+
+                // Convert to absolute values
+                cv::convertScaleAbs(grad_x, abs_grad_x);
+                cv::convertScaleAbs(grad_y, abs_grad_y);
+
+                // Combine gradients
+                cv::addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0, edges);
+                spdlog::debug("ImageEnhancer: Applied Scharr edge detection");
+                break;
+            }
+
+            default:
+                spdlog::error("ImageEnhancer: Unknown edge detector type {}",
+                              static_cast<int>(detector_type));
+                return false;
+        }
+
+        // Convert edges back to float and update image_data
+        // Edge detection produces binary or grayscale output
+        cv::Mat output_float;
+        edges.convertTo(output_float, CV_32FC1, 1.0 / 255.0);
+
+        // If input was RGB, replicate edge map to 3 channels
+        if (channels == 3) {
+            cv::Mat output_rgb;
+            cv::cvtColor(output_float, output_rgb, cv::COLOR_GRAY2RGB);
+            std::memcpy(image_data.data(), output_rgb.data,
+                        image_data.size() * sizeof(float));
+        } else {
+            std::memcpy(image_data.data(), output_float.data,
+                        image_data.size() * sizeof(float));
+        }
+
+        return true;
+
+    } catch (const cv::Exception& e) {
+        spdlog::error("ImageEnhancer: OpenCV exception in ApplyEdgeDetection: {}", e.what());
+        return false;
+    }
+}
+
 } // namespace cyxwiz

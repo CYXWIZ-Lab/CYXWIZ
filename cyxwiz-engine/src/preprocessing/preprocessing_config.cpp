@@ -75,6 +75,24 @@ ResizeMode StringToResizeMode(const std::string& str) {
     return ResizeMode::None;
 }
 
+std::string EdgeDetectorTypeToString(EdgeDetectorType type) {
+    switch (type) {
+        case EdgeDetectorType::Canny: return "Canny";
+        case EdgeDetectorType::Sobel: return "Sobel";
+        case EdgeDetectorType::Laplacian: return "Laplacian";
+        case EdgeDetectorType::Scharr: return "Scharr";
+        default: return "Canny";
+    }
+}
+
+EdgeDetectorType StringToEdgeDetectorType(const std::string& str) {
+    if (str == "Canny") return EdgeDetectorType::Canny;
+    if (str == "Sobel") return EdgeDetectorType::Sobel;
+    if (str == "Laplacian") return EdgeDetectorType::Laplacian;
+    if (str == "Scharr") return EdgeDetectorType::Scharr;
+    return EdgeDetectorType::Canny;
+}
+
 // ============================================================================
 // ImagePreprocessingConfig Serialization
 // ============================================================================
@@ -93,6 +111,11 @@ json ImagePreprocessingConfig::ToJson() const {
     j["denoise_strength"] = denoise_strength;
     j["enable_sharpen"] = enable_sharpen;
     j["sharpen_amount"] = sharpen_amount;
+    j["enable_edge_detection"] = enable_edge_detection;
+    j["edge_detector_type"] = EdgeDetectorTypeToString(edge_detector_type);
+    j["edge_threshold1"] = edge_threshold1;
+    j["edge_threshold2"] = edge_threshold2;
+    j["edge_kernel_size"] = edge_kernel_size;
     return j;
 }
 
@@ -133,6 +156,21 @@ ImagePreprocessingConfig ImagePreprocessingConfig::FromJson(const json& j) {
     }
     if (j.contains("sharpen_amount")) {
         config.sharpen_amount = j["sharpen_amount"].get<float>();
+    }
+    if (j.contains("enable_edge_detection")) {
+        config.enable_edge_detection = j["enable_edge_detection"].get<bool>();
+    }
+    if (j.contains("edge_detector_type")) {
+        config.edge_detector_type = StringToEdgeDetectorType(j["edge_detector_type"].get<std::string>());
+    }
+    if (j.contains("edge_threshold1")) {
+        config.edge_threshold1 = j["edge_threshold1"].get<float>();
+    }
+    if (j.contains("edge_threshold2")) {
+        config.edge_threshold2 = j["edge_threshold2"].get<float>();
+    }
+    if (j.contains("edge_kernel_size")) {
+        config.edge_kernel_size = j["edge_kernel_size"].get<int>();
     }
     return config;
 }

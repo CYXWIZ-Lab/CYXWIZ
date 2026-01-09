@@ -143,6 +143,37 @@ Tensor ImageTransform::Apply(const Tensor& input) {
                 }
             }
 
+            // Apply Edge Detection
+            if (config_.enable_edge_detection) {
+                // Convert EdgeDetectorType enum from preprocessing config to ImageEnhancer
+                ImageEnhancer::EdgeDetectorType detector_type;
+                switch (config_.edge_detector_type) {
+                    case EdgeDetectorType::Canny:
+                        detector_type = ImageEnhancer::EdgeDetectorType::Canny;
+                        break;
+                    case EdgeDetectorType::Sobel:
+                        detector_type = ImageEnhancer::EdgeDetectorType::Sobel;
+                        break;
+                    case EdgeDetectorType::Laplacian:
+                        detector_type = ImageEnhancer::EdgeDetectorType::Laplacian;
+                        break;
+                    case EdgeDetectorType::Scharr:
+                        detector_type = ImageEnhancer::EdgeDetectorType::Scharr;
+                        break;
+                    default:
+                        detector_type = ImageEnhancer::EdgeDetectorType::Canny;
+                }
+
+                if (ImageEnhancer::ApplyEdgeDetection(image_data, out_width, out_height, out_channels,
+                                                       detector_type, config_.edge_threshold1,
+                                                       config_.edge_threshold2, config_.edge_kernel_size)) {
+                    spdlog::debug("ImageTransform: Applied edge detection (type={}, t1={}, t2={}, kernel={})",
+                                static_cast<int>(config_.edge_detector_type),
+                                config_.edge_threshold1, config_.edge_threshold2,
+                                config_.edge_kernel_size);
+                }
+            }
+
             // Copy enhanced image back to batch
             std::copy(image_data.begin(), image_data.end(),
                      transformed_data.begin() + offset);

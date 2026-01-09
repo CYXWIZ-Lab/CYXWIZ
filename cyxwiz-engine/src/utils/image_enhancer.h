@@ -69,6 +69,37 @@ public:
     );
 
     /**
+     * Edge detection types
+     */
+    enum class EdgeDetectorType {
+        Canny,      // Canny edge detector (multi-stage, best general-purpose)
+        Sobel,      // Sobel operator (gradient-based)
+        Laplacian,  // Laplacian operator (second derivative)
+        Scharr      // Scharr operator (high-precision gradient)
+    };
+
+    /**
+     * Apply edge detection
+     * @param image_data Float image data (0-1 range) [modified in-place]
+     * @param width Image width
+     * @param height Image height
+     * @param channels Number of channels
+     * @param detector_type Type of edge detector to use
+     * @param threshold1 For Canny: low threshold (50.0 recommended)
+     * @param threshold2 For Canny: high threshold (150.0 recommended)
+     * @param kernel_size For Sobel/Laplacian/Scharr: kernel size (3, 5, or 7)
+     * @return true if successful, false otherwise
+     */
+    static bool ApplyEdgeDetection(
+        std::vector<float>& image_data,
+        int width, int height, int channels,
+        EdgeDetectorType detector_type = EdgeDetectorType::Canny,
+        float threshold1 = 50.0f,
+        float threshold2 = 150.0f,
+        int kernel_size = 3
+    );
+
+    /**
      * Enhancement presets for common use cases
      */
     enum class EnhancementPreset {
