@@ -1678,18 +1678,25 @@ void NodeEditor::HandleInteractions() {
     // Use the extended version that provides both node IDs and pin IDs
     int from_node, from_pin, to_node, to_pin;
     if (ImNodes::IsLinkCreated(&from_node, &from_pin, &to_node, &to_pin)) {
-        SaveUndoState();  // Save state before creating link
+        // Validate the link before creating it
+        std::string error_message;
+        if (ValidateLink(from_pin, to_pin, error_message)) {
+            SaveUndoState();  // Save state before creating link
 
-        NodeLink link;
-        link.id = next_link_id_++;
-        link.from_node = from_node;
-        link.from_pin = from_pin;
-        link.to_node = to_node;
-        link.to_pin = to_pin;
+            NodeLink link;
+            link.id = next_link_id_++;
+            link.from_node = from_node;
+            link.from_pin = from_pin;
+            link.to_node = to_node;
+            link.to_pin = to_pin;
 
-        links_.push_back(link);
-        spdlog::info("Created link {} from node {} pin {} to node {} pin {}",
-                    link.id, from_node, from_pin, to_node, to_pin);
+            links_.push_back(link);
+            spdlog::info("Created link {} from node {} pin {} to node {} pin {}",
+                        link.id, from_node, from_pin, to_node, to_pin);
+        } else {
+            spdlog::warn("Link validation failed: {}", error_message);
+            // Link creation blocked - dialog may have been triggered if shape mismatch
+        }
     }
 
     // Handle link deletion
