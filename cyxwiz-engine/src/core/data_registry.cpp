@@ -1,4 +1,5 @@
 #include "data_registry.h"
+#include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../transforms/transform.h"
 #include <spdlog/spdlog.h>
@@ -1047,9 +1048,10 @@ private:
             return;
         }
 
-        // Detect channels from first image
+        // Detect channels from first image using OpenCV
+        std::vector<float> temp_data;
         int width, height, channels;
-        if (!stbi_info(image_paths_[0].c_str(), &width, &height, &channels)) {
+        if (!ImageUtils::LoadImage(image_paths_[0], temp_data, width, height, channels)) {
             spdlog::warn("Could not get info for first image, defaulting to 3 channels");
             channels_ = 3;
         } else {
@@ -1064,37 +1066,29 @@ private:
     }
 
     std::vector<float> LoadImage(const std::string& path) const {
+        // Load image using OpenCV (via ImageUtils)
+        std::vector<float> result;
         int width, height, channels;
-        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, channels_);
 
-        if (!data) {
+        if (!ImageUtils::LoadImage(path, result, width, height, channels)) {
             spdlog::warn("Failed to load image: {}", path);
             return std::vector<float>(target_width_ * target_height_ * channels_, 0.0f);
         }
 
-        // Resize if needed (simple nearest-neighbor for now)
-        std::vector<float> result(target_width_ * target_height_ * channels_);
+        // Resize if needed using OpenCV high-quality resize
+        if (width != target_width_ || height != target_height_) {
+            // Use Area method for downscaling (best quality), Lanczos for upscaling
+            ImageUtils::ResizeMethod method = (target_width_ < width || target_height_ < height)
+                ? ImageUtils::ResizeMethod::Area
+                : ImageUtils::ResizeMethod::Lanczos;
 
-        float x_ratio = static_cast<float>(width) / target_width_;
-        float y_ratio = static_cast<float>(height) / target_height_;
-
-        for (int y = 0; y < target_height_; y++) {
-            for (int x = 0; x < target_width_; x++) {
-                int src_x = static_cast<int>(x * x_ratio);
-                int src_y = static_cast<int>(y * y_ratio);
-
-                src_x = std::min(src_x, width - 1);
-                src_y = std::min(src_y, height - 1);
-
-                for (int c = 0; c < channels_; c++) {
-                    int src_idx = (src_y * width + src_x) * channels + c;
-                    int dst_idx = (y * target_width_ + x) * channels_ + c;
-                    result[dst_idx] = data[src_idx] / 255.0f;  // Normalize to [0, 1]
-                }
+            if (!ImageUtils::ResizeImage(result, width, height, channels,
+                                          target_width_, target_height_, method)) {
+                spdlog::warn("Failed to resize image: {}", path);
+                return std::vector<float>(target_width_ * target_height_ * channels_, 0.0f);
             }
         }
 
-        stbi_image_free(data);
         return result;
     }
 
@@ -1208,9 +1202,10 @@ private:
             return;
         }
 
-        // Detect channels from first image
+        // Detect channels from first image using OpenCV
+        std::vector<float> temp_data;
         int width, height, channels;
-        if (!stbi_info(image_paths_[0].c_str(), &width, &height, &channels)) {
+        if (!ImageUtils::LoadImage(image_paths_[0], temp_data, width, height, channels)) {
             spdlog::warn("ImageDataset: Could not get info for first image, defaulting to 3 channels");
             channels_ = 3;
         } else {
@@ -1573,37 +1568,29 @@ private:
     }
 
     std::vector<float> LoadImage(const std::string& path) const {
+        // Load image using OpenCV (via ImageUtils)
+        std::vector<float> result;
         int width, height, channels;
-        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, channels_);
 
-        if (!data) {
+        if (!ImageUtils::LoadImage(path, result, width, height, channels)) {
             spdlog::warn("ImageCSV: Failed to load image: {}", path);
             return std::vector<float>(target_width_ * target_height_ * channels_, 0.0f);
         }
 
-        // Resize if needed (simple nearest-neighbor)
-        std::vector<float> result(target_width_ * target_height_ * channels_);
+        // Resize if needed using OpenCV high-quality resize
+        if (width != target_width_ || height != target_height_) {
+            // Use Area method for downscaling (best quality), Lanczos for upscaling
+            ImageUtils::ResizeMethod method = (target_width_ < width || target_height_ < height)
+                ? ImageUtils::ResizeMethod::Area
+                : ImageUtils::ResizeMethod::Lanczos;
 
-        float x_ratio = static_cast<float>(width) / target_width_;
-        float y_ratio = static_cast<float>(height) / target_height_;
-
-        for (int y = 0; y < target_height_; y++) {
-            for (int x = 0; x < target_width_; x++) {
-                int src_x = static_cast<int>(x * x_ratio);
-                int src_y = static_cast<int>(y * y_ratio);
-
-                src_x = std::min(src_x, width - 1);
-                src_y = std::min(src_y, height - 1);
-
-                for (int c = 0; c < channels_; c++) {
-                    int src_idx = (src_y * width + src_x) * channels + c;
-                    int dst_idx = (y * target_width_ + x) * channels_ + c;
-                    result[dst_idx] = data[src_idx] / 255.0f;  // Normalize to [0, 1]
-                }
+            if (!ImageUtils::ResizeImage(result, width, height, channels,
+                                          target_width_, target_height_, method)) {
+                spdlog::warn("ImageCSV: Failed to resize image: {}", path);
+                return std::vector<float>(target_width_ * target_height_ * channels_, 0.0f);
             }
         }
 
-        stbi_image_free(data);
         return result;
     }
 

@@ -67,15 +67,6 @@ private:
         const std::vector<float>& input,
         int height, int width
     );
-
-    /**
-     * Bilinear interpolation helper
-     */
-    float BilinearInterpolate(
-        const std::vector<float>& input,
-        float x, float y, int channel,
-        int width, int height, int channels
-    );
 };
 
 } // namespace cyxwiz

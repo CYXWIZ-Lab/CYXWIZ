@@ -54,6 +54,7 @@ set(ENGINE_SOURCES
     src/core/async_task_manager.cpp
     src/core/graph_compiler.cpp
     src/core/dataset_batcher.cpp
+    src/core/image_utils.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp

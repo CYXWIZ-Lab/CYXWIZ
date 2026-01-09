@@ -1,4 +1,5 @@
 #include "image_transform.h"
+#include "../core/image_utils.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -125,22 +126,18 @@ std::vector<float> ImageTransform::ResizeImage(
     int in_height, int in_width, int in_channels,
     int out_height, int out_width
 ) {
-    std::vector<float> output(out_height * out_width * in_channels);
+    // Use ImageUtils for high-quality OpenCV-based resize
+    std::vector<float> output = input;  // Copy input data
 
-    float scale_x = static_cast<float>(in_width) / out_width;
-    float scale_y = static_cast<float>(in_height) / out_height;
+    // Choose resize method based on upscale/downscale
+    ImageUtils::ResizeMethod method = (out_width < in_width || out_height < in_height)
+        ? ImageUtils::ResizeMethod::Area      // Best for downscaling
+        : ImageUtils::ResizeMethod::Lanczos;  // Best for upscaling
 
-    for (int y = 0; y < out_height; ++y) {
-        for (int x = 0; x < out_width; ++x) {
-            float src_x = (x + 0.5f) * scale_x - 0.5f;
-            float src_y = (y + 0.5f) * scale_y - 0.5f;
-
-            for (int c = 0; c < in_channels; ++c) {
-                float value = BilinearInterpolate(input, src_x, src_y, c,
-                                                  in_width, in_height, in_channels);
-                output[(y * out_width + x) * in_channels + c] = value;
-            }
-        }
+    if (!ImageUtils::ResizeImage(output, in_width, in_height, in_channels,
+                                  out_width, out_height, method)) {
+        spdlog::error("ImageTransform: OpenCV resize failed, returning zeros");
+        return std::vector<float>(out_height * out_width * in_channels, 0.0f);
     }
 
     return output;
@@ -190,37 +187,6 @@ std::vector<float> ImageTransform::GrayscaleToRGB(
     return output;
 }
 
-float ImageTransform::BilinearInterpolate(
-    const std::vector<float>& input,
-    float x, float y, int channel,
-    int width, int height, int channels
-) {
-    // Clamp coordinates
-    x = std::clamp(x, 0.0f, width - 1.0f);
-    y = std::clamp(y, 0.0f, height - 1.0f);
-
-    int x0 = static_cast<int>(std::floor(x));
-    int y0 = static_cast<int>(std::floor(y));
-    int x1 = std::min(x0 + 1, width - 1);
-    int y1 = std::min(y0 + 1, height - 1);
-
-    float dx = x - x0;
-    float dy = y - y0;
-
-    auto get_pixel = [&](int px, int py, int c) -> float {
-        int idx = (py * width + px) * channels + c;
-        return (idx >= 0 && idx < static_cast<int>(input.size())) ? input[idx] : 0.0f;
-    };
-
-    float v00 = get_pixel(x0, y0, channel);
-    float v10 = get_pixel(x1, y0, channel);
-    float v01 = get_pixel(x0, y1, channel);
-    float v11 = get_pixel(x1, y1, channel);
-
-    float v0 = v00 * (1 - dx) + v10 * dx;
-    float v1 = v01 * (1 - dx) + v11 * dx;
-
-    return v0 * (1 - dy) + v1 * dy;
-}
+// BilinearInterpolate method removed - now using OpenCV via ImageUtils for higher quality resize
 
 } // namespace cyxwiz
