@@ -95,6 +95,7 @@ static bool ScreenToImageCoords(float screen_x, float screen_y,
 
 void DatasetPanel::RenderInteractiveToolsTab() {
     auto& state = g_interactive_state;
+
     state.Initialize();
 
     // Tool selection toolbar
@@ -168,7 +169,10 @@ void DatasetPanel::RenderInteractiveToolsTab() {
     ImGui::BeginChild("ImageViewport", ImVec2(avail.x - controls_width - 10, avail.y), true,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     {
-        if (!state.image_loaded) {
+        size_t expected_sz = static_cast<size_t>(state.image_width) * state.image_height * state.image_channels;
+        bool valid_img = state.image_loaded && state.image_width > 0 && state.image_height > 0 && state.image_channels > 0 && state.current_image.size() == expected_sz;
+        if (!valid_img) {
+            if (state.image_loaded) state.image_loaded = false;
             ImVec2 win_size = ImGui::GetWindowSize();
             ImVec2 text_size = ImGui::CalcTextSize("No image loaded");
             ImGui::SetCursorPos(ImVec2((win_size.x - text_size.x) / 2, win_size.y / 2 - 30));

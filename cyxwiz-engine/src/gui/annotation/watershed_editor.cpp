@@ -9,29 +9,34 @@
 
 namespace cyxwiz {
 
-// Predefined colors for different regions
-const std::vector<ImU32> WatershedEditor::REGION_COLORS = {
-    IM_COL32(255, 0, 0, 200),      // Red
-    IM_COL32(0, 255, 0, 200),      // Green
-    IM_COL32(0, 0, 255, 200),      // Blue
-    IM_COL32(255, 255, 0, 200),    // Yellow
-    IM_COL32(255, 0, 255, 200),    // Magenta
-    IM_COL32(0, 255, 255, 200),    // Cyan
-    IM_COL32(255, 128, 0, 200),    // Orange
-    IM_COL32(128, 0, 255, 200),    // Purple
-    IM_COL32(0, 255, 128, 200),    // Spring Green
-    IM_COL32(255, 128, 128, 200),  // Light Red
-    IM_COL32(128, 255, 128, 200),  // Light Green
-    IM_COL32(128, 128, 255, 200),  // Light Blue
-};
+// Predefined colors for different regions - use function to avoid static init order issues
+static const std::vector<ImU32>& GetRegionColors() {
+    static const std::vector<ImU32> colors = {
+        IM_COL32(255, 0, 0, 200),      // Red
+        IM_COL32(0, 255, 0, 200),      // Green
+        IM_COL32(0, 0, 255, 200),      // Blue
+        IM_COL32(255, 255, 0, 200),    // Yellow
+        IM_COL32(255, 0, 255, 200),    // Magenta
+        IM_COL32(0, 255, 255, 200),    // Cyan
+        IM_COL32(255, 128, 0, 200),    // Orange
+        IM_COL32(128, 0, 255, 200),    // Purple
+        IM_COL32(0, 255, 128, 200),    // Spring Green
+        IM_COL32(255, 128, 128, 200),  // Light Red
+        IM_COL32(128, 255, 128, 200),  // Light Green
+        IM_COL32(128, 128, 255, 200),  // Light Blue
+    };
+    return colors;
+}
+
+// Keep the static member for ABI compatibility but redirect to function
+const std::vector<ImU32> WatershedEditor::REGION_COLORS = {};
 
 WatershedEditor::WatershedEditor() {
     marker_tool_ = std::make_unique<PointMarkerTool>();
 
-    // Add default regions
-    AddRegionType("Foreground", true);
-    AddRegionType("Background", false);
-    current_region_ = 1;  // Start with foreground
+    // Don't add default regions in constructor - do it lazily
+    // This avoids potential static initialization issues
+    current_region_ = 0;
 }
 
 WatershedEditor::~WatershedEditor() = default;
@@ -52,17 +57,17 @@ void WatershedEditor::SetImage(const std::vector<float>& image_data, int width, 
 
 void WatershedEditor::Reset() {
     has_segmentation_ = false;
-    marker_tool_->Clear();
+    if (marker_tool_) {
+        marker_tool_->Clear();
+    }
     std::fill(marker_mask_.begin(), marker_mask_.end(), 0);
     std::fill(region_mask_.begin(), region_mask_.end(), 0);
 
-    // Reset regions but keep default ones
+    // Clear regions - they will be re-added lazily via EnsureDefaultRegions
     regions_.clear();
     region_foreground_.clear();
     next_region_id_ = 1;
-    AddRegionType("Foreground", true);
-    AddRegionType("Background", false);
-    current_region_ = 1;
+    current_region_ = 0;
 }
 
 AnnotationMask WatershedEditor::GetForegroundMask() const {
@@ -100,6 +105,15 @@ std::vector<float> WatershedEditor::GetFloatMask() const {
 
 size_t WatershedEditor::GetMarkerCount() const {
     return marker_tool_->GetMarkers().size();
+}
+
+void WatershedEditor::EnsureDefaultRegions() {
+    if (regions_.empty()) {
+        // Add default regions lazily
+        AddRegionType("Foreground", true);
+        AddRegionType("Background", false);
+        current_region_ = 1;  // Start with foreground
+    }
 }
 
 int WatershedEditor::AddRegionType(const std::string& label, bool is_foreground) {
@@ -143,7 +157,8 @@ bool WatershedEditor::IsRegionForeground(int region_id) const {
 
 ImU32 WatershedEditor::GetRegionColor(int region_id) const {
     if (region_id <= 0) return IM_COL32(128, 128, 128, 100);
-    return REGION_COLORS[(region_id - 1) % REGION_COLORS.size()];
+    const auto& colors = GetRegionColors();
+    return colors[(region_id - 1) % colors.size()];
 }
 
 void WatershedEditor::UpdateMarkerMask() {
@@ -383,6 +398,9 @@ void WatershedEditor::RenderOverlay(void* draw_list_ptr, float offset_x, float o
 }
 
 void WatershedEditor::RenderControls() {
+    // Ensure default regions exist (lazy init to avoid static init issues)
+    EnsureDefaultRegions();
+
     ImGui::Text("Watershed Segmentation");
     ImGui::Separator();
 

@@ -126,6 +126,11 @@ public:
      */
     void RenderControls();
 
+    /**
+     * Ensure default regions are initialized (called lazily)
+     */
+    void EnsureDefaultRegions();
+
     // Settings
     void SetMarkerRadius(float radius) { marker_radius_ = radius; }
     float GetMarkerRadius() const { return marker_radius_; }
