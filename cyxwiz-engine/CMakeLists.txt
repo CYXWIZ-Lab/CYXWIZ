@@ -59,6 +59,11 @@ set(ENGINE_SOURCES
     src/preprocessing/normalization_transform.cpp
     src/preprocessing/scaling_transform.cpp
     src/preprocessing/image_transform.cpp
+    # OpenCV Transforms (Phase 1)
+    src/preprocessing/morphology_transform.cpp
+    src/preprocessing/blur_transform.cpp
+    src/preprocessing/perspective_transform.cpp
+    src/preprocessing/pyramid_transform.cpp
     # Image utilities
     src/utils/image_enhancer.cpp
     src/utils/dataset_analyzer.cpp
@@ -419,6 +424,11 @@ set(ENGINE_HEADERS
     src/preprocessing/normalization_transform.h
     src/preprocessing/scaling_transform.h
     src/preprocessing/image_transform.h
+    # OpenCV Transforms (Phase 1)
+    src/preprocessing/morphology_transform.h
+    src/preprocessing/blur_transform.h
+    src/preprocessing/perspective_transform.h
+    src/preprocessing/pyramid_transform.h
     # Image utilities
     src/utils/image_enhancer.h
     src/utils/dataset_analyzer.h

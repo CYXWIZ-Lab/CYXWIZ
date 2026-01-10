@@ -1,6 +1,10 @@
 #include "image_transform.h"
 #include "../core/image_utils.h"
 #include "../utils/image_enhancer.h"
+#include "morphology_transform.h"
+#include "blur_transform.h"
+#include "perspective_transform.h"
+#include "pyramid_transform.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -106,7 +110,107 @@ Tensor ImageTransform::Apply(const Tensor& input) {
         spdlog::debug("ImageTransform: Resized to {}x{}", target_w, target_h);
     }
 
-    // 3. Image Enhancement (CLAHE, Denoise, Sharpen)
+    // 3. Morphological Operations (NEW - OpenCV Phase 1)
+    if (config_.morphology_config.enabled) {
+        for (int b = 0; b < batch_size; ++b) {
+            size_t offset = b * out_height * out_width * out_channels;
+            std::vector<float> image_data(
+                transformed_data.begin() + offset,
+                transformed_data.begin() + offset + out_height * out_width * out_channels
+            );
+
+            if (MorphologyTransform::Apply(image_data, out_width, out_height, out_channels,
+                                            config_.morphology_config)) {
+                spdlog::debug("ImageTransform: Applied morphology transform");
+            }
+
+            std::copy(image_data.begin(), image_data.end(),
+                     transformed_data.begin() + offset);
+        }
+    }
+
+    // 4. Blur/Smoothing Operations (NEW - OpenCV Phase 1)
+    if (config_.blur_config.enabled) {
+        for (int b = 0; b < batch_size; ++b) {
+            size_t offset = b * out_height * out_width * out_channels;
+            std::vector<float> image_data(
+                transformed_data.begin() + offset,
+                transformed_data.begin() + offset + out_height * out_width * out_channels
+            );
+
+            if (BlurTransform::Apply(image_data, out_width, out_height, out_channels,
+                                      config_.blur_config)) {
+                spdlog::debug("ImageTransform: Applied blur transform");
+            }
+
+            std::copy(image_data.begin(), image_data.end(),
+                     transformed_data.begin() + offset);
+        }
+    }
+
+    // 5. Perspective/Coordinate Transforms (NEW - OpenCV Phase 1)
+    // Note: These can change dimensions, so we need to handle per-image
+    if (config_.perspective_config.enabled) {
+        std::vector<float> perspective_result;
+        perspective_result.reserve(transformed_data.size());  // Initial reserve
+
+        for (int b = 0; b < batch_size; ++b) {
+            size_t offset = b * out_height * out_width * out_channels;
+            std::vector<float> image_data(
+                transformed_data.begin() + offset,
+                transformed_data.begin() + offset + out_height * out_width * out_channels
+            );
+
+            int img_w = out_width;
+            int img_h = out_height;
+
+            if (PerspectiveTransform::Apply(image_data, img_w, img_h, out_channels,
+                                             config_.perspective_config)) {
+                spdlog::debug("ImageTransform: Applied perspective transform, new size: {}x{}", img_w, img_h);
+                // Update dimensions (assuming all images in batch have same output size)
+                if (b == 0) {
+                    out_width = img_w;
+                    out_height = img_h;
+                }
+            }
+
+            perspective_result.insert(perspective_result.end(), image_data.begin(), image_data.end());
+        }
+        transformed_data = perspective_result;
+    }
+
+    // 6. Pyramid Operations (NEW - OpenCV Phase 1)
+    // Note: These change dimensions, so handle per-image
+    if (config_.pyramid_config.enabled) {
+        std::vector<float> pyramid_result;
+        pyramid_result.reserve(transformed_data.size());  // Initial reserve
+
+        for (int b = 0; b < batch_size; ++b) {
+            size_t offset = b * out_height * out_width * out_channels;
+            std::vector<float> image_data(
+                transformed_data.begin() + offset,
+                transformed_data.begin() + offset + out_height * out_width * out_channels
+            );
+
+            int img_w = out_width;
+            int img_h = out_height;
+
+            if (PyramidTransform::Apply(image_data, img_w, img_h, out_channels,
+                                         config_.pyramid_config)) {
+                spdlog::debug("ImageTransform: Applied pyramid transform, new size: {}x{}", img_w, img_h);
+                // Update dimensions (assuming all images in batch have same output size)
+                if (b == 0) {
+                    out_width = img_w;
+                    out_height = img_h;
+                }
+            }
+
+            pyramid_result.insert(pyramid_result.end(), image_data.begin(), image_data.end());
+        }
+        transformed_data = pyramid_result;
+    }
+
+    // 7. Image Enhancement (CLAHE, Denoise, Sharpen)
     // Apply per-image in the batch
     if (config_.enable_clahe || config_.enable_denoise || config_.enable_sharpen) {
         for (int b = 0; b < batch_size; ++b) {

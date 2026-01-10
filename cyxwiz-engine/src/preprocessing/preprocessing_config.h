@@ -4,6 +4,12 @@
 #include <string>
 #include <vector>
 
+// Forward declarations for transform configs
+#include "morphology_transform.h"
+#include "blur_transform.h"
+#include "perspective_transform.h"
+#include "pyramid_transform.h"
+
 namespace cyxwiz {
 
 /**
@@ -79,6 +85,12 @@ struct ImagePreprocessingConfig {
     float edge_threshold2 = 150.0f;  // Canny: high threshold, Sobel/Scharr: not used
     int edge_kernel_size = 3;        // Sobel/Laplacian/Scharr kernel size (3, 5, 7)
 
+    // OpenCV Transform Configs (Phase 1)
+    MorphologyConfig morphology_config;
+    BlurConfig blur_config;
+    PerspectiveConfig perspective_config;
+    PyramidConfig pyramid_config;
+
     nlohmann::json ToJson() const;
     static ImagePreprocessingConfig FromJson(const nlohmann::json& j);
 
@@ -99,7 +111,11 @@ struct ImagePreprocessingConfig {
                edge_detector_type == other.edge_detector_type &&
                edge_threshold1 == other.edge_threshold1 &&
                edge_threshold2 == other.edge_threshold2 &&
-               edge_kernel_size == other.edge_kernel_size;
+               edge_kernel_size == other.edge_kernel_size &&
+               morphology_config == other.morphology_config &&
+               blur_config == other.blur_config &&
+               perspective_config == other.perspective_config &&
+               pyramid_config == other.pyramid_config;
     }
 };
 

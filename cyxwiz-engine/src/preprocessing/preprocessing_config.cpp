@@ -116,6 +116,11 @@ json ImagePreprocessingConfig::ToJson() const {
     j["edge_threshold1"] = edge_threshold1;
     j["edge_threshold2"] = edge_threshold2;
     j["edge_kernel_size"] = edge_kernel_size;
+    // OpenCV Transform Configs (Phase 1)
+    j["morphology_config"] = morphology_config.ToJson();
+    j["blur_config"] = blur_config.ToJson();
+    j["perspective_config"] = perspective_config.ToJson();
+    j["pyramid_config"] = pyramid_config.ToJson();
     return j;
 }
 
@@ -171,6 +176,19 @@ ImagePreprocessingConfig ImagePreprocessingConfig::FromJson(const json& j) {
     }
     if (j.contains("edge_kernel_size")) {
         config.edge_kernel_size = j["edge_kernel_size"].get<int>();
+    }
+    // OpenCV Transform Configs (Phase 1)
+    if (j.contains("morphology_config")) {
+        config.morphology_config = MorphologyConfig::FromJson(j["morphology_config"]);
+    }
+    if (j.contains("blur_config")) {
+        config.blur_config = BlurConfig::FromJson(j["blur_config"]);
+    }
+    if (j.contains("perspective_config")) {
+        config.perspective_config = PerspectiveConfig::FromJson(j["perspective_config"]);
+    }
+    if (j.contains("pyramid_config")) {
+        config.pyramid_config = PyramidConfig::FromJson(j["pyramid_config"]);
     }
     return config;
 }
