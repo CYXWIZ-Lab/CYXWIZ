@@ -13,6 +13,7 @@
 #include "../annotation/grabcut_editor.h"
 #include "../annotation/watershed_editor.h"
 #include "../icons.h"
+#include "../../core/image_utils.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -489,8 +490,11 @@ void DatasetPanel::RenderInteractiveToolsTab() {
                 }
 
                 if (!mask.empty()) {
-                    // TODO: Implement mask export using OpenCV imwrite
-                    spdlog::info("Export mask to: {} (not implemented yet)", state.export_path);
+                    if (cyxwiz::ImageUtils::SaveMask(state.export_path, mask,
+                                                      state.image_width, state.image_height,
+                                                      state.export_as_binary)) {
+                        spdlog::info("Exported mask to: {}", state.export_path);
+                    }
                 } else {
                     spdlog::warn("No mask to export");
                 }

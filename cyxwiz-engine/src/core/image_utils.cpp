@@ -48,6 +48,95 @@ bool ImageUtils::LoadImage(const std::string& path,
 }
 
 // =============================================================================
+// Image Saving
+// =============================================================================
+
+bool ImageUtils::SaveImage(const std::string& path,
+                            const std::vector<float>& data,
+                            int width, int height, int channels) {
+    if (width <= 0 || height <= 0 || channels <= 0) {
+        spdlog::error("ImageUtils: Invalid dimensions for SaveImage");
+        return false;
+    }
+
+    size_t expected_size = static_cast<size_t>(width) * height * channels;
+    if (data.size() != expected_size) {
+        spdlog::error("ImageUtils: Data size mismatch for SaveImage. Expected {}, got {}",
+                      expected_size, data.size());
+        return false;
+    }
+
+    // Create Mat from float data
+    cv::Mat float_img(height, width, CV_32FC(channels), const_cast<float*>(data.data()));
+
+    // Convert to uint8 [0, 255]
+    cv::Mat uint8_img;
+    float_img.convertTo(uint8_img, CV_8UC(channels), 255.0);
+
+    // Convert RGB to BGR for OpenCV if color image
+    if (channels == 3) {
+        cv::cvtColor(uint8_img, uint8_img, cv::COLOR_RGB2BGR);
+    }
+
+    // Save using OpenCV
+    if (!cv::imwrite(path, uint8_img)) {
+        spdlog::error("ImageUtils: Failed to save image to: {}", path);
+        return false;
+    }
+
+    spdlog::info("ImageUtils: Saved image to: {} ({}x{}x{})", path, width, height, channels);
+    return true;
+}
+
+bool ImageUtils::SaveMask(const std::string& path,
+                           const std::vector<float>& mask,
+                           int width, int height, bool binary) {
+    if (width <= 0 || height <= 0) {
+        spdlog::error("ImageUtils: Invalid dimensions for SaveMask");
+        return false;
+    }
+
+    size_t expected_size = static_cast<size_t>(width) * height;
+    if (mask.size() != expected_size) {
+        spdlog::error("ImageUtils: Mask size mismatch. Expected {}, got {}",
+                      expected_size, mask.size());
+        return false;
+    }
+
+    // Create output uint8 image
+    cv::Mat output(height, width, CV_8UC1);
+
+    if (binary) {
+        // Binary mask: threshold at 0.5 -> 0 or 255
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                float val = mask[y * width + x];
+                output.at<uchar>(y, x) = (val >= 0.5f) ? 255 : 0;
+            }
+        }
+    } else {
+        // Grayscale mask: scale [0,1] -> [0,255]
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                float val = mask[y * width + x];
+                val = std::max(0.0f, std::min(1.0f, val));
+                output.at<uchar>(y, x) = static_cast<uchar>(val * 255.0f);
+            }
+        }
+    }
+
+    // Save using OpenCV
+    if (!cv::imwrite(path, output)) {
+        spdlog::error("ImageUtils: Failed to save mask to: {}", path);
+        return false;
+    }
+
+    spdlog::info("ImageUtils: Saved mask to: {} ({}x{}, {})",
+                 path, width, height, binary ? "binary" : "grayscale");
+    return true;
+}
+
+// =============================================================================
 // Image Resizing
 // =============================================================================
 

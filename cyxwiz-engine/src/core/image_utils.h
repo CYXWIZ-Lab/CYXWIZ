@@ -120,6 +120,38 @@ public:
                              size_t count, float scale = 255.0f);
 
     /**
+     * Save image to file using OpenCV
+     *
+     * @param path Output file path (extension determines format)
+     * @param data Float image data [0, 1] range
+     * @param width Image width
+     * @param height Image height
+     * @param channels Number of channels (1=Grayscale, 3=RGB)
+     * @return true if successful, false otherwise
+     *
+     * Supported formats: JPG, PNG, BMP, TIFF, WebP, and more via OpenCV
+     * RGB data is converted to BGR for OpenCV's imwrite
+     */
+    static bool SaveImage(const std::string& path,
+                          const std::vector<float>& data,
+                          int width, int height, int channels);
+
+    /**
+     * Save mask/segmentation to file
+     *
+     * @param path Output file path (PNG recommended for masks)
+     * @param mask Float mask data [0, 1] range
+     * @param width Mask width
+     * @param height Mask height
+     * @param binary If true, threshold at 0.5 to create binary mask (0/255)
+     *               If false, scale to full range (0-255)
+     * @return true if successful, false otherwise
+     */
+    static bool SaveMask(const std::string& path,
+                         const std::vector<float>& mask,
+                         int width, int height, bool binary = false);
+
+    /**
      * Get list of supported image formats
      *
      * @return Vector of file extensions (e.g., "jpg", "png", "bmp")
