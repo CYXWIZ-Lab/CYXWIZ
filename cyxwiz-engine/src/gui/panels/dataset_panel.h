@@ -38,7 +38,8 @@ enum class DatasetTab {
     LoadedDatasets = 1,
     Preview = 2,
     DataPipeline = 3,      // MERGED: Augmentation + Preprocessing
-    Training = 4           // Shifted down from 5
+    Interactive = 4,       // Interactive annotation tools (Phase 4)
+    Training = 5           // Shifted down
 };
 
 class DatasetPanel : public cyxwiz::Panel {
@@ -124,6 +125,9 @@ private:
     // Data Pipeline tab (unified Augmentation + Preprocessing)
     void RenderDataPipelineTab();
     void RenderUnifiedPreview();
+
+    // Interactive Tools tab (Phase 4)
+    void RenderInteractiveToolsTab();
 
     // Preview display methods (extracted for unified preview)
     void RenderPreprocessingPreviewDisplay();

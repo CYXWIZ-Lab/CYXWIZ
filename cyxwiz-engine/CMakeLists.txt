@@ -119,6 +119,11 @@ set(ENGINE_SOURCES
     src/gui/panels/dataset_panel.cpp
     src/gui/panels/dataset_panel_preprocessing.cpp
     src/gui/panels/dataset_panel_datapipeline.cpp
+    src/gui/panels/dataset_panel_interactive.cpp
+    # Interactive annotation tools (Phase 4)
+    src/gui/annotation/annotation_tools.cpp
+    src/gui/annotation/grabcut_editor.cpp
+    src/gui/annotation/watershed_editor.cpp
     src/gui/panels/task_progress_panel.cpp
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp
@@ -293,6 +298,10 @@ set(ENGINE_HEADERS
     src/gui/panels/data_explorer_panel.h
     src/gui/panels/connection_dialog.h
     src/gui/panels/dataset_panel.h
+    # Interactive annotation tools (Phase 4)
+    src/gui/annotation/annotation_tools.h
+    src/gui/annotation/grabcut_editor.h
+    src/gui/annotation/watershed_editor.h
     src/gui/panels/task_progress_panel.h
     src/gui/panels/custom_node_editor.h
     src/gui/panels/theme_editor.h

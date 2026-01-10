@@ -194,7 +194,22 @@ void DatasetPanel::Render() {
                 ImGui::EndTabItem();
             }
 
-            if (ImGui::BeginTabItem("Training", nullptr, train_flags)) {
+            // Interactive annotation tools tab (Phase 4)
+            ImGuiTabItemFlags interactive_flags = (pending_tab_ == static_cast<int>(DatasetTab::Interactive)) ?
+                ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+            if (ImGui::BeginTabItem("Interactive", nullptr, interactive_flags)) {
+                if (IsDatasetLoaded()) {
+                    RenderInteractiveToolsTab();
+                } else {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load an image dataset to use interactive tools");
+                }
+                ImGui::EndTabItem();
+            }
+
+            // Training tab (shifted to index 5)
+            ImGuiTabItemFlags train_flags_final = (pending_tab_ == static_cast<int>(DatasetTab::Training)) ?
+                ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+            if (ImGui::BeginTabItem("Training", nullptr, train_flags_final)) {
                 if (IsDatasetLoaded()) {
                     RenderTrainingSection();
                 } else {
