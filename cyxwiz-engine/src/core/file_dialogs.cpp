@@ -263,4 +263,18 @@ std::optional<std::string> FileDialogs::SelectOutputFolder(const char* default_p
     return SelectFolder("Select Output Folder", default_path);
 }
 
+std::optional<std::string> FileDialogs::OpenTheme(const char* default_path) {
+    return OpenFile("Open Theme", {
+        {"Theme Files", "json"},
+        {"All Files", "*"}
+    }, default_path);
+}
+
+std::optional<std::string> FileDialogs::SaveTheme(const char* default_path, const char* default_name) {
+    return SaveFile("Save Theme", {
+        {"Theme Files", "json"},
+        {"All Files", "*"}
+    }, default_path, default_name);
+}
+
 } // namespace cyxwiz

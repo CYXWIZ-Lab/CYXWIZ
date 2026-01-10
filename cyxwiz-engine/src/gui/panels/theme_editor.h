@@ -35,6 +35,7 @@ private:
     void RenderImNodesColorsTab();
     void RenderStyleTab();
     void RenderSaveLoadTab();
+    void RenderGalleryTab();
 
     // Color group rendering
     void RenderColorGroup(const char* group_name, const std::vector<std::pair<ImGuiCol_, const char*>>& colors);

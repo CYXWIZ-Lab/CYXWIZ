@@ -1,5 +1,6 @@
 #include "theme_editor.h"
 #include "../icons.h"
+#include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <nlohmann/json.hpp>
@@ -203,6 +204,11 @@ void ThemeEditorPanel::Render() {
             if (ImGui::BeginTabItem("Save/Load")) {
                 current_tab_ = 3;
                 RenderSaveLoadTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(ICON_FA_PALETTE " Gallery")) {
+                current_tab_ = 4;
+                RenderGalleryTab();
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -502,7 +508,11 @@ void ThemeEditorPanel::RenderSaveLoadTab() {
     ImGui::InputText("Theme File", theme_path_buffer_, sizeof(theme_path_buffer_));
     ImGui::SameLine();
     if (ImGui::Button("Browse...")) {
-        // TODO: Open file dialog
+        auto result = cyxwiz::FileDialogs::OpenTheme();
+        if (result) {
+            strncpy(theme_path_buffer_, result->c_str(), sizeof(theme_path_buffer_) - 1);
+            theme_path_buffer_[sizeof(theme_path_buffer_) - 1] = '\0';
+        }
     }
 
     if (ImGui::Button("Load Theme", ImVec2(-1, 0))) {
@@ -717,6 +727,202 @@ void ThemeEditorPanel::RenderImNodesColorGroup(const char* group_name, const std
     (void)group_name;
     (void)colors;
     // Implemented in RenderImNodesColorsTab
+}
+
+void ThemeEditorPanel::RenderGalleryTab() {
+    auto& theme = GetTheme();
+    auto current_preset = theme.GetCurrentPreset();
+    auto presets = Theme::GetAvailablePresets();
+
+    ImGui::TextWrapped("Browse and apply themes with a single click. Hover over theme cards to see a preview.");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Calculate card layout
+    const float card_width = 280.0f;
+    const float card_height = 200.0f;
+    const float spacing = 15.0f;
+    const float avail_width = ImGui::GetContentRegionAvail().x;
+    const int cols = std::max(1, static_cast<int>((avail_width + spacing) / (card_width + spacing)));
+
+    // Render theme cards in a grid
+    int col = 0;
+    for (auto preset : presets) {
+        const char* preset_name = Theme::GetPresetName(preset);
+        bool is_current = (preset == current_preset);
+
+        // Card positioning
+        if (col > 0) {
+            ImGui::SameLine();
+        }
+
+        ImGui::BeginGroup();
+        {
+            // Card background
+            ImVec2 card_min = ImGui::GetCursorScreenPos();
+            ImVec2 card_max = ImVec2(card_min.x + card_width, card_min.y + card_height);
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+            // Card background color
+            ImVec4 card_bg = is_current
+                ? ImVec4(0.25f, 0.35f, 0.45f, 0.9f)  // Highlighted if current
+                : ImVec4(0.15f, 0.15f, 0.17f, 0.9f);
+
+            draw_list->AddRectFilled(card_min, card_max, ImGui::ColorConvertFloat4ToU32(card_bg), 8.0f);
+
+            // Card border
+            ImVec4 border_color = is_current
+                ? ImVec4(0.4f, 0.6f, 0.8f, 1.0f)  // Blue border if current
+                : ImVec4(0.3f, 0.3f, 0.3f, 0.8f);
+            draw_list->AddRect(card_min, card_max, ImGui::ColorConvertFloat4ToU32(border_color), 8.0f, 0, is_current ? 2.5f : 1.5f);
+
+            // Move cursor inside card
+            ImGui::SetCursorScreenPos(ImVec2(card_min.x + 10, card_min.y + 10));
+
+            // Theme name with icon
+            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Use default font
+            if (is_current) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+                ImGui::Text(ICON_FA_CHECK " %s", preset_name);
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::Text(ICON_FA_PALETTE " %s", preset_name);
+            }
+            ImGui::PopFont();
+
+            ImGui::Spacing();
+
+            // Get sample colors for this theme (we'll temporarily apply it to get colors)
+            ImGuiStyle backup_style = ImGui::GetStyle();
+            theme.ApplyPreset(preset);
+            ImGuiStyle& style = ImGui::GetStyle();
+
+            // Color swatches display
+            ImVec2 swatch_start = ImGui::GetCursorScreenPos();
+            const float swatch_width = (card_width - 20.0f) / 5.0f;
+            const float swatch_height = 60.0f;
+
+            // Define which colors to show
+            ImVec4 colors_to_show[5] = {
+                style.Colors[ImGuiCol_WindowBg],       // Background
+                style.Colors[ImGuiCol_Button],         // Primary button
+                style.Colors[ImGuiCol_ButtonHovered],  // Hover accent
+                style.Colors[ImGuiCol_Text],           // Text
+                style.Colors[ImGuiCol_CheckMark]       // Success/accent
+            };
+
+            const char* color_labels[5] = {
+                "Background", "Button", "Hover", "Text", "Accent"
+            };
+
+            // Draw color swatches
+            for (int i = 0; i < 5; i++) {
+                ImVec2 swatch_min = ImVec2(swatch_start.x + i * swatch_width, swatch_start.y);
+                ImVec2 swatch_max = ImVec2(swatch_min.x + swatch_width - 2, swatch_min.y + swatch_height);
+
+                // Draw swatch
+                draw_list->AddRectFilled(swatch_min, swatch_max,
+                    ImGui::ColorConvertFloat4ToU32(colors_to_show[i]), 4.0f);
+
+                // Draw border
+                draw_list->AddRect(swatch_min, swatch_max,
+                    ImGui::ColorConvertFloat4ToU32(ImVec4(0.2f, 0.2f, 0.2f, 0.6f)), 4.0f, 0, 1.0f);
+
+                // Add tooltip on hover
+                if (ImGui::IsMouseHoveringRect(swatch_min, swatch_max)) {
+                    ImGui::BeginTooltip();
+                    ImGui::Text("%s", color_labels[i]);
+                    ImGui::ColorButton("##preview", colors_to_show[i],
+                        ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoPicker, ImVec2(40, 40));
+                    ImGui::EndTooltip();
+                }
+            }
+
+            // Restore original style
+            ImGui::GetStyle() = backup_style;
+
+            // Move cursor below swatches
+            ImGui::SetCursorScreenPos(ImVec2(card_min.x + 10, swatch_start.y + swatch_height + 10));
+
+            // Theme description (brief)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui::PushTextWrapPos(card_min.x + card_width - 10);
+
+            // Add brief descriptions for each theme
+            const char* description = "";
+            switch (preset) {
+                case ThemePreset::CyxWizDark:
+                    description = "Official CyxWiz dark theme with branded colors";
+                    break;
+                case ThemePreset::CyxWizLight:
+                    description = "Official CyxWiz light theme for daytime use";
+                    break;
+                case ThemePreset::VSCodeDark:
+                    description = "Inspired by Visual Studio Code's default dark theme";
+                    break;
+                case ThemePreset::UnrealEngine:
+                    description = "Game editor style with warm orange accents";
+                    break;
+                case ThemePreset::ModernDark:
+                    description = "Minimal dark theme with clean aesthetics";
+                    break;
+                case ThemePreset::HighContrast:
+                    description = "High contrast theme for accessibility";
+                    break;
+                case ThemePreset::Dracula:
+                    description = "Vibrant purple and pink theme for night owls";
+                    break;
+                case ThemePreset::OneDarkPro:
+                    description = "Popular VSCode theme with blue accents";
+                    break;
+                case ThemePreset::Nord:
+                    description = "Cool frost blue theme with arctic pastels";
+                    break;
+                case ThemePreset::CatppuccinMocha:
+                    description = "Cozy pastel rainbow theme with soft colors";
+                    break;
+                default:
+                    description = "Custom theme";
+                    break;
+            }
+
+            ImGui::TextWrapped("%s", description);
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+
+            ImGui::Spacing();
+
+            // Apply button at bottom
+            ImGui::SetCursorScreenPos(ImVec2(card_min.x + 10, card_max.y - 35));
+            ImGui::PushStyleColor(ImGuiCol_Button, is_current
+                ? ImVec4(0.2f, 0.6f, 0.3f, 0.8f)  // Green if current
+                : ImVec4(0.3f, 0.5f, 0.7f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, is_current
+                ? ImVec4(0.3f, 0.7f, 0.4f, 1.0f)
+                : ImVec4(0.4f, 0.6f, 0.8f, 1.0f));
+
+            ImGui::SetNextItemWidth(card_width - 20);
+            if (ImGui::Button(is_current ? ICON_FA_CHECK " Applied" : ICON_FA_WAND_MAGIC_SPARKLES " Apply",
+                ImVec2(card_width - 20, 0))) {
+                if (!is_current) {
+                    theme.ApplyPreset(preset);
+                    has_unsaved_changes_ = false;
+                    spdlog::info("Applied theme: {}", preset_name);
+                }
+            }
+
+            ImGui::PopStyleColor(2);
+
+            // Move cursor to end of card for next item
+            ImGui::SetCursorScreenPos(ImVec2(card_min.x, card_max.y + spacing));
+        }
+        ImGui::EndGroup();
+
+        col++;
+        if (col >= cols) {
+            col = 0;
+        }
+    }
 }
 
 } // namespace gui
