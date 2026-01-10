@@ -133,6 +133,9 @@ set(ENGINE_SOURCES
     src/gui/panels/deployment_dialog.cpp
     src/network/deployment_client.cpp
     src/inference/local_inference_server.cpp
+    # DNN inference (Phase 3)
+    src/inference/dnn_models.cpp
+    src/inference/dnn_preprocessor.cpp
     src/gui/panels/model_summary_panel.cpp
     src/gui/panels/architecture_diagram.cpp
     src/gui/panels/lr_finder_panel.cpp
@@ -303,6 +306,9 @@ set(ENGINE_HEADERS
     src/gui/panels/deployment_dialog.h
     src/network/deployment_client.h
     src/inference/local_inference_server.h
+    # DNN inference (Phase 3)
+    src/inference/dnn_models.h
+    src/inference/dnn_preprocessor.h
     src/gui/panels/model_summary_panel.h
     src/gui/panels/architecture_diagram.h
     src/gui/panels/lr_finder_panel.h
