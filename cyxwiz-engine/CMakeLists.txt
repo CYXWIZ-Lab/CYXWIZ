@@ -697,3 +697,37 @@ endif()
 set_target_properties(test_sandbox_timeout PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: OpenCV Integration =====
+add_executable(test_opencv_integration
+    tests/test_opencv_integration.cpp
+    src/preprocessing/morphology_transform.cpp
+    src/preprocessing/blur_transform.cpp
+    src/preprocessing/perspective_transform.cpp
+    src/preprocessing/pyramid_transform.cpp
+    src/utils/segmentation_utils.cpp
+    src/utils/shape_utils.cpp
+    src/utils/labeling_utils.cpp
+    src/core/image_utils.cpp
+)
+
+target_include_directories(test_opencv_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_opencv_integration PRIVATE
+    ${OpenCV_LIBS}
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_opencv_integration PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_opencv_integration PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)

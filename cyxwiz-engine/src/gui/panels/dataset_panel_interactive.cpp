@@ -501,8 +501,45 @@ void DatasetPanel::RenderInteractiveToolsTab() {
             }
         }
 
-        // Load test image button (for development)
+        // Load from dataset button
         ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Load Image");
+
+        // Check if dataset is loaded with image data
+        bool can_load_from_dataset = current_dataset_.IsValid() &&
+                                      !cached_info_.shape.empty() &&
+                                      cached_info_.shape.size() >= 2;
+
+        if (!can_load_from_dataset) {
+            ImGui::BeginDisabled();
+        }
+
+        if (ImGui::Button("Load from Dataset (Preview)", ImVec2(-1, 0))) {
+            // Get current preview sample from dataset
+            auto [sample, label] = current_dataset_.GetSample(preview_sample_idx_);
+
+            int width = static_cast<int>(cached_info_.shape[0]);
+            int height = static_cast<int>(cached_info_.shape[1]);
+            int channels = cached_info_.shape.size() > 2 ? static_cast<int>(cached_info_.shape[2]) : 1;
+
+            if (sample.size() == static_cast<size_t>(width * height * channels)) {
+                state.LoadImage(sample, width, height, channels);
+                state.current_sample_idx = preview_sample_idx_;
+                spdlog::info("Loaded dataset sample {} ({}x{}x{})", preview_sample_idx_, width, height, channels);
+            } else {
+                spdlog::warn("Sample size mismatch: expected {}, got {}",
+                            width * height * channels, sample.size());
+            }
+        }
+        if (ImGui::IsItemHovered() && !can_load_from_dataset) {
+            ImGui::SetTooltip("Load a dataset first in the Preview tab");
+        }
+
+        if (!can_load_from_dataset) {
+            ImGui::EndDisabled();
+        }
+
+        // Load test image button (for development)
         if (ImGui::Button("Load Test Image (64x64)", ImVec2(-1, 0))) {
             // Create a simple test image
             std::vector<float> test_image(64 * 64 * 3);
