@@ -69,6 +69,10 @@ set(ENGINE_SOURCES
     src/utils/dataset_analyzer.cpp
     src/utils/image_quality_analyzer.cpp
     src/utils/image_deduplicator.cpp
+    # Dataset utilities (Phase 2)
+    src/utils/segmentation_utils.cpp
+    src/utils/shape_utils.cpp
+    src/utils/labeling_utils.cpp
     src/core/test_manager.cpp
     src/core/checkpoint_manager.cpp
     src/core/model_exporter.cpp
@@ -432,6 +436,10 @@ set(ENGINE_HEADERS
     # Image utilities
     src/utils/image_enhancer.h
     src/utils/dataset_analyzer.h
+    # Dataset utilities (Phase 2)
+    src/utils/segmentation_utils.h
+    src/utils/shape_utils.h
+    src/utils/labeling_utils.h
 )
 
 # Create executable
