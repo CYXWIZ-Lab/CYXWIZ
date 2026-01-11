@@ -1,4 +1,5 @@
 #include "data_registry.h"
+#include "annotation_manager.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../transforms/transform.h"
@@ -4176,6 +4177,26 @@ void DataRegistry::ClearAugmentationPipeline(const std::string& dataset_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     augmentation_pipelines_.erase(dataset_id);
     spdlog::info("DataRegistry: Cleared augmentation pipeline for dataset '{}'", dataset_id);
+}
+
+// =============================================================================
+// Annotation Manager
+// =============================================================================
+
+AnnotationManager& DataRegistry::GetAnnotationManager() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!annotation_manager_) {
+        annotation_manager_ = std::make_unique<AnnotationManager>();
+    }
+    return *annotation_manager_;
+}
+
+const AnnotationManager& DataRegistry::GetAnnotationManager() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!annotation_manager_) {
+        annotation_manager_ = std::make_unique<AnnotationManager>();
+    }
+    return *annotation_manager_;
 }
 
 } // namespace cyxwiz

@@ -2,7 +2,47 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current Work Status (Updated: 2025-12-31)
+## Current Work Status (Updated: 2026-01-11)
+
+### CyxWiz Engine - Annotation System ✅ (NEW)
+
+**Production-ready annotation system for semantic segmentation:**
+
+- ✅ **AnnotationManager** - Central annotation storage (`src/core/annotation_manager.h/cpp`)
+- ✅ **Batch Navigation UI** - Prev/Next/Go-to for dataset images
+- ✅ **Annotation List UI** - View, select, delete annotations per image
+- ✅ **Class Management** - Add/select class labels
+- ✅ **Save from Tools** - Convert mask to annotation with one click
+- ✅ **Export Formats** - COCO JSON, YOLO txt, Pascal VOC XML
+- ✅ **Training Integration** - `GetAnnotatedBatch()` for segmentation training
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/core/annotation_manager.h` | Data structures (Annotation, AnnotationSet) |
+| `src/core/annotation_manager.cpp` | Storage, export, mask generation |
+| `src/core/dataset_batcher.h` | `AnnotatedBatch` struct, `GetAnnotatedBatch()` |
+| `src/gui/panels/dataset_panel_interactive.cpp` | UI for annotation workflow |
+
+**Usage - Training with Annotations:**
+```cpp
+DatasetBatcher batcher(dataset, 32, DatasetSplit::Train);
+while (batcher.HasNext()) {
+    AnnotatedBatch batch = batcher.GetNextAnnotatedBatch("my_dataset");
+    // batch.images: [B, H, W, C] - input images
+    // batch.masks:  [B, H, W]    - segmentation masks (class IDs per pixel)
+}
+```
+
+**Usage - Export Annotations:**
+```cpp
+auto& ann_mgr = DataRegistry::Instance().GetAnnotationManager();
+ann_mgr.ExportCOCO("dataset", "coco.json");   // For Detectron2, MMDet
+ann_mgr.ExportYOLO("dataset", "yolo/");       // For YOLOv5/v8
+ann_mgr.ExportVOC("dataset", "voc/");         // For Pascal VOC tools
+```
+
+---
 
 ### CyxWiz Backend - Recently Completed
 
@@ -550,6 +590,7 @@ src/
 - **Data Augmentation**: 13 transform presets (ImageNet, CIFAR-10, Medical, Self-Supervised, etc.) with live preview
 - **Local Training**: TrainingExecutor with Sequential model support, real-time loss/accuracy plotting
 - **Properties Panel**: Dynamic shape inference for node connections, editable layer parameters
+- **Annotation System**: Production annotation workflow with batch navigation, class management, COCO/YOLO/VOC export, and training integration via `GetAnnotatedBatch()`
 
 **TODO Features** (marked in code):
 - Import/Export model formats (ONNX, PyTorch, TensorFlow)

@@ -14,6 +14,9 @@
 #include "../annotation/watershed_editor.h"
 #include "../icons.h"
 #include "../../core/image_utils.h"
+#include "../../core/data_registry.h"
+#include "../../core/annotation_manager.h"
+#include "../../utils/labeling_utils.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -51,6 +54,15 @@ static struct InteractiveToolsState {
     char export_path[512] = "mask.png";
     bool export_as_binary = true;
 
+    // Annotation state
+    std::string current_dataset_id;
+    int current_class_id = 0;
+    char new_class_name[128] = "";
+    char export_dir[512] = "annotations";
+    int selected_annotation_id = -1;
+    bool show_all_annotations = true;
+    int goto_image_idx = 0;
+
     // Initialize tools
     void Initialize() {
         if (!grabcut_editor) {
@@ -82,6 +94,36 @@ static struct InteractiveToolsState {
         if (polygon_tool) polygon_tool->SetImage(image, w, h, c);
     }
 
+    // Get current mask from active tool
+    std::vector<float> GetCurrentMask() const {
+        switch (active_tool) {
+            case ActiveTool::GrabCut:
+                if (grabcut_editor && grabcut_editor->HasSegmentation())
+                    return grabcut_editor->GetFloatMask();
+                break;
+            case ActiveTool::Watershed:
+                if (watershed_editor && watershed_editor->HasSegmentation())
+                    return watershed_editor->GetFloatMask();
+                break;
+            case ActiveTool::Brush:
+                if (brush_tool)
+                    return brush_tool->GetMask().ToFloatMask();
+                break;
+            case ActiveTool::Polygon:
+                if (polygon_tool)
+                    return polygon_tool->GetMask().ToFloatMask();
+                break;
+            default:
+                break;
+        }
+        return {};
+    }
+
+    // Check if there's a valid mask
+    bool HasMask() const {
+        return !GetCurrentMask().empty();
+    }
+
 } g_interactive_state;
 
 // Helper to convert screen coords to image coords
@@ -99,9 +141,92 @@ void DatasetPanel::RenderInteractiveToolsTab() {
 
     state.Initialize();
 
+    // Get annotation manager
+    auto& ann_mgr = cyxwiz::DataRegistry::Instance().GetAnnotationManager();
+
+    // Update dataset ID if we have a valid dataset
+    if (current_dataset_.IsValid()) {
+        state.current_dataset_id = current_dataset_.GetName();
+        // Ensure annotation set exists
+        if (!ann_mgr.HasAnnotationSet(state.current_dataset_id)) {
+            ann_mgr.CreateAnnotationSet(state.current_dataset_id);
+        }
+    }
+
     // Tool selection toolbar
     ImGui::Text("Interactive Annotation Tools");
+
+    // =========================================================================
+    // Batch Navigation Section
+    // =========================================================================
+    if (current_dataset_.IsValid()) {
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 400);
+        ImGui::Text("Dataset: %s (%zu images)", state.current_dataset_id.c_str(),
+                    current_dataset_.Size());
+    }
     ImGui::Separator();
+
+    // Navigation controls (only show if dataset is loaded)
+    if (current_dataset_.IsValid()) {
+        size_t dataset_size = current_dataset_.Size();
+
+        // Prev button
+        if (ImGui::Button(ICON_FA_CHEVRON_LEFT " Prev")) {
+            if (state.current_sample_idx > 0) {
+                state.current_sample_idx--;
+                // Load new image
+                auto [sample, label] = current_dataset_.GetSample(state.current_sample_idx);
+                int width = static_cast<int>(cached_info_.shape[0]);
+                int height = static_cast<int>(cached_info_.shape[1]);
+                int channels = cached_info_.shape.size() > 2 ? static_cast<int>(cached_info_.shape[2]) : 1;
+                state.LoadImage(sample, width, height, channels);
+            }
+        }
+        ImGui::SameLine();
+
+        // Image counter
+        ImGui::Text("%d / %zu", state.current_sample_idx + 1, dataset_size);
+        ImGui::SameLine();
+
+        // Next button
+        if (ImGui::Button("Next " ICON_FA_CHEVRON_RIGHT)) {
+            if (state.current_sample_idx < static_cast<int>(dataset_size) - 1) {
+                state.current_sample_idx++;
+                // Load new image
+                auto [sample, label] = current_dataset_.GetSample(state.current_sample_idx);
+                int width = static_cast<int>(cached_info_.shape[0]);
+                int height = static_cast<int>(cached_info_.shape[1]);
+                int channels = cached_info_.shape.size() > 2 ? static_cast<int>(cached_info_.shape[2]) : 1;
+                state.LoadImage(sample, width, height, channels);
+            }
+        }
+        ImGui::SameLine();
+
+        // Go to specific image
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::InputInt("##goto", &state.goto_image_idx, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue)) {
+            state.goto_image_idx = std::clamp(state.goto_image_idx, 0, static_cast<int>(dataset_size) - 1);
+            state.current_sample_idx = state.goto_image_idx;
+            auto [sample, label] = current_dataset_.GetSample(state.current_sample_idx);
+            int width = static_cast<int>(cached_info_.shape[0]);
+            int height = static_cast<int>(cached_info_.shape[1]);
+            int channels = cached_info_.shape.size() > 2 ? static_cast<int>(cached_info_.shape[2]) : 1;
+            state.LoadImage(sample, width, height, channels);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(Enter to jump)");
+
+        // Show annotation count for current image
+        auto* anns = ann_mgr.GetAnnotations(state.current_dataset_id, state.current_sample_idx);
+        if (anns && !anns->empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "[%zu annotations]", anns->size());
+        }
+
+        ImGui::Separator();
+    }
+
+    // =========================================================================
 
     // Tool buttons
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
@@ -498,6 +623,151 @@ void DatasetPanel::RenderInteractiveToolsTab() {
                 } else {
                     spdlog::warn("No mask to export");
                 }
+            }
+        }
+
+        // =====================================================================
+        // Annotation Management Section
+        // =====================================================================
+        if (!state.current_dataset_id.empty()) {
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.4f, 1.0f), ICON_FA_TAGS " Annotations");
+
+            // Current image annotations list
+            auto* anns = ann_mgr.GetAnnotations(state.current_dataset_id, state.current_sample_idx);
+            if (anns && !anns->empty()) {
+                ImGui::Text("Image %d: %zu annotations", state.current_sample_idx, anns->size());
+
+                ImGui::BeginChild("AnnotationList", ImVec2(-1, 120), true);
+                for (const auto& ann : *anns) {
+                    bool selected = (state.selected_annotation_id == ann.id);
+                    std::string label = std::to_string(ann.id) + ": " + ann.class_name +
+                                        " (" + cyxwiz::AnnotationTypeToString(ann.type) + ")";
+
+                    if (ImGui::Selectable(label.c_str(), selected)) {
+                        state.selected_annotation_id = selected ? -1 : ann.id;
+                    }
+
+                    // Delete button on same line
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 50);
+                    ImGui::PushID(ann.id);
+                    if (ImGui::SmallButton(ICON_FA_TRASH)) {
+                        ann_mgr.RemoveAnnotation(state.current_dataset_id, state.current_sample_idx, ann.id);
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
+            } else {
+                ImGui::TextDisabled("No annotations for this image");
+            }
+
+            // Class selector
+            ImGui::Separator();
+            ImGui::Text("Class:");
+            const auto& classes = ann_mgr.GetClasses(state.current_dataset_id);
+
+            if (!classes.empty()) {
+                if (ImGui::BeginCombo("##class", classes[state.current_class_id].c_str())) {
+                    for (int i = 0; i < static_cast<int>(classes.size()); ++i) {
+                        bool is_selected = (state.current_class_id == i);
+                        if (ImGui::Selectable(classes[i].c_str(), is_selected)) {
+                            state.current_class_id = i;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            } else {
+                ImGui::TextDisabled("No classes defined");
+            }
+
+            // Add new class
+            ImGui::SetNextItemWidth(100);
+            ImGui::InputText("##newclass", state.new_class_name, sizeof(state.new_class_name));
+            ImGui::SameLine();
+            if (ImGui::Button("+ Add Class")) {
+                if (strlen(state.new_class_name) > 0) {
+                    state.current_class_id = ann_mgr.AddClass(state.current_dataset_id, state.new_class_name);
+                    state.new_class_name[0] = '\0';
+                }
+            }
+
+            // Add annotation from current mask
+            ImGui::Separator();
+            bool has_mask = state.HasMask();
+            if (!has_mask) {
+                ImGui::BeginDisabled();
+            }
+
+            if (ImGui::Button(ICON_FA_PLUS " Add Annotation from Mask", ImVec2(-1, 0))) {
+                std::vector<float> mask = state.GetCurrentMask();
+                if (!mask.empty() && state.image_width > 0 && state.image_height > 0) {
+                    // Extract contours from mask
+                    auto contours = cyxwiz::LabelingUtils::ExtractContours(
+                        mask, state.image_width, state.image_height,
+                        cyxwiz::ContourMode::External, cyxwiz::ContourApprox::Simple);
+
+                    if (!contours.empty()) {
+                        // Use largest contour
+                        auto& largest = contours[0];
+                        for (const auto& c : contours) {
+                            if (c.points.size() > largest.points.size()) {
+                                largest = c;
+                            }
+                        }
+
+                        // Add annotation
+                        int ann_id = ann_mgr.AddAnnotation(
+                            state.current_dataset_id,
+                            state.current_sample_idx,
+                            state.current_class_id,
+                            cyxwiz::AnnotationType::Polygon,
+                            largest.points,
+                            cyxwiz::BoundingBox{},
+                            state.image_width,
+                            state.image_height);
+
+                        spdlog::info("Added annotation {} to image {}", ann_id, state.current_sample_idx);
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered() && !has_mask) {
+                ImGui::SetTooltip("Use a tool to create a mask first");
+            }
+
+            if (!has_mask) {
+                ImGui::EndDisabled();
+            }
+
+            // Export annotations
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.8f, 1.0f), ICON_FA_DOWNLOAD " Export Annotations");
+            ImGui::InputText("Dir##export", state.export_dir, sizeof(state.export_dir));
+
+            if (ImGui::Button("COCO JSON", ImVec2(-1, 0))) {
+                std::string coco_path = std::string(state.export_dir) + "/annotations.json";
+                if (ann_mgr.ExportCOCO(state.current_dataset_id, coco_path)) {
+                    spdlog::info("Exported COCO annotations to: {}", coco_path);
+                }
+            }
+            if (ImGui::Button("YOLO txt", ImVec2(-1, 0))) {
+                if (ann_mgr.ExportYOLO(state.current_dataset_id, state.export_dir,
+                                        std::string(state.export_dir) + "/classes.txt")) {
+                    spdlog::info("Exported YOLO annotations to: {}", state.export_dir);
+                }
+            }
+            if (ImGui::Button("Pascal VOC", ImVec2(-1, 0))) {
+                if (ann_mgr.ExportVOC(state.current_dataset_id, state.export_dir)) {
+                    spdlog::info("Exported VOC annotations to: {}", state.export_dir);
+                }
+            }
+
+            // Show stats
+            auto* ann_set = ann_mgr.GetAnnotationSet(state.current_dataset_id);
+            if (ann_set) {
+                ImGui::Separator();
+                ImGui::TextDisabled("Total: %zu annotations, %zu images",
+                                    ann_set->GetTotalAnnotationCount(),
+                                    ann_set->GetAnnotatedImageCount());
             }
         }
 

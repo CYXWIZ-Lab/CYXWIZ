@@ -1,4 +1,5 @@
 #include "dataset_batcher.h"
+#include "annotation_manager.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../preprocessing/statistics_calculator.h"
 #include "../preprocessing/normalization_transform.h"
@@ -420,6 +421,146 @@ void DatasetIterator::SetFlatten(bool flatten) {
     train_batcher_->SetFlatten(flatten);
     val_batcher_->SetFlatten(flatten);
     test_batcher_->SetFlatten(flatten);
+}
+
+
+// =============================================================================
+// Annotation-aware batch access (for segmentation training)
+// =============================================================================
+
+bool DatasetBatcher::HasAnnotations(const std::string& dataset_id) const {
+    const auto& ann_mgr = DataRegistry::Instance().GetAnnotationManager();
+    return ann_mgr.HasAnnotationSet(dataset_id);
+}
+
+AnnotatedBatch DatasetBatcher::GetNextAnnotatedBatch(const std::string& dataset_id) {
+    AnnotatedBatch batch;
+
+    if (!dataset_.IsValid() || indices_.empty()) {
+        return batch;
+    }
+
+    if (IsEpochComplete()) {
+        return batch;
+    }
+
+    // Calculate batch bounds
+    size_t batch_start = current_index_;
+    size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
+    size_t actual_batch_size = batch_end - batch_start;
+
+    // Skip last incomplete batch if drop_last is enabled
+    if (drop_last_ && actual_batch_size < batch_size_) {
+        return batch;
+    }
+
+    // Collect indices for this batch
+    std::vector<size_t> sample_indices(actual_batch_size);
+    for (size_t i = 0; i < actual_batch_size; ++i) {
+        sample_indices[i] = indices_[batch_start + i];
+    }
+
+    // Advance position
+    current_index_ = batch_end;
+    current_batch_++;
+
+    return GetAnnotatedBatch(dataset_id, sample_indices);
+}
+
+AnnotatedBatch DatasetBatcher::GetAnnotatedBatch(const std::string& dataset_id,
+                                                  const std::vector<size_t>& sample_indices) {
+    AnnotatedBatch batch;
+
+    if (!dataset_.IsValid() || sample_indices.empty()) {
+        return batch;
+    }
+
+    // Get dataset info for shape
+    DatasetInfo info = dataset_.GetInfo();
+
+    // Determine dimensions from sample shape
+    if (info.shape.size() >= 2) {
+        batch.height = info.shape[0];
+        batch.width = info.shape[1];
+        batch.channels = info.shape.size() > 2 ? info.shape[2] : 1;
+    } else {
+        spdlog::warn("DatasetBatcher: Cannot determine image dimensions from shape");
+        return batch;
+    }
+
+    batch.size = sample_indices.size();
+    batch.indices = sample_indices;
+
+    // Collect batch data
+    size_t sample_size = batch.height * batch.width * batch.channels;
+    std::vector<float> batch_data;
+    std::vector<int> batch_labels;
+    batch_data.reserve(batch.size * sample_size);
+    batch_labels.reserve(batch.size);
+
+    // Check if augmentation should be applied
+    bool should_augment = augmentation_pipeline_ != nullptr &&
+                          apply_augmentation_on_train_ &&
+                          split_ == DatasetSplit::Train;
+
+    for (size_t idx : sample_indices) {
+        auto [sample, label] = dataset_.GetSample(idx);
+
+        // Apply augmentation if enabled
+        if (should_augment && !sample.empty()) {
+            transforms::Image img(sample, batch.width, batch.height, batch.channels);
+            transforms::Image augmented = augmentation_pipeline_->apply(img);
+            sample = augmented.data;
+        }
+
+        batch_data.insert(batch_data.end(), sample.begin(), sample.end());
+        batch_labels.push_back(label);
+    }
+
+    // Convert to tensors
+    std::vector<size_t> data_shape = {batch.size, batch.height, batch.width, batch.channels};
+    batch.images = VectorToTensor(batch_data, data_shape);
+
+    // Apply preprocessing if enabled
+    if (preprocessing_enabled_) {
+        ApplyPreprocessing(batch.images);
+    }
+
+    // Convert labels
+    if (one_hot_) {
+        batch.labels = LabelsToOneHot(batch_labels);
+    } else {
+        batch.labels = LabelsToTensor(batch_labels);
+    }
+
+    // Generate segmentation masks if annotations exist
+    const auto& ann_mgr = DataRegistry::Instance().GetAnnotationManager();
+    if (ann_mgr.HasAnnotationSet(dataset_id)) {
+        int out_width = mask_width_ > 0 ? mask_width_ : static_cast<int>(batch.width);
+        int out_height = mask_height_ > 0 ? mask_height_ : static_cast<int>(batch.height);
+        size_t mask_size = static_cast<size_t>(out_width) * static_cast<size_t>(out_height);
+
+        std::vector<float> masks_data;
+        masks_data.reserve(batch.size * mask_size);
+
+        for (size_t idx : sample_indices) {
+            auto mask = ann_mgr.GetSegmentationMask(dataset_id, idx, out_width, out_height);
+            if (mask.size() == mask_size) {
+                masks_data.insert(masks_data.end(), mask.begin(), mask.end());
+            } else {
+                // No annotations for this image, fill with zeros (background)
+                masks_data.resize(masks_data.size() + mask_size, 0.0f);
+            }
+        }
+
+        std::vector<size_t> mask_shape = {batch.size, static_cast<size_t>(out_height),
+                                           static_cast<size_t>(out_width)};
+        batch.masks = VectorToTensor(masks_data, mask_shape);
+
+        spdlog::debug("DatasetBatcher: Generated {} segmentation masks", batch.size);
+    }
+
+    return batch;
 }
 
 } // namespace cyxwiz

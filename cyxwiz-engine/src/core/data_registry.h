@@ -12,6 +12,7 @@
 // Forward declarations for preprocessing and augmentation
 namespace cyxwiz {
     struct PreprocessingConfig;
+    class AnnotationManager;
 
     namespace transforms {
         class Compose;
@@ -442,6 +443,10 @@ public:
     bool HasAugmentationPipeline(const std::string& dataset_id) const;
     void ClearAugmentationPipeline(const std::string& dataset_id);
 
+    // Annotation management (for labeling and export)
+    AnnotationManager& GetAnnotationManager();
+    const AnnotationManager& GetAnnotationManager() const;
+
 private:
     DataRegistry() = default;
 
@@ -483,6 +488,9 @@ private:
 
     // Augmentation pipelines per dataset
     mutable std::map<std::string, std::shared_ptr<transforms::Compose>> augmentation_pipelines_;
+
+    // Annotation manager
+    mutable std::unique_ptr<AnnotationManager> annotation_manager_;
 };
 
 } // namespace cyxwiz

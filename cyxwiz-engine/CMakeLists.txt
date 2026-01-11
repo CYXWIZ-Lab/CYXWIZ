@@ -45,6 +45,7 @@ set(ENGINE_SOURCES
     src/core/project_manager.cpp
     src/core/engine_config.cpp
     src/core/data_registry.cpp
+    src/core/annotation_manager.cpp
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
     src/core/graph_compiler.cpp

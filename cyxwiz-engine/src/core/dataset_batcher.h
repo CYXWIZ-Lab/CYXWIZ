@@ -9,6 +9,8 @@
 namespace cyxwiz {
 
 // Forward declarations
+class AnnotationManager;
+
 namespace transforms {
     class Compose;
     struct Image;
@@ -23,6 +25,28 @@ struct Batch {
     size_t size = 0;      // Actual batch size (may be < requested for last batch)
 
     bool IsValid() const { return size > 0; }
+};
+
+/**
+ * A batch of images with segmentation masks from annotations
+ * Used for training semantic segmentation models
+ */
+struct AnnotatedBatch {
+    Tensor images;        // [batch_size, height, width, channels] - input images
+    Tensor labels;        // [batch_size] - classification labels
+    Tensor masks;         // [batch_size, height, width] - segmentation masks (class IDs per pixel)
+    size_t size = 0;      // Actual batch size
+
+    // Batch metadata
+    size_t height = 0;
+    size_t width = 0;
+    size_t channels = 0;
+
+    // Which images in the dataset
+    std::vector<size_t> indices;
+
+    bool IsValid() const { return size > 0; }
+    bool HasMasks() const { return masks.NumElements() > 0; }
 };
 
 /**
@@ -102,6 +126,44 @@ public:
     void SetApplyAugmentationOnTrain(bool enable) { apply_augmentation_on_train_ = enable; }
     bool HasAugmentation() const { return augmentation_pipeline_ != nullptr; }
 
+    // =========================================================================
+    // Annotation-aware batch access (for segmentation training)
+    // =========================================================================
+
+    /**
+     * Get annotated batch for specific image indices
+     * Includes segmentation masks from AnnotationManager
+     * @param dataset_id Dataset identifier for annotations
+     * @param sample_indices Image indices to include
+     * @return AnnotatedBatch with images and segmentation masks
+     */
+    AnnotatedBatch GetAnnotatedBatch(const std::string& dataset_id,
+                                      const std::vector<size_t>& sample_indices);
+
+    /**
+     * Get next annotated batch (like GetNextBatch but with masks)
+     * @param dataset_id Dataset identifier for annotations
+     * @return AnnotatedBatch with images and segmentation masks
+     */
+    AnnotatedBatch GetNextAnnotatedBatch(const std::string& dataset_id);
+
+    /**
+     * Check if dataset has annotations
+     * @param dataset_id Dataset identifier
+     * @return true if annotations exist
+     */
+    bool HasAnnotations(const std::string& dataset_id) const;
+
+    /**
+     * Set mask output dimensions (if different from image size)
+     * @param width Mask width (0 = same as image)
+     * @param height Mask height (0 = same as image)
+     */
+    void SetMaskSize(int width, int height) {
+        mask_width_ = width;
+        mask_height_ = height;
+    }
+
 private:
     DatasetHandle dataset_;
     size_t batch_size_;
@@ -124,6 +186,10 @@ private:
     size_t num_classes_ = 0;
 
     bool flatten_ = false;
+
+    // Mask output size (0 = use image dimensions)
+    int mask_width_ = 0;
+    int mask_height_ = 0;
 
     // Preprocessing pipeline
     struct PreprocessingConfig* preprocessing_config_ = nullptr;
