@@ -1,0 +1,50 @@
+[2025-12-20 00:22:30.048] [info] CyxWiz Server GUI v0.3.0
+[2025-12-20 00:22:30.049] [info] Interface mode: GUI
+[2025-12-20 00:22:30.051] [info] Initializing BackendManager with node_id: gui-standalone
+[2025-12-20 00:22:31.176] [info] NVML: Found 1 NVIDIA GPU(s)
+[2025-12-20 00:22:31.189] [info]   GPU 0: NVIDIA GeForce GTX 1050 Ti
+[2025-12-20 00:22:31.192] [info] D3DKMT: Initialized for Intel/generic GPU monitoring
+[2025-12-20 00:22:31.193] [info] MetricsCollector started with 1000ms interval
+[2025-12-20 00:22:31.194] [info] APIKeyManager: Loaded 0 keys from ./config/api_keys.json
+[2025-12-20 00:22:31.196] [info] BackendManager initialized successfully
+[2025-12-20 00:22:31.197] [info] Starting GUI...
+[2025-12-20 00:22:31.198] [info] Initializing ServerApplication GUI...
+[2025-12-20 00:22:31.225] [info] PDH GPU: Added wildcard 3D counter for Intel(R) UHD Graphics 630
+[2025-12-20 00:22:31.227] [info] PDH GPU: Initialized counter for Intel(R) UHD Graphics 630 (LUID: luid_0x00000000_0x00010743)
+[2025-12-20 00:22:31.652] [info] Window icon loaded from: ./cyxwiz-server-node/resources/servernode.png
+[2025-12-20 00:22:31.655] [info] GLFW initialized with OpenGL 3.3.0 NVIDIA 560.76
+[2025-12-20 00:22:31.659] [info] ImGui initialized
+[2025-12-20 00:22:31.722] [info] Fonts loaded from: ./cyxwiz-server-node/resources/fonts/
+[2025-12-20 00:22:31.723] [info] Theme applied: CyxWizDark
+[2025-12-20 00:22:31.723] [info] Creating ServerMainWindow (daemon_client=connected)
+[2025-12-20 00:22:31.724] [info] ServerApplication initialized successfully
+[2025-12-20 00:22:31.724] [info] Initializing BackendManager in background...
+[2025-12-20 00:22:31.725] [warning] BackendManager already initialized
+[2025-12-20 00:22:31.725] [info] BackendManager initialization complete
+[2025-12-20 00:22:31.724] [info] Connecting to daemon at localhost:50054 (background)...
+[2025-12-20 00:22:31.766] [info] AuthManager initialized with API URL: http://127.0.0.1:3002/api
+[2025-12-20 00:22:31.811] [error] Failed to fetch user profile: [json.exception.type_error.302] type must be string, but is null
+[2025-12-20 00:22:31.811] [warning] Saved session token is invalid or expired
+[2025-12-20 00:22:31.813] [error] Failed to clear saved session: remove: The process cannot access the file because it is being used by another process.: "C:\Users\chick\AppData\Roaming\CyxWiz\server-node\auth.json"
+[2025-12-20 00:22:36.742] [error] Failed to connect to daemon at localhost:50054 (timeout)
+[2025-12-20 00:22:36.745] [warning] Failed to connect to daemon at localhost:50054
+[2025-12-20 00:22:40.093] [info] Entering offline mode
+[2025-12-20 00:22:41.768] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:22:51.774] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:23:01.782] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:23:11.788] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:23:21.796] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:23:31.803] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:23:41.810] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:23:51.817] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:24:01.824] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:24:11.831] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:24:21.838] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:24:31.845] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:24:41.853] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:24:51.860] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:25:01.867] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:25:11.874] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:25:21.882] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:25:31.889] [info] Heartbeat check: node_registered=true, offline=true, central=false
+[2025-12-20 00:25:41.896] [info] Heartbeat check: node_registered=true, offline=true, central=false

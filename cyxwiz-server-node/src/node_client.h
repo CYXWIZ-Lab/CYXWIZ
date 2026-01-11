@@ -86,6 +86,11 @@ public:
     using ConnectionLostCallback = std::function<void()>;
     void SetConnectionLostCallback(ConnectionLostCallback callback) { connection_lost_callback_ = callback; }
 
+    // Callback for authentication failures (token invalid/revoked)
+    // This is called when heartbeat fails due to auth error - user needs to re-login
+    using AuthFailedCallback = std::function<void(const std::string& reason)>;
+    void SetAuthFailedCallback(AuthFailedCallback callback) { auth_failed_callback_ = callback; }
+
     // ========================================================================
     // Job Status Reporting (Server Node → Central Server)
     // ========================================================================
@@ -163,6 +168,10 @@ private:
 
     // Callback for connection lost events
     ConnectionLostCallback connection_lost_callback_;
+
+    // Callback for authentication failures
+    AuthFailedCallback auth_failed_callback_;
+    std::atomic<bool> auth_failed_{false};  // Prevent repeated callbacks
 };
 
 } // namespace servernode

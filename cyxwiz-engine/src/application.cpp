@@ -28,6 +28,7 @@
 #endif
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <thread>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -72,15 +73,34 @@ static void enable_dark_title_bar(GLFWwindow* window) {
 
 // Load window icon from resources
 static bool load_window_icon(GLFWwindow* window) {
-    // Try both possible locations
-    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz.png";
+    // Try multiple possible locations
+    std::vector<std::filesystem::path> icon_paths = {
+        "cyxwiz-engine/resources/cyxwiz.png",
+        "resources/cyxwiz.png"
+    };
 
-    if (!std::filesystem::exists(icon_path)) {
-        icon_path = "resources/cyxwiz.png";
-        if (!std::filesystem::exists(icon_path)) {
-            spdlog::warn("Window icon not found at either location");
-            return false;
+#ifdef _WIN32
+    // On Windows, check paths relative to the executable
+    char exec_path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, exec_path, MAX_PATH);
+    if (len > 0) {
+        std::filesystem::path exec_dir = std::filesystem::path(exec_path).parent_path();
+        icon_paths.insert(icon_paths.begin(), exec_dir / "resources" / "cyxwiz.png");
+        icon_paths.insert(icon_paths.begin(), exec_dir / ".." / ".." / ".." / "cyxwiz-engine" / "resources" / "cyxwiz.png");
+    }
+#endif
+
+    std::filesystem::path icon_path;
+    for (const auto& path : icon_paths) {
+        if (std::filesystem::exists(path)) {
+            icon_path = path;
+            break;
         }
+    }
+
+    if (icon_path.empty()) {
+        spdlog::warn("Window icon not found at any location");
+        return false;
     }
 
     int width, height, channels;
@@ -113,9 +133,16 @@ CyxWizApp::CyxWizApp(int argc, char** argv)
     }
 }
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4722)  // destructor never returns - intentional (Shutdown calls quick_exit)
+#endif
 CyxWizApp::~CyxWizApp() {
     Shutdown();
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
@@ -209,14 +236,14 @@ bool CyxWizApp::Initialize() {
     // Load professional fonts
     LoadFonts(io);
 
-    // Initialize components
+    // Initialize components - UI loads immediately
     main_window_ = std::make_unique<gui::MainWindow>();
+
+    // Initialize Python and Network synchronously for now (fast enough)
+    // These will show in console log but UI is already visible
     python_engine_ = std::make_unique<scripting::PythonEngine>();
     grpc_client_ = std::make_unique<network::GRPCClient>();
     job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
-
-    // Connect network components to main window
-    main_window_->SetNetworkComponents(grpc_client_.get(), job_manager_.get());
 
     // Connect debug logging flags to main window (for View menu toggles)
     main_window_->SetIdleLogPtr(&log_idle_transitions_);
@@ -296,7 +323,8 @@ int CyxWizApp::Run() {
         // Check if user is trying to close the window
         if (glfwWindowShouldClose(window_)) {
             if (force_close_) {
-                // User confirmed force close
+                // User confirmed force close - hide immediately
+                glfwHideWindow(window_);
                 break;
             }
 
@@ -316,7 +344,8 @@ int CyxWizApp::Run() {
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
                 show_data_loaded_confirmation_ = true;
             } else {
-                // OK to close
+                // OK to close - hide window immediately for instant feedback
+                glfwHideWindow(window_);
                 break;
             }
         }
@@ -579,7 +608,7 @@ void CyxWizApp::HandleInput() {
     }
 }
 
-void CyxWizApp::Update(float delta_time) {
+void CyxWizApp::Update(float /*delta_time*/) {
     // Update components
     if (job_manager_) {
         job_manager_->Update();
@@ -639,29 +668,95 @@ void CyxWizApp::Render() {
     glfwSwapBuffers(window_);
 }
 
-void CyxWizApp::Shutdown() {
+[[noreturn]] void CyxWizApp::Shutdown() {
     spdlog::info("Shutting down application...");
+    spdlog::default_logger()->flush();
 
-    // Cleanup components
+    // Immediately exit to avoid crashes during static destructor cleanup
+    // (ArrayFire/CUDA have complex cleanup that can crash).
+    // All resources will be properly cleaned up by the OS on process exit.
+    //
+    // The window is already hidden at this point (see Run() method),
+    // so the user experience is still instant close.
+    std::quick_exit(0);
+
+#if 0  // Documentation of proper cleanup order (not executed due to quick_exit above)
+
+    // Stop any active training first (before destroying UI)
+    auto& training_mgr = cyxwiz::TrainingManager::Instance();
+    if (training_mgr.IsTrainingActive()) {
+        spdlog::info("Stopping active training...");
+        training_mgr.StopTraining();
+    }
+
+    // Shutdown async task manager (wait for worker threads)
+    spdlog::info("Shutting down async tasks...");
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+
+    // Cleanup components - with timing for debugging slow shutdown
+    auto start = std::chrono::steady_clock::now();
+    auto log_elapsed = [&start](const char* step) {
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+        spdlog::info("Shutdown: {} ({}ms)", step, ms);
+        start = now;
+    };
+
+    spdlog::info("Cleaning up job manager...");
     job_manager_.reset();
+    log_elapsed("job_manager_.reset()");
+
+    spdlog::info("Cleaning up gRPC client...");
     grpc_client_.reset();
-    python_engine_.reset();
+    log_elapsed("grpc_client_.reset()");
+
+    // Prepare main window for shutdown (stop all background threads first)
+    if (main_window_) {
+        spdlog::info("Preparing main window for shutdown...");
+        main_window_->PrepareForShutdown();
+        log_elapsed("main_window_->PrepareForShutdown()");
+    }
+
+    // IMPORTANT: Destroy MainWindow BEFORE Python engine!
+    // MainWindow has ScriptingEngine which may use pybind11 objects during destruction.
+    // If Python is finalized first, those objects crash when they try to clean up.
+    spdlog::info("Cleaning up main window...");
     main_window_.reset();
+    log_elapsed("main_window_.reset()");
+
+    spdlog::info("Cleaning up Python engine...");
+    python_engine_.reset();
+    log_elapsed("python_engine_.reset()");
+
+    // Clear data registry (unload datasets from memory)
+    spdlog::info("Unloading datasets...");
+    cyxwiz::DataRegistry::Instance().UnloadAll();
+    log_elapsed("DataRegistry::UnloadAll()");
 
     // Cleanup ImGui
+    spdlog::info("Cleaning up ImGui...");
+    spdlog::info("  ImGui_ImplOpenGL3_Shutdown...");
     ImGui_ImplOpenGL3_Shutdown();
+    spdlog::info("  ImGui_ImplGlfw_Shutdown...");
     ImGui_ImplGlfw_Shutdown();
-    ImNodes::DestroyContext();  // Cleanup ImNodes context
-    ImPlot::DestroyContext();  // Cleanup ImPlot context
+    spdlog::info("  ImNodes::DestroyContext...");
+    ImNodes::DestroyContext();
+    spdlog::info("  ImPlot::DestroyContext...");
+    ImPlot::DestroyContext();
+    spdlog::info("  ImGui::DestroyContext...");
     ImGui::DestroyContext();
 
-    // Cleanup GLFW
-    if (window_) {
-        glfwDestroyWindow(window_);
-    }
-    glfwTerminate();
+    // Force flush all loggers
+    spdlog::default_logger()->flush();
+    log_elapsed("ImGui shutdown");
 
-    spdlog::info("Application shut down complete");
+    // Exit immediately after ImGui cleanup to avoid crashes from CUDA/ArrayFire
+    // static destructor ordering issues. The OS will cleanup GLFW and all other
+    // resources during process termination anyway.
+    spdlog::info("Application shutdown complete (quick exit)");
+    spdlog::default_logger()->flush();
+    std::quick_exit(0);
+#endif  // End of documentation-only cleanup code
 }
 
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
@@ -679,7 +774,19 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         "../Resources/fonts/"  // macOS app bundle
     };
 
-#ifdef __APPLE__
+#ifdef _WIN32
+    // On Windows, check paths relative to the executable
+    char exec_path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, exec_path, MAX_PATH);
+    if (len > 0) {
+        std::filesystem::path exec_dir = std::filesystem::path(exec_path).parent_path();
+        // From build/bin/Release/ back to cyxwiz-engine/resources/fonts/
+        font_paths.insert(font_paths.begin(), (exec_dir / "resources" / "fonts" / "").string());
+        font_paths.insert(font_paths.begin(), (exec_dir / ".." / "resources" / "fonts" / "").string());
+        font_paths.insert(font_paths.begin(), (exec_dir / ".." / ".." / ".." / "cyxwiz-engine" / "resources" / "fonts" / "").string());
+        spdlog::debug("Windows executable dir: {}", exec_dir.string());
+    }
+#elif defined(__APPLE__)
     // On macOS, also check paths relative to the executable
     char exec_path[PATH_MAX];
     uint32_t size = sizeof(exec_path);

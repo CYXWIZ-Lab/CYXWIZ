@@ -410,7 +410,6 @@ void DescriptiveStatsPanel::ComputeAsync() {
     is_computing_ = true;
 
     // Find the actual column index
-    const auto& headers = current_table_->GetHeaders();
     size_t col_idx = 0;
     int numeric_idx = 0;
 

@@ -8,6 +8,7 @@
 #include "network/p2p_client.h"
 #include "core/data_registry.h"
 #include "auth/auth_client.h"
+#include "core/engine_config.h"
 #include "common.pb.h"
 #include "job.pb.h"
 #include <imgui.h>
@@ -30,8 +31,9 @@ namespace cyxwiz {
 
 ConnectionDialog::ConnectionDialog(network::GRPCClient* client, network::JobManager* job_manager)
     : client_(client), job_manager_(job_manager), show_(false), connecting_(false) {
-    // Default server address
-    std::strncpy(server_address_, "localhost:50051", sizeof(server_address_) - 1);
+    // Load server address from config
+    std::string addr = core::EngineConfig::Instance().GetCentralServerAddress();
+    std::strncpy(server_address_, addr.c_str(), sizeof(server_address_) - 1);
     server_address_[sizeof(server_address_) - 1] = '\0';
 
     // Initialize dataset URI for P2P training

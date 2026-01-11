@@ -48,6 +48,7 @@ void PatternLibrary::LoadBuiltinPatterns() {
     // Try multiple possible locations for builtin patterns
     std::vector<std::string> search_paths = {
         builtin_patterns_dir_,
+        "cyxwiz-engine/resources/patterns",  // From project root
         "../resources/patterns",
         "../../resources/patterns",
         "../../../cyxwiz-engine/resources/patterns"
@@ -709,14 +710,10 @@ bool PatternLibrary::SavePatternFromSelection(
     json nodes_json = json::array();
     json links_json = json::array();
 
-    // Find bounding box for positioning
-    float min_x = std::numeric_limits<float>::max();
-    float min_y = std::numeric_limits<float>::max();
-
     std::set<int> selected_set(selected_ids.begin(), selected_ids.end());
     std::map<int, std::string> node_to_id_map;
 
-    // First pass: find min position and create ID map
+    // First pass: create ID map
     int node_counter = 1;
     for (const auto& node : nodes) {
         if (selected_set.count(node.id)) {

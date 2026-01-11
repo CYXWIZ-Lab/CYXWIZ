@@ -153,6 +153,29 @@ bool NodeEditor::ValidateLink(int from_pin, int to_pin, std::string& error) cons
         return false;
     }
 
+    // Shape-based validation: Check for Conv2D/MaxPool2D (4D) → Dense (2D) mismatch
+    const MLNode* from_node = nullptr;
+    const MLNode* to_node = nullptr;
+
+    for (const auto& node : nodes_) {
+        if (node.id == from_node_id) from_node = &node;
+        if (node.id == to_node_id) to_node = &node;
+    }
+
+    if (from_node && to_node) {
+        if (Is4DOutputNode(from_node->type) && Expects2DInput(to_node->type)) {
+            // Store pending connection for auto-insert dialog
+            const_cast<NodeEditor*>(this)->pending_flatten_from_node_ = from_node->id;
+            const_cast<NodeEditor*>(this)->pending_flatten_to_node_ = to_node->id;
+            const_cast<NodeEditor*>(this)->pending_flatten_from_pin_ = from_pin;
+            const_cast<NodeEditor*>(this)->pending_flatten_to_pin_ = to_pin;
+            const_cast<NodeEditor*>(this)->show_auto_insert_flatten_dialog_ = true;
+
+            error = "Shape mismatch - Flatten needed";
+            return false;
+        }
+    }
+
     return true;
 }
 

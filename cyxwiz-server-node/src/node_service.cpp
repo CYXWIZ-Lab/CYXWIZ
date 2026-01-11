@@ -12,7 +12,7 @@ NodeServiceImpl::NodeServiceImpl(JobExecutor* job_executor, const std::string& n
 }
 
 grpc::Status NodeServiceImpl::AssignJob(
-    grpc::ServerContext* context,
+    [[maybe_unused]] grpc::ServerContext* context,
     const protocol::AssignJobRequest* request,
     protocol::AssignJobResponse* response)
 {
@@ -92,9 +92,9 @@ grpc::Status NodeServiceImpl::AssignJob(
 }
 
 grpc::Status NodeServiceImpl::GetNodeMetrics(
-    grpc::ServerContext* context,
-    const protocol::GetNodeMetricsRequest* request,
-    protocol::GetNodeMetricsResponse* response)
+    [[maybe_unused]] grpc::ServerContext* context,
+    [[maybe_unused]] const protocol::GetNodeMetricsRequest* request,
+    [[maybe_unused]] protocol::GetNodeMetricsResponse* response)
 {
     // TODO: Implement node metrics collection
     spdlog::debug("GetNodeMetrics called (not yet implemented)");

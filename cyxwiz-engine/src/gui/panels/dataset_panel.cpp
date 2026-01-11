@@ -2,13 +2,17 @@
 #include "training_plot_panel.h"
 #include "wallet_panel.h"
 #include "../node_editor.h"
+#include "../icons.h"
 #include "../../network/job_manager.h"
 #include "../../core/texture_manager.h"
 #include "../../core/training_manager.h"
 #include "../../core/graph_compiler.h"
 #include "../../core/file_dialogs.h"
+#include "../../preprocessing/preprocessing_config.h"
+#include "../../preprocessing/statistics_calculator.h"
 #include "job.pb.h"
 #include <imgui.h>
+#include <implot.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -59,135 +63,546 @@ void DatasetPanel::StopLocalTraining() {
     cyxwiz::TrainingManager::Instance().StopTraining();
 }
 
+// ========== DBGate-Style Layout Methods ==========
+
+const char* DatasetPanel::GetDatasetTypeIcon(cyxwiz::DatasetType type) const {
+    switch (type) {
+        case cyxwiz::DatasetType::MNIST:
+        case cyxwiz::DatasetType::CIFAR10:
+        case cyxwiz::DatasetType::ImageFolder:
+        case cyxwiz::DatasetType::ImageCSV:
+            return ICON_FA_IMAGE;
+        case cyxwiz::DatasetType::CSV:
+            return ICON_FA_FILE_CSV;
+        case cyxwiz::DatasetType::HuggingFace:
+            return ICON_FA_CLOUD;
+        case cyxwiz::DatasetType::Kaggle:
+            return ICON_FA_TROPHY;
+        default:
+            return ICON_FA_DATABASE;
+    }
+}
+
+void DatasetPanel::RenderToolbar() {
+    // Refresh button
+    if (ImGui::Button(ICON_FA_ARROWS_ROTATE "##Refresh")) {
+        if (current_dataset_.IsValid()) {
+            cached_info_ = current_dataset_.GetInfo();
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refresh");
+
+    ImGui::SameLine(0, 12);
+
+    // Memory bar (color-coded)
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    auto stats = registry.GetMemoryStats();
+    float usage = (stats.memory_limit > 0) ?
+        static_cast<float>(stats.total_allocated) / static_cast<float>(stats.memory_limit) : 0.0f;
+
+    ImVec4 bar_color = usage > 0.9f ? ImVec4(0.9f, 0.3f, 0.3f, 1.0f) :
+                       usage > 0.7f ? ImVec4(0.9f, 0.7f, 0.3f, 1.0f) :
+                                      ImVec4(0.3f, 0.7f, 0.3f, 1.0f);
+
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, bar_color);
+    char mem_label[64];
+    snprintf(mem_label, sizeof(mem_label), "%.1f/%.1f GB",
+             stats.total_allocated / 1e9, stats.memory_limit / 1e9);
+    ImGui::ProgressBar(usage, ImVec2(100, 0), mem_label);
+    ImGui::PopStyleColor();
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Memory: %.1f%% used\nClick to trim", usage * 100.0f);
+    }
+    if (ImGui::IsItemClicked()) {
+        registry.TrimMemory();
+    }
+
+    ImGui::SameLine(0, 12);
+
+    // Search box
+    ImGui::SetNextItemWidth(150);
+    ImGui::InputTextWithHint("##Search", ICON_FA_MAGNIFYING_GLASS " Search...", search_buffer_, sizeof(search_buffer_));
+
+    // Settings button on the right
+    float settings_x = ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 30;
+    ImGui::SameLine(settings_x);
+    if (ImGui::Button(ICON_FA_GEAR "##Settings")) {
+        // TODO: Show settings popup
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Settings");
+}
+
+void DatasetPanel::RenderSidebar() {
+    // Header
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), ICON_FA_DATABASE " DATASETS");
+    ImGui::Separator();
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    auto datasets = registry.ListDatasets();
+
+    if (datasets.empty()) {
+        ImGui::TextDisabled("No datasets loaded");
+        ImGui::TextDisabled("Use Load tab " ICON_FA_ARROW_RIGHT);
+        return;
+    }
+
+    // Filter datasets by search
+    std::string search_str(search_buffer_);
+    std::transform(search_str.begin(), search_str.end(), search_str.begin(), ::tolower);
+
+    ImGui::BeginChild("##DatasetList", ImVec2(0, -50), false);
+
+    for (size_t i = 0; i < datasets.size(); ++i) {
+        const auto& info = datasets[i];
+
+        // Filter by search
+        if (!search_str.empty()) {
+            std::string name_lower = info.name;
+            std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+            if (name_lower.find(search_str) == std::string::npos) continue;
+        }
+
+        bool is_selected = current_dataset_.IsValid() && current_dataset_.GetName() == info.name;
+
+        const char* type_icon = GetDatasetTypeIcon(info.type);
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                                   ImGuiTreeNodeFlags_SpanAvailWidth |
+                                   ImGuiTreeNodeFlags_DefaultOpen;
+        if (is_selected) {
+            flags |= ImGuiTreeNodeFlags_Selected;
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.4f, 0.3f, 1.0f));
+        }
+
+        bool node_open = ImGui::TreeNodeEx((void*)(intptr_t)i, flags, "%s %s", type_icon, info.name.c_str());
+
+        if (is_selected) {
+            ImGui::PopStyleColor();
+        }
+
+        // Right-click context menu
+        if (ImGui::BeginPopupContextItem()) {
+            if (ImGui::MenuItem(ICON_FA_CHECK " Set Active")) {
+                current_dataset_ = registry.GetDataset(info.name);
+                cached_info_ = current_dataset_.GetInfo();
+                class_counts_.clear();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(ICON_FA_TRASH " Unload")) {
+                registry.UnloadDataset(info.name);
+                if (is_selected) {
+                    current_dataset_ = cyxwiz::DatasetHandle();
+                    cached_info_ = cyxwiz::DatasetInfo();
+                }
+            }
+            ImGui::EndPopup();
+        }
+
+        // Tooltip with more info
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::Text("%s", info.name.c_str());
+            ImGui::TextDisabled("Samples: %zu | Classes: %zu", info.num_samples, info.num_classes);
+            ImGui::TextDisabled("Memory: %.1f MB", info.memory_usage / 1e6);
+            ImGui::EndTooltip();
+        }
+
+        if (node_open) {
+            // Set Active button (only show if not already active)
+            if (!is_selected) {
+                if (ImGui::SmallButton(ICON_FA_CHECK " Set Active")) {
+                    current_dataset_ = registry.GetDataset(info.name);
+                    cached_info_ = current_dataset_.GetInfo();
+                    class_counts_.clear();
+                    // Show notification
+                    show_notification_ = true;
+                    notification_time_ = static_cast<float>(ImGui::GetTime());
+                    notification_message_ = "Active: " + info.name;
+                }
+            } else {
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Active");
+            }
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+
+            ImGui::TreeNodeEx("train", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen,
+                             ICON_FA_GRADUATION_CAP " train (%zu)", info.train_count);
+            ImGui::TreeNodeEx("val", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen,
+                             ICON_FA_SCALE_BALANCED " val (%zu)", info.val_count);
+            ImGui::TreeNodeEx("test", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen,
+                             ICON_FA_FLASK " test (%zu)", info.test_count);
+
+            ImGui::PopStyleColor();
+            ImGui::TreePop();
+        }
+    }
+
+    ImGui::EndChild();
+
+    // Quick load section at bottom
+    ImGui::Separator();
+    RenderQuickLoadSection();
+}
+
+void DatasetPanel::RenderQuickLoadSection() {
+    ImGui::TextDisabled("Quick Load:");
+    ImGui::SameLine();
+
+    if (ImGui::SmallButton("MNIST")) {
+        LoadMNISTDatasetAsync("");
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("CIFAR-10")) {
+        LoadCIFAR10DatasetAsync("");
+    }
+}
+
+void DatasetPanel::RenderSplitter(float height) {
+    ImGui::SameLine();
+
+    ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##VSplitter", ImVec2(4.0f, height));
+
+    if (ImGui::IsItemActive()) {
+        sidebar_width_ += ImGui::GetIO().MouseDelta.x;
+        sidebar_width_ = std::clamp(sidebar_width_, 150.0f, 350.0f);
+    }
+
+    // Visual feedback
+    bool hovered = ImGui::IsItemHovered() || ImGui::IsItemActive();
+    if (hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddRectFilled(
+            cursor_pos,
+            ImVec2(cursor_pos.x + 4.0f, cursor_pos.y + height),
+            IM_COL32(100, 150, 200, 100)
+        );
+    }
+}
+
+void DatasetPanel::RenderMainContent() {
+    // Always show tab bar - Load tab is first so user can always load datasets
+    if (ImGui::BeginTabBar("ContentTabs", ImGuiTabBarFlags_None)) {
+        // Load Dataset tab
+        if (ImGui::BeginTabItem(ICON_FA_FOLDER_OPEN " Load")) {
+            ImGui::BeginChild("##LoadContent", ImVec2(0, 0), false);
+            RenderDatasetSelection();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        // Preview tab
+        if (ImGui::BeginTabItem(ICON_FA_EYE " Preview")) {
+            active_content_tab_ = ContentTab::Preview;
+            ImGui::BeginChild("##PreviewContent", ImVec2(0, 0), false);
+            RenderPreviewContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        // Pipeline tab
+        if (ImGui::BeginTabItem(ICON_FA_SLIDERS " Pipeline")) {
+            active_content_tab_ = ContentTab::Pipeline;
+            ImGui::BeginChild("##PipelineContent", ImVec2(0, 0), false);
+            RenderPipelineContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        // Annotate tab (before Training)
+        if (ImGui::BeginTabItem(ICON_FA_PEN " Annotate")) {
+            ImGui::BeginChild("##AnnotateContent", ImVec2(0, 0), false);
+            RenderInteractiveToolsTab();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        // Training tab
+        if (ImGui::BeginTabItem(ICON_FA_PLAY " Training")) {
+            active_content_tab_ = ContentTab::Training;
+            ImGui::BeginChild("##TrainingContent", ImVec2(0, 0), false);
+            RenderTrainingContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        // Details tab
+        if (ImGui::BeginTabItem(ICON_FA_CIRCLE_INFO " Details")) {
+            active_content_tab_ = ContentTab::Details;
+            ImGui::BeginChild("##DetailsContent", ImVec2(0, 0), false);
+            RenderDetailsContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
+    }
+}
+
+void DatasetPanel::RenderPreviewContent() {
+    ImGui::Text("View:");
+    ImGui::SameLine();
+
+    bool single = preview_view_mode_ == 0;
+    bool grid = preview_view_mode_ == 1;
+    bool table = preview_view_mode_ == 2;
+
+    if (single) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+    if (ImGui::Button(ICON_FA_SQUARE "##Single")) preview_view_mode_ = 0;
+    if (single) ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Single Sample");
+
+    ImGui::SameLine();
+    if (grid) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+    if (ImGui::Button(ICON_FA_GRIP "##Grid")) preview_view_mode_ = 1;
+    if (grid) ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grid View");
+
+    ImGui::SameLine();
+    if (table) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+    if (ImGui::Button(ICON_FA_TABLE "##Table")) preview_view_mode_ = 2;
+    if (table) ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Table View");
+
+    ImGui::SameLine(0, 20);
+    ImGui::Text("#");
+    ImGui::SameLine();
+
+    int max_idx = static_cast<int>(current_dataset_.Size()) - 1;
+    if (max_idx < 0) max_idx = 0;
+
+    ImGui::SetNextItemWidth(120);
+    ImGui::SliderInt("##SampleIdx", &preview_sample_idx_, 0, max_idx);
+
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_SHUFFLE "##Random")) {
+        if (current_dataset_.Size() > 0) {
+            preview_sample_idx_ = rand() % static_cast<int>(current_dataset_.Size());
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Random Sample");
+
+    ImGui::Separator();
+
+    size_t dataset_size = current_dataset_.Size();
+    bool is_image = (cached_info_.type == cyxwiz::DatasetType::ImageFolder ||
+                     cached_info_.type == cyxwiz::DatasetType::ImageCSV ||
+                     cached_info_.type == cyxwiz::DatasetType::MNIST ||
+                     cached_info_.type == cyxwiz::DatasetType::CIFAR10);
+
+    switch (preview_view_mode_) {
+        case 0: RenderSingleSamplePreview(dataset_size, is_image); break;
+        case 1: RenderGridPreview(dataset_size, is_image); break;
+        case 2: RenderTablePreview(dataset_size); break;
+    }
+}
+
+void DatasetPanel::RenderPipelineContent() {
+    RenderDataPipelineTab();
+}
+
+void DatasetPanel::RenderTrainingContent() {
+    RenderTrainingSection();
+}
+
+void DatasetPanel::RenderDetailsContent() {
+    if (ImGui::CollapsingHeader(ICON_FA_CIRCLE_INFO " Dataset Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10);
+        RenderDatasetInfo();
+        ImGui::Unindent(10);
+    }
+
+    if (ImGui::CollapsingHeader(ICON_FA_CHART_PIE " Train/Val/Test Split", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10);
+        RenderSplitConfiguration();
+        ImGui::Unindent(10);
+    }
+
+    if (ImGui::CollapsingHeader(ICON_FA_CHART_BAR " Statistics")) {
+        ImGui::Indent(10);
+        RenderStatistics();
+        ImGui::Unindent(10);
+    }
+
+    // Show indicator if computing
+    std::string analytics_label = ICON_FA_CHART_LINE " Analytics";
+    if (analytics_computing_.load()) {
+        analytics_label += " (computing...)";
+    } else if (analytics_results_.success) {
+        analytics_label += " " ICON_FA_CHECK;
+    }
+
+    if (ImGui::CollapsingHeader(analytics_label.c_str())) {
+        ImGui::Indent(10);
+        RenderDatasetAnalyticsSection();
+        ImGui::Unindent(10);
+    }
+
+    bool is_image = (cached_info_.type == cyxwiz::DatasetType::ImageFolder ||
+                     cached_info_.type == cyxwiz::DatasetType::ImageCSV ||
+                     cached_info_.type == cyxwiz::DatasetType::MNIST ||
+                     cached_info_.type == cyxwiz::DatasetType::CIFAR10);
+
+    if (is_image) {
+        if (ImGui::CollapsingHeader(ICON_FA_MAGNIFYING_GLASS_CHART " Quality Analysis")) {
+            ImGui::Indent(10);
+            RenderQualityAnalysisSection();
+            ImGui::Unindent(10);
+        }
+
+        if (ImGui::CollapsingHeader(ICON_FA_COPY " Duplicate Detection")) {
+            ImGui::Indent(10);
+            RenderDuplicateDetectionSection();
+            ImGui::Unindent(10);
+        }
+    }
+}
+
+void DatasetPanel::RenderStatusBar() {
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::BeginChild("##StatusBar", ImVec2(0, footer_height_), true);
+
+    // Show analytics progress if computing
+    if (analytics_computing_.load()) {
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(analytics_task_id_);
+        if (task) {
+            float progress = task->GetProgress();
+            std::string status = task->GetStatusMessage();
+
+            ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), ICON_FA_CHART_LINE);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(150);
+            ImGui::ProgressBar(progress, ImVec2(0, 0), status.empty() ? "Analyzing..." : nullptr);
+            ImGui::SameLine();
+            ImGui::Text("%.0f%%", progress * 100);
+        }
+    } else if (is_loading_.load()) {
+        float time = static_cast<float>(ImGui::GetTime());
+        const char* spinner_chars[] = {"|", "/", "-", "\\"};
+        int idx = static_cast<int>(time * 8) % 4;
+        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "%s Loading...", spinner_chars[idx]);
+    } else {
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Ready");
+    }
+
+    if (IsDatasetLoaded()) {
+        ImGui::SameLine(200);
+        ImGui::Text("%s | %zu samples | %zu classes",
+                   cached_info_.name.c_str(),
+                   cached_info_.num_samples,
+                   cached_info_.num_classes);
+    }
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    auto stats = registry.GetMemoryStats();
+
+    float mem_text_width = ImGui::CalcTextSize("Mem: 999.9 MB").x;
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - mem_text_width - 10);
+    ImGui::TextDisabled("Mem: %.1f MB", stats.total_allocated / 1e6);
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+}
+
 void DatasetPanel::Render() {
     if (!visible_) return;
 
-    ImGui::SetNextWindowSize(ImVec2(700, 750), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin(name_.c_str(), &visible_)) {
-
-        // Header
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Dataset Management");
-        ImGui::Spacing();
-
-        // Show loading task indicator when async loading is in progress
-        if (is_loading_.load()) {
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.15f, 0.2f, 1.0f));
-            ImGui::BeginChild("LoadingTask", ImVec2(0, 60), true);
-
-            // Animated loading spinner using time
-            float time = static_cast<float>(ImGui::GetTime());
-            const char* spinner_chars[] = {"|", "/", "-", "\\"};
-            int spinner_idx = static_cast<int>(time * 8) % 4;
-
-            ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s LOADING DATASET...", spinner_chars[spinner_idx]);
-
-            // Status message
-            if (!loading_status_message_.empty()) {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(%s)", loading_status_message_.c_str());
+    // Check analytics completion (must run every frame, not just when Details tab is visible)
+    if (analytics_computing_.load()) {
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(analytics_task_id_);
+        if (task) {
+            auto state = task->GetState();
+            // Debug: log state periodically (use info level to ensure visibility)
+            static int frame_count = 0;
+            if (++frame_count % 120 == 0) {
+                spdlog::info("Analytics check: task_id={}, state={}, progress={:.1f}%",
+                    analytics_task_id_, static_cast<int>(state), task->GetProgress() * 100);
             }
 
-            // Progress bar
-            float progress = loading_progress_.load();
-            ImGui::ProgressBar(progress, ImVec2(-80, 0), progress > 0 ? "" : "Preparing...");
+            if (state == cyxwiz::TaskState::Completed) {
+                analytics_computing_.store(false);
+                spdlog::info("Analytics computation completed, success={}", analytics_results_.success);
 
-            // Cancel button
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(70, 0))) {
-                CancelLoading();
-            }
-
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
-            ImGui::Spacing();
-        }
-
-        // Show notification (fades out after 2 seconds)
-        if (show_notification_) {
-            float elapsed = static_cast<float>(ImGui::GetTime()) - notification_time_;
-            const float NOTIFICATION_DURATION = 2.0f;
-
-            if (elapsed < NOTIFICATION_DURATION) {
-                // Fade out in the last 0.5 seconds
-                float alpha = (elapsed > NOTIFICATION_DURATION - 0.5f) ?
-                    (NOTIFICATION_DURATION - elapsed) / 0.5f : 1.0f;
-
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.3f, 0.15f, alpha * 0.9f));
-                ImGui::BeginChild("Notification", ImVec2(0, 30), true);
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, alpha), "%s", notification_message_.c_str());
-                ImGui::EndChild();
-                ImGui::PopStyleColor();
-                ImGui::Spacing();
-            } else {
-                show_notification_ = false;
-            }
-        }
-
-        // Tab bar for different views
-        if (ImGui::BeginTabBar("DatasetTabs")) {
-            if (ImGui::BeginTabItem("Load Dataset")) {
-                ImGui::BeginChild("LoadPanel", ImVec2(0, 0), false);
-
-                // Single column clean layout
-                RenderDatasetSelection();
-
-                // Show loaded dataset info below in a card-style section
-                if (IsDatasetLoaded()) {
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-
-                    // Dataset Info Card
-                    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
-                    ImGui::BeginChild("DatasetInfoCard", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysAutoResize);
-
-                    RenderDatasetInfo();
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    RenderSplitConfiguration();
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    RenderStatistics();
-
-                    ImGui::EndChild();
-                    ImGui::PopStyleColor();
-                }
-
-                ImGui::EndChild();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Loaded Datasets")) {
-                RenderLoadedDatasets();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Preview")) {
-                if (IsDatasetLoaded()) {
-                    RenderDataPreview();
+                // Show notification
+                show_notification_ = true;
+                notification_time_ = static_cast<float>(ImGui::GetTime());
+                if (analytics_results_.success) {
+                    notification_message_ = ICON_FA_CHECK " Analytics complete!";
                 } else {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a dataset to preview samples");
+                    notification_message_ = ICON_FA_XMARK " Analytics failed";
                 }
-                ImGui::EndTabItem();
             }
-
-            if (ImGui::BeginTabItem("Augmentation")) {
-                RenderAugmentationTab();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Training")) {
-                if (IsDatasetLoaded()) {
-                    RenderTrainingSection();
-                } else {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a dataset to train a model");
-                }
-                ImGui::EndTabItem();
-            }
-
-            ImGui::EndTabBar();
+        } else {
+            spdlog::warn("Analytics task {} not found!", analytics_task_id_);
+            analytics_computing_.store(false);
         }
     }
+
+    // Apply compact styling for professional look
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 3));
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 center = viewport->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
+
+    if (ImGui::Begin("Dataset Manager###DatasetPanel", &visible_)) {
+        // Toolbar
+        RenderToolbar();
+        ImGui::Separator();
+
+        // Calculate layout dimensions
+        float available_height = ImGui::GetContentRegionAvail().y - footer_height_ - 4;
+
+        // Left sidebar
+        ImGui::BeginChild("##Sidebar", ImVec2(sidebar_width_, available_height), true);
+        RenderSidebar();
+        ImGui::EndChild();
+
+        // Draggable splitter
+        RenderSplitter(available_height);
+
+        // Main content area
+        ImGui::SameLine();
+        ImGui::BeginChild("##MainContent", ImVec2(0, available_height), true);
+        RenderMainContent();
+        ImGui::EndChild();
+
+        // Status bar
+        RenderStatusBar();
+    }
     ImGui::End();
+
+    ImGui::PopStyleVar(3);
+
+    // Show notification (fades out after 2 seconds) - overlay
+    if (show_notification_) {
+        float elapsed = static_cast<float>(ImGui::GetTime()) - notification_time_;
+        const float NOTIFICATION_DURATION = 2.0f;
+
+        if (elapsed < NOTIFICATION_DURATION) {
+            float alpha = (elapsed > NOTIFICATION_DURATION - 0.5f) ?
+                (NOTIFICATION_DURATION - elapsed) / 0.5f : 1.0f;
+
+            ImGui::SetNextWindowPos(ImVec2(viewport->GetCenter().x, viewport->WorkPos.y + 50),
+                                   ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+            ImGui::SetNextWindowBgAlpha(alpha * 0.9f);
+            ImGui::Begin("##Notification", nullptr,
+                        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove |
+                        ImGuiWindowFlags_NoSavedSettings);
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, alpha), "%s", notification_message_.c_str());
+            ImGui::End();
+        } else {
+            show_notification_ = false;
+        }
+    }
 }
 
 void DatasetPanel::RenderDatasetSelection() {
@@ -223,7 +638,6 @@ void DatasetPanel::RenderDatasetSelection() {
     }
 
     ImGui::Spacing();
-    ImGui::Spacing();
 
     // Show different input based on type
     if (selected_type_ == cyxwiz::DatasetType::HuggingFace) {
@@ -233,10 +647,9 @@ void DatasetPanel::RenderDatasetSelection() {
         ImGui::InputTextWithHint("##HFName", "e.g., mnist, cifar10, imdb", hf_dataset_name_, sizeof(hf_dataset_name_));
 
         ImGui::Spacing();
-        ImGui::Spacing();
 
         // Load button for HuggingFace
-        if (ImGui::Button("Load from HuggingFace", ImVec2(-1, 30))) {
+        if (ImGui::Button(ICON_FA_CLOUD_ARROW_DOWN " Load from HuggingFace", ImVec2(180, 0))) {
             std::string name = hf_dataset_name_;
             if (!name.empty()) {
                 LoadHuggingFaceDatasetAsync(name);
@@ -249,10 +662,9 @@ void DatasetPanel::RenderDatasetSelection() {
         ImGui::InputTextWithHint("##KaggleSlug", "e.g., titanic, uciml/iris", kaggle_dataset_slug_, sizeof(kaggle_dataset_slug_));
 
         ImGui::Spacing();
-        ImGui::Spacing();
 
         // Load button for Kaggle
-        if (ImGui::Button("Load from Kaggle", ImVec2(-1, 30))) {
+        if (ImGui::Button(ICON_FA_CLOUD_ARROW_DOWN " Load from Kaggle", ImVec2(160, 0))) {
             std::string slug = kaggle_dataset_slug_;
             if (!slug.empty()) {
                 LoadKaggleDatasetAsync(slug);
@@ -264,7 +676,7 @@ void DatasetPanel::RenderDatasetSelection() {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
         ImGui::InputText("##CustomPath", file_path_buffer_, sizeof(file_path_buffer_));
         ImGui::SameLine();
-        if (ImGui::Button("Browse##Custom", ImVec2(-1, 0))) {
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN "##Custom", ImVec2(70, 0))) {
             ShowFileBrowser();
         }
 
@@ -302,10 +714,9 @@ void DatasetPanel::RenderDatasetSelection() {
         }
 
         ImGui::Spacing();
-        ImGui::Spacing();
 
         // Load button for Custom
-        if (ImGui::Button("Load Custom Dataset", ImVec2(-1, 30))) {
+        if (ImGui::Button(ICON_FA_DOWNLOAD " Load Custom", ImVec2(130, 0))) {
             std::string path = file_path_buffer_;
             if (!path.empty()) {
                 // Build config
@@ -331,7 +742,7 @@ void DatasetPanel::RenderDatasetSelection() {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
         ImGui::InputText("##ImageFolder", file_path_buffer_, sizeof(file_path_buffer_));
         ImGui::SameLine();
-        if (ImGui::Button("Browse##ImgFolder", ImVec2(-1, 0))) {
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN "##ImgFolder", ImVec2(70, 0))) {
             ShowFolderBrowser(file_path_buffer_, sizeof(file_path_buffer_));
         }
 
@@ -346,7 +757,7 @@ void DatasetPanel::RenderDatasetSelection() {
             ShowCSVFileBrowser();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Clear##ClearCSV", ImVec2(-1, 0))) {
+        if (ImGui::Button(ICON_FA_XMARK "##ClearCSV", ImVec2(btn_width, 0))) {
             csv_path_buffer_[0] = '\0';
         }
 
@@ -386,10 +797,9 @@ void DatasetPanel::RenderDatasetSelection() {
         }
 
         ImGui::Spacing();
-        ImGui::Spacing();
 
         // Load button
-        if (ImGui::Button("Load Image Dataset", ImVec2(-1, 30))) {
+        if (ImGui::Button(ICON_FA_IMAGE " Load Images", ImVec2(130, 0))) {
             std::string img_folder = file_path_buffer_;
             std::string csv_file = csv_path_buffer_;  // Can be empty
             if (!img_folder.empty()) {
@@ -460,15 +870,12 @@ void DatasetPanel::RenderDatasetSelection() {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
         ImGui::InputText("##Path", file_path_buffer_, sizeof(file_path_buffer_));
         ImGui::SameLine();
-        if (ImGui::Button("Browse", ImVec2(-1, 0))) {
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN "##Browse", ImVec2(70, 0))) {
             ShowFileBrowser();
         }
 
-        ImGui::Spacing();
-        ImGui::Spacing();
-
         // Load button
-        if (ImGui::Button("Load Dataset", ImVec2(-1, 30))) {
+        if (ImGui::Button(ICON_FA_DOWNLOAD " Load", ImVec2(100, 0))) {
             std::string path = file_path_buffer_;
             if (!path.empty()) {
                 LoadDatasetAsync(path);
@@ -478,18 +885,16 @@ void DatasetPanel::RenderDatasetSelection() {
 
     // Clear button
     if (IsDatasetLoaded()) {
-        ImGui::Spacing();
-        if (ImGui::Button("Clear Dataset", ImVec2(-1, 0))) {
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_TRASH " Clear", ImVec2(80, 0))) {
             ClearDataset();
         }
     }
 
-    ImGui::Spacing();
-
     // Config Export/Import section (collapsible)
     if (ImGui::CollapsingHeader("Configuration")) {
         if (IsDatasetLoaded()) {
-            if (ImGui::Button("Export Config", ImVec2(-1, 0))) {
+            if (ImGui::Button(ICON_FA_FILE_EXPORT " Export", ImVec2(90, 0))) {
                 auto result = cyxwiz::FileDialogs::SaveFile(
                     "Export Dataset Config",
                     {{"JSON Files", "json"}, {"All Files", "*"}},
@@ -506,9 +911,10 @@ void DatasetPanel::RenderDatasetSelection() {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Export dataset configuration to JSON file");
             }
+            ImGui::SameLine();
         }
 
-        if (ImGui::Button("Import Config", ImVec2(-1, 0))) {
+        if (ImGui::Button(ICON_FA_FILE_IMPORT " Import", ImVec2(90, 0))) {
             auto result = cyxwiz::FileDialogs::OpenFile(
                 "Import Dataset Config",
                 {{"JSON Files", "json"}, {"All Files", "*"}}
@@ -538,8 +944,8 @@ void DatasetPanel::RenderDatasetSelection() {
 
         // Versioning (only when dataset loaded)
         if (IsDatasetLoaded()) {
-            ImGui::Spacing();
-            if (ImGui::Button("Save Version", ImVec2(-1, 0))) {
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_FA_CLOCK_ROTATE_LEFT " Version", ImVec2(90, 0))) {
                 auto& registry = cyxwiz::DataRegistry::Instance();
                 registry.SaveVersion(cached_info_.name, "Manual save");
             }
@@ -563,7 +969,6 @@ void DatasetPanel::RenderDatasetSelection() {
     }
 
     ImGui::Spacing();
-    ImGui::Spacing();
 
     // Popular Datasets section
     if (ImGui::CollapsingHeader("Quick Load Popular Datasets")) {
@@ -584,7 +989,7 @@ void DatasetPanel::RenderDatasetSelection() {
             ImGui::Combo("##Dataset", &popular_dataset_index_, kaggle_datasets, IM_ARRAYSIZE(kaggle_datasets));
         }
 
-        if (ImGui::Button("Download & Load", ImVec2(-1, 0))) {
+        if (ImGui::Button(ICON_FA_DOWNLOAD " Download", ImVec2(110, 0))) {
             if (popular_dataset_source_ == 0) {
                 const char* hf_datasets[] = {"mnist", "cifar10", "imdb", "fashion_mnist", "ag_news"};
                 LoadHuggingFaceDatasetAsync(hf_datasets[popular_dataset_index_]);
@@ -600,7 +1005,7 @@ void DatasetPanel::RenderDatasetSelection() {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60);
         ImGui::InputTextWithHint("##SearchDataset", "Search online...", dataset_search_buffer_, sizeof(dataset_search_buffer_));
         ImGui::SameLine();
-        if (ImGui::Button("Go", ImVec2(-1, 0))) {
+        if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS, ImVec2(50, 0))) {
             std::string query = dataset_search_buffer_;
             if (!query.empty()) {
                 std::string url;
@@ -678,7 +1083,6 @@ void DatasetPanel::RenderLoadedDatasets() {
 
     ImGui::Text("Loaded Datasets: %zu", datasets.size());
     ImGui::Separator();
-    ImGui::Spacing();
 
     if (datasets.empty()) {
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No datasets loaded");
@@ -737,7 +1141,7 @@ void DatasetPanel::RenderLoadedDatasets() {
 
         ImGui::Spacing();
 
-        if (ImGui::Button("Set as Active", ImVec2(-1, 0))) {
+        if (ImGui::Button(ICON_FA_CHECK " Set Active", ImVec2(100, 0))) {
             current_dataset_ = registry.GetDataset(info.name);
             if (current_dataset_.IsValid()) {
                 cached_info_ = current_dataset_.GetInfo();
@@ -749,7 +1153,23 @@ void DatasetPanel::RenderLoadedDatasets() {
             }
         }
 
-        if (ImGui::Button("Unload", ImVec2(-1, 0))) {
+        // Dataset Analytics Section
+        if (ImGui::CollapsingHeader("Dataset Analytics")) {
+            RenderDatasetAnalyticsSection();
+        }
+
+        // Image Quality Analysis Section
+        if (ImGui::CollapsingHeader("Image Quality Analysis")) {
+            RenderQualityAnalysisSection();
+        }
+
+        // Duplicate Detection Section
+        if (ImGui::CollapsingHeader("Duplicate Detection")) {
+            RenderDuplicateDetectionSection();
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button(ICON_FA_TRASH " Unload", ImVec2(90, 0))) {
             if (current_dataset_.IsValid() && current_dataset_.GetName() == info.name) {
                 current_dataset_ = cyxwiz::DatasetHandle();
                 cached_info_ = cyxwiz::DatasetInfo();
@@ -762,10 +1182,6 @@ void DatasetPanel::RenderLoadedDatasets() {
 }
 
 void DatasetPanel::RenderDatasetInfo() {
-    ImGui::Text("Dataset Information");
-    ImGui::Separator();
-    ImGui::Spacing();
-
     ImGui::Text("Name: %s", cached_info_.name.c_str());
     ImGui::Text("Type: %s", cyxwiz::DataRegistry::TypeToString(cached_info_.type).c_str());
     ImGui::Text("Total Samples: %zu", cached_info_.num_samples);
@@ -773,9 +1189,7 @@ void DatasetPanel::RenderDatasetInfo() {
     ImGui::Text("Shape: %s", cached_info_.GetShapeString().c_str());
 
     // Memory usage section
-    ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Spacing();
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Memory Usage");
 
     // Refresh cached_info_ to get current memory stats
@@ -830,7 +1244,6 @@ void DatasetPanel::RenderDatasetInfo() {
 void DatasetPanel::RenderSplitConfiguration() {
     ImGui::Text("Train/Val/Test Split");
     ImGui::Separator();
-    ImGui::Spacing();
 
     bool changed = false;
     changed |= ImGui::SliderFloat("Train", &split_config_.train_ratio, 0.0f, 1.0f, "%.2f");
@@ -851,8 +1264,7 @@ void DatasetPanel::RenderSplitConfiguration() {
     ImGui::Text("  Val:   %zu samples", cached_info_.val_count);
     ImGui::Text("  Test:  %zu samples", cached_info_.test_count);
 
-    ImGui::Spacing();
-    if (ImGui::Button("Apply Split", ImVec2(-1, 0))) {
+    if (ImGui::Button(ICON_FA_CHECK " Apply", ImVec2(80, 0))) {
         ApplySplit();
     }
 }
@@ -860,13 +1272,41 @@ void DatasetPanel::RenderSplitConfiguration() {
 void DatasetPanel::RenderStatistics() {
     ImGui::Text("Dataset Statistics");
     ImGui::Separator();
-    ImGui::Spacing();
 
-    if (!class_counts_.empty()) {
+    // Use analytics class distribution if available
+    if (analytics_results_.success && !analytics_results_.class_distribution.counts.empty()) {
+        auto& dist = analytics_results_.class_distribution;
         ImGui::Text("Class Distribution:");
         ImGui::Spacing();
 
         // Find max count for normalization
+        size_t max_count = 0;
+        for (const auto& [label, count] : dist.counts) {
+            max_count = std::max(max_count, count);
+        }
+
+        size_t displayed = 0;
+        for (const auto& [label, count] : dist.counts) {
+            if (displayed >= 10) break;
+
+            float ratio = max_count > 0 ? static_cast<float>(count) / max_count : 0.0f;
+            std::string class_label = (label < static_cast<int>(class_names_.size())) ?
+                class_names_[label] : std::to_string(label);
+
+            ImGui::Text("%s:", class_label.c_str());
+            ImGui::SameLine(80);
+            ImGui::ProgressBar(ratio, ImVec2(-1, 0), std::to_string(count).c_str());
+            displayed++;
+        }
+
+        if (dist.counts.size() > 10) {
+            ImGui::Text("... and %zu more classes", dist.counts.size() - 10);
+        }
+    } else if (!class_counts_.empty()) {
+        // Fall back to class_counts_ if available
+        ImGui::Text("Class Distribution:");
+        ImGui::Spacing();
+
         int max_count = *std::max_element(class_counts_.begin(), class_counts_.end());
 
         for (size_t i = 0; i < class_counts_.size() && i < 10; ++i) {
@@ -881,6 +1321,8 @@ void DatasetPanel::RenderStatistics() {
         if (class_counts_.size() > 10) {
             ImGui::Text("... and %zu more classes", class_counts_.size() - 10);
         }
+    } else {
+        ImGui::TextDisabled("Run Analytics to compute class distribution");
     }
 }
 
@@ -966,7 +1408,8 @@ void DatasetPanel::RenderSingleSamplePreview(size_t dataset_size, bool is_image_
     ImGui::SliderInt("##SampleNav", &preview_sample_idx_, 0, static_cast<int>(dataset_size) - 1, "%d");
 
     // Random sample button
-    if (ImGui::Button("Random", ImVec2(-1, 0))) {
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_SHUFFLE, ImVec2(40, 0))) {
         preview_sample_idx_ = rand() % static_cast<int>(dataset_size);
     }
 
@@ -1889,6 +2332,30 @@ void DatasetPanel::ApplySplit() {
         cached_info_.train_count, cached_info_.val_count, cached_info_.test_count);
 }
 
+void DatasetPanel::ApplyAugmentationConfig() {
+    if (!current_dataset_.IsValid()) {
+        spdlog::warn("DatasetPanel: No dataset loaded, cannot apply augmentation");
+        return;
+    }
+
+    if (!augmentation_pipeline_) {
+        spdlog::warn("DatasetPanel: No augmentation pipeline configured");
+        return;
+    }
+
+    // Store augmentation pipeline in DataRegistry
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    registry.SetAugmentationPipeline(current_dataset_.GetName(), augmentation_pipeline_);
+
+    // Show notification (if notification system is implemented)
+    show_notification_ = true;
+    notification_message_ = "Augmentation pipeline applied to dataset";
+    notification_time_ = 3.0f;
+
+    spdlog::info("DatasetPanel: Augmentation pipeline applied to dataset '{}'",
+                 current_dataset_.GetName());
+}
+
 void DatasetPanel::ClearDataset() {
     if (current_dataset_.IsValid()) {
         auto& registry = cyxwiz::DataRegistry::Instance();
@@ -1963,12 +2430,10 @@ void DatasetPanel::RenderTrainingSection() {
         // Stop button
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
-        if (ImGui::Button("Stop Training", ImVec2(-1, 30))) {
+        if (ImGui::Button(ICON_FA_STOP " Stop Training", ImVec2(120, 0))) {
             StopLocalTraining();
         }
         ImGui::PopStyleColor(2);
-
-        ImGui::Spacing();
     }
 
     // Show warning if no valid graph
@@ -2080,7 +2545,7 @@ void DatasetPanel::RenderTrainingSection() {
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.3f, 1.0f));
-        if (ImGui::Button("Start Training", ImVec2(-1, 35))) {
+        if (ImGui::Button(ICON_FA_PLAY " Start Training", ImVec2(130, 0))) {
             StartLocalTraining();
         }
         ImGui::PopStyleColor(2);
@@ -2107,7 +2572,7 @@ void DatasetPanel::RenderTrainingSection() {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Status: Not configured");
         } else if (!job_manager_->IsConnected()) {
             ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Status: Disconnected");
-            if (ImGui::Button("Connect to Network", ImVec2(-1, 25))) {
+            if (ImGui::Button(ICON_FA_PLUG " Connect", ImVec2(100, 0))) {
                 // TODO: Trigger connection
             }
         } else {
@@ -2120,7 +2585,7 @@ void DatasetPanel::RenderTrainingSection() {
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
-        if (ImGui::Button("Submit to Network", ImVec2(-1, 35))) {
+        if (ImGui::Button(ICON_FA_CLOUD_ARROW_UP " Submit", ImVec2(100, 0))) {
             if (SubmitTrainingJob()) {
                 spdlog::info("Training job submitted successfully");
             }
@@ -2327,7 +2792,13 @@ void DatasetPanel::StartLocalTraining() {
         node_editor_callback
     );
 
-    if (!started) {
+    if (started) {
+        // Show Training Dashboard when training starts
+        if (training_plot_panel_) {
+            training_plot_panel_->SetVisible(true);
+            spdlog::info("Showing Training Dashboard");
+        }
+    } else {
         spdlog::warn("Could not start training - another training session may be in progress");
     }
 }
@@ -2393,7 +2864,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 4:  // RandAugment - strong augmentation
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<RandomResizedCrop>(224));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<RandAugment>(2, 9));
@@ -2405,7 +2876,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 5:  // AutoAugment - learned policies
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<RandomResizedCrop>(224));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<AutoAugment>(AutoAugmentPolicy::ImageNet));
@@ -2417,7 +2888,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 6:  // Aggressive - heavy regularization
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<RandomResizedCrop>(224, 0.08f, 1.0f));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<RandomVerticalFlip>(0.2f));
@@ -2434,7 +2905,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 7:  // Light - minimal transforms
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(224, 224));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<ColorJitter>(0.1f, 0.1f, 0.0f, 0.0f));
@@ -2446,7 +2917,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 8:  // Object Detection
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(416, 416));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<ColorJitter>(0.3f, 0.3f, 0.2f, 0.1f));
@@ -2459,7 +2930,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 9:  // Satellite/Aerial
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(256, 256));
                     pipeline->add(std::make_unique<RandomHorizontalFlip>(0.5f));
                     pipeline->add(std::make_unique<RandomVerticalFlip>(0.5f));
@@ -2473,7 +2944,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 10:  // Text/OCR
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(224, 224));
                     // Conservative for text - no flips, minimal distortion
                     pipeline->add(std::make_unique<RandomRotation>(5.0f));
@@ -2487,7 +2958,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 break;
             case 11:  // Grayscale (MNIST-style)
                 {
-                    auto pipeline = std::make_unique<Compose>();
+                    auto pipeline = std::make_shared<Compose>();
                     pipeline->add(std::make_unique<Resize>(28, 28));
                     pipeline->add(std::make_unique<Grayscale>(1));
                     pipeline->add(std::make_unique<RandomRotation>(15.0f));
@@ -2498,7 +2969,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
                 }
                 break;
             case 12:  // Custom - start empty
-                augmentation_pipeline_ = std::make_unique<Compose>();
+                augmentation_pipeline_ = std::make_shared<Compose>();
                 break;
         }
         preview_needs_update_ = true;
@@ -2513,9 +2984,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
         }
     }
 
-    ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Spacing();
 
     // Transform list
     if (augmentation_pipeline_ && augmentation_pipeline_->size() > 0) {
@@ -2581,9 +3050,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
 
     // Add transform button (for custom mode)
     if (augmentation_preset_ == 4 && augmentation_pipeline_) {
-        ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Spacing();
 
         if (ImGui::Button("+ Add Transform")) {
             ImGui::OpenPopup("AddTransformPopup");
@@ -2669,6 +3136,20 @@ void DatasetPanel::RenderAugmentationPipeline() {
 
             ImGui::EndPopup();
         }
+    }
+
+    // Apply Augmentation button
+    ImGui::Separator();
+
+    if (ImGui::Button(ICON_FA_CHECK " Apply Augmentation", ImVec2(160, 0))) {
+        ApplyAugmentationConfig();
+    }
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Store this augmentation pipeline for use during training.\n"
+            "Augmentation will be applied per-batch during training only."
+        );
     }
 }
 
@@ -2866,6 +3347,879 @@ void DatasetPanel::RenderAugmentationPreview() {
         } else {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No augmentation pipeline");
         }
+    }
+}
+
+// ============================================================================
+// Dataset Analytics
+// ============================================================================
+
+void DatasetPanel::StartAnalyticsComputation() {
+    if (analytics_computing_.load()) {
+        spdlog::warn("Analytics computation already running");
+        return;
+    }
+
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("No dataset loaded for analytics");
+        return;
+    }
+
+    std::string dataset_name = current_dataset_.GetName();
+    spdlog::info("Starting analytics computation for dataset: {}", dataset_name);
+
+    // Set computing flag BEFORE starting task to avoid race condition
+    analytics_computing_.store(true);
+
+    analytics_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Computing Dataset Analytics",
+        [this, dataset_name](cyxwiz::LambdaTask& task) {
+            spdlog::info("Analytics task started executing for: {}", dataset_name);
+            // Get registry inside the lambda to avoid dangling reference
+            auto& registry = cyxwiz::DataRegistry::Instance();
+            analytics_results_ = cyxwiz::DatasetAnalyzer::ComputeAnalytics(
+                dataset_name,
+                &registry,
+                [&task](float progress, const std::string& msg) {
+                    task.ReportProgress(progress, msg);
+                }
+            );
+            spdlog::info("Analytics task calling MarkCompleted, success={}", analytics_results_.success);
+            task.MarkCompleted();
+        }
+    );
+
+    spdlog::info("Analytics task started with ID: {}", analytics_task_id_);
+}
+
+void DatasetPanel::RenderDatasetAnalyticsSection() {
+    // Compute Analytics button
+    if (!analytics_computing_.load()) {
+        if (ImGui::Button(ICON_FA_CHART_BAR " Compute", ImVec2(100, 0))) {
+            spdlog::info("Compute button clicked");
+            StartAnalyticsComputation();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Analyze dataset:\n"
+                            "- Color histograms\n"
+                            "- Class distribution\n"
+                            "- Brightness/contrast stats\n"
+                            "- Outlier detection");
+        }
+    } else {
+        // Show progress
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(analytics_task_id_);
+        if (task) {
+            float progress = task->GetProgress();
+            std::string status = task->GetStatusMessage();
+
+            ImGui::ProgressBar(progress);
+            ImGui::TextWrapped("%s", status.c_str());
+
+            if (ImGui::Button(ICON_FA_XMARK " Cancel", ImVec2(80, 0))) {
+                task_mgr.Cancel(analytics_task_id_);
+                analytics_computing_.store(false);
+            }
+        }
+        return;
+    }
+
+    // Show results if available
+    if (!analytics_results_.success) {
+        if (!analytics_results_.error_message.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", analytics_results_.error_message.c_str());
+        } else {
+            ImGui::TextDisabled("Click 'Compute' to analyze the dataset");
+        }
+        return;
+    }
+
+    ImGui::Separator();
+
+    // Class Distribution
+    if (ImGui::CollapsingHeader("Class Distribution##AnalyticsClassDist", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10.0f);
+
+        auto& dist = analytics_results_.class_distribution;
+        ImGui::Text("Total Samples: %zu", dist.total_samples);
+        ImGui::Text("Number of Classes: %d", dist.num_classes);
+        ImGui::Text("Imbalance Ratio: %.2f", dist.GetImbalanceRatio());
+
+        if (dist.IsBalanced()) {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Balanced dataset");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Imbalanced dataset");
+        }
+
+        ImGui::Spacing();
+
+        // Bar chart with ImPlot
+        if (ImPlot::BeginPlot("##ClassDistPlot", ImVec2(-1, 200))) {
+            // Prepare data for bar chart
+            std::vector<double> x_data, y_data;
+            for (const auto& [label, count] : dist.counts) {
+                x_data.push_back(static_cast<double>(label));
+                y_data.push_back(static_cast<double>(count));
+            }
+
+            ImPlot::SetupAxes("Class Label", "Sample Count");
+            ImPlot::PlotBars("Samples", x_data.data(), y_data.data(), static_cast<int>(x_data.size()), 0.67);
+
+            ImPlot::EndPlot();
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Color Histogram
+    if (ImGui::CollapsingHeader("Color Histogram")) {
+        ImGui::Indent(10.0f);
+
+        auto& hist = analytics_results_.color_histogram;
+
+        if (hist.is_grayscale) {
+            // Grayscale histogram
+            if (ImPlot::BeginPlot("Grayscale Histogram", ImVec2(-1, 200))) {
+                std::vector<double> x_data(256), gray_data(256);
+                for (int i = 0; i < 256; ++i) {
+                    x_data[i] = static_cast<double>(i);
+                    gray_data[i] = static_cast<double>(hist.gray_bins[i]);
+                }
+
+                ImPlot::SetupAxes("Intensity", "Frequency");
+                ImPlot::PlotLine("Gray", x_data.data(), gray_data.data(), 256);
+
+                ImPlot::EndPlot();
+            }
+        } else {
+            // RGB histogram
+            if (ImPlot::BeginPlot("RGB Histogram", ImVec2(-1, 200))) {
+                std::vector<double> x_data(256);
+                std::vector<double> red_data(256), green_data(256), blue_data(256);
+
+                for (int i = 0; i < 256; ++i) {
+                    x_data[i] = static_cast<double>(i);
+                    red_data[i] = static_cast<double>(hist.red_bins[i]);
+                    green_data[i] = static_cast<double>(hist.green_bins[i]);
+                    blue_data[i] = static_cast<double>(hist.blue_bins[i]);
+                }
+
+                ImPlot::SetupAxes("Intensity", "Frequency");
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+                ImPlot::PlotLine("Red", x_data.data(), red_data.data(), 256);
+                ImPlot::PopStyleColor();
+
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
+                ImPlot::PlotLine("Green", x_data.data(), green_data.data(), 256);
+                ImPlot::PopStyleColor();
+
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.0f, 0.0f, 1.0f, 1.0f));
+                ImPlot::PlotLine("Blue", x_data.data(), blue_data.data(), 256);
+                ImPlot::PopStyleColor();
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Brightness/Contrast Statistics
+    if (ImGui::CollapsingHeader("Brightness & Contrast")) {
+        ImGui::Indent(10.0f);
+
+        ImGui::Text("Mean Brightness: %.3f", analytics_results_.mean_brightness);
+        ImGui::Text("Std Brightness: %.3f", analytics_results_.std_brightness);
+        ImGui::Text("Mean Contrast: %.3f", analytics_results_.mean_contrast);
+        ImGui::Text("Std Contrast: %.3f", analytics_results_.std_contrast);
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Outlier Detection
+    if (ImGui::CollapsingHeader("Outlier Detection")) {
+        ImGui::Indent(10.0f);
+
+        auto& outliers = analytics_results_.outliers;
+        ImGui::Text("Outliers Detected: %zu", outliers.GetCount());
+
+        if (outliers.GetCount() > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
+                             "\u26a0 Found %zu potential outliers", outliers.GetCount());
+
+            if (ImGui::Button(ICON_FA_EYE " View Outliers", ImVec2(120, 0))) {
+                show_analytics_outliers_popup_ = true;
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "\u2713 No outliers detected");
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Outliers Popup
+    if (show_analytics_outliers_popup_) {
+        ImGui::OpenPopup("Outlier Viewer");
+    }
+
+    if (ImGui::BeginPopupModal("Outlier Viewer", &show_analytics_outliers_popup_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        auto& outliers = analytics_results_.outliers;
+
+        ImGui::Text("Total Outliers: %zu", outliers.GetCount());
+        ImGui::Separator();
+
+        // Table of outliers
+        if (ImGui::BeginTable("OutliersTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Index");
+            ImGui::TableSetupColumn("Score");
+            ImGui::TableSetupColumn("Reason");
+            ImGui::TableHeadersRow();
+
+            for (size_t i = 0; i < outliers.outlier_indices.size(); ++i) {
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%zu", outliers.outlier_indices[i]);
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%.2f", outliers.outlier_scores[i]);
+
+                ImGui::TableSetColumnIndex(2);
+                auto reason_it = outliers.outlier_reasons.find(outliers.outlier_indices[i]);
+                if (reason_it != outliers.outlier_reasons.end()) {
+                    switch (reason_it->second) {
+                        case cyxwiz::OutlierInfo::OutlierReason::Brightness:
+                            ImGui::Text("Brightness");
+                            break;
+                        case cyxwiz::OutlierInfo::OutlierReason::Contrast:
+                            ImGui::Text("Contrast");
+                            break;
+                        case cyxwiz::OutlierInfo::OutlierReason::Size:
+                            ImGui::Text("Size");
+                            break;
+                        case cyxwiz::OutlierInfo::OutlierReason::ChannelCount:
+                            ImGui::Text("Channels");
+                            break;
+                    }
+                }
+            }
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(80, 0))) {
+            show_analytics_outliers_popup_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+// ============================================================================
+// Image Quality Analysis
+// ============================================================================
+
+void DatasetPanel::StartQualityAnalysis() {
+    if (quality_analysis_running_) {
+        spdlog::warn("Quality analysis already running");
+        return;
+    }
+
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("No dataset loaded");
+        return;
+    }
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    std::string dataset_name = current_dataset_.GetName();
+
+    quality_analysis_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Analyzing Image Quality",
+        [this, dataset_name, &registry](cyxwiz::LambdaTask& task) {
+            auto handle = registry.GetDataset(dataset_name);
+            if (!handle) {
+                task.ReportProgress(1.0f, "Error: Dataset not found");
+                task.MarkCompleted();
+                return;
+            }
+
+            size_t total_samples = handle.Size();
+            quality_results_.clear();
+            quality_results_.reserve(total_samples);
+
+            auto info = handle.GetInfo();
+
+            // Extract dimensions from shape
+            int height = 0, width = 0, channels = 1;
+            if (info.shape.size() >= 3) {
+                height = static_cast<int>(info.shape[0]);
+                width = static_cast<int>(info.shape[1]);
+                channels = static_cast<int>(info.shape[2]);
+            } else if (info.shape.size() == 2) {
+                height = static_cast<int>(info.shape[0]);
+                width = static_cast<int>(info.shape[1]);
+                channels = 1;
+            } else if (info.shape.size() == 1) {
+                size_t total = info.shape[0];
+                height = width = static_cast<int>(std::sqrt(total));
+                channels = 1;
+            }
+
+            for (size_t i = 0; i < total_samples; ++i) {
+                if (task.ShouldStop()) {
+                    task.ReportProgress(1.0f, "Cancelled");
+                    task.MarkCompleted();
+                    return;
+                }
+
+                auto [sample, label] = handle.GetSample(i);
+                cyxwiz::QualityMetrics metrics = cyxwiz::ImageQualityAnalyzer::Analyze(
+                    sample, width, height, channels
+                );
+                quality_results_.push_back(metrics);
+
+                if (i % 10 == 0 || i == total_samples - 1) {
+                    float progress = static_cast<float>(i + 1) / total_samples;
+                    std::string msg = std::format("Analyzed {}/{} images", i + 1, total_samples);
+                    task.ReportProgress(progress, msg);
+                }
+            }
+
+            task.ReportProgress(1.0f, "Quality analysis complete!");
+            task.MarkCompleted();
+        }
+    );
+
+    quality_analysis_running_ = true;
+}
+
+void DatasetPanel::RenderQualityAnalysisSection() {
+    // Check if async task is done
+    if (quality_analysis_running_) {
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(quality_analysis_task_id_);
+        if (task && task->GetState() == cyxwiz::TaskState::Completed) {
+            quality_analysis_running_ = false;
+            spdlog::info("Quality analysis completed");
+        }
+    }
+
+    // Analyze Quality button
+    if (!quality_analysis_running_) {
+        if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Analyze", ImVec2(100, 0))) {
+            StartQualityAnalysis();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Analyze image quality:\n"
+                            "- Blur detection (Laplacian variance)\n"
+                            "- Sharpness measurement (Canny edges)\n"
+                            "- Exposure analysis (histogram)\n"
+                            "- Brightness/contrast issues");
+        }
+    } else {
+        // Show progress
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(quality_analysis_task_id_);
+        if (task) {
+            float progress = task->GetProgress();
+            std::string status = task->GetStatusMessage();
+
+            ImGui::ProgressBar(progress);
+            ImGui::TextWrapped("%s", status.c_str());
+
+            if (ImGui::Button(ICON_FA_XMARK " Cancel", ImVec2(80, 0))) {
+                task_mgr.Cancel(quality_analysis_task_id_);
+                quality_analysis_running_ = false;
+            }
+        }
+        return;
+    }
+
+    // Show results if available
+    if (quality_results_.empty()) {
+        return;
+    }
+
+    ImGui::Separator();
+
+    // Summary statistics
+    if (ImGui::CollapsingHeader("Quality Summary", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10.0f);
+
+        size_t total_images = quality_results_.size();
+        size_t images_with_issues = 0;
+        size_t blurry_count = 0;
+        size_t overexposed_count = 0;
+        size_t underexposed_count = 0;
+        size_t low_sharpness_count = 0;
+        size_t corrupted_count = 0;
+
+        for (const auto& metrics : quality_results_) {
+            if (metrics.HasIssues()) {
+                images_with_issues++;
+            }
+            if (metrics.IsBlurry()) blurry_count++;
+            if (metrics.IsOverexposed()) overexposed_count++;
+            if (metrics.IsUnderexposed()) underexposed_count++;
+            if (metrics.HasLowSharpness()) low_sharpness_count++;
+            if (metrics.IsCorrupted()) corrupted_count++;
+        }
+
+        ImGui::Text("Total Images: %zu", total_images);
+        ImGui::Text("Images with Issues: %zu (%.1f%%)",
+                    images_with_issues,
+                    100.0f * images_with_issues / total_images);
+
+        ImGui::Spacing();
+
+        if (images_with_issues == 0) {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "\u2713 All images passed quality checks");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "\u26a0 Found %zu images with quality issues", images_with_issues);
+
+            ImGui::Spacing();
+
+            // Issue breakdown
+            if (blurry_count > 0) {
+                ImGui::BulletText("Blurry: %zu (%.1f%%)", blurry_count, 100.0f * blurry_count / total_images);
+            }
+            if (overexposed_count > 0) {
+                ImGui::BulletText("Overexposed: %zu (%.1f%%)", overexposed_count, 100.0f * overexposed_count / total_images);
+            }
+            if (underexposed_count > 0) {
+                ImGui::BulletText("Underexposed: %zu (%.1f%%)", underexposed_count, 100.0f * underexposed_count / total_images);
+            }
+            if (low_sharpness_count > 0) {
+                ImGui::BulletText("Low Sharpness: %zu (%.1f%%)", low_sharpness_count, 100.0f * low_sharpness_count / total_images);
+            }
+            if (corrupted_count > 0) {
+                ImGui::BulletText("Corrupted: %zu (%.1f%%)", corrupted_count, 100.0f * corrupted_count / total_images);
+            }
+
+            ImGui::Spacing();
+
+            if (ImGui::Button(ICON_FA_EYE " View Issues", ImVec2(110, 0))) {
+                show_quality_issues_popup_ = true;
+            }
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Threshold Configuration
+    if (ImGui::CollapsingHeader("Detection Thresholds")) {
+        ImGui::Indent(10.0f);
+
+        bool thresholds_changed = false;
+
+        thresholds_changed |= ImGui::SliderFloat("Blur Threshold", &quality_thresholds_.blur_threshold, 50.0f, 200.0f, "%.1f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Laplacian variance (lower = more sensitive)");
+        }
+
+        thresholds_changed |= ImGui::SliderFloat("Sharpness Threshold", &quality_thresholds_.sharpness_threshold, 0.1f, 0.5f, "%.2f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Edge strength ratio (higher = stricter)");
+        }
+
+        thresholds_changed |= ImGui::SliderFloat("Overexposure %", &quality_thresholds_.overexposure_pct, 0.5f, 0.95f, "%.2f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Percentage of bright pixels (lower = more sensitive)");
+        }
+
+        thresholds_changed |= ImGui::SliderFloat("Underexposure %", &quality_thresholds_.underexposure_pct, 0.5f, 0.95f, "%.2f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Percentage of dark pixels (lower = more sensitive)");
+        }
+
+        thresholds_changed |= ImGui::SliderFloat("Min Brightness", &quality_thresholds_.brightness_low, 10.0f, 50.0f, "%.1f");
+        thresholds_changed |= ImGui::SliderFloat("Max Brightness", &quality_thresholds_.brightness_high, 200.0f, 245.0f, "%.1f");
+
+        if (thresholds_changed) {
+            cyxwiz::ImageQualityAnalyzer::SetThresholds(quality_thresholds_);
+        }
+
+        ImGui::Spacing();
+
+        if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Reset", ImVec2(80, 0))) {
+            quality_thresholds_ = cyxwiz::ImageQualityAnalyzer::Thresholds();
+            cyxwiz::ImageQualityAnalyzer::SetThresholds(quality_thresholds_);
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Quality Issues Popup
+    if (show_quality_issues_popup_) {
+        ImGui::OpenPopup("Quality Issues Viewer");
+    }
+
+    if (ImGui::BeginPopupModal("Quality Issues Viewer", &show_quality_issues_popup_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Images with Quality Issues");
+        ImGui::Separator();
+
+        // Filter options
+        static bool filter_blurry = true;
+        static bool filter_overexposed = true;
+        static bool filter_underexposed = true;
+        static bool filter_low_sharpness = true;
+        static bool filter_corrupted = true;
+
+        ImGui::Text("Filter:");
+        ImGui::SameLine();
+        ImGui::Checkbox("Blurry", &filter_blurry);
+        ImGui::SameLine();
+        ImGui::Checkbox("Overexposed", &filter_overexposed);
+        ImGui::SameLine();
+        ImGui::Checkbox("Underexposed", &filter_underexposed);
+        ImGui::SameLine();
+        ImGui::Checkbox("Low Sharpness", &filter_low_sharpness);
+        ImGui::SameLine();
+        ImGui::Checkbox("Corrupted", &filter_corrupted);
+
+        ImGui::Separator();
+
+        // Table of issues
+        if (ImGui::BeginTable("QualityIssuesTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 400))) {
+            ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 60);
+            ImGui::TableSetupColumn("Issues", ImGuiTableColumnFlags_WidthFixed, 150);
+            ImGui::TableSetupColumn("Blur Score", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableSetupColumn("Sharpness", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableSetupColumn("Exposure", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableSetupColumn("Brightness", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableHeadersRow();
+
+            for (size_t i = 0; i < quality_results_.size(); ++i) {
+                const auto& metrics = quality_results_[i];
+
+                if (!metrics.HasIssues()) continue;
+
+                // Apply filters
+                bool show = false;
+                if (filter_blurry && metrics.IsBlurry()) show = true;
+                if (filter_overexposed && metrics.IsOverexposed()) show = true;
+                if (filter_underexposed && metrics.IsUnderexposed()) show = true;
+                if (filter_low_sharpness && metrics.HasLowSharpness()) show = true;
+                if (filter_corrupted && metrics.IsCorrupted()) show = true;
+
+                if (!show) continue;
+
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%zu", i);
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%s", metrics.GetIssueDescription().c_str());
+
+                ImGui::TableSetColumnIndex(2);
+                if (metrics.IsBlurry()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%.1f", metrics.blur_score);
+                } else {
+                    ImGui::Text("%.1f", metrics.blur_score);
+                }
+
+                ImGui::TableSetColumnIndex(3);
+                if (metrics.HasLowSharpness()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%.3f", metrics.sharpness_score);
+                } else {
+                    ImGui::Text("%.3f", metrics.sharpness_score);
+                }
+
+                ImGui::TableSetColumnIndex(4);
+                if (metrics.IsOverexposed() || metrics.IsUnderexposed()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%.3f", metrics.exposure_score);
+                } else {
+                    ImGui::Text("%.3f", metrics.exposure_score);
+                }
+
+                ImGui::TableSetColumnIndex(5);
+                ImGui::Text("%.1f", metrics.mean_brightness);
+            }
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(80, 0))) {
+            show_quality_issues_popup_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+// ============================================================================
+// Duplicate Detection
+// ============================================================================
+
+void DatasetPanel::StartDuplicateDetection() {
+    if (duplicate_detection_running_) {
+        spdlog::warn("Duplicate detection already running");
+        return;
+    }
+
+    if (!current_dataset_.IsValid()) {
+        spdlog::error("No dataset loaded");
+        return;
+    }
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    std::string dataset_name = current_dataset_.GetName();
+
+    // Convert hash type index to enum
+    cyxwiz::HashType hash_type = static_cast<cyxwiz::HashType>(duplicate_hash_type_);
+
+    duplicate_detection_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Detecting Duplicates",
+        [this, dataset_name, &registry, hash_type](cyxwiz::LambdaTask& task) {
+            auto handle = registry.GetDataset(dataset_name);
+            if (!handle) {
+                task.ReportProgress(1.0f, "Error: Dataset not found");
+                task.MarkCompleted();
+                return;
+            }
+
+            size_t total_samples = handle.Size();
+            auto info = handle.GetInfo();
+
+            // Extract dimensions from shape
+            int height = 0, width = 0, channels = 1;
+            if (info.shape.size() >= 3) {
+                height = static_cast<int>(info.shape[0]);
+                width = static_cast<int>(info.shape[1]);
+                channels = static_cast<int>(info.shape[2]);
+            } else if (info.shape.size() == 2) {
+                height = static_cast<int>(info.shape[0]);
+                width = static_cast<int>(info.shape[1]);
+                channels = 1;
+            } else if (info.shape.size() == 1) {
+                size_t total = info.shape[0];
+                height = width = static_cast<int>(std::sqrt(total));
+                channels = 1;
+            }
+
+            // Load all images for hashing
+            task.ReportProgress(0.1f, "Loading images...");
+            std::vector<std::vector<float>> images;
+            images.reserve(total_samples);
+
+            for (size_t i = 0; i < total_samples; ++i) {
+                if (task.ShouldStop()) {
+                    task.ReportProgress(1.0f, "Cancelled");
+                    task.MarkCompleted();
+                    return;
+                }
+
+                auto [sample, label] = handle.GetSample(i);
+                images.push_back(sample);
+
+                if (i % 100 == 0) {
+                    float progress = 0.1f + 0.3f * (static_cast<float>(i + 1) / total_samples);
+                    task.ReportProgress(progress, std::format("Loaded {}/{} images", i + 1, total_samples));
+                }
+            }
+
+            // Compute hashes
+            task.ReportProgress(0.4f, "Computing perceptual hashes...");
+            std::vector<cyxwiz::ImageHash> hashes = cyxwiz::ImageDeduplicator::ComputeHashes(
+                images,
+                width, height, channels,
+                hash_type,
+                [&task](float hash_progress, const std::string& msg) {
+                    float total_progress = 0.4f + 0.4f * hash_progress;
+                    task.ReportProgress(total_progress, msg);
+                }
+            );
+
+            // Find duplicates
+            task.ReportProgress(0.8f, "Finding duplicate groups...");
+            duplicate_groups_ = cyxwiz::ImageDeduplicator::FindDuplicates(hashes, duplicate_threshold_);
+
+            task.ReportProgress(1.0f, std::format("Found {} duplicate groups!", duplicate_groups_.size()));
+            task.MarkCompleted();
+        }
+    );
+
+    duplicate_detection_running_ = true;
+}
+
+void DatasetPanel::RenderDuplicateDetectionSection() {
+    // Check if async task is done
+    if (duplicate_detection_running_) {
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(duplicate_detection_task_id_);
+        if (task && task->GetState() == cyxwiz::TaskState::Completed) {
+            duplicate_detection_running_ = false;
+            spdlog::info("Duplicate detection completed");
+        }
+    }
+
+    // Configuration
+    ImGui::Text("Hash Algorithm:");
+    const char* hash_types[] = {"pHash (DCT)", "aHash (Average)", "dHash (Difference)"};
+    ImGui::Combo("##HashType", &duplicate_hash_type_, hash_types, 3);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("pHash: Most robust, slower\n"
+                        "aHash: Fastest, less accurate\n"
+                        "dHash: Good for crops/resizes");
+    }
+
+    ImGui::Text("Hamming Threshold:");
+    ImGui::SliderInt("##HammingThreshold", &duplicate_threshold_, 0, 15);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("0 = Exact duplicates only\n"
+                        "5 = Near-duplicates (recommended)\n"
+                        "10 = Very similar images\n"
+                        "15 = Loosely similar");
+    }
+
+    ImGui::Spacing();
+
+    // Detect Duplicates button
+    if (!duplicate_detection_running_) {
+        if (ImGui::Button(ICON_FA_COPY " Detect", ImVec2(90, 0))) {
+            StartDuplicateDetection();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Find duplicate and near-duplicate images:\n"
+                            "- Perceptual hashing (robust to minor changes)\n"
+                            "- Hamming distance comparison\n"
+                            "- Group similar images");
+        }
+    } else {
+        // Show progress
+        auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+        auto task = task_mgr.GetTask(duplicate_detection_task_id_);
+        if (task) {
+            float progress = task->GetProgress();
+            std::string status = task->GetStatusMessage();
+
+            ImGui::ProgressBar(progress);
+            ImGui::TextWrapped("%s", status.c_str());
+
+            if (ImGui::Button(ICON_FA_XMARK " Cancel", ImVec2(80, 0))) {
+                task_mgr.Cancel(duplicate_detection_task_id_);
+                duplicate_detection_running_ = false;
+            }
+        }
+        return;
+    }
+
+    // Show results if available
+    if (duplicate_groups_.empty()) {
+        return;
+    }
+
+    ImGui::Separator();
+
+    // Summary statistics
+    if (ImGui::CollapsingHeader("Duplicate Summary", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent(10.0f);
+
+        size_t total_groups = duplicate_groups_.size();
+        size_t total_duplicates = 0;
+        size_t exact_duplicates = 0;
+
+        for (const auto& group : duplicate_groups_) {
+            total_duplicates += group.indices.size();
+            if (group.exact_duplicate) {
+                exact_duplicates += group.indices.size();
+            }
+        }
+
+        ImGui::Text("Duplicate Groups: %zu", total_groups);
+        ImGui::Text("Total Duplicate Images: %zu", total_duplicates);
+        ImGui::Text("Exact Duplicates: %zu", exact_duplicates);
+
+        ImGui::Spacing();
+
+        if (total_groups == 0) {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "\u2713 No duplicates found!");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
+                             "\u26a0 Found %zu groups with %zu duplicate images",
+                             total_groups, total_duplicates);
+
+            ImGui::Spacing();
+
+            if (ImGui::Button(ICON_FA_EYE " View Groups", ImVec2(110, 0))) {
+                show_duplicate_groups_popup_ = true;
+            }
+        }
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Duplicate Groups Popup
+    if (show_duplicate_groups_popup_) {
+        ImGui::OpenPopup("Duplicate Groups Viewer");
+    }
+
+    if (ImGui::BeginPopupModal("Duplicate Groups Viewer", &show_duplicate_groups_popup_,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Duplicate Image Groups");
+        ImGui::Separator();
+
+        // Table of duplicate groups
+        if (ImGui::BeginTable("DuplicateGroupsTable", 4,
+                             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+                             ImVec2(0, 400))) {
+            ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 60);
+            ImGui::TableSetupColumn("Images", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableSetupColumn("Similarity", ImGuiTableColumnFlags_WidthFixed, 100);
+            ImGui::TableSetupColumn("Indices", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+
+            for (size_t g = 0; g < duplicate_groups_.size(); ++g) {
+                const auto& group = duplicate_groups_[g];
+
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%zu", g + 1);
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%zu", group.indices.size());
+
+                ImGui::TableSetColumnIndex(2);
+                if (group.exact_duplicate) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "EXACT (%.0f%%)", group.similarity * 100.0f);
+                } else {
+                    ImGui::Text("%.1f%%", group.similarity * 100.0f);
+                }
+
+                ImGui::TableSetColumnIndex(3);
+                // Show first few indices
+                std::string indices_str;
+                for (size_t i = 0; i < std::min(size_t(10), group.indices.size()); ++i) {
+                    if (i > 0) indices_str += ", ";
+                    indices_str += std::to_string(group.indices[i]);
+                }
+                if (group.indices.size() > 10) {
+                    indices_str += ", ...";
+                }
+                ImGui::TextWrapped("%s", indices_str.c_str());
+            }
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
+                         "Note: To remove duplicates, use your dataset tools or file manager.");
+
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(80, 0))) {
+            show_duplicate_groups_popup_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
     }
 }
 

@@ -67,7 +67,7 @@ public:
      * @brief Set trainable parameters
      * @param params Map of parameter name -> tensor
      */
-    virtual void SetParameters(const std::map<std::string, Tensor>& params) {}
+    virtual void SetParameters(const std::map<std::string, Tensor>& /*params*/) {}
 
     /**
      * @brief Get parameter gradients
@@ -308,6 +308,45 @@ public:
 
 private:
     std::unique_ptr<MishActivation> activation_;
+};
+
+/**
+ * @brief BatchNorm1D module for normalizing activations in MLPs
+ * Normalizes across the batch dimension for [batch, features] input
+ */
+class CYXWIZ_API BatchNormModule : public Module {
+public:
+    BatchNormModule(size_t num_features, float eps = 1e-5f, float momentum = 0.1f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    size_t num_features_;
+    float eps_;
+    float momentum_;
+
+    // Learnable parameters
+    Tensor gamma_;   // Scale [num_features]
+    Tensor beta_;    // Shift [num_features]
+
+    // Running statistics for inference
+    Tensor running_mean_;
+    Tensor running_var_;
+
+    // Cached for backward pass
+    Tensor normalized_;
+    Tensor std_inv_;
+    Tensor batch_mean_;
+
+    // Gradients
+    Tensor grad_gamma_;
+    Tensor grad_beta_;
 };
 
 /**

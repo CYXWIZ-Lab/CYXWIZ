@@ -1,4 +1,5 @@
 #include "node_client.h"
+#include "core/backend_manager.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 #include <chrono>
@@ -73,7 +74,9 @@ protocol::NodeInfo HardwareDetector::DetectHardwareInfo(const std::string& node_
 
     // Network
     info.set_ip_address(GetLocalIPAddress());
-    info.set_port(50052);  // Deployment service port
+    auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
+    int p2p_port = backend.IsInitialized() ? backend.GetConfig().p2p_port : 50052;
+    info.set_port(p2p_port);
     info.set_region("unknown");  // TODO: Detect geographic region
 
     // Performance (initialize with defaults)
@@ -558,9 +561,23 @@ bool NodeClient::SendHeartbeat() {
 
     if (status.ok() && response.status() == protocol::STATUS_SUCCESS) {
         spdlog::debug("Heartbeat sent successfully");
+        auth_failed_ = false;  // Reset auth failed flag on success
         return response.keep_alive();
     } else {
-        spdlog::warn("Heartbeat failed: {}", status.error_message());
+        // Check if this is an authentication failure
+        if (status.error_code() == grpc::StatusCode::UNAUTHENTICATED) {
+            spdlog::error("Heartbeat failed: Authentication error - {}", status.error_message());
+
+            // Only call callback once to avoid spamming
+            if (!auth_failed_.exchange(true)) {
+                if (auth_failed_callback_) {
+                    spdlog::warn("Notifying listeners of authentication failure...");
+                    auth_failed_callback_(status.error_message());
+                }
+            }
+        } else {
+            spdlog::warn("Heartbeat failed: {}", status.error_message());
+        }
         return false;
     }
 }

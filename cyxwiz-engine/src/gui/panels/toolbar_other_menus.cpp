@@ -17,59 +17,58 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <commdlg.h>
+#include <shellapi.h>
 #endif
 
 namespace cyxwiz {
 
 void ToolbarPanel::RenderNodesMenu() {
     if (ImGui::BeginMenu("Nodes")) {
-        if (ImGui::BeginMenu("Add Layer")) {
-            if (ImGui::MenuItem("Dense/Linear")) {
-                // TODO: Add dense layer
+        if (ImGui::BeginMenu(ICON_FA_LAYER_GROUP " Add Layer")) {
+            if (ImGui::MenuItem(ICON_FA_BARS " Dense/Linear")) {
+                if (add_dense_node_callback_) add_dense_node_callback_();
             }
-            if (ImGui::MenuItem("Convolutional")) {
-                // TODO: Add conv layer
+            if (ImGui::MenuItem(ICON_FA_TABLE " Convolutional")) {
+                if (add_conv_node_callback_) add_conv_node_callback_();
             }
-            if (ImGui::MenuItem("Pooling")) {
-                // TODO: Add pooling layer
+            if (ImGui::MenuItem(ICON_FA_COMPRESS " Pooling")) {
+                if (add_pooling_node_callback_) add_pooling_node_callback_();
             }
-            if (ImGui::MenuItem("Dropout")) {
-                // TODO: Add dropout
+            if (ImGui::MenuItem(ICON_FA_DICE " Dropout")) {
+                if (add_dropout_node_callback_) add_dropout_node_callback_();
             }
-            if (ImGui::MenuItem("Batch Normalization")) {
-                // TODO: Add batch norm
+            if (ImGui::MenuItem(ICON_FA_CHART_BAR " Batch Normalization")) {
+                if (add_batchnorm_node_callback_) add_batchnorm_node_callback_();
             }
-            if (ImGui::MenuItem("Attention")) {
-                // TODO: Add attention
+            if (ImGui::MenuItem(ICON_FA_BULLSEYE " Attention")) {
+                if (add_attention_node_callback_) add_attention_node_callback_();
             }
             ImGui::EndMenu();
         }
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Group Selected", "Ctrl+G")) {
-            // TODO: Group nodes
+        if (ImGui::MenuItem(ICON_FA_OBJECT_GROUP " Group Selected", "Ctrl+G")) {
+            if (group_nodes_callback_) group_nodes_callback_();
         }
 
-        if (ImGui::MenuItem("Ungroup", "Ctrl+Shift+G")) {
-            // TODO: Ungroup nodes
+        if (ImGui::MenuItem(ICON_FA_OBJECT_UNGROUP " Ungroup", "Ctrl+Shift+G")) {
+            if (ungroup_nodes_callback_) ungroup_nodes_callback_();
         }
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
-            // TODO: Duplicate selected
+        if (ImGui::MenuItem(ICON_FA_COPY " Duplicate", "Ctrl+D")) {
+            if (duplicate_nodes_callback_) duplicate_nodes_callback_();
         }
 
-        if (ImGui::MenuItem("Delete Selected", "Delete")) {
-            // TODO: Delete selected nodes
+        if (ImGui::MenuItem(ICON_FA_TRASH " Delete Selected", "Delete")) {
+            if (delete_nodes_callback_) delete_nodes_callback_();
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem(ICON_FA_WAND_MAGIC_SPARKLES " Custom Node Editor...")) {
-            // Signal to open Custom Node Editor panel
-            // This is handled via callback in MainWindow
             if (open_custom_node_editor_callback_) {
                 open_custom_node_editor_callback_();
             }
@@ -82,25 +81,35 @@ void ToolbarPanel::RenderNodesMenu() {
 void ToolbarPanel::RenderTrainMenu() {
     if (ImGui::BeginMenu("Train")) {
         if (ImGui::MenuItem("Start Training", "F5")) {
-            // TODO: Start training
+            if (start_training_callback_) {
+                start_training_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Pause", "F6")) {
-            // TODO: Pause training
+            if (pause_training_callback_) {
+                pause_training_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Stop", "Shift+F5")) {
-            // TODO: Stop training
+            if (stop_training_callback_) {
+                stop_training_callback_();
+            }
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem("Training Settings...")) {
-            // TODO: Open training settings
+            if (training_settings_callback_) {
+                training_settings_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Optimizer Settings...")) {
-            // TODO: Open optimizer settings
+            if (optimizer_settings_callback_) {
+                optimizer_settings_callback_();
+            }
         }
 
         ImGui::EndMenu();
@@ -116,27 +125,37 @@ void ToolbarPanel::RenderDatasetMenu() {
         }
 
         if (ImGui::MenuItem("Create Custom Dataset...")) {
-            // TODO: Create dataset
+            if (create_custom_dataset_callback_) {
+                create_custom_dataset_callback_();
+            }
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem("Preprocess...")) {
-            // TODO: Preprocess dataset
+            if (preprocess_dataset_callback_) {
+                preprocess_dataset_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Tokenize...")) {
-            // TODO: Tokenize dataset
+            if (tokenize_dataset_callback_) {
+                tokenize_dataset_callback_();
+            }
         }
 
         if (ImGui::MenuItem("Augment...")) {
-            // TODO: Data augmentation
+            if (augment_dataset_callback_) {
+                augment_dataset_callback_();
+            }
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem("Dataset Statistics")) {
-            // TODO: Show statistics
+            if (dataset_statistics_callback_) {
+                dataset_statistics_callback_();
+            }
         }
 
         ImGui::EndMenu();
@@ -145,24 +164,31 @@ void ToolbarPanel::RenderDatasetMenu() {
 
 void ToolbarPanel::RenderScriptMenu() {
     if (ImGui::BeginMenu("Script")) {
-        if (ImGui::MenuItem("Open Python Console", "F12")) {
-            // TODO: Show Python console
+        if (ImGui::MenuItem(ICON_FA_TERMINAL " Open Python Console", "F12")) {
+            if (open_python_console_callback_) {
+                open_python_console_callback_();
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open interactive Python command window");
         }
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("New Script...")) {
-            // TODO: Create new script
+        if (ImGui::MenuItem(ICON_FA_FILE_CODE " New Script...", "Ctrl+N")) {
+            if (new_script_callback_) {
+                new_script_callback_();
+            }
         }
 
-        if (ImGui::MenuItem("Run Script...", "Ctrl+R")) {
-            // TODO: Run script
+        if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Script...", "Ctrl+O")) {
+            if (open_script_callback_) {
+                open_script_callback_();
+            }
         }
 
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Script Editor...")) {
-            // TODO: Open script editor
+        if (ImGui::MenuItem(ICON_FA_PLAY " Run Script", "Ctrl+R")) {
+            // TODO: Run current script
         }
 
         ImGui::EndMenu();
@@ -394,7 +420,13 @@ void ToolbarPanel::RenderHelpMenu() {
         ImGui::Separator();
 
         if (ImGui::MenuItem(ICON_FA_BUG " Report Issue...")) {
-            // TODO: Open issue tracker
+#ifdef _WIN32
+            ShellExecuteA(NULL, "open", "https://github.com/CYXWIZ-Lab/CYXWIZ/issues", NULL, NULL, SW_SHOWNORMAL);
+#elif __APPLE__
+            system("open "https://github.com/CYXWIZ-Lab/CYXWIZ/issues"");
+#else
+            system("xdg-open "https://github.com/CYXWIZ-Lab/CYXWIZ/issues"");
+#endif
         }
 
         if (ImGui::MenuItem(ICON_FA_DOWNLOAD " Check for Updates...")) {

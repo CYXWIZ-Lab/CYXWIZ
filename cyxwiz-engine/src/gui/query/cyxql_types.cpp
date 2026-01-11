@@ -171,8 +171,8 @@ void ASTNode::addChild(ASTNodePtr child) {
     }
 }
 
-void ASTNode::setProperty(const std::string& key, const std::string& value) {
-    properties[key] = value;
+void ASTNode::setProperty(const std::string& key, const std::string& val) {
+    properties[key] = val;
 }
 
 std::string ASTNode::getProperty(const std::string& key, const std::string& defaultVal) const {

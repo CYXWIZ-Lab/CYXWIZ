@@ -549,7 +549,7 @@ int64_t ModelAnalyzer::ComputeDenseFLOPs(int64_t in_features, int64_t out_featur
     return flops * batch_size;
 }
 
-int64_t ModelAnalyzer::ComputeConv2DFLOPs(int64_t in_h, int64_t in_w, int64_t in_c,
+int64_t ModelAnalyzer::ComputeConv2DFLOPs(int64_t /*in_h*/, int64_t /*in_w*/, int64_t in_c,
                                           int64_t out_h, int64_t out_w, int64_t filters,
                                           int64_t kernel_size, int64_t batch_size) const {
     // FLOPs = 2 * K^2 * C_in * C_out * H_out * W_out
@@ -634,7 +634,7 @@ int64_t ModelAnalyzer::ComputeBatchNormNonTrainableParams(int64_t features) cons
     return 2 * features;
 }
 
-int64_t ModelAnalyzer::ComputeAttentionParams(int64_t embed_dim, int64_t num_heads) const {
+int64_t ModelAnalyzer::ComputeAttentionParams(int64_t embed_dim, int64_t /*num_heads*/) const {
     // Q, K, V projections + output projection
     // Each projection: embed_dim * embed_dim + embed_dim (bias)
     return 4 * (embed_dim * embed_dim + embed_dim);

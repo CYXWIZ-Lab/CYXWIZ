@@ -1,5 +1,6 @@
 #include "node_editor.h"
 #include "node_documentation.h"
+#include "node_editor_shape_inference.h"
 #include "panels/script_editor.h"
 #include "properties.h"
 #include "patterns/pattern_library.h"
@@ -55,6 +56,9 @@ NodeEditor::NodeEditor()
 
     ImNodesStyle& style = ImNodes::GetStyle();
     style.Flags |= ImNodesStyleFlags_GridLines;
+
+    // Initialize shape inference engine
+    shape_inference_ = std::make_unique<ShapeInferenceEngine>();
 
     // Create a Linear Attention Transformer showcase model
     // This demonstrates the O(n) Linear Attention node for efficient sequence processing
@@ -652,56 +656,198 @@ void NodeEditor::Render() {
 
         ImGui::EndPopup();
     }
+
+    // Auto-Insert Flatten Dialog
+    if (show_auto_insert_flatten_dialog_) {
+        ImGui::OpenPopup("Shape Mismatch Detected");
+    }
+
+    if (ImGui::BeginPopupModal("Shape Mismatch Detected",
+                              &show_auto_insert_flatten_dialog_,
+                              ImGuiWindowFlags_AlwaysAutoResize)) {
+
+        ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.03f, 1.0f),
+                         ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Find source and target nodes for display
+        MLNode* from_node = nullptr;
+        MLNode* to_node = nullptr;
+        for (auto& node : nodes_) {
+            if (node.id == pending_flatten_from_node_) from_node = &node;
+            if (node.id == pending_flatten_to_node_) to_node = &node;
+        }
+
+        if (from_node && to_node) {
+            ImGui::Text("Source: %s (4D tensor output)", from_node->name.c_str());
+            ImGui::Text("Target: %s (expects 2D input)", to_node->name.c_str());
+        } else {
+            ImGui::Text("Connection requires shape transformation");
+        }
+
+        ImGui::Spacing();
+        ImGui::TextWrapped("Dense layers require flattened 2D input [batch, features]. "
+                        "The source node outputs a 4D tensor [batch, height, width, channels]. "
+                        "Insert a Flatten node to convert the shape?");
+        ImGui::Spacing();
+
+        // Button 1: Auto-Insert Flatten
+        if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Auto-Insert Flatten", ImVec2(210, 0))) {
+            if (from_node && to_node) {
+                // Create Flatten node
+                MLNode flatten_node = CreateNode(NodeType::Flatten, "Flatten");
+
+                // Calculate position at midpoint between nodes
+                ImVec2 from_pos = ImNodes::GetNodeGridSpacePos(from_node->id);
+                ImVec2 to_pos = ImNodes::GetNodeGridSpacePos(to_node->id);
+                ImVec2 flatten_pos = ImVec2(
+                    (from_pos.x + to_pos.x) / 2.0f,
+                    (from_pos.y + to_pos.y) / 2.0f
+                );
+
+                // Add to graph
+                nodes_.push_back(flatten_node);
+                pending_positions_[flatten_node.id] = flatten_pos;
+                pending_positions_frames_ = 3;  // Apply position for 3 frames
+
+                // Get flatten node's pin IDs
+                int flatten_in = flatten_node.inputs[0].id;
+                int flatten_out = flatten_node.outputs[0].id;
+
+                // Create connections: from → flatten → to
+                CreateLink(pending_flatten_from_pin_, flatten_in,
+                         pending_flatten_from_node_, flatten_node.id);
+                CreateLink(flatten_out, pending_flatten_to_pin_,
+                         flatten_node.id, pending_flatten_to_node_);
+
+                // Invalidate shape cache
+                if (shape_inference_) {
+                    shape_inference_->InvalidateShapes();
+                }
+
+                // Save undo state
+                SaveUndoState();
+
+                spdlog::info("Auto-inserted Flatten node between {} and {}",
+                           from_node->name, to_node->name);
+            }
+
+            show_auto_insert_flatten_dialog_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        // Button 2: Manual
+        if (ImGui::Button(ICON_FA_HAND " Manual", ImVec2(95, 0))) {
+            show_auto_insert_flatten_dialog_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        // Button 3: Cancel
+        if (ImGui::Button(ICON_FA_XMARK " Cancel", ImVec2(95, 0))) {
+            show_auto_insert_flatten_dialog_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
 }
 
 void NodeEditor::ShowToolbar() {
-    // File operations
-    if (ImGui::Button("Save Graph")) {
+    // Enhanced toolbar styling
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
+
+    // File operations with icons
+    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
         ShowSaveDialog();
     }
     ImGui::SameLine();
 
-    if (ImGui::Button("Load Graph")) {
+    if (ImGui::Button(ICON_FA_FOLDER_OPEN " Load")) {
         ShowLoadDialog();
     }
     ImGui::SameLine();
 
-    ImGui::Text("|");
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
     ImGui::SameLine();
 
-    if (ImGui::Button("Add Dense Layer")) {
-        // Use special sentinel position - will be replaced by FindEmptyPosition after EndNodeEditor
-        context_menu_pos_ = ImVec2(-99999.0f, -99999.0f);
-        AddNode(NodeType::Dense, "Dense Layer");
+    // Zoom controls
+    if (ImGui::Button(ICON_FA_MINUS)) {
+        zoom_ = std::max(ZOOM_MIN, zoom_ - 0.1f);
+    }
+    ImGui::SameLine();
+    ImGui::Text("%.0f%%", zoom_ * 100.0f);
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_PLUS)) {
+        zoom_ = std::min(ZOOM_MAX, zoom_ + 0.1f);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_EXPAND " Fit")) {
+        zoom_ = 1.0f; ImNodes::EditorContextResetPanning(ImVec2(0, 0));
     }
     ImGui::SameLine();
 
-    if (ImGui::Button("Add ReLU")) {
-        // Use special sentinel position - will be replaced by FindEmptyPosition after EndNodeEditor
-        context_menu_pos_ = ImVec2(-99999.0f, -99999.0f);
-        AddNode(NodeType::ReLU, "ReLU");
-    }
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
     ImGui::SameLine();
 
-    // Delete selected nodes (Clear)
-    if (ImGui::Button("Clear")) {
+    // Selection tools
+    if (ImGui::Button(ICON_FA_OBJECT_GROUP " Select All")) {
+        SelectAll();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_TRASH " Delete")) {
         DeleteSelected();
     }
     ImGui::SameLine();
-
-    if (ImGui::Button("Clear All")) {
+    if (ImGui::Button(ICON_FA_COPY " Duplicate")) {
+        DuplicateSelection();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_ERASER " Clear All")) {
         ClearGraph();
     }
     ImGui::SameLine();
 
-    ImGui::Text("|");
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
     ImGui::SameLine();
 
-    ImGui::Text("Nodes: %zu | Links: %zu", nodes_.size(), links_.size());
+    // Minimap toggle
+    if (ImGui::Button(show_minimap_ ? ICON_FA_SITEMAP " Minimap" : ICON_FA_SITEMAP)) {
+        show_minimap_ = !show_minimap_;
+    }
+    ImGui::SameLine();
 
-    // Code generation controls on a new line for better visibility
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+    ImGui::SameLine();
+
+    // Stats display
+    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_CIRCLE_NODES " %zu", nodes_.size());
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_LINK " %zu", links_.size());
+    
+    int num_selected = ImNodes::NumSelectedNodes();
+    if (num_selected > 0) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), ICON_FA_SQUARE_CHECK " %d", num_selected);
+    }
+
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+
+    // Code generation controls - second toolbar row
     ImGui::Separator();
-    ImGui::Text("Code Generation:");
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
+    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_CODE " Code:");
     ImGui::SameLine();
 
     // Framework selection
@@ -714,18 +860,18 @@ void NodeEditor::ShowToolbar() {
     }
     ImGui::SameLine();
 
-    if (ImGui::Button("Generate Code")) {
+    if (ImGui::Button(ICON_FA_GEARS " Generate")) {
         GeneratePythonCode();
     }
     ImGui::SameLine();
 
-    if (ImGui::Button("Export Code")) {
+    if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
         ShowExportDialog();
     }
 
     // Training controls
     ImGui::SameLine();
-    ImGui::Text("|");
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
     ImGui::SameLine();
 
     // Check training state from TrainingManager
@@ -735,12 +881,15 @@ void NodeEditor::ShowToolbar() {
     if (training_active) {
         // Show training progress and stop button
         auto metrics = training_mgr.GetCurrentMetrics();
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Training... Epoch %d/%d",
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_SPINNER " Epoch %d/%d",
             metrics.current_epoch, metrics.total_epochs);
         ImGui::SameLine();
-        if (ImGui::Button("Stop Training")) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+        if (ImGui::Button(ICON_FA_STOP " Stop")) {
             training_mgr.StopTraining();
         }
+        ImGui::PopStyleColor(2);
     } else {
         // Train button - green when valid, disabled when invalid
         bool can_train = IsGraphValid() && train_callback_;
@@ -751,7 +900,7 @@ void NodeEditor::ShowToolbar() {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
-        if (ImGui::Button("Train Model")) {
+        if (ImGui::Button(ICON_FA_PLAY " Train")) {
             if (train_callback_) {
                 spdlog::info("NodeEditor: Starting training from graph");
                 train_callback_(nodes_, links_);
@@ -771,26 +920,8 @@ void NodeEditor::ShowToolbar() {
         }
     }
 
-    // Zoom controls
-    ImGui::SameLine();
-    ImGui::Text("|");
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_PLUS)) {
-        zoom_ = std::min(zoom_ * 1.2f, ZOOM_MAX);
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom In");
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_MINUS)) {
-        zoom_ = std::max(zoom_ / 1.2f, ZOOM_MIN);
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom Out");
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_EXPAND)) {
-        zoom_ = 1.0f;
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Zoom (100%)");
-    ImGui::SameLine();
-    ImGui::Text("%.0f%%", zoom_ * 100.0f);
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
 }
 
 void NodeEditor::RenderMinimap() {
@@ -834,19 +965,55 @@ void NodeEditor::RenderMinimap() {
     ImGui::SetNextWindowPos(minimap_pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(minimap_size_, ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.14f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.20f, 0.20f, 0.22f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.31f, 0.31f, 0.35f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.12f, 0.92f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.22f, 0.22f, 0.28f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.40f, 0.50f, 0.8f));
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
                                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                                     ImGuiWindowFlags_NoMove;  // We handle movement manually
 
-    
+
     if (ImGui::Begin("##MinimapWindow", &show_minimap_, window_flags)) {
+        // Draw subtle grid pattern on background
+        ImDrawList* bg_draw_list = ImGui::GetWindowDrawList();
+        ImVec2 win_pos = ImGui::GetWindowPos();
+        ImVec2 win_size = ImGui::GetWindowSize();
+        const float grid_step = 20.0f;
+        ImU32 grid_color = IM_COL32(60, 65, 75, 40);
+        for (float x = win_pos.x; x < win_pos.x + win_size.x; x += grid_step) {
+            bg_draw_list->AddLine(ImVec2(x, win_pos.y), ImVec2(x, win_pos.y + win_size.y), grid_color);
+        }
+        for (float y = win_pos.y; y < win_pos.y + win_size.y; y += grid_step) {
+            bg_draw_list->AddLine(ImVec2(win_pos.x, y), ImVec2(win_pos.x + win_size.x, y), grid_color);
+        }
+        
+        // Draw stats header bar at top
+        const float header_height = 16.0f;
+        bg_draw_list->AddRectFilled(
+            win_pos, 
+            ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
+            IM_COL32(30, 35, 45, 220)
+        );
+        bg_draw_list->AddLine(
+            ImVec2(win_pos.x, win_pos.y + header_height),
+            ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
+            IM_COL32(60, 70, 90, 200)
+        );
+        
+        // Draw stats text
+        char stats_text[64];
+        snprintf(stats_text, sizeof(stats_text), "%zu nodes | %zu links", nodes_.size(), links_.size());
+        ImVec2 text_size = ImGui::CalcTextSize(stats_text);
+        bg_draw_list->AddText(
+            ImVec2(win_pos.x + (win_size.x - text_size.x) * 0.5f, win_pos.y + 2.0f),
+            IM_COL32(160, 170, 190, 220),
+            stats_text
+        );
+        
         // Get the draw list for this window
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 window_pos = ImGui::GetWindowPos();
@@ -944,7 +1111,11 @@ void NodeEditor::RenderMinimap() {
         if (from_node && to_node) {
             ImVec2 mm_from = gridToMinimap(from_pos);
             ImVec2 mm_to = gridToMinimap(to_pos);
-            draw_list->AddLine(mm_from, mm_to, IM_COL32(150, 150, 150, 150), 1.0f);
+            // Use a gradient-like effect: brighter in middle
+            ImU32 link_color = is_training_ ? 
+                IM_COL32(200, 220, 100, 180) :  // Amber-ish during training
+                IM_COL32(130, 160, 200, 160);   // Blue-gray normally
+            draw_list->AddLine(mm_from, mm_to, link_color, 1.5f);
         }
     }
 
@@ -968,13 +1139,30 @@ void NodeEditor::RenderMinimap() {
             200
         );
 
-        // Check if node is selected
-        bool is_selected = (node.id == selected_node_id_);
+        // Check if node is selected (support multi-selection)
+        bool is_selected = ImNodes::IsNodeSelected(node.id);
 
-        draw_list->AddRectFilled(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), fill_color, 2.0f);
+        // Draw node with rounded corners
+        draw_list->AddRectFilled(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), fill_color, 3.0f);
+        
+        // Draw subtle border for all nodes
+        draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), 
+            IM_COL32(255, 255, 255, 40), 3.0f, 0, 1.0f);
 
         if (is_selected) {
-            draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), IM_COL32(255, 255, 100, 255), 2.0f, 0, 2.0f);
+            // Blue glow effect matching main editor
+            for (int i = 2; i >= 0; --i) {
+                float offset = (i + 1) * 1.5f;
+                int alpha = 40 * (3 - i);  // 120, 80, 40
+                draw_list->AddRect(
+                    ImVec2(mm_pos.x - offset, mm_pos.y - offset),
+                    ImVec2(mm_pos.x + mm_size.x + offset, mm_pos.y + mm_size.y + offset),
+                    IM_COL32(100, 180, 255, alpha), 3.0f, 0, 1.5f
+                );
+            }
+            // Bright selection border
+            draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), 
+                IM_COL32(100, 180, 255, 255), 3.0f, 0, 2.0f);
         }
     }
 
@@ -995,9 +1183,40 @@ void NodeEditor::RenderMinimap() {
     viewport_mm_max.x = std::min(viewport_mm_max.x, window_pos.x + window_size.x);
     viewport_mm_max.y = std::min(viewport_mm_max.y, window_pos.y + window_size.y);
 
-    // Draw semi-transparent viewport indicator
-    draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, IM_COL32(100, 150, 255, 40));
-    draw_list->AddRect(viewport_mm_min, viewport_mm_max, IM_COL32(100, 150, 255, 200), 0.0f, 0, 1.5f);
+    // Draw semi-transparent viewport indicator with enhanced styling
+    draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, IM_COL32(80, 140, 255, 35));
+    
+    // Draw viewport border with rounded corners
+    draw_list->AddRect(viewport_mm_min, viewport_mm_max, IM_COL32(100, 160, 255, 220), 2.0f, 0, 2.0f);
+    
+    // Draw corner handles for visual emphasis
+    const float handle_size = 4.0f;
+    ImU32 handle_color = IM_COL32(130, 180, 255, 255);
+    
+    // Top-left corner
+    draw_list->AddRectFilled(
+        ImVec2(viewport_mm_min.x - 1, viewport_mm_min.y - 1),
+        ImVec2(viewport_mm_min.x + handle_size, viewport_mm_min.y + handle_size),
+        handle_color
+    );
+    // Top-right corner
+    draw_list->AddRectFilled(
+        ImVec2(viewport_mm_max.x - handle_size, viewport_mm_min.y - 1),
+        ImVec2(viewport_mm_max.x + 1, viewport_mm_min.y + handle_size),
+        handle_color
+    );
+    // Bottom-left corner
+    draw_list->AddRectFilled(
+        ImVec2(viewport_mm_min.x - 1, viewport_mm_max.y - handle_size),
+        ImVec2(viewport_mm_min.x + handle_size, viewport_mm_max.y + 1),
+        handle_color
+    );
+    // Bottom-right corner
+    draw_list->AddRectFilled(
+        ImVec2(viewport_mm_max.x - handle_size, viewport_mm_max.y - handle_size),
+        ImVec2(viewport_mm_max.x + 1, viewport_mm_max.y + 1),
+        handle_color
+    );
 
     // Handle mouse interaction with minimap using the window system
     // mouse_pos already declared above, just refresh it
@@ -1304,6 +1523,40 @@ void NodeEditor::RenderNodes() {
             NodeDocumentationManager::Instance().RenderTooltip(node.type);
         }
 
+        // Draw selection glow effect for selected nodes
+        if (ImNodes::IsNodeSelected(node.id)) {
+            ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
+            ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+            // Draw multi-layered glow effect (outer to inner)
+            float glow_size = 8.0f * zoom_;
+
+            for (int i = 3; i >= 0; --i) {
+                float offset = glow_size * (i + 1) * 0.4f;
+                int alpha = 15 * (4 - i);  // Fade out: 60, 45, 30, 15
+                ImU32 glow_color = IM_COL32(100, 180, 255, alpha);
+                draw_list->AddRect(
+                    ImVec2(node_pos.x - offset, node_pos.y - offset),
+                    ImVec2(node_pos.x + node_dims.x + offset, node_pos.y + node_dims.y + offset),
+                    glow_color,
+                    8.0f * zoom_,  // Corner rounding
+                    0,
+                    2.0f + i * 0.5f  // Thicker outer lines
+                );
+            }
+
+            // Draw bright inner border
+            draw_list->AddRect(
+                ImVec2(node_pos.x - 1, node_pos.y - 1),
+                ImVec2(node_pos.x + node_dims.x + 1, node_pos.y + node_dims.y + 1),
+                IM_COL32(100, 180, 255, 180),
+                6.0f * zoom_,
+                0,
+                2.0f
+            );
+        }
+
         // Apply any pending position AFTER the node has been created
         // (ImNodes needs the node to exist before SetNodeGridSpacePos works)
         // Keep applying positions while pending_positions_frames_ > 0 to ensure they stick
@@ -1313,6 +1566,59 @@ void NodeEditor::RenderNodes() {
             // Only erase if we're done applying (frame counter reached 0)
             if (pending_positions_frames_ <= 0) {
                 pending_positions_.erase(pos_it);
+            }
+        }
+
+        // Render warning icon if node has warnings
+        for (const auto& warning : validation_warnings_) {
+            if (warning.node_id == node.id) {
+                // Get node position and dimensions
+                ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
+                ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+
+                // Position warning icon in top-right corner of node
+                ImVec2 icon_pos = ImVec2(node_pos.x + node_dims.x - 30, node_pos.y + 5);
+
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+                // Draw warning icon (yellow triangle with exclamation mark)
+                ImU32 warning_color = IM_COL32(255, 193, 7, 255);  // Amber/yellow
+                draw_list->AddText(icon_pos, warning_color, ICON_FA_TRIANGLE_EXCLAMATION);
+
+                // Show tooltip when hovering over icon area
+                ImVec2 icon_size = ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION);
+                ImVec2 mouse_pos = ImGui::GetMousePos();
+                bool is_hovering = (mouse_pos.x >= icon_pos.x && mouse_pos.x <= icon_pos.x + icon_size.x &&
+                                  mouse_pos.y >= icon_pos.y && mouse_pos.y <= icon_pos.y + icon_size.y);
+
+                if (is_hovering) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+
+                    // Warning header
+                    ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.03f, 1.0f),
+                                     ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
+                    ImGui::Separator();
+
+                    // Warning message
+                    ImGui::TextWrapped("%s", warning.message.c_str());
+
+                    // Suggested fix
+                    if (warning.has_auto_fix && !warning.suggested_fix.empty()) {
+                        ImGui::Spacing();
+                        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
+                                         ICON_FA_LIGHTBULB " Suggestion:");
+                        ImGui::TextWrapped("%s", warning.suggested_fix.c_str());
+                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                                         "(Try connecting the nodes to see auto-fix dialog)");
+                    }
+
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+
+                // Only show one warning per node
+                break;
             }
         }
 
@@ -1372,18 +1678,25 @@ void NodeEditor::HandleInteractions() {
     // Use the extended version that provides both node IDs and pin IDs
     int from_node, from_pin, to_node, to_pin;
     if (ImNodes::IsLinkCreated(&from_node, &from_pin, &to_node, &to_pin)) {
-        SaveUndoState();  // Save state before creating link
+        // Validate the link before creating it
+        std::string error_message;
+        if (ValidateLink(from_pin, to_pin, error_message)) {
+            SaveUndoState();  // Save state before creating link
 
-        NodeLink link;
-        link.id = next_link_id_++;
-        link.from_node = from_node;
-        link.from_pin = from_pin;
-        link.to_node = to_node;
-        link.to_pin = to_pin;
+            NodeLink link;
+            link.id = next_link_id_++;
+            link.from_node = from_node;
+            link.from_pin = from_pin;
+            link.to_node = to_node;
+            link.to_pin = to_pin;
 
-        links_.push_back(link);
-        spdlog::info("Created link {} from node {} pin {} to node {} pin {}",
-                    link.id, from_node, from_pin, to_node, to_pin);
+            links_.push_back(link);
+            spdlog::info("Created link {} from node {} pin {} to node {} pin {}",
+                        link.id, from_node, from_pin, to_node, to_pin);
+        } else {
+            spdlog::warn("Link validation failed: {}", error_message);
+            // Link creation blocked - dialog may have been triggered if shape mismatch
+        }
     }
 
     // Handle link deletion
@@ -2228,6 +2541,44 @@ SubgraphData* NodeEditor::GetSubgraphData(int node_id) {
         }
     }
     return nullptr;
+}
+
+
+// ========== Menu Operations Implementation ==========
+
+void NodeEditor::AddNodeFromMenu(NodeType type, const std::string& name) {
+    // Get center of the visible area for node placement
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    ImVec2 visible_center(-panning.x + 400, -panning.y + 300);
+    
+    // Queue the node for addition (deferred to avoid modifying nodes_ during rendering)
+    PendingNode pending;
+    pending.type = type;
+    pending.name = name;
+    pending.position = visible_center;
+    pending_nodes_.push_back(pending);
+    
+    spdlog::info("Menu: Adding {} node at center of view", name);
+}
+
+void NodeEditor::DeleteSelectedNodes() {
+    // Reuse existing DeleteSelected logic
+    DeleteSelected();
+}
+
+void NodeEditor::DuplicateSelectedNodes() {
+    // Reuse existing DuplicateSelection logic
+    DuplicateSelection();
+}
+
+void NodeEditor::GroupSelectedNodes() {
+    // TODO: Implement node grouping
+    spdlog::info("Group selected nodes - not yet implemented");
+}
+
+void NodeEditor::UngroupSelectedNodes() {
+    // TODO: Implement node ungrouping
+    spdlog::info("Ungroup selected nodes - not yet implemented");
 }
 
 } // namespace gui

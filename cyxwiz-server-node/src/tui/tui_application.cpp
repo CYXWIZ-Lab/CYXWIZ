@@ -1,6 +1,7 @@
 // tui_application.cpp - Enhanced FTXUI-based TUI with tab navigation
 #include "tui/tui_application.h"
 #include "core/backend_manager.h"
+#include "core/config_manager.h"
 #include "core/state_manager.h"
 #include "core/metrics_collector.h"
 #include "core/device_pool.h"
@@ -47,12 +48,23 @@ TUIApplication::TUIApplication(int argc, char** argv,
                                std::shared_ptr<ipc::DaemonClient> daemon_client)
     : argc_(argc), argv_(argv), daemon_client_(std::move(daemon_client)) {
 
+    // Load addresses from config file first
+    core::ConfigManager config_manager;
+    std::string config_path = core::ConfigManager::FindConfigFile();
+    if (config_manager.Load(config_path)) {
+        const auto& cfg = config_manager.GetConfig();
+        daemon_address_ = cfg.ipc_address;
+        central_server_address_ = cfg.central_server;
+        max_concurrent_jobs_ = cfg.max_concurrent_jobs;
+        spdlog::debug("TUI loaded config from: {}", config_path);
+    }
+
     // Initialize input fields
     daemon_address_input_ = daemon_address_;
     central_server_input_ = central_server_address_;
     max_jobs_input_ = std::to_string(max_concurrent_jobs_);
 
-    // Get node ID and config from daemon if connected
+    // Get node ID and config from daemon if connected (overrides file config)
     if (daemon_client_ && daemon_client_->IsConnected()) {
         ipc::DaemonStatus status;
         if (daemon_client_->GetStatus(status)) {

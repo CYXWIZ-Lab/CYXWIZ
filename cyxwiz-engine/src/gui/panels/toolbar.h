@@ -57,6 +57,29 @@ public:
     void SetConnectToServerCallback(std::function<void()> callback) { connect_to_server_callback_ = callback; }
     void SetDeployToServerCallback(std::function<void()> callback) { deploy_to_server_callback_ = callback; }
     void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
+    void SetCreateCustomDatasetCallback(std::function<void()> callback) { create_custom_dataset_callback_ = callback; }
+    void SetPreprocessDatasetCallback(std::function<void()> callback) { preprocess_dataset_callback_ = callback; }
+    void SetTokenizeDatasetCallback(std::function<void()> callback) { tokenize_dataset_callback_ = callback; }
+    void SetAugmentDatasetCallback(std::function<void()> callback) { augment_dataset_callback_ = callback; }
+    void SetDatasetStatisticsCallback(std::function<void()> callback) { dataset_statistics_callback_ = callback; }
+    void SetStartTrainingCallback(std::function<void()> callback) { start_training_callback_ = callback; }
+    void SetPauseTrainingCallback(std::function<void()> callback) { pause_training_callback_ = callback; }
+    void SetStopTrainingCallback(std::function<void()> callback) { stop_training_callback_ = callback; }
+    void SetTrainingSettingsCallback(std::function<void()> callback) { training_settings_callback_ = callback; }
+    void SetOptimizerSettingsCallback(std::function<void()> callback) { optimizer_settings_callback_ = callback; }
+
+    // Node editor callbacks
+    void SetAddDenseNodeCallback(std::function<void()> cb) { add_dense_node_callback_ = cb; }
+    void SetAddConvNodeCallback(std::function<void()> cb) { add_conv_node_callback_ = cb; }
+    void SetAddPoolingNodeCallback(std::function<void()> cb) { add_pooling_node_callback_ = cb; }
+    void SetAddDropoutNodeCallback(std::function<void()> cb) { add_dropout_node_callback_ = cb; }
+    void SetAddBatchNormNodeCallback(std::function<void()> cb) { add_batchnorm_node_callback_ = cb; }
+    void SetAddAttentionNodeCallback(std::function<void()> cb) { add_attention_node_callback_ = cb; }
+    void SetDuplicateNodesCallback(std::function<void()> cb) { duplicate_nodes_callback_ = cb; }
+    void SetDeleteNodesCallback(std::function<void()> cb) { delete_nodes_callback_ = cb; }
+    void SetGroupNodesCallback(std::function<void()> cb) { group_nodes_callback_ = cb; }
+    void SetUngroupNodesCallback(std::function<void()> cb) { ungroup_nodes_callback_ = cb; }
+
     void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
     void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
@@ -64,6 +87,7 @@ public:
     void SetNewScriptCallback(std::function<void()> callback) { new_script_callback_ = callback; }
     void SetOpenScriptCallback(std::function<void()> callback) { open_script_callback_ = callback; }
     void SetOpenScriptInEditorCallback(std::function<void(const std::string&)> callback) { open_script_in_editor_callback_ = callback; }
+    void SetOpenPythonConsoleCallback(std::function<void()> callback) { open_python_console_callback_ = callback; }
     void SetSaveAllCallback(std::function<void()> callback) { save_all_callback_ = callback; }
     void SetAccountSettingsCallback(std::function<void()> callback) { account_settings_callback_ = callback; }
     void SetExitCallback(std::function<void()> callback) { exit_callback_ = callback; }
@@ -166,6 +190,9 @@ public:
     void SetOpenGradCAMCallback(std::function<void()> cb) { open_gradcam_callback_ = cb; }
     void SetOpenFeatureImportanceCallback(std::function<void()> cb) { open_feature_importance_callback_ = cb; }
     void SetOpenNASCallback(std::function<void()> cb) { open_nas_callback_ = cb; }
+    void SetOpenHyperparamSearchCallback(std::function<void()> cb) { open_hyperparam_search_callback_ = cb; }
+    void SetOpenServingCallback(std::function<void()> cb) { open_serving_callback_ = cb; }
+    void SetOpenDNNInferenceCallback(std::function<void()> cb) { open_dnn_inference_callback_ = cb; }
 
     // Clustering callbacks (Phase 6A)
     void SetOpenKMeansCallback(std::function<void()> cb) { open_kmeans_callback_ = cb; }
@@ -333,6 +360,29 @@ private:
     std::function<void()> connect_to_server_callback_;
     std::function<void()> deploy_to_server_callback_;
     std::function<void()> import_dataset_callback_;
+    std::function<void()> create_custom_dataset_callback_;
+    std::function<void()> preprocess_dataset_callback_;
+    std::function<void()> tokenize_dataset_callback_;
+    std::function<void()> augment_dataset_callback_;
+    std::function<void()> dataset_statistics_callback_;
+    std::function<void()> start_training_callback_;
+    std::function<void()> pause_training_callback_;
+    std::function<void()> stop_training_callback_;
+    std::function<void()> training_settings_callback_;
+    std::function<void()> optimizer_settings_callback_;
+
+    // Node editor callbacks
+    std::function<void()> add_dense_node_callback_;
+    std::function<void()> add_conv_node_callback_;
+    std::function<void()> add_pooling_node_callback_;
+    std::function<void()> add_dropout_node_callback_;
+    std::function<void()> add_batchnorm_node_callback_;
+    std::function<void()> add_attention_node_callback_;
+    std::function<void()> duplicate_nodes_callback_;
+    std::function<void()> delete_nodes_callback_;
+    std::function<void()> group_nodes_callback_;
+    std::function<void()> ungroup_nodes_callback_;
+
     std::function<void()> open_custom_node_editor_callback_;
     std::function<void()> open_theme_editor_callback_;
     std::function<void()> open_profiler_callback_;
@@ -340,6 +390,7 @@ private:
     std::function<void()> new_script_callback_;
     std::function<void()> open_script_callback_;
     std::function<void(const std::string&)> open_script_in_editor_callback_;
+    std::function<void()> open_python_console_callback_;
     std::function<void()> save_all_callback_;
     std::function<void()> account_settings_callback_;
     std::function<void()> exit_callback_;
@@ -444,6 +495,18 @@ private:
     int editing_shortcut_index_ = -1;
     char shortcut_edit_buffer_[64] = "";
 
+    // Device preferences
+    int selected_device_index_ = 0;  // Index into cached_devices_
+    bool devices_initialized_ = false;
+    struct CachedDevice {
+        int type;  // 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal, 4=Vulkan
+        int device_id;
+        std::string name;
+        size_t memory_total;
+        size_t memory_available;
+    };
+    std::vector<CachedDevice> cached_devices_;
+
     // Go to Line dialog state
     bool show_go_to_line_dialog_ = false;
     int go_to_line_number_ = 1;
@@ -510,6 +573,9 @@ private:
     std::function<void()> open_gradcam_callback_;
     std::function<void()> open_feature_importance_callback_;
     std::function<void()> open_nas_callback_;
+    std::function<void()> open_hyperparam_search_callback_;
+    std::function<void()> open_serving_callback_;
+    std::function<void()> open_dnn_inference_callback_;
 
     // Clustering callbacks (Phase 6A)
     std::function<void()> open_kmeans_callback_;

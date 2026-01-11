@@ -218,6 +218,11 @@ void ToolbarPanel::RenderEditMenu() {
                     {"Script Editor", "Toggle Block Comment", "Shift+Alt+A", "Add/remove block comment", true},
                     {"Script Editor", "Run Script", "F5", "Execute current script", true},
                     {"Script Editor", "Stop Script", "Shift+F5", "Stop running script", true},
+                    {"Script Editor", "Auto-Complete", "Ctrl+Space", "Show auto-completion suggestions", true},
+                    {"Script Editor", "Accept Completion", "Tab/Enter", "Accept selected completion item", true},
+                    {"Script Editor", "Next Completion", "Down", "Select next completion item", true},
+                    {"Script Editor", "Previous Completion", "Up", "Select previous completion item", true},
+                    {"Script Editor", "Close Completion", "Escape", "Close completion popup", true},
 
                     // ===== Node Editor shortcuts =====
                     {"Node Editor", "Undo", "Ctrl+Z", "Undo last node operation", false},

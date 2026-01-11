@@ -19,6 +19,8 @@ class DatasetPanel;
 class WalletPanel;
 class CustomNodeEditorPanel;
 class ThemeEditorPanel;
+class CloudBrowserPanel;
+class CloudDatasetManagerPanel;
 struct MLNode;
 struct NodeLink;
 
@@ -33,6 +35,8 @@ class PlotTestControlPanel;
 class CommandWindowPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
+class DataExplorerPanel;
+class VisualizationPanel;
 class ConnectionDialog;
 class JobStatusPanel;
 class P2PTrainingPanel;
@@ -42,6 +46,7 @@ class ProfilingPanel;
 class MemoryPanel;
 class MemoryMonitor;
 class VariableExplorerPanel;
+class PlotOutputPanel;
 class TestResultsPanel;
 class ExportDialog;
 class ImportDialog;
@@ -61,6 +66,9 @@ class DimReductionPanel;
 class GradCAMPanel;
 class FeatureImportancePanel;
 class NASPanel;
+class HyperparamSearchPanel;
+class ServingPanel;
+class DNNInferencePanel;
 class KMeansPanel;
 class DBSCANPanel;
 class HierarchicalPanel;
@@ -78,6 +86,7 @@ class StandardizationPanel;
 class LogTransformPanel;
 class BoxCoxPanel;
 class FeatureScalingPanel;
+class OptimizerSettingsPanel;
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
 class EigenDecompPanel;
@@ -124,6 +133,7 @@ class StartupScriptManager;
 } // namespace scripting
 
 namespace network {
+class DataStreamClient;
 class GRPCClient;
 class JobManager;
 } // namespace network
@@ -143,6 +153,9 @@ public:
 
     // Set network components (called by Application after construction)
     void SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager);
+    
+    // Set DataStream client for cloud panels
+    void SetDataStreamClient(network::DataStreamClient* client);
 
     // Get P2PTrainingPanel for job monitoring
     cyxwiz::P2PTrainingPanel* GetP2PTrainingPanel() { return p2p_training_panel_.get(); }
@@ -163,6 +176,10 @@ public:
 
     // Get the scripting engine
     std::shared_ptr<scripting::ScriptingEngine> GetScriptingEngine() { return scripting_engine_; }
+
+    // Prepare for shutdown - stops all background threads before destruction
+    // Call this before destroying MainWindow for faster, cleaner shutdown
+    void PrepareForShutdown();
 
     // Exit request callback (set by Application to trigger window close)
     using ExitRequestCallback = std::function<void()>;
@@ -189,6 +206,7 @@ private:
     void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
     void RenderSidebar();
     void RenderStatusBar();
+    void DetectKeyboardContext();
     void HandleGlobalShortcuts();
 
     // Training from node graph
@@ -213,6 +231,8 @@ private:
     std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
+    std::unique_ptr<cyxwiz::DataExplorerPanel> data_explorer_panel_;
+    std::unique_ptr<cyxwiz::VisualizationPanel> visualization_panel_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
     std::unique_ptr<cyxwiz::P2PTrainingPanel> p2p_training_panel_;
@@ -226,6 +246,7 @@ private:
     std::unique_ptr<cyxwiz::MemoryPanel> memory_panel_;
     std::unique_ptr<cyxwiz::MemoryMonitor> memory_monitor_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;
+    std::unique_ptr<cyxwiz::PlotOutputPanel> plot_output_panel_;
     std::unique_ptr<cyxwiz::TestResultsPanel> test_results_panel_;
     std::unique_ptr<cyxwiz::ExportDialog> export_dialog_;
     std::unique_ptr<cyxwiz::ImportDialog> import_dialog_;
@@ -253,6 +274,9 @@ private:
     std::unique_ptr<cyxwiz::GradCAMPanel> gradcam_panel_;
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
     std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
+    std::unique_ptr<cyxwiz::HyperparamSearchPanel> hyperparam_search_panel_;
+    std::unique_ptr<cyxwiz::ServingPanel> serving_panel_;
+    std::unique_ptr<cyxwiz::DNNInferencePanel> dnn_inference_panel_;
 
     // Clustering panels (Phase 6A)
     std::unique_ptr<cyxwiz::KMeansPanel> kmeans_panel_;
@@ -274,6 +298,7 @@ private:
     std::unique_ptr<cyxwiz::LogTransformPanel> log_transform_panel_;
     std::unique_ptr<cyxwiz::BoxCoxPanel> boxcox_panel_;
     std::unique_ptr<cyxwiz::FeatureScalingPanel> feature_scaling_panel_;
+    std::unique_ptr<cyxwiz::OptimizerSettingsPanel> optimizer_settings_panel_;
 
     // Linear Algebra panels (Phase 7)
     std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;
@@ -318,6 +343,10 @@ private:
     std::unique_ptr<cyxwiz::HashGeneratorPanel> hash_generator_panel_;
     std::unique_ptr<cyxwiz::JSONViewerPanel> json_viewer_panel_;
     std::unique_ptr<cyxwiz::RegexTesterPanel> regex_tester_panel_;
+    
+    // Cloud panels (DataStream)
+    std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
+    std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
@@ -331,6 +360,7 @@ private:
 
     // Network components
     network::JobManager* job_manager_ = nullptr;
+    network::DataStreamClient* datastream_client_ = nullptr;
     std::string monitoring_job_id_;
 
     // Exit request callback

@@ -257,7 +257,7 @@ struct ASTNode {
 
     // Helpers
     void addChild(ASTNodePtr child);
-    void setProperty(const std::string& key, const std::string& value);
+    void setProperty(const std::string& key, const std::string& val);
     std::string getProperty(const std::string& key, const std::string& defaultVal = "") const;
     bool hasProperty(const std::string& key) const;
 

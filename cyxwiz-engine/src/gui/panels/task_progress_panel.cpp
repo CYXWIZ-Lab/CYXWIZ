@@ -235,13 +235,7 @@ bool TaskStatusIndicator::Render() {
     // Spinner + count
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));
 
-    // Animated spinner
-    float time = static_cast<float>(ImGui::GetTime());
-    int frame = static_cast<int>(time * 10) % 4;
-    const char* spinner_frames[] = { ICON_FA_SPINNER, ICON_FA_SPINNER, ICON_FA_SPINNER, ICON_FA_SPINNER };
-    (void)spinner_frames;
-
-    // Use rotation for spinner effect
+    // Use spinner icon
     ImGui::Text(ICON_FA_SPINNER);
     ImGui::PopStyleColor();
 
@@ -283,9 +277,6 @@ void TaskStatusIndicator::RenderSpinner(float radius) {
     float time = static_cast<float>(ImGui::GetTime());
     int num_segments = 12;
     float start_angle = time * 4.0f;
-
-    ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
-    ImU32 color_fade = ImGui::GetColorU32(ImVec4(0.5f, 0.5f, 0.5f, 0.3f));
 
     for (int i = 0; i < num_segments; ++i) {
         float angle = start_angle + (i * 2.0f * 3.14159f / num_segments);

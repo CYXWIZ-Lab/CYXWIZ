@@ -9,6 +9,16 @@
 #include <optional>
 #include <chrono>
 
+// Forward declarations for preprocessing and augmentation
+namespace cyxwiz {
+    struct PreprocessingConfig;
+    class AnnotationManager;
+
+    namespace transforms {
+        class Compose;
+    }
+}
+
 namespace cyxwiz {
 
 // Forward declarations
@@ -419,6 +429,24 @@ public:
     std::vector<DatasetVersion> GetVersionHistory(const std::string& name) const;
     bool SaveVersion(const std::string& name, const std::string& description = "");
 
+    // Preprocessing configuration management
+    void SetPreprocessingConfig(const std::string& dataset_id, const PreprocessingConfig& config);
+    PreprocessingConfig GetPreprocessingConfig(const std::string& dataset_id) const;
+    bool HasPreprocessingConfig(const std::string& dataset_id) const;
+    void ClearPreprocessingConfig(const std::string& dataset_id);
+
+    // Augmentation pipeline management
+    void SetAugmentationPipeline(const std::string& dataset_id,
+                                  std::shared_ptr<transforms::Compose> pipeline);
+    std::shared_ptr<transforms::Compose> GetAugmentationPipeline(
+        const std::string& dataset_id) const;
+    bool HasAugmentationPipeline(const std::string& dataset_id) const;
+    void ClearAugmentationPipeline(const std::string& dataset_id);
+
+    // Annotation management (for labeling and export)
+    AnnotationManager& GetAnnotationManager();
+    const AnnotationManager& GetAnnotationManager() const;
+
 private:
     DataRegistry() = default;
 
@@ -454,6 +482,15 @@ private:
 
     // Version history storage (in-memory, could be persisted)
     std::map<std::string, std::vector<DatasetVersion>> version_history_;
+
+    // Preprocessing configurations per dataset
+    mutable std::map<std::string, PreprocessingConfig> preprocessing_configs_;
+
+    // Augmentation pipelines per dataset
+    mutable std::map<std::string, std::shared_ptr<transforms::Compose>> augmentation_pipelines_;
+
+    // Annotation manager
+    mutable std::unique_ptr<AnnotationManager> annotation_manager_;
 };
 
 } // namespace cyxwiz

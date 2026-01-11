@@ -2,6 +2,7 @@
 #include "deployment_dialog.h"
 #include "../icons.h"
 #include "../../auth/auth_client.h"
+#include "../../core/engine_config.h"
 #include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -17,6 +18,13 @@ DeploymentDialog::DeploymentDialog()
     embedded_server_ = std::make_unique<LocalInferenceServer>();
     deployment_client_ = std::make_unique<network::DeploymentClient>();
     central_server_client_ = std::make_unique<network::GRPCClient>();
+
+    // Load server addresses from config
+    auto& config = core::EngineConfig::Instance();
+    std::strncpy(server_address_, config.GetDefaultDeploymentAddress().c_str(), sizeof(server_address_) - 1);
+    server_address_[sizeof(server_address_) - 1] = '\0';
+    std::strncpy(central_server_address_, config.GetCentralServerAddress().c_str(), sizeof(central_server_address_) - 1);
+    central_server_address_[sizeof(central_server_address_) - 1] = '\0';
 }
 
 DeploymentDialog::~DeploymentDialog() {
@@ -967,7 +975,8 @@ void DeploymentDialog::RenderNodeTable() {
                              node.ip_address.c_str(), node.port);
                 } else {
                     // Fallback to node_id if ip_address not available
-                    snprintf(server_address_, sizeof(server_address_), "%s:50052", node.node_id.c_str());
+                    int default_port = core::EngineConfig::Instance().GetDefaultP2PPort();
+                    snprintf(server_address_, sizeof(server_address_), "%s:%d", node.node_id.c_str(), default_port);
                     spdlog::warn("Node {} has no IP address, using node_id as fallback", node.name);
                 }
             }

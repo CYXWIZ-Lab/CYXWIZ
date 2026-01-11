@@ -1,0 +1,282 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+// DataStream service for zero-copy ML training data streaming from CyxCloud
+service DataStreamService {
+    // Stream batches for training
+    rpc StreamBatches(StreamBatchesRequest) returns (stream StreamBatchResponse);
+
+    // Get dataset metadata
+    rpc GetDatasetInfo(GetDatasetInfoRequest) returns (CloudDatasetInfoResponse);
+
+    // List user's datasets (owned + shared)
+    rpc ListDatasets(ListDatasetsRequest) returns (ListDatasetsResponse);
+
+    // Create a new dataset from uploaded files
+    rpc CreateDataset(CreateDatasetRequest) returns (CreateDatasetResponse);
+
+    // Create access token for direct node access
+    rpc CreateAccessToken(CreateAccessTokenRequest) returns (AccessTokenResponse);
+
+    // Revoke an access token
+    rpc RevokeAccessToken(RevokeAccessTokenRequest) returns (RevokeAccessTokenResponse);
+
+    // Verify dataset integrity
+    rpc VerifyDataset(VerifyDatasetRequest) returns (VerificationResult);
+
+    // Share dataset with another user
+    rpc ShareDataset(ShareDatasetRequest) returns (ShareDatasetResponse);
+
+    // List public datasets (MNIST, CIFAR, ImageNet, etc.)
+    rpc ListPublicDatasets(ListPublicDatasetsRequest) returns (ListPublicDatasetsResponse);
+
+    // Upload file to CyxCloud (for creating datasets)
+    rpc UploadFile(stream UploadFileRequest) returns (UploadFileResponse);
+
+    // Delete a dataset
+    rpc DeleteDataset(DeleteDatasetRequest) returns (DeleteDatasetResponse);
+}
+
+// Trust levels for datasets
+enum TrustLevel {
+    TRUST_SELF = 0;       // User's own uploads
+    TRUST_SIGNED = 1;     // Cryptographically signed by trusted party
+    TRUST_VERIFIED = 2;   // Hash verified against known good source
+    TRUST_ATTESTED = 3;   // TEE/SGX attested
+    TRUST_UNTRUSTED = 4;  // Unknown source (needs verification)
+}
+
+// ============================================================================
+// STREAM BATCHES
+// ============================================================================
+
+message StreamBatchesRequest {
+    string dataset_id = 1;
+    string access_token = 2;        // Optional - required if streaming from Server Node
+    int32 batch_size = 3;
+    int64 start_index = 4;          // File index to start from
+    int32 prefetch_batches = 5;     // How many batches to buffer
+    int32 max_trust_level = 6;      // Maximum acceptable trust level (default: 2=VERIFIED)
+    bool shuffle = 7;
+    int64 seed = 8;                 // For reproducible shuffling
+}
+
+message StreamBatchResponse {
+    uint64 batch_index = 1;
+    repeated bytes items = 2;       // Raw data for each item in batch
+    repeated bytes item_hashes = 3; // Blake3 hash of each item for verification
+    bytes batch_hash = 4;           // Blake3 hash of entire batch
+    uint64 total_batches = 5;       // Total number of batches in dataset
+    bool is_last = 6;               // True if this is the last batch
+}
+
+// ============================================================================
+// DATASET INFO
+// ============================================================================
+
+message GetDatasetInfoRequest {
+    string dataset_id = 1;
+}
+
+message CloudDatasetInfoResponse {
+    DatasetInfo dataset = 1;
+    repeated DatasetFileInfo files = 2;
+}
+
+message DatasetInfo {
+    string id = 1;
+    string name = 2;
+    string owner_id = 3;
+    string description = 4;
+    int64 total_size_bytes = 5;
+    int32 file_count = 6;
+    bytes content_hash = 7;
+    TrustLevel trust_level = 8;
+    bytes signature = 9;
+    string schema_json = 10;
+    int32 version = 11;
+    int64 created_at = 12;          // Unix timestamp
+    int64 updated_at = 13;          // Unix timestamp
+}
+
+message DatasetFileInfo {
+    string id = 1;
+    string path_in_dataset = 2;
+    int64 size_bytes = 3;
+    bytes content_hash = 4;
+    int32 file_index = 5;
+}
+
+// ============================================================================
+// LIST DATASETS
+// ============================================================================
+
+message ListDatasetsRequest {
+    int32 limit = 1;                // Max results (default: 100)
+    int32 offset = 2;               // Pagination offset
+    bool include_shared = 3;        // Include datasets shared with user
+    int32 max_trust_level = 4;      // Filter by trust level
+}
+
+message ListDatasetsResponse {
+    repeated DatasetInfo datasets = 1;
+    int32 total_count = 2;
+}
+
+// ============================================================================
+// CREATE DATASET
+// ============================================================================
+
+message CreateDatasetRequest {
+    string name = 1;
+    string description = 2;
+    repeated string file_ids = 3;   // UUIDs of uploaded files to include
+    string schema_json = 4;         // Optional schema definition
+}
+
+message CreateDatasetResponse {
+    DatasetInfo dataset = 1;
+}
+
+// ============================================================================
+// ACCESS TOKENS
+// ============================================================================
+
+message CreateAccessTokenRequest {
+    string dataset_id = 1;
+    string node_id = 2;             // Optional - specific node
+    repeated string scopes = 3;     // ["read", "stream"]
+    int64 ttl_seconds = 4;          // Time-to-live (default: 24 hours)
+}
+
+message AccessTokenResponse {
+    string token = 1;
+    string token_id = 2;
+    int64 expires_at = 3;           // Unix timestamp
+    repeated string scopes = 4;
+}
+
+message RevokeAccessTokenRequest {
+    string token_id = 1;
+}
+
+message RevokeAccessTokenResponse {
+    bool success = 1;
+}
+
+// ============================================================================
+// VERIFICATION
+// ============================================================================
+
+message VerifyDatasetRequest {
+    string dataset_id = 1;
+    bool check_public_registry = 2; // Check against known public datasets
+    bool full_verification = 3;     // Verify all file contents (slow)
+}
+
+message VerificationResult {
+    string dataset_id = 1;
+    bool manifest_valid = 2;
+    bool all_files_valid = 3;
+    TrustLevel computed_trust_level = 4;
+    repeated FileVerification files = 5;
+    PublicDatasetMatch public_match = 6;
+    int64 verified_at = 7;          // Unix timestamp
+    string message = 8;             // Human-readable status
+}
+
+message FileVerification {
+    string path = 1;
+    bytes expected_hash = 2;
+    bytes actual_hash = 3;
+    bool valid = 4;
+    string error = 5;               // Error message if verification failed
+}
+
+message PublicDatasetMatch {
+    string name = 1;
+    string version = 2;
+    string official_url = 3;
+    string license = 4;
+    repeated string verified_by = 5;  // ["torchvision", "huggingface"]
+    double confidence = 6;            // Match confidence 0.0-1.0
+}
+
+// ============================================================================
+// SHARING
+// ============================================================================
+
+message ShareDatasetRequest {
+    string dataset_id = 1;
+    string share_with_user_id = 2;
+    repeated string permissions = 3;  // ["read", "stream", "reshare"]
+    int64 expires_at = 4;             // Optional expiration timestamp
+}
+
+message ShareDatasetResponse {
+    string share_id = 1;
+    bool success = 2;
+}
+
+// ============================================================================
+// PUBLIC DATASETS
+// ============================================================================
+
+message ListPublicDatasetsRequest {
+    string name_filter = 1;         // Optional name filter
+}
+
+message ListPublicDatasetsResponse {
+    repeated PublicDatasetInfo datasets = 1;
+}
+
+message PublicDatasetInfo {
+    string id = 1;
+    string name = 2;
+    string version = 3;
+    string official_url = 4;
+    bytes official_hash = 5;
+    string paper_url = 6;
+    string license = 7;
+    repeated string verified_by = 8;
+    bool cached = 9;                // True if cached in CyxCloud
+    string cached_dataset_id = 10;  // ID if cached
+}
+
+// ============================================================================
+// FILE UPLOAD
+// ============================================================================
+
+message UploadFileRequest {
+    oneof request {
+        UploadFileMetadata metadata = 1;  // First message: file metadata
+        bytes chunk = 2;                  // Subsequent messages: file chunks
+    }
+}
+
+message UploadFileMetadata {
+    string filename = 1;
+    int64 size_bytes = 2;
+    string content_type = 3;          // MIME type
+    bytes content_hash = 4;           // Blake3 hash for verification
+}
+
+message UploadFileResponse {
+    string file_id = 1;               // UUID of uploaded file
+    bool success = 2;
+    string error = 3;                 // Error message if failed
+}
+
+// ============================================================================
+// DELETE DATASET
+// ============================================================================
+
+message DeleteDatasetRequest {
+    string dataset_id = 1;
+}
+
+message DeleteDatasetResponse {
+    bool success = 1;
+    string error = 2;
+}

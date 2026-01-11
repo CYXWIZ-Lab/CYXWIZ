@@ -260,6 +260,7 @@ bool DaemonClient::GetStatus(DaemonStatus& status) {
     status.node_id = response.node_id();
     status.version = response.version();
     status.connected_to_central = response.central_server_status() == ConnectionStatus::CONNECTION_STATUS_CONNECTED;
+    status.auth_required = response.central_server_status() == ConnectionStatus::CONNECTION_STATUS_AUTH_REQUIRED;
     status.uptime_seconds = response.uptime_seconds();
     status.active_jobs = response.active_jobs();
     status.active_deployments = response.active_deployments();

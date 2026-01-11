@@ -28,6 +28,9 @@ private:
     bool initialized_ = false;
     bool initialized_by_us_ = false;  // True if we called py::initialize_interpreter()
     PyThreadState* main_thread_state_ = nullptr;  // Saved when releasing GIL
+
+    // Configure custom Python packages path from EngineConfig
+    void ConfigureCustomPythonPath();
 };
 
 } // namespace scripting

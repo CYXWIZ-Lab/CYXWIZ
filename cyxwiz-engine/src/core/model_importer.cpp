@@ -301,7 +301,7 @@ ImportResult ModelImporter::Import(
 ImportResult ModelImporter::ImportCyxModelBinary(
     const std::string& input_path,
     SequentialModel& model,
-    const ImportOptions& options,
+    const ImportOptions& /*options*/,
     ProgressCallback progress_cb
 ) {
     ImportResult result;
@@ -399,7 +399,6 @@ ImportResult ModelImporter::ImportCyxModelBinary(
         }
 
         // Load weights into model
-        size_t modules_to_load = std::min(num_modules, model.Size());
         for (size_t i = 0; i < num_modules; ++i) {
             size_t num_params;
             file.read(reinterpret_cast<char*>(&num_params), sizeof(num_params));
@@ -675,10 +674,10 @@ ImportResult ModelImporter::ImportCyxModel(
 }
 
 ImportResult ModelImporter::ImportONNX(
-    const std::string& input_path,
-    SequentialModel& model,
-    const ImportOptions& options,
-    ProgressCallback progress_cb
+    const std::string& /*input_path*/,
+    SequentialModel& /*model*/,
+    const ImportOptions& /*options*/,
+    ProgressCallback /*progress_cb*/
 ) {
     ImportResult result;
 
@@ -804,9 +803,9 @@ ImportResult ModelImporter::ImportSafetensors(
 }
 
 ImportResult ModelImporter::ImportGGUF(
-    const std::string& input_path,
-    SequentialModel& model,
-    const ImportOptions& options,
+    const std::string& /*input_path*/,
+    SequentialModel& /*model*/,
+    const ImportOptions& /*options*/,
     ProgressCallback progress_cb
 ) {
     ImportResult result;

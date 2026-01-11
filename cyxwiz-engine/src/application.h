@@ -26,7 +26,7 @@ public:
     ~CyxWizApp();
 
     int Run();
-    void Shutdown();
+    [[noreturn]] void Shutdown();
 
 private:
     bool Initialize();

@@ -220,7 +220,7 @@ CyxWizTensor* cyxwiz_tensor_div(const CyxWizTensor* a, const CyxWizTensor* b) {
     }
 }
 
-CyxWizTensor* cyxwiz_tensor_matmul(const CyxWizTensor* a, const CyxWizTensor* b) {
+CyxWizTensor* cyxwiz_tensor_matmul(const CyxWizTensor* /*a*/, const CyxWizTensor* /*b*/) {
     // TODO: Implement matrix multiplication
     SetLastError("Matrix multiplication not yet implemented");
     return nullptr;

@@ -187,7 +187,6 @@ void RandomGeneratorPanel::RenderResults() {
 
     // Show values in columns
     int columns = 5;
-    int row = 0;
     ImGui::Columns(columns, "values_cols", false);
 
     for (size_t i = 0; i < result_.values.size() && i < 1000; ++i) {

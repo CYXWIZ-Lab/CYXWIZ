@@ -8,12 +8,18 @@ add_executable(cyxwiz-tests
     unit/test_device.cpp
     unit/test_optimizer.cpp
     unit/test_sequence_layers.cpp
+    unit/test_data_loader.cpp
 )
 
 target_link_libraries(cyxwiz-tests PRIVATE
     Catch2::Catch2WithMain
     cyxwiz-backend
 )
+
+# DuckDB compile definition for data loader tests
+if(CYXWIZ_HAS_DUCKDB)
+    target_compile_definitions(cyxwiz-tests PRIVATE CYXWIZ_HAS_DUCKDB)
+endif()
 
 # Register tests with CTest
 include(CTest)

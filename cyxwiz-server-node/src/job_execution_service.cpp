@@ -1470,7 +1470,10 @@ bool JobExecutionServiceImpl::NotifyCentralServer(const std::string& job_id,
         request.set_engine_address("direct_p2p");
         request.set_accepted_at(
             std::chrono::system_clock::now().time_since_epoch().count());
-        request.set_node_endpoint("0.0.0.0:50052"); // Our P2P endpoint
+        // Set our P2P endpoint from config
+        auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
+        std::string p2p_endpoint = backend.IsInitialized() ? backend.GetConfig().p2p_address : "0.0.0.0:50052";
+        request.set_node_endpoint(p2p_endpoint);
 
         // Send notification
         cyxwiz::protocol::JobAcceptedResponse response;

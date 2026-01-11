@@ -46,14 +46,23 @@ bool ConfigManager::LoadConfig(const std::string& path, NodeConfig& config) {
         if (yaml["network"]) {
             auto network = yaml["network"];
             if (network["central_server"]) config.central_server = network["central_server"].as<std::string>();
+            if (network["auth_api_url"]) config.auth_api_url = network["auth_api_url"].as<std::string>();
+            if (network["ipc_address"]) config.ipc_address = network["ipc_address"].as<std::string>();
+            if (network["p2p_address"]) config.p2p_address = network["p2p_address"].as<std::string>();
+            if (network["terminal_address"]) config.terminal_address = network["terminal_address"].as<std::string>();
+            if (network["node_service_address"]) config.node_service_address = network["node_service_address"].as<std::string>();
+            if (network["deployment_address"]) config.deployment_address = network["deployment_address"].as<std::string>();
+            if (network["inference_address"]) config.inference_address = network["inference_address"].as<std::string>();
             if (network["p2p_port"]) config.p2p_port = network["p2p_port"].as<int>();
             if (network["terminal_port"]) config.terminal_port = network["terminal_port"].as<int>();
             if (network["node_service_port"]) config.node_service_port = network["node_service_port"].as<int>();
             if (network["deployment_port"]) config.deployment_port = network["deployment_port"].as<int>();
             if (network["http_api_port"]) config.http_api_port = network["http_api_port"].as<int>();
+            if (network["inference_port"]) config.inference_port = network["inference_port"].as<int>();
             if (network["enable_tls"]) config.enable_tls = network["enable_tls"].as<bool>();
             if (network["cert_path"]) config.cert_path = network["cert_path"].as<std::string>();
             if (network["key_path"]) config.key_path = network["key_path"].as<std::string>();
+            if (network["ca_path"]) config.ca_path = network["ca_path"].as<std::string>();
             if (network["p2p_secret"]) config.p2p_secret = network["p2p_secret"].as<std::string>();
         }
 
@@ -138,14 +147,18 @@ bool ConfigManager::SaveConfig(const NodeConfig& config, const std::string& path
         // Network settings
         out << YAML::Key << "network" << YAML::Value << YAML::BeginMap;
         out << YAML::Key << "central_server" << YAML::Value << config.central_server;
-        out << YAML::Key << "p2p_port" << YAML::Value << config.p2p_port;
-        out << YAML::Key << "terminal_port" << YAML::Value << config.terminal_port;
-        out << YAML::Key << "node_service_port" << YAML::Value << config.node_service_port;
-        out << YAML::Key << "deployment_port" << YAML::Value << config.deployment_port;
+        out << YAML::Key << "auth_api_url" << YAML::Value << config.auth_api_url;
+        out << YAML::Key << "ipc_address" << YAML::Value << config.ipc_address;
+        out << YAML::Key << "p2p_address" << YAML::Value << config.p2p_address;
+        out << YAML::Key << "terminal_address" << YAML::Value << config.terminal_address;
+        out << YAML::Key << "node_service_address" << YAML::Value << config.node_service_address;
+        out << YAML::Key << "deployment_address" << YAML::Value << config.deployment_address;
+        out << YAML::Key << "inference_address" << YAML::Value << config.inference_address;
         out << YAML::Key << "http_api_port" << YAML::Value << config.http_api_port;
         out << YAML::Key << "enable_tls" << YAML::Value << config.enable_tls;
         out << YAML::Key << "cert_path" << YAML::Value << config.cert_path;
         out << YAML::Key << "key_path" << YAML::Value << config.key_path;
+        out << YAML::Key << "ca_path" << YAML::Value << config.ca_path;
         out << YAML::Key << "p2p_secret" << YAML::Value << config.p2p_secret;
         out << YAML::EndMap;
 

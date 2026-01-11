@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 
 project(cyxwiz-backend VERSION 0.1.0)
 
+# Add cmake module path for custom Find modules
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
 # Find ArrayFire (needs to be installed separately)
 # Download from: https://arrayfire.com/download
 find_package(ArrayFire QUIET)
@@ -14,7 +17,6 @@ else()
     message(STATUS "ArrayFire found: ${ArrayFire_DIR}")
     set(CYXWIZ_HAS_ARRAYFIRE TRUE)
 endif()
-
 # Find other packages
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -22,6 +24,16 @@ find_package(spdlog CONFIG REQUIRED)
 # pybind11 is optional - controlled by parent CYXWIZ_HAS_PYTHON
 if(CYXWIZ_HAS_PYTHON)
     find_package(pybind11 CONFIG QUIET)
+endif()
+
+# Find DuckDB (optional - for SQL-based data loading)
+find_package(duckdb CONFIG QUIET)
+if(duckdb_FOUND)
+    message(STATUS "DuckDB found - SQL data loading enabled")
+    set(CYXWIZ_HAS_DUCKDB TRUE)
+else()
+    message(WARNING "DuckDB not found - SQL data loading disabled")
+    set(CYXWIZ_HAS_DUCKDB FALSE)
 endif()
 
 # Source files
@@ -44,7 +56,6 @@ set(BACKEND_SOURCES
     src/algorithms/scheduler.cpp
     src/algorithms/clustering.cpp
     src/algorithms/data_transform.cpp
-    src/algorithms/dataloader.cpp
     src/algorithms/model_evaluation.cpp
     src/algorithms/dimensionality_reduction.cpp
     src/algorithms/feature_importance.cpp
@@ -55,6 +66,13 @@ set(BACKEND_SOURCES
     src/algorithms/time_series.cpp
     src/algorithms/text_processing.cpp
     src/algorithms/utilities.cpp
+    src/core/data_loader.cpp
+    # Distributed training
+    src/algorithms/distributed/process_group.cpp
+    src/algorithms/distributed/cpu_backend.cpp
+    src/algorithms/distributed/ddp.cpp
+    src/algorithms/distributed/distributed_sampler.cpp
+    src/algorithms/distributed/distributed_trainer.cpp
 )
 
 # Header files
@@ -78,7 +96,6 @@ set(BACKEND_HEADERS
     include/cyxwiz/scheduler.h
     include/cyxwiz/clustering.h
     include/cyxwiz/data_transform.h
-    include/cyxwiz/dataloader.h
     include/cyxwiz/model_evaluation.h
     include/cyxwiz/dimensionality_reduction.h
     include/cyxwiz/feature_importance.h
@@ -89,6 +106,14 @@ set(BACKEND_HEADERS
     include/cyxwiz/time_series.h
     include/cyxwiz/text_processing.h
     include/cyxwiz/utilities.h
+    include/cyxwiz/data_loader.h
+    # Distributed training
+    include/cyxwiz/distributed/process_group.h
+    include/cyxwiz/distributed/cpu_backend.h
+    include/cyxwiz/distributed/nccl_backend.h
+    include/cyxwiz/distributed/ddp.h
+    include/cyxwiz/distributed/distributed_sampler.h
+    include/cyxwiz/distributed/distributed_trainer.h
 )
 
 # Create shared library (DLL/SO)
@@ -118,6 +143,11 @@ target_link_libraries(cyxwiz-backend PUBLIC
     cyxwiz-protocol
 )
 
+# Platform-specific libraries for distributed training
+if(WIN32)
+    target_link_libraries(cyxwiz-backend PRIVATE ws2_32)
+endif()
+
 if(CYXWIZ_HAS_ARRAYFIRE)
     target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::af)
     target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
@@ -132,6 +162,28 @@ if(CYXWIZ_HAS_ARRAYFIRE)
                 CUDA::cudart  # CUDA runtime for cudaMemGetInfo()
             )
             target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
+
+            # NCCL for distributed GPU training (optional)
+            option(CYXWIZ_ENABLE_NCCL "Enable NCCL for distributed GPU training" ON)
+            if(CYXWIZ_ENABLE_NCCL)
+                find_package(NCCL QUIET)
+                if(NCCL_FOUND)
+                    message(STATUS "NCCL found: ${NCCL_LIBRARIES}")
+                    if(NCCL_VERSION)
+                        message(STATUS "  NCCL version: ${NCCL_VERSION}")
+                    endif()
+                    target_sources(cyxwiz-backend PRIVATE
+                        src/algorithms/distributed/nccl_backend.cpp
+                    )
+                    target_link_libraries(cyxwiz-backend PUBLIC NCCL::nccl)
+                    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_NCCL)
+                    set(CYXWIZ_HAS_NCCL TRUE)
+                else()
+                    message(WARNING "NCCL not found - distributed GPU training will use CPU fallback")
+                    message(STATUS "  NCCL can be installed from: https://developer.nvidia.com/nccl")
+                    set(CYXWIZ_HAS_NCCL FALSE)
+                endif()
+            endif()
         else()
             message(WARNING "CUDA Toolkit not found. Install from: https://developer.nvidia.com/cuda-downloads")
             message(WARNING "Building without CUDA memory query support")
@@ -146,6 +198,13 @@ if(CYXWIZ_HAS_ARRAYFIRE)
         )
         target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
     endif()
+endif()
+
+# Link DuckDB if available
+if(CYXWIZ_HAS_DUCKDB)
+    find_package(Threads REQUIRED)
+    target_link_libraries(cyxwiz-backend PRIVATE duckdb Threads::Threads)
+    target_compile_definitions(cyxwiz-backend PRIVATE CYXWIZ_HAS_DUCKDB)
 endif()
 
 # Set properties

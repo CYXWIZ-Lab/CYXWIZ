@@ -49,6 +49,7 @@ struct DaemonStatus {
     std::string node_id;
     std::string version;
     bool connected_to_central = false;
+    bool auth_required = false;  // Token invalid/revoked - user needs to re-login
     int64_t uptime_seconds = 0;
     int active_jobs = 0;
     int active_deployments = 0;

@@ -5,6 +5,7 @@
 // Includes cycle detection, reachability analysis, and graph integrity checks.
 
 #include "node_editor.h"
+#include "node_editor_shape_inference.h"
 #include <spdlog/spdlog.h>
 #include <set>
 #include <queue>
@@ -65,7 +66,94 @@ bool NodeEditor::ValidateGraph(std::string& error_message) {
         }
     }
 
+    // Compute shape validation warnings (non-blocking)
+    validation_warnings_ = ValidateShapes();
+
     return true;
+}
+
+std::vector<ValidationWarning> NodeEditor::ValidateShapes() {
+    std::vector<ValidationWarning> warnings;
+
+    // First, compute shapes for all nodes
+    if (shape_inference_) {
+        shape_inference_->ComputeAllShapes(nodes_, links_);
+    } else {
+        spdlog::error("ValidateShapes: shape_inference_ is null");
+        return warnings;
+    }
+
+    // Check each link for shape mismatches
+    for (const auto& link : links_) {
+        // Find source and target nodes
+        MLNode* from_node = nullptr;
+        MLNode* to_node = nullptr;
+
+        for (auto& node : nodes_) {
+            for (const auto& pin : node.outputs) {
+                if (pin.id == link.from_pin) {
+                    from_node = &node;
+                    break;
+                }
+            }
+            for (const auto& pin : node.inputs) {
+                if (pin.id == link.to_pin) {
+                    to_node = &node;
+                    break;
+                }
+            }
+        }
+
+        if (!from_node || !to_node) continue;
+
+        // Check for Conv2D/MaxPool2D (4D) → Dense (2D) without Flatten
+        if (Is4DOutputNode(from_node->type) && Expects2DInput(to_node->type)) {
+            // Check if there's already a Flatten node between them
+            bool has_flatten_between = false;
+
+            // Simple check: see if target node has Flatten as immediate predecessor
+            // (More sophisticated: check full path, but this is good enough for now)
+            for (const auto& other_link : links_) {
+                if (other_link.to_node == to_node->id) {
+                    for (const auto& node : nodes_) {
+                        if (node.id == other_link.from_node && node.type == NodeType::Flatten) {
+                            has_flatten_between = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!has_flatten_between) {
+                warnings.push_back({
+                    .node_id = to_node->id,
+                    .severity = ValidationSeverity::Warning,
+                    .message = "Dense layer expects 2D input but receiving 4D from " + from_node->name + ". Insert Flatten node.",
+                    .suggested_fix = "Auto-insert Flatten",
+                    .has_auto_fix = true,
+                    .from_node_id = from_node->id,
+                    .to_node_id = to_node->id
+                });
+            }
+        }
+    }
+
+    return warnings;
+}
+
+bool NodeEditor::Is4DOutputNode(NodeType type) const {
+    // Nodes that output 4D tensors: [batch, height, width, channels]
+    return type == NodeType::Conv2D ||
+           type == NodeType::Conv1D ||
+           type == NodeType::Conv3D ||
+           type == NodeType::DepthwiseConv2D ||
+           type == NodeType::MaxPool2D ||
+           type == NodeType::AvgPool2D;
+}
+
+bool NodeEditor::Expects2DInput(NodeType type) const {
+    // Nodes that expect 2D tensors: [batch, features]
+    return type == NodeType::Dense;
 }
 
 bool NodeEditor::IsGraphValid() const {

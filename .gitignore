@@ -128,3 +128,4 @@ WALLET_*.md
 
 # Central Server (Rust project - separate repo)
 cyxwiz-central-server/
+*.gguf

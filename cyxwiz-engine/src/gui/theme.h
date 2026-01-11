@@ -21,6 +21,11 @@ enum class ThemePreset {
     UnrealEngine,    // Unreal Engine inspired theme
     ModernDark,      // Clean modern dark theme
     HighContrast,    // High contrast for accessibility
+    // NEW VIBRANT THEMES
+    Dracula,         // Vibrant purple/pink theme
+    OneDarkPro,      // VSCode One Dark Pro (blue/cyan)
+    Nord,            // Cool pastel arctic theme
+    CatppuccinMocha, // Pastel rainbow cozy theme
     COUNT
 };
 
@@ -98,6 +103,11 @@ private:
     void ApplyUnrealEngine();
     void ApplyModernDark();
     void ApplyHighContrast();
+    // New vibrant themes
+    void ApplyDracula();
+    void ApplyOneDarkPro();
+    void ApplyNord();
+    void ApplyCatppuccinMocha();
 
     // Apply common style settings
     void ApplyStyleConfig();

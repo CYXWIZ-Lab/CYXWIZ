@@ -1,0 +1,294 @@
+{
+    "version": "1.0",
+    "framework": 0,
+    "nodes": [
+        {
+            "id": 0,
+            "type": 77,
+            "name": "MNIST Dataset",
+            "parameters": {
+                "dataset": "mnist",
+                "batch_size": "128",
+                "shuffle": "true"
+            },
+            "pos_x": 50.0,
+            "pos_y": 300.0
+        },
+        {
+            "id": 1,
+            "type": 2,
+            "name": "Conv2D_1",
+            "parameters": {
+                "in_channels": "1",
+                "out_channels": "32",
+                "kernel_size": "3",
+                "stride": "1",
+                "padding": "1"
+            },
+            "pos_x": 300.0,
+            "pos_y": 300.0
+        },
+        {
+            "id": 2,
+            "type": 10,
+            "name": "BatchNorm_1",
+            "parameters": {
+                "num_features": "32"
+            },
+            "pos_x": 550.0,
+            "pos_y": 300.0
+        },
+        {
+            "id": 3,
+            "type": 29,
+            "name": "ReLU_1",
+            "parameters": {},
+            "pos_x": 800.0,
+            "pos_y": 300.0
+        },
+        {
+            "id": 4,
+            "type": 2,
+            "name": "Conv2D_2",
+            "parameters": {
+                "in_channels": "32",
+                "out_channels": "64",
+                "kernel_size": "3",
+                "stride": "1",
+                "padding": "1"
+            },
+            "pos_x": 1050.0,
+            "pos_y": 300.0
+        },
+        {
+            "id": 5,
+            "type": 10,
+            "name": "BatchNorm_2",
+            "parameters": {
+                "num_features": "64"
+            },
+            "pos_x": 1300.0,
+            "pos_y": 300.0
+        },
+        {
+            "id": 6,
+            "type": 29,
+            "name": "ReLU_2",
+            "parameters": {},
+            "pos_x": 1550.0,
+            "pos_y": 300.0
+        },
+        {
+            "id": 7,
+            "type": 5,
+            "name": "MaxPool2D_1",
+            "parameters": {
+                "kernel_size": "2",
+                "stride": "2"
+            },
+            "pos_x": 1800.0,
+            "pos_y": 300.0
+        },
+        {
+            "id": 8,
+            "type": 14,
+            "name": "Dropout_1",
+            "parameters": {
+                "rate": "0.25"
+            },
+            "pos_x": 2050.0,
+            "pos_y": 300.0
+        },
+        {
+            "id": 9,
+            "type": 2,
+            "name": "Conv2D_3",
+            "parameters": {
+                "in_channels": "64",
+                "out_channels": "128",
+                "kernel_size": "3",
+                "stride": "1",
+                "padding": "1"
+            },
+            "pos_x": 300.0,
+            "pos_y": 550.0
+        },
+        {
+            "id": 10,
+            "type": 10,
+            "name": "BatchNorm_3",
+            "parameters": {
+                "num_features": "128"
+            },
+            "pos_x": 550.0,
+            "pos_y": 550.0
+        },
+        {
+            "id": 11,
+            "type": 29,
+            "name": "ReLU_3",
+            "parameters": {},
+            "pos_x": 800.0,
+            "pos_y": 550.0
+        },
+        {
+            "id": 12,
+            "type": 5,
+            "name": "MaxPool2D_2",
+            "parameters": {
+                "kernel_size": "2",
+                "stride": "2"
+            },
+            "pos_x": 1050.0,
+            "pos_y": 550.0
+        },
+        {
+            "id": 13,
+            "type": 14,
+            "name": "Dropout_2",
+            "parameters": {
+                "rate": "0.25"
+            },
+            "pos_x": 1300.0,
+            "pos_y": 550.0
+        },
+        {
+            "id": 14,
+            "type": 15,
+            "name": "Flatten",
+            "parameters": {},
+            "pos_x": 1550.0,
+            "pos_y": 550.0
+        },
+        {
+            "id": 15,
+            "type": 0,
+            "name": "Dense_1",
+            "parameters": {
+                "in_features": "6272",
+                "out_features": "256",
+                "bias": "true"
+            },
+            "pos_x": 1800.0,
+            "pos_y": 550.0
+        },
+        {
+            "id": 16,
+            "type": 10,
+            "name": "BatchNorm_4",
+            "parameters": {
+                "num_features": "256"
+            },
+            "pos_x": 2050.0,
+            "pos_y": 550.0
+        },
+        {
+            "id": 17,
+            "type": 29,
+            "name": "ReLU_4",
+            "parameters": {},
+            "pos_x": 300.0,
+            "pos_y": 800.0
+        },
+        {
+            "id": 18,
+            "type": 14,
+            "name": "Dropout_3",
+            "parameters": {
+                "rate": "0.5"
+            },
+            "pos_x": 550.0,
+            "pos_y": 800.0
+        },
+        {
+            "id": 19,
+            "type": 0,
+            "name": "Dense_2",
+            "parameters": {
+                "in_features": "256",
+                "out_features": "10",
+                "bias": "true"
+            },
+            "pos_x": 800.0,
+            "pos_y": 800.0
+        },
+        {
+            "id": 20,
+            "type": 39,
+            "name": "Softmax",
+            "parameters": {
+                "dim": "1"
+            },
+            "pos_x": 1050.0,
+            "pos_y": 800.0
+        },
+        {
+            "id": 21,
+            "type": 50,
+            "name": "Output",
+            "parameters": {},
+            "pos_x": 1300.0,
+            "pos_y": 800.0
+        },
+        {
+            "id": 22,
+            "type": 52,
+            "name": "CrossEntropyLoss",
+            "parameters": {},
+            "pos_x": 1550.0,
+            "pos_y": 800.0
+        },
+        {
+            "id": 23,
+            "type": 60,
+            "name": "Adam",
+            "parameters": {
+                "lr": "0.001",
+                "beta1": "0.9",
+                "beta2": "0.999",
+                "eps": "1e-8",
+                "weight_decay": "1e-5"
+            },
+            "pos_x": 1800.0,
+            "pos_y": 800.0
+        },
+        {
+            "id": 24,
+            "type": 66,
+            "name": "CosineAnnealing",
+            "parameters": {
+                "T_max": "100",
+                "eta_min": "1e-6"
+            },
+            "pos_x": 2050.0,
+            "pos_y": 800.0
+        }
+    ],
+    "links": [
+        {"id": 0, "from_node": 0, "from_pin": 1, "to_node": 1, "to_pin": 2},
+        {"id": 1, "from_node": 1, "from_pin": 3, "to_node": 2, "to_pin": 4},
+        {"id": 2, "from_node": 2, "from_pin": 5, "to_node": 3, "to_pin": 6},
+        {"id": 3, "from_node": 3, "from_pin": 7, "to_node": 4, "to_pin": 8},
+        {"id": 4, "from_node": 4, "from_pin": 9, "to_node": 5, "to_pin": 10},
+        {"id": 5, "from_node": 5, "from_pin": 11, "to_node": 6, "to_pin": 12},
+        {"id": 6, "from_node": 6, "from_pin": 13, "to_node": 7, "to_pin": 14},
+        {"id": 7, "from_node": 7, "from_pin": 15, "to_node": 8, "to_pin": 16},
+        {"id": 8, "from_node": 8, "from_pin": 17, "to_node": 9, "to_pin": 18},
+        {"id": 9, "from_node": 9, "from_pin": 19, "to_node": 10, "to_pin": 20},
+        {"id": 10, "from_node": 10, "from_pin": 21, "to_node": 11, "to_pin": 22},
+        {"id": 11, "from_node": 11, "from_pin": 23, "to_node": 12, "to_pin": 24},
+        {"id": 12, "from_node": 12, "from_pin": 25, "to_node": 13, "to_pin": 26},
+        {"id": 13, "from_node": 13, "from_pin": 27, "to_node": 14, "to_pin": 28},
+        {"id": 14, "from_node": 14, "from_pin": 29, "to_node": 15, "to_pin": 30},
+        {"id": 15, "from_node": 15, "from_pin": 31, "to_node": 16, "to_pin": 32},
+        {"id": 16, "from_node": 16, "from_pin": 33, "to_node": 17, "to_pin": 34},
+        {"id": 17, "from_node": 17, "from_pin": 35, "to_node": 18, "to_pin": 36},
+        {"id": 18, "from_node": 18, "from_pin": 37, "to_node": 19, "to_pin": 38},
+        {"id": 19, "from_node": 19, "from_pin": 39, "to_node": 20, "to_pin": 40},
+        {"id": 20, "from_node": 20, "from_pin": 41, "to_node": 21, "to_pin": 42},
+        {"id": 21, "from_node": 21, "from_pin": 43, "to_node": 22, "to_pin": 44},
+        {"id": 22, "from_node": 22, "from_pin": 45, "to_node": 23, "to_pin": 46},
+        {"id": 23, "from_node": 23, "from_pin": 47, "to_node": 24, "to_pin": 48},
+        {"id": 24, "from_node": 0, "from_pin": 49, "to_node": 22, "to_pin": 50, "from_pin_index": 1, "to_pin_index": 1}
+    ]
+}

@@ -20,12 +20,15 @@
 #define ICON_FA_FOLDER              "\xef\x81\xbb"  // U+F07B
 #define ICON_FA_FOLDER_OPEN         "\xef\x81\xbc"  // U+F07C
 #define ICON_FA_FOLDER_PLUS         "\xef\x99\x9e"  // U+F65E
+#define ICON_FA_FOLDER_MINUS        "\xef\x99\x9d"  // U+F65D
+#define ICON_FA_FOLDER_TREE         "\xef\xa0\x82"  // U+F802
 #define ICON_FA_FLOPPY_DISK         "\xef\x83\x87"  // U+F0C7
 #define ICON_FA_DOWNLOAD            "\xef\x80\x99"  // U+F019
 
 // Edit operations
 #define ICON_FA_COPY                "\xef\x83\x85"  // U+F0C5
 #define ICON_FA_PASTE               "\xef\x83\xaa"  // U+F0EA
+#define ICON_FA_HAND                "\xef\x89\x96"  // U+F256
 #define ICON_FA_CLIPBOARD           "\xef\x8c\xa8"  // U+F328 - clipboard
 #define ICON_FA_SCISSORS            "\xef\x83\x84"  // U+F0C4
 #define ICON_FA_TRASH               "\xef\x87\xb8"  // U+F1F8
@@ -133,7 +136,11 @@
 #define ICON_FA_IMAGE               "\xef\x80\xbe"  // U+F03E - image
 #define ICON_FA_IMAGES              "\xef\x8c\x82"  // U+F302 - multiple images
 #define ICON_FA_DATABASE            "\xef\x87\x80"  // U+F1C0 - database
+#define ICON_FA_FILE_CSV            "\xef\x9b\x9d"  // U+F6DD - csv file
 #define ICON_FA_LIST_UL             "\xef\x83\x8a"  // U+F0CA - unordered list
+#define ICON_FA_CLOCK_ROTATE_LEFT   "\xef\x87\x9a"  // U+F1DA - history/undo
+#define ICON_FA_SPINNER             "\xef\x84\x90"  // U+F110 - spinner/loading
+#define ICON_FA_TRIANGLE_EXCLAMATION "\xef\x81\xb1" // U+F071 - warning triangle
 #define ICON_FA_WALLET              "\xef\x95\x95"  // U+F555 - wallet
 
 // Network/Connection
@@ -258,7 +265,6 @@
 #define ICON_FA_LOCK_OPEN           "\xef\x8f\x81"  // U+F3C1
 #define ICON_FA_KEY                 "\xef\x82\x84"  // U+F084
 #define ICON_FA_QUESTION            "\xef\x84\xa8"  // U+F128
-#define ICON_FA_LIGHTBULB           "\xef\x83\xab"  // U+F0EB
 #define ICON_FA_HOUSE               "\xef\x80\x95"  // U+F015
 #define ICON_FA_HOME                "\xef\x80\x95"  // U+F015
 #define ICON_FA_FONT                "\xef\x80\xb1"  // U+F031 - font
@@ -300,6 +306,20 @@
 
 // Cloud/Network
 #define ICON_FA_CLOUD               "\xef\x83\x82"  // U+F0C2
+#define ICON_FA_CLOUD_ARROW_UP      "\xef\x83\xae"  // U+F0EE
+#define ICON_FA_CLOUD_ARROW_DOWN    "\xef\x83\xad"  // U+F0ED
+
+// Trust/Security
+#define ICON_FA_USER_CHECK          "\xef\x93\xbc"  // U+F4FC - user with checkmark
+#define ICON_FA_SIGNATURE           "\xef\x96\xb7"  // U+F5B7 - signature
+#define ICON_FA_SHIELD              "\xef\x84\xb2"  // U+F132 - shield
+#define ICON_FA_SHIELD_HALVED       "\xef\x8f\xad"  // U+F3ED - shield halved
+#define ICON_FA_CERTIFICATE         "\xef\x82\xa3"  // U+F0A3 - certificate
+#define ICON_FA_SHARE_NODES         "\xee\x90\x9d"  // U+E41D - share nodes (for sharing)
+#define ICON_FA_CIRCLE_PAUSE        "\xef\x82\x8b"  // U+F28B - circle pause
+
+// Aliases for common alternative names
+#define ICON_FA_SEARCH              ICON_FA_MAGNIFYING_GLASS
 #define ICON_FA_GEM                 "ï¥"  // U+F3A5 - gem/diamond for SOL
 #define ICON_FA_PAPER_PLANE         "ï"  // U+F1D8 - paper plane for sending
 #define ICON_FA_UNLOCK              "ï"  // U+F09C - unlock

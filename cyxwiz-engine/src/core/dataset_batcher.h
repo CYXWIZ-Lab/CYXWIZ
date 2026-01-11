@@ -8,6 +8,14 @@
 
 namespace cyxwiz {
 
+// Forward declarations
+class AnnotationManager;
+
+namespace transforms {
+    class Compose;
+    struct Image;
+}
+
 /**
  * A batch of data ready for training
  */
@@ -17,6 +25,28 @@ struct Batch {
     size_t size = 0;      // Actual batch size (may be < requested for last batch)
 
     bool IsValid() const { return size > 0; }
+};
+
+/**
+ * A batch of images with segmentation masks from annotations
+ * Used for training semantic segmentation models
+ */
+struct AnnotatedBatch {
+    Tensor images;        // [batch_size, height, width, channels] - input images
+    Tensor labels;        // [batch_size] - classification labels
+    Tensor masks;         // [batch_size, height, width] - segmentation masks (class IDs per pixel)
+    size_t size = 0;      // Actual batch size
+
+    // Batch metadata
+    size_t height = 0;
+    size_t width = 0;
+    size_t channels = 0;
+
+    // Which images in the dataset
+    std::vector<size_t> indices;
+
+    bool IsValid() const { return size > 0; }
+    bool HasMasks() const { return masks.NumElements() > 0; }
 };
 
 /**
@@ -42,6 +72,11 @@ public:
         bool shuffle = true,
         bool drop_last = false
     );
+
+    /**
+     * Destructor - cleans up preprocessing resources
+     */
+    ~DatasetBatcher();
 
     /**
      * Get the next batch
@@ -79,6 +114,56 @@ public:
     void SetOneHotEncoding(size_t num_classes);
     void SetFlatten(bool flatten) { flatten_ = flatten; }
 
+    // New preprocessing pipeline
+    void SetPreprocessingConfig(const struct PreprocessingConfig& config);
+    const struct PreprocessingConfig& GetPreprocessingConfig() const;
+    void InitializePreprocessing(const struct DatasetStatistics& stats);
+    void ClearPreprocessing();
+    bool HasPreprocessing() const { return preprocessing_enabled_; }
+
+    // Augmentation pipeline (applied before preprocessing during training only)
+    void SetAugmentationPipeline(std::shared_ptr<transforms::Compose> pipeline);
+    void SetApplyAugmentationOnTrain(bool enable) { apply_augmentation_on_train_ = enable; }
+    bool HasAugmentation() const { return augmentation_pipeline_ != nullptr; }
+
+    // =========================================================================
+    // Annotation-aware batch access (for segmentation training)
+    // =========================================================================
+
+    /**
+     * Get annotated batch for specific image indices
+     * Includes segmentation masks from AnnotationManager
+     * @param dataset_id Dataset identifier for annotations
+     * @param sample_indices Image indices to include
+     * @return AnnotatedBatch with images and segmentation masks
+     */
+    AnnotatedBatch GetAnnotatedBatch(const std::string& dataset_id,
+                                      const std::vector<size_t>& sample_indices);
+
+    /**
+     * Get next annotated batch (like GetNextBatch but with masks)
+     * @param dataset_id Dataset identifier for annotations
+     * @return AnnotatedBatch with images and segmentation masks
+     */
+    AnnotatedBatch GetNextAnnotatedBatch(const std::string& dataset_id);
+
+    /**
+     * Check if dataset has annotations
+     * @param dataset_id Dataset identifier
+     * @return true if annotations exist
+     */
+    bool HasAnnotations(const std::string& dataset_id) const;
+
+    /**
+     * Set mask output dimensions (if different from image size)
+     * @param width Mask width (0 = same as image)
+     * @param height Mask height (0 = same as image)
+     */
+    void SetMaskSize(int width, int height) {
+        mask_width_ = width;
+        mask_height_ = height;
+    }
+
 private:
     DatasetHandle dataset_;
     size_t batch_size_;
@@ -102,6 +187,21 @@ private:
 
     bool flatten_ = false;
 
+    // Mask output size (0 = use image dimensions)
+    int mask_width_ = 0;
+    int mask_height_ = 0;
+
+    // Preprocessing pipeline
+    struct PreprocessingConfig* preprocessing_config_ = nullptr;
+    std::vector<class NormalizationTransform*> normalization_transforms_;
+    std::vector<class ScalingTransform*> scaling_transforms_;
+    std::vector<class ImageTransform*> image_transforms_;
+    bool preprocessing_enabled_ = false;
+
+    // Augmentation pipeline (applied BEFORE preprocessing, only on training split)
+    std::shared_ptr<transforms::Compose> augmentation_pipeline_;
+    bool apply_augmentation_on_train_ = true;  // Only apply to training split
+
     // Convert float vector to Tensor
     Tensor VectorToTensor(const std::vector<float>& data, const std::vector<size_t>& shape);
 
@@ -113,6 +213,9 @@ private:
 
     // Apply normalization to data
     void NormalizeData(std::vector<float>& data);
+
+    // Apply preprocessing pipeline
+    void ApplyPreprocessing(Tensor& batch);
 
     // Shuffle indices
     void ShuffleIndices();

@@ -5,6 +5,7 @@
 #include "../../scripting/scripting_engine.h"
 #include "../../scripting/debugger.h"
 #include "../../core/file_dialogs.h"
+#include "../../core/keyboard_shortcuts.h"
 #include <imgui.h>
 #include <fstream>
 #include <sstream>
@@ -74,8 +75,11 @@ void ScriptEditorPanel::Render() {
                 } else if (!r.success) {
                     command_window_->DisplayScriptOutput("Script", "Error: " + r.error_message, true);
                 } else {
-                    // Script completed successfully - don't print redundant "completed" message
-                    // since output was already displayed above
+                    // Script completed successfully
+                    if (remaining_output.empty()) {
+                        // No output was produced, show completion message
+                        command_window_->DisplayScriptOutput("Script", "Completed successfully", false);
+                    }
                     spdlog::info("Script completed successfully");
                 }
             }
@@ -84,6 +88,9 @@ void ScriptEditorPanel::Render() {
     }
 
     ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
+
+    // Track focus state (including child windows like TextEditor)
+    is_focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
 
     // Handle window focus request (bring to front)
     if (request_window_focus_) {
@@ -571,6 +578,12 @@ void ScriptEditorPanel::RenderEditor() {
     RenderScriptBreakpointGutter(available_height);
     ImGui::SameLine();
 
+    // Temporarily disable keyboard input if we just accepted a completion
+    // This prevents Tab/Enter from being passed to the editor
+    if (completion_just_accepted_) {
+        tab->editor.SetHandleKeyboardInputs(false);
+    }
+
     if (show_minimap_) {
         // Layout: Gutter | Editor | Minimap
         float editor_width = available_width - minimap_width_ - gutter_width - 8.0f;  // 8px for separators
@@ -592,6 +605,12 @@ void ScriptEditorPanel::RenderEditor() {
         tab->editor.Render("##editor", editor_size);
     }
 
+    // Re-enable keyboard input and clear the flag
+    if (completion_just_accepted_) {
+        tab->editor.SetHandleKeyboardInputs(true);
+        completion_just_accepted_ = false;
+    }
+
     ImGui::PopStyleColor(4);
 
     // Reset font scale
@@ -599,10 +618,22 @@ void ScriptEditorPanel::RenderEditor() {
         ImGui::SetWindowFontScale(1.0f);
     }
 
-    // Track modifications
+    // Track modifications and auto-completion
     if (tab->editor.IsTextChanged()) {
         tab->is_modified = true;
+
+        // Skip auto-trigger if popup was just opened this frame (Ctrl+Space inserts space)
+        if (!completion_just_opened_) {
+            // Auto-trigger completion when typing (not forced, uses trigger char check)
+            UpdateAutoCompletion(false);
+        }
     }
+
+    // Clear the just-opened flag after the first frame
+    completion_just_opened_ = false;
+
+    // Render auto-completion popup (if open)
+    RenderCompletionPopup();
 }
 
 void ScriptEditorPanel::RenderMinimap() {
@@ -830,8 +861,16 @@ void ScriptEditorPanel::RenderStatusBar() {
 }
 
 void ScriptEditorPanel::HandleKeyboardShortcuts() {
-    // Handle debug shortcuts (F5, F9, F10, F11)
-    HandleDebugKeyboardShortcuts();
+    // Use is_focused_ directly instead of keyboard context to avoid timing issues
+    // (context is detected before Render() updates is_focused_)
+    if (!is_focused_ && !show_completion_popup_) {
+        return;  // Not focused and no popup, don't process shortcuts
+    }
+
+    // Handle debug shortcuts (F5, F9, F10, F11) - only when focused
+    if (is_focused_) {
+        HandleDebugKeyboardShortcuts();
+    }
 
     ImGuiIO& io = ImGui::GetIO();
 
@@ -839,7 +878,43 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     bool shift = io.KeyShift;
     bool alt = io.KeyAlt;
 
-    // File operations
+    // ========================================================================
+    // COMPLETION POPUP - Highest priority when popup is open
+    // ========================================================================
+    if (show_completion_popup_) {
+        // Escape closes completion popup
+        if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            CloseCompletionPopup();
+            return;  // Don't process other shortcuts
+        }
+        // Tab or Enter applies selected completion
+        if (!ctrl && !shift && !alt && (ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_Enter))) {
+            if (selected_completion_ >= 0 && selected_completion_ < static_cast<int>(completion_items_.size())) {
+                ApplyCompletion(completion_items_[selected_completion_]);
+            }
+            CloseCompletionPopup();
+            // Set flag to disable editor keyboard input for this frame
+            completion_just_accepted_ = true;
+            // Also clear Tab/Enter/Newline characters from input queue
+            for (int i = io.InputQueueCharacters.Size - 1; i >= 0; --i) {
+                ImWchar c = io.InputQueueCharacters[i];
+                if (c == '\t' || c == '\n' || c == '\r') {
+                    io.InputQueueCharacters.erase(io.InputQueueCharacters.Data + i);
+                }
+            }
+            return;  // Don't process other shortcuts
+        }
+        // Let other keys pass through to editor (typing continues)
+    }
+
+    // ========================================================================
+    // SCRIPT EDITOR SHORTCUTS - Only when this panel is focused
+    // ========================================================================
+    if (!is_focused_) {
+        return;  // Not focused, don't process shortcuts
+    }
+
+    // File operations (script editor specific)
     if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_N)) {
         NewFile();
     }
@@ -883,6 +958,11 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     }
     if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F10) && !script_running_) {
         Debug();
+    }
+
+    // Ctrl+Space triggers completion manually (force = true bypasses trigger char check)
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+        UpdateAutoCompletion(true);
     }
 }
 
@@ -1321,30 +1401,40 @@ void ScriptEditorPanel::DoRunScript() {
     spdlog::info("Running script asynchronously: {}", tab->filename);
 
     // Get script text - prefer file if it exists
-    std::string script;
+    std::string script_text;
     if (!tab->filepath.empty() && std::filesystem::exists(tab->filepath)) {
         // Read file content
         std::ifstream file(tab->filepath);
         if (file.is_open()) {
             std::stringstream buffer;
             buffer << file.rdbuf();
-            script = buffer.str();
+            script_text = buffer.str();
             file.close();
         }
     }
 
-    if (script.empty()) {
+    if (script_text.empty()) {
         // Use text from editor
-        std::string script_text = tab->editor.GetText();
+        script_text = tab->editor.GetText();
+    }
 
-        // Strip out %% markers before executing
-        std::istringstream stream(script_text);
-        std::string line;
-        while (std::getline(stream, line)) {
-            // Skip lines containing only %% markers
-            if (line.find("%%") == std::string::npos) {
-                script += line + "\n";
-            }
+    // Strip out %% section markers before executing (always, regardless of source)
+    std::string script;
+    std::istringstream stream(script_text);
+    std::string line;
+    while (std::getline(stream, line)) {
+        // Only skip lines that are ONLY a %% marker (with optional whitespace)
+        std::string trimmed = line;
+        size_t start = trimmed.find_first_not_of(" \t");
+        size_t end = trimmed.find_last_not_of(" \t\r\n");
+        if (start != std::string::npos && end != std::string::npos) {
+            trimmed = trimmed.substr(start, end - start + 1);
+        } else {
+            trimmed = "";
+        }
+        // Keep the line unless it's exactly "%%"
+        if (trimmed != "%%") {
+            script += line + "\n";
         }
     }
 
@@ -1359,8 +1449,57 @@ void ScriptEditorPanel::DoRunScript() {
     running_indicator_time_ = 0.0f;
 }
 
+std::string ScriptEditorPanel::DedentCode(const std::string& code) {
+    std::vector<std::string> lines;
+    std::istringstream stream(code);
+    std::string line;
+
+    // Split into lines
+    while (std::getline(stream, line)) {
+        lines.push_back(line);
+    }
+
+    if (lines.empty()) return code;
+
+    // Find minimum indentation (ignoring empty lines and whitespace-only lines)
+    size_t min_indent = std::string::npos;
+    for (const auto& l : lines) {
+        if (l.empty()) continue;
+        size_t first_non_space = l.find_first_not_of(" \t");
+        if (first_non_space == std::string::npos) continue;  // Whitespace-only line
+        if (first_non_space < min_indent) min_indent = first_non_space;
+    }
+
+    // No dedent needed
+    if (min_indent == 0 || min_indent == std::string::npos) return code;
+
+    // Remove common indentation
+    std::string result;
+    for (const auto& l : lines) {
+        if (l.empty()) {
+            result += "\n";
+        } else {
+            size_t first_non_space = l.find_first_not_of(" \t");
+            if (first_non_space == std::string::npos) {
+                // Whitespace-only line, keep it empty
+                result += "\n";
+            } else {
+                result += l.substr(min_indent) + "\n";
+            }
+        }
+    }
+
+    // Remove trailing newline if original didn't have one
+    if (!code.empty() && code.back() != '\n' && !result.empty() && result.back() == '\n') {
+        result.pop_back();
+    }
+
+    return result;
+}
+
 void ScriptEditorPanel::RunSelection() {
     if (active_tab_index_ < 0 || !scripting_engine_) return;
+    if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
     std::string selected_text = tab->editor.GetSelectedText();
@@ -1377,36 +1516,22 @@ void ScriptEditorPanel::RunSelection() {
         return;
     }
 
-    spdlog::info("Running selection");
-    auto result = scripting_engine_->ExecuteCommand(selected_text);
-
-    // Send output to Command Window if available
+    spdlog::info("Running selection asynchronously");
     if (command_window_) {
-        if (!result.success) {
-            command_window_->DisplayScriptOutput(tab->filename + " (selection)", "Error: " + result.error_message, true);
-        } else {
-            std::string output = result.output.empty() ? "Selection executed successfully (no output)" : result.output;
-            command_window_->DisplayScriptOutput(tab->filename + " (selection)", output, false);
-        }
-    } else {
-        // Fallback to notification
-        if (!result.success) {
-            spdlog::error("Execution error: {}", result.error_message);
-            last_execution_output_ = "Error: " + result.error_message;
-            printf("[Selection Error] %s\n", result.error_message.c_str());
-        } else {
-            last_execution_output_ = result.output.empty() ? "Selection executed successfully" : result.output;
-            if (!result.output.empty()) {
-                printf("[Selection Output]\n%s\n", result.output.c_str());
-            }
-        }
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
+        command_window_->DisplayScriptOutput(tab->filename + " (selection)", "Running...", false);
     }
+
+    // Dedent and execute asynchronously for plot capture support
+    std::string dedented = DedentCode(selected_text);
+    spdlog::debug("Dedented selection:\n{}", dedented);
+    scripting_engine_->ExecuteScriptAsync(dedented);
+    script_running_ = true;
+    running_indicator_time_ = 0.0f;
 }
 
 void ScriptEditorPanel::RunCurrentSection() {
     if (active_tab_index_ < 0 || !scripting_engine_) return;
+    if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
     Section section = GetCurrentSection();
@@ -1423,39 +1548,21 @@ void ScriptEditorPanel::RunCurrentSection() {
         return;
     }
 
-    spdlog::info("Running section (lines {}-{})", section.start_line, section.end_line);
-    auto result = scripting_engine_->ExecuteScript(section.code);
-
-    // Send output to Command Window if available
     std::string section_name = tab->filename + " (lines " +
                               std::to_string(section.start_line) + "-" +
                               std::to_string(section.end_line) + ")";
 
+    spdlog::info("Running section {} asynchronously", section_name);
     if (command_window_) {
-        if (!result.success) {
-            command_window_->DisplayScriptOutput(section_name, "Error: " + result.error_message, true);
-        } else {
-            std::string output = result.output.empty() ? "Section executed successfully (no output)" : result.output;
-            command_window_->DisplayScriptOutput(section_name, output, false);
-        }
-    } else {
-        // Fallback to notification
-        if (!result.success) {
-            spdlog::error("Section execution error: {}", result.error_message);
-            last_execution_output_ = "Section Error: " + result.error_message;
-            printf("[Section Error] %s\n", result.error_message.c_str());
-        } else {
-            last_execution_output_ = "Section executed successfully (lines " +
-                                    std::to_string(section.start_line) + "-" +
-                                    std::to_string(section.end_line) + ")";
-            if (!result.output.empty()) {
-                last_execution_output_ += "\nOutput: " + result.output;
-                printf("[Section Output]\n%s\n", result.output.c_str());
-            }
-        }
-        show_output_notification_ = true;
-        output_notification_time_ = 0.0f;
+        command_window_->DisplayScriptOutput(section_name, "Running...", false);
     }
+
+    // Dedent and execute asynchronously for plot capture support
+    std::string dedented = DedentCode(section.code);
+    spdlog::debug("Dedented section:\n{}", dedented);
+    scripting_engine_->ExecuteScriptAsync(dedented);
+    script_running_ = true;
+    running_indicator_time_ = 0.0f;
 }
 
 void ScriptEditorPanel::Debug() {
@@ -1568,19 +1675,17 @@ std::vector<ScriptEditorPanel::Section> ScriptEditorPanel::ParseSections(const s
 
     while (std::getline(stream, line)) {
         // Check for section delimiter %%
+        // Each %% both ENDS the previous section AND STARTS the next one (MATLAB-style)
         if (line.find("%%") != std::string::npos) {
-            if (in_section) {
-                // End of section
+            if (in_section && !current_section.code.empty()) {
+                // End current section (only if it has content)
                 current_section.end_line = line_num - 1;
                 sections.push_back(current_section);
-                current_section = Section();
-                current_section.start_line = line_num + 1;
-                in_section = false;
-            } else {
-                // Start of section
-                current_section.start_line = line_num + 1;
-                in_section = true;
             }
+            // Start new section after this %%
+            current_section = Section();
+            current_section.start_line = line_num + 1;
+            in_section = true;
         } else if (in_section) {
             current_section.code += line + "\n";
         }
@@ -1870,6 +1975,15 @@ void ScriptEditorPanel::SaveAllFiles() {
     if (original_active >= 0 && original_active < static_cast<int>(tabs_.size())) {
         active_tab_index_ = original_active;
     }
+}
+
+bool ScriptEditorPanel::HasEmptyNewTab() const {
+    for (const auto& tab : tabs_) {
+        if (tab->is_new && !tab->is_modified) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ==================== Save Confirmation Dialogs ====================
@@ -2205,8 +2319,159 @@ bool ScriptEditorPanel::FindNext() {
 }
 
 bool ScriptEditorPanel::FindPrevious() {
-    // TODO: Implement backward search
-    spdlog::info("FindPrevious not yet implemented");
+    if (last_search_text_.empty()) {
+        return false;
+    }
+
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return false;
+    }
+
+    auto& editor = tabs_[active_tab_index_]->editor;
+    std::string text = editor.GetText();
+    auto lines = editor.GetTextLines();
+
+    // Get current cursor position
+    auto cursor = editor.GetCursorPosition();
+    int end_search_pos = 0;
+
+    // Convert cursor position to character offset
+    for (int i = 0; i < cursor.mLine && i < static_cast<int>(lines.size()); ++i) {
+        end_search_pos += static_cast<int>(lines[i].length()) + 1;  // +1 for newline
+    }
+    end_search_pos += cursor.mColumn;
+
+    // If there's a selection (current match), search before it
+    if (editor.HasSelection()) {
+        // Don't include current match in search
+        end_search_pos = std::max(0, end_search_pos - 1);
+    }
+
+    // Search backward from current position
+    size_t found_pos = std::string::npos;
+    size_t match_len = last_search_text_.length();
+
+    if (last_use_regex_) {
+        try {
+            std::regex::flag_type flags = std::regex::ECMAScript;
+            if (!last_case_sensitive_) flags |= std::regex::icase;
+
+            std::regex re(last_search_text_, flags);
+            std::smatch match;
+
+            // Search in the text before cursor
+            std::string search_area = text.substr(0, end_search_pos);
+
+            // Find the last match by iterating through all matches
+            auto begin = std::sregex_iterator(search_area.begin(), search_area.end(), re);
+            auto end_it = std::sregex_iterator();
+
+            std::smatch last_match;
+            bool found_any = false;
+            for (auto it = begin; it != end_it; ++it) {
+                last_match = *it;
+                found_any = true;
+            }
+
+            if (found_any) {
+                found_pos = last_match.position(0);
+                match_len = last_match.length(0);
+            } else {
+                // Wrap around: search from end of document
+                auto wrap_begin = std::sregex_iterator(text.begin(), text.end(), re);
+                for (auto it = wrap_begin; it != end_it; ++it) {
+                    last_match = *it;
+                    found_any = true;
+                }
+                if (found_any) {
+                    found_pos = last_match.position(0);
+                    match_len = last_match.length(0);
+                }
+            }
+        } catch (const std::regex_error& e) {
+            spdlog::warn("Invalid regex: {}", e.what());
+            return false;
+        }
+    } else {
+        std::string search_text_lower = last_search_text_;
+        std::string text_lower = text;
+
+        if (!last_case_sensitive_) {
+            std::transform(search_text_lower.begin(), search_text_lower.end(),
+                           search_text_lower.begin(), ::tolower);
+            std::transform(text_lower.begin(), text_lower.end(),
+                           text_lower.begin(), ::tolower);
+        }
+
+        // Search backward from current position
+        if (end_search_pos > 0) {
+            found_pos = text_lower.rfind(search_text_lower, end_search_pos - 1);
+        }
+
+        // Wrap around if not found
+        if (found_pos == std::string::npos) {
+            found_pos = text_lower.rfind(search_text_lower);
+        }
+
+        // Check whole word boundary
+        if (found_pos != std::string::npos && last_whole_word_) {
+            bool start_ok = (found_pos == 0) || !std::isalnum(static_cast<unsigned char>(text_lower[found_pos - 1]));
+            bool end_ok = (found_pos + search_text_lower.length() >= text_lower.length()) ||
+                          !std::isalnum(static_cast<unsigned char>(text_lower[found_pos + search_text_lower.length()]));
+            if (!start_ok || !end_ok) {
+                // Try to find another match that satisfies whole word
+                while (found_pos != std::string::npos && found_pos > 0) {
+                    found_pos = text_lower.rfind(search_text_lower, found_pos - 1);
+                    if (found_pos != std::string::npos) {
+                        start_ok = (found_pos == 0) || !std::isalnum(static_cast<unsigned char>(text_lower[found_pos - 1]));
+                        end_ok = (found_pos + search_text_lower.length() >= text_lower.length()) ||
+                                 !std::isalnum(static_cast<unsigned char>(text_lower[found_pos + search_text_lower.length()]));
+                        if (start_ok && end_ok) break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (found_pos != std::string::npos) {
+        // Convert character offset to line/column
+        int line = 0;
+        int col = 0;
+        size_t pos = 0;
+
+        for (const auto& line_text : lines) {
+            if (pos + line_text.length() >= found_pos) {
+                col = static_cast<int>(found_pos - pos);
+                break;
+            }
+            pos += line_text.length() + 1;  // +1 for newline
+            line++;
+        }
+
+        // Select the found text
+        TextEditor::Coordinates start_coord(line, col);
+        TextEditor::Coordinates end_coord(line, col + static_cast<int>(match_len));
+
+        // Handle multi-line match
+        size_t end_pos = found_pos + match_len;
+        pos = 0;
+        for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
+            if (pos + lines[i].length() >= end_pos) {
+                end_coord.mLine = i;
+                end_coord.mColumn = static_cast<int>(end_pos - pos);
+                break;
+            }
+            pos += lines[i].length() + 1;
+        }
+
+        editor.SetSelection(start_coord, end_coord);
+        editor.SetCursorPosition(start_coord);
+
+        spdlog::info("Found previous '{}' at line {}, col {}", last_search_text_, line + 1, col + 1);
+        return true;
+    }
+
+    spdlog::info("'{}' not found (backward)", last_search_text_);
     return false;
 }
 
@@ -2628,12 +2893,9 @@ void ScriptEditorPanel::MoveLineUp() {
     std::string above_line = lines[line - 1];
 
     // Select and delete both lines
-    int above_len = static_cast<int>(above_line.size());
-    int current_len = static_cast<int>(current_line.size());
-
     editor.SetSelection(
         TextEditor::Coordinates(line - 1, 0),
-        TextEditor::Coordinates(line, current_len)
+        TextEditor::Coordinates(line, static_cast<int>(current_line.size()))
     );
 
     // Replace with swapped content
@@ -2665,12 +2927,9 @@ void ScriptEditorPanel::MoveLineDown() {
     std::string current_line = lines[line];
     std::string below_line = lines[line + 1];
 
-    int current_len = static_cast<int>(current_line.size());
-    int below_len = static_cast<int>(below_line.size());
-
     editor.SetSelection(
         TextEditor::Coordinates(line, 0),
-        TextEditor::Coordinates(line + 1, below_len)
+        TextEditor::Coordinates(line + 1, static_cast<int>(below_line.size()))
     );
 
     // Replace with swapped content
@@ -3373,7 +3632,19 @@ void ScriptEditorPanel::RenderCodeCell(Cell& cell, int index) {
         content_height = std::min(content_height, 400.0f);  // Cap height
 
         ImGui::PushID("code_editor");
+
+        // Temporarily disable keyboard input if we just accepted a completion
+        if (completion_just_accepted_) {
+            cell.editor.SetHandleKeyboardInputs(false);
+        }
+
         cell.editor.Render("##code", ImVec2(code_width, content_height));
+
+        // Re-enable keyboard input and clear the flag
+        if (completion_just_accepted_) {
+            cell.editor.SetHandleKeyboardInputs(true);
+            completion_just_accepted_ = false;
+        }
 
         // Sync changes back
         cell.SyncSourceFromEditor();
@@ -3433,8 +3704,20 @@ void ScriptEditorPanel::RenderMarkdownCell(Cell& cell, int index) {
         float content_height = std::max(80.0f, (line_count + 1) * line_height);
         content_height = std::min(content_height, 300.0f);
 
+        // Temporarily disable keyboard input if we just accepted a completion
+        if (completion_just_accepted_) {
+            cell.editor.SetHandleKeyboardInputs(false);
+        }
+
         // Render editor directly
         cell.editor.Render("##markdown_edit", ImVec2(content_width, content_height));
+
+        // Re-enable keyboard input and clear the flag
+        if (completion_just_accepted_) {
+            cell.editor.SetHandleKeyboardInputs(true);
+            completion_just_accepted_ = false;
+        }
+
         cell.SyncSourceFromEditor();
 
         if (cell.editor.IsTextChanged()) {
@@ -3828,7 +4111,7 @@ void ScriptEditorPanel::RenderDebugToolbar() {
     ImGui::PopStyleColor();
 }
 
-void ScriptEditorPanel::RenderBreakpointGutter(Cell& cell, int cell_index) {
+void ScriptEditorPanel::RenderBreakpointGutter(Cell& cell, int /*cell_index*/) {
     if (cell.type != CellType::Code) return;
 
     int line_count = cell.editor.GetTotalLines();
@@ -4110,6 +4393,225 @@ void ScriptEditorPanel::HandleDebugKeyboardShortcuts() {
             }
         }
     }
+}
+
+// ============================================================================
+// Auto-Completion Implementation
+// ============================================================================
+
+void ScriptEditorPanel::UpdateAutoCompletion(bool force) {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        CloseCompletionPopup();
+        return;
+    }
+
+    auto& tab = tabs_[active_tab_index_];
+    if (tab->cell_mode || tab->is_loading) {
+        CloseCompletionPopup();
+        return;
+    }
+
+    // Get current cursor position and line
+    auto cursor_pos = tab->editor.GetCursorPosition();
+    std::string current_line = tab->editor.GetCurrentLineText();
+    int col = cursor_pos.mColumn;
+
+    // Check if we should show completions (allow empty line/col=0 for force mode)
+    if (!force && (col <= 0 || current_line.empty())) {
+        CloseCompletionPopup();
+        return;
+    }
+
+    // Get the character just typed
+    char last_char = (col > 0 && col <= static_cast<int>(current_line.length()))
+                     ? current_line[col - 1] : '\0';
+
+    // Check if we should trigger completion (skip check if forced via Ctrl+Space)
+    if (!force && !script_manager_.ShouldTriggerCompletion(last_char)) {
+        // Only close if we're not in an identifier
+        std::string word = scripting::ScriptManager::GetWordAtCursor(current_line, col);
+        if (word.empty() && !show_completion_popup_) {
+            return;
+        }
+        if (word.empty() && show_completion_popup_) {
+            CloseCompletionPopup();
+            return;
+        }
+    }
+
+    // Get completions
+    std::string code = tab->editor.GetText();
+    size_t cursor_offset = 0;
+    auto lines = tab->editor.GetTextLines();
+    for (int i = 0; i < cursor_pos.mLine && i < static_cast<int>(lines.size()); ++i) {
+        cursor_offset += lines[i].length() + 1; // +1 for newline
+    }
+    cursor_offset += col;
+
+    completion_items_ = script_manager_.GetCompletions(code, cursor_offset, current_line, col);
+
+    if (completion_items_.empty()) {
+        CloseCompletionPopup();
+        return;
+    }
+
+    // Get prefix and start position
+    completion_prefix_ = scripting::ScriptManager::GetWordAtCursor(current_line, col);
+    completion_start_pos_ = cursor_pos;
+    completion_start_pos_.mColumn = col - static_cast<int>(completion_prefix_.length());
+
+    show_completion_popup_ = true;
+    completion_just_opened_ = true;  // Prevent immediate close from Ctrl+Space inserting space
+    selected_completion_ = 0;
+}
+
+void ScriptEditorPanel::RenderCompletionPopup() {
+    if (!show_completion_popup_ || completion_items_.empty()) {
+        return;
+    }
+
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& tab = tabs_[active_tab_index_];
+
+    // NO keyboard handling here - it interferes with the text editor!
+    // Keyboard shortcuts are handled in HandleKeyboardShortcuts() instead
+
+    // Get the window position where the editor is rendered
+    ImVec2 window_pos = ImGui::GetWindowPos();
+    ImVec2 content_region_min = ImGui::GetWindowContentRegionMin();
+
+    // Calculate popup position based on cursor position in editor
+    auto cursor_pos = tab->editor.GetCursorPosition();
+
+    // Estimate character dimensions using monospace font
+    float char_width = ImGui::CalcTextSize("M").x * font_scale_;
+    float line_height = ImGui::GetTextLineHeightWithSpacing() * font_scale_;
+
+    // Account for editor offset (gutter, margins, etc.)
+    float editor_left_offset = 45.0f;  // Approximate gutter + padding
+    float editor_top_offset = 80.0f;   // Approximate tab bar + menu bar height
+
+    // Position popup below the cursor
+    float popup_x = window_pos.x + content_region_min.x + editor_left_offset +
+                    (completion_start_pos_.mColumn * char_width);
+    float popup_y = window_pos.y + content_region_min.y + editor_top_offset +
+                    ((cursor_pos.mLine + 1) * line_height);
+
+    // Clamp to screen bounds
+    ImVec2 display_size = ImGui::GetIO().DisplaySize;
+    popup_x = std::min(popup_x, display_size.x - 320.0f);
+    popup_y = std::min(popup_y, display_size.y - 250.0f);
+
+    ImGui::SetNextWindowPos(ImVec2(popup_x, popup_y), ImGuiCond_Always);
+
+    // Popup flags - NO focus stealing!
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing |
+                             ImGuiWindowFlags_NoNav;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.15f, 0.15f, 0.18f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.4f, 0.5f, 0.8f));
+
+    if (ImGui::Begin("##completion_popup", nullptr, flags)) {
+        // Header with hint
+        ImGui::TextDisabled("Tab: insert | Esc: close | Ctrl+Space: trigger");
+        ImGui::Separator();
+
+        // Render completion list
+        for (int i = 0; i < static_cast<int>(completion_items_.size()) && i < 10; ++i) {
+            const auto& item = completion_items_[i];
+            bool is_selected = (i == selected_completion_);
+
+            // Kind icon
+            const char* icon = scripting::GetCompletionKindIcon(item.kind);
+
+            ImGui::PushID(i);
+
+            // Highlight selected item
+            if (is_selected) {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.5f, 0.8f, 0.7f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.5f, 0.8f, 0.8f));
+            }
+
+            if (ImGui::Selectable("##item", is_selected, ImGuiSelectableFlags_None, ImVec2(280, 0))) {
+                ApplyCompletion(item);
+                CloseCompletionPopup();
+            }
+
+            if (is_selected) {
+                ImGui::PopStyleColor(2);
+            }
+
+            ImGui::SameLine(0, 0);
+            ImGui::SetCursorPosX(8);
+
+            // Icon with color based on kind
+            ImVec4 kind_color;
+            switch (item.kind) {
+                case scripting::CompletionItem::Kind::Keyword:  kind_color = ImVec4(0.8f, 0.4f, 0.8f, 1.0f); break;
+                case scripting::CompletionItem::Kind::Builtin:  kind_color = ImVec4(0.4f, 0.8f, 0.8f, 1.0f); break;
+                case scripting::CompletionItem::Kind::Module:   kind_color = ImVec4(0.8f, 0.6f, 0.2f, 1.0f); break;
+                case scripting::CompletionItem::Kind::Function: kind_color = ImVec4(0.4f, 0.7f, 1.0f, 1.0f); break;
+                default: kind_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f); break;
+            }
+            ImGui::TextColored(kind_color, "[%s]", icon);
+            ImGui::SameLine();
+
+            // Label
+            ImGui::Text("%s", item.label.c_str());
+
+            // Detail (if any)
+            if (!item.detail.empty() && item.detail != "keyword" && item.detail != "builtin") {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", item.detail.c_str());
+            }
+
+            ImGui::PopID();
+        }
+
+        // Show more items indicator
+        if (completion_items_.size() > 10) {
+            ImGui::Separator();
+            ImGui::TextDisabled("... and %zu more", completion_items_.size() - 10);
+        }
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+}
+
+void ScriptEditorPanel::ApplyCompletion(const scripting::CompletionItem& item) {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& tab = tabs_[active_tab_index_];
+
+    // Get the text to insert
+    std::string text_to_insert = item.insert_text.empty() ? item.label : item.insert_text;
+
+    // Select the prefix text (from completion_start_pos_ to current cursor)
+    auto cursor_pos = tab->editor.GetCursorPosition();
+    tab->editor.SetSelection(completion_start_pos_, cursor_pos);
+
+    // Delete the selected prefix, then insert completion
+    if (tab->editor.HasSelection()) {
+        tab->editor.Delete();  // Deletes selected text
+    }
+    tab->editor.InsertText(text_to_insert);
+}
+
+void ScriptEditorPanel::CloseCompletionPopup() {
+    show_completion_popup_ = false;
+    completion_items_.clear();
+    selected_completion_ = 0;
 }
 
 } // namespace cyxwiz

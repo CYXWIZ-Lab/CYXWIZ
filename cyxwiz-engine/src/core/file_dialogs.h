@@ -132,6 +132,12 @@ public:
     /** Select a folder for project output */
     static std::optional<std::string> SelectOutputFolder(const char* default_path = nullptr);
 
+    /** Open a theme file (.json) */
+    static std::optional<std::string> OpenTheme(const char* default_path = nullptr);
+
+    /** Save a theme file (.json) */
+    static std::optional<std::string> SaveTheme(const char* default_path = nullptr, const char* default_name = nullptr);
+
 private:
     // Initialize NFD (called automatically)
     static void EnsureInitialized();

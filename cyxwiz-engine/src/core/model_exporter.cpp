@@ -567,9 +567,9 @@ ExportResult ModelExporter::ExportSafetensors(
 }
 
 ExportResult ModelExporter::ExportGGUF(
-    SequentialModel& model,
+    SequentialModel& /*model*/,
     const std::string& output_path,
-    const ExportOptions& options,
+    const ExportOptions& /*options*/,
     ProgressCallback progress_cb
 ) {
     ExportResult result;

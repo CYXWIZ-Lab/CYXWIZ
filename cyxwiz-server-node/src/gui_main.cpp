@@ -12,6 +12,7 @@
 
 #include "ipc/daemon_client.h"
 #include "core/backend_manager.h"
+#include "core/config_manager.h"
 
 #ifdef CYXWIZ_HAS_GUI
 #include "gui/server_application.h"
@@ -94,18 +95,31 @@ GUIConfig ParseArgs(int argc, char** argv) {
 int main(int argc, char** argv) {
     spdlog::info("CyxWiz Server GUI v0.3.0");
 
-    // Parse arguments
+    // Load config file first
+    cyxwiz::servernode::core::ConfigManager config_manager;
+    std::string config_path = cyxwiz::servernode::core::ConfigManager::FindConfigFile();
+    config_manager.Load(config_path);
+    const auto& node_config = config_manager.GetConfig();
+    spdlog::info("Config loaded from: {}", config_path);
+
+    // Parse arguments (may override config)
     GUIConfig config = ParseArgs(argc, argv);
+
+    // Use config file value if CLI didn't specify a different address
+    if (config.daemon_address == "localhost:50054") {
+        config.daemon_address = node_config.ipc_address;
+    }
 
     const char* mode_name = (config.mode == InterfaceMode::GUI) ? "GUI" : "TUI";
     spdlog::info("Interface mode: {}", mode_name);
+    spdlog::info("Daemon address: {}", config.daemon_address);
 
     // Initialize BackendManager for standalone/single-process mode
     // This enables metrics collection even when daemon is not connected
-    cyxwiz::servernode::core::NodeConfig node_config;
-    node_config.node_id = "gui-standalone";
-    node_config.deployment_enabled = false;
-    if (!cyxwiz::servernode::core::BackendManager::Instance().Initialize(node_config)) {
+    cyxwiz::servernode::core::NodeConfig backend_config = node_config;
+    backend_config.node_id = "gui-standalone";
+    backend_config.deployment_enabled = false;
+    if (!cyxwiz::servernode::core::BackendManager::Instance().Initialize(backend_config)) {
         spdlog::warn("Failed to initialize BackendManager - metrics may not be available in standalone mode");
     }
 

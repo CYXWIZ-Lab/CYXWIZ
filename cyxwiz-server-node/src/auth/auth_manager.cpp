@@ -20,6 +20,8 @@
 
 // MetricsCollector for detailed hardware detection (DXGI + NVML/ADL)
 #include "core/metrics_collector.h"
+#include "core/backend_manager.h"
+#include "core/config_manager.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -74,6 +76,18 @@ AuthManager& AuthManager::Instance() {
 }
 
 AuthManager::AuthManager() {
+    // Try to load auth API URL from config
+    auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
+    if (backend.IsInitialized()) {
+        api_base_url_ = backend.GetConfig().auth_api_url;
+    } else {
+        // BackendManager not initialized yet, try loading from config file directly
+        cyxwiz::servernode::core::ConfigManager config_manager;
+        std::string config_path = cyxwiz::servernode::core::ConfigManager::FindConfigFile();
+        if (config_manager.Load(config_path)) {
+            api_base_url_ = config_manager.GetConfig().auth_api_url;
+        }
+    }
     spdlog::info("AuthManager initialized with API URL: {}", api_base_url_);
 }
 

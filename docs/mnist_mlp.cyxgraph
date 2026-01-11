@@ -1,0 +1,73 @@
+{
+  "id": "mnist_mlp",
+  "name": "MNIST MLP Classifier",
+  "description": "Multi-layer perceptron for MNIST handwritten digit classification. Architecture: 784->512->256->10 with ReLU activations and Dropout regularization.",
+  "category": "Classification",
+  "tags": ["mnist", "mlp", "dense", "dropout", "classification", "digits"],
+  "parameters": [
+    {
+      "name": "hidden1_size",
+      "type": "int",
+      "default_value": "512",
+      "description": "Number of neurons in first hidden layer",
+      "min_value": "64",
+      "max_value": "2048"
+    },
+    {
+      "name": "hidden2_size",
+      "type": "int",
+      "default_value": "256",
+      "description": "Number of neurons in second hidden layer",
+      "min_value": "32",
+      "max_value": "1024"
+    },
+    {
+      "name": "dropout_rate",
+      "type": "float",
+      "default_value": "0.2",
+      "description": "Dropout probability for regularization",
+      "min_value": "0.0",
+      "max_value": "0.5"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.001",
+      "description": "Adam optimizer learning rate",
+      "min_value": "0.0001",
+      "max_value": "0.1"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "Input", "name": "Input [784]", "pos": [0, 200], "params": {"shape": "[784]"}},
+      {"id": "normalize", "type": "Normalize", "name": "Normalize", "pos": [100, 200], "params": {"mean": "0.0", "std": "255.0"}},
+      {"id": "dense1", "type": "Dense", "name": "Dense 512", "pos": [250, 200], "params": {"units": "$hidden1_size"}},
+      {"id": "relu1", "type": "ReLU", "name": "ReLU 1", "pos": [450, 200]},
+      {"id": "dropout1", "type": "Dropout", "name": "Dropout 1", "pos": [600, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "dense2", "type": "Dense", "name": "Dense 256", "pos": [800, 200], "params": {"units": "$hidden2_size"}},
+      {"id": "relu2", "type": "ReLU", "name": "ReLU 2", "pos": [1000, 200]},
+      {"id": "dropout2", "type": "Dropout", "name": "Dropout 2", "pos": [1200, 200], "params": {"rate": "$dropout_rate"}},
+      {"id": "dense3", "type": "Dense", "name": "Dense 10", "pos": [1400, 200], "params": {"units": "10"}},
+      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [1600, 100]},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy Loss", "pos": [1600, 300]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [1800, 300], "params": {"learning_rate": "$learning_rate"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1800, 100]}
+    ],
+    "links": [
+      {"from": "input", "to": "normalize", "from_pin": 0, "to_pin": 0},
+      {"from": "normalize", "to": "dense1"},
+      {"from": "dense1", "to": "relu1"},
+      {"from": "relu1", "to": "dropout1"},
+      {"from": "dropout1", "to": "dense2"},
+      {"from": "dense2", "to": "relu2"},
+      {"from": "relu2", "to": "dropout2"},
+      {"from": "dropout2", "to": "dense3"},
+      {"from": "dense3", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "input", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer"},
+      {"from": "dense3", "to": "softmax"},
+      {"from": "softmax", "to": "output"}
+    ]
+  }
+}

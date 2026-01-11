@@ -2,6 +2,138 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Current Work Status (Updated: 2026-01-11)
+
+### CyxWiz Engine - Annotation System ✅ (NEW)
+
+**Production-ready annotation system for semantic segmentation:**
+
+- ✅ **AnnotationManager** - Central annotation storage (`src/core/annotation_manager.h/cpp`)
+- ✅ **Batch Navigation UI** - Prev/Next/Go-to for dataset images
+- ✅ **Annotation List UI** - View, select, delete annotations per image
+- ✅ **Class Management** - Add/select class labels
+- ✅ **Save from Tools** - Convert mask to annotation with one click
+- ✅ **Export Formats** - COCO JSON, YOLO txt, Pascal VOC XML
+- ✅ **Training Integration** - `GetAnnotatedBatch()` for segmentation training
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/core/annotation_manager.h` | Data structures (Annotation, AnnotationSet) |
+| `src/core/annotation_manager.cpp` | Storage, export, mask generation |
+| `src/core/dataset_batcher.h` | `AnnotatedBatch` struct, `GetAnnotatedBatch()` |
+| `src/gui/panels/dataset_panel_interactive.cpp` | UI for annotation workflow |
+
+**Usage - Training with Annotations:**
+```cpp
+DatasetBatcher batcher(dataset, 32, DatasetSplit::Train);
+while (batcher.HasNext()) {
+    AnnotatedBatch batch = batcher.GetNextAnnotatedBatch("my_dataset");
+    // batch.images: [B, H, W, C] - input images
+    // batch.masks:  [B, H, W]    - segmentation masks (class IDs per pixel)
+}
+```
+
+**Usage - Export Annotations:**
+```cpp
+auto& ann_mgr = DataRegistry::Instance().GetAnnotationManager();
+ann_mgr.ExportCOCO("dataset", "coco.json");   // For Detectron2, MMDet
+ann_mgr.ExportYOLO("dataset", "yolo/");       // For YOLOv5/v8
+ann_mgr.ExportVOC("dataset", "voc/");         // For Pascal VOC tools
+```
+
+---
+
+### CyxWiz Backend - Recently Completed
+
+**Transformer & RNN Layers:**
+- ✅ EmbeddingLayer (pretrained weights, padding_idx, max_norm)
+- ✅ LSTMLayer (multi-layer, bidirectional, dropout)
+- ✅ GRULayer (multi-layer, bidirectional, dropout)
+- ✅ MultiHeadAttentionLayer (self/cross attention)
+- ✅ TransformerEncoderLayer (Pre-LN and Post-LN)
+- ✅ TransformerDecoderLayer (cross-attention, causal masking)
+
+**Loss Functions:**
+- ✅ FocalLoss (class imbalance, alpha/gamma parameters)
+- ✅ TripletLoss (metric learning, Euclidean/Cosine distance)
+- ✅ ContrastiveLoss (similarity learning, margin-based)
+
+**Python Bindings:**
+- ✅ All new layers exposed via pybind11
+- ✅ All new losses exposed via pybind11
+- ✅ Python examples in `cyxwiz-backend/examples/python/`
+
+---
+
+### CyxCloud - DOCKER TESTING COMPLETE ✅
+
+**Repository:** https://github.com/CYXWIZ-Lab/cyxcloud
+
+**Completed:**
+- ✅ All Rust code compiles and tests pass
+- ✅ Blockchain programs deployed to Solana Devnet
+- ✅ GitHub Actions CI/CD for releases
+- ✅ v0.1.0-alpha released with binaries for Linux, macOS, Windows
+- ✅ Documentation updated (README, USAGE, USECASE)
+- ✅ Docker Compose configured for full stack
+- ✅ Arch Linux setup instructions added
+- ✅ **Docker testing complete (2025-12-31)**
+
+**Docker Test Results:**
+| Component | Status | Details |
+|-----------|--------|---------|
+| PostgreSQL | ✅ Healthy | Metadata storage working |
+| Redis | ✅ Healthy | Cache layer working |
+| Gateway | ✅ Healthy | HTTP :8080, gRPC :50052 |
+| Node 1 | ✅ Online | 100 GB storage registered |
+| Node 2 | ✅ Online | 100 GB storage registered |
+| Node 3 | ✅ Online | 100 GB storage registered |
+| CyxWiz API | ✅ Running | Authentication service |
+
+**Verified Features:**
+- ✅ S3-compatible API (PUT/GET/DELETE objects)
+- ✅ Erasure coding (10 data + 4 parity shards)
+- ✅ 3x replication across all nodes
+- ✅ CLI authentication via CyxWiz API
+- ✅ CLI upload/download/list/delete operations
+- ✅ Node registration and heartbeat
+- ✅ Chunk distribution verified in database
+
+**CLI Commands Tested:**
+```bash
+# Authentication (registration via website only for security)
+cyxcloud login -e user@example.com  # Prompts for password
+
+# Storage operations
+cyxcloud status                           # Check gateway status
+cyxcloud upload -b bucket file.txt        # Upload file
+cyxcloud list bucket                      # List objects
+cyxcloud download bucket -k file -o out   # Download file
+cyxcloud delete bucket key -f             # Delete object
+cyxcloud whoami                           # Show user profile
+```
+
+**Docker Services:**
+| Service | Port | Purpose |
+|---------|------|---------|
+| PostgreSQL | 5432 | Metadata storage |
+| Redis | 6379 | Caching layer |
+| Gateway | 8080, 50052 | HTTP/S3 API + gRPC |
+| CyxWiz API | 3002 | Authentication |
+| Node 1 | 50061, 4001, 9091 | Storage node |
+| Node 2 | 50062, 4002, 9092 | Storage node |
+| Node 3 | 50063, 4003, 9093 | Storage node |
+
+**Quick Start:**
+```bash
+cd D:/Dev/CyxWiz_Claude/cyx_cloud
+docker compose up -d --build
+curl http://localhost:8080/health  # Should return "OK"
+```
+
+---
+
 ## Project Overview
 
 CyxWiz is a **decentralized ML compute platform** consisting of three interconnected projects:
@@ -458,6 +590,7 @@ src/
 - **Data Augmentation**: 13 transform presets (ImageNet, CIFAR-10, Medical, Self-Supervised, etc.) with live preview
 - **Local Training**: TrainingExecutor with Sequential model support, real-time loss/accuracy plotting
 - **Properties Panel**: Dynamic shape inference for node connections, editable layer parameters
+- **Annotation System**: Production annotation workflow with batch navigation, class management, COCO/YOLO/VOC export, and training integration via `GetAnnotatedBatch()`
 
 **TODO Features** (marked in code):
 - Import/Export model formats (ONNX, PyTorch, TensorFlow)

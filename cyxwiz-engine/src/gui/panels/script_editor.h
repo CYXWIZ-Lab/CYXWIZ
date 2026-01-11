@@ -4,6 +4,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../scripting/cell_manager.h"
 #include "../../scripting/debugger.h"
+#include "../../scripting/script_manager.h"
 #include <TextEditor.h>
 #include <string>
 #include <vector>
@@ -58,6 +59,7 @@ public:
     bool HasUnsavedFiles() const;
     std::vector<std::string> GetUnsavedFileNames() const;
     void SaveAllFiles();  // Save all unsaved files
+    bool HasEmptyNewTab() const;  // Check if there's an empty untitled tab
 
     // Find/Replace operations
     bool FindInEditor(const std::string& search_text, bool case_sensitive, bool whole_word, bool use_regex);
@@ -120,6 +122,12 @@ public:
 
     // Callbacks for settings changes (Script Editor -> Preferences sync)
     void SetOnSettingsChangedCallback(std::function<void()> callback) { on_settings_changed_callback_ = callback; }
+
+    // Auto-completion state query
+    bool IsCompletionPopupOpen() const { return show_completion_popup_; }
+
+    // Check if this panel has focus (including child windows)
+    bool IsFocused() const { return is_focused_; }
 
 private:
     // Tab/File representation
@@ -192,6 +200,7 @@ private:
     };
     std::vector<Section> ParseSections(const std::string& text);
     Section GetCurrentSection();
+    std::string DedentCode(const std::string& code);  // Remove common leading whitespace
 
     // Python language definition for syntax highlighting
     static TextEditor::LanguageDefinition CreatePythonLanguage();
@@ -269,6 +278,25 @@ private:
 
     // Settings changed callback (for syncing with Preferences)
     std::function<void()> on_settings_changed_callback_;
+
+    // Auto-completion state
+    scripting::ScriptManager script_manager_;
+    std::vector<scripting::CompletionItem> completion_items_;
+    bool show_completion_popup_ = false;
+    bool completion_just_opened_ = false;  // Skip close check for one frame after opening
+    bool completion_just_accepted_ = false;  // Skip editor keyboard input for one frame after accepting
+    int selected_completion_ = 0;
+    std::string completion_prefix_;
+    TextEditor::Coordinates completion_start_pos_;
+
+    // Focus tracking
+    bool is_focused_ = false;
+
+    // Auto-completion helpers
+    void UpdateAutoCompletion(bool force = false);
+    void RenderCompletionPopup();
+    void ApplyCompletion(const scripting::CompletionItem& item);
+    void CloseCompletionPopup();
 };
 
 } // namespace cyxwiz

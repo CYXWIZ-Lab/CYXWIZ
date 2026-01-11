@@ -10,6 +10,9 @@ namespace cyxwiz::servernode::gui {
 void SettingsPanel::Render() {
     if (!config_loaded_) {
         config_ = GetBackend().GetConfig();
+        // Initialize daemon address from config
+        strncpy(daemon_address_, config_.ipc_address.c_str(), sizeof(daemon_address_) - 1);
+        daemon_address_[sizeof(daemon_address_) - 1] = '\0';
         config_loaded_ = true;
     }
 

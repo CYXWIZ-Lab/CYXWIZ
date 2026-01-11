@@ -181,7 +181,7 @@ bool TestExecutor::BuildModelFromConfig() {
     return true;
 }
 
-bool TestExecutor::Initialize(int batch_size) {
+bool TestExecutor::Initialize(int /*batch_size*/) {
     // Build model from configuration if not already set
     if (!BuildModelFromConfig()) {
         spdlog::error("TestExecutor: Failed to build model from config");
@@ -547,7 +547,7 @@ void TestExecutor::UpdateMetrics(const std::function<void(TestingMetrics&)>& upd
     updater(metrics_);
 }
 
-void TestExecutor::PreprocessBatch(Batch& batch) {
+void TestExecutor::PreprocessBatch(Batch& /*batch*/) {
     // Preprocessing is handled by DatasetBatcher
 }
 

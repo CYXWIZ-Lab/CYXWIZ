@@ -11,9 +11,7 @@ find_package(Stb REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-if(CYXWIZ_HAS_PYTHON)
-    find_package(pybind11 CONFIG QUIET)
-endif()
+find_package(pybind11 CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
@@ -31,15 +29,10 @@ else()
 endif()
 
 
-# Optional: OpenCV for image processing and augmentation
-find_package(OpenCV CONFIG)
-if(OpenCV_FOUND)
-    message(STATUS "OpenCV ${OpenCV_VERSION} found - Image processing enabled")
-    set(CYXWIZ_HAS_OPENCV ON)
-else()
-    message(WARNING "OpenCV not found - Image augmentation disabled (using STB fallback)")
-    set(CYXWIZ_HAS_OPENCV OFF)
-endif()
+# OpenCV for image processing and augmentation (REQUIRED)
+find_package(OpenCV CONFIG REQUIRED)
+message(STATUS "OpenCV ${OpenCV_VERSION} found - Image processing enabled")
+set(CYXWIZ_HAS_OPENCV ON)
 
 # ImNodes for visual node editor - integrated manually
 # Source: https://github.com/Nelarius/imnodes
@@ -50,14 +43,37 @@ set(ENGINE_SOURCES
     src/application.cpp
     src/auth/auth_client.cpp
     src/core/project_manager.cpp
+    src/core/engine_config.cpp
     src/core/data_registry.cpp
+    src/core/annotation_manager.cpp
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
     src/core/graph_compiler.cpp
     src/core/dataset_batcher.cpp
+    src/core/image_utils.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
+    # Preprocessing system
+    src/preprocessing/preprocessing_config.cpp
+    src/preprocessing/statistics_calculator.cpp
+    src/preprocessing/normalization_transform.cpp
+    src/preprocessing/scaling_transform.cpp
+    src/preprocessing/image_transform.cpp
+    # OpenCV Transforms (Phase 1)
+    src/preprocessing/morphology_transform.cpp
+    src/preprocessing/blur_transform.cpp
+    src/preprocessing/perspective_transform.cpp
+    src/preprocessing/pyramid_transform.cpp
+    # Image utilities
+    src/utils/image_enhancer.cpp
+    src/utils/dataset_analyzer.cpp
+    src/utils/image_quality_analyzer.cpp
+    src/utils/image_deduplicator.cpp
+    # Dataset utilities (Phase 2)
+    src/utils/segmentation_utils.cpp
+    src/utils/shape_utils.cpp
+    src/utils/labeling_utils.cpp
     src/core/test_manager.cpp
     src/core/checkpoint_manager.cpp
     src/core/model_exporter.cpp
@@ -75,6 +91,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_io.cpp
     src/gui/node_editor_nodes.cpp
     src/gui/node_editor_validation.cpp
+    src/gui/node_editor_shape_inference.cpp
     src/gui/node_editor_skip.cpp
     src/gui/node_editor_add_search.cpp
     src/gui/node_documentation.cpp
@@ -93,11 +110,21 @@ set(ENGINE_SOURCES
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
+    src/gui/panels/plot_output_panel.cpp
     src/gui/panels/command_window.cpp
     src/gui/panels/script_editor.cpp
     src/gui/panels/table_viewer.cpp
+    src/gui/panels/data_explorer_panel.cpp
+    src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/dataset_panel.cpp
+    src/gui/panels/dataset_panel_preprocessing.cpp
+    src/gui/panels/dataset_panel_datapipeline.cpp
+    src/gui/panels/dataset_panel_interactive.cpp
+    # Interactive annotation tools (Phase 4)
+    src/gui/annotation/annotation_tools.cpp
+    src/gui/annotation/grabcut_editor.cpp
+    src/gui/annotation/watershed_editor.cpp
     src/gui/panels/task_progress_panel.cpp
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp
@@ -112,6 +139,9 @@ set(ENGINE_SOURCES
     src/gui/panels/deployment_dialog.cpp
     src/network/deployment_client.cpp
     src/inference/local_inference_server.cpp
+    # DNN inference (Phase 3)
+    src/inference/dnn_models.cpp
+    src/inference/dnn_preprocessor.cpp
     src/gui/panels/model_summary_panel.cpp
     src/gui/panels/architecture_diagram.cpp
     src/gui/panels/lr_finder_panel.cpp
@@ -127,6 +157,11 @@ set(ENGINE_SOURCES
     src/gui/panels/gradcam_panel.cpp
     src/gui/panels/feature_importance_panel.cpp
     src/gui/panels/nas_panel.cpp
+    src/gui/panels/hyperparam_search_panel.cpp
+    src/core/hyperparam_search.cpp
+    src/gui/panels/serving_panel.cpp
+    src/gui/panels/dnn_inference_panel.cpp
+    src/serving/inference_server.cpp
     src/gui/panels/kmeans_panel.cpp
     src/gui/panels/dbscan_panel.cpp
     src/gui/panels/hierarchical_panel.cpp
@@ -142,6 +177,7 @@ set(ENGINE_SOURCES
     src/gui/panels/log_transform_panel.cpp
     src/gui/panels/boxcox_panel.cpp
     src/gui/panels/feature_scaling_panel.cpp
+    src/gui/panels/optimizer_settings_panel.cpp
     src/gui/panels/matrix_calculator_panel.cpp
     src/gui/panels/eigen_decomp_panel.cpp
     src/gui/panels/svd_panel.cpp
@@ -201,6 +237,12 @@ set(ENGINE_SOURCES
     src/network/p2p_client.cpp
     src/network/dataset_provider.cpp
     src/network/reservation_client.cpp
+    src/network/datastream_client.cpp
+    src/core/cloud_data_registry.cpp
+    src/gui/panels/cloud_browser.cpp
+    src/gui/panels/cloud_dataset_manager.cpp
+    src/gui/panels/cloud_upload_dialog.cpp
+    src/gui/panels/trust_badge.cpp
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/job_status_panel.cpp
     src/gui/panels/wallet_panel.cpp
@@ -219,6 +261,7 @@ set(ENGINE_HEADERS
     src/application.h
     src/auth/auth_client.h
     src/core/project_manager.h
+    src/core/engine_config.h
     src/core/data_registry.h
     src/core/texture_manager.h
     src/core/async_task_manager.h
@@ -250,11 +293,17 @@ set(ENGINE_HEADERS
     src/gui/panels/training_plot_panel.h
     src/gui/panels/plot_window.h
     src/gui/panels/plot_test_control.h
+    src/gui/panels/plot_output_panel.h
     src/gui/panels/command_window.h
     src/gui/panels/script_editor.h
     src/gui/panels/table_viewer.h
+    src/gui/panels/data_explorer_panel.h
     src/gui/panels/connection_dialog.h
     src/gui/panels/dataset_panel.h
+    # Interactive annotation tools (Phase 4)
+    src/gui/annotation/annotation_tools.h
+    src/gui/annotation/grabcut_editor.h
+    src/gui/annotation/watershed_editor.h
     src/gui/panels/task_progress_panel.h
     src/gui/panels/custom_node_editor.h
     src/gui/panels/theme_editor.h
@@ -268,6 +317,9 @@ set(ENGINE_HEADERS
     src/gui/panels/deployment_dialog.h
     src/network/deployment_client.h
     src/inference/local_inference_server.h
+    # DNN inference (Phase 3)
+    src/inference/dnn_models.h
+    src/inference/dnn_preprocessor.h
     src/gui/panels/model_summary_panel.h
     src/gui/panels/architecture_diagram.h
     src/gui/panels/lr_finder_panel.h
@@ -283,6 +335,10 @@ set(ENGINE_HEADERS
     src/gui/panels/gradcam_panel.h
     src/gui/panels/feature_importance_panel.h
     src/gui/panels/nas_panel.h
+    src/gui/panels/hyperparam_search_panel.h
+    src/core/hyperparam_search.h
+    src/gui/panels/serving_panel.h
+    src/serving/inference_server.h
     src/gui/panels/kmeans_panel.h
     src/gui/panels/dbscan_panel.h
     src/gui/panels/hierarchical_panel.h
@@ -298,6 +354,7 @@ set(ENGINE_HEADERS
     src/gui/panels/log_transform_panel.h
     src/gui/panels/boxcox_panel.h
     src/gui/panels/feature_scaling_panel.h
+    src/gui/panels/optimizer_settings_panel.h
     src/gui/panels/matrix_calculator_panel.h
     src/gui/panels/eigen_decomp_panel.h
     src/gui/panels/svd_panel.h
@@ -355,6 +412,12 @@ set(ENGINE_HEADERS
     src/network/p2p_client.h
     src/network/dataset_provider.h
     src/network/reservation_client.h
+    src/network/datastream_client.h
+    src/core/cloud_data_registry.h
+    src/gui/panels/cloud_browser.h
+    src/gui/panels/cloud_dataset_manager.h
+    src/gui/panels/cloud_upload_dialog.h
+    src/gui/panels/trust_badge.h
     src/gui/panels/p2p_training_panel.h
     src/gui/panels/job_status_panel.h
     src/gui/panels/wallet_panel.h
@@ -376,6 +439,24 @@ set(ENGINE_HEADERS
     src/transforms/noise.h
     src/transforms/advanced.h
     src/transforms/transforms.h
+    # Preprocessing system
+    src/preprocessing/preprocessing_config.h
+    src/preprocessing/statistics_calculator.h
+    src/preprocessing/normalization_transform.h
+    src/preprocessing/scaling_transform.h
+    src/preprocessing/image_transform.h
+    # OpenCV Transforms (Phase 1)
+    src/preprocessing/morphology_transform.h
+    src/preprocessing/blur_transform.h
+    src/preprocessing/perspective_transform.h
+    src/preprocessing/pyramid_transform.h
+    # Image utilities
+    src/utils/image_enhancer.h
+    src/utils/dataset_analyzer.h
+    # Dataset utilities (Phase 2)
+    src/utils/segmentation_utils.h
+    src/utils/shape_utils.h
+    src/utils/labeling_utils.h
 )
 
 # Create executable
@@ -405,6 +486,7 @@ target_link_libraries(cyxwiz-engine PRIVATE
     fmt::fmt
     spdlog::spdlog
     nlohmann_json::nlohmann_json
+    pybind11::embed
     httplib::httplib
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -417,12 +499,6 @@ target_link_libraries(cyxwiz-engine PRIVATE
 if(HighFive_FOUND)
     target_link_libraries(cyxwiz-engine PRIVATE HighFive)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_HDF5)
-endif()
-
-# Optional: Link pybind11 for Python scripting
-if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
-    target_link_libraries(cyxwiz-engine PRIVATE pybind11::embed)
-    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_PYTHON)
 endif()
 
 # Optional: Link OpenCV if found
@@ -503,83 +579,87 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
 )
 
 # Copy pycyxwiz Python module to engine directory (built by cyxwiz-backend)
-if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
-    add_custom_command(TARGET cyxwiz-engine POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:pycyxwiz>
-        $<TARGET_FILE_DIR:cyxwiz-engine>/pycyxwiz.pyd
-        COMMENT "Copying pycyxwiz Python module..."
-    )
-endif()
+add_custom_command(TARGET cyxwiz-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:pycyxwiz>
+    $<TARGET_FILE_DIR:cyxwiz-engine>/pycyxwiz.pyd
+    COMMENT "Copying pycyxwiz Python module..."
+)
 
-# ===== Python Bindings Module (Optional) =====
+# ===== Python Bindings Module =====
 
-if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
-    # Create Python module for plotting bindings
-    pybind11_add_module(cyxwiz_plotting
-        python/plot_bindings.cpp
-        src/plotting/plot_manager.cpp
-        src/plotting/plot_dataset.cpp
-        src/plotting/plot_3d_generator.cpp
-        src/plotting/test_data_generator.cpp
-        src/plotting/backends/implot_backend.cpp
-        src/plotting/backends/matplotlib_backend.cpp
-        src/plotting/stb_image_impl.cpp
-        src/gui/panels/plot_window.cpp
-        src/gui/panels/plot_test_control.cpp
-        src/gui/panels/plot_test_panel.cpp
-        src/gui/panels/training_plot_panel.cpp
-        src/gui/panels/training_plot_panel_global.cpp
-    )
+# Create Python module for plotting bindings
+pybind11_add_module(cyxwiz_plotting
+    python/plot_bindings.cpp
+    src/plotting/plot_manager.cpp
+    src/plotting/plot_dataset.cpp
+    src/plotting/plot_3d_generator.cpp
+    src/plotting/test_data_generator.cpp
+    src/plotting/backends/implot_backend.cpp
+    src/plotting/backends/matplotlib_backend.cpp
+    src/plotting/stb_image_impl.cpp
+    src/gui/panels/plot_window.cpp
+    src/gui/panels/plot_test_control.cpp
+    src/gui/panels/plot_test_panel.cpp
+    src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_plot_panel_global.cpp
+)
 
-    # Link the plotting module against necessary libraries
-    target_link_libraries(cyxwiz_plotting PRIVATE
-        imgui::imgui
-        implot::implot
-        glad::glad
-        glfw
-        fmt::fmt
-        spdlog::spdlog
-    )
+# Link the plotting module against necessary libraries
+target_link_libraries(cyxwiz_plotting PRIVATE
+    imgui::imgui
+    implot::implot
+    glad::glad
+    glfw
+    fmt::fmt
+    spdlog::spdlog
+)
 
-    # Include directories for the Python module
-    target_include_directories(cyxwiz_plotting PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-    )
+# Include directories for the Python module
+target_include_directories(cyxwiz_plotting PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
-    # Set output directory for Python module
+# Set output directory for Python module
+set_target_properties(cyxwiz_plotting PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
+)
+
+# Platform-specific module settings
+if(WIN32)
+    # Windows: .pyd extension
     set_target_properties(cyxwiz_plotting PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
+        SUFFIX ".pyd"
     )
-
-    # Platform-specific module settings
-    if(WIN32)
-        # Windows: .pyd extension
-        set_target_properties(cyxwiz_plotting PROPERTIES
-            SUFFIX ".pyd"
-        )
-    elseif(APPLE)
-        # macOS: .so extension
-        set_target_properties(cyxwiz_plotting PROPERTIES
-            SUFFIX ".so"
-        )
-    else()
-        # Linux: .so extension (default)
-    endif()
-
-    # Install Python module
-    install(TARGETS cyxwiz_plotting
-        LIBRARY DESTINATION lib/python/cyxwiz
-        RUNTIME DESTINATION lib/python/cyxwiz
+elseif(APPLE)
+    # macOS: .so extension
+    set_target_properties(cyxwiz_plotting PROPERTIES
+        SUFFIX ".so"
     )
-
-    # Install Python examples
-    install(DIRECTORY python/examples/
-        DESTINATION share/cyxwiz/python/examples
-        FILES_MATCHING PATTERN "*.py"
-    )
+else()
+    # Linux: .so extension (default)
 endif()
+
+# Install Python module
+install(TARGETS cyxwiz_plotting
+    LIBRARY DESTINATION lib/python/cyxwiz
+    RUNTIME DESTINATION lib/python/cyxwiz
+)
+
+# Copy cyxwiz_plotting Python module to engine directory after build
+add_custom_command(TARGET cyxwiz_plotting POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:cyxwiz_plotting>
+    $<TARGET_FILE_DIR:cyxwiz-engine>/cyxwiz_plotting$<TARGET_FILE_SUFFIX:cyxwiz_plotting>
+    COMMENT "Copying cyxwiz_plotting Python module..."
+)
+
+# Install Python examples
+install(DIRECTORY python/examples/
+    DESTINATION share/cyxwiz/python/examples
+    FILES_MATCHING PATTERN "*.py"
+)
 
 # Install
 install(TARGETS cyxwiz-engine
@@ -588,4 +668,68 @@ install(TARGETS cyxwiz-engine
 
 install(DIRECTORY resources/
     DESTINATION share/cyxwiz/resources
+)
+
+# ===== Test: Sandbox Timeout =====
+add_executable(test_sandbox_timeout
+    tests/test_sandbox_timeout.cpp
+    src/scripting/python_engine.cpp
+    src/scripting/python_sandbox.cpp
+)
+
+target_include_directories(test_sandbox_timeout PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_sandbox_timeout PRIVATE
+    pybind11::embed
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_sandbox_timeout PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+    target_link_libraries(test_sandbox_timeout PRIVATE psapi)
+endif()
+
+# Set output directory
+set_target_properties(test_sandbox_timeout PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: OpenCV Integration =====
+add_executable(test_opencv_integration
+    tests/test_opencv_integration.cpp
+    src/preprocessing/morphology_transform.cpp
+    src/preprocessing/blur_transform.cpp
+    src/preprocessing/perspective_transform.cpp
+    src/preprocessing/pyramid_transform.cpp
+    src/utils/segmentation_utils.cpp
+    src/utils/shape_utils.cpp
+    src/utils/labeling_utils.cpp
+    src/core/image_utils.cpp
+)
+
+target_include_directories(test_opencv_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_opencv_integration PRIVATE
+    ${OpenCV_LIBS}
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_opencv_integration PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_opencv_integration PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )

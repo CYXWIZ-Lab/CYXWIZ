@@ -26,12 +26,26 @@ CommandWindowPanel::CommandWindowPanel()
     output_.push_back(welcome);
 }
 
+CommandWindowPanel::~CommandWindowPanel() {
+    // Stop any running command
+    if (command_executing_) {
+        StopAsyncCommand();
+    }
+    // Wait for thread to finish
+    if (command_thread_ && command_thread_->joinable()) {
+        command_thread_->join();
+    }
+}
+
 void CommandWindowPanel::SetScriptingEngine(std::shared_ptr<scripting::ScriptingEngine> engine) {
     scripting_engine_ = engine;
 }
 
 void CommandWindowPanel::Render() {
     if (!visible_) return;
+
+    // Check for async command completion
+    CheckAsyncCompletion();
 
     ImGui::Begin(GetName(), &visible_);
 
@@ -40,8 +54,17 @@ void CommandWindowPanel::Render() {
 
     ImGui::Separator();
 
-    // Input area (bottom)
-    RenderInputArea();
+    // Show "Running..." indicator and Stop button if command is executing
+    if (command_executing_) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Running...");
+        ImGui::SameLine();
+        if (ImGui::Button("Stop")) {
+            StopAsyncCommand();
+        }
+    } else {
+        // Input area (bottom) - only show when not executing
+        RenderInputArea();
+    }
 
     // Render completion popup if active
     RenderCompletionPopup();
@@ -171,7 +194,8 @@ void CommandWindowPanel::RenderInputArea() {
         return 0;
     };
 
-    // Auto-focus on input field
+    // Only set focus when explicitly requested (e.g., after command execution)
+    // Don't steal focus every frame - this breaks other GUI interactions
     if (focus_input_) {
         ImGui::SetKeyboardFocusHere();
         focus_input_ = false;
@@ -250,32 +274,43 @@ COMMANDS:
   clear       - Clear output window
   help()      - Show this help message
 
-MATLAB-STYLE FUNCTIONS (auto-loaded):
+DUCKDB (SQL Analytics):
+  sql(query)       - Run SQL query on in-memory database
+  read_csv(path)   - Load CSV file
+  read_parquet(p)  - Load Parquet file
+  read_json(path)  - Load JSON file
+  db               - DuckDB connection object
+
+  Examples:
+    sql("SELECT 1 + 1 AS result")
+    sql("SELECT * FROM 'data.csv' LIMIT 10")
+    read_csv('data.csv').filter('age > 30')
+
+POLARS (Fast DataFrames):
+  pl               - Polars module
+  df(data)         - Create DataFrame
+  col('name')      - Column expression
+  pl_csv(path)     - Read CSV file
+  pl_parquet(p)    - Read Parquet file
+  scan_csv(path)   - Lazy CSV reader
+  scan_parquet(p)  - Lazy Parquet reader
+
+  Examples:
+    data = df({'a': [1, 2, 3], 'b': [4, 5, 6]})
+    data.filter(col('a') > 1)
+    pl_csv('data.csv').head(10)
+
+MATLAB-STYLE FUNCTIONS:
   Linear Algebra:  eye, zeros, ones, svd, eig, qr, chol, lu, det,
-                   rank, trace, norm, cond, inv, transpose, solve, lstsq, matmul
-  Signal:          fft, ifft, conv, conv2, spectrogram, lowpass, highpass,
-                   bandpass, filter, findpeaks, sine, square, noise
-  Statistics:      kmeans, dbscan, gmm, pca, tsne, silhouette,
-                   confusion_matrix, roc
-  Time Series:     acf, pacf, decompose, stationarity, arima, diff,
-                   rolling_mean, rolling_std
+                   rank, trace, norm, cond, inv, transpose, solve
+  Signal:          fft, ifft, conv, spectrogram, lowpass, highpass
+  Statistics:      kmeans, dbscan, gmm, pca, tsne
+  Time Series:     acf, pacf, decompose, stationarity, arima
 
-UTILITY FUNCTIONS:
-  printmat(A)      - Print matrix in aligned format (alias: pm)
-  pm(A, precision=4) - Print with custom decimal precision
-
-EXAMPLES:
-  I = eye(3)              # Create 3x3 identity matrix
-  pm(I)                   # Print matrix nicely
-  A = [[1,2],[3,4]]
-  U, S, V = svd(A)        # Singular value decomposition
-  spectrum = fft([1,2,3,4])  # FFT of signal
-
-GROUPED NAMESPACE (alternative):
-  cyx.linalg.svd(A)       # Same as svd(A)
-  cyx.signal.fft(x)       # Same as fft(x)
-  cyx.stats.kmeans(data, k=3)
-  cyx.timeseries.arima(data, horizon=5)
+  Examples:
+    I = eye(3)              # 3x3 identity matrix
+    pm(I)                   # Print matrix nicely
+    U, S, V = svd([[1,2],[3,4]])
 
 Type any Python code to execute.
 )";
@@ -284,22 +319,9 @@ Type any Python code to execute.
         return;
     }
 
-    // Execute Python command
+    // Execute Python command asynchronously
     if (scripting_engine_) {
-        auto result = scripting_engine_->ExecuteCommand(command);
-
-        OutputEntry result_entry;
-        if (result.success) {
-            result_entry.type = OutputEntry::Type::Result;
-            result_entry.text = result.output.empty() ? "" : result.output;
-        } else {
-            result_entry.type = OutputEntry::Type::Error;
-            result_entry.text = "Error: " + result.error_message;
-        }
-
-        if (!result_entry.text.empty()) {
-            output_.push_back(result_entry);
-        }
+        StartAsyncCommand(command);
     } else {
         OutputEntry error;
         error.type = OutputEntry::Type::Error;
@@ -524,6 +546,70 @@ void CommandWindowPanel::RenderCompletionPopup() {
         }
     }
     ImGui::End();
+}
+
+// ========== Async Command Execution ==========
+
+void CommandWindowPanel::StartAsyncCommand(const std::string& command) {
+    if (command_executing_ || !scripting_engine_) {
+        return;
+    }
+
+    executing_command_ = command;
+    command_executing_ = true;
+    command_cancel_requested_ = false;
+
+    // Use the scripting engine's async command execution
+    scripting_engine_->ExecuteCommandAsync(command);
+}
+
+void CommandWindowPanel::CheckAsyncCompletion() {
+    if (!command_executing_ || !scripting_engine_) {
+        return;
+    }
+
+    // Check if command has finished
+    if (!scripting_engine_->IsCommandRunning()) {
+        // Get the result
+        auto result_opt = scripting_engine_->GetCommandResult();
+        if (result_opt) {
+            auto& result = *result_opt;
+
+            OutputEntry result_entry;
+            if (result.success) {
+                result_entry.type = OutputEntry::Type::Result;
+                result_entry.text = result.output.empty() ? "" : result.output;
+            } else {
+                result_entry.type = OutputEntry::Type::Error;
+                if (result.timeout_exceeded) {
+                    result_entry.text = "Command interrupted (timeout)";
+                } else if (result.was_cancelled) {
+                    result_entry.text = "Command cancelled";
+                } else {
+                    result_entry.text = "Error: " + result.error_message;
+                }
+            }
+
+            if (!result_entry.text.empty()) {
+                output_.push_back(result_entry);
+            }
+
+            scroll_to_bottom_ = true;
+        }
+
+        command_executing_ = false;
+        executing_command_.clear();
+        focus_input_ = true;
+    }
+}
+
+void CommandWindowPanel::StopAsyncCommand() {
+    if (!command_executing_ || !scripting_engine_) {
+        return;
+    }
+
+    command_cancel_requested_ = true;
+    scripting_engine_->StopCommand();
 }
 
 } // namespace cyxwiz

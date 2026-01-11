@@ -72,6 +72,7 @@ private:
     std::chrono::steady_clock::time_point last_status_check_time_;
     static constexpr int kStatusCheckIntervalMs = 2000;  // Check every 2 seconds
     bool cached_connected_to_central_ = false;
+    bool cached_auth_required_ = false;  // True when token expired/revoked - needs re-login
 };
 
 } // namespace cyxwiz::servernode::gui

@@ -1,4 +1,8 @@
 #include "data_registry.h"
+#include "annotation_manager.h"
+#include "image_utils.h"
+#include "../preprocessing/preprocessing_config.h"
+#include "../transforms/transform.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
@@ -429,7 +433,7 @@ private:
             if (first_line) {
                 first_line = false;
                 try {
-                    std::stof(tokens[0]);
+                    (void)std::stof(tokens[0]);  // Just checking if it's numeric
                 } catch (...) {
                     // First line is header
                     column_names_ = tokens;
@@ -543,7 +547,7 @@ private:
             if (first_line) {
                 first_line = false;
                 try {
-                    std::stof(tokens[0]);
+                    (void)std::stof(tokens[0]);  // Just checking if it's numeric
                 } catch (...) {
                     column_names_ = tokens;
                     continue;
@@ -1045,9 +1049,10 @@ private:
             return;
         }
 
-        // Detect channels from first image
+        // Detect channels from first image using OpenCV
+        std::vector<float> temp_data;
         int width, height, channels;
-        if (!stbi_info(image_paths_[0].c_str(), &width, &height, &channels)) {
+        if (!ImageUtils::LoadImage(image_paths_[0], temp_data, width, height, channels)) {
             spdlog::warn("Could not get info for first image, defaulting to 3 channels");
             channels_ = 3;
         } else {
@@ -1062,37 +1067,29 @@ private:
     }
 
     std::vector<float> LoadImage(const std::string& path) const {
+        // Load image using OpenCV (via ImageUtils)
+        std::vector<float> result;
         int width, height, channels;
-        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, channels_);
 
-        if (!data) {
+        if (!ImageUtils::LoadImage(path, result, width, height, channels)) {
             spdlog::warn("Failed to load image: {}", path);
             return std::vector<float>(target_width_ * target_height_ * channels_, 0.0f);
         }
 
-        // Resize if needed (simple nearest-neighbor for now)
-        std::vector<float> result(target_width_ * target_height_ * channels_);
+        // Resize if needed using OpenCV high-quality resize
+        if (width != target_width_ || height != target_height_) {
+            // Use Area method for downscaling (best quality), Lanczos for upscaling
+            ImageUtils::ResizeMethod method = (target_width_ < width || target_height_ < height)
+                ? ImageUtils::ResizeMethod::Area
+                : ImageUtils::ResizeMethod::Lanczos;
 
-        float x_ratio = static_cast<float>(width) / target_width_;
-        float y_ratio = static_cast<float>(height) / target_height_;
-
-        for (int y = 0; y < target_height_; y++) {
-            for (int x = 0; x < target_width_; x++) {
-                int src_x = static_cast<int>(x * x_ratio);
-                int src_y = static_cast<int>(y * y_ratio);
-
-                src_x = std::min(src_x, width - 1);
-                src_y = std::min(src_y, height - 1);
-
-                for (int c = 0; c < channels_; c++) {
-                    int src_idx = (src_y * width + src_x) * channels + c;
-                    int dst_idx = (y * target_width_ + x) * channels_ + c;
-                    result[dst_idx] = data[src_idx] / 255.0f;  // Normalize to [0, 1]
-                }
+            if (!ImageUtils::ResizeImage(result, width, height, channels,
+                                          target_width_, target_height_, method)) {
+                spdlog::warn("Failed to resize image: {}", path);
+                return std::vector<float>(target_width_ * target_height_ * channels_, 0.0f);
             }
         }
 
-        stbi_image_free(data);
         return result;
     }
 
@@ -1206,9 +1203,10 @@ private:
             return;
         }
 
-        // Detect channels from first image
+        // Detect channels from first image using OpenCV
+        std::vector<float> temp_data;
         int width, height, channels;
-        if (!stbi_info(image_paths_[0].c_str(), &width, &height, &channels)) {
+        if (!ImageUtils::LoadImage(image_paths_[0], temp_data, width, height, channels)) {
             spdlog::warn("ImageDataset: Could not get info for first image, defaulting to 3 channels");
             channels_ = 3;
         } else {
@@ -1571,37 +1569,29 @@ private:
     }
 
     std::vector<float> LoadImage(const std::string& path) const {
+        // Load image using OpenCV (via ImageUtils)
+        std::vector<float> result;
         int width, height, channels;
-        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, channels_);
 
-        if (!data) {
+        if (!ImageUtils::LoadImage(path, result, width, height, channels)) {
             spdlog::warn("ImageCSV: Failed to load image: {}", path);
             return std::vector<float>(target_width_ * target_height_ * channels_, 0.0f);
         }
 
-        // Resize if needed (simple nearest-neighbor)
-        std::vector<float> result(target_width_ * target_height_ * channels_);
+        // Resize if needed using OpenCV high-quality resize
+        if (width != target_width_ || height != target_height_) {
+            // Use Area method for downscaling (best quality), Lanczos for upscaling
+            ImageUtils::ResizeMethod method = (target_width_ < width || target_height_ < height)
+                ? ImageUtils::ResizeMethod::Area
+                : ImageUtils::ResizeMethod::Lanczos;
 
-        float x_ratio = static_cast<float>(width) / target_width_;
-        float y_ratio = static_cast<float>(height) / target_height_;
-
-        for (int y = 0; y < target_height_; y++) {
-            for (int x = 0; x < target_width_; x++) {
-                int src_x = static_cast<int>(x * x_ratio);
-                int src_y = static_cast<int>(y * y_ratio);
-
-                src_x = std::min(src_x, width - 1);
-                src_y = std::min(src_y, height - 1);
-
-                for (int c = 0; c < channels_; c++) {
-                    int src_idx = (src_y * width + src_x) * channels + c;
-                    int dst_idx = (y * target_width_ + x) * channels_ + c;
-                    result[dst_idx] = data[src_idx] / 255.0f;  // Normalize to [0, 1]
-                }
+            if (!ImageUtils::ResizeImage(result, width, height, channels,
+                                          target_width_, target_height_, method)) {
+                spdlog::warn("ImageCSV: Failed to resize image: {}", path);
+                return std::vector<float>(target_width_ * target_height_ * channels_, 0.0f);
             }
         }
 
-        stbi_image_free(data);
         return result;
     }
 
@@ -3593,7 +3583,7 @@ DatasetPreview DataRegistry::GetPreview(const std::string& path, int max_samples
                 if (line_count == 0) {
                     // Check if header
                     try {
-                        std::stof(tokens[0]);
+                        (void)std::stof(tokens[0]);  // Just checking if it's numeric
                         preview.rows.push_back(tokens);
                     } catch (...) {
                         preview.columns = tokens;
@@ -4122,6 +4112,91 @@ bool DataRegistry::SaveVersion(const std::string& name, const std::string& descr
 
     spdlog::info("Saved version {} for dataset '{}'", version.version_id, name);
     return true;
+}
+
+// =============================================================================
+// Preprocessing Configuration Management
+// =============================================================================
+
+void DataRegistry::SetPreprocessingConfig(const std::string& dataset_id, const PreprocessingConfig& config) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    preprocessing_configs_[dataset_id] = config;
+    spdlog::info("DataRegistry: Set preprocessing config for dataset '{}'", dataset_id);
+}
+
+PreprocessingConfig DataRegistry::GetPreprocessingConfig(const std::string& dataset_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = preprocessing_configs_.find(dataset_id);
+    if (it != preprocessing_configs_.end()) {
+        return it->second;
+    }
+    // Return empty config if not found
+    PreprocessingConfig empty_config;
+    empty_config.dataset_id = dataset_id;
+    return empty_config;
+}
+
+bool DataRegistry::HasPreprocessingConfig(const std::string& dataset_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return preprocessing_configs_.find(dataset_id) != preprocessing_configs_.end();
+}
+
+void DataRegistry::ClearPreprocessingConfig(const std::string& dataset_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    preprocessing_configs_.erase(dataset_id);
+    spdlog::info("DataRegistry: Cleared preprocessing config for dataset '{}'", dataset_id);
+}
+
+// =============================================================================
+// Augmentation Pipeline Management
+// =============================================================================
+
+void DataRegistry::SetAugmentationPipeline(const std::string& dataset_id,
+                                            std::shared_ptr<transforms::Compose> pipeline) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    augmentation_pipelines_[dataset_id] = pipeline;
+    spdlog::info("DataRegistry: Set augmentation pipeline for dataset '{}'", dataset_id);
+}
+
+std::shared_ptr<transforms::Compose> DataRegistry::GetAugmentationPipeline(
+    const std::string& dataset_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = augmentation_pipelines_.find(dataset_id);
+    if (it != augmentation_pipelines_.end()) {
+        return it->second;
+    }
+    return nullptr;
+}
+
+bool DataRegistry::HasAugmentationPipeline(const std::string& dataset_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return augmentation_pipelines_.find(dataset_id) != augmentation_pipelines_.end();
+}
+
+void DataRegistry::ClearAugmentationPipeline(const std::string& dataset_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    augmentation_pipelines_.erase(dataset_id);
+    spdlog::info("DataRegistry: Cleared augmentation pipeline for dataset '{}'", dataset_id);
+}
+
+// =============================================================================
+// Annotation Manager
+// =============================================================================
+
+AnnotationManager& DataRegistry::GetAnnotationManager() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!annotation_manager_) {
+        annotation_manager_ = std::make_unique<AnnotationManager>();
+    }
+    return *annotation_manager_;
+}
+
+const AnnotationManager& DataRegistry::GetAnnotationManager() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!annotation_manager_) {
+        annotation_manager_ = std::make_unique<AnnotationManager>();
+    }
+    return *annotation_manager_;
 }
 
 } // namespace cyxwiz

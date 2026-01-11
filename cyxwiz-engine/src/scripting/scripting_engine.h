@@ -11,6 +11,7 @@
 #include <mutex>
 #include <queue>
 #include <condition_variable>
+#include <chrono>
 
 // Forward declarations
 namespace cyxwiz {
@@ -60,8 +61,21 @@ public:
     ~ScriptingEngine();
 
     // ========== Synchronous Execution (blocks caller) ==========
-    // Execute single command (REPL-style)
+    // Execute single command (REPL-style) - WARNING: blocks for timeout duration
     ExecutionResult ExecuteCommand(const std::string& command);
+
+    // ========== Async Command Execution (for console commands) ==========
+    // Start command execution in background (non-blocking)
+    void ExecuteCommandAsync(const std::string& command);
+
+    // Check if a console command is currently running
+    bool IsCommandRunning() const { return command_running_.load(); }
+
+    // Stop currently running console command
+    void StopCommand();
+
+    // Get result of async command (if finished)
+    std::optional<ExecutionResult> GetCommandResult();
 
     // Execute multi-line script
     ExecutionResult ExecuteScript(const std::string& script);
@@ -109,6 +123,11 @@ public:
     bool IsVerboseLogging() const { return verbose_logging_; }
     bool* GetVerboseLoggingPtr() { return &verbose_logging_; }
 
+    // Console timeout configuration (for interactive commands)
+    void SetConsoleTimeout(double seconds) { console_timeout_seconds_ = seconds; }
+    double GetConsoleTimeout() const { return console_timeout_seconds_; }
+    double* GetConsoleTimeoutPtr() { return &console_timeout_seconds_; }
+
     // Check if engine is initialized
     bool IsInitialized() const;
 
@@ -122,6 +141,7 @@ private:
     CompletionCallback completion_callback_;
     bool sandbox_enabled_;
     bool verbose_logging_{false};  // Log all commands including internal ones
+    double console_timeout_seconds_{30.0};  // Console command timeout (default 30s)
 
     // ========== Async execution state ==========
     std::unique_ptr<std::thread> script_thread_;
@@ -168,10 +188,36 @@ private:
     bool matlab_aliases_initialized_{false};
     void InitializeMatlabAliases();
 
+    // Console command execution with timeout
+    std::mutex command_mutex_;
+    std::condition_variable command_cv_;
+    std::atomic<bool> command_finished_{false};
+    ExecutionResult command_result_;
+    ExecutionResult ExecuteCommandDirect(const std::string& command);
+    ExecutionResult ExecuteCommandWithPythonTimeout(const std::string& command);
+    void ExecuteCommandWorker(const std::string& command);
+
+    // Async command execution (for non-blocking console)
+    std::unique_ptr<std::thread> command_thread_;
+    std::atomic<bool> command_running_{false};
+    std::atomic<bool> command_stop_requested_{false};
+    std::mutex command_result_mutex_;
+    std::optional<ExecutionResult> async_command_result_;
+    void CommandAsyncWorker(const std::string& command);
+
+    // Post-command cooldown tracking (to prevent racing with Python cleanup)
+    std::chrono::steady_clock::time_point last_command_end_time_;
+    std::atomic<bool> last_command_had_error_{false};
+    std::atomic<bool> python_busy_{false};  // True while any Python operation is in progress
+    static constexpr int POST_ERROR_COOLDOWN_MS = 500;  // Wait 500ms after error (increased)
+
 public:
     // Static method for Python to check cancellation (no GIL needed)
     static int GetCancelFlag() { return shared_cancel_flag_.load(); }
     static void SetCancelFlag(int val) { shared_cancel_flag_.store(val); }
+
+    // Check if it's safe to run commands (no async running, past cooldown period)
+    bool IsSafeForNewCommand() const;
 };
 
 } // namespace scripting

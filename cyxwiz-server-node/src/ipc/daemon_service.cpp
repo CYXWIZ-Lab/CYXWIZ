@@ -94,8 +94,11 @@ grpc::Status DaemonServiceImpl::GetStatus(
     response->set_node_id(node_id_);
     response->set_version("0.3.0");
 
-    // Connection status - check actual registration state
-    if (node_client_ && node_client_->IsRegistered()) {
+    // Connection status - check auth failure first, then registration state
+    if (auth_failed_) {
+        // Auth failed - user needs to re-login
+        response->set_central_server_status(ConnectionStatus::CONNECTION_STATUS_AUTH_REQUIRED);
+    } else if (node_client_ && node_client_->IsRegistered()) {
         response->set_central_server_status(ConnectionStatus::CONNECTION_STATUS_CONNECTED);
     } else {
         response->set_central_server_status(ConnectionStatus::CONNECTION_STATUS_DISCONNECTED);

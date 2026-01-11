@@ -1,4 +1,7 @@
 #include "training_executor.h"
+#include "data_registry.h"
+#include "../preprocessing/preprocessing_config.h"
+#include "../preprocessing/statistics_calculator.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
 #include <cmath>
@@ -111,6 +114,15 @@ bool TrainingExecutor::BuildModelFromConfig() {
                 break;
             }
 
+            case gui::NodeType::BatchNorm: {
+                // BatchNorm uses current feature size (output of previous Dense layer)
+                float eps = layer_cfg.eps > 0 ? layer_cfg.eps : 1e-5f;
+                float momentum = layer_cfg.momentum > 0 ? layer_cfg.momentum : 0.1f;
+                model_->Add<BatchNormModule>(current_input_size, eps, momentum);
+                spdlog::info("  [{}] BatchNorm({})", i, current_input_size);
+                break;
+            }
+
             case gui::NodeType::Output: {
                 // Output node is just a marker, not an actual layer
                 // The actual output transformation is done by the preceding Dense layer
@@ -148,7 +160,6 @@ bool TrainingExecutor::BuildModelFromConfig() {
             case gui::NodeType::AvgPool2D:
             case gui::NodeType::GlobalMaxPool:
             case gui::NodeType::GlobalAvgPool:
-            case gui::NodeType::BatchNorm:
                 spdlog::warn("  [{}] CNN layer {} not yet supported in SequentialModel",
                              i, static_cast<int>(layer_cfg.type));
                 break;
@@ -170,7 +181,7 @@ bool TrainingExecutor::BuildModelFromConfig() {
     return true;
 }
 
-bool TrainingExecutor::Initialize(int batch_size) {
+bool TrainingExecutor::Initialize(int /*batch_size*/) {
     // Build model from configuration
     if (!BuildModelFromConfig()) {
         spdlog::error("TrainingExecutor: Failed to build model from config");
@@ -263,7 +274,66 @@ void TrainingExecutor::Train(
     DatasetBatcher train_batcher(dataset_, batch_size, DatasetSplit::Train, true, false);
     DatasetBatcher val_batcher(dataset_, batch_size, DatasetSplit::Validation, false, false);
 
-    // Apply preprocessing settings
+    // Apply NEW preprocessing pipeline (if configured)
+    std::string dataset_name = dataset_.GetName();
+    DataRegistry& registry = DataRegistry::Instance();
+
+    if (registry.HasPreprocessingConfig(dataset_name)) {
+        spdlog::info("TrainingExecutor: Found preprocessing config for dataset '{}'", dataset_name);
+
+        PreprocessingConfig preprocessing_config = registry.GetPreprocessingConfig(dataset_name);
+
+        if (preprocessing_config.enabled) {
+            // Set config on batchers
+            train_batcher.SetPreprocessingConfig(preprocessing_config);
+            val_batcher.SetPreprocessingConfig(preprocessing_config);
+
+            // Compute statistics (with progress callback)
+            spdlog::info("TrainingExecutor: Computing dataset statistics...");
+            DatasetStatistics stats = StatisticsCalculator::Compute(
+                dataset_name,
+                &registry,
+                [](float progress) {
+                    // Optional: Update progress UI
+                    spdlog::debug("Statistics computation: {:.1f}%", progress * 100.0f);
+                }
+            );
+
+            if (stats.is_valid) {
+                // Initialize preprocessing pipeline with statistics
+                train_batcher.InitializePreprocessing(stats);
+                val_batcher.InitializePreprocessing(stats);
+                spdlog::info("TrainingExecutor: Preprocessing pipeline initialized successfully");
+            } else {
+                spdlog::error("TrainingExecutor: Failed to compute statistics, preprocessing disabled");
+            }
+        } else {
+            spdlog::info("TrainingExecutor: Preprocessing config exists but is disabled");
+        }
+    } else {
+        spdlog::info("TrainingExecutor: No preprocessing config found for dataset '{}'", dataset_name);
+    }
+
+    // Load augmentation pipeline (NEW - applied BEFORE preprocessing, only on training split)
+    if (registry.HasAugmentationPipeline(dataset_name)) {
+        auto aug_pipeline = registry.GetAugmentationPipeline(dataset_name);
+
+        if (aug_pipeline) {
+            train_batcher.SetAugmentationPipeline(aug_pipeline);
+            train_batcher.SetApplyAugmentationOnTrain(true);
+
+            // Don't apply augmentation to validation - we want clean metrics
+            // val_batcher does NOT get augmentation
+
+            spdlog::info("TrainingExecutor: Augmentation pipeline enabled for training split");
+        } else {
+            spdlog::warn("TrainingExecutor: Augmentation pipeline registered but is null");
+        }
+    } else {
+        spdlog::debug("TrainingExecutor: No augmentation pipeline found for dataset '{}'", dataset_name);
+    }
+
+    // Apply OLD preprocessing settings (DEPRECATED - for backward compatibility)
     if (config_.preprocessing.has_normalization) {
         spdlog::info("TrainingExecutor: Applying normalization (mean={}, std={})",
                      config_.preprocessing.norm_mean, config_.preprocessing.norm_std);
@@ -400,7 +470,12 @@ void TrainingExecutor::RunTrainingEpoch(
 
             // Log input data range
             float min_input = input_data[0], max_input = input_data[0];
-            size_t input_size = batch.data.Shape()[0] * batch.data.Shape()[1];
+            const auto& input_shape = batch.data.Shape();
+            if (input_shape.size() < 2) {
+                spdlog::error("TrainingExecutor: Expected 2D input, got {}D", input_shape.size());
+                break;
+            }
+            size_t input_size = input_shape[0] * input_shape[1];
             for (size_t i = 1; i < std::min(input_size, size_t(1000)); ++i) {
                 min_input = std::min(min_input, input_data[i]);
                 max_input = std::max(max_input, input_data[i]);
@@ -441,7 +516,8 @@ void TrainingExecutor::RunTrainingEpoch(
             float max_pred = pred_data[b * config_.output_size];
             float max_target = target_data[b * config_.output_size];
 
-            for (size_t c = 1; c < config_.output_size; ++c) {
+            // Start from c=0 to properly compare all classes including class 0
+            for (size_t c = 0; c < config_.output_size; ++c) {
                 if (pred_data[b * config_.output_size + c] > max_pred) {
                     max_pred = pred_data[b * config_.output_size + c];
                     pred_class = static_cast<int>(c);
@@ -519,7 +595,8 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
             float max_pred = pred_data[b * config_.output_size];
             float max_target = target_data[b * config_.output_size];
 
-            for (size_t c = 1; c < config_.output_size; ++c) {
+            // Start from c=0 to properly compare all classes including class 0
+            for (size_t c = 0; c < config_.output_size; ++c) {
                 if (pred_data[b * config_.output_size + c] > max_pred) {
                     max_pred = pred_data[b * config_.output_size + c];
                     pred_class = static_cast<int>(c);
@@ -580,7 +657,8 @@ float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor&
         float max_pred = pred_data[b * num_classes];
         float max_target = target_data[b * num_classes];
 
-        for (size_t c = 1; c < num_classes; ++c) {
+        // Start from c=0 to properly compare all classes including class 0
+        for (size_t c = 0; c < num_classes; ++c) {
             if (pred_data[b * num_classes + c] > max_pred) {
                 max_pred = pred_data[b * num_classes + c];
                 pred_class = static_cast<int>(c);
@@ -651,7 +729,7 @@ void TrainingExecutor::WaitWhilePaused() {
     }
 }
 
-void TrainingExecutor::PreprocessBatch(Batch& batch) {
+void TrainingExecutor::PreprocessBatch(Batch& /*batch*/) {
     // Preprocessing is handled by DatasetBatcher
 }
 

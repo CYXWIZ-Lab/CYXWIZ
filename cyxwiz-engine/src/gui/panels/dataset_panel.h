@@ -12,6 +12,12 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <future>
+#include "../../preprocessing/preprocessing_config.h"
+#include "../../preprocessing/statistics_calculator.h"
+#include "../../utils/dataset_analyzer.h"
+#include "../../utils/image_quality_analyzer.h"
+#include "../../utils/image_deduplicator.h"
 
 namespace cyxwiz {
     class Tensor;
@@ -25,6 +31,24 @@ namespace network {
 namespace gui {
 
 class NodeEditor;
+
+// Content tabs for main area (DBGate-style layout)
+enum class ContentTab {
+    Preview = 0,
+    Pipeline = 1,
+    Training = 2,
+    Details = 3
+};
+
+// Legacy tab indices (kept for compatibility)
+enum class DatasetTab {
+    LoadDataset = 0,
+    LoadedDatasets = 1,
+    Preview = 2,
+    DataPipeline = 3,
+    Interactive = 4,
+    Training = 5
+};
 
 class DatasetPanel : public cyxwiz::Panel {
 public:
@@ -87,10 +111,40 @@ public:
     int GetTrainEpochs() const { return train_epochs_; }
     int GetTrainBatchSize() const { return train_batch_size_; }
 
+    // Tab selection for menu navigation
+    void SetActiveTab(DatasetTab tab) { pending_tab_ = static_cast<int>(tab); }
+
     // Get raw data for job submission (from DataRegistry)
     const std::vector<size_t>& GetTrainIndices() const;
 
 private:
+    int pending_tab_ = -1;  // -1 means no pending tab switch
+
+    // ========== DBGate-Style Layout ==========
+    // Layout state
+    float sidebar_width_ = 200.0f;
+    float footer_height_ = 24.0f;
+    bool sidebar_collapsed_ = false;
+    ContentTab active_content_tab_ = ContentTab::Preview;
+
+    // Search buffer for sidebar filtering
+    char search_buffer_[256] = "";
+
+    // Layout rendering methods
+    void RenderToolbar();
+    void RenderSidebar();
+    void RenderMainContent();
+    void RenderStatusBar();
+    void RenderSplitter(float height);
+    void RenderDatasetTree();
+    void RenderPreviewContent();
+    void RenderPipelineContent();
+    void RenderTrainingContent();
+    void RenderDetailsContent();
+    void RenderQuickLoadSection();
+    const char* GetDatasetTypeIcon(cyxwiz::DatasetType type) const;
+    
+    // ========== Legacy Methods ==========
     void RenderDatasetSelection();
     void RenderDatasetInfo();
     void RenderSplitConfiguration();
@@ -101,6 +155,26 @@ private:
     void RenderAugmentationPipeline();
     void RenderAugmentationPreview();
 
+    // Data Pipeline tab (unified Augmentation + Preprocessing)
+    void RenderDataPipelineTab();
+    void RenderUnifiedPreview();
+
+    // Interactive Tools tab (Phase 4)
+    void RenderInteractiveToolsTab();
+
+    // Preview display methods (extracted for unified preview)
+    void RenderPreprocessingPreviewDisplay();
+    void RenderAugmentationPreviewDisplay();
+    void UpdateAugmentationPreview();
+
+    // Preprocessing methods (used by Data Pipeline tab)
+    void RenderPreprocessingTab();  // Deprecated - kept for reference
+    void RenderDatasetStatistics();
+    void RenderNormalizationSection();
+    void RenderScalingSection();
+    void RenderImagePreprocessingSection();
+    void RenderPreprocessingPreview();
+
     // File browser dialogs
     void ShowFileBrowser();
     void ShowFolderBrowser(char* buffer, size_t buffer_size);
@@ -109,6 +183,9 @@ private:
     // Data preprocessing
     void ApplySplit();
     void UpdateClassCounts();
+
+    // Augmentation configuration
+    void ApplyAugmentationConfig();
 
     // Visualization
     void RenderImagePreview(const float* image_data, int width, int height, int channels);
@@ -192,7 +269,7 @@ private:
     std::atomic<float> loading_progress_{0.0f};
 
     // Augmentation pipeline
-    std::unique_ptr<cyxwiz::transforms::Compose> augmentation_pipeline_;
+    std::shared_ptr<cyxwiz::transforms::Compose> augmentation_pipeline_;
     bool show_augmented_preview_ = false;
     int augmentation_preset_ = 0;  // 0=None, 1=ImageNet, 2=CIFAR10, 3=Medical, 4=Custom
     cyxwiz::transforms::Image preview_original_;
@@ -209,6 +286,60 @@ private:
         bool expanded = false;
     };
     std::vector<TransformUIState> transform_ui_states_;
+
+    // Preprocessing state
+    cyxwiz::PreprocessingConfig current_preprocessing_config_;
+    cyxwiz::DatasetStatistics current_stats_;
+    bool stats_computed_ = false;
+    bool computing_stats_ = false;
+    float stats_computation_progress_ = 0.0f;
+    std::future<cyxwiz::DatasetStatistics> stats_future_;
+
+    // Preprocessing preview
+    bool show_preprocessing_preview_ = false;
+    cyxwiz::Tensor preview_preprocessed_;
+    unsigned int preview_texture_preprocessed_ = 0;
+    int preview_tex_prep_w_ = 0, preview_tex_prep_h_ = 0, preview_tex_prep_c_ = 0;
+    bool preprocessing_preview_needs_update_ = true;
+
+    // Preprocessing preview textures (before/after)
+    unsigned int preview_texture_before_ = 0;  // Original sample texture
+    unsigned int preview_texture_after_ = 0;   // Preprocessed sample texture
+    int preview_tex_before_w_ = 0, preview_tex_before_h_ = 0, preview_tex_before_c_ = 0;
+    int preview_tex_after_w_ = 0, preview_tex_after_h_ = 0, preview_tex_after_c_ = 0;
+
+    // Preprocessing helper methods
+    void ComputeStatistics();
+    void ApplyPreprocessingConfig();
+    void UpdatePreprocessingPreview();  // Apply preprocessing to preview sample
+
+    // Dataset Analytics
+    void RenderDatasetAnalyticsSection();
+    void StartAnalyticsComputation();
+    std::atomic<bool> analytics_computing_{false};
+    uint64_t analytics_task_id_ = 0;
+    cyxwiz::DatasetAnalytics analytics_results_;
+    bool show_analytics_outliers_popup_ = false;
+    bool show_histogram_popup_ = false;
+
+    // Image Quality Analysis
+    void RenderQualityAnalysisSection();
+    void StartQualityAnalysis();
+    std::atomic<bool> quality_analysis_running_{false};
+    uint64_t quality_analysis_task_id_ = 0;
+    std::vector<cyxwiz::QualityMetrics> quality_results_;
+    cyxwiz::ImageQualityAnalyzer::Thresholds quality_thresholds_;
+    bool show_quality_issues_popup_ = false;
+
+    // Duplicate Detection
+    void RenderDuplicateDetectionSection();
+    void StartDuplicateDetection();
+    std::atomic<bool> duplicate_detection_running_{false};
+    uint64_t duplicate_detection_task_id_ = 0;
+    std::vector<cyxwiz::DuplicateGroup> duplicate_groups_;
+    int duplicate_hash_type_ = 0;  // 0=pHash, 1=aHash, 2=dHash
+    int duplicate_threshold_ = 5;   // Hamming distance threshold
+    bool show_duplicate_groups_popup_ = false;
 
     // Notification state (for "Set as Active" feedback)
     bool show_notification_ = false;

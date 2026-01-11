@@ -674,7 +674,7 @@ bool CyxModelFormat::IsZipFile(const std::string& path) {
 bool CyxModelFormat::CreateArchive(
     const std::string& output_path,
     const std::map<std::string, std::vector<uint8_t>>& files,
-    bool compress
+    bool /*compress*/
 ) {
     // TODO: Implement with minizip for proper ZIP archive creation
     // For now, fall back to directory-based storage

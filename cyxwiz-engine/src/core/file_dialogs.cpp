@@ -19,7 +19,7 @@ void FileDialogs::EnsureInitialized() {
 }
 
 std::optional<std::string> FileDialogs::OpenFile(
-    const char* title,
+    const char* /*title*/,
     const FilterList& filters,
     const char* default_path
 ) {
@@ -54,7 +54,7 @@ std::optional<std::string> FileDialogs::OpenFile(
 }
 
 std::vector<std::string> FileDialogs::OpenMultiple(
-    const char* title,
+    const char* /*title*/,
     const FilterList& filters,
     const char* default_path
 ) {
@@ -99,7 +99,7 @@ std::vector<std::string> FileDialogs::OpenMultiple(
 }
 
 std::optional<std::string> FileDialogs::SaveFile(
-    const char* title,
+    const char* /*title*/,
     const FilterList& filters,
     const char* default_path,
     const char* default_name
@@ -136,7 +136,7 @@ std::optional<std::string> FileDialogs::SaveFile(
 }
 
 std::optional<std::string> FileDialogs::SelectFolder(
-    const char* title,
+    const char* /*title*/,
     const char* default_path
 ) {
     EnsureInitialized();
@@ -206,21 +206,27 @@ std::optional<std::string> FileDialogs::SaveScript(const char* default_path) {
 
 std::optional<std::string> FileDialogs::OpenModel(const char* default_path) {
     return OpenFile("Open Model", {
+        {"CyxWiz Models", "cyxmodel"},
         {"ONNX Models", "onnx"},
+        {"Safetensors", "safetensors"},
+        {"GGUF Models", "gguf"},
         {"PyTorch Models", "pt,pth"},
         {"TensorFlow Models", "pb,h5"},
         {"Keras Models", "keras,h5"},
-        {"All Models", "onnx,pt,pth,pb,h5,keras"},
+        {"All Models", "cyxmodel,onnx,safetensors,gguf,pt,pth,pb,h5,keras"},
         {"All Files", "*"}
     }, default_path);
 }
 
 std::optional<std::string> FileDialogs::SaveModel(const char* default_path) {
     return SaveFile("Save Model", {
+        {"CyxWiz Models", "cyxmodel"},
         {"ONNX Models", "onnx"},
+        {"Safetensors", "safetensors"},
+        {"GGUF Models", "gguf"},
         {"PyTorch Models", "pt"},
         {"All Files", "*"}
-    }, default_path, "model.onnx");
+    }, default_path, "model.cyxmodel");
 }
 
 std::optional<std::string> FileDialogs::OpenDataset(const char* default_path) {
@@ -255,6 +261,20 @@ std::optional<std::string> FileDialogs::SelectDatasetFolder(const char* default_
 
 std::optional<std::string> FileDialogs::SelectOutputFolder(const char* default_path) {
     return SelectFolder("Select Output Folder", default_path);
+}
+
+std::optional<std::string> FileDialogs::OpenTheme(const char* default_path) {
+    return OpenFile("Open Theme", {
+        {"Theme Files", "json"},
+        {"All Files", "*"}
+    }, default_path);
+}
+
+std::optional<std::string> FileDialogs::SaveTheme(const char* default_path, const char* default_name) {
+    return SaveFile("Save Theme", {
+        {"Theme Files", "json"},
+        {"All Files", "*"}
+    }, default_path, default_name);
 }
 
 } // namespace cyxwiz

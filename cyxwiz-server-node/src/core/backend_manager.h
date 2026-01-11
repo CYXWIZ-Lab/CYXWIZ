@@ -30,16 +30,25 @@ struct NodeConfig {
     std::string node_name = "CyxWiz Server Node";
     std::string region = "us-west-2";
 
-    // Network
+    // Network - Server addresses
     std::string central_server = "localhost:50051";
+    std::string auth_api_url = "http://127.0.0.1:3002/api";
+    std::string ipc_address = "localhost:50054";
+    std::string p2p_address = "0.0.0.0:50052";
+    std::string terminal_address = "0.0.0.0:50053";
+    std::string node_service_address = "0.0.0.0:50055";
+    std::string deployment_address = "0.0.0.0:50056";
+    std::string inference_address = "0.0.0.0:50057";
     int p2p_port = 50052;
     int terminal_port = 50053;
     int node_service_port = 50054;
     int deployment_port = 50055;
     int http_api_port = 8082;
+    int inference_port = 50057;
     bool enable_tls = false;
     std::string cert_path;
     std::string key_path;
+    std::string ca_path;
 
     // P2P Authentication
     // Secret for validating P2P JWT tokens from Central Server

@@ -117,6 +117,10 @@ std::unique_ptr<Activation> CreateActivation(ActivationType type, float alpha) {
             return std::make_unique<MishActivation>();
         case ActivationType::Hardswish:
             return std::make_unique<HardswishActivation>();
+        case ActivationType::SELU:
+            return std::make_unique<SELUActivation>();
+        case ActivationType::PReLU:
+            return std::make_unique<PReLUActivation>(1, alpha);
         default:
             throw std::runtime_error("Unknown activation type");
     }
@@ -539,6 +543,144 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
     }
 #endif
     throw std::runtime_error("Hardswish backward requires ArrayFire");
+}
+
+
+// ============================================================================
+// SELU Implementation - Scaled Exponential Linear Unit
+// ============================================================================
+
+Tensor SELUActivation::Forward(const Tensor& input) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array x = TensorToAf(input);
+        // SELU: scale * (max(0, x) + alpha * min(0, exp(x) - 1))
+        af::array positive = af::max(x, 0.0f);
+        af::array negative = af::min(x, 0.0f);
+        af::array output = SCALE * (positive + ALPHA * (af::exp(negative) - 1.0f));
+        return AfToTensor(output);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire SELU::Forward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("SELU forward requires ArrayFire");
+}
+
+Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array grad = TensorToAf(grad_output);
+        af::array x = TensorToAf(input);
+        // d(SELU)/dx = scale for x > 0, scale * alpha * exp(x) for x <= 0
+        af::array positive_mask = (x > 0).as(af::dtype::f32);
+        af::array negative_mask = (x <= 0).as(af::dtype::f32);
+        af::array grad_input = grad * SCALE * (positive_mask + ALPHA * af::exp(x) * negative_mask);
+        return AfToTensor(grad_input);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire SELU::Backward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("SELU backward requires ArrayFire");
+}
+
+// ============================================================================
+// PReLU Implementation - Parametric ReLU
+// ============================================================================
+
+PReLUActivation::PReLUActivation(int num_parameters, float init)
+    : num_parameters_(num_parameters) {
+    // Initialize alpha with the init value
+    alpha_ = Tensor({static_cast<size_t>(num_parameters)}, DataType::Float32);
+    float* alpha_data = alpha_.Data<float>();
+    for (int i = 0; i < num_parameters; ++i) {
+        alpha_data[i] = init;
+    }
+    grad_alpha_ = Tensor::Zeros({static_cast<size_t>(num_parameters)});
+}
+
+Tensor PReLUActivation::Forward(const Tensor& input) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array x = TensorToAf(input);
+        af::array alpha = TensorToAf(alpha_);
+
+        // PReLU: max(0, x) + alpha * min(0, x)
+        af::array positive = af::max(x, 0.0f);
+        af::array negative = af::min(x, 0.0f);
+
+        af::array output;
+        if (num_parameters_ == 1) {
+            // Shared alpha across all channels
+            output = positive + alpha(0) * negative;
+        } else {
+            // Per-channel alpha (for CNNs)
+            // Input shape assumed: [batch, channels, ...] or similar
+            // Reshape alpha for broadcasting
+            af::dim4 alpha_shape(1, 1, 1, 1);
+            // Assume channels are in dim 1 (after batch in dim 0 for AF column-major)
+            alpha_shape[1] = static_cast<dim_t>(num_parameters_);
+            af::array alpha_bc = af::moddims(alpha, alpha_shape);
+
+            // Tile to match input dimensions
+            af::dim4 tile_dims = x.dims();
+            tile_dims[1] = 1;  // Don't tile along channel dimension
+            alpha_bc = af::tile(alpha_bc, tile_dims);
+
+            output = positive + alpha_bc * negative;
+        }
+
+        return AfToTensor(output);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire PReLU::Forward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("PReLU forward requires ArrayFire");
+}
+
+Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array grad = TensorToAf(grad_output);
+        af::array x = TensorToAf(input);
+        af::array alpha = TensorToAf(alpha_);
+
+        // Gradient w.r.t input: 1 for x > 0, alpha for x <= 0
+        af::array positive_mask = (x > 0).as(af::dtype::f32);
+        af::array negative_mask = (x <= 0).as(af::dtype::f32);
+
+        af::array grad_input;
+        if (num_parameters_ == 1) {
+            grad_input = grad * (positive_mask + alpha(0) * negative_mask);
+
+            // Gradient w.r.t alpha: sum of grad * min(0, x)
+            float grad_alpha_val = af::sum<float>(grad * af::min(x, 0.0f));
+            float* grad_alpha_data = grad_alpha_.Data<float>();
+            grad_alpha_data[0] = grad_alpha_val;
+        } else {
+            // Per-channel
+            af::dim4 alpha_shape(1, 1, 1, 1);
+            alpha_shape[1] = static_cast<dim_t>(num_parameters_);
+            af::array alpha_bc = af::moddims(alpha, alpha_shape);
+            af::dim4 tile_dims = x.dims();
+            tile_dims[1] = 1;
+            alpha_bc = af::tile(alpha_bc, tile_dims);
+
+            grad_input = grad * (positive_mask + alpha_bc * negative_mask);
+
+            // Gradient w.r.t alpha per channel
+            af::array negative = af::min(x, 0.0f);
+            af::array grad_times_neg = grad * negative;
+            // Sum over all dimensions except channel
+            af::array grad_alpha_arr = af::sum(af::sum(af::sum(grad_times_neg, 0), 2), 3);
+            grad_alpha_ = AfToTensor(af::moddims(grad_alpha_arr, af::dim4(num_parameters_)));
+        }
+
+        return AfToTensor(grad_input);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire PReLU::Backward failed: {}", e.what());
+    }
+#endif
+    throw std::runtime_error("PReLU backward requires ArrayFire");
 }
 
 } // namespace cyxwiz

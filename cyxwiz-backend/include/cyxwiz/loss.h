@@ -21,7 +21,10 @@ enum class LossType {
     SmoothL1,               // Huber Loss
     Huber,                  // Alias for SmoothL1
     KLDivergence,           // KL Divergence
-    CosineEmbedding         // Cosine Embedding Loss
+    CosineEmbedding,        // Cosine Embedding Loss
+    Focal,                  // Focal Loss (for class imbalance)
+    Triplet,                // Triplet Loss (metric learning)
+    Contrastive             // Contrastive Loss (similarity learning)
 };
 
 // Reduction mode for loss computation
@@ -207,6 +210,151 @@ public:
 private:
     float margin_;
     Tensor labels_;  // 1 for similar, -1 for dissimilar
+};
+
+// ============================================================================
+// Focal Loss - for handling class imbalance
+// ============================================================================
+
+/**
+ * Focal Loss: FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+ *
+ * Designed for object detection where there's extreme class imbalance.
+ * The modulating factor (1 - p_t)^gamma reduces loss for well-classified
+ * examples, focusing training on hard negatives.
+ *
+ * Reference: "Focal Loss for Dense Object Detection" (Lin et al., 2017)
+ */
+class CYXWIZ_API FocalLoss : public Loss {
+public:
+    /**
+     * Create Focal Loss
+     * @param alpha Weighting factor for class balance (default: 0.25)
+     * @param gamma Focusing parameter - higher means more focus on hard examples (default: 2.0)
+     * @param reduction Reduction mode
+     */
+    explicit FocalLoss(float alpha = 0.25f, float gamma = 2.0f,
+                       Reduction reduction = Reduction::Mean)
+        : Loss(reduction), alpha_(alpha), gamma_(gamma) {}
+
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
+    std::string GetName() const override { return "Focal"; }
+
+    float GetAlpha() const { return alpha_; }
+    float GetGamma() const { return gamma_; }
+    void SetAlpha(float alpha) { alpha_ = alpha; }
+    void SetGamma(float gamma) { gamma_ = gamma; }
+
+private:
+    float alpha_;  // Class balance weight
+    float gamma_;  // Focusing parameter
+    Tensor cached_probs_;  // Store probabilities for backward
+};
+
+// ============================================================================
+// Triplet Loss - for metric learning
+// ============================================================================
+
+/**
+ * Triplet Loss: L = max(d(a, p) - d(a, n) + margin, 0)
+ *
+ * Used for learning embeddings where similar items should be close
+ * and dissimilar items should be far apart.
+ *
+ * - anchor: reference sample
+ * - positive: sample of same class as anchor
+ * - negative: sample of different class
+ *
+ * Reference: "FaceNet: A Unified Embedding for Face Recognition" (Schroff et al., 2015)
+ */
+class CYXWIZ_API TripletLoss : public Loss {
+public:
+    enum class DistanceType {
+        Euclidean,  // L2 distance
+        Cosine      // 1 - cosine similarity
+    };
+
+    /**
+     * Create Triplet Loss
+     * @param margin Minimum desired distance between positive and negative pairs (default: 1.0)
+     * @param distance_type Type of distance metric (default: Euclidean)
+     * @param reduction Reduction mode
+     */
+    explicit TripletLoss(float margin = 1.0f,
+                         DistanceType distance_type = DistanceType::Euclidean,
+                         Reduction reduction = Reduction::Mean)
+        : Loss(reduction), margin_(margin), distance_type_(distance_type) {}
+
+    /**
+     * Forward pass
+     * @param anchor Anchor embeddings [batch, embed_dim]
+     * @param positive Positive embeddings [batch, embed_dim] (set via SetPositive())
+     * Note: For the Loss interface, predictions=anchor, targets=positive
+     *       Negative must be set separately via SetNegative()
+     */
+    Tensor Forward(const Tensor& anchor, const Tensor& positive) override;
+    Tensor Backward(const Tensor& anchor, const Tensor& positive) override;
+    std::string GetName() const override { return "Triplet"; }
+
+    void SetNegative(const Tensor& negative) { negative_ = negative; }
+    const Tensor& GetNegative() const { return negative_; }
+
+    float GetMargin() const { return margin_; }
+    void SetMargin(float margin) { margin_ = margin; }
+    DistanceType GetDistanceType() const { return distance_type_; }
+
+private:
+    float margin_;
+    DistanceType distance_type_;
+    Tensor negative_;  // Negative samples
+    Tensor cached_dist_ap_;  // Cached anchor-positive distance
+    Tensor cached_dist_an_;  // Cached anchor-negative distance
+};
+
+// ============================================================================
+// Contrastive Loss - for similarity learning
+// ============================================================================
+
+/**
+ * Contrastive Loss: L = (1-y) * 0.5 * d^2 + y * 0.5 * max(margin - d, 0)^2
+ *
+ * Used for learning embeddings from pairs of samples.
+ * - y=0: similar pair (minimize distance)
+ * - y=1: dissimilar pair (push apart if too close)
+ *
+ * Reference: "Dimensionality Reduction by Learning an Invariant Mapping" (Hadsell et al., 2006)
+ */
+class CYXWIZ_API ContrastiveLoss : public Loss {
+public:
+    /**
+     * Create Contrastive Loss
+     * @param margin Minimum distance for dissimilar pairs (default: 1.0)
+     * @param reduction Reduction mode
+     */
+    explicit ContrastiveLoss(float margin = 1.0f, Reduction reduction = Reduction::Mean)
+        : Loss(reduction), margin_(margin) {}
+
+    /**
+     * Forward pass
+     * @param x1 First embeddings [batch, embed_dim]
+     * @param x2 Second embeddings [batch, embed_dim]
+     * Note: Labels (0=similar, 1=dissimilar) must be set via SetLabels()
+     */
+    Tensor Forward(const Tensor& x1, const Tensor& x2) override;
+    Tensor Backward(const Tensor& x1, const Tensor& x2) override;
+    std::string GetName() const override { return "Contrastive"; }
+
+    void SetLabels(const Tensor& labels) { labels_ = labels; }
+    const Tensor& GetLabels() const { return labels_; }
+
+    float GetMargin() const { return margin_; }
+    void SetMargin(float margin) { margin_ = margin; }
+
+private:
+    float margin_;
+    Tensor labels_;  // 0 for similar, 1 for dissimilar
+    Tensor cached_distances_;  // Cached pairwise distances
 };
 
 } // namespace cyxwiz

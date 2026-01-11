@@ -4,6 +4,7 @@
 
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
+#include "../core/engine_config.h"
 
 namespace py = pybind11;
 
@@ -32,6 +33,9 @@ bool PythonEngine::Initialize() {
         initialized_ = true;
         initialized_by_us_ = true;  // We initialized it, so we'll finalize it
 
+        // Configure custom Python packages path if set in preferences
+        ConfigureCustomPythonPath();
+
         // Release the GIL so background threads can use Python
         // This is REQUIRED for multi-threaded Python execution
         ReleaseGIL();
@@ -44,15 +48,51 @@ bool PythonEngine::Initialize() {
     }
 }
 
+void PythonEngine::ConfigureCustomPythonPath() {
+    // Get custom Python path from EngineConfig
+    auto& config = cyxwiz::core::EngineConfig::Instance();
+    
+    if (!config.HasCustomPythonPath()) {
+        spdlog::info("Using system Python packages (no custom path configured)");
+        return;
+    }
+
+    std::string packages_dir = config.GetPythonPackagesDir();
+    if (packages_dir.empty()) {
+        spdlog::warn("Custom Python path set but site-packages not found");
+        return;
+    }
+
+    try {
+        py::gil_scoped_acquire acquire;
+        py::object sys = py::module_::import("sys");
+        py::list sys_path = sys.attr("path").cast<py::list>();
+        
+        // Insert custom site-packages at the beginning of sys.path
+        // This makes it have priority over system packages
+        sys_path.insert(0, packages_dir);
+        
+        spdlog::info("Custom Python packages path configured: {}", packages_dir);
+        spdlog::debug("  sys.path[0] = {}", py::str(sys_path[0]).cast<std::string>());
+    } catch (const py::error_already_set& e) {
+        spdlog::error("Failed to configure custom Python path: {}", e.what());
+    } catch (const std::exception& e) {
+        spdlog::error("Error configuring Python path: {}", e.what());
+    }
+}
+
 void PythonEngine::Shutdown() {
     if (initialized_ && initialized_by_us_) {
-        // Only finalize if we were the ones who initialized Python
-        // Reacquire the GIL before finalizing
-        AcquireGIL();
-        py::finalize_interpreter();
+        // Skip Python finalization during shutdown.
+        // py::finalize_interpreter() can cause crashes if there are still
+        // pybind11 objects (lambdas, callbacks) that need to be cleaned up.
+        // The OS will clean up Python when the process exits.
+        //
+        // Note: This is safe because we're only called during process shutdown.
+        // If we needed to reinitialize Python, we would need to finalize properly.
+        spdlog::info("Python interpreter shutdown (not finalized - OS will cleanup)");
         initialized_ = false;
         main_thread_state_ = nullptr;
-        spdlog::info("Python interpreter finalized");
     } else if (initialized_) {
         // We're using a shared interpreter, just mark as not initialized
         initialized_ = false;
