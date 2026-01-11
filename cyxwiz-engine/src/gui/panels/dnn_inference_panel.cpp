@@ -45,7 +45,7 @@ const ImU32 DNNInferencePanel::CLASS_COLORS[NUM_COLORS] = {
 };
 
 DNNInferencePanel::DNNInferencePanel()
-    : Panel("DNN Inference", true) {
+    : Panel("DNN Inference", false) {
     model_ = std::make_unique<DNNModel>();
 }
 
