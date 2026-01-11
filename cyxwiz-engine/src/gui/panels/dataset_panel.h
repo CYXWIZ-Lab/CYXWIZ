@@ -32,14 +32,22 @@ namespace gui {
 
 class NodeEditor;
 
-// Tab indices for DatasetPanel
+// Content tabs for main area (DBGate-style layout)
+enum class ContentTab {
+    Preview = 0,
+    Pipeline = 1,
+    Training = 2,
+    Details = 3
+};
+
+// Legacy tab indices (kept for compatibility)
 enum class DatasetTab {
     LoadDataset = 0,
     LoadedDatasets = 1,
     Preview = 2,
-    DataPipeline = 3,      // MERGED: Augmentation + Preprocessing
-    Interactive = 4,       // Interactive annotation tools (Phase 4)
-    Training = 5           // Shifted down
+    DataPipeline = 3,
+    Interactive = 4,
+    Training = 5
 };
 
 class DatasetPanel : public cyxwiz::Panel {
@@ -112,6 +120,31 @@ public:
 private:
     int pending_tab_ = -1;  // -1 means no pending tab switch
 
+    // ========== DBGate-Style Layout ==========
+    // Layout state
+    float sidebar_width_ = 200.0f;
+    float footer_height_ = 24.0f;
+    bool sidebar_collapsed_ = false;
+    ContentTab active_content_tab_ = ContentTab::Preview;
+
+    // Search buffer for sidebar filtering
+    char search_buffer_[256] = "";
+
+    // Layout rendering methods
+    void RenderToolbar();
+    void RenderSidebar();
+    void RenderMainContent();
+    void RenderStatusBar();
+    void RenderSplitter(float height);
+    void RenderDatasetTree();
+    void RenderPreviewContent();
+    void RenderPipelineContent();
+    void RenderTrainingContent();
+    void RenderDetailsContent();
+    void RenderQuickLoadSection();
+    const char* GetDatasetTypeIcon(cyxwiz::DatasetType type) const;
+    
+    // ========== Legacy Methods ==========
     void RenderDatasetSelection();
     void RenderDatasetInfo();
     void RenderSplitConfiguration();

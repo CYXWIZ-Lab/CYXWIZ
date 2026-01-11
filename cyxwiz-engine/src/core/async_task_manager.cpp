@@ -232,9 +232,17 @@ void AsyncTaskManager::CancelAll() {
 std::shared_ptr<AsyncTask> AsyncTaskManager::GetTask(uint64_t task_id) {
     std::lock_guard<std::mutex> lock(tasks_mutex_);
 
+    // First check active tasks
     auto it = active_tasks_.find(task_id);
     if (it != active_tasks_.end()) {
         return it->second;
+    }
+
+    // Also check completed tasks (for fast-completing tasks that get moved before UI can check)
+    for (const auto& task : completed_tasks_) {
+        if (task->GetId() == task_id) {
+            return task;
+        }
     }
 
     return nullptr;

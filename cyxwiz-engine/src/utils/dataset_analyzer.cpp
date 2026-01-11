@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
+#include <thread>
+#include <future>
 
 namespace cyxwiz {
 
@@ -79,13 +81,38 @@ DatasetAnalytics DatasetAnalyzer::ComputeAnalytics(
             progress_callback(0.0f, "Computing class distribution...");
         }
 
-        // 1. Compute class distribution
-        std::vector<int> labels;
-        labels.reserve(total_samples);
-        for (size_t i = 0; i < total_samples; ++i) {
-            auto [_, label] = handle.GetSample(i);
-            labels.push_back(label);
+        // 1. Compute class distribution (parallelized)
+        std::vector<int> labels(total_samples);
+
+        // Use multiple threads for label collection
+        const size_t num_threads = std::min(static_cast<size_t>(std::thread::hardware_concurrency()), size_t(12));
+        const size_t chunk_size = (total_samples + num_threads - 1) / num_threads;
+
+        std::vector<std::future<void>> futures;
+        futures.reserve(num_threads);
+
+        for (size_t t = 0; t < num_threads; ++t) {
+            size_t start = t * chunk_size;
+            size_t end = std::min(start + chunk_size, total_samples);
+            if (start >= total_samples) break;
+
+            futures.push_back(std::async(std::launch::async, [&handle, &labels, start, end]() {
+                for (size_t i = start; i < end; ++i) {
+                    auto [_, label] = handle.GetSample(i);
+                    labels[i] = label;
+                }
+            }));
         }
+
+        // Wait for all threads
+        for (auto& f : futures) {
+            f.get();
+        }
+
+        if (progress_callback) {
+            progress_callback(0.15f, "Computing class distribution...");
+        }
+
         analytics.class_distribution = ComputeClassDistribution(labels);
 
         // 2. Compute dimension statistics
@@ -131,19 +158,35 @@ DatasetAnalytics DatasetAnalyzer::ComputeAnalytics(
         }
         analytics.color_histogram = ComputeColorHistogram(images, width, height, channels);
 
-        // 5. Compute brightness/contrast statistics
+        // 5. Compute brightness/contrast statistics (parallelized)
         if (progress_callback) {
             progress_callback(0.8f, "Computing brightness/contrast...");
         }
 
-        std::vector<float> brightness_values;
-        std::vector<float> contrast_values;
-        brightness_values.reserve(images.size());
-        contrast_values.reserve(images.size());
+        std::vector<float> brightness_values(images.size());
+        std::vector<float> contrast_values(images.size());
 
-        for (const auto& img : images) {
-            brightness_values.push_back(ComputeBrightness(img, channels));
-            contrast_values.push_back(ComputeContrast(img));
+        // Parallelize brightness/contrast computation
+        {
+            const size_t img_count = images.size();
+            const size_t bc_threads = std::min(static_cast<size_t>(std::thread::hardware_concurrency()), size_t(8));
+            const size_t bc_chunk = (img_count + bc_threads - 1) / bc_threads;
+
+            std::vector<std::future<void>> bc_futures;
+            for (size_t t = 0; t < bc_threads; ++t) {
+                size_t start = t * bc_chunk;
+                size_t end = std::min(start + bc_chunk, img_count);
+                if (start >= img_count) break;
+
+                bc_futures.push_back(std::async(std::launch::async,
+                    [&images, &brightness_values, &contrast_values, channels, start, end]() {
+                        for (size_t i = start; i < end; ++i) {
+                            brightness_values[i] = ComputeBrightness(images[i], channels);
+                            contrast_values[i] = ComputeContrast(images[i]);
+                        }
+                    }));
+            }
+            for (auto& f : bc_futures) f.get();
         }
 
         // Compute mean/std
