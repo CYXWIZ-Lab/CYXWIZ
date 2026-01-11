@@ -62,6 +62,7 @@
 #include "panels/nas_panel.h"
 #include "panels/hyperparam_search_panel.h"
 #include "panels/serving_panel.h"
+#include "panels/dnn_inference_panel.h"
 #include "panels/kmeans_panel.h"
 #include "panels/dbscan_panel.h"
 #include "panels/hierarchical_panel.h"
@@ -243,6 +244,7 @@ MainWindow::MainWindow()
     nas_panel_ = std::make_unique<cyxwiz::NASPanel>();
     hyperparam_search_panel_ = std::make_unique<cyxwiz::HyperparamSearchPanel>();
     serving_panel_ = std::make_unique<cyxwiz::ServingPanel>();
+    dnn_inference_panel_ = std::make_unique<cyxwiz::DNNInferencePanel>();
 
     // Clustering panels (Phase 6A)
     kmeans_panel_ = std::make_unique<cyxwiz::KMeansPanel>();
@@ -907,6 +909,13 @@ MainWindow::MainWindow()
         if (serving_panel_) {
             serving_panel_->Toggle();
             spdlog::info("Toggled Model Serving panel");
+        }
+    });
+
+    toolbar_->SetOpenDNNInferenceCallback([this]() {
+        if (dnn_inference_panel_) {
+            dnn_inference_panel_->Toggle();
+            spdlog::info("Toggled DNN Inference panel");
         }
     });
 
@@ -2146,6 +2155,7 @@ void MainWindow::Render() {
     if (nas_panel_) nas_panel_->Render();
     if (hyperparam_search_panel_) hyperparam_search_panel_->Render();
     if (serving_panel_) serving_panel_->Render();
+    if (dnn_inference_panel_) dnn_inference_panel_->Render();
 
     // Render Clustering panels (Phase 6A)
     if (kmeans_panel_) kmeans_panel_->Render();

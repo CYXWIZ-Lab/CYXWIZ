@@ -2465,6 +2465,7 @@ void ToolbarPanel::InitializeToolEntries() {
     all_tools_.push_back({"Neural Architecture Search", "Advanced", "nas automl neural architecture search", ICON_FA_MICROCHIP, "", [this]() { if (open_nas_callback_) open_nas_callback_(); }});
     all_tools_.push_back({"Hyperparameter Search", "Advanced", "hyperparameter tuning grid random bayesian optimization", ICON_FA_MAGNIFYING_GLASS_CHART, "", [this]() { if (open_hyperparam_search_callback_) open_hyperparam_search_callback_(); }});
     all_tools_.push_back({"Model Serving", "Advanced", "deploy serving api rest inference endpoint", ICON_FA_SERVER, "", [this]() { if (open_serving_callback_) open_serving_callback_(); }});
+    all_tools_.push_back({"DNN Inference", "Advanced", "dnn inference yolo detection face pose classification", ICON_FA_BRAIN, "", [this]() { if (open_dnn_inference_callback_) open_dnn_inference_callback_(); }});
 
     // Clustering (Phase 6A)
     all_tools_.push_back({"K-Means Clustering", "Clustering", "kmeans clustering centroid", ICON_FA_OBJECT_GROUP, "", [this]() { if (open_kmeans_callback_) open_kmeans_callback_(); }});

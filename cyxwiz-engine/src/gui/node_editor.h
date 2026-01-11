@@ -142,7 +142,27 @@ enum class NodeType {
     OneHotEncode,       // Label encoding
 
     // ===== Composite Nodes =====
-    Subgraph            // Encapsulated subgraph (collapsible)
+    Subgraph,           // Encapsulated subgraph (collapsible)
+
+    // ===== DNN Inference Nodes =====
+    DNNModelLoad,       // Load pre-trained DNN model
+    DNNDetect,          // Object detection (YOLO, SSD)
+    DNNClassify,        // Image classification
+    DNNPoseEstimate,    // Pose estimation (OpenPose)
+    DNNFaceDetect,      // Face detection
+    DNNPreprocess,      // DNN preprocessing pipeline
+
+    // Pre-trained Model Shortcuts
+    PretrainedYOLO,     // YOLOv4 with default config
+    PretrainedMobileNet,// MobileNet classifier
+    PretrainedOpenPose, // OpenPose body estimation
+    PretrainedFaceNet,  // Face detector
+
+    // Post-processing Nodes
+    NonMaxSuppression,  // NMS for detections
+    ArgMax,             // Classification argmax
+    TopK,               // Top-K predictions
+    ThresholdFilter     // Filter by confidence
 };
 
 // Attribute for node pins (inputs/outputs)

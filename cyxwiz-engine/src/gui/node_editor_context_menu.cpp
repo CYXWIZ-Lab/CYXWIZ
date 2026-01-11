@@ -483,6 +483,37 @@ void NodeEditor::ShowContextMenu() {
         ImGui::EndMenu();
     }
 
+    // ===== DNN INFERENCE =====
+    if (ImGui::BeginMenu("Inference")) {
+        if (ImGui::BeginMenu("Pre-trained Models")) {
+            if (ImGui::MenuItem("YOLO v4")) { AddNode(NodeType::PretrainedYOLO, "YOLOv4"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("MobileNet SSD")) { AddNode(NodeType::PretrainedMobileNet, "MobileNet-SSD"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("OpenPose")) { AddNode(NodeType::PretrainedOpenPose, "OpenPose"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("Face Detector")) { AddNode(NodeType::PretrainedFaceNet, "FaceDetector"); ImGui::CloseCurrentPopup(); }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Model Loading")) {
+            if (ImGui::MenuItem("Load DNN Model")) { AddNode(NodeType::DNNModelLoad, "Load Model"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("DNN Preprocessor")) { AddNode(NodeType::DNNPreprocess, "Preprocess"); ImGui::CloseCurrentPopup(); }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Inference Operations")) {
+            if (ImGui::MenuItem("Detect Objects")) { AddNode(NodeType::DNNDetect, "Detect"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("Classify Image")) { AddNode(NodeType::DNNClassify, "Classify"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("Estimate Pose")) { AddNode(NodeType::DNNPoseEstimate, "Pose"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("Detect Faces")) { AddNode(NodeType::DNNFaceDetect, "Faces"); ImGui::CloseCurrentPopup(); }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Post-processing")) {
+            if (ImGui::MenuItem("Non-Max Suppression")) { AddNode(NodeType::NonMaxSuppression, "NMS"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("ArgMax")) { AddNode(NodeType::ArgMax, "ArgMax"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("Top-K")) { AddNode(NodeType::TopK, "TopK (5)"); ImGui::CloseCurrentPopup(); }
+            if (ImGui::MenuItem("Threshold Filter")) { AddNode(NodeType::ThresholdFilter, "Filter"); ImGui::CloseCurrentPopup(); }
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenu();
+    }
+
     // ===== UTILITY NODES =====
     if (ImGui::BeginMenu("Utility")) {
         if (ImGui::MenuItem("Lambda")) {

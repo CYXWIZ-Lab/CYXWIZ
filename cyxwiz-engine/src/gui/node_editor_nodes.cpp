@@ -1130,6 +1130,106 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        // ===== DNN Inference Nodes =====
+        case NodeType::DNNModelLoad: {
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+            node.parameters["model_path"] = "";
+            node.parameters["config_path"] = "";
+            node.parameters["model_type"] = "yolov4";
+            node.parameters["backend"] = "cuda";
+            break;
+        }
+
+        case NodeType::DNNDetect: {
+            NodePin image_in;
+            image_in.id = next_pin_id_++;
+            image_in.type = PinType::Tensor;
+            image_in.name = "Image";
+            image_in.is_input = true;
+            node.inputs.push_back(image_in);
+            NodePin model_in;
+            model_in.id = next_pin_id_++;
+            model_in.type = PinType::Parameters;
+            model_in.name = "Model";
+            model_in.is_input = true;
+            node.inputs.push_back(model_in);
+            NodePin boxes_out;
+            boxes_out.id = next_pin_id_++;
+            boxes_out.type = PinType::Tensor;
+            boxes_out.name = "Detections";
+            boxes_out.is_input = false;
+            node.outputs.push_back(boxes_out);
+            node.parameters["confidence"] = "0.5";
+            node.parameters["nms_threshold"] = "0.4";
+            break;
+        }
+
+        case NodeType::DNNClassify:
+        case NodeType::DNNPoseEstimate:
+        case NodeType::DNNFaceDetect:
+        case NodeType::DNNPreprocess: {
+            NodePin image_in;
+            image_in.id = next_pin_id_++;
+            image_in.type = PinType::Tensor;
+            image_in.name = "Image";
+            image_in.is_input = true;
+            node.inputs.push_back(image_in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Output";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["threshold"] = "0.5";
+            break;
+        }
+
+        case NodeType::PretrainedYOLO:
+        case NodeType::PretrainedMobileNet:
+        case NodeType::PretrainedOpenPose:
+        case NodeType::PretrainedFaceNet: {
+            NodePin image_in;
+            image_in.id = next_pin_id_++;
+            image_in.type = PinType::Tensor;
+            image_in.name = "Image";
+            image_in.is_input = true;
+            node.inputs.push_back(image_in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Output";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["confidence"] = "0.5";
+            node.parameters["backend"] = "cuda";
+            break;
+        }
+
+        case NodeType::NonMaxSuppression:
+        case NodeType::ArgMax:
+        case NodeType::TopK:
+        case NodeType::ThresholdFilter: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Input";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Output";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["threshold"] = "0.5";
+            break;
+        }
+
         default:
             // Default: input and output pins
             NodePin input_pin;
@@ -1586,6 +1686,30 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         // Subgraph
         case NodeType::Subgraph:
             return ICON_FA_OBJECT_GROUP;
+
+        // DNN Inference Nodes
+        case NodeType::DNNModelLoad:
+            return ICON_FA_BRAIN;
+        case NodeType::DNNDetect:
+        case NodeType::DNNFaceDetect:
+            return ICON_FA_CROSSHAIRS;
+        case NodeType::DNNClassify:
+            return ICON_FA_TAGS;
+        case NodeType::DNNPoseEstimate:
+            return ICON_FA_USER;
+        case NodeType::DNNPreprocess:
+            return ICON_FA_WAND_MAGIC_SPARKLES;
+        case NodeType::PretrainedYOLO:
+        case NodeType::PretrainedMobileNet:
+        case NodeType::PretrainedOpenPose:
+        case NodeType::PretrainedFaceNet:
+            return ICON_FA_BRAIN;
+        case NodeType::NonMaxSuppression:
+        case NodeType::ThresholdFilter:
+            return ICON_FA_FILTER;
+        case NodeType::ArgMax:
+        case NodeType::TopK:
+            return ICON_FA_ARROW_UP;
 
         default:
             return ICON_FA_CIRCLE_NODES;

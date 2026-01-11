@@ -68,6 +68,7 @@ class FeatureImportancePanel;
 class NASPanel;
 class HyperparamSearchPanel;
 class ServingPanel;
+class DNNInferencePanel;
 class KMeansPanel;
 class DBSCANPanel;
 class HierarchicalPanel;
@@ -275,6 +276,7 @@ private:
     std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
     std::unique_ptr<cyxwiz::HyperparamSearchPanel> hyperparam_search_panel_;
     std::unique_ptr<cyxwiz::ServingPanel> serving_panel_;
+    std::unique_ptr<cyxwiz::DNNInferencePanel> dnn_inference_panel_;
 
     // Clustering panels (Phase 6A)
     std::unique_ptr<cyxwiz::KMeansPanel> kmeans_panel_;

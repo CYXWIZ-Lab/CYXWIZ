@@ -160,6 +160,7 @@ set(ENGINE_SOURCES
     src/gui/panels/hyperparam_search_panel.cpp
     src/core/hyperparam_search.cpp
     src/gui/panels/serving_panel.cpp
+    src/gui/panels/dnn_inference_panel.cpp
     src/serving/inference_server.cpp
     src/gui/panels/kmeans_panel.cpp
     src/gui/panels/dbscan_panel.cpp
