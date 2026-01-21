@@ -526,6 +526,8 @@ if(WIN32)
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX
     )
+    # Link Windows-specific libraries (PDH for CPU metrics in System Monitor)
+    target_link_libraries(cyxwiz-engine PRIVATE pdh)
     # Add icon resource if available
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.rc")
         target_sources(cyxwiz-engine PRIVATE resources/icon.rc)
