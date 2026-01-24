@@ -199,6 +199,68 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 code += "        # Output layer\n";
                 break;
 
+            // ===== Transformer Layers =====
+            case NodeType::TransformerEncoder:
+                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                break;
+
+            case NodeType::TransformerDecoder:
+                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x, memory)  # memory from encoder\n";
+                break;
+
+            case NodeType::PositionalEncoding:
+                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                break;
+
+            // ===== RNN Layers =====
+            case NodeType::LSTM:
+                code += "        x, (h_n, c_n) = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                break;
+
+            case NodeType::GRU:
+            case NodeType::RNN:
+                code += "        x, h_n = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                break;
+
+            // ===== Additional Activations =====
+            case NodeType::GELU:
+                code += "        x = F.gelu(x)\n";
+                break;
+
+            case NodeType::LeakyReLU:
+                code += "        x = F.leaky_relu(x, 0.01)\n";
+                break;
+
+            case NodeType::Swish:
+                code += "        x = F.silu(x)\n";
+                break;
+
+            case NodeType::Mish:
+                code += "        x = F.mish(x)\n";
+                break;
+
+            // ===== Normalization Layers =====
+            case NodeType::BatchNorm:
+            case NodeType::LayerNorm:
+            case NodeType::GroupNorm:
+            case NodeType::InstanceNorm:
+                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                break;
+
+            // ===== Embedding =====
+            case NodeType::Embedding:
+                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                break;
+
+            // ===== Attention =====
+            case NodeType::MultiHeadAttention:
+                code += "        x, _ = self.layer" + std::to_string(layer_idx++) + "(x, x, x)  # self-attention\n";
+                break;
+
+            case NodeType::LinearAttention:
+                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                break;
+
             default:
                 break;
         }
@@ -602,6 +664,133 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
         case NodeType::ReLU:
             code = "nn.ReLU()";
             break;
+
+        case NodeType::LeakyReLU: {
+            std::string negative_slope = "0.01";
+            auto it = node.parameters.find("negative_slope");
+            if (it != node.parameters.end()) negative_slope = it->second;
+            code = "nn.LeakyReLU(negative_slope=" + negative_slope + ")";
+            break;
+        }
+
+        case NodeType::Swish:
+            code = "nn.SiLU()";
+            break;
+
+        case NodeType::Mish:
+            code = "nn.Mish()";
+            break;
+
+        // ===== Transformer Layers =====
+        case NodeType::TransformerEncoder: {
+            std::string d_model = "512";
+            std::string nhead = "8";
+            std::string dim_feedforward = "2048";
+            std::string dropout = "0.1";
+            auto it = node.parameters.find("embed_dim");
+            if (it != node.parameters.end()) d_model = it->second;
+            it = node.parameters.find("num_heads");
+            if (it != node.parameters.end()) nhead = it->second;
+            it = node.parameters.find("ff_dim");
+            if (it != node.parameters.end()) dim_feedforward = it->second;
+            it = node.parameters.find("dropout");
+            if (it != node.parameters.end()) dropout = it->second;
+            code = "nn.TransformerEncoderLayer(d_model=" + d_model + ", nhead=" + nhead +
+                   ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout + ", batch_first=True)";
+            break;
+        }
+
+        case NodeType::TransformerDecoder: {
+            std::string d_model = "512";
+            std::string nhead = "8";
+            std::string dim_feedforward = "2048";
+            std::string dropout = "0.1";
+            auto it = node.parameters.find("embed_dim");
+            if (it != node.parameters.end()) d_model = it->second;
+            it = node.parameters.find("num_heads");
+            if (it != node.parameters.end()) nhead = it->second;
+            it = node.parameters.find("ff_dim");
+            if (it != node.parameters.end()) dim_feedforward = it->second;
+            it = node.parameters.find("dropout");
+            if (it != node.parameters.end()) dropout = it->second;
+            code = "nn.TransformerDecoderLayer(d_model=" + d_model + ", nhead=" + nhead +
+                   ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout + ", batch_first=True)";
+            break;
+        }
+
+        case NodeType::PositionalEncoding: {
+            std::string d_model = "512";
+            std::string max_len = "5000";
+            auto it = node.parameters.find("d_model");
+            if (it != node.parameters.end()) d_model = it->second;
+            it = node.parameters.find("max_len");
+            if (it != node.parameters.end()) max_len = it->second;
+            code = "PositionalEncoding(d_model=" + d_model + ", max_len=" + max_len + ")";
+            break;
+        }
+
+        // ===== RNN Layers =====
+        case NodeType::LSTM: {
+            std::string input_size = "512";
+            std::string hidden_size = "256";
+            std::string num_layers = "1";
+            std::string bidirectional = "False";
+            std::string dropout = "0.0";
+            auto it = node.parameters.find("input_size");
+            if (it != node.parameters.end()) input_size = it->second;
+            it = node.parameters.find("hidden_size");
+            if (it != node.parameters.end()) hidden_size = it->second;
+            it = node.parameters.find("num_layers");
+            if (it != node.parameters.end()) num_layers = it->second;
+            it = node.parameters.find("bidirectional");
+            if (it != node.parameters.end()) bidirectional = it->second;
+            it = node.parameters.find("dropout");
+            if (it != node.parameters.end()) dropout = it->second;
+            code = "nn.LSTM(input_size=" + input_size + ", hidden_size=" + hidden_size +
+                   ", num_layers=" + num_layers + ", batch_first=True, bidirectional=" + bidirectional +
+                   ", dropout=" + dropout + ")";
+            break;
+        }
+
+        case NodeType::GRU: {
+            std::string input_size = "512";
+            std::string hidden_size = "256";
+            std::string num_layers = "1";
+            std::string bidirectional = "False";
+            std::string dropout = "0.0";
+            auto it = node.parameters.find("input_size");
+            if (it != node.parameters.end()) input_size = it->second;
+            it = node.parameters.find("hidden_size");
+            if (it != node.parameters.end()) hidden_size = it->second;
+            it = node.parameters.find("num_layers");
+            if (it != node.parameters.end()) num_layers = it->second;
+            it = node.parameters.find("bidirectional");
+            if (it != node.parameters.end()) bidirectional = it->second;
+            it = node.parameters.find("dropout");
+            if (it != node.parameters.end()) dropout = it->second;
+            code = "nn.GRU(input_size=" + input_size + ", hidden_size=" + hidden_size +
+                   ", num_layers=" + num_layers + ", batch_first=True, bidirectional=" + bidirectional +
+                   ", dropout=" + dropout + ")";
+            break;
+        }
+
+        case NodeType::RNN: {
+            std::string input_size = "512";
+            std::string hidden_size = "256";
+            std::string num_layers = "1";
+            std::string nonlinearity = "tanh";
+            auto it = node.parameters.find("input_size");
+            if (it != node.parameters.end()) input_size = it->second;
+            it = node.parameters.find("hidden_size");
+            if (it != node.parameters.end()) hidden_size = it->second;
+            it = node.parameters.find("num_layers");
+            if (it != node.parameters.end()) num_layers = it->second;
+            it = node.parameters.find("nonlinearity");
+            if (it != node.parameters.end()) nonlinearity = it->second;
+            code = "nn.RNN(input_size=" + input_size + ", hidden_size=" + hidden_size +
+                   ", num_layers=" + num_layers + ", nonlinearity='" + nonlinearity + "', batch_first=True)";
+            break;
+        }
 
         default:
             // Activation functions and others don't need layers in __init__
