@@ -250,6 +250,17 @@ private:
     void CopyColumnToClipboard(TableTab* tab, int col);
     void CopySelectionToClipboard(TableTab* tab);
 
+    // ═══════════════════════════════════════════════════════════════
+    // NEW: Number formatting
+    // ═══════════════════════════════════════════════════════════════
+    std::string FormatNumber(double value, const ColumnFormat& fmt);
+
+    // ═══════════════════════════════════════════════════════════════
+    // NEW: Export and Find dialogs
+    // ═══════════════════════════════════════════════════════════════
+    void RenderExportDialog();
+    void RenderFindDialog();
+
     // Async loading helpers
     void LoadFileAsync(const std::string& filepath, const std::string& type, char delimiter = ',');
     void OnLoadComplete(int tab_index, std::shared_ptr<DataTable> table, bool success, const std::string& error);

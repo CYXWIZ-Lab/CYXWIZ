@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <map>
 #include <cmath>
+#include <sstream>
+#include <iomanip>
 
 namespace fs = std::filesystem;
 
@@ -84,6 +86,10 @@ void TableViewerPanel::Render() {
     RenderStatusBar();
 
     ImGui::End();
+
+    // Render modal dialogs (must be outside main window)
+    RenderExportDialog();
+    RenderFindDialog();
 }
 
 void TableViewerPanel::RenderTabBar() {
@@ -188,15 +194,38 @@ void TableViewerPanel::RenderToolbar() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear filter");
     }
 
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // Column freeze control
+    ImGui::Text(ICON_FA_LOCK);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frozen columns");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(50);
+    if (ImGui::InputInt("##Freeze", &active_tab->frozen_columns, 0, 0)) {
+        active_tab->frozen_columns = std::clamp(active_tab->frozen_columns, 0,
+            static_cast<int>(active_tab->table ? active_tab->table->GetColumnCount() : 0));
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Number of columns to freeze");
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // Find button
+    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Find")) {
+        show_find_dialog_ = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find in table");
+
     // Export button
     if (active_tab->table && !active_tab->is_loading) {
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_DOWNLOAD " Export")) {
-            std::string export_path = "export_" + active_tab->filename + ".csv";
-            if (active_tab->table->SaveToCSV(export_path)) {
-                spdlog::info("Table exported to: {}", export_path);
-            }
+        if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
+            show_export_dialog_ = true;
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export table to file");
     }
 
     // Close tab button
@@ -257,6 +286,15 @@ void TableViewerPanel::RenderTable() {
     }
 
     if (ImGui::BeginTable("DataTable", column_count, flags)) {
+        // Apply column freeze for horizontal scrolling
+        // frozen_columns + 1 if line numbers are shown (line number column + frozen data columns)
+        // 1 row frozen for header
+        int freeze_cols = active_tab->frozen_columns;
+        if (show_line_numbers_ && freeze_cols > 0) {
+            freeze_cols++;  // Account for line number column
+        }
+        ImGui::TableSetupScrollFreeze(freeze_cols, 1);  // Freeze columns + 1 header row
+
         // Setup columns with type indicators and sort arrows
         if (show_line_numbers_) {
             ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 50.0f);
@@ -378,6 +416,29 @@ void TableViewerPanel::RenderTable() {
 
                     std::string cell_text = table->GetCellAsString(actual_row, c);
 
+                    // Apply number formatting if configured for this column
+                    if (c < active_tab->column_formats.size() && c < active_tab->column_stats.size() &&
+                        active_tab->column_stats[c].type == "Numeric") {
+                        auto& fmt = active_tab->column_formats[c];
+                        // Only format if any formatting option is set
+                        if (fmt.decimal_places >= 0 || fmt.thousands_separator ||
+                            fmt.as_percentage || !fmt.prefix.empty() || !fmt.suffix.empty()) {
+                            auto cell = table->GetCell(actual_row, c);
+                            double val = 0;
+                            bool is_numeric = false;
+                            if (std::holds_alternative<double>(cell)) {
+                                val = std::get<double>(cell);
+                                is_numeric = true;
+                            } else if (std::holds_alternative<int64_t>(cell)) {
+                                val = static_cast<double>(std::get<int64_t>(cell));
+                                is_numeric = true;
+                            }
+                            if (is_numeric) {
+                                cell_text = FormatNumber(val, fmt);
+                            }
+                        }
+                    }
+
                     // Check for colormap on this column
                     bool has_colormap = (c < active_tab->column_colormaps.size() &&
                                         active_tab->column_colormaps[c].type != ColorMapType::None);
@@ -420,13 +481,29 @@ void TableViewerPanel::RenderTable() {
                         }
                     }
 
-                    // Use Selectable for clickable cells with unique ID
-                    bool is_selected = (active_tab->selected_row == static_cast<int>(actual_row) &&
-                                       active_tab->selected_col == static_cast<int>(c));
+                    // Check if cell is selected (single selection or multi-selection)
+                    int cell_row = static_cast<int>(actual_row);
+                    int cell_col = static_cast<int>(c);
+                    bool is_selected = (active_tab->selected_row == cell_row &&
+                                       active_tab->selected_col == cell_col);
+
+                    // Check multi-selection ranges
+                    bool in_multi_selection = false;
+                    for (const auto& sel : active_tab->selections) {
+                        if (sel.Contains(cell_row, cell_col)) {
+                            in_multi_selection = true;
+                            break;
+                        }
+                    }
 
                     // Apply filter highlighting color
                     bool has_filter_match = !active_tab->filter_text.empty() &&
                         cell_text.find(active_tab->filter_text) != std::string::npos;
+
+                    // Apply multi-selection background color
+                    if (in_multi_selection && !is_selected) {
+                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.5f, 0.7f, 0.4f));
+                    }
 
                     if (has_filter_match) {
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
@@ -435,12 +512,36 @@ void TableViewerPanel::RenderTable() {
                     // Push unique ID for each cell to avoid conflicts
                     ImGui::PushID(static_cast<int>(actual_row * col_count + c));
 
-                    // Selectable cell - this makes it clickable (no SpanAllColumns for individual cell selection)
-                    if (ImGui::Selectable(cell_text.c_str(), is_selected, ImGuiSelectableFlags_None)) {
-                        active_tab->selected_row = static_cast<int>(actual_row);
-                        active_tab->selected_col = static_cast<int>(c);
-                        active_tab->selected_column = static_cast<int>(c);  // Update stats sidebar
-                        spdlog::info("Selected cell: Row {}, Col {}", actual_row + 1, c + 1);
+                    // Selectable cell - this makes it clickable
+                    if (ImGui::Selectable(cell_text.c_str(), is_selected || in_multi_selection, ImGuiSelectableFlags_None)) {
+                        ImGuiIO& io = ImGui::GetIO();
+
+                        if (io.KeyCtrl) {
+                            // Ctrl+Click: Add new selection range (single cell)
+                            SelectionRange new_sel;
+                            new_sel.row_start = new_sel.row_end = cell_row;
+                            new_sel.col_start = new_sel.col_end = cell_col;
+                            active_tab->selections.push_back(new_sel);
+                            spdlog::info("Added selection: Cell [{}, {}]", cell_row + 1, cell_col + 1);
+                        } else if (io.KeyShift && active_tab->selected_row >= 0 && active_tab->selected_col >= 0) {
+                            // Shift+Click: Extend selection from last selected cell
+                            SelectionRange new_sel;
+                            new_sel.row_start = std::min(active_tab->selected_row, cell_row);
+                            new_sel.row_end = std::max(active_tab->selected_row, cell_row);
+                            new_sel.col_start = std::min(active_tab->selected_col, cell_col);
+                            new_sel.col_end = std::max(active_tab->selected_col, cell_col);
+                            active_tab->selections.push_back(new_sel);
+                            spdlog::info("Extended selection: [{},{}] to [{},{}]",
+                                new_sel.row_start + 1, new_sel.col_start + 1,
+                                new_sel.row_end + 1, new_sel.col_end + 1);
+                        } else {
+                            // Normal click: Clear multi-selection, set single selection
+                            active_tab->selections.clear();
+                            active_tab->selected_row = cell_row;
+                            active_tab->selected_col = cell_col;
+                            active_tab->selected_column = cell_col;  // Update stats sidebar
+                            spdlog::info("Selected cell: Row {}, Col {}", cell_row + 1, cell_col + 1);
+                        }
                     }
 
                     // Cell context menu (right-click on cell) - using BeginPopupContextItem
@@ -452,6 +553,9 @@ void TableViewerPanel::RenderTable() {
                     ImGui::PopID();
 
                     if (has_filter_match) {
+                        ImGui::PopStyleColor();
+                    }
+                    if (in_multi_selection && !is_selected) {
                         ImGui::PopStyleColor();
                     }
                 }
@@ -1108,6 +1212,83 @@ void TableViewerPanel::RenderColumnContextMenu(TableTab* tab, int column) {
         ImGui::EndMenu();
     }
 
+    // Format Numbers submenu (only for numeric columns)
+    if (column < static_cast<int>(tab->column_stats.size()) &&
+        tab->column_stats[column].type == "Numeric") {
+        if (ImGui::BeginMenu(ICON_FA_HASHTAG " Format Numbers")) {
+            // Ensure column_formats is sized correctly
+            if (tab->column_formats.size() <= static_cast<size_t>(column)) {
+                tab->column_formats.resize(column + 1);
+            }
+            auto& fmt = tab->column_formats[column];
+
+            // Decimal places
+            ImGui::Text("Decimal places:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            int decimals = fmt.decimal_places;
+            if (ImGui::InputInt("##Decimals", &decimals, 1, 1)) {
+                fmt.decimal_places = std::clamp(decimals, -1, 10);  // -1 = auto
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("-1 = auto");
+
+            ImGui::Separator();
+
+            // Formatting options
+            if (ImGui::MenuItem("Thousands separator", nullptr, fmt.thousands_separator)) {
+                fmt.thousands_separator = !fmt.thousands_separator;
+            }
+            if (ImGui::MenuItem("As percentage (%)", nullptr, fmt.as_percentage)) {
+                fmt.as_percentage = !fmt.as_percentage;
+            }
+
+            ImGui::Separator();
+
+            // Prefix/Suffix
+            ImGui::Text("Prefix:");
+            ImGui::SameLine();
+            char prefix_buf[32];
+            strncpy(prefix_buf, fmt.prefix.c_str(), sizeof(prefix_buf) - 1);
+            prefix_buf[sizeof(prefix_buf) - 1] = '\0';
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputText("##Prefix", prefix_buf, sizeof(prefix_buf))) {
+                fmt.prefix = prefix_buf;
+            }
+
+            ImGui::Text("Suffix:");
+            ImGui::SameLine();
+            char suffix_buf[32];
+            strncpy(suffix_buf, fmt.suffix.c_str(), sizeof(suffix_buf) - 1);
+            suffix_buf[sizeof(suffix_buf) - 1] = '\0';
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputText("##Suffix", suffix_buf, sizeof(suffix_buf))) {
+                fmt.suffix = suffix_buf;
+            }
+
+            ImGui::Separator();
+
+            // Quick presets
+            if (ImGui::MenuItem(ICON_FA_DOLLAR_SIGN " Currency ($)")) {
+                fmt.prefix = "$";
+                fmt.suffix = "";
+                fmt.decimal_places = 2;
+                fmt.thousands_separator = true;
+                fmt.as_percentage = false;
+            }
+            if (ImGui::MenuItem(ICON_FA_PERCENT " Percentage")) {
+                fmt.prefix = "";
+                fmt.suffix = "";
+                fmt.as_percentage = true;
+                fmt.decimal_places = 1;
+            }
+            if (ImGui::MenuItem(ICON_FA_XMARK " Clear Formatting")) {
+                fmt = ColumnFormat();  // Reset to defaults
+            }
+
+            ImGui::EndMenu();
+        }
+    }
+
     ImGui::Separator();
 
     // Plotting
@@ -1424,7 +1605,7 @@ void TableViewerPanel::RenderQuickPlot() {
     if (ImGui::Begin(ICON_FA_CHART_SIMPLE " Quick Plot", &show_plot_popup_)) {
         TableTab* tab = GetActiveTab();
 
-        // Chart type selector
+        // Chart type selector - Row 1: Basic charts
         ImGui::Text("Chart Type:");
         ImGui::SameLine();
 
@@ -1446,6 +1627,25 @@ void TableViewerPanel::RenderQuickPlot() {
         ImGui::SameLine();
         if (ImGui::RadioButton("Box", plot_popup_.type == QuickPlotType::Box)) {
             plot_popup_.type = QuickPlotType::Box;
+        }
+
+        // Row 2: Extended charts
+        ImGui::Text("          ");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Pie", plot_popup_.type == QuickPlotType::Pie)) {
+            plot_popup_.type = QuickPlotType::Pie;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Stairs", plot_popup_.type == QuickPlotType::Stairs)) {
+            plot_popup_.type = QuickPlotType::Stairs;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Stem", plot_popup_.type == QuickPlotType::Stem)) {
+            plot_popup_.type = QuickPlotType::Stem;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Area", plot_popup_.type == QuickPlotType::Area)) {
+            plot_popup_.type = QuickPlotType::Area;
         }
 
         // Column selector(s)
@@ -1586,6 +1786,80 @@ void TableViewerPanel::RenderQuickPlot() {
                     break;
                 }
 
+                case QuickPlotType::Pie: {
+                    if (ImPlot::BeginPlot("##Pie", ImVec2(-1, plot_height), ImPlotFlags_Equal)) {
+                        // For pie chart, bin the data into categories
+                        int num_bins = std::min(8, static_cast<int>(plot_popup_.x_data.size()));
+                        if (num_bins > 0) {
+                            double min_val = *std::min_element(plot_popup_.x_data.begin(), plot_popup_.x_data.end());
+                            double max_val = *std::max_element(plot_popup_.x_data.begin(), plot_popup_.x_data.end());
+                            double bin_width = (max_val - min_val) / num_bins;
+
+                            std::vector<double> bin_counts(num_bins, 0);
+                            std::vector<const char*> labels;
+                            std::vector<std::string> label_strings;
+
+                            for (double val : plot_popup_.x_data) {
+                                int bin = static_cast<int>((val - min_val) / bin_width);
+                                bin = std::clamp(bin, 0, num_bins - 1);
+                                bin_counts[bin]++;
+                            }
+
+                            // Create labels
+                            for (int i = 0; i < num_bins; i++) {
+                                double lo = min_val + i * bin_width;
+                                double hi = lo + bin_width;
+                                label_strings.push_back(std::to_string(static_cast<int>(lo)) + "-" + std::to_string(static_cast<int>(hi)));
+                            }
+                            for (const auto& s : label_strings) {
+                                labels.push_back(s.c_str());
+                            }
+
+                            ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
+                            ImPlot::PlotPieChart(labels.data(), bin_counts.data(), num_bins, 0, 0, 0.9, "%.0f", 90);
+                        }
+                        ImPlot::EndPlot();
+                    }
+                    break;
+                }
+
+                case QuickPlotType::Stairs: {
+                    if (ImPlot::BeginPlot("##Stairs", ImVec2(-1, plot_height))) {
+                        ImPlot::SetupAxes("Index", "Value", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+                        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.7f, 0.3f, 1.0f), 2.0f);
+                        ImPlot::PlotStairs("Data", plot_popup_.x_data.data(),
+                            static_cast<int>(plot_popup_.x_data.size()));
+                        ImPlot::EndPlot();
+                    }
+                    break;
+                }
+
+                case QuickPlotType::Stem: {
+                    if (ImPlot::BeginPlot("##Stem", ImVec2(-1, plot_height))) {
+                        ImPlot::SetupAxes("Index", "Value", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+                        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5, ImVec4(0.8f, 0.3f, 0.2f, 1.0f));
+                        ImPlot::PlotStems("Data", plot_popup_.x_data.data(),
+                            static_cast<int>(plot_popup_.x_data.size()));
+                        ImPlot::EndPlot();
+                    }
+                    break;
+                }
+
+                case QuickPlotType::Area: {
+                    if (ImPlot::BeginPlot("##Area", ImVec2(-1, plot_height))) {
+                        ImPlot::SetupAxes("Index", "Value", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+                        ImPlot::SetNextFillStyle(ImVec4(0.3f, 0.6f, 0.9f, 0.5f));
+                        ImPlot::PlotShaded("Data", plot_popup_.x_data.data(),
+                            static_cast<int>(plot_popup_.x_data.size()), 0);
+                        // Draw line on top
+                        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.5f, 0.8f, 1.0f), 2.0f);
+                        ImPlot::PlotLine("##Line", plot_popup_.x_data.data(),
+                            static_cast<int>(plot_popup_.x_data.size()));
+                        ImPlot::EndPlot();
+                    }
+                    break;
+                }
+
                 default:
                     ImGui::TextDisabled("Select a chart type");
                     break;
@@ -1603,6 +1877,105 @@ void TableViewerPanel::RenderQuickPlot() {
             double max_val = *std::max_element(plot_popup_.x_data.begin(), plot_popup_.x_data.end());
             ImGui::Text("Points: %zu | Min: %.4g | Max: %.4g | Mean: %.4g",
                 plot_popup_.x_data.size(), min_val, max_val, mean);
+
+            // Action buttons
+            ImGui::Separator();
+
+            if (ImGui::Button(ICON_FA_CHART_LINE " Open in Visualizer")) {
+                // Send data to VisualizationPanel
+                // TODO: Get VisualizationPanel reference from MainWindow and send data
+                spdlog::info("Opening data in Visualizer panel (not yet integrated)");
+            }
+            ImGui::SameLine();
+
+            if (ImGui::Button(ICON_FA_CODE " Plot with Python")) {
+                // Generate matplotlib script
+                std::string plot_type;
+                switch (plot_popup_.type) {
+                    case QuickPlotType::Histogram: plot_type = "hist"; break;
+                    case QuickPlotType::Bar: plot_type = "bar"; break;
+                    case QuickPlotType::Line: plot_type = "plot"; break;
+                    case QuickPlotType::Scatter: plot_type = "scatter"; break;
+                    case QuickPlotType::Box: plot_type = "boxplot"; break;
+                    case QuickPlotType::Pie: plot_type = "pie"; break;
+                    case QuickPlotType::Stairs: plot_type = "step"; break;
+                    case QuickPlotType::Stem: plot_type = "stem"; break;
+                    case QuickPlotType::Area: plot_type = "fill_between"; break;
+                    default: plot_type = "plot"; break;
+                }
+
+                // Build data array string
+                std::ostringstream data_ss;
+                data_ss << "data = [";
+                for (size_t i = 0; i < plot_popup_.x_data.size(); i++) {
+                    if (i > 0) data_ss << ", ";
+                    data_ss << plot_popup_.x_data[i];
+                    if (i > 100) {
+                        data_ss << ", ...";  // Truncate for large datasets
+                        break;
+                    }
+                }
+                data_ss << "]";
+
+                std::ostringstream script;
+                script << "import matplotlib.pyplot as plt\n";
+                script << "import numpy as np\n\n";
+                script << "# Data from Table Viewer\n";
+                script << data_ss.str() << "\n\n";
+                script << "plt.figure(figsize=(10, 6))\n";
+
+                if (plot_type == "hist") {
+                    script << "plt.hist(data, bins=30, edgecolor='black', alpha=0.7)\n";
+                    script << "plt.xlabel('Value')\n";
+                    script << "plt.ylabel('Frequency')\n";
+                } else if (plot_type == "bar") {
+                    script << "plt.bar(range(len(data)), data, alpha=0.7)\n";
+                    script << "plt.xlabel('Index')\n";
+                    script << "plt.ylabel('Value')\n";
+                } else if (plot_type == "scatter" && !plot_popup_.y_data.empty()) {
+                    std::ostringstream y_ss;
+                    y_ss << "y_data = [";
+                    for (size_t i = 0; i < plot_popup_.y_data.size() && i < 100; i++) {
+                        if (i > 0) y_ss << ", ";
+                        y_ss << plot_popup_.y_data[i];
+                    }
+                    y_ss << "]";
+                    script << y_ss.str() << "\n";
+                    script << "plt.scatter(data[:len(y_data)], y_data, alpha=0.7)\n";
+                    script << "plt.xlabel('X')\n";
+                    script << "plt.ylabel('Y')\n";
+                } else if (plot_type == "boxplot") {
+                    script << "plt.boxplot(data)\n";
+                } else if (plot_type == "pie") {
+                    script << "# Binning data for pie chart\n";
+                    script << "counts, bins = np.histogram(data, bins=8)\n";
+                    script << "labels = [f'{bins[i]:.1f}-{bins[i+1]:.1f}' for i in range(len(counts))]\n";
+                    script << "plt.pie(counts, labels=labels, autopct='%1.1f%%')\n";
+                } else if (plot_type == "step") {
+                    script << "plt.step(range(len(data)), data, where='mid')\n";
+                } else if (plot_type == "stem") {
+                    script << "plt.stem(range(len(data)), data)\n";
+                } else if (plot_type == "fill_between") {
+                    script << "x = range(len(data))\n";
+                    script << "plt.fill_between(x, data, alpha=0.5)\n";
+                    script << "plt.plot(x, data)\n";
+                } else {
+                    script << "plt.plot(data)\n";
+                }
+
+                script << "plt.title('" << plot_popup_.title << "')\n";
+                script << "plt.tight_layout()\n";
+                script << "plt.show()\n";
+
+                // Copy to clipboard
+                ImGui::SetClipboardText(script.str().c_str());
+                spdlog::info("Python matplotlib script copied to clipboard ({} bytes)", script.str().length());
+            }
+            ImGui::SameLine();
+
+            if (ImGui::Button(ICON_FA_XMARK " Close")) {
+                show_plot_popup_ = false;
+            }
         }
     }
     ImGui::End();
@@ -1717,6 +2090,228 @@ void TableViewerPanel::CopySelectionToClipboard(TableTab* tab) {
         }
     }
     CopyToClipboard(result);
+}
+
+// ============================================================================
+// Number Formatting
+// ============================================================================
+
+std::string TableViewerPanel::FormatNumber(double value, const ColumnFormat& fmt) {
+    std::ostringstream ss;
+
+    // Apply percentage conversion
+    double display_val = fmt.as_percentage ? value * 100.0 : value;
+
+    // Determine decimal places
+    int decimals = fmt.decimal_places;
+    if (decimals < 0) {
+        // Auto: use 2 decimals for floats, 0 for integers
+        if (std::abs(display_val - std::round(display_val)) < 0.0001) {
+            decimals = 0;
+        } else {
+            decimals = 2;
+        }
+    }
+
+    // Format the number
+    ss << std::fixed << std::setprecision(decimals) << display_val;
+    std::string num_str = ss.str();
+
+    // Add thousands separator
+    if (fmt.thousands_separator) {
+        // Find decimal point
+        size_t decimal_pos = num_str.find('.');
+        std::string integer_part = (decimal_pos != std::string::npos) ?
+            num_str.substr(0, decimal_pos) : num_str;
+        std::string decimal_part = (decimal_pos != std::string::npos) ?
+            num_str.substr(decimal_pos) : "";
+
+        // Insert commas
+        std::string formatted_int;
+        int count = 0;
+        for (int i = static_cast<int>(integer_part.length()) - 1; i >= 0; i--) {
+            if (count > 0 && count % 3 == 0 && integer_part[i] != '-') {
+                formatted_int = ',' + formatted_int;
+            }
+            formatted_int = integer_part[i] + formatted_int;
+            count++;
+        }
+        num_str = formatted_int + decimal_part;
+    }
+
+    // Add prefix and suffix
+    std::string result = fmt.prefix + num_str;
+    if (fmt.as_percentage) {
+        result += "%";
+    } else {
+        result += fmt.suffix;
+    }
+
+    return result;
+}
+
+// ============================================================================
+// Export Dialog
+// ============================================================================
+
+void TableViewerPanel::RenderExportDialog() {
+    if (!show_export_dialog_) return;
+
+    ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(ICON_FA_FILE_EXPORT " Export Table", &show_export_dialog_)) {
+        TableTab* tab = GetActiveTab();
+        if (!tab || !tab->table) {
+            ImGui::TextDisabled("No table to export");
+            ImGui::End();
+            return;
+        }
+
+        static int export_format = 0;  // 0=CSV, 1=TSV, 2=JSON
+        static bool include_headers = true;
+        static bool filtered_only = false;
+        static char export_path[512] = "";
+
+        ImGui::Text("Format:");
+        ImGui::RadioButton("CSV (Comma-separated)", &export_format, 0);
+        ImGui::RadioButton("TSV (Tab-separated)", &export_format, 1);
+        ImGui::RadioButton("JSON", &export_format, 2);
+
+        ImGui::Separator();
+        ImGui::Text("Options:");
+        ImGui::Checkbox("Include headers", &include_headers);
+        ImGui::Checkbox("Export filtered rows only", &filtered_only);
+
+        ImGui::Separator();
+        ImGui::Text("Output Path:");
+        ImGui::InputText("##ExportPath", export_path, sizeof(export_path));
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...")) {
+            // TODO: Open file dialog
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::Button(ICON_FA_FILE_EXPORT " Export", ImVec2(120, 0))) {
+            // Build export content
+            std::ostringstream ss;
+            char delimiter = (export_format == 0) ? ',' : '\t';
+
+            if (export_format < 2) {  // CSV/TSV
+                // Headers
+                if (include_headers) {
+                    const auto& headers = tab->table->GetHeaders();
+                    for (size_t i = 0; i < headers.size(); i++) {
+                        if (i > 0) ss << delimiter;
+                        ss << headers[i];
+                    }
+                    ss << "\n";
+                }
+
+                // Data
+                const auto& indices = (filtered_only && tab->filter_mode_hide && !tab->filtered_indices.empty()) ?
+                    tab->filtered_indices : tab->sorted_indices;
+
+                for (size_t idx : indices) {
+                    for (size_t c = 0; c < tab->table->GetColumnCount(); c++) {
+                        if (c > 0) ss << delimiter;
+                        ss << tab->table->GetCellAsString(idx, c);
+                    }
+                    ss << "\n";
+                }
+            } else {  // JSON
+                ss << "[\n";
+                const auto& headers = tab->table->GetHeaders();
+                const auto& indices = (filtered_only && tab->filter_mode_hide && !tab->filtered_indices.empty()) ?
+                    tab->filtered_indices : tab->sorted_indices;
+
+                for (size_t i = 0; i < indices.size(); i++) {
+                    size_t idx = indices[i];
+                    ss << "  {";
+                    for (size_t c = 0; c < tab->table->GetColumnCount(); c++) {
+                        if (c > 0) ss << ", ";
+                        ss << "\"" << headers[c] << "\": \"" << tab->table->GetCellAsString(idx, c) << "\"";
+                    }
+                    ss << "}";
+                    if (i < indices.size() - 1) ss << ",";
+                    ss << "\n";
+                }
+                ss << "]\n";
+            }
+
+            // Copy to clipboard for now (file saving needs platform dialog)
+            ImGui::SetClipboardText(ss.str().c_str());
+            spdlog::info("Exported table to clipboard ({} bytes)", ss.str().length());
+            show_export_dialog_ = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            show_export_dialog_ = false;
+        }
+    }
+    ImGui::End();
+}
+
+// ============================================================================
+// Find/Replace Dialog
+// ============================================================================
+
+void TableViewerPanel::RenderFindDialog() {
+    if (!show_find_dialog_) return;
+
+    ImGui::SetNextWindowSize(ImVec2(400, 200), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(ICON_FA_MAGNIFYING_GLASS " Find in Table", &show_find_dialog_)) {
+        TableTab* tab = GetActiveTab();
+        if (!tab || !tab->table) {
+            ImGui::TextDisabled("No table loaded");
+            ImGui::End();
+            return;
+        }
+
+        static bool case_sensitive = false;
+        static bool whole_cell = false;
+        static int found_count = -1;
+
+        ImGui::Text("Find:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        bool search_changed = ImGui::InputText("##FindInput", find_buffer_, sizeof(find_buffer_));
+
+        ImGui::Checkbox("Case sensitive", &case_sensitive);
+        ImGui::SameLine();
+        ImGui::Checkbox("Whole cell match", &whole_cell);
+
+        ImGui::Separator();
+
+        if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Find All", ImVec2(120, 0)) || search_changed) {
+            // Use filter functionality
+            tab->filter_text = find_buffer_;
+            std::strncpy(tab->filter_buffer, find_buffer_, sizeof(tab->filter_buffer) - 1);
+
+            // Count matches
+            found_count = 0;
+            std::string search_term = find_buffer_;
+            for (size_t r = 0; r < tab->table->GetRowCount(); r++) {
+                for (size_t c = 0; c < tab->table->GetColumnCount(); c++) {
+                    std::string cell = tab->table->GetCellAsString(r, c);
+                    if (cell.find(search_term) != std::string::npos) {
+                        found_count++;
+                    }
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_XMARK " Clear", ImVec2(120, 0))) {
+            std::memset(find_buffer_, 0, sizeof(find_buffer_));
+            tab->filter_text.clear();
+            std::memset(tab->filter_buffer, 0, sizeof(tab->filter_buffer));
+            found_count = -1;
+        }
+
+        if (found_count >= 0) {
+            ImGui::Text("Found: %d matches", found_count);
+        }
+    }
+    ImGui::End();
 }
 
 } // namespace cyxwiz
