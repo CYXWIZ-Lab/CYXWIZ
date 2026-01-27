@@ -2516,6 +2516,13 @@ void MainWindow::RegisterPanelsWithSidebar() {
         dock_style.RegisterPanel("Cloud Manager", ICON_FA_DATABASE, cloud_dataset_manager_panel_->GetVisiblePtr());
     }
 
+    // Command Palette - action button (not a panel toggle)
+    if (toolbar_) {
+        dock_style.RegisterPanel("Command Palette", ICON_FA_MAGNIFYING_GLASS, nullptr, [this]() {
+            toolbar_->OpenCommandPalette();
+        });
+    }
+
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
 }
 
