@@ -1,4 +1,5 @@
 #include "table_viewer.h"
+#include "visualization_panel.h"
 #include "../icons.h"
 #include <imgui.h>
 #include <implot.h>
@@ -32,6 +33,22 @@ void TableViewerPanel::Render() {
             active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
         }
         close_tab_index_ = -1;
+    }
+
+    // Handle keyboard shortcuts
+    ImGuiIO& io = ImGui::GetIO();
+    TableTab* shortcut_tab = GetActiveTab();
+    if (shortcut_tab && !shortcut_tab->is_loading) {
+        // Ctrl+S: Save
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
+            if (shortcut_tab->is_dirty) {
+                SaveTable(shortcut_tab);
+            }
+        }
+        // Escape: Cancel editing
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && shortcut_tab->editing_row >= 0) {
+            EndCellEdit(shortcut_tab, false);
+        }
     }
 
     ImGui::Begin(GetName(), &visible_);
@@ -107,8 +124,11 @@ void TableViewerPanel::RenderTabBar() {
         for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
             auto& tab = tabs_[i];
 
-            // Tab name with loading indicator
+            // Tab name with loading/dirty indicator
             std::string tab_name = tab->filename;
+            if (tab->is_dirty) {
+                tab_name += " *";  // Unsaved changes indicator
+            }
             if (tab->is_loading) {
                 tab_name = ICON_FA_SPINNER " " + tab_name;
             } else {
@@ -219,8 +239,24 @@ void TableViewerPanel::RenderToolbar() {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find in table");
 
-    // Export button
+    // Save button (only enabled if dirty)
     if (active_tab->table && !active_tab->is_loading) {
+        ImGui::SameLine();
+        if (active_tab->is_dirty) {
+            if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
+                SaveTable(active_tab);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save changes (Ctrl+S)");
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::Button(ICON_FA_FLOPPY_DISK " Save");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("No unsaved changes");
+            }
+        }
+
+        // Export button
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
             show_export_dialog_ = true;
@@ -512,42 +548,80 @@ void TableViewerPanel::RenderTable() {
                     // Push unique ID for each cell to avoid conflicts
                     ImGui::PushID(static_cast<int>(actual_row * col_count + c));
 
-                    // Selectable cell - this makes it clickable
-                    if (ImGui::Selectable(cell_text.c_str(), is_selected || in_multi_selection, ImGuiSelectableFlags_None)) {
-                        ImGuiIO& io = ImGui::GetIO();
+                    // Check if this cell is being edited
+                    bool is_editing = (active_tab->editing_row == cell_row &&
+                                      active_tab->editing_col == cell_col);
 
-                        if (io.KeyCtrl) {
-                            // Ctrl+Click: Add new selection range (single cell)
-                            SelectionRange new_sel;
-                            new_sel.row_start = new_sel.row_end = cell_row;
-                            new_sel.col_start = new_sel.col_end = cell_col;
-                            active_tab->selections.push_back(new_sel);
-                            spdlog::info("Added selection: Cell [{}, {}]", cell_row + 1, cell_col + 1);
-                        } else if (io.KeyShift && active_tab->selected_row >= 0 && active_tab->selected_col >= 0) {
-                            // Shift+Click: Extend selection from last selected cell
-                            SelectionRange new_sel;
-                            new_sel.row_start = std::min(active_tab->selected_row, cell_row);
-                            new_sel.row_end = std::max(active_tab->selected_row, cell_row);
-                            new_sel.col_start = std::min(active_tab->selected_col, cell_col);
-                            new_sel.col_end = std::max(active_tab->selected_col, cell_col);
-                            active_tab->selections.push_back(new_sel);
-                            spdlog::info("Extended selection: [{},{}] to [{},{}]",
-                                new_sel.row_start + 1, new_sel.col_start + 1,
-                                new_sel.row_end + 1, new_sel.col_end + 1);
-                        } else {
-                            // Normal click: Clear multi-selection, set single selection
-                            active_tab->selections.clear();
-                            active_tab->selected_row = cell_row;
-                            active_tab->selected_col = cell_col;
-                            active_tab->selected_column = cell_col;  // Update stats sidebar
-                            spdlog::info("Selected cell: Row {}, Col {}", cell_row + 1, cell_col + 1);
+                    if (is_editing) {
+                        // ═══════════════════════════════════════════════════════════
+                        // EDITING MODE: Show InputText
+                        // ═══════════════════════════════════════════════════════════
+                        ImGui::SetNextItemWidth(-1);  // Fill available width
+
+                        // Focus on first frame of editing
+                        if (active_tab->edit_just_started) {
+                            ImGui::SetKeyboardFocusHere();
+                            active_tab->edit_just_started = false;
                         }
-                    }
 
-                    // Cell context menu (right-click on cell) - using BeginPopupContextItem
-                    if (ImGui::BeginPopupContextItem()) {
-                        RenderCellContextMenu(active_tab, static_cast<int>(actual_row), static_cast<int>(c));
-                        ImGui::EndPopup();
+                        ImGuiInputTextFlags input_flags = ImGuiInputTextFlags_EnterReturnsTrue |
+                                                          ImGuiInputTextFlags_AutoSelectAll;
+
+                        if (ImGui::InputText("##CellEdit", active_tab->edit_buffer,
+                                            sizeof(active_tab->edit_buffer), input_flags)) {
+                            // Enter pressed - save and end editing
+                            EndCellEdit(active_tab, true);
+                        }
+
+                        // Handle Escape to cancel
+                        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                            EndCellEdit(active_tab, false);
+                        }
+
+                        // Handle click outside to save
+                        if (!ImGui::IsItemActive() && ImGui::IsMouseClicked(0)) {
+                            EndCellEdit(active_tab, true);
+                        }
+                    } else {
+                        // ═══════════════════════════════════════════════════════════
+                        // NORMAL MODE: Selectable cell
+                        // ═══════════════════════════════════════════════════════════
+                        ImGuiSelectableFlags sel_flags = ImGuiSelectableFlags_AllowDoubleClick;
+
+                        if (ImGui::Selectable(cell_text.c_str(), is_selected || in_multi_selection, sel_flags)) {
+                            ImGuiIO& io = ImGui::GetIO();
+
+                            // Check for double-click to edit
+                            if (ImGui::IsMouseDoubleClicked(0)) {
+                                BeginCellEdit(active_tab, cell_row, cell_col);
+                            } else if (io.KeyCtrl) {
+                                // Ctrl+Click: Add new selection range (single cell)
+                                SelectionRange new_sel;
+                                new_sel.row_start = new_sel.row_end = cell_row;
+                                new_sel.col_start = new_sel.col_end = cell_col;
+                                active_tab->selections.push_back(new_sel);
+                            } else if (io.KeyShift && active_tab->selected_row >= 0 && active_tab->selected_col >= 0) {
+                                // Shift+Click: Extend selection from last selected cell
+                                SelectionRange new_sel;
+                                new_sel.row_start = std::min(active_tab->selected_row, cell_row);
+                                new_sel.row_end = std::max(active_tab->selected_row, cell_row);
+                                new_sel.col_start = std::min(active_tab->selected_col, cell_col);
+                                new_sel.col_end = std::max(active_tab->selected_col, cell_col);
+                                active_tab->selections.push_back(new_sel);
+                            } else {
+                                // Normal click: Clear multi-selection, set single selection
+                                active_tab->selections.clear();
+                                active_tab->selected_row = cell_row;
+                                active_tab->selected_col = cell_col;
+                                active_tab->selected_column = cell_col;  // Update stats sidebar
+                            }
+                        }
+
+                        // Cell context menu (right-click on cell) - using BeginPopupContextItem
+                        if (ImGui::BeginPopupContextItem()) {
+                            RenderCellContextMenu(active_tab, static_cast<int>(actual_row), static_cast<int>(c));
+                            ImGui::EndPopup();
+                        }
                     }
 
                     ImGui::PopID();
@@ -1882,9 +1956,9 @@ void TableViewerPanel::RenderQuickPlot() {
             ImGui::Separator();
 
             if (ImGui::Button(ICON_FA_CHART_LINE " Open in Visualizer")) {
-                // Send data to VisualizationPanel
-                // TODO: Get VisualizationPanel reference from MainWindow and send data
-                spdlog::info("Opening data in Visualizer panel (not yet integrated)");
+                // Send selected column data to VisualizationPanel
+                SendToVisualizer(plot_popup_.x_column);
+                show_plot_popup_ = false;
             }
             ImGui::SameLine();
 
@@ -2312,6 +2386,165 @@ void TableViewerPanel::RenderFindDialog() {
         }
     }
     ImGui::End();
+}
+
+// ============================================================================
+// Cell Editing
+// ============================================================================
+
+void TableViewerPanel::BeginCellEdit(TableTab* tab, int row, int col) {
+    if (!tab || !tab->table) return;
+
+    // End any current editing
+    if (tab->editing_row >= 0 && tab->editing_col >= 0) {
+        EndCellEdit(tab, true);  // Save current edit
+    }
+
+    // Get current cell value
+    std::string current_value = tab->table->GetCellAsString(row, col);
+
+    // Copy to edit buffer
+    strncpy(tab->edit_buffer, current_value.c_str(), sizeof(tab->edit_buffer) - 1);
+    tab->edit_buffer[sizeof(tab->edit_buffer) - 1] = '\0';
+
+    // Set editing state
+    tab->editing_row = row;
+    tab->editing_col = col;
+    tab->edit_just_started = true;
+
+    spdlog::debug("Started editing cell [{}, {}]: '{}'", row + 1, col + 1, current_value);
+}
+
+void TableViewerPanel::EndCellEdit(TableTab* tab, bool save) {
+    if (!tab || tab->editing_row < 0 || tab->editing_col < 0) return;
+
+    if (save && tab->table) {
+        std::string new_value = tab->edit_buffer;
+        std::string old_value = tab->table->GetCellAsString(tab->editing_row, tab->editing_col);
+
+        // Only update if value changed
+        if (new_value != old_value) {
+            if (tab->table->SetCellFromString(tab->editing_row, tab->editing_col, new_value)) {
+                tab->is_dirty = true;
+                spdlog::info("Cell [{}, {}] changed: '{}' -> '{}'",
+                    tab->editing_row + 1, tab->editing_col + 1, old_value, new_value);
+
+                // Recompute column stats for this column (value may affect min/max/avg)
+                if (tab->editing_col < static_cast<int>(tab->column_stats.size())) {
+                    tab->column_stats[tab->editing_col].computed = false;
+                }
+            } else {
+                spdlog::warn("Failed to update cell [{}, {}]", tab->editing_row + 1, tab->editing_col + 1);
+            }
+        }
+    }
+
+    // Clear editing state
+    tab->editing_row = -1;
+    tab->editing_col = -1;
+    std::memset(tab->edit_buffer, 0, sizeof(tab->edit_buffer));
+    tab->edit_just_started = false;
+}
+
+void TableViewerPanel::SaveTable(TableTab* tab) {
+    if (!tab || !tab->table || tab->filepath.empty()) {
+        spdlog::warn("Cannot save: No table or filepath");
+        return;
+    }
+
+    // Determine file type from extension
+    std::string ext = fs::path(tab->filepath).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    bool success = false;
+    if (ext == ".csv") {
+        success = tab->table->SaveToCSV(tab->filepath);
+    } else if (ext == ".txt" || ext == ".tsv") {
+        char delim = (ext == ".tsv") ? '\t' : '\t';
+        success = tab->table->SaveToTXT(tab->filepath, delim);
+    } else if (ext == ".h5" || ext == ".hdf5") {
+        success = tab->table->SaveToHDF5(tab->filepath);
+    } else {
+        // Default to CSV
+        success = tab->table->SaveToCSV(tab->filepath);
+    }
+
+    if (success) {
+        tab->is_dirty = false;
+        spdlog::info("Saved table to: {}", tab->filepath);
+    } else {
+        spdlog::error("Failed to save table to: {}", tab->filepath);
+    }
+}
+
+bool TableViewerPanel::HasUnsavedChanges() const {
+    for (const auto& tab : tabs_) {
+        if (tab && tab->is_dirty) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// ============================================================================
+// Visualization Integration
+// ============================================================================
+
+void TableViewerPanel::SendToVisualizer(int column) {
+    if (!visualization_panel_) {
+        spdlog::warn("VisualizationPanel not connected to TableViewer");
+        return;
+    }
+
+    TableTab* tab = GetActiveTab();
+    if (!tab || !tab->table) {
+        spdlog::warn("No active table to send to Visualizer");
+        return;
+    }
+
+    const auto& headers = tab->table->GetHeaders();
+    std::vector<std::string> col_names;
+    std::vector<std::vector<std::string>> rows;
+
+    // Determine which columns to send
+    std::vector<int> columns_to_send;
+    if (column >= 0 && column < static_cast<int>(headers.size())) {
+        // Single column
+        columns_to_send.push_back(column);
+    } else {
+        // All columns
+        for (int i = 0; i < static_cast<int>(headers.size()); i++) {
+            columns_to_send.push_back(i);
+        }
+    }
+
+    // Build column names
+    for (int col : columns_to_send) {
+        col_names.push_back(headers[col]);
+    }
+
+    // Build rows - use filtered/sorted indices if active
+    const std::vector<size_t>& display_indices = (tab->filter_mode_hide && !tab->filtered_indices.empty())
+        ? tab->filtered_indices
+        : tab->sorted_indices;
+
+    // Limit to reasonable number of rows for visualization
+    size_t max_rows = std::min(display_indices.size(), size_t(10000));
+
+    for (size_t i = 0; i < max_rows; i++) {
+        size_t actual_row = display_indices[i];
+        std::vector<std::string> row_data;
+        for (int col : columns_to_send) {
+            row_data.push_back(tab->table->GetCellAsString(actual_row, col));
+        }
+        rows.push_back(row_data);
+    }
+
+    // Send to visualizer
+    visualization_panel_->SetData(col_names, rows);
+    visualization_panel_->Show();
+
+    spdlog::info("Sent {} columns x {} rows to Visualizer", col_names.size(), rows.size());
 }
 
 } // namespace cyxwiz

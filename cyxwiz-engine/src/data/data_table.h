@@ -39,6 +39,10 @@ public:
     const Row& GetRow(size_t index) const;
     CellValue GetCell(size_t row, size_t col) const;
 
+    // Modify data
+    bool SetCell(size_t row, size_t col, const CellValue& value);
+    bool SetCellFromString(size_t row, size_t col, const std::string& value);
+
     // Get cell as string (for display)
     std::string GetCellAsString(size_t row, size_t col) const;
 

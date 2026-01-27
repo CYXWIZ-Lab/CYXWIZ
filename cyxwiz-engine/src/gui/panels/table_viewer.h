@@ -13,6 +13,9 @@
 
 namespace cyxwiz {
 
+// Forward declaration
+class VisualizationPanel;
+
 // ============================================================================
 // Colormap Types for conditional formatting
 // ============================================================================
@@ -148,6 +151,10 @@ public:
     // Clear current table
     void Clear();
 
+    // Visualization integration
+    void SetVisualizationPanel(VisualizationPanel* viz) { visualization_panel_ = viz; }
+    void SendToVisualizer(int column = -1);  // -1 = all columns, otherwise specific column
+
 private:
     // Tab structure
     struct TableTab {
@@ -198,8 +205,18 @@ private:
         // ═══════════════════════════════════════════════════════════
         int frozen_columns = 0;
 
+        // ═══════════════════════════════════════════════════════════
+        // NEW: Cell editing support
+        // ═══════════════════════════════════════════════════════════
+        bool is_dirty = false;              // Has unsaved changes
+        int editing_row = -1;               // Row being edited (-1 = none)
+        int editing_col = -1;               // Column being edited (-1 = none)
+        char edit_buffer[1024] = {0};       // Text buffer for editing
+        bool edit_just_started = false;     // Flag to focus input on first frame
+
         TableTab() {
             std::memset(filter_buffer, 0, sizeof(filter_buffer));
+            std::memset(edit_buffer, 0, sizeof(edit_buffer));
         }
     };
 
@@ -261,6 +278,14 @@ private:
     void RenderExportDialog();
     void RenderFindDialog();
 
+    // ═══════════════════════════════════════════════════════════════
+    // NEW: Cell editing
+    // ═══════════════════════════════════════════════════════════════
+    void BeginCellEdit(TableTab* tab, int row, int col);
+    void EndCellEdit(TableTab* tab, bool save);
+    void SaveTable(TableTab* tab);
+    bool HasUnsavedChanges() const;
+
     // Async loading helpers
     void LoadFileAsync(const std::string& filepath, const std::string& type, char delimiter = ',');
     void OnLoadComplete(int tab_index, std::shared_ptr<DataTable> table, bool success, const std::string& error);
@@ -311,6 +336,9 @@ private:
     // Async loading
     std::mutex tabs_mutex_;
     std::atomic<bool> has_pending_load_{false};
+
+    // Visualization integration
+    VisualizationPanel* visualization_panel_ = nullptr;
 };
 
 } // namespace cyxwiz

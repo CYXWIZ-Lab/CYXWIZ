@@ -75,6 +75,49 @@ std::string DataTable::GetCellAsString(size_t row, size_t col) const {
     }, cell);
 }
 
+bool DataTable::SetCell(size_t row, size_t col, const CellValue& value) {
+    if (row >= rows_.size()) {
+        spdlog::warn("SetCell: Row index {} out of range ({})", row, rows_.size());
+        return false;
+    }
+    if (col >= rows_[row].size()) {
+        spdlog::warn("SetCell: Col index {} out of range ({})", col, rows_[row].size());
+        return false;
+    }
+    rows_[row][col] = value;
+    return true;
+}
+
+bool DataTable::SetCellFromString(size_t row, size_t col, const std::string& value) {
+    if (row >= rows_.size() || col >= rows_[row].size()) {
+        return false;
+    }
+
+    // Try to parse as number, otherwise store as string
+    if (value.empty()) {
+        return SetCell(row, col, std::monostate{});
+    }
+
+    // Try integer first
+    try {
+        if (value.find('.') == std::string::npos &&
+            value.find('e') == std::string::npos &&
+            value.find('E') == std::string::npos) {
+            int64_t int_val = std::stoll(value);
+            return SetCell(row, col, int_val);
+        }
+    } catch (...) {}
+
+    // Try double
+    try {
+        double dbl_val = std::stod(value);
+        return SetCell(row, col, dbl_val);
+    } catch (...) {}
+
+    // Store as string
+    return SetCell(row, col, value);
+}
+
 // ============================================================================
 // CSV Support
 // ============================================================================
@@ -273,37 +316,114 @@ bool DataTable::LoadFromHDF5(const std::string& filepath, const std::string& dat
 #ifdef CYXWIZ_HAS_HDF5
     try {
         HighFive::File file(filepath, HighFive::File::ReadOnly);
-        HighFive::DataSet dataset = file.getDataSet(dataset_name);
+        
+        // Try to find the dataset - first the specified name, then common alternatives
+        std::string actual_name = dataset_name;
+        if (!file.exist(dataset_name)) {
+            // Try common dataset names
+            const std::vector<std::string> common_names = {
+                "data", "images", "features", "X", "x", "inputs",
+                "labels", "targets", "y", "Y", "outputs"
+            };
+            bool found = false;
+            for (const auto& name : common_names) {
+                if (file.exist(name)) {
+                    actual_name = name;
+                    found = true;
+                    spdlog::info("HDF5: Using dataset '{}' (requested '{}' not found)", name, dataset_name);
+                    break;
+                }
+            }
+            if (!found) {
+                spdlog::error("HDF5: No suitable dataset found in file");
+                return false;
+            }
+        }
+        
+        HighFive::DataSet dataset = file.getDataSet(actual_name);
 
         // Get dimensions
         auto dims = dataset.getDimensions();
-        if (dims.size() != 2) {
-            spdlog::error("HDF5 dataset must be 2D (got {} dimensions)", dims.size());
+        if (dims.size() < 1) {
+            spdlog::error("HDF5 dataset is empty");
             return false;
         }
-
+        
+        // Handle multi-dimensional data by flattening inner dimensions
         size_t rows = dims[0];
-        size_t cols = dims[1];
-
-        // Read data
-        std::vector<std::vector<double>> data;
-        dataset.read(data);
+        size_t cols = 1;
+        for (size_t i = 1; i < dims.size(); i++) {
+            cols *= dims[i];
+        }
+        
+        if (dims.size() != 2) {
+            spdlog::info("HDF5: Flattening {}D dataset to 2D ({} x {})", dims.size(), rows, cols);
+        }
 
         Clear();
 
         // Create default headers
         std::vector<std::string> headers;
         for (size_t i = 0; i < cols; i++) {
-            headers.push_back("Column_" + std::to_string(i));
+            headers.push_back("Col_" + std::to_string(i));
         }
         SetHeaders(headers);
 
-        // Add rows
-        for (const auto& row_data : data) {
+        // Read data row by row - container must match selection dimensionality
+        std::vector<size_t> offset(dims.size(), 0);
+        std::vector<size_t> count(dims.size(), 1);
+        for (size_t d = 1; d < dims.size(); d++) {
+            count[d] = dims[d];
+        }
+
+        for (size_t r = 0; r < rows; r++) {
+            offset[0] = r;
+            auto selection = dataset.select(offset, count);
+
             Row row;
-            for (double val : row_data) {
-                row.push_back(val);
+            row.reserve(cols);
+
+            if (dims.size() == 1) {
+                // 1D: single value per row
+                std::vector<double> val(1);
+                selection.read(val);
+                row.push_back(val[0]);
+            } else if (dims.size() == 2) {
+                // 2D: [N, features] - read into 1D vector
+                std::vector<double> row_data(cols);
+                selection.read(row_data);
+                for (double val : row_data) {
+                    row.push_back(val);
+                }
+            } else if (dims.size() == 3) {
+                // 3D: [N, H, W] - selection [1, H, W] needs 3D container
+                std::vector<std::vector<std::vector<double>>> data_3d;
+                selection.read(data_3d);
+                for (const auto& plane : data_3d) {
+                    for (const auto& r : plane) {
+                        for (double val : r) {
+                            row.push_back(val);
+                        }
+                    }
+                }
+            } else if (dims.size() == 4) {
+                // 4D: [N, H, W, C] - selection [1, H, W, C] needs 4D container
+                std::vector<std::vector<std::vector<std::vector<double>>>> data_4d;
+                selection.read(data_4d);
+                for (const auto& vol : data_4d) {
+                    for (const auto& plane : vol) {
+                        for (const auto& r : plane) {
+                            for (double val : r) {
+                                row.push_back(val);
+                            }
+                        }
+                    }
+                }
+            } else {
+                spdlog::error("HDF5: Unsupported dimensionality {} for table view", dims.size());
+                return false;
             }
+
             AddRow(std::move(row));
         }
 

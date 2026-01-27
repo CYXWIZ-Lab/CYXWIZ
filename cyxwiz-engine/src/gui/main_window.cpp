@@ -237,6 +237,11 @@ MainWindow::MainWindow()
         data_explorer_panel_->SetVisualizationPanel(visualization_panel_.get());
     }
 
+    // Connect TableViewer to VisualizationPanel
+    if (table_viewer_ && visualization_panel_) {
+        table_viewer_->SetVisualizationPanel(visualization_panel_.get());
+    }
+
     // Advanced Tools panels (Phase 5)
     dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
     gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
