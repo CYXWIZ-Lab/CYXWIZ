@@ -255,43 +255,145 @@ bool HDF5Browser::ReadPreviewSamples(const std::string& path,
             sample_size = 1;
         }
 
-        // Read samples
+        // Read samples - need to handle different dimensionalities
         data.resize(num_samples * sample_size);
 
-        // Build selection
+        // Build selection for reading sample by sample
         std::vector<size_t> offset(dims.size(), 0);
-        std::vector<size_t> count = dims;
-        count[0] = num_samples;
+        std::vector<size_t> count(dims.size(), 1);
+        for (size_t d = 1; d < dims.size(); d++) {
+            count[d] = dims[d];
+        }
 
-        auto selection = dataset.select(offset, count);
-
-        // Read based on dtype
+        // Determine normalization
         bool normalize = (dtype == HighFive::AtomicType<uint8_t>());
         float scale = normalize ? 1.0f / 255.0f : 1.0f;
 
-        if (dtype == HighFive::AtomicType<float>()) {
-            selection.read(data);
-        } else if (dtype == HighFive::AtomicType<uint8_t>()) {
-            std::vector<uint8_t> raw(num_samples * sample_size);
-            selection.read(raw);
-            for (size_t i = 0; i < raw.size(); i++) {
-                data[i] = static_cast<float>(raw[i]) * scale;
+        // Read sample by sample to handle any dimensionality
+        for (size_t s = 0; s < num_samples; s++) {
+            offset[0] = s;
+            auto selection = dataset.select(offset, count);
+            size_t out_offset = s * sample_size;
+
+            if (dims.size() == 1) {
+                // 1D: [N] - scalar per sample
+                if (dtype == HighFive::AtomicType<float>()) {
+                    float val;
+                    selection.read(val);
+                    data[out_offset] = val;
+                } else if (dtype == HighFive::AtomicType<uint8_t>()) {
+                    uint8_t val;
+                    selection.read(val);
+                    data[out_offset] = static_cast<float>(val) * scale;
+                } else if (dtype == HighFive::AtomicType<int32_t>()) {
+                    int32_t val;
+                    selection.read(val);
+                    data[out_offset] = static_cast<float>(val);
+                } else if (dtype == HighFive::AtomicType<double>()) {
+                    double val;
+                    selection.read(val);
+                    data[out_offset] = static_cast<float>(val);
+                }
+            } else if (dims.size() == 2) {
+                // 2D: [N, features]
+                if (dtype == HighFive::AtomicType<float>()) {
+                    std::vector<float> row(sample_size);
+                    selection.read(row);
+                    std::copy(row.begin(), row.end(), data.begin() + out_offset);
+                } else if (dtype == HighFive::AtomicType<uint8_t>()) {
+                    std::vector<uint8_t> row(sample_size);
+                    selection.read(row);
+                    for (size_t i = 0; i < sample_size; i++) {
+                        data[out_offset + i] = static_cast<float>(row[i]) * scale;
+                    }
+                } else if (dtype == HighFive::AtomicType<int32_t>()) {
+                    std::vector<int32_t> row(sample_size);
+                    selection.read(row);
+                    for (size_t i = 0; i < sample_size; i++) {
+                        data[out_offset + i] = static_cast<float>(row[i]);
+                    }
+                } else if (dtype == HighFive::AtomicType<double>()) {
+                    std::vector<double> row(sample_size);
+                    selection.read(row);
+                    for (size_t i = 0; i < sample_size; i++) {
+                        data[out_offset + i] = static_cast<float>(row[i]);
+                    }
+                }
+            } else if (dims.size() == 3) {
+                // 3D: [N, H, W] - grayscale images
+                size_t h = dims[1], w = dims[2];
+                if (dtype == HighFive::AtomicType<float>()) {
+                    std::vector<std::vector<float>> img(h, std::vector<float>(w));
+                    selection.read(img);
+                    size_t k = 0;
+                    for (const auto& row : img) {
+                        for (float val : row) {
+                            data[out_offset + k++] = val;
+                        }
+                    }
+                } else if (dtype == HighFive::AtomicType<uint8_t>()) {
+                    std::vector<std::vector<uint8_t>> img(h, std::vector<uint8_t>(w));
+                    selection.read(img);
+                    size_t k = 0;
+                    for (const auto& row : img) {
+                        for (uint8_t val : row) {
+                            data[out_offset + k++] = static_cast<float>(val) * scale;
+                        }
+                    }
+                } else if (dtype == HighFive::AtomicType<double>()) {
+                    std::vector<std::vector<double>> img(h, std::vector<double>(w));
+                    selection.read(img);
+                    size_t k = 0;
+                    for (const auto& row : img) {
+                        for (double val : row) {
+                            data[out_offset + k++] = static_cast<float>(val);
+                        }
+                    }
+                }
+            } else if (dims.size() == 4) {
+                // 4D: [N, H, W, C] - color images
+                size_t h = dims[1], w = dims[2], c = dims[3];
+                if (dtype == HighFive::AtomicType<float>()) {
+                    std::vector<std::vector<std::vector<float>>> img(h,
+                        std::vector<std::vector<float>>(w, std::vector<float>(c)));
+                    selection.read(img);
+                    size_t k = 0;
+                    for (const auto& row : img) {
+                        for (const auto& pixel : row) {
+                            for (float val : pixel) {
+                                data[out_offset + k++] = val;
+                            }
+                        }
+                    }
+                } else if (dtype == HighFive::AtomicType<uint8_t>()) {
+                    std::vector<std::vector<std::vector<uint8_t>>> img(h,
+                        std::vector<std::vector<uint8_t>>(w, std::vector<uint8_t>(c)));
+                    selection.read(img);
+                    size_t k = 0;
+                    for (const auto& row : img) {
+                        for (const auto& pixel : row) {
+                            for (uint8_t val : pixel) {
+                                data[out_offset + k++] = static_cast<float>(val) * scale;
+                            }
+                        }
+                    }
+                } else if (dtype == HighFive::AtomicType<double>()) {
+                    std::vector<std::vector<std::vector<double>>> img(h,
+                        std::vector<std::vector<double>>(w, std::vector<double>(c)));
+                    selection.read(img);
+                    size_t k = 0;
+                    for (const auto& row : img) {
+                        for (const auto& pixel : row) {
+                            for (double val : pixel) {
+                                data[out_offset + k++] = static_cast<float>(val);
+                            }
+                        }
+                    }
+                }
+            } else {
+                spdlog::warn("HDF5Browser: Unsupported dimensionality {} for preview", dims.size());
+                return false;
             }
-        } else if (dtype == HighFive::AtomicType<double>()) {
-            std::vector<double> raw(num_samples * sample_size);
-            selection.read(raw);
-            for (size_t i = 0; i < raw.size(); i++) {
-                data[i] = static_cast<float>(raw[i]);
-            }
-        } else if (dtype == HighFive::AtomicType<int32_t>()) {
-            std::vector<int32_t> raw(num_samples * sample_size);
-            selection.read(raw);
-            for (size_t i = 0; i < raw.size(); i++) {
-                data[i] = static_cast<float>(raw[i]);
-            }
-        } else {
-            spdlog::warn("HDF5Browser: Unsupported dtype for preview");
-            return false;
         }
 
         return true;
