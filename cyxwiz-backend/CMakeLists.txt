@@ -199,7 +199,14 @@ endif()
 # Link DuckDB if available
 if(CYXWIZ_HAS_DUCKDB)
     find_package(Threads REQUIRED)
-    target_link_libraries(cyxwiz-backend PRIVATE duckdb Threads::Threads)
+    # DuckDB may provide either 'duckdb' or 'duckdb_static' target
+    if(TARGET duckdb)
+        target_link_libraries(cyxwiz-backend PRIVATE duckdb Threads::Threads)
+    elseif(TARGET duckdb_static)
+        target_link_libraries(cyxwiz-backend PRIVATE duckdb_static Threads::Threads)
+    else()
+        message(WARNING "DuckDB found but no valid target available")
+    endif()
     target_compile_definitions(cyxwiz-backend PRIVATE CYXWIZ_HAS_DUCKDB)
 endif()
 
