@@ -215,6 +215,10 @@ struct HDF5Config {
     size_t chunk_size = 256;         // Number of samples per chunk
     size_t chunk_cache_size = 32;    // Max number of chunks to keep in memory
     size_t lazy_threshold = 10000;   // Enable lazy loading if num_samples > this
+
+    // Layout options
+    bool auto_detect_nchw = true;    // Auto-detect NCHW format and transpose to NHWC
+    bool force_nchw = false;         // Force NCHW->NHWC transpose (overrides auto-detect)
 };
 
 /**

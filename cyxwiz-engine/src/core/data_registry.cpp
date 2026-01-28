@@ -684,6 +684,37 @@ private:
                 sample_size_ = 1;
             }
 
+            // Detect NCHW format for 4D image data
+            is_nchw_ = false;
+            if (dims_.size() == 4) {
+                // dims_ = [N, dim1, dim2, dim3]
+                // NCHW: [N, C, H, W] where C is small (1, 3, 4) and H, W are larger
+                // NHWC: [N, H, W, C] where C is small (1, 3, 4) and H, W are larger
+                size_t dim1 = dims_[1];  // C in NCHW, H in NHWC
+                size_t dim2 = dims_[2];  // H in NCHW, W in NHWC
+                size_t dim3 = dims_[3];  // W in NCHW, C in NHWC
+
+                bool dim1_is_channel = (dim1 == 1 || dim1 == 3 || dim1 == 4) && dim2 > 4 && dim3 > 4;
+                bool dim3_is_channel = (dim3 == 1 || dim3 == 3 || dim3 == 4) && dim1 > 4 && dim2 > 4;
+
+                if (config_.force_nchw) {
+                    // User explicitly said it's NCHW
+                    is_nchw_ = true;
+                    spdlog::info("HDF5: Forcing NCHW->NHWC transpose");
+                } else if (config_.auto_detect_nchw && dim1_is_channel && !dim3_is_channel) {
+                    // Auto-detected NCHW format
+                    is_nchw_ = true;
+                    spdlog::info("HDF5: Auto-detected NCHW format [N,{},{},{}], will transpose to NHWC",
+                                 dim1, dim2, dim3);
+                }
+
+                // Adjust sample_shape_ if NCHW -> NHWC
+                if (is_nchw_) {
+                    // Original: [C, H, W] -> Transposed: [H, W, C]
+                    sample_shape_ = {dim2, dim3, dim1};  // [H, W, C]
+                }
+            }
+
             // Load labels (always load into memory - they're small)
             LoadLabels(file);
 
@@ -859,54 +890,51 @@ private:
 
     void ReadAndFlatten4D(HighFive::Selection& selection, std::vector<float>& out, float scale) const {
         size_t k = 0;
+
+        // Helper lambda to flatten with optional NCHW->NHWC transpose
+        auto flatten_4d = [&](auto& data_4d, float s) {
+            for (const auto& vol : data_4d) {
+                if (is_nchw_) {
+                    // NCHW -> NHWC transpose: vol is [C, H, W], output as [H, W, C]
+                    size_t C = vol.size();
+                    size_t H = C > 0 ? vol[0].size() : 0;
+                    size_t W = (C > 0 && H > 0) ? vol[0][0].size() : 0;
+                    for (size_t h = 0; h < H; h++) {
+                        for (size_t w = 0; w < W; w++) {
+                            for (size_t c = 0; c < C; c++) {
+                                out[k++] = static_cast<float>(vol[c][h][w]) * s;
+                            }
+                        }
+                    }
+                } else {
+                    // NHWC: vol is [H, W, C], output as-is
+                    for (const auto& plane : vol) {
+                        for (const auto& row : plane) {
+                            for (auto val : row) {
+                                out[k++] = static_cast<float>(val) * s;
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
         if (dtype_is_uint8_) {
             std::vector<std::vector<std::vector<std::vector<uint8_t>>>> data_4d;
             selection.read(data_4d);
-            for (const auto& vol : data_4d) {
-                for (const auto& plane : vol) {
-                    for (const auto& row : plane) {
-                        for (auto val : row) {
-                            out[k++] = static_cast<float>(val) * scale;
-                        }
-                    }
-                }
-            }
+            flatten_4d(data_4d, scale);
         } else if (dtype_is_float_) {
             std::vector<std::vector<std::vector<std::vector<float>>>> data_4d;
             selection.read(data_4d);
-            for (const auto& vol : data_4d) {
-                for (const auto& plane : vol) {
-                    for (const auto& row : plane) {
-                        for (auto val : row) {
-                            out[k++] = val;
-                        }
-                    }
-                }
-            }
+            flatten_4d(data_4d, 1.0f);
         } else if (dtype_is_double_) {
             std::vector<std::vector<std::vector<std::vector<double>>>> data_4d;
             selection.read(data_4d);
-            for (const auto& vol : data_4d) {
-                for (const auto& plane : vol) {
-                    for (const auto& row : plane) {
-                        for (auto val : row) {
-                            out[k++] = static_cast<float>(val);
-                        }
-                    }
-                }
-            }
+            flatten_4d(data_4d, 1.0f);
         } else if (dtype_is_int32_) {
             std::vector<std::vector<std::vector<std::vector<int32_t>>>> data_4d;
             selection.read(data_4d);
-            for (const auto& vol : data_4d) {
-                for (const auto& plane : vol) {
-                    for (const auto& row : plane) {
-                        for (auto val : row) {
-                            out[k++] = static_cast<float>(val);
-                        }
-                    }
-                }
-            }
+            flatten_4d(data_4d, 1.0f);
         }
     }
 
@@ -1008,6 +1036,9 @@ private:
 
     // Loading mode
     bool use_lazy_loading_ = false;
+
+    // NCHW transpose flag (for PyTorch-style datasets)
+    bool is_nchw_ = false;
 
     // Eager loading storage (used when lazy_loading is disabled)
     std::vector<std::vector<float>> eager_samples_;
