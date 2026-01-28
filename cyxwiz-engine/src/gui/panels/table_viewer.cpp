@@ -274,11 +274,11 @@ void TableViewerPanel::RenderToolbar() {
 
 void TableViewerPanel::RenderTable() {
     TableTab* active_tab = GetActiveTab();
-    if (!active_tab || !active_tab->table) return;
+    if (!active_tab || !active_tab->HasData()) return;
 
-    auto& table = active_tab->table;
-    size_t row_count = table->GetRowCount();
-    size_t col_count = table->GetColumnCount();
+    // Use unified accessors
+    size_t row_count = active_tab->GetRowCount();
+    size_t col_count = active_tab->GetColumnCount();
 
     if (row_count == 0 || col_count == 0) {
         ImGui::Text("Table is empty");
@@ -336,9 +336,9 @@ void TableViewerPanel::RenderTable() {
             ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 50.0f);
         }
 
-        const auto& headers = table->GetHeaders();
+        const auto& headers = active_tab->GetHeaders();
         for (size_t i = 0; i < col_count; i++) {
-            std::string header = headers[i];
+            std::string header = i < headers.size() ? headers[i] : ("Col" + std::to_string(i));
 
             // Add type indicator
             if (i < active_tab->column_stats.size()) {
@@ -370,7 +370,7 @@ void TableViewerPanel::RenderTable() {
             ImGui::TableSetColumnIndex(table_col);
 
             // Build header text with type indicator
-            std::string header = headers[i];
+            std::string header = i < headers.size() ? headers[i] : ("Col" + std::to_string(i));
             if (i < active_tab->column_stats.size()) {
                 auto& stats = active_tab->column_stats[i];
                 if (stats.type == "Numeric") {
@@ -450,7 +450,7 @@ void TableViewerPanel::RenderTable() {
                 for (size_t c = 0; c < col_count; c++) {
                     ImGui::TableSetColumnIndex(col_idx++);
 
-                    std::string cell_text = table->GetCellAsString(actual_row, c);
+                    std::string cell_text = active_tab->GetCellAsString(actual_row, c);
 
                     // Apply number formatting if configured for this column
                     if (c < active_tab->column_formats.size() && c < active_tab->column_stats.size() &&
@@ -459,7 +459,7 @@ void TableViewerPanel::RenderTable() {
                         // Only format if any formatting option is set
                         if (fmt.decimal_places >= 0 || fmt.thousands_separator ||
                             fmt.as_percentage || !fmt.prefix.empty() || !fmt.suffix.empty()) {
-                            auto cell = table->GetCell(actual_row, c);
+                            auto cell = active_tab->GetCell(actual_row, c);
                             double val = 0;
                             bool is_numeric = false;
                             if (std::holds_alternative<double>(cell)) {
@@ -483,7 +483,7 @@ void TableViewerPanel::RenderTable() {
                     if ((show_data_bars_ || has_colormap) && c < active_tab->column_stats.size()) {
                         auto& stats = active_tab->column_stats[c];
                         if (stats.type == "Numeric" && stats.max_val > stats.min_val) {
-                            auto cell = table->GetCell(actual_row, c);
+                            auto cell = active_tab->GetCell(actual_row, c);
                             double val = 0;
                             if (std::holds_alternative<double>(cell)) {
                                 val = std::get<double>(cell);
@@ -696,16 +696,24 @@ void TableViewerPanel::RenderStatusBar() {
         return;
     }
 
-    if (!tab->table) {
+    if (!tab->HasData()) {
         ImGui::TextDisabled("Failed to load table");
         return;
     }
 
-    auto& table = tab->table;
-
-    // Left: Table info
+    // Left: Table info with lazy loading indicator
+    if (tab->use_lazy_loading) {
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_BOLT);
+        ImGui::SameLine(0, 4);
+    }
     ImGui::Text(ICON_FA_TABLE " %zu rows x %zu cols",
-        table->GetRowCount(), table->GetColumnCount());
+        tab->GetRowCount(), tab->GetColumnCount());
+
+    // Show cache info for lazy loading
+    if (tab->use_lazy_loading && tab->lazy_table) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(cached: %zu)", tab->lazy_table->GetCachedRowCount());
+    }
 
     // Middle: Selection info
     ImGui::SameLine();
@@ -717,15 +725,26 @@ void TableViewerPanel::RenderStatusBar() {
         ImGui::TextDisabled("No cell selected");
     }
 
-    // Right: Memory estimate
+    // Right: Memory/file size info
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-    size_t mem_bytes = table->GetRowCount() * table->GetColumnCount() * sizeof(double);
-    if (mem_bytes > 1024 * 1024) {
-        ImGui::Text(ICON_FA_MEMORY " %.1f MB", mem_bytes / (1024.0 * 1024.0));
+    if (tab->use_lazy_loading && tab->lazy_table) {
+        // Show file size for lazy loading
+        size_t file_bytes = tab->lazy_table->GetFileSize();
+        if (file_bytes > 1024 * 1024) {
+            ImGui::Text(ICON_FA_FILE " %.1f MB (lazy)", file_bytes / (1024.0 * 1024.0));
+        } else {
+            ImGui::Text(ICON_FA_FILE " %.1f KB (lazy)", file_bytes / 1024.0);
+        }
     } else {
-        ImGui::Text(ICON_FA_MEMORY " %.1f KB", mem_bytes / 1024.0);
+        // Memory estimate for in-memory table
+        size_t mem_bytes = tab->GetRowCount() * tab->GetColumnCount() * sizeof(double);
+        if (mem_bytes > 1024 * 1024) {
+            ImGui::Text(ICON_FA_MEMORY " %.1f MB", mem_bytes / (1024.0 * 1024.0));
+        } else {
+            ImGui::Text(ICON_FA_MEMORY " %.1f KB", mem_bytes / 1024.0);
+        }
     }
 }
 
@@ -756,12 +775,17 @@ void TableViewerPanel::RenderLoadingIndicator() {
 }
 
 void TableViewerPanel::ComputeColumnStats(TableTab* tab) {
-    if (!tab || !tab->table) return;
-    auto& table = tab->table;
-    size_t cols = table->GetColumnCount();
-    size_t rows = table->GetRowCount();
+    if (!tab || !tab->HasData()) return;
+
+    size_t cols = tab->GetColumnCount();
+    size_t rows = tab->GetRowCount();
 
     tab->column_stats.resize(cols);
+
+    // For lazy loading with many rows, sample instead of scanning all
+    bool sample_mode = tab->use_lazy_loading && rows > 10000;
+    size_t sample_size = sample_mode ? 5000 : rows;
+    size_t step = sample_mode ? rows / sample_size : 1;
 
     for (size_t c = 0; c < cols; c++) {
         auto& stats = tab->column_stats[c];
@@ -775,10 +799,13 @@ void TableViewerPanel::ComputeColumnStats(TableTab* tab) {
         std::vector<double> numeric_values;  // For std dev, median, histogram
         std::map<std::string, int> value_counts;
 
-        numeric_values.reserve(rows);
+        numeric_values.reserve(sample_mode ? sample_size : rows);
 
-        for (size_t r = 0; r < rows; r++) {
-            auto cell = table->GetCell(r, c);
+        for (size_t i = 0; i < sample_size; i++) {
+            size_t r = sample_mode ? i * step : i;
+            if (r >= rows) break;
+
+            auto cell = tab->GetCell(r, c);
             if (std::holds_alternative<std::monostate>(cell)) {
                 stats.null_count++;
             } else if (std::holds_alternative<double>(cell)) {
@@ -800,7 +827,7 @@ void TableViewerPanel::ComputeColumnStats(TableTab* tab) {
                 numeric_values.push_back(v);
                 has_numeric = true;
             } else {
-                std::string s = table->GetCellAsString(r, c);
+                std::string s = tab->GetCellAsString(r, c);
                 value_counts[s]++;
             }
         }
@@ -859,11 +886,15 @@ void TableViewerPanel::ComputeColumnStats(TableTab* tab) {
 }
 
 void TableViewerPanel::SortByColumn(TableTab* tab, int column) {
-    if (!tab || !tab->table || column < 0) return;
+    if (!tab || !tab->HasData() || column < 0) return;
 
-    // sort_column and sort_ascending are set by the caller (from ImGui sort specs)
-    auto& table = tab->table;
-    size_t rows = table->GetRowCount();
+    size_t rows = tab->GetRowCount();
+
+    // For very large lazy-loaded files, sorting is disabled (too slow)
+    if (tab->use_lazy_loading && rows > 100000) {
+        spdlog::warn("Sorting disabled for lazy-loaded files with >100K rows");
+        return;
+    }
 
     tab->sorted_indices.resize(rows);
     std::iota(tab->sorted_indices.begin(), tab->sorted_indices.end(), size_t(0));
@@ -876,7 +907,7 @@ void TableViewerPanel::SortByColumn(TableTab* tab, int column) {
         [&](size_t a, size_t b) {
             if (is_numeric) {
                 auto get_val = [&](size_t r) -> double {
-                    auto cell = table->GetCell(r, column);
+                    auto cell = tab->GetCell(r, column);
                     if (std::holds_alternative<double>(cell))
                         return std::get<double>(cell);
                     if (std::holds_alternative<int64_t>(cell))
@@ -887,8 +918,8 @@ void TableViewerPanel::SortByColumn(TableTab* tab, int column) {
                 double va = get_val(a), vb = get_val(b);
                 return ascending ? va < vb : va > vb;
             } else {
-                std::string sa = table->GetCellAsString(a, column);
-                std::string sb = table->GetCellAsString(b, column);
+                std::string sa = tab->GetCellAsString(a, column);
+                std::string sb = tab->GetCellAsString(b, column);
                 return ascending ? sa < sb : sa > sb;
             }
         });
@@ -1062,7 +1093,23 @@ void TableViewerPanel::LoadFileAsync(const std::string& filepath, const std::str
     tabs_.push_back(std::move(tab));
     active_tab_index_ = tab_index;
 
-    spdlog::info("Starting async load of: {}", filepath);
+    // Check if lazy loading should be used (only for CSV/TXT, large files)
+    bool use_lazy = false;
+    std::string main_type = type;
+    size_t colon_pos = type.find(':');
+    if (colon_pos != std::string::npos) {
+        main_type = type.substr(0, colon_pos);
+    }
+
+    if (prefer_lazy_loading_ && (main_type == "csv" || main_type == "txt")) {
+        use_lazy = LazyDataTable::ShouldUseLazyLoading(filepath, LAZY_LOAD_THRESHOLD_MB);
+    }
+
+    if (use_lazy) {
+        spdlog::info("Using lazy loading for large file: {}", filepath);
+    } else {
+        spdlog::info("Starting async load of: {}", filepath);
+    }
 
     // Capture values for lambda
     std::string path = filepath;
@@ -1070,11 +1117,8 @@ void TableViewerPanel::LoadFileAsync(const std::string& filepath, const std::str
 
     AsyncTaskManager::Instance().RunAsync(
         "Loading: " + fs::path(filepath).filename().string(),
-        [this, tab_index, path, file_type, delimiter](LambdaTask& task) {
+        [this, tab_index, path, file_type, delimiter, use_lazy](LambdaTask& task) {
             task.ReportProgress(0.1f, "Opening file...");
-
-            auto table = std::make_shared<DataTable>();
-            bool success = false;
 
             // Parse type and optional parameter
             std::string main_type = file_type;
@@ -1085,37 +1129,76 @@ void TableViewerPanel::LoadFileAsync(const std::string& filepath, const std::str
                 type_param = file_type.substr(colon_pos + 1);
             }
 
-            task.ReportProgress(0.3f, "Parsing data...");
+            bool success = false;
 
-            if (main_type == "csv") {
-                success = table->LoadFromCSV(path);
-            } else if (main_type == "txt") {
-                success = table->LoadFromTXT(path, delimiter);
-            } else if (main_type == "hdf5") {
-                success = table->LoadFromHDF5(path, type_param.empty() ? "data" : type_param);
-            } else if (main_type == "excel") {
-                success = table->LoadFromExcel(path, type_param);
+            if (use_lazy) {
+                // Lazy loading for large CSV/TXT files
+                auto lazy_table = std::make_shared<LazyDataTable>();
+                char delim = (main_type == "txt") ? delimiter : ',';
+
+                success = lazy_table->IndexFile(path, delim,
+                    [&task](float progress, const std::string& status) {
+                        task.ReportProgress(0.1f + progress * 0.8f, status);
+                    });
+
+                if (success) {
+                    lazy_table->SetName(fs::path(path).stem().string());
+                    task.MarkCompleted();
+
+                    // Update tab with lazy table
+                    if (tab_index < static_cast<int>(tabs_.size())) {
+                        auto& tab = tabs_[tab_index];
+                        tab->lazy_table = lazy_table;
+                        tab->use_lazy_loading = true;
+                        tab->is_loading = false;
+                        tab->load_progress = 1.0f;
+                        tab->load_status = "Complete (lazy)";
+                    }
+                } else {
+                    task.MarkFailed("Failed to index file");
+                    if (tab_index < static_cast<int>(tabs_.size())) {
+                        auto& tab = tabs_[tab_index];
+                        tab->is_loading = false;
+                        tab->load_progress = 1.0f;
+                        tab->load_status = "Failed";
+                    }
+                }
             } else {
-                // Default to CSV
-                success = table->LoadFromCSV(path);
-            }
+                // Standard in-memory loading
+                auto table = std::make_shared<DataTable>();
+                task.ReportProgress(0.3f, "Parsing data...");
 
-            task.ReportProgress(0.9f, "Finalizing...");
+                if (main_type == "csv") {
+                    success = table->LoadFromCSV(path);
+                } else if (main_type == "txt") {
+                    success = table->LoadFromTXT(path, delimiter);
+                } else if (main_type == "hdf5") {
+                    success = table->LoadFromHDF5(path, type_param.empty() ? "data" : type_param);
+                } else if (main_type == "excel") {
+                    success = table->LoadFromExcel(path, type_param);
+                } else {
+                    // Default to CSV
+                    success = table->LoadFromCSV(path);
+                }
 
-            if (success) {
-                table->SetName(fs::path(path).stem().string());
-                task.MarkCompleted();
-            } else {
-                task.MarkFailed("Failed to parse file");
-            }
+                task.ReportProgress(0.9f, "Finalizing...");
 
-            // Update tab with result (thread-safe)
-            if (tab_index < static_cast<int>(tabs_.size())) {
-                auto& tab = tabs_[tab_index];
-                tab->table = success ? table : nullptr;
-                tab->is_loading = false;
-                tab->load_progress = 1.0f;
-                tab->load_status = success ? "Complete" : "Failed";
+                if (success) {
+                    table->SetName(fs::path(path).stem().string());
+                    task.MarkCompleted();
+                } else {
+                    task.MarkFailed("Failed to parse file");
+                }
+
+                // Update tab with result
+                if (tab_index < static_cast<int>(tabs_.size())) {
+                    auto& tab = tabs_[tab_index];
+                    tab->table = success ? table : nullptr;
+                    tab->use_lazy_loading = false;
+                    tab->is_loading = false;
+                    tab->load_progress = 1.0f;
+                    tab->load_status = success ? "Complete" : "Failed";
+                }
             }
         },
         [this, tab_index](float progress, const std::string& status) {
@@ -1126,9 +1209,9 @@ void TableViewerPanel::LoadFileAsync(const std::string& filepath, const std::str
                 tab->load_status = status;
             }
         },
-        [this, tab_index, path](bool success, const std::string& error) {
+        [this, tab_index, path, use_lazy](bool success, const std::string& error) {
             if (success) {
-                spdlog::info("Async load completed: {}", path);
+                spdlog::info("Async load completed{}: {}", use_lazy ? " (lazy)" : "", path);
             } else {
                 spdlog::error("Async load failed: {} - {}", path, error);
             }

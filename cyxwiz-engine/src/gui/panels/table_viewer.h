@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "../../data/data_table.h"
+#include "../../data/lazy_data_table.h"
 #include "../../core/async_task_manager.h"
 #include <imgui.h>
 #include <string>
@@ -161,6 +162,8 @@ private:
         std::string filename;           // Display name
         std::string filepath;           // Full path
         std::shared_ptr<DataTable> table;
+        std::shared_ptr<LazyDataTable> lazy_table;  // For large files
+        bool use_lazy_loading = false;  // Which table type is active
         int current_page = 0;
         std::string filter_text;
         char filter_buffer[256] = {0};
@@ -217,6 +220,43 @@ private:
         TableTab() {
             std::memset(filter_buffer, 0, sizeof(filter_buffer));
             std::memset(edit_buffer, 0, sizeof(edit_buffer));
+        }
+
+        // Unified accessors for both table types
+        size_t GetRowCount() const {
+            if (use_lazy_loading && lazy_table) return lazy_table->GetRowCount();
+            if (table) return table->GetRowCount();
+            return 0;
+        }
+
+        size_t GetColumnCount() const {
+            if (use_lazy_loading && lazy_table) return lazy_table->GetColumnCount();
+            if (table) return table->GetColumnCount();
+            return 0;
+        }
+
+        const std::vector<std::string>& GetHeaders() const {
+            static std::vector<std::string> empty;
+            if (use_lazy_loading && lazy_table) return lazy_table->GetHeaders();
+            if (table) return table->GetHeaders();
+            return empty;
+        }
+
+        std::string GetCellAsString(size_t row, size_t col) {
+            if (use_lazy_loading && lazy_table) return lazy_table->GetCellAsString(row, col);
+            if (table) return table->GetCellAsString(row, col);
+            return "";
+        }
+
+        DataTable::CellValue GetCell(size_t row, size_t col) {
+            if (use_lazy_loading && lazy_table) return lazy_table->GetCell(row, col);
+            if (table) return table->GetCell(row, col);
+            return std::monostate{};
+        }
+
+        bool HasData() const {
+            return (use_lazy_loading && lazy_table && lazy_table->GetRowCount() > 0) ||
+                   (!use_lazy_loading && table && table->GetRowCount() > 0);
         }
     };
 
@@ -336,6 +376,10 @@ private:
     // Async loading
     std::mutex tabs_mutex_;
     std::atomic<bool> has_pending_load_{false};
+
+    // Lazy loading settings
+    static constexpr size_t LAZY_LOAD_THRESHOLD_MB = 10;  // Files > 10MB use lazy loading
+    bool prefer_lazy_loading_ = true;  // User preference
 
     // Visualization integration
     VisualizationPanel* visualization_panel_ = nullptr;
