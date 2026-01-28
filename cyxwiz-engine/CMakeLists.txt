@@ -229,6 +229,14 @@ set(ENGINE_SOURCES
     src/scripting/startup_script_manager.cpp
     src/scripting/cell_manager.cpp
     src/gui/panels/output_renderer.cpp
+    # Preview system
+    src/gui/preview/preview_renderer.cpp
+    src/gui/preview/text_preview.cpp
+    src/gui/preview/json_tree.cpp
+    src/gui/preview/table_preview.cpp
+    src/gui/preview/image_preview.cpp
+    src/gui/preview/markdown_preview.cpp
+    src/gui/preview/hex_preview.cpp
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.cpp
     # ImNodes (visual node editor)

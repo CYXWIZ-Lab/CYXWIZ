@@ -3,6 +3,7 @@
 #include "../panel.h"
 #include "../../core/data_registry.h"
 #include "../../core/async_task_manager.h"
+#include "../preview/preview_renderer.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -211,6 +212,15 @@ private:
     std::unique_ptr<AssetItem> pending_directory_root_;  // Built in background thread
     std::mutex pending_tree_mutex_;  // Protects pending_directory_root_
     std::atomic<bool> scan_completed_{false};  // Signal that scan is done
+
+    // Quick Preview popup state
+    bool show_quick_preview_ = false;
+    std::string quick_preview_path_;
+    gui::PreviewRenderer quick_preview_renderer_;
+
+    // Helper methods
+    void RenderQuickPreviewPopup();
+    bool IsPreviewableFile(const AssetItem& item) const;
 };
 
 } // namespace cyxwiz

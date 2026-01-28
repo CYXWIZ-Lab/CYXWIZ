@@ -333,6 +333,11 @@ public:
     virtual std::pair<std::vector<float>, int> GetNext() { return {{}, -1}; }
     virtual void ResetStream() {}
 
+    // Raw data access for preview (overridden by specific dataset types)
+    virtual std::vector<std::string> GetColumnNames() const { return {}; }
+    virtual const std::vector<std::string>& GetTextLines() const { static std::vector<std::string> empty; return empty; }
+    virtual const void* GetRawJSON() const { return nullptr; }
+
 protected:
     std::vector<size_t> train_indices_;
     std::vector<size_t> val_indices_;
@@ -373,6 +378,9 @@ public:
 
     // Apply split configuration
     void ApplySplit(const SplitConfig& config);
+
+    // Access underlying dataset for type-specific operations (preview)
+    Dataset* GetUnderlyingDataset() const { return dataset_.get(); }
 
 private:
     std::shared_ptr<Dataset> dataset_;

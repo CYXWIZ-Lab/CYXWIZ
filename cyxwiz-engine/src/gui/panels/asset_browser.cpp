@@ -206,6 +206,9 @@ void AssetBrowserPanel::Render() {
     RenderRenameDialog();
     RenderDeleteConfirmDialog();
 
+    // Quick Preview popup (non-modal, separate window)
+    RenderQuickPreviewPopup();
+
     ImGui::End();
 }
 
@@ -652,6 +655,14 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
             if (IsDatasetFile(item)) {
                 if (ImGui::MenuItem(ICON_FA_DATABASE " Load Dataset")) {
                     LoadDatasetFromItemAsync(item);
+                }
+            }
+
+            // Quick Preview (for previewable files)
+            if (IsPreviewableFile(item)) {
+                if (ImGui::MenuItem(ICON_FA_EYE " Quick Preview")) {
+                    show_quick_preview_ = true;
+                    quick_preview_path_ = item.absolute_path;
                 }
             }
 
@@ -1561,6 +1572,50 @@ bool AssetBrowserPanel::IsTableViewableFile(const AssetItem& item) const {
            ext == ".h5" || ext == ".hdf5" ||
            ext == ".xlsx" || ext == ".xls" ||
            ext == ".json" || ext == ".parquet";
+}
+
+bool AssetBrowserPanel::IsPreviewableFile(const AssetItem& item) const {
+    if (item.is_directory) return false;
+
+    auto content_type = gui::PreviewRenderer::DetectFileType(item.absolute_path);
+    return content_type != gui::PreviewContentType::Unknown;
+}
+
+void AssetBrowserPanel::RenderQuickPreviewPopup() {
+    if (!show_quick_preview_) return;
+
+    ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
+
+    std::string title = "Quick Preview - " + fs::path(quick_preview_path_).filename().string() + "###QuickPreview";
+
+    if (ImGui::Begin(title.c_str(), &show_quick_preview_, ImGuiWindowFlags_NoDocking)) {
+        // File info bar
+        auto content_type = gui::PreviewRenderer::DetectFileType(quick_preview_path_);
+        ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "%s", quick_preview_path_.c_str());
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
+
+        // Type indicator
+        const char* type_str = "Unknown";
+        switch (content_type) {
+            case gui::PreviewContentType::Image: type_str = "Image"; break;
+            case gui::PreviewContentType::TableCSV: type_str = "CSV"; break;
+            case gui::PreviewContentType::JSONTree: type_str = "JSON"; break;
+            case gui::PreviewContentType::PlainText: type_str = "Text"; break;
+            case gui::PreviewContentType::SyntaxText: type_str = "Code"; break;
+            case gui::PreviewContentType::Markdown: type_str = "Markdown"; break;
+            case gui::PreviewContentType::HexDump: type_str = "Binary"; break;
+            default: break;
+        }
+        ImGui::TextDisabled("[%s]", type_str);
+
+        ImGui::Separator();
+
+        // Render preview content
+        ImGui::BeginChild("##QuickPreviewContent", ImVec2(0, 0), false);
+        quick_preview_renderer_.RenderFilePreview(quick_preview_path_);
+        ImGui::EndChild();
+    }
+    ImGui::End();
 }
 
 void AssetBrowserPanel::LoadDatasetFromItem(const AssetItem& item) {

@@ -19,6 +19,7 @@
 #include "../../utils/image_quality_analyzer.h"
 #include "../../utils/image_deduplicator.h"
 #include "../../utils/hdf5_browser.h"
+#include "../preview/preview_renderer.h"
 
 namespace cyxwiz {
     class Tensor;
@@ -197,6 +198,7 @@ private:
     void RenderSingleSamplePreview(size_t dataset_size, bool is_image_data);
     void RenderGridPreview(size_t dataset_size, bool is_image_data);
     void RenderTablePreview(size_t dataset_size);
+    void RenderTypeAwarePreview();
 
     // Training
     void RenderTrainingSection();
@@ -269,11 +271,12 @@ private:
     char dataset_search_buffer_[256] = "";  // Search query for external search
 
     // Preview settings
-    int preview_view_mode_ = 0;        // 0=Single, 1=Grid, 2=Table
+    int preview_view_mode_ = 0;        // 0=Single, 1=Grid, 2=Table, 3=Type-Aware
     float preview_zoom_ = 1.0f;        // Image zoom level
     int preview_grid_cols_ = 4;        // Grid columns
     int preview_grid_rows_ = 4;        // Grid rows
     int preview_table_rows_ = 20;      // Rows per page in table view
+    gui::PreviewRenderer preview_renderer_;  // Type-aware preview dispatcher
 
     // Class names (for visualization)
     std::vector<std::string> class_names_;

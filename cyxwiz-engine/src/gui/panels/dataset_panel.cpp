@@ -343,61 +343,156 @@ void DatasetPanel::RenderMainContent() {
 }
 
 void DatasetPanel::RenderPreviewContent() {
+    // Determine dataset type for mode availability
+    bool is_image = (cached_info_.type == cyxwiz::DatasetType::ImageFolder ||
+                     cached_info_.type == cyxwiz::DatasetType::ImageCSV ||
+                     cached_info_.type == cyxwiz::DatasetType::MNIST ||
+                     cached_info_.type == cyxwiz::DatasetType::CIFAR10 ||
+                     cached_info_.type == cyxwiz::DatasetType::FashionMNIST ||
+                     cached_info_.type == cyxwiz::DatasetType::CIFAR100);
+
+    bool is_tabular = (cached_info_.type == cyxwiz::DatasetType::CSV ||
+                       cached_info_.type == cyxwiz::DatasetType::TSV);
+
+    bool is_json = (cached_info_.type == cyxwiz::DatasetType::JSON);
+
+    bool is_text = (cached_info_.type == cyxwiz::DatasetType::TXT);
+
+    bool is_hdf5 = (cached_info_.type == cyxwiz::DatasetType::HDF5);
+
+    // View mode toolbar
     ImGui::Text("View:");
     ImGui::SameLine();
 
     bool single = preview_view_mode_ == 0;
     bool grid = preview_view_mode_ == 1;
     bool table = preview_view_mode_ == 2;
+    bool type_aware = preview_view_mode_ == 3;
 
+    // Single sample mode (for images and tabular)
     if (single) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
     if (ImGui::Button(ICON_FA_SQUARE "##Single")) preview_view_mode_ = 0;
     if (single) ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Single Sample");
 
-    ImGui::SameLine();
-    if (grid) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
-    if (ImGui::Button(ICON_FA_GRIP "##Grid")) preview_view_mode_ = 1;
-    if (grid) ImGui::PopStyleColor();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grid View");
+    // Grid mode (mainly for images)
+    if (is_image) {
+        ImGui::SameLine();
+        if (grid) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+        if (ImGui::Button(ICON_FA_GRIP "##Grid")) preview_view_mode_ = 1;
+        if (grid) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grid View");
+    }
 
+    // Table mode (for tabular data samples)
     ImGui::SameLine();
     if (table) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
     if (ImGui::Button(ICON_FA_TABLE "##Table")) preview_view_mode_ = 2;
     if (table) ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Table View");
 
-    ImGui::SameLine(0, 20);
-    ImGui::Text("#");
-    ImGui::SameLine();
-
-    int max_idx = static_cast<int>(current_dataset_.Size()) - 1;
-    if (max_idx < 0) max_idx = 0;
-
-    ImGui::SetNextItemWidth(120);
-    ImGui::SliderInt("##SampleIdx", &preview_sample_idx_, 0, max_idx);
-
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_SHUFFLE "##Random")) {
-        if (current_dataset_.Size() > 0) {
-            preview_sample_idx_ = rand() % static_cast<int>(current_dataset_.Size());
-        }
+    // Type-aware rich preview mode (shows raw data with smart rendering)
+    if (is_tabular || is_json || is_text) {
+        ImGui::SameLine();
+        if (type_aware) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+        if (ImGui::Button(ICON_FA_CODE "##TypeAware")) preview_view_mode_ = 3;
+        if (type_aware) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rich Preview (type-aware)");
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Random Sample");
+
+    // Sample navigation (for non-type-aware modes)
+    if (preview_view_mode_ != 3) {
+        ImGui::SameLine(0, 20);
+        ImGui::Text("#");
+        ImGui::SameLine();
+
+        int max_idx = static_cast<int>(current_dataset_.Size()) - 1;
+        if (max_idx < 0) max_idx = 0;
+
+        ImGui::SetNextItemWidth(120);
+        ImGui::SliderInt("##SampleIdx", &preview_sample_idx_, 0, max_idx);
+
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_SHUFFLE "##Random")) {
+            if (current_dataset_.Size() > 0) {
+                preview_sample_idx_ = rand() % static_cast<int>(current_dataset_.Size());
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Random Sample");
+    }
 
     ImGui::Separator();
 
     size_t dataset_size = current_dataset_.Size();
-    bool is_image = (cached_info_.type == cyxwiz::DatasetType::ImageFolder ||
-                     cached_info_.type == cyxwiz::DatasetType::ImageCSV ||
-                     cached_info_.type == cyxwiz::DatasetType::MNIST ||
-                     cached_info_.type == cyxwiz::DatasetType::CIFAR10);
 
     switch (preview_view_mode_) {
         case 0: RenderSingleSamplePreview(dataset_size, is_image); break;
         case 1: RenderGridPreview(dataset_size, is_image); break;
         case 2: RenderTablePreview(dataset_size); break;
+        case 3: RenderTypeAwarePreview(); break;
     }
+}
+
+void DatasetPanel::RenderTypeAwarePreview() {
+    // Type-aware preview using PreviewRenderer
+    if (!IsDatasetLoaded()) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No dataset loaded.");
+        return;
+    }
+
+    // Detect content type and render appropriately
+    auto content_type = preview_renderer_.DetectDatasetType(cached_info_);
+
+    ImGui::BeginChild("##TypeAwareContent", ImVec2(0, 0), false);
+
+    switch (content_type) {
+        case gui::PreviewContentType::DatasetTabular: {
+            // CSV/TSV with real column headers
+            auto* dataset = current_dataset_.GetUnderlyingDataset();
+            if (dataset) {
+                auto col_names = dataset->GetColumnNames();
+                if (!col_names.empty()) {
+                    preview_renderer_.RenderDatasetPreview(current_dataset_, cached_info_,
+                        preview_sample_idx_, preview_view_mode_, preview_zoom_,
+                        preview_grid_cols_, preview_grid_rows_, class_names_);
+                } else {
+                    // Fallback to default table view
+                    RenderTablePreview(current_dataset_.Size());
+                }
+            }
+            break;
+        }
+
+        case gui::PreviewContentType::DatasetJSON: {
+            // JSON tree view
+            preview_renderer_.RenderDatasetPreview(current_dataset_, cached_info_,
+                preview_sample_idx_, preview_view_mode_, preview_zoom_,
+                preview_grid_cols_, preview_grid_rows_, class_names_);
+            break;
+        }
+
+        case gui::PreviewContentType::DatasetText: {
+            // Text with line numbers
+            preview_renderer_.RenderDatasetPreview(current_dataset_, cached_info_,
+                preview_sample_idx_, preview_view_mode_, preview_zoom_,
+                preview_grid_cols_, preview_grid_rows_, class_names_);
+            break;
+        }
+
+        case gui::PreviewContentType::DatasetImage: {
+            // Use existing image preview
+            RenderSingleSamplePreview(current_dataset_.Size(), true);
+            break;
+        }
+
+        default: {
+            // Fallback to table view
+            RenderTablePreview(current_dataset_.Size());
+            break;
+        }
+    }
+
+    ImGui::EndChild();
 }
 
 void DatasetPanel::RenderPipelineContent() {

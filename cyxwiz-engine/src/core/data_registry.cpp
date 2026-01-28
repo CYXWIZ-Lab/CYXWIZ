@@ -410,7 +410,7 @@ public:
         return info;
     }
 
-    const std::vector<std::string>& GetColumnNames() const { return column_names_; }
+    std::vector<std::string> GetColumnNames() const override { return column_names_; }
 
 private:
     void LoadData() {
@@ -1221,7 +1221,7 @@ public:
         return info;
     }
 
-    const std::vector<std::string>& GetColumnNames() const { return column_names_; }
+    std::vector<std::string> GetColumnNames() const override { return column_names_; }
 
 private:
     void LoadData() {
@@ -1334,6 +1334,8 @@ public:
         return info;
     }
 
+    const void* GetRawJSON() const override { return raw_json_ ? &(*raw_json_) : nullptr; }
+
 private:
     void LoadData() {
         std::ifstream file(path_);
@@ -1346,6 +1348,9 @@ private:
             using json = nlohmann::json;
             json j;
             file >> j;
+
+            // Store raw JSON for preview
+            raw_json_ = j;
 
             std::set<int> unique_labels;
 
@@ -1423,6 +1428,7 @@ private:
     std::vector<int> labels_;
     int num_features_ = 0;
     int num_classes_ = 0;
+    std::optional<nlohmann::json> raw_json_;
 };
 
 /**
@@ -1460,6 +1466,7 @@ public:
 
     // Get raw lines for non-numeric text files
     const std::vector<std::string>& GetLines() const { return raw_lines_; }
+    const std::vector<std::string>& GetTextLines() const override { return raw_lines_; }
 
 private:
     void LoadData() {
