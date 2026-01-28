@@ -1026,12 +1026,13 @@ AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::st
     // Scripts
     if (ext == ".py" || ext == ".cyx") return AssetType::Script;
 
-    // Models
-    if (ext == ".h5" || ext == ".onnx" || ext == ".pt" || ext == ".safetensors" || ext == ".bin")
+    // Models (note: .h5 can be Keras models OR HDF5 datasets - we prioritize datasets)
+    if (ext == ".onnx" || ext == ".pt" || ext == ".safetensors" || ext == ".bin")
         return AssetType::Model;
 
-    // Datasets
-    if (ext == ".csv" || ext == ".json" || ext == ".parquet" || ext == ".arrow" || ext == ".txt")
+    // Datasets (including HDF5 files which are commonly used for ML datasets)
+    if (ext == ".csv" || ext == ".json" || ext == ".parquet" || ext == ".arrow" || ext == ".txt" ||
+        ext == ".h5" || ext == ".hdf5" || ext == ".hdf")
         return AssetType::Dataset;
 
     // Checkpoints

@@ -42,7 +42,8 @@ enum class DatasetType {
     CIFAR100,
     HuggingFace,
     Kaggle,
-    Custom
+    Custom,
+    HDF5                // HDF5 data files (.h5, .hdf5)
 };
 
 /**
@@ -198,6 +199,22 @@ struct StreamingConfig {
     size_t chunk_size = 100;           // Samples per chunk
     bool shuffle_buffer = true;
     int prefetch_threads = 2;
+};
+
+/**
+ * HDF5 dataset configuration
+ */
+struct HDF5Config {
+    std::string data_path = "";      // Path to data dataset (e.g., "/images")
+    std::string label_path = "";     // Path to labels dataset (e.g., "/labels")
+    bool auto_detect = true;         // Auto-detect data/label paths
+    bool normalize = true;           // Normalize uint8 to [0,1]
+
+    // Lazy loading options
+    bool lazy_loading = true;        // Enable lazy loading (default: true for large files)
+    size_t chunk_size = 256;         // Number of samples per chunk
+    size_t chunk_cache_size = 32;    // Max number of chunks to keep in memory
+    size_t lazy_threshold = 10000;   // Enable lazy loading if num_samples > this
 };
 
 /**
@@ -362,6 +379,8 @@ public:
     DatasetHandle LoadHuggingFace(const HuggingFaceConfig& config, const std::string& name = "");
     DatasetHandle LoadKaggle(const KaggleConfig& config, const std::string& name = "");
     DatasetHandle LoadCustom(const CustomConfig& config, const std::string& name = "");
+    DatasetHandle LoadHDF5(const std::string& path, const std::string& name = "",
+                           const HDF5Config& config = {});
 
     // Streaming dataset loading
     DatasetHandle LoadStreamingDataset(const std::string& path, const StreamingConfig& config, const std::string& name = "");

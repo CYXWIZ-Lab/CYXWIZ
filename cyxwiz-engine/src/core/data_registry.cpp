@@ -22,6 +22,13 @@
 // stb_image for image loading (implementation in stb_image_impl.cpp)
 #include <stb_image.h>
 
+// HDF5 support (optional - only if HighFive is available)
+#ifdef CYXWIZ_HAS_HDF5
+#include <highfive/H5File.hpp>
+#include <highfive/H5DataSet.hpp>
+#include <highfive/H5DataSpace.hpp>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace cyxwiz {
@@ -482,6 +489,541 @@ private:
     int num_features_ = 0;
     int num_classes_ = 0;
 };
+
+// =============================================================================
+// HDF5 Dataset Implementation
+// =============================================================================
+#ifdef CYXWIZ_HAS_HDF5
+
+/**
+ * HDF5 Dataset Implementation with Lazy Loading
+ *
+ * Features:
+ * - Lazy loading: Only loads chunks on demand
+ * - LRU cache: Keeps recently accessed chunks in memory
+ * - Memory efficient: Suitable for large datasets (100GB+)
+ * - Thread-safe: Mutex-protected file access and cache
+ *
+ * Supports common HDF5 layouts: /images+/labels, /data+/labels, /X+/y, etc.
+ */
+class HDF5Dataset : public Dataset {
+public:
+    HDF5Dataset(const std::string& path, const HDF5Config& config = {})
+        : path_(path), config_(config) {
+        Initialize();
+    }
+
+    ~HDF5Dataset() {
+        // File is closed automatically when unique_ptr is destroyed
+    }
+
+    size_t Size() const override { return num_samples_; }
+
+    std::pair<std::vector<float>, int> GetItem(size_t index) const override {
+        if (index >= num_samples_) return {{}, -1};
+
+        // Get label (labels are always in memory - they're small)
+        int label = labels_.empty() ? 0 : labels_[index];
+
+        // If not using lazy loading, return directly from memory
+        if (!use_lazy_loading_) {
+            return {eager_samples_[index], label};
+        }
+
+        // Lazy loading path: get sample from chunk cache
+        std::vector<float> sample = GetSampleFromCache(index);
+        return {std::move(sample), label};
+    }
+
+    DatasetInfo GetInfo() const override {
+        DatasetInfo info;
+        info.name = fs::path(path_).stem().string();
+        info.path = path_;
+        info.type = DatasetType::HDF5;
+        info.shape = sample_shape_;
+        info.num_samples = num_samples_;
+        info.num_classes = num_classes_;
+        info.train_count = train_indices_.size();
+        info.val_count = val_indices_.size();
+        info.test_count = test_indices_.size();
+
+        // Memory usage depends on loading mode
+        if (use_lazy_loading_) {
+            // Only cache is in memory
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            info.memory_usage = chunk_cache_.size() * config_.chunk_size * sample_size_ * sizeof(float);
+            info.cache_usage = info.memory_usage;
+            info.is_streaming = true;
+        } else {
+            info.memory_usage = num_samples_ * sample_size_ * sizeof(float);
+            info.cache_usage = 0;
+            info.is_streaming = false;
+        }
+        info.is_loaded = true;
+
+        // Cache statistics
+        info.cache_hits = cache_hits_;
+        info.cache_misses = cache_misses_;
+
+        return info;
+    }
+
+    // Check if using lazy loading
+    bool IsLazyLoading() const { return use_lazy_loading_; }
+
+    // Get cache statistics
+    size_t GetCacheHits() const { return cache_hits_; }
+    size_t GetCacheMisses() const { return cache_misses_; }
+    size_t GetCachedChunks() const {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        return chunk_cache_.size();
+    }
+
+    // Clear cache (useful for memory pressure)
+    void ClearCache() const {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        chunk_cache_.clear();
+        lru_order_.clear();
+        cache_hits_ = 0;
+        cache_misses_ = 0;
+    }
+
+private:
+    // Chunk data structure
+    struct Chunk {
+        std::vector<std::vector<float>> samples;  // samples in this chunk
+        size_t start_index;                        // first sample index
+        size_t count;                              // number of samples
+    };
+
+    bool DetectSchema(HighFive::File& file) {
+        // Common data path names (priority order)
+        const std::vector<std::string> data_names = {
+            "images", "data", "features", "X", "x", "inputs",
+            "x_train", "train/images", "train/data"
+        };
+
+        // Common label path names
+        const std::vector<std::string> label_names = {
+            "labels", "targets", "y", "Y", "outputs",
+            "y_train", "train/labels", "train/targets"
+        };
+
+        // Try to find data dataset
+        for (const auto& name : data_names) {
+            if (file.exist(name)) {
+                try {
+                    auto ds = file.getDataSet(name);
+                    auto dims = ds.getDimensions();
+                    if (dims.size() >= 1) {
+                        data_path_ = name;
+                        break;
+                    }
+                } catch (...) {}
+            }
+        }
+
+        // Try to find labels dataset
+        for (const auto& name : label_names) {
+            if (file.exist(name)) {
+                try {
+                    auto ds = file.getDataSet(name);
+                    auto dims = ds.getDimensions();
+                    if (dims.size() == 1) {
+                        label_path_ = name;
+                        break;
+                    }
+                } catch (...) {}
+            }
+        }
+
+        return !data_path_.empty();
+    }
+
+    void Initialize() {
+        try {
+            HighFive::File file(path_, HighFive::File::ReadOnly);
+
+            // Use config paths or auto-detect
+            if (config_.auto_detect || config_.data_path.empty()) {
+                if (!DetectSchema(file)) {
+                    spdlog::error("HDF5: Could not auto-detect schema in {}", path_);
+                    return;
+                }
+            } else {
+                data_path_ = config_.data_path;
+                label_path_ = config_.label_path;
+            }
+
+            // Get data dataset info
+            auto data_ds = file.getDataSet(data_path_);
+            dims_ = data_ds.getDimensions();
+            dtype_is_uint8_ = (data_ds.getDataType() == HighFive::AtomicType<uint8_t>());
+            dtype_is_float_ = (data_ds.getDataType() == HighFive::AtomicType<float>());
+            dtype_is_double_ = (data_ds.getDataType() == HighFive::AtomicType<double>());
+            dtype_is_int32_ = (data_ds.getDataType() == HighFive::AtomicType<int32_t>());
+
+            if (dims_.empty()) {
+                spdlog::error("HDF5: Empty dataset at {}", data_path_);
+                return;
+            }
+
+            num_samples_ = dims_[0];
+
+            // Calculate sample shape and size
+            sample_shape_.clear();
+            sample_size_ = 1;
+            for (size_t i = 1; i < dims_.size(); i++) {
+                sample_shape_.push_back(dims_[i]);
+                sample_size_ *= dims_[i];
+            }
+
+            // Handle 1D data (tabular)
+            if (dims_.size() == 1) {
+                sample_shape_ = {1};
+                sample_size_ = 1;
+            }
+
+            // Load labels (always load into memory - they're small)
+            LoadLabels(file);
+
+            // Decide whether to use lazy loading
+            use_lazy_loading_ = config_.lazy_loading &&
+                                (num_samples_ > config_.lazy_threshold);
+
+            if (use_lazy_loading_) {
+                // Lazy loading: just store metadata, don't load data
+                spdlog::info("HDF5 dataset initialized (LAZY): {} samples, shape [{}], {} classes, "
+                             "chunk_size={}, cache_size={}",
+                    num_samples_, GetShapeString(), num_classes_,
+                    config_.chunk_size, config_.chunk_cache_size);
+            } else {
+                // Eager loading: load all data into memory
+                LoadAllData(file);
+                spdlog::info("HDF5 dataset loaded (EAGER): {} samples, shape [{}], {} classes",
+                    num_samples_, GetShapeString(), num_classes_);
+            }
+
+            if (num_samples_ > 0) {
+                SetSplit(SplitConfig{});
+            }
+
+        } catch (const std::exception& e) {
+            spdlog::error("HDF5 initialization error: {}", e.what());
+        }
+    }
+
+    void LoadLabels(HighFive::File& file) {
+        std::set<int> unique_labels;
+
+        if (!label_path_.empty() && file.exist(label_path_)) {
+            auto label_ds = file.getDataSet(label_path_);
+            auto label_dtype = label_ds.getDataType();
+
+            if (label_dtype == HighFive::AtomicType<int32_t>()) {
+                label_ds.read(labels_);
+            } else if (label_dtype == HighFive::AtomicType<int64_t>()) {
+                std::vector<int64_t> labels64;
+                label_ds.read(labels64);
+                labels_.resize(labels64.size());
+                for (size_t i = 0; i < labels64.size(); i++) {
+                    labels_[i] = static_cast<int>(labels64[i]);
+                }
+            } else if (label_dtype == HighFive::AtomicType<uint8_t>()) {
+                std::vector<uint8_t> labels8;
+                label_ds.read(labels8);
+                labels_.resize(labels8.size());
+                for (size_t i = 0; i < labels8.size(); i++) {
+                    labels_[i] = static_cast<int>(labels8[i]);
+                }
+            } else if (label_dtype == HighFive::AtomicType<float>()) {
+                std::vector<float> labelsf;
+                label_ds.read(labelsf);
+                labels_.resize(labelsf.size());
+                for (size_t i = 0; i < labelsf.size(); i++) {
+                    labels_[i] = static_cast<int>(labelsf[i]);
+                }
+            }
+
+            for (int label : labels_) {
+                unique_labels.insert(label);
+            }
+        }
+
+        num_classes_ = unique_labels.empty() ? 0 : static_cast<int>(unique_labels.size());
+    }
+
+    void LoadAllData(HighFive::File& file) {
+        auto data_ds = file.getDataSet(data_path_);
+        eager_samples_.resize(num_samples_);
+
+        float scale = (config_.normalize && dtype_is_uint8_) ? 1.0f / 255.0f : 1.0f;
+
+        // Build selection parameters
+        std::vector<size_t> offset(dims_.size(), 0);
+        std::vector<size_t> count(dims_.size(), 1);
+        for (size_t d = 1; d < dims_.size(); d++) {
+            count[d] = dims_[d];
+        }
+
+        for (size_t i = 0; i < num_samples_; i++) {
+            offset[0] = i;
+            eager_samples_[i].resize(sample_size_);
+            ReadSampleInto(data_ds, offset, count, eager_samples_[i], scale);
+        }
+    }
+
+    void ReadSampleInto(HighFive::DataSet& data_ds,
+                        const std::vector<size_t>& offset,
+                        const std::vector<size_t>& count,
+                        std::vector<float>& out,
+                        float scale) const {
+        auto selection = data_ds.select(offset, count);
+
+        if (dims_.size() == 2) {
+            // 2D: [N, features]
+            if (dtype_is_float_) {
+                selection.read(out);
+            } else if (dtype_is_uint8_) {
+                std::vector<uint8_t> raw(sample_size_);
+                selection.read(raw);
+                for (size_t j = 0; j < sample_size_; j++) {
+                    out[j] = static_cast<float>(raw[j]) * scale;
+                }
+            } else if (dtype_is_double_) {
+                std::vector<double> raw(sample_size_);
+                selection.read(raw);
+                for (size_t j = 0; j < sample_size_; j++) {
+                    out[j] = static_cast<float>(raw[j]);
+                }
+            } else if (dtype_is_int32_) {
+                std::vector<int32_t> raw(sample_size_);
+                selection.read(raw);
+                for (size_t j = 0; j < sample_size_; j++) {
+                    out[j] = static_cast<float>(raw[j]);
+                }
+            }
+        } else if (dims_.size() == 3) {
+            // 3D: [N, H, W]
+            ReadAndFlatten3D(selection, out, scale);
+        } else if (dims_.size() == 4) {
+            // 4D: [N, H, W, C]
+            ReadAndFlatten4D(selection, out, scale);
+        }
+    }
+
+    void ReadAndFlatten3D(HighFive::Selection& selection, std::vector<float>& out, float scale) const {
+        size_t k = 0;
+        if (dtype_is_uint8_) {
+            std::vector<std::vector<std::vector<uint8_t>>> data_3d;
+            selection.read(data_3d);
+            for (const auto& plane : data_3d) {
+                for (const auto& row : plane) {
+                    for (auto val : row) {
+                        out[k++] = static_cast<float>(val) * scale;
+                    }
+                }
+            }
+        } else if (dtype_is_float_) {
+            std::vector<std::vector<std::vector<float>>> data_3d;
+            selection.read(data_3d);
+            for (const auto& plane : data_3d) {
+                for (const auto& row : plane) {
+                    for (auto val : row) {
+                        out[k++] = val;
+                    }
+                }
+            }
+        } else if (dtype_is_double_) {
+            std::vector<std::vector<std::vector<double>>> data_3d;
+            selection.read(data_3d);
+            for (const auto& plane : data_3d) {
+                for (const auto& row : plane) {
+                    for (auto val : row) {
+                        out[k++] = static_cast<float>(val);
+                    }
+                }
+            }
+        } else if (dtype_is_int32_) {
+            std::vector<std::vector<std::vector<int32_t>>> data_3d;
+            selection.read(data_3d);
+            for (const auto& plane : data_3d) {
+                for (const auto& row : plane) {
+                    for (auto val : row) {
+                        out[k++] = static_cast<float>(val);
+                    }
+                }
+            }
+        }
+    }
+
+    void ReadAndFlatten4D(HighFive::Selection& selection, std::vector<float>& out, float scale) const {
+        size_t k = 0;
+        if (dtype_is_uint8_) {
+            std::vector<std::vector<std::vector<std::vector<uint8_t>>>> data_4d;
+            selection.read(data_4d);
+            for (const auto& vol : data_4d) {
+                for (const auto& plane : vol) {
+                    for (const auto& row : plane) {
+                        for (auto val : row) {
+                            out[k++] = static_cast<float>(val) * scale;
+                        }
+                    }
+                }
+            }
+        } else if (dtype_is_float_) {
+            std::vector<std::vector<std::vector<std::vector<float>>>> data_4d;
+            selection.read(data_4d);
+            for (const auto& vol : data_4d) {
+                for (const auto& plane : vol) {
+                    for (const auto& row : plane) {
+                        for (auto val : row) {
+                            out[k++] = val;
+                        }
+                    }
+                }
+            }
+        } else if (dtype_is_double_) {
+            std::vector<std::vector<std::vector<std::vector<double>>>> data_4d;
+            selection.read(data_4d);
+            for (const auto& vol : data_4d) {
+                for (const auto& plane : vol) {
+                    for (const auto& row : plane) {
+                        for (auto val : row) {
+                            out[k++] = static_cast<float>(val);
+                        }
+                    }
+                }
+            }
+        } else if (dtype_is_int32_) {
+            std::vector<std::vector<std::vector<std::vector<int32_t>>>> data_4d;
+            selection.read(data_4d);
+            for (const auto& vol : data_4d) {
+                for (const auto& plane : vol) {
+                    for (const auto& row : plane) {
+                        for (auto val : row) {
+                            out[k++] = static_cast<float>(val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::vector<float> GetSampleFromCache(size_t index) const {
+        size_t chunk_idx = index / config_.chunk_size;
+        size_t local_idx = index % config_.chunk_size;
+
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+
+        // Check if chunk is in cache
+        auto it = chunk_cache_.find(chunk_idx);
+        if (it != chunk_cache_.end()) {
+            // Cache hit - update LRU order
+            cache_hits_++;
+            lru_order_.remove(chunk_idx);
+            lru_order_.push_front(chunk_idx);
+            return it->second.samples[local_idx];
+        }
+
+        // Cache miss - need to load chunk
+        cache_misses_++;
+
+        // Evict oldest chunks if cache is full
+        while (chunk_cache_.size() >= config_.chunk_cache_size && !lru_order_.empty()) {
+            size_t evict_idx = lru_order_.back();
+            lru_order_.pop_back();
+            chunk_cache_.erase(evict_idx);
+        }
+
+        // Load chunk from file
+        Chunk chunk = LoadChunk(chunk_idx);
+        chunk_cache_[chunk_idx] = std::move(chunk);
+        lru_order_.push_front(chunk_idx);
+
+        return chunk_cache_[chunk_idx].samples[local_idx];
+    }
+
+    Chunk LoadChunk(size_t chunk_idx) const {
+        Chunk chunk;
+        chunk.start_index = chunk_idx * config_.chunk_size;
+        chunk.count = std::min(config_.chunk_size, num_samples_ - chunk.start_index);
+
+        float scale = (config_.normalize && dtype_is_uint8_) ? 1.0f / 255.0f : 1.0f;
+
+        try {
+            // Open file for reading
+            HighFive::File file(path_, HighFive::File::ReadOnly);
+            auto data_ds = file.getDataSet(data_path_);
+
+            chunk.samples.resize(chunk.count);
+
+            // Build selection parameters for the chunk
+            std::vector<size_t> offset(dims_.size(), 0);
+            std::vector<size_t> count(dims_.size(), 1);
+            for (size_t d = 1; d < dims_.size(); d++) {
+                count[d] = dims_[d];
+            }
+
+            for (size_t i = 0; i < chunk.count; i++) {
+                offset[0] = chunk.start_index + i;
+                chunk.samples[i].resize(sample_size_);
+                ReadSampleInto(data_ds, offset, count, chunk.samples[i], scale);
+            }
+
+        } catch (const std::exception& e) {
+            spdlog::error("HDF5: Failed to load chunk {}: {}", chunk_idx, e.what());
+        }
+
+        return chunk;
+    }
+
+    std::string GetShapeString() const {
+        std::string s;
+        for (size_t i = 0; i < sample_shape_.size(); i++) {
+            if (i > 0) s += ", ";
+            s += std::to_string(sample_shape_[i]);
+        }
+        return s;
+    }
+
+    // Configuration
+    std::string path_;
+    HDF5Config config_;
+    std::string data_path_;
+    std::string label_path_;
+
+    // Dataset metadata
+    std::vector<size_t> dims_;
+    std::vector<size_t> sample_shape_;
+    size_t num_samples_ = 0;
+    size_t sample_size_ = 0;
+    int num_classes_ = 0;
+
+    // Data type flags
+    bool dtype_is_uint8_ = false;
+    bool dtype_is_float_ = false;
+    bool dtype_is_double_ = false;
+    bool dtype_is_int32_ = false;
+
+    // Loading mode
+    bool use_lazy_loading_ = false;
+
+    // Eager loading storage (used when lazy_loading is disabled)
+    std::vector<std::vector<float>> eager_samples_;
+
+    // Labels (always loaded into memory)
+    std::vector<int> labels_;
+
+    // Lazy loading: chunk cache with LRU eviction
+    mutable std::mutex cache_mutex_;
+    mutable std::unordered_map<size_t, Chunk> chunk_cache_;
+    mutable std::list<size_t> lru_order_;  // front = most recent, back = oldest
+    mutable size_t cache_hits_ = 0;
+    mutable size_t cache_misses_ = 0;
+};
+
+#endif // CYXWIZ_HAS_HDF5
 
 /**
  * TSV Dataset Implementation (Tab-Separated Values)
@@ -2699,6 +3241,8 @@ DatasetHandle DataRegistry::LoadDataset(const std::string& path, const std::stri
             return LoadTXT(path, name);
         case DatasetType::ImageFolder:
             return LoadImageFolder(path, name);
+        case DatasetType::HDF5:
+            return LoadHDF5(path, name);
         default:
             spdlog::error("Unknown dataset type for path: {}", path);
             return DatasetHandle();
@@ -3463,6 +4007,43 @@ DatasetHandle DataRegistry::LoadCustom(const CustomConfig& config, const std::st
     }
 }
 
+DatasetHandle DataRegistry::LoadHDF5(const std::string& path, const std::string& name,
+                                      const HDF5Config& config) {
+#ifdef CYXWIZ_HAS_HDF5
+    std::string base_name = name.empty() ? fs::path(path).stem().string() : name;
+    std::string unique_name = GenerateUniqueName(base_name);
+
+    try {
+        auto dataset = std::make_shared<HDF5Dataset>(path, config);
+        if (dataset->Size() == 0) {
+            spdlog::warn("HDF5 dataset is empty: {}", path);
+            return DatasetHandle();
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            datasets_[unique_name] = dataset;
+        }
+
+        auto handle = DatasetHandle(dataset, unique_name);
+
+        if (on_loaded_) {
+            on_loaded_(unique_name, handle.GetInfo());
+        }
+
+        spdlog::info("Registered HDF5 dataset '{}': {} samples", unique_name, dataset->Size());
+        return handle;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to load HDF5 dataset: {}", e.what());
+        return DatasetHandle();
+    }
+#else
+    spdlog::error("HDF5 support not compiled (HighFive library missing)");
+    return DatasetHandle();
+#endif
+}
+
 void DataRegistry::UnloadDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -3681,6 +4262,7 @@ DatasetType DataRegistry::DetectType(const std::string& path) {
         if (ext == ".tsv") return DatasetType::TSV;
         if (ext == ".json") return DatasetType::JSON;
         if (ext == ".txt") return DatasetType::TXT;
+        if (ext == ".h5" || ext == ".hdf5" || ext == ".hdf") return DatasetType::HDF5;
     }
 
     return DatasetType::None;
@@ -3702,6 +4284,7 @@ std::string DataRegistry::TypeToString(DatasetType type) {
         case DatasetType::HuggingFace: return "HuggingFace";
         case DatasetType::Kaggle: return "Kaggle";
         case DatasetType::Custom: return "Custom";
+        case DatasetType::HDF5: return "HDF5";
         default: return "Unknown";
     }
 }
