@@ -5,6 +5,7 @@
 #include "image_preview.h"
 #include "markdown_preview.h"
 #include "hex_preview.h"
+#include "hdf5_preview.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -23,6 +24,7 @@ PreviewRenderer::PreviewRenderer()
     , image_renderer_(std::make_unique<ImagePreviewRenderer>())
     , markdown_renderer_(std::make_unique<MarkdownPreviewRenderer>())
     , hex_renderer_(std::make_unique<HexPreviewRenderer>())
+    , hdf5_renderer_(std::make_unique<HDF5PreviewRenderer>())
 {}
 
 PreviewRenderer::~PreviewRenderer() = default;
@@ -71,9 +73,9 @@ PreviewContentType PreviewRenderer::DetectFileType(const std::string& filepath) 
         ext == "" /* no extension */)
         return PreviewContentType::PlainText;
 
-    // HDF5 (special binary)
+    // HDF5 files (tree view with dataset info)
     if (ext == ".h5" || ext == ".hdf5" || ext == ".hdf")
-        return PreviewContentType::HexDump;  // Show hex for raw HDF5 files
+        return PreviewContentType::HDF5;
 
     // Binary/unknown -> hex dump
     return PreviewContentType::HexDump;
@@ -119,6 +121,7 @@ const char* PreviewRenderer::GetTypeName(PreviewContentType type) {
         case PreviewContentType::SyntaxText:     return "Source Code";
         case PreviewContentType::Markdown:       return "Markdown";
         case PreviewContentType::HexDump:        return "Binary";
+        case PreviewContentType::HDF5:           return "HDF5";
         case PreviewContentType::DatasetImage:   return "Image Dataset";
         case PreviewContentType::DatasetTabular: return "Tabular Dataset";
         case PreviewContentType::DatasetJSON:    return "JSON Dataset";
@@ -231,6 +234,11 @@ void PreviewRenderer::RenderFilePreview(const std::string& filepath) {
         case PreviewContentType::HexDump:
             hex_renderer_->LoadFile(filepath);
             hex_renderer_->Render();
+            break;
+
+        case PreviewContentType::HDF5:
+            hdf5_renderer_->LoadFile(filepath);
+            hdf5_renderer_->Render();
             break;
 
         default:

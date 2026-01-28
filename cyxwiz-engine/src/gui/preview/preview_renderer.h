@@ -19,6 +19,7 @@ enum class PreviewContentType {
     SyntaxText,     // .py, .cpp, .xml, .yaml - syntax highlighted
     Markdown,       // .md - rendered formatted
     HexDump,        // Binary/unknown files
+    HDF5,           // HDF5 files (.h5, .hdf5) - tree view
     // Dataset types
     DatasetImage,   // Loaded image dataset
     DatasetTabular, // Loaded tabular dataset
@@ -33,6 +34,7 @@ class TablePreviewRenderer;
 class ImagePreviewRenderer;
 class MarkdownPreviewRenderer;
 class HexPreviewRenderer;
+class HDF5PreviewRenderer;
 
 /**
  * Central preview dispatcher
@@ -72,6 +74,7 @@ private:
     std::unique_ptr<ImagePreviewRenderer> image_renderer_;
     std::unique_ptr<MarkdownPreviewRenderer> markdown_renderer_;
     std::unique_ptr<HexPreviewRenderer> hex_renderer_;
+    std::unique_ptr<HDF5PreviewRenderer> hdf5_renderer_;
 
     // File cache
     std::string current_path_;

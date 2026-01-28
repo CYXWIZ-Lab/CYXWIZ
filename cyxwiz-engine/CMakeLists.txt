@@ -237,6 +237,7 @@ set(ENGINE_SOURCES
     src/gui/preview/image_preview.cpp
     src/gui/preview/markdown_preview.cpp
     src/gui/preview/hex_preview.cpp
+    src/gui/preview/hdf5_preview.cpp
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.cpp
     # ImNodes (visual node editor)
