@@ -4208,6 +4208,181 @@ DatasetHandle DataRegistry::LoadHDF5(const std::string& path, const std::string&
 #endif
 }
 
+bool DataRegistry::ExportHDF5(const std::string& name, const std::string& filepath,
+                               const HDF5ExportConfig& config) {
+    auto handle = GetDataset(name);
+    if (!handle.IsValid()) {
+        spdlog::error("ExportHDF5: Dataset '{}' not found", name);
+        return false;
+    }
+    return ExportHDF5(handle, filepath, config);
+}
+
+bool DataRegistry::ExportHDF5(DatasetHandle handle, const std::string& filepath,
+                               const HDF5ExportConfig& config) {
+#ifdef CYXWIZ_HAS_HDF5
+    if (!handle.IsValid()) {
+        spdlog::error("ExportHDF5: Invalid dataset handle");
+        return false;
+    }
+
+    try {
+        auto info = handle.GetInfo();
+        spdlog::info("Exporting dataset to HDF5: {} ({} samples)", filepath, info.num_samples);
+
+        // Create HDF5 file
+        HighFive::File file(filepath, HighFive::File::Overwrite);
+
+        // Get sample shape
+        std::vector<size_t> sample_shape = info.shape;
+        if (sample_shape.empty()) {
+            sample_shape = {1};  // Scalar samples
+        }
+
+        // Calculate total data shape: [N, ...sample_shape]
+        std::vector<size_t> data_shape;
+        data_shape.push_back(info.num_samples);
+
+        // Handle NCHW transpose if requested
+        bool do_nchw = config.store_as_nchw && sample_shape.size() == 3;
+        if (do_nchw) {
+            // Input is NHWC [H, W, C], output should be NCHW [C, H, W]
+            data_shape.push_back(sample_shape[2]);  // C
+            data_shape.push_back(sample_shape[0]);  // H
+            data_shape.push_back(sample_shape[1]);  // W
+        } else {
+            for (auto d : sample_shape) {
+                data_shape.push_back(d);
+            }
+        }
+
+        // Set up chunking
+        std::vector<size_t> chunk_dims = data_shape;
+        if (config.chunked && info.num_samples > config.chunk_samples) {
+            chunk_dims[0] = std::min(config.chunk_samples, info.num_samples);
+        }
+
+        // Create property list for compression and chunking
+        HighFive::DataSetCreateProps props;
+        if (config.chunked) {
+            props.add(HighFive::Chunking(chunk_dims));
+        }
+        if (config.compress && config.chunked) {
+            props.add(HighFive::Deflate(config.compression_level));
+        }
+
+        // Calculate sample size
+        size_t sample_size = 1;
+        for (auto d : sample_shape) {
+            sample_size *= d;
+        }
+
+        // Read all data from dataset
+        spdlog::info("Reading {} samples from dataset...", info.num_samples);
+        std::vector<float> all_data;
+        all_data.reserve(info.num_samples * sample_size);
+
+        std::vector<int> all_labels;
+        all_labels.reserve(info.num_samples);
+
+        for (size_t i = 0; i < info.num_samples; i++) {
+            auto [data, label] = handle.GetSample(i);
+
+            // Transpose NHWC to NCHW if requested
+            if (do_nchw && sample_shape.size() == 3) {
+                size_t H = sample_shape[0];
+                size_t W = sample_shape[1];
+                size_t C = sample_shape[2];
+                std::vector<float> transposed(sample_size);
+
+                // NHWC [h, w, c] -> NCHW [c, h, w]
+                for (size_t h = 0; h < H; h++) {
+                    for (size_t w = 0; w < W; w++) {
+                        for (size_t c = 0; c < C; c++) {
+                            size_t src_idx = h * W * C + w * C + c;  // NHWC
+                            size_t dst_idx = c * H * W + h * W + w;  // NCHW
+                            transposed[dst_idx] = data[src_idx];
+                        }
+                    }
+                }
+                all_data.insert(all_data.end(), transposed.begin(), transposed.end());
+            } else {
+                all_data.insert(all_data.end(), data.begin(), data.end());
+            }
+
+            all_labels.push_back(label);
+
+            if ((i + 1) % 1000 == 0) {
+                spdlog::info("Read {}/{} samples", i + 1, info.num_samples);
+            }
+        }
+
+        // Create and write data dataset
+        if (config.store_as_uint8) {
+            // Convert float [0,1] to uint8 [0,255]
+            std::vector<uint8_t> uint8_data(all_data.size());
+            for (size_t i = 0; i < all_data.size(); i++) {
+                float val = std::clamp(all_data[i], 0.0f, 1.0f) * 255.0f;
+                uint8_data[i] = static_cast<uint8_t>(val);
+            }
+
+            auto data_ds = file.createDataSet<uint8_t>(config.data_path,
+                HighFive::DataSpace(data_shape), props);
+            data_ds.write_raw(uint8_data.data());
+            spdlog::info("Wrote data as uint8 to {}", config.data_path);
+        } else {
+            auto data_ds = file.createDataSet<float>(config.data_path,
+                HighFive::DataSpace(data_shape), props);
+            data_ds.write_raw(all_data.data());
+            spdlog::info("Wrote data as float32 to {}", config.data_path);
+        }
+
+        // Create and write labels dataset
+        auto label_ds = file.createDataSet<int>(config.label_path,
+            HighFive::DataSpace({info.num_samples}));
+        label_ds.write(all_labels);
+        spdlog::info("Wrote {} labels to {}", info.num_samples, config.label_path);
+
+        // Write metadata
+        if (config.include_metadata) {
+            auto root = file.getGroup("/");
+
+            // Number of samples
+            root.createAttribute("num_samples", info.num_samples);
+
+            // Number of classes
+            root.createAttribute("num_classes", info.num_classes);
+
+            // Sample shape
+            if (!sample_shape.empty()) {
+                root.createAttribute("sample_shape", sample_shape);
+            }
+
+            // Data format
+            std::string format = do_nchw ? "NCHW" : "NHWC";
+            root.createAttribute("data_format", format);
+
+            // Class names if provided
+            if (!config.class_names.empty()) {
+                root.createAttribute("class_names", config.class_names);
+            }
+
+            spdlog::info("Wrote metadata attributes");
+        }
+
+        spdlog::info("Successfully exported dataset to: {}", filepath);
+        return true;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to export HDF5 dataset: {}", e.what());
+        return false;
+    }
+#else
+    spdlog::error("HDF5 support not compiled (HighFive library missing)");
+    return false;
+#endif
+}
+
 void DataRegistry::UnloadDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
 

@@ -227,6 +227,30 @@ struct HDF5Config {
 };
 
 /**
+ * HDF5 export configuration
+ */
+struct HDF5ExportConfig {
+    std::string data_path = "/images";   // Path to store data dataset
+    std::string label_path = "/labels";  // Path to store labels dataset
+
+    // Compression options
+    bool compress = true;                // Enable GZIP compression
+    int compression_level = 4;           // GZIP level (1-9, higher = more compression)
+
+    // Chunking options
+    bool chunked = true;                 // Enable chunked storage
+    size_t chunk_samples = 256;          // Number of samples per chunk
+
+    // Data type options
+    bool store_as_uint8 = false;         // Store as uint8 (assumes data is [0,1], multiplies by 255)
+    bool store_as_nchw = false;          // Transpose NHWC to NCHW for PyTorch compatibility
+
+    // Metadata
+    bool include_metadata = true;        // Include class names, split indices, etc.
+    std::vector<std::string> class_names; // Optional class names to store
+};
+
+/**
  * HuggingFace dataset configuration
  */
 struct HuggingFaceConfig {
@@ -445,6 +469,12 @@ public:
     bool ImportConfig(const std::string& filepath, std::string& out_name, SplitConfig& out_split);
     static std::string SerializeConfig(const DatasetInfo& info, const SplitConfig& split);
     static bool DeserializeConfig(const std::string& json_str, DatasetInfo& info, SplitConfig& split);
+
+    // HDF5 export
+    bool ExportHDF5(const std::string& name, const std::string& filepath,
+                    const HDF5ExportConfig& config = {});
+    bool ExportHDF5(DatasetHandle handle, const std::string& filepath,
+                    const HDF5ExportConfig& config = {});
 
     // Dataset versioning
     struct DatasetVersion {
