@@ -70,6 +70,7 @@ set(ENGINE_SOURCES
     src/utils/dataset_analyzer.cpp
     src/utils/image_quality_analyzer.cpp
     src/utils/image_deduplicator.cpp
+    src/utils/hdf5_browser.cpp
     # Dataset utilities (Phase 2)
     src/utils/segmentation_utils.cpp
     src/utils/shape_utils.cpp
@@ -735,3 +736,6 @@ endif()
 set_target_properties(test_opencv_integration PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# HDF5 Loading test - run via engine's Python console or dedicated test runner
+# The HDF5Dataset class is tested as part of cyxwiz-engine

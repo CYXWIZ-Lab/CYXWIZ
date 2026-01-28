@@ -18,6 +18,7 @@
 #include "../../utils/dataset_analyzer.h"
 #include "../../utils/image_quality_analyzer.h"
 #include "../../utils/image_deduplicator.h"
+#include "../../utils/hdf5_browser.h"
 
 namespace cyxwiz {
     class Tensor;
@@ -70,6 +71,7 @@ public:
 
     // Async dataset loading (non-blocking versions)
     void LoadCSVDatasetAsync(const std::string& path);
+    void LoadHDF5DatasetAsync(const std::string& path);
     void LoadImageDatasetAsync(const std::string& path);
     void LoadMNISTDatasetAsync(const std::string& path);
     void LoadCIFAR10DatasetAsync(const std::string& path);
@@ -179,6 +181,9 @@ private:
     void ShowFileBrowser();
     void ShowFolderBrowser(char* buffer, size_t buffer_size);
     void ShowCSVFileBrowser();
+    void RenderHDF5ConfigDialog();
+    void ScanHDF5File(const std::string& path);
+    void UpdateHDF5Preview();
 
     // Data preprocessing
     void ApplySplit();
@@ -237,6 +242,20 @@ private:
     char csv_path_buffer_[512] = "";         // CSV file path for ImageCSV
     char hf_dataset_name_[256] = "mnist";    // HuggingFace dataset name
     char kaggle_dataset_slug_[256] = "titanic";  // Kaggle dataset slug
+    char hdf5_data_path_[128] = "";          // HDF5 data dataset path (auto-detect if empty)
+    char hdf5_label_path_[128] = "";         // HDF5 labels dataset path (auto-detect if empty)
+    bool hdf5_normalize_ = true;             // Normalize uint8 to [0,1]
+    bool show_hdf5_dialog_ = false;          // Show HDF5 configuration dialog
+    bool hdf5_file_scanned_ = false;         // Has the file been scanned?
+    std::string hdf5_dialog_path_;           // Path being configured in dialog
+    int hdf5_selected_data_idx_ = -1;        // Selected data dataset in list
+    int hdf5_selected_label_idx_ = -1;       // Selected label dataset in list
+    std::vector<std::string> hdf5_dataset_paths_;  // List of dataset paths in file
+    std::vector<std::string> hdf5_dataset_info_;   // Dataset info strings for display
+    std::vector<float> hdf5_preview_data_;   // Preview data for selected dataset
+    std::vector<size_t> hdf5_preview_shape_; // Shape of preview samples
+    unsigned int hdf5_preview_texture_ = 0;  // Preview texture ID
+    int hdf5_preview_tex_w_ = 0, hdf5_preview_tex_h_ = 0;
     cyxwiz::DatasetType selected_type_ = cyxwiz::DatasetType::None;
     int preview_sample_idx_ = 0;
     int selected_dataset_index_ = -1;  // For dataset list

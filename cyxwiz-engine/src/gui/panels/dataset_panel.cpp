@@ -13,6 +13,7 @@
 #include "job.pb.h"
 #include <imgui.h>
 #include <implot.h>
+#include <glad/glad.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -614,15 +615,16 @@ void DatasetPanel::RenderDatasetSelection() {
     ImGui::Spacing();
 
     // Dataset type selection (merged Images + CSV into single "Images" option)
-    const char* types[] = {"CSV", "Images", "MNIST", "CIFAR-10", "HuggingFace", "Kaggle", "Custom"};
+    const char* types[] = {"CSV", "Images", "MNIST", "CIFAR-10", "HDF5", "HuggingFace", "Kaggle", "Custom"};
     int current_type = 0;
     if (selected_type_ == cyxwiz::DatasetType::CSV) current_type = 0;
     else if (selected_type_ == cyxwiz::DatasetType::ImageFolder || selected_type_ == cyxwiz::DatasetType::ImageCSV) current_type = 1;
     else if (selected_type_ == cyxwiz::DatasetType::MNIST) current_type = 2;
     else if (selected_type_ == cyxwiz::DatasetType::CIFAR10) current_type = 3;
-    else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) current_type = 4;
-    else if (selected_type_ == cyxwiz::DatasetType::Kaggle) current_type = 5;
-    else if (selected_type_ == cyxwiz::DatasetType::Custom) current_type = 6;
+    else if (selected_type_ == cyxwiz::DatasetType::HDF5) current_type = 4;
+    else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) current_type = 5;
+    else if (selected_type_ == cyxwiz::DatasetType::Kaggle) current_type = 6;
+    else if (selected_type_ == cyxwiz::DatasetType::Custom) current_type = 7;
 
     ImGui::SetNextItemWidth(-1);
     if (ImGui::Combo("##Type", &current_type, types, IM_ARRAYSIZE(types))) {
@@ -631,16 +633,82 @@ void DatasetPanel::RenderDatasetSelection() {
             case 1: selected_type_ = cyxwiz::DatasetType::ImageCSV; break;  // Unified Images type
             case 2: selected_type_ = cyxwiz::DatasetType::MNIST; break;
             case 3: selected_type_ = cyxwiz::DatasetType::CIFAR10; break;
-            case 4: selected_type_ = cyxwiz::DatasetType::HuggingFace; break;
-            case 5: selected_type_ = cyxwiz::DatasetType::Kaggle; break;
-            case 6: selected_type_ = cyxwiz::DatasetType::Custom; break;
+            case 4: selected_type_ = cyxwiz::DatasetType::HDF5; break;
+            case 5: selected_type_ = cyxwiz::DatasetType::HuggingFace; break;
+            case 6: selected_type_ = cyxwiz::DatasetType::Kaggle; break;
+            case 7: selected_type_ = cyxwiz::DatasetType::Custom; break;
         }
     }
 
     ImGui::Spacing();
 
     // Show different input based on type
-    if (selected_type_ == cyxwiz::DatasetType::HuggingFace) {
+    if (selected_type_ == cyxwiz::DatasetType::HDF5) {
+        // HDF5 file input
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "HDF5 FILE");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
+        ImGui::InputText("##HDF5Path", file_path_buffer_, sizeof(file_path_buffer_));
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN "##HDF5Browse", ImVec2(70, 0))) {
+            ShowFileBrowser();
+        }
+
+        ImGui::Spacing();
+
+        // Browse Structure button - opens dialog to explore HDF5 file
+        std::string current_path = file_path_buffer_;
+        bool can_browse = !current_path.empty() && std::filesystem::exists(current_path);
+
+        if (!can_browse) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_FA_SITEMAP " Browse Structure...", ImVec2(-1, 0))) {
+            hdf5_dialog_path_ = current_path;
+            hdf5_file_scanned_ = false;
+            hdf5_selected_data_idx_ = -1;
+            hdf5_selected_label_idx_ = -1;
+            show_hdf5_dialog_ = true;
+        }
+        if (!can_browse) ImGui::EndDisabled();
+
+        ImGui::Spacing();
+
+        // Show selected paths
+        if (strlen(hdf5_data_path_) > 0 || strlen(hdf5_label_path_) > 0) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+            ImGui::BeginChild("##HDF5Selection", ImVec2(-1, 60), true);
+
+            if (strlen(hdf5_data_path_) > 0) {
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), ICON_FA_DATABASE " Data:");
+                ImGui::SameLine();
+                ImGui::Text("%s", hdf5_data_path_);
+            }
+            if (strlen(hdf5_label_path_) > 0) {
+                ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), ICON_FA_TAGS " Labels:");
+                ImGui::SameLine();
+                ImGui::Text("%s", hdf5_label_path_);
+            }
+
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
+
+        // Options
+        ImGui::Checkbox("Normalize uint8 to [0,1]", &hdf5_normalize_);
+
+        ImGui::Spacing();
+
+        // Load button
+        bool can_load = can_browse;
+        if (!can_load) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_FA_DOWNLOAD " Load HDF5", ImVec2(120, 0))) {
+            if (!current_path.empty()) {
+                LoadHDF5DatasetAsync(current_path);
+            }
+        }
+        if (!can_load) ImGui::EndDisabled();
+
+        // Render the HDF5 config dialog if open
+        RenderHDF5ConfigDialog();
+    } else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) {
         // HuggingFace dataset name input
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "DATASET NAME");
         ImGui::SetNextItemWidth(-1);
@@ -1737,6 +1805,322 @@ void DatasetPanel::ShowCSVFileBrowser() {
     }
 }
 
+void DatasetPanel::ScanHDF5File(const std::string& path) {
+    hdf5_dataset_paths_.clear();
+    hdf5_dataset_info_.clear();
+
+    auto datasets = cyxwiz::HDF5Browser::ListDatasets(path);
+
+    for (const auto& ds : datasets) {
+        hdf5_dataset_paths_.push_back(ds.path);
+
+        // Build info string
+        std::string info = ds.path + "  " + ds.GetShapeString() + "  " + ds.dtype;
+        if (ds.size_bytes > 0) {
+            info += "  (" + ds.GetSizeString() + ")";
+        }
+        hdf5_dataset_info_.push_back(info);
+    }
+
+    // Auto-select likely data and label datasets
+    std::string auto_data, auto_label;
+    if (cyxwiz::HDF5Browser::AutoDetectPaths(path, auto_data, auto_label)) {
+        for (size_t i = 0; i < hdf5_dataset_paths_.size(); i++) {
+            if (hdf5_dataset_paths_[i] == auto_data) {
+                hdf5_selected_data_idx_ = static_cast<int>(i);
+            }
+            if (hdf5_dataset_paths_[i] == auto_label) {
+                hdf5_selected_label_idx_ = static_cast<int>(i);
+            }
+        }
+    }
+
+    hdf5_file_scanned_ = true;
+}
+
+void DatasetPanel::UpdateHDF5Preview() {
+    if (hdf5_selected_data_idx_ < 0 ||
+        hdf5_selected_data_idx_ >= static_cast<int>(hdf5_dataset_paths_.size())) {
+        return;
+    }
+
+    const std::string& data_path = hdf5_dataset_paths_[hdf5_selected_data_idx_];
+
+    // Read preview samples
+    if (!cyxwiz::HDF5Browser::ReadPreviewSamples(
+            hdf5_dialog_path_, data_path, 4,
+            hdf5_preview_data_, hdf5_preview_shape_)) {
+        return;
+    }
+
+    // If image data, create a preview texture
+    if (hdf5_preview_shape_.size() >= 2) {
+        int h = static_cast<int>(hdf5_preview_shape_[0]);
+        int w = static_cast<int>(hdf5_preview_shape_[1]);
+        int c = hdf5_preview_shape_.size() >= 3 ? static_cast<int>(hdf5_preview_shape_[2]) : 1;
+
+        // Only create texture for reasonable sizes
+        if (w >= 8 && w <= 512 && h >= 8 && h <= 512) {
+            // Delete old texture
+            if (hdf5_preview_texture_ != 0) {
+                glDeleteTextures(1, &hdf5_preview_texture_);
+                hdf5_preview_texture_ = 0;
+            }
+
+            // Create new texture for first sample
+            glGenTextures(1, &hdf5_preview_texture_);
+            glBindTexture(GL_TEXTURE_2D, hdf5_preview_texture_);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+            // Convert to RGBA
+            std::vector<unsigned char> rgba(w * h * 4);
+            size_t sample_size = w * h * c;
+
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int idx = (y * w + x);
+                    if (c == 1) {
+                        // Grayscale
+                        unsigned char v = static_cast<unsigned char>(
+                            std::clamp(hdf5_preview_data_[idx] * 255.0f, 0.0f, 255.0f));
+                        rgba[idx * 4 + 0] = v;
+                        rgba[idx * 4 + 1] = v;
+                        rgba[idx * 4 + 2] = v;
+                        rgba[idx * 4 + 3] = 255;
+                    } else if (c >= 3) {
+                        // RGB
+                        rgba[idx * 4 + 0] = static_cast<unsigned char>(
+                            std::clamp(hdf5_preview_data_[idx * c + 0] * 255.0f, 0.0f, 255.0f));
+                        rgba[idx * 4 + 1] = static_cast<unsigned char>(
+                            std::clamp(hdf5_preview_data_[idx * c + 1] * 255.0f, 0.0f, 255.0f));
+                        rgba[idx * 4 + 2] = static_cast<unsigned char>(
+                            std::clamp(hdf5_preview_data_[idx * c + 2] * 255.0f, 0.0f, 255.0f));
+                        rgba[idx * 4 + 3] = 255;
+                    }
+                }
+            }
+
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+            hdf5_preview_tex_w_ = w;
+            hdf5_preview_tex_h_ = h;
+        }
+    }
+}
+
+void DatasetPanel::RenderHDF5ConfigDialog() {
+    if (!show_hdf5_dialog_) return;
+
+    ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("HDF5 Dataset Configuration", &show_hdf5_dialog_,
+                     ImGuiWindowFlags_NoCollapse)) {
+
+        // File path header
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "File:");
+        ImGui::SameLine();
+        ImGui::Text("%s", hdf5_dialog_path_.c_str());
+
+        ImGui::Separator();
+
+        // Scan file if not already done
+        if (!hdf5_file_scanned_) {
+            ScanHDF5File(hdf5_dialog_path_);
+        }
+
+        // Main content: two-column layout
+        float panel_width = ImGui::GetContentRegionAvail().x;
+
+        // Left panel: Dataset list
+        ImGui::BeginChild("##HDF5Datasets", ImVec2(panel_width * 0.55f, -60), true);
+
+        ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.5f, 1.0f), ICON_FA_DATABASE " Datasets in File");
+        ImGui::Separator();
+
+        if (hdf5_dataset_paths_.empty()) {
+            ImGui::TextColored(ImVec4(0.7f, 0.5f, 0.5f, 1.0f), "No datasets found");
+        } else {
+            // Headers
+            ImGui::Columns(2, "##HDF5Cols", true);
+            ImGui::SetColumnWidth(0, 100);
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Use As");
+            ImGui::NextColumn();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Dataset Info");
+            ImGui::NextColumn();
+            ImGui::Separator();
+
+            for (size_t i = 0; i < hdf5_dataset_paths_.size(); i++) {
+                ImGui::PushID(static_cast<int>(i));
+
+                // Radio buttons for data/label selection
+                bool is_data = (hdf5_selected_data_idx_ == static_cast<int>(i));
+                bool is_label = (hdf5_selected_label_idx_ == static_cast<int>(i));
+
+                // Data checkbox
+                ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
+                if (ImGui::RadioButton("D", is_data)) {
+                    if (is_data) {
+                        hdf5_selected_data_idx_ = -1;  // Deselect
+                    } else {
+                        hdf5_selected_data_idx_ = static_cast<int>(i);
+                        // Remove from labels if was selected
+                        if (hdf5_selected_label_idx_ == static_cast<int>(i)) {
+                            hdf5_selected_label_idx_ = -1;
+                        }
+                        UpdateHDF5Preview();
+                    }
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use as Data");
+
+                ImGui::SameLine();
+
+                // Label checkbox
+                ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.4f, 0.6f, 0.9f, 1.0f));
+                if (ImGui::RadioButton("L", is_label)) {
+                    if (is_label) {
+                        hdf5_selected_label_idx_ = -1;  // Deselect
+                    } else {
+                        hdf5_selected_label_idx_ = static_cast<int>(i);
+                        // Remove from data if was selected
+                        if (hdf5_selected_data_idx_ == static_cast<int>(i)) {
+                            hdf5_selected_data_idx_ = -1;
+                        }
+                    }
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use as Labels");
+
+                ImGui::NextColumn();
+
+                // Dataset info with color coding
+                if (is_data) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s", hdf5_dataset_info_[i].c_str());
+                } else if (is_label) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), "%s", hdf5_dataset_info_[i].c_str());
+                } else {
+                    ImGui::Text("%s", hdf5_dataset_info_[i].c_str());
+                }
+
+                ImGui::NextColumn();
+                ImGui::PopID();
+            }
+
+            ImGui::Columns(1);
+        }
+
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // Right panel: Preview
+        ImGui::BeginChild("##HDF5Preview", ImVec2(0, -60), true);
+
+        ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.5f, 1.0f), ICON_FA_EYE " Preview");
+        ImGui::Separator();
+
+        if (hdf5_selected_data_idx_ >= 0 && hdf5_preview_texture_ != 0) {
+            // Show image preview
+            float avail_w = ImGui::GetContentRegionAvail().x;
+            float avail_h = ImGui::GetContentRegionAvail().y - 30;
+
+            float scale = std::min(avail_w / hdf5_preview_tex_w_,
+                                   avail_h / hdf5_preview_tex_h_);
+            scale = std::min(scale, 4.0f);  // Max 4x zoom
+
+            float disp_w = hdf5_preview_tex_w_ * scale;
+            float disp_h = hdf5_preview_tex_h_ * scale;
+
+            // Center the image
+            float offset_x = (avail_w - disp_w) * 0.5f;
+            if (offset_x > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset_x);
+
+            ImGui::Image((ImTextureID)(intptr_t)hdf5_preview_texture_,
+                         ImVec2(disp_w, disp_h));
+
+            // Show shape info
+            std::string shape_str = "Shape: [";
+            for (size_t i = 0; i < hdf5_preview_shape_.size(); i++) {
+                if (i > 0) shape_str += ", ";
+                shape_str += std::to_string(hdf5_preview_shape_[i]);
+            }
+            shape_str += "]";
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", shape_str.c_str());
+        } else if (hdf5_selected_data_idx_ >= 0) {
+            // Show text preview for non-image data
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Select a dataset to preview");
+            if (!hdf5_preview_shape_.empty()) {
+                std::string shape_str = "Shape: [";
+                for (size_t i = 0; i < hdf5_preview_shape_.size(); i++) {
+                    if (i > 0) shape_str += ", ";
+                    shape_str += std::to_string(hdf5_preview_shape_[i]);
+                }
+                shape_str += "]";
+                ImGui::Text("%s", shape_str.c_str());
+
+                // Show first few values
+                if (!hdf5_preview_data_.empty()) {
+                    ImGui::Text("First values: ");
+                    for (size_t i = 0; i < std::min(hdf5_preview_data_.size(), size_t(8)); i++) {
+                        if (i > 0) ImGui::SameLine();
+                        ImGui::Text("%.3f", hdf5_preview_data_[i]);
+                    }
+                    if (hdf5_preview_data_.size() > 8) {
+                        ImGui::SameLine();
+                        ImGui::Text("...");
+                    }
+                }
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+                "Select a dataset (D) to see preview");
+        }
+
+        ImGui::EndChild();
+
+        ImGui::Separator();
+
+        // Legend and buttons
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Legend:");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "D = Data");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), "L = Labels");
+
+        ImGui::SameLine(ImGui::GetWindowWidth() - 220);
+
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            show_hdf5_dialog_ = false;
+        }
+
+        ImGui::SameLine();
+
+        bool can_apply = hdf5_selected_data_idx_ >= 0;
+        if (!can_apply) ImGui::BeginDisabled();
+        if (ImGui::Button("Apply", ImVec2(100, 0))) {
+            // Copy selected paths to the main UI
+            if (hdf5_selected_data_idx_ >= 0) {
+                strncpy(hdf5_data_path_,
+                        hdf5_dataset_paths_[hdf5_selected_data_idx_].c_str(),
+                        sizeof(hdf5_data_path_) - 1);
+            } else {
+                hdf5_data_path_[0] = '\0';
+            }
+
+            if (hdf5_selected_label_idx_ >= 0) {
+                strncpy(hdf5_label_path_,
+                        hdf5_dataset_paths_[hdf5_selected_label_idx_].c_str(),
+                        sizeof(hdf5_label_path_) - 1);
+            } else {
+                hdf5_label_path_[0] = '\0';
+            }
+
+            show_hdf5_dialog_ = false;
+        }
+        if (!can_apply) ImGui::EndDisabled();
+    }
+    ImGui::End();
+}
+
 bool DatasetPanel::LoadDataset(const std::string& path) {
     auto& registry = cyxwiz::DataRegistry::Instance();
 
@@ -1946,6 +2330,63 @@ void DatasetPanel::LoadCSVDatasetAsync(const std::string& path) {
             loading_status_message_.clear();
             if (!success) {
                 spdlog::error("Async CSV load failed: {}", error);
+            }
+        }
+    );
+}
+
+void DatasetPanel::LoadHDF5DatasetAsync(const std::string& path) {
+    if (is_loading_.load()) {
+        spdlog::warn("Already loading a dataset, please wait...");
+        return;
+    }
+
+    is_loading_.store(true);
+    loading_progress_.store(0.0f);
+    loading_status_message_ = "Starting...";
+
+    // Capture HDF5 config from UI
+    cyxwiz::HDF5Config hdf5_config;
+    hdf5_config.data_path = hdf5_data_path_;
+    hdf5_config.label_path = hdf5_label_path_;
+    hdf5_config.normalize = hdf5_normalize_;
+    hdf5_config.auto_detect = hdf5_config.data_path.empty();  // Auto-detect if no custom path
+
+    loading_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Loading HDF5: " + std::filesystem::path(path).filename().string(),
+        [this, path, hdf5_config](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.1f, "Opening HDF5 file...");
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+
+            task.ReportProgress(0.3f, "Parsing HDF5 data...");
+            if (task.ShouldStop()) return;
+
+            auto handle = registry.LoadHDF5(path, "", hdf5_config);
+
+            task.ReportProgress(0.8f, "Processing dataset...");
+            if (task.ShouldStop()) return;
+
+            if (handle.IsValid()) {
+                current_dataset_ = handle;
+                cached_info_ = current_dataset_.GetInfo();
+                ApplySplit();
+                UpdateClassCounts();
+                task.ReportProgress(1.0f, "Complete");
+                task.MarkCompleted();
+            } else {
+                task.MarkFailed("Failed to load HDF5 file");
+            }
+        },
+        [this](float progress, const std::string& msg) {
+            loading_progress_.store(progress);
+            loading_status_message_ = msg;
+        },
+        [this](bool success, const std::string& error) {
+            is_loading_.store(false);
+            loading_status_message_.clear();
+            if (!success) {
+                spdlog::error("Async HDF5 load failed: {}", error);
             }
         }
     );
@@ -2277,6 +2718,8 @@ void DatasetPanel::LoadDatasetAsync(const std::string& path) {
 
     if (ext == ".csv") {
         LoadCSVDatasetAsync(path);
+    } else if (ext == ".h5" || ext == ".hdf5" || ext == ".hdf") {
+        LoadHDF5DatasetAsync(path);
     } else if (std::filesystem::is_directory(fs_path)) {
         // Check for MNIST/CIFAR-10 patterns
         if (std::filesystem::exists(fs_path / "train-images-idx3-ubyte") ||
