@@ -219,6 +219,11 @@ struct HDF5Config {
     // Layout options
     bool auto_detect_nchw = true;    // Auto-detect NCHW format and transpose to NHWC
     bool force_nchw = false;         // Force NCHW->NHWC transpose (overrides auto-detect)
+
+    // Parallel I/O options
+    bool prefetch_enabled = true;    // Enable background prefetching
+    size_t prefetch_threads = 2;     // Number of prefetch worker threads
+    size_t prefetch_ahead = 4;       // Number of chunks to prefetch ahead
 };
 
 /**

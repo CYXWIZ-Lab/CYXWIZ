@@ -17,6 +17,10 @@
 #include <numeric>
 #include <chrono>
 #include <ctime>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
+#include <queue>
 #include <nlohmann/json.hpp>
 
 // stb_image for image loading (implementation in stb_image_impl.cpp)
@@ -514,6 +518,8 @@ public:
     }
 
     ~HDF5Dataset() {
+        // Stop prefetch threads
+        StopPrefetch();
         // File is closed automatically when unique_ptr is destroyed
     }
 
@@ -528,6 +534,11 @@ public:
         // If not using lazy loading, return directly from memory
         if (!use_lazy_loading_) {
             return {eager_samples_[index], label};
+        }
+
+        // Trigger prefetch for upcoming chunks
+        if (config_.prefetch_enabled && !prefetch_threads_.empty()) {
+            TriggerPrefetch(index);
         }
 
         // Lazy loading path: get sample from chunk cache
@@ -728,6 +739,11 @@ private:
                              "chunk_size={}, cache_size={}",
                     num_samples_, GetShapeString(), num_classes_,
                     config_.chunk_size, config_.chunk_cache_size);
+
+                // Start prefetch threads if enabled
+                if (config_.prefetch_enabled && config_.prefetch_threads > 0) {
+                    StartPrefetch();
+                }
             } else {
                 // Eager loading: load all data into memory
                 LoadAllData(file);
@@ -980,6 +996,9 @@ private:
         float scale = (config_.normalize && dtype_is_uint8_) ? 1.0f / 255.0f : 1.0f;
 
         try {
+            // HDF5 is not thread-safe, so we need to serialize file access
+            std::lock_guard<std::mutex> lock(file_mutex_);
+
             // Open file for reading
             HighFive::File file(path_, HighFive::File::ReadOnly);
             auto data_ds = file.getDataSet(data_path_);
@@ -1015,6 +1034,111 @@ private:
         return s;
     }
 
+    // ========== Prefetch Methods ==========
+
+    void StartPrefetch() const {
+        prefetch_stop_ = false;
+        size_t num_threads = config_.prefetch_threads;
+        spdlog::info("HDF5: Starting {} prefetch threads", num_threads);
+
+        for (size_t i = 0; i < num_threads; i++) {
+            prefetch_threads_.emplace_back([this]() { PrefetchWorker(); });
+        }
+    }
+
+    void StopPrefetch() const {
+        if (prefetch_threads_.empty()) return;
+
+        // Signal threads to stop
+        {
+            std::lock_guard<std::mutex> lock(prefetch_mutex_);
+            prefetch_stop_ = true;
+        }
+        prefetch_cv_.notify_all();
+
+        // Wait for threads to finish
+        for (auto& t : prefetch_threads_) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+        prefetch_threads_.clear();
+    }
+
+    void TriggerPrefetch(size_t current_index) const {
+        size_t current_chunk = current_index / config_.chunk_size;
+        size_t total_chunks = (num_samples_ + config_.chunk_size - 1) / config_.chunk_size;
+
+        std::lock_guard<std::mutex> lock(prefetch_mutex_);
+
+        // Queue chunks ahead of current position
+        for (size_t i = 1; i <= config_.prefetch_ahead; i++) {
+            size_t chunk_to_prefetch = current_chunk + i;
+            if (chunk_to_prefetch >= total_chunks) break;
+
+            // Skip if already cached or being loaded
+            {
+                std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+                if (chunk_cache_.find(chunk_to_prefetch) != chunk_cache_.end()) continue;
+            }
+            if (prefetch_in_progress_.find(chunk_to_prefetch) != prefetch_in_progress_.end()) continue;
+
+            prefetch_queue_.push(chunk_to_prefetch);
+            prefetch_in_progress_.insert(chunk_to_prefetch);
+        }
+
+        if (!prefetch_queue_.empty()) {
+            prefetch_cv_.notify_one();
+        }
+    }
+
+    void PrefetchWorker() const {
+        while (true) {
+            size_t chunk_idx;
+
+            // Wait for work
+            {
+                std::unique_lock<std::mutex> lock(prefetch_mutex_);
+                prefetch_cv_.wait(lock, [this]() {
+                    return prefetch_stop_ || !prefetch_queue_.empty();
+                });
+
+                if (prefetch_stop_ && prefetch_queue_.empty()) {
+                    return;
+                }
+
+                if (prefetch_queue_.empty()) continue;
+
+                chunk_idx = prefetch_queue_.front();
+                prefetch_queue_.pop();
+            }
+
+            // Load chunk (outside of lock)
+            Chunk chunk = LoadChunk(chunk_idx);
+
+            // Store in cache
+            {
+                std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+
+                // Evict if cache is full
+                while (chunk_cache_.size() >= config_.chunk_cache_size && !lru_order_.empty()) {
+                    size_t evict_idx = lru_order_.back();
+                    lru_order_.pop_back();
+                    chunk_cache_.erase(evict_idx);
+                }
+
+                chunk_cache_[chunk_idx] = std::move(chunk);
+                lru_order_.push_front(chunk_idx);
+            }
+
+            // Remove from in-progress set
+            {
+                std::lock_guard<std::mutex> lock(prefetch_mutex_);
+                prefetch_in_progress_.erase(chunk_idx);
+            }
+        }
+    }
+
     // Configuration
     std::string path_;
     HDF5Config config_;
@@ -1048,10 +1172,19 @@ private:
 
     // Lazy loading: chunk cache with LRU eviction
     mutable std::mutex cache_mutex_;
+    mutable std::mutex file_mutex_;  // Serialize HDF5 file access (not thread-safe)
     mutable std::unordered_map<size_t, Chunk> chunk_cache_;
     mutable std::list<size_t> lru_order_;  // front = most recent, back = oldest
     mutable size_t cache_hits_ = 0;
     mutable size_t cache_misses_ = 0;
+
+    // Prefetch thread pool for parallel I/O
+    mutable std::vector<std::thread> prefetch_threads_;
+    mutable std::queue<size_t> prefetch_queue_;
+    mutable std::mutex prefetch_mutex_;
+    mutable std::condition_variable prefetch_cv_;
+    mutable std::atomic<bool> prefetch_stop_{false};
+    mutable std::set<size_t> prefetch_in_progress_;  // Chunks currently being loaded
 };
 
 #endif // CYXWIZ_HAS_HDF5
