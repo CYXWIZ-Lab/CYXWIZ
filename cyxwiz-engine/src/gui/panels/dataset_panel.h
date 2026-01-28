@@ -276,6 +276,7 @@ private:
     int preview_grid_cols_ = 4;        // Grid columns
     int preview_grid_rows_ = 4;        // Grid rows
     int preview_table_rows_ = 20;      // Rows per page in table view
+    int preview_table_cols_ = 10;      // Columns to display in table view
     gui::PreviewRenderer preview_renderer_;  // Type-aware preview dispatcher
 
     // Class names (for visualization)

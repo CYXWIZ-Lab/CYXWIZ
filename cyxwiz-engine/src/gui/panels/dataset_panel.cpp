@@ -392,7 +392,7 @@ void DatasetPanel::RenderPreviewContent() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Table View");
 
     // Type-aware rich preview mode (shows raw data with smart rendering)
-    if (is_tabular || is_json || is_text) {
+    if (is_tabular || is_json || is_text || is_hdf5) {
         ImGui::SameLine();
         if (type_aware) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
         if (ImGui::Button(ICON_FA_CODE "##TypeAware")) preview_view_mode_ = 3;
@@ -482,6 +482,16 @@ void DatasetPanel::RenderTypeAwarePreview() {
         case gui::PreviewContentType::DatasetImage: {
             // Use existing image preview
             RenderSingleSamplePreview(current_dataset_.Size(), true);
+            break;
+        }
+
+        case gui::PreviewContentType::DatasetHDF5: {
+            // HDF5 tree view using original file path
+            if (!cached_info_.path.empty()) {
+                preview_renderer_.RenderHDF5Preview(cached_info_.path);
+            } else {
+                ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "HDF5 path not available");
+            }
             break;
         }
 
@@ -1842,19 +1852,43 @@ void DatasetPanel::RenderGridPreview(size_t dataset_size, bool is_image_data) {
 }
 
 void DatasetPanel::RenderTablePreview(size_t dataset_size) {
-    // Table settings
-    ImGui::Text("Rows per page:");
+    // Get feature count and column names
+    auto [first_sample, _] = current_dataset_.GetSample(0);
+    int num_features = static_cast<int>(first_sample.size());
+
+    // Try to get real column names from dataset
+    std::vector<std::string> column_names;
+    auto* dataset = current_dataset_.GetUnderlyingDataset();
+    if (dataset) {
+        column_names = dataset->GetColumnNames();
+    }
+
+    // Table settings toolbar
+    ImGui::Text("Rows:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(60);
+    ImGui::SetNextItemWidth(50);
     ImGui::InputInt("##TableRows", &preview_table_rows_, 0, 0);
     preview_table_rows_ = std::clamp(preview_table_rows_, 5, 100);
 
     ImGui::SameLine();
+    ImGui::Text("Cols:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(50);
+    ImGui::InputInt("##TableCols", &preview_table_cols_, 0, 0);
+    preview_table_cols_ = std::clamp(preview_table_cols_, 1, std::max(1, num_features));
+
+    ImGui::SameLine();
+    if (ImGui::Button("All##AllCols")) {
+        preview_table_cols_ = num_features;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show all %d columns", num_features);
+
+    ImGui::SameLine(0, 20);
     ImGui::Text("Page:");
     ImGui::SameLine();
     int page = preview_sample_idx_ / preview_table_rows_;
     int total_pages = static_cast<int>((dataset_size + preview_table_rows_ - 1) / preview_table_rows_);
-    ImGui::SetNextItemWidth(60);
+    ImGui::SetNextItemWidth(50);
     if (ImGui::InputInt("##Page", &page, 0, 0)) {
         page = std::clamp(page, 0, total_pages - 1);
         preview_sample_idx_ = page * preview_table_rows_;
@@ -1863,34 +1897,40 @@ void DatasetPanel::RenderTablePreview(size_t dataset_size) {
     ImGui::Text("/ %d", total_pages);
 
     ImGui::SameLine();
-    if (ImGui::Button("<##PrevPage") && page > 0) {
+    if (ImGui::Button(ICON_FA_CHEVRON_LEFT "##PrevPage") && page > 0) {
         preview_sample_idx_ = (page - 1) * preview_table_rows_;
     }
     ImGui::SameLine();
-    if (ImGui::Button(">##NextPage") && page < total_pages - 1) {
+    if (ImGui::Button(ICON_FA_CHEVRON_RIGHT "##NextPage") && page < total_pages - 1) {
         preview_sample_idx_ = (page + 1) * preview_table_rows_;
     }
 
     ImGui::Spacing();
 
-    // Get feature count from first sample
-    auto [first_sample, _] = current_dataset_.GetSample(0);
-    int num_features = static_cast<int>(first_sample.size());
-    int display_cols = std::min(num_features, 10);  // Limit columns displayed
+    int display_cols = std::min(preview_table_cols_, num_features);
 
     ImGui::BeginChild("TablePreview", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
 
     if (ImGui::BeginTable("DataTable", display_cols + 2,
             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
-            ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable)) {
+            ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
+            ImGuiTableFlags_Hideable)) {
 
-        // Header
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 40);
-        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 60);
+        // Setup columns with freeze for index and label
+        ImGui::TableSetupScrollFreeze(2, 1);  // Freeze first 2 columns and header row
+
+        // Header - use real column names if available
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 50);
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 80);
+
         for (int i = 0; i < display_cols; ++i) {
-            char col_name[16];
-            snprintf(col_name, sizeof(col_name), "F%d", i);
-            ImGui::TableSetupColumn(col_name, ImGuiTableColumnFlags_WidthFixed, 70);
+            std::string col_name;
+            if (i < static_cast<int>(column_names.size()) && !column_names[i].empty()) {
+                col_name = column_names[i];
+            } else {
+                col_name = "Col " + std::to_string(i);
+            }
+            ImGui::TableSetupColumn(col_name.c_str(), ImGuiTableColumnFlags_WidthFixed, 80);
         }
         ImGui::TableHeadersRow();
 
@@ -1905,7 +1945,7 @@ void DatasetPanel::RenderTablePreview(size_t dataset_size) {
 
             // Index
             ImGui::TableNextColumn();
-            ImGui::Text("%d", i);
+            ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "%d", i);
 
             // Label
             ImGui::TableNextColumn();
@@ -1925,9 +1965,10 @@ void DatasetPanel::RenderTablePreview(size_t dataset_size) {
         ImGui::EndTable();
     }
 
-    if (num_features > display_cols) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Showing %d of %d features", display_cols, num_features);
-    }
+    // Info bar
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        "%zu samples | %d features | Showing cols 0-%d",
+        dataset_size, num_features, display_cols - 1);
 
     ImGui::EndChild();
 }

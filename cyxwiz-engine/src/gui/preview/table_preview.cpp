@@ -7,11 +7,17 @@
 
 namespace gui {
 
+void TablePreviewRenderer::Clear() {
+    headers_.clear();
+    rows_.clear();
+    current_page_ = 0;
+    cached_source_.clear();
+}
+
 void TablePreviewRenderer::LoadFromFile(const std::string& filepath, char delimiter, int max_rows) {
     // Avoid reloading same file
-    static std::string last_path;
-    if (filepath == last_path && !rows_.empty()) return;
-    last_path = filepath;
+    if (filepath == cached_source_ && !rows_.empty()) return;
+    cached_source_ = filepath;
 
     headers_.clear();
     rows_.clear();
@@ -99,14 +105,16 @@ void TablePreviewRenderer::LoadFromFile(const std::string& filepath, char delimi
 
 void TablePreviewRenderer::LoadFromDataset(const cyxwiz::DatasetHandle& handle,
                                             const std::vector<std::string>& column_names) {
-    // Avoid reloading if data exists
-    if (!rows_.empty()) return;
+    if (!handle.IsValid()) return;
+
+    // Check if same dataset (avoid reloading)
+    std::string dataset_name = handle.GetName();
+    if (dataset_name == cached_source_ && !rows_.empty()) return;
+    cached_source_ = dataset_name;
 
     headers_ = column_names;
     rows_.clear();
     current_page_ = 0;
-
-    if (!handle.IsValid()) return;
 
     size_t num_samples = std::min(handle.Size(), static_cast<size_t>(1000));
 

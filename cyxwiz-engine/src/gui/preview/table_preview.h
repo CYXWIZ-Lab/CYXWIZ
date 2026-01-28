@@ -27,6 +27,9 @@ public:
     // Render the table
     void Render();
 
+    // Clear cached data (call when dataset changes)
+    void Clear();
+
     bool HasData() const { return !rows_.empty(); }
 
 private:
@@ -36,6 +39,9 @@ private:
     int rows_per_page_ = 50;
     char search_buffer_[256] = "";
     bool has_header_ = true;
+
+    // Cache tracking to detect source changes
+    std::string cached_source_;  // File path or dataset name
 
     void RenderPagination();
 };

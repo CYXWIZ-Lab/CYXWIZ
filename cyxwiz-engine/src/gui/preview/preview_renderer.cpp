@@ -102,10 +102,7 @@ PreviewContentType PreviewRenderer::DetectDatasetType(const cyxwiz::DatasetInfo&
             return PreviewContentType::DatasetText;
 
         case cyxwiz::DatasetType::HDF5:
-            // HDF5 could be image or tabular - check shape
-            if (info.shape.size() >= 2)
-                return PreviewContentType::DatasetImage;
-            return PreviewContentType::DatasetTabular;
+            return PreviewContentType::DatasetHDF5;
 
         default:
             return PreviewContentType::DatasetTabular;
@@ -126,7 +123,15 @@ const char* PreviewRenderer::GetTypeName(PreviewContentType type) {
         case PreviewContentType::DatasetTabular: return "Tabular Dataset";
         case PreviewContentType::DatasetJSON:    return "JSON Dataset";
         case PreviewContentType::DatasetText:    return "Text Dataset";
+        case PreviewContentType::DatasetHDF5:    return "HDF5 Dataset";
         default:                                 return "Unknown";
+    }
+}
+
+void PreviewRenderer::RenderHDF5Preview(const std::string& filepath) {
+    if (!filepath.empty()) {
+        hdf5_renderer_->LoadFile(filepath);
+        hdf5_renderer_->Render();
     }
 }
 

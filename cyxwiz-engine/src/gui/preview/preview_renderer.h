@@ -24,7 +24,8 @@ enum class PreviewContentType {
     DatasetImage,   // Loaded image dataset
     DatasetTabular, // Loaded tabular dataset
     DatasetJSON,    // Loaded JSON dataset
-    DatasetText     // Loaded text dataset
+    DatasetText,    // Loaded text dataset
+    DatasetHDF5     // Loaded HDF5 dataset (tree view)
 };
 
 // Forward declarations for sub-renderers
@@ -61,6 +62,9 @@ public:
 
     // Get human-readable type name
     static const char* GetTypeName(PreviewContentType type);
+
+    // Render HDF5 file directly (for loaded HDF5 datasets)
+    void RenderHDF5Preview(const std::string& filepath);
 
     // State for file preview
     void SetFilePath(const std::string& path);
