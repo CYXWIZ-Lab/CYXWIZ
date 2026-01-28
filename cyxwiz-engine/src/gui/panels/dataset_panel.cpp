@@ -962,7 +962,7 @@ void DatasetPanel::RenderDatasetSelection() {
     // Config Export/Import section (collapsible)
     if (ImGui::CollapsingHeader("Configuration")) {
         if (IsDatasetLoaded()) {
-            if (ImGui::Button(ICON_FA_FILE_EXPORT " Export", ImVec2(90, 0))) {
+            if (ImGui::Button(ICON_FA_FILE_EXPORT " Config", ImVec2(80, 0))) {
                 auto result = cyxwiz::FileDialogs::SaveFile(
                     "Export Dataset Config",
                     {{"JSON Files", "json"}, {"All Files", "*"}},
@@ -978,6 +978,81 @@ void DatasetPanel::RenderDatasetSelection() {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Export dataset configuration to JSON file");
+            }
+            ImGui::SameLine();
+
+            // HDF5 Data Export button
+            if (ImGui::Button(ICON_FA_DATABASE " HDF5", ImVec2(70, 0))) {
+                ImGui::OpenPopup("HDF5 Export Options");
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Export dataset data to HDF5 file");
+            }
+
+            // HDF5 Export popup with options
+            if (ImGui::BeginPopup("HDF5 Export Options")) {
+                ImGui::Text("HDF5 Export Options");
+                ImGui::Separator();
+
+                static cyxwiz::HDF5ExportConfig hdf5_export_config;
+                static char data_path[128] = "/images";
+                static char label_path[128] = "/labels";
+
+                ImGui::InputText("Data Path", data_path, sizeof(data_path));
+                ImGui::InputText("Label Path", label_path, sizeof(label_path));
+
+                ImGui::Checkbox("Compress (GZIP)", &hdf5_export_config.compress);
+                if (hdf5_export_config.compress) {
+                    ImGui::SliderInt("Compression Level", &hdf5_export_config.compression_level, 1, 9);
+                }
+
+                ImGui::Checkbox("Chunked Storage", &hdf5_export_config.chunked);
+                if (hdf5_export_config.chunked) {
+                    int chunk_samples = static_cast<int>(hdf5_export_config.chunk_samples);
+                    if (ImGui::InputInt("Chunk Size", &chunk_samples)) {
+                        hdf5_export_config.chunk_samples = static_cast<size_t>(std::max(1, chunk_samples));
+                    }
+                }
+
+                ImGui::Checkbox("Store as uint8", &hdf5_export_config.store_as_uint8);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Convert float [0,1] to uint8 [0,255]");
+                }
+
+                ImGui::Checkbox("Store as NCHW", &hdf5_export_config.store_as_nchw);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Transpose NHWC to NCHW for PyTorch");
+                }
+
+                ImGui::Checkbox("Include Metadata", &hdf5_export_config.include_metadata);
+
+                ImGui::Separator();
+                if (ImGui::Button("Export...", ImVec2(100, 0))) {
+                    auto result = cyxwiz::FileDialogs::SaveFile(
+                        "Export to HDF5",
+                        {{"HDF5 Files", "h5"}, {"All Files", "*"}},
+                        nullptr,
+                        (cached_info_.name + "_export.h5").c_str()
+                    );
+                    if (result) {
+                        hdf5_export_config.data_path = data_path;
+                        hdf5_export_config.label_path = label_path;
+
+                        auto& registry = cyxwiz::DataRegistry::Instance();
+                        if (registry.ExportHDF5(cached_info_.name, *result, hdf5_export_config)) {
+                            spdlog::info("Exported HDF5 to: {}", *result);
+                        } else {
+                            spdlog::error("Failed to export HDF5");
+                        }
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(70, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
             }
             ImGui::SameLine();
         }
