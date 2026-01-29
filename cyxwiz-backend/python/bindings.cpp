@@ -2490,16 +2490,23 @@ Example queries:
             py::arg("min_freq") = 1,
             py::arg("max_vocab_size") = -1,
             "Train tokenizer on documents (builds vocabulary)")
-        .def("set_vocabulary", &cyxwiz::Tokenizer::SetVocabulary)
+        .def("set_vocabulary", &cyxwiz::Tokenizer::SetVocabulary,
+            py::arg("vocab"), "Set the vocabulary")
         .def("get_vocabulary", static_cast<cyxwiz::Vocabulary& (cyxwiz::Tokenizer::*)()>(&cyxwiz::Tokenizer::GetVocabulary),
             py::return_value_policy::reference_internal,
             "Get the vocabulary")
-        .def("set_lowercase", &cyxwiz::Tokenizer::SetLowercase)
-        .def("set_max_length", &cyxwiz::Tokenizer::SetMaxLength)
-        .def("set_padding", &cyxwiz::Tokenizer::SetPadding)
-        .def("set_truncation", &cyxwiz::Tokenizer::SetTruncation)
-        .def("set_add_bos", &cyxwiz::Tokenizer::SetAddBos)
-        .def("set_add_eos", &cyxwiz::Tokenizer::SetAddEos)
+        .def("set_lowercase", &cyxwiz::Tokenizer::SetLowercase,
+            py::arg("value"), "Enable/disable lowercase normalization")
+        .def("set_max_length", &cyxwiz::Tokenizer::SetMaxLength,
+            py::arg("value"), "Set maximum token sequence length")
+        .def("set_padding", &cyxwiz::Tokenizer::SetPadding,
+            py::arg("value"), "Enable/disable padding")
+        .def("set_truncation", &cyxwiz::Tokenizer::SetTruncation,
+            py::arg("value"), "Enable/disable truncation")
+        .def("set_add_bos", &cyxwiz::Tokenizer::SetAddBos,
+            py::arg("value"), "Enable/disable BOS token")
+        .def("set_add_eos", &cyxwiz::Tokenizer::SetAddEos,
+            py::arg("value"), "Enable/disable EOS token")
         .def_property_readonly("vocab_size", [](const cyxwiz::Tokenizer& t) {
             return t.GetVocabulary().Size();
         });

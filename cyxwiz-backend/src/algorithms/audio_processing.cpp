@@ -143,6 +143,10 @@ AudioFeatures AudioProcessing::ComputeSpectrogram(const AudioData& audio,
         padded = audio.samples;
     }
 
+    if (padded.size() < static_cast<size_t>(win_len)) {
+        result.error_message = "Audio too short for given FFT parameters";
+        return result;
+    }
     int n_frames = static_cast<int>((padded.size() - win_len) / hop) + 1;
     if (n_frames <= 0) {
         result.error_message = "Audio too short for given FFT parameters";
@@ -152,38 +156,49 @@ AudioFeatures AudioProcessing::ComputeSpectrogram(const AudioData& audio,
     int freq_bins = n_fft / 2 + 1;
     result.rows = freq_bins;
     result.cols = n_frames;
-    result.data.resize(freq_bins * n_frames);
+    result.data.resize(static_cast<size_t>(freq_bins) * static_cast<size_t>(n_frames));
 
 #ifdef CYXWIZ_HAS_FFTW
-    // Allocate FFTW buffers
-    double* fft_in = fftw_alloc_real(n_fft);
-    fftw_complex* fft_out = fftw_alloc_complex(freq_bins);
-    fftw_plan plan = fftw_plan_dft_r2c_1d(n_fft, fft_in, fft_out, FFTW_ESTIMATE);
+    {
+        // Allocate FFTW buffers with RAII cleanup
+        double* fft_in = fftw_alloc_real(n_fft);
+        fftw_complex* fft_out = fftw_alloc_complex(freq_bins);
+        if (!fft_in || !fft_out) {
+            if (fft_in) fftw_free(fft_in);
+            if (fft_out) fftw_free(fft_out);
+            result.error_message = "FFTW allocation failed";
+            return result;
+        }
+        fftw_plan plan = fftw_plan_dft_r2c_1d(n_fft, fft_in, fft_out, FFTW_ESTIMATE);
+        // Ensure cleanup on any exit
+        auto cleanup = [&]() {
+            fftw_destroy_plan(plan);
+            fftw_free(fft_in);
+            fftw_free(fft_out);
+        };
 
-    for (int frame = 0; frame < n_frames; frame++) {
-        // Zero-fill and apply window
-        std::memset(fft_in, 0, n_fft * sizeof(double));
-        int start = frame * hop;
-        for (int i = 0; i < win_len && (start + i) < static_cast<int>(padded.size()); i++) {
-            fft_in[i] = static_cast<double>(padded[start + i] * window[i]);
+        for (int frame = 0; frame < n_frames; frame++) {
+            // Zero-fill and apply window
+            std::memset(fft_in, 0, n_fft * sizeof(double));
+            int start = frame * hop;
+            for (int i = 0; i < win_len && (start + i) < static_cast<int>(padded.size()); i++) {
+                fft_in[i] = static_cast<double>(padded[start + i] * window[i]);
+            }
+
+            // Execute FFT
+            fftw_execute(plan);
+
+            // Compute magnitude spectrum
+            for (int f = 0; f < freq_bins; f++) {
+                double re = fft_out[f][0];
+                double im = fft_out[f][1];
+                result.data[static_cast<size_t>(f) * n_frames + frame] = static_cast<float>(std::sqrt(re * re + im * im));
+            }
         }
 
-        // Execute FFT
-        fftw_execute(plan);
-
-        // Compute magnitude spectrum
-        for (int f = 0; f < freq_bins; f++) {
-            double re = fft_out[f][0];
-            double im = fft_out[f][1];
-            result.data[f * n_frames + frame] = static_cast<float>(std::sqrt(re * re + im * im));
-        }
+        cleanup();
+        result.valid = true;
     }
-
-    fftw_destroy_plan(plan);
-    fftw_free(fft_in);
-    fftw_free(fft_out);
-
-    result.valid = true;
 #else
     result.error_message = "Spectrogram computation requires FFTW3 (not available in this build)";
 #endif // CYXWIZ_HAS_FFTW
@@ -222,7 +237,9 @@ std::vector<std::vector<float>> AudioProcessing::CreateMelFilterbank(
     std::vector<int> bin_indices(n_mels + 2);
     for (int i = 0; i < n_mels + 2; i++) {
         float hz = MelToHz(mel_points[i]);
-        bin_indices[i] = static_cast<int>(std::floor((n_fft + 1) * hz / sample_rate));
+        bin_indices[i] = std::clamp(
+            static_cast<int>(std::floor((n_fft + 1) * hz / sample_rate)),
+            0, freq_bins - 1);
     }
 
     // Create triangular filters
@@ -233,12 +250,12 @@ std::vector<std::vector<float>> AudioProcessing::CreateMelFilterbank(
         int f_center = bin_indices[m + 1];
         int f_right = bin_indices[m + 2];
 
-        for (int f = f_left; f < f_center && f < freq_bins; f++) {
+        for (int f = std::max(0, f_left); f < f_center && f < freq_bins; f++) {
             if (f_center != f_left) {
                 filterbank[m][f] = static_cast<float>(f - f_left) / (f_center - f_left);
             }
         }
-        for (int f = f_center; f < f_right && f < freq_bins; f++) {
+        for (int f = std::max(0, f_center); f < f_right && f < freq_bins; f++) {
             if (f_right != f_center) {
                 filterbank[m][f] = static_cast<float>(f_right - f) / (f_right - f_center);
             }

@@ -1998,13 +1998,19 @@ std::vector<std::vector<double>> TimeSeries::AddFeatures(
 std::pair<size_t, size_t> TimeSeries::ChronologicalSplit(
     size_t num_samples, double train_ratio, double val_ratio) {
 
+    // Need at least 3 samples for train/val/test
+    if (num_samples < 3) {
+        // Degenerate case: put everything in train
+        return {num_samples, num_samples};
+    }
+
     size_t train_end = static_cast<size_t>(num_samples * train_ratio);
     size_t val_end = train_end + static_cast<size_t>(num_samples * val_ratio);
 
     // Ensure at least 1 sample in each split
     if (train_end == 0) train_end = 1;
     if (val_end <= train_end) val_end = train_end + 1;
-    if (val_end >= num_samples) val_end = num_samples - 1;
+    if (val_end >= num_samples) val_end = num_samples > 1 ? num_samples - 1 : num_samples;
 
     return {train_end, val_end};
 }

@@ -20,6 +20,14 @@ bool GymConnector::CreateEnv(const std::string& env_name) {
         return false;
     }
 
+    // Sanitize env_name to prevent code injection
+    for (char c : env_name) {
+        if (!std::isalnum(c) && c != '-' && c != '_' && c != '/' && c != '.') {
+            spdlog::error("GymConnector: invalid character '{}' in env name '{}'", c, env_name);
+            return false;
+        }
+    }
+
     env_name_ = env_name;
 
     // Import gymnasium (or gym as fallback) and create environment
@@ -75,7 +83,9 @@ print(json.dumps(_env_info))
             if (pos == std::string::npos) return 0;
             pos = output.find(':', pos);
             if (pos == std::string::npos) return 0;
-            return std::stoi(output.substr(pos + 1));
+            try {
+                return std::stoi(output.substr(pos + 1));
+            } catch (...) { return 0; }
         };
 
         auto find_bool = [&](const std::string& key) -> bool {
@@ -84,7 +94,11 @@ print(json.dumps(_env_info))
             pos = output.find(':', pos);
             if (pos == std::string::npos) return false;
             std::string rest = output.substr(pos + 1);
-            return rest.find("true") < rest.find("false");
+            auto true_pos = rest.find("true");
+            auto false_pos = rest.find("false");
+            if (true_pos == std::string::npos) return false;
+            if (false_pos == std::string::npos) return true;
+            return true_pos < false_pos;
         };
 
         env_info_.observation_dim = find_int("obs_dim");
@@ -164,14 +178,21 @@ StepResult GymConnector::Step(int action) {
             auto pos = output.find("\"" + key + "\"");
             if (pos == std::string::npos) return 0.0f;
             pos = output.find(':', pos);
-            return std::stof(output.substr(pos + 1));
+            if (pos == std::string::npos) return 0.0f;
+            try { return std::stof(output.substr(pos + 1)); }
+            catch (...) { return 0.0f; }
         };
         auto find_bool = [&](const std::string& key) -> bool {
             auto pos = output.find("\"" + key + "\"");
             if (pos == std::string::npos) return false;
             pos = output.find(':', pos);
+            if (pos == std::string::npos) return false;
             std::string rest = output.substr(pos + 1);
-            return rest.find("true") < rest.find("false");
+            auto true_pos = rest.find("true");
+            auto false_pos = rest.find("false");
+            if (true_pos == std::string::npos) return false;
+            if (false_pos == std::string::npos) return true;
+            return true_pos < false_pos;
         };
 
         // Parse observation
@@ -224,14 +245,21 @@ StepResult GymConnector::StepContinuous(const std::vector<float>& action) {
             auto pos = output.find("\"" + key + "\"");
             if (pos == std::string::npos) return 0.0f;
             pos = output.find(':', pos);
-            return std::stof(output.substr(pos + 1));
+            if (pos == std::string::npos) return 0.0f;
+            try { return std::stof(output.substr(pos + 1)); }
+            catch (...) { return 0.0f; }
         };
         auto find_bool = [&](const std::string& key) -> bool {
             auto pos = output.find("\"" + key + "\"");
             if (pos == std::string::npos) return false;
             pos = output.find(':', pos);
+            if (pos == std::string::npos) return false;
             std::string rest = output.substr(pos + 1);
-            return rest.find("true") < rest.find("false");
+            auto true_pos = rest.find("true");
+            auto false_pos = rest.find("false");
+            if (true_pos == std::string::npos) return false;
+            if (false_pos == std::string::npos) return true;
+            return true_pos < false_pos;
         };
 
         auto obs_start = output.find("[");
