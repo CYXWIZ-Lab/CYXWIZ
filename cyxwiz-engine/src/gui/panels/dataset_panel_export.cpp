@@ -5,7 +5,13 @@
 
 #include "dataset_panel.h"
 #include "../icons.h"
+#include "../../core/model_exporter.h"
+#include "../../core/model_importer.h"
+#include "../../core/training_manager.h"
+#include "../../core/file_dialogs.h"
+#include "../../data/data_table.h"
 #include <imgui.h>
+#include <spdlog/spdlog.h>
 
 namespace gui {
 
@@ -57,7 +63,35 @@ void DatasetPanel::RenderExportContent() {
             ImGui::Spacing();
 
             if (ImGui::Button(ICON_FA_FILE_EXPORT " Export...", ImVec2(150, 0))) {
-                // TODO: Wire to ExportDialog / ModelExporter
+                auto& tmgr = cyxwiz::TrainingManager::Instance();
+                auto* model = tmgr.GetLastTrainedModel();
+                if (model) {
+                    cyxwiz::ModelFormat fmt;
+                    std::string ext;
+                    switch (export_format_idx_) {
+                        case 0: fmt = cyxwiz::ModelFormat::CyxModel; ext = ".cyxmodel"; break;
+                        case 1: fmt = cyxwiz::ModelFormat::ONNX; ext = ".onnx"; break;
+                        case 2: fmt = cyxwiz::ModelFormat::Safetensors; ext = ".safetensors"; break;
+                        default: fmt = cyxwiz::ModelFormat::GGUF; ext = ".gguf"; break;
+                    }
+                    auto result = cyxwiz::FileDialogs::SaveFile("Export Model",
+                        {{"Model File", "*" + ext}});
+                    if (result) {
+                        cyxwiz::ModelExporter exporter;
+                        cyxwiz::ExportOptions opts;
+                        opts.format = fmt;
+                        opts.model_name = std::string(export_model_name_);
+                        opts.author = std::string(export_author_);
+                        opts.description = std::string(export_description_);
+                        auto export_result = exporter.Export(*model, nullptr,
+                            &tmgr.GetLastMetrics(), "", *result, opts);
+                        if (export_result.success) {
+                            spdlog::info("Export: Model saved to {}", *result);
+                        } else {
+                            spdlog::error("Export: Failed - {}", export_result.error_message);
+                        }
+                    }
+                }
             }
         }
 
@@ -74,7 +108,21 @@ void DatasetPanel::RenderExportContent() {
         ImGui::Spacing();
 
         if (ImGui::Button(ICON_FA_FOLDER_OPEN " Browse...", ImVec2(150, 0))) {
-            // TODO: Wire to ImportDialog / ModelImporter
+            auto result = cyxwiz::FileDialogs::OpenFile("Import Model",
+                {{"Model Files", "*.cyxmodel;*.onnx;*.safetensors;*.gguf;*.pt"},
+                 {"All Files", "*"}});
+            if (result) {
+                spdlog::info("Export: Selected model file for import: {}", *result);
+                // Probe the file to show info
+                cyxwiz::ModelImporter importer;
+                auto probe = importer.ProbeFile(*result);
+                if (probe.valid) {
+                    spdlog::info("Export: Probed model - format: {}, layers: {}",
+                                 (int)probe.format, probe.num_layers);
+                } else {
+                    spdlog::warn("Export: Failed to probe model file");
+                }
+            }
         }
 
         ImGui::Unindent(8);
@@ -99,7 +147,23 @@ void DatasetPanel::RenderExportContent() {
             ImGui::Spacing();
 
             if (ImGui::Button(ICON_FA_FILE_EXPORT " Export Dataset...", ImVec2(180, 0))) {
-                // TODO: Wire dataset export
+                const char* exts[] = {".csv", ".npy", ".h5", ".json"};
+                const char* descs[] = {"CSV Files", "NumPy Files", "HDF5 Files", "JSON Files"};
+                auto result = cyxwiz::FileDialogs::SaveFile("Export Dataset",
+                    {{descs[ds_format], std::string("*") + exts[ds_format]}});
+                if (result) {
+                    // For CSV, use DataTable's built-in SaveToCSV
+                    if (ds_format == 0) {
+                        auto& registry = cyxwiz::DataTableRegistry::Instance();
+                        auto table = registry.GetTable(cached_info_.name);
+                        if (table) {
+                            table->SaveToCSV(*result);
+                            spdlog::info("Export: Dataset saved to {}", *result);
+                        }
+                    } else {
+                        spdlog::info("Export: {} format export not yet implemented", exts[ds_format]);
+                    }
+                }
             }
         }
 

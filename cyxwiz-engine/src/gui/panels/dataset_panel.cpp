@@ -616,6 +616,28 @@ void DatasetPanel::RenderPipelineContent() {
 }
 
 void DatasetPanel::RenderTrainingContent() {
+    // Poll TrainingManager for trained model availability
+    auto& tmgr = cyxwiz::TrainingManager::Instance();
+    if (tmgr.HasTrainedModel() && !has_trained_model_) {
+        has_trained_model_ = true;
+        trained_model_name_ = cached_info_.name.empty() ? "Trained Model" : cached_info_.name + " Model";
+        // Populate eval results from training metrics
+        auto metrics = tmgr.GetLastMetrics();
+        if (metrics.is_complete) {
+            has_eval_results_ = true;
+            eval_task_type_ = 0; // Default to classification
+            // Store learning curve data
+            eval_has_learning_curves_ = true;
+            // Map training history to LearningCurveData fields
+            eval_learning_curves_.scoring_metric = "Loss";
+            eval_learning_curves_.train_scores_mean = std::vector<double>(metrics.loss_history.begin(), metrics.loss_history.end());
+            eval_learning_curves_.val_scores_mean = std::vector<double>(metrics.val_loss_history.begin(), metrics.val_loss_history.end());
+            for (int i = 1; i <= (int)metrics.loss_history.size(); i++)
+                eval_learning_curves_.train_sizes.push_back(i);
+            eval_learning_curves_.success = true;
+        }
+    }
+
     RenderTrainingSection();
 
     // "Go to Evaluate" button after training completes
@@ -848,16 +870,17 @@ void DatasetPanel::RenderDatasetSelection() {
     ImGui::Spacing();
 
     // Dataset type selection (merged Images + CSV into single "Images" option)
-    const char* types[] = {"CSV", "Images", "MNIST", "CIFAR-10", "HDF5", "HuggingFace", "Kaggle", "Custom"};
+    const char* types[] = {"CSV", "Images", "MNIST", "CIFAR-10", "HDF5", "ARFF", "HuggingFace", "Kaggle", "Custom"};
     int current_type = 0;
     if (selected_type_ == cyxwiz::DatasetType::CSV) current_type = 0;
     else if (selected_type_ == cyxwiz::DatasetType::ImageFolder || selected_type_ == cyxwiz::DatasetType::ImageCSV) current_type = 1;
     else if (selected_type_ == cyxwiz::DatasetType::MNIST) current_type = 2;
     else if (selected_type_ == cyxwiz::DatasetType::CIFAR10) current_type = 3;
     else if (selected_type_ == cyxwiz::DatasetType::HDF5) current_type = 4;
-    else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) current_type = 5;
-    else if (selected_type_ == cyxwiz::DatasetType::Kaggle) current_type = 6;
-    else if (selected_type_ == cyxwiz::DatasetType::Custom) current_type = 7;
+    else if (selected_type_ == cyxwiz::DatasetType::ARFF) current_type = 5;
+    else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) current_type = 6;
+    else if (selected_type_ == cyxwiz::DatasetType::Kaggle) current_type = 7;
+    else if (selected_type_ == cyxwiz::DatasetType::Custom) current_type = 8;
 
     ImGui::SetNextItemWidth(-1);
     if (ImGui::Combo("##Type", &current_type, types, IM_ARRAYSIZE(types))) {
@@ -867,9 +890,10 @@ void DatasetPanel::RenderDatasetSelection() {
             case 2: selected_type_ = cyxwiz::DatasetType::MNIST; break;
             case 3: selected_type_ = cyxwiz::DatasetType::CIFAR10; break;
             case 4: selected_type_ = cyxwiz::DatasetType::HDF5; break;
-            case 5: selected_type_ = cyxwiz::DatasetType::HuggingFace; break;
-            case 6: selected_type_ = cyxwiz::DatasetType::Kaggle; break;
-            case 7: selected_type_ = cyxwiz::DatasetType::Custom; break;
+            case 5: selected_type_ = cyxwiz::DatasetType::ARFF; break;
+            case 6: selected_type_ = cyxwiz::DatasetType::HuggingFace; break;
+            case 7: selected_type_ = cyxwiz::DatasetType::Kaggle; break;
+            case 8: selected_type_ = cyxwiz::DatasetType::Custom; break;
         }
     }
 
@@ -941,6 +965,29 @@ void DatasetPanel::RenderDatasetSelection() {
 
         // Render the HDF5 config dialog if open
         RenderHDF5ConfigDialog();
+    } else if (selected_type_ == cyxwiz::DatasetType::ARFF) {
+        // ARFF file input
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "ARFF FILE");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
+        ImGui::InputText("##ARFFPath", file_path_buffer_, sizeof(file_path_buffer_));
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN "##ARFFBrowse", ImVec2(70, 0))) {
+            ShowFileBrowser();
+        }
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Weka Attribute-Relation File Format (.arff)");
+        ImGui::Spacing();
+
+        std::string current_path = file_path_buffer_;
+        bool can_load = !current_path.empty() && std::filesystem::exists(current_path);
+        if (!can_load) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_FA_UPLOAD " Load ARFF", ImVec2(140, 0))) {
+            if (!current_path.empty()) {
+                LoadDatasetAsync(current_path);
+            }
+        }
+        if (!can_load) ImGui::EndDisabled();
     } else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) {
         // HuggingFace dataset name input
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "DATASET NAME");
@@ -3355,6 +3402,27 @@ void DatasetPanel::ClearDataset() {
     class_counts_.clear();
     class_names_.clear();
     preview_sample_idx_ = 0;
+
+    // Clear Prepare tab state
+    prepare_missing_analyzed_ = false;
+    prepare_missing_summary_.clear();
+    prepare_missing_columns_.clear();
+    prepare_outlier_analyzed_ = false;
+    prepare_outlier_count_ = 0;
+    prepare_outlier_summary_.clear();
+    prepare_correlation_computed_ = false;
+    prepare_high_corr_pairs_.clear();
+
+    // Clear Evaluate tab state
+    has_eval_results_ = false;
+    eval_has_roc_data_ = false;
+    eval_has_pr_data_ = false;
+    eval_has_learning_curves_ = false;
+    eval_learning_curves_ = {};
+
+    // Clear Export tab state
+    has_trained_model_ = false;
+    trained_model_name_.clear();
 
     spdlog::info("Dataset cleared");
 }

@@ -8,13 +8,43 @@
 #include "dataset_panel.h"
 #include "../icons.h"
 #include "../../core/data_analyzer.h"
-#include "../../core/data_transform.h"
+#include <cyxwiz/data_transform.h>
 #include "../../data/data_table.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
+#include <map>
+#include <spdlog/spdlog.h>
 
 namespace gui {
+
+// Helper: extract numeric column data from DataTable
+static std::vector<double> ExtractColumnDoubles(const cyxwiz::DataTable& table, size_t col) {
+    std::vector<double> data;
+    data.reserve(table.GetRowCount());
+    for (size_t r = 0; r < table.GetRowCount(); r++) {
+        auto cell = table.GetCell(r, col);
+        if (auto* d = std::get_if<double>(&cell)) {
+            data.push_back(*d);
+        } else if (auto* i = std::get_if<int64_t>(&cell)) {
+            data.push_back(static_cast<double>(*i));
+        }
+        // skip monostate/string (missing/non-numeric)
+    }
+    return data;
+}
+
+// Helper: extract all numeric columns as 2D data for DataTransform
+static std::vector<std::vector<double>> ExtractAllNumericColumns(const cyxwiz::DataTable& table) {
+    std::vector<std::vector<double>> columns;
+    for (size_t c = 0; c < table.GetColumnCount(); c++) {
+        auto col_data = ExtractColumnDoubles(table, c);
+        if (!col_data.empty()) {
+            columns.push_back(std::move(col_data));
+        }
+    }
+    return columns;
+}
 
 // Helper: try to get a DataTable for the currently loaded dataset
 static std::shared_ptr<cyxwiz::DataTable> GetDataTableForDataset(const cyxwiz::DatasetInfo& info) {
@@ -120,7 +150,48 @@ void DatasetPanel::RenderTabularPrepareContent() {
                         ImGui::InputFloat("Fill Value", &prepare_missing_fill_value_);
                     }
                     if (ImGui::Button(ICON_FA_CHECK " Apply##MissingValues")) {
-                        // TODO: Apply imputation via DataTransform
+                        size_t filled = 0;
+                        for (size_t c = 0; c < table->GetColumnCount(); c++) {
+                            // Compute fill value for this column
+                            auto col_data = ExtractColumnDoubles(*table, c);
+                            if (col_data.empty()) continue;
+
+                            double fill_val = 0.0;
+                            if (prepare_missing_strategy_ == 1) { // Mean
+                                double sum = 0; for (auto v : col_data) sum += v;
+                                fill_val = sum / col_data.size();
+                            } else if (prepare_missing_strategy_ == 2) { // Median
+                                std::sort(col_data.begin(), col_data.end());
+                                fill_val = col_data[col_data.size() / 2];
+                            } else if (prepare_missing_strategy_ == 3) { // Mode
+                                std::map<int64_t, int> freq;
+                                for (auto v : col_data) freq[(int64_t)(v * 1000)]++;
+                                int max_f = 0;
+                                for (auto& [k, f] : freq) { if (f > max_f) { max_f = f; fill_val = k / 1000.0; } }
+                            } else if (prepare_missing_strategy_ == 4) { // Constant
+                                fill_val = (double)prepare_missing_fill_value_;
+                            }
+
+                            // Apply: fill missing cells or drop rows
+                            if (prepare_missing_strategy_ == 0) {
+                                // Drop rows handled separately below
+                                continue;
+                            }
+                            for (size_t r = 0; r < table->GetRowCount(); r++) {
+                                auto cell = table->GetCell(r, c);
+                                if (std::holds_alternative<std::monostate>(cell)) {
+                                    table->SetCell(r, c, cyxwiz::DataTable::CellValue(fill_val));
+                                    filled++;
+                                }
+                            }
+                        }
+                        if (prepare_missing_strategy_ == 0) {
+                            spdlog::info("Prepare: Drop rows with missing values (not yet supported for in-place)");
+                        } else {
+                            spdlog::info("Prepare: Filled {} missing cells with strategy {}", filled, prepare_missing_strategy_);
+                        }
+                        // Re-analyze
+                        prepare_missing_analyzed_ = false;
                     }
                 } else {
                     ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f),
@@ -222,8 +293,43 @@ void DatasetPanel::RenderTabularPrepareContent() {
         ImGui::TextDisabled("%s", descriptions[prepare_scaling_method_]);
 
         ImGui::Spacing();
-        if (ImGui::Button(ICON_FA_CHECK " Apply Scaling")) {
-            // TODO: Wire to DataTransform static methods
+        if (table) {
+            if (ImGui::Button(ICON_FA_CHECK " Apply Scaling")) {
+                auto data = ExtractAllNumericColumns(*table);
+                if (!data.empty()) {
+                    cyxwiz::TransformResult result;
+                    switch (prepare_scaling_method_) {
+                        case 0: result = cyxwiz::DataTransform::Standardize(data); break;
+                        case 1: result = cyxwiz::DataTransform::Normalize(data); break;
+                        case 2: result = cyxwiz::DataTransform::RobustScale(data); break;
+                        case 3: result = cyxwiz::DataTransform::MaxAbsScale(data); break;
+                        case 4: result = cyxwiz::DataTransform::LogTransform(data); break;
+                        case 5: result = cyxwiz::DataTransform::BoxCox(data); break;
+                        case 6: result = cyxwiz::DataTransform::YeoJohnson(data); break;
+                    }
+                    if (result.success) {
+                        // Write transformed data back to table
+                        size_t col_idx = 0;
+                        for (size_t c = 0; c < table->GetColumnCount() && col_idx < result.transformed_data.size(); c++) {
+                            auto test = ExtractColumnDoubles(*table, c);
+                            if (test.empty()) continue; // skip non-numeric columns
+                            auto& transformed = result.transformed_data[col_idx];
+                            for (size_t r = 0; r < std::min(table->GetRowCount(), transformed.size()); r++) {
+                                table->SetCell(r, c, cyxwiz::DataTable::CellValue(transformed[r]));
+                            }
+                            col_idx++;
+                        }
+                        spdlog::info("Prepare: Applied {} scaling to {} columns", result.method, col_idx);
+                    } else {
+                        spdlog::warn("Prepare: Scaling failed - {}", result.error_message);
+                    }
+                }
+            }
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::Button(ICON_FA_CHECK " Apply Scaling");
+            ImGui::EndDisabled();
+            ImGui::TextDisabled("Load dataset in Table Viewer to apply scaling.");
         }
 
         ImGui::Unindent(8);
@@ -246,11 +352,57 @@ void DatasetPanel::RenderTabularPrepareContent() {
 
         ImGui::Spacing();
         if (table) {
-            ImGui::TextDisabled("Categorical columns detected by data profiling.");
-        }
+            // Detect categorical columns (columns with string values)
+            std::vector<size_t> cat_cols;
+            for (size_t c = 0; c < table->GetColumnCount(); c++) {
+                for (size_t r = 0; r < std::min((size_t)100, table->GetRowCount()); r++) {
+                    auto cell = table->GetCell(r, c);
+                    if (std::holds_alternative<std::string>(cell)) {
+                        cat_cols.push_back(c);
+                        break;
+                    }
+                }
+            }
+            if (cat_cols.empty()) {
+                ImGui::TextDisabled("No categorical columns detected.");
+            } else {
+                ImGui::Text("%d categorical column(s): ", (int)cat_cols.size());
+                for (size_t i = 0; i < std::min(cat_cols.size(), (size_t)5); i++) {
+                    auto& headers = table->GetHeaders();
+                    if (i > 0) ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "%s", headers[cat_cols[i]].c_str());
+                }
+                if (cat_cols.size() > 5) ImGui::Text("  ... and %d more", (int)(cat_cols.size() - 5));
+            }
 
-        if (ImGui::Button(ICON_FA_CHECK " Apply Encoding")) {
-            // TODO: Wire categorical encoder backend
+            if (ImGui::Button(ICON_FA_CHECK " Apply Encoding")) {
+                if (prepare_encoding_method_ == 1 || prepare_encoding_method_ == 2) {
+                    // Label / Ordinal encoding: map unique strings to integers
+                    for (size_t c : cat_cols) {
+                        std::map<std::string, int> label_map;
+                        int next_label = 0;
+                        for (size_t r = 0; r < table->GetRowCount(); r++) {
+                            auto cell = table->GetCell(r, c);
+                            if (auto* s = std::get_if<std::string>(&cell)) {
+                                auto it = label_map.find(*s);
+                                if (it == label_map.end()) {
+                                    label_map[*s] = next_label++;
+                                }
+                                table->SetCell(r, c, cyxwiz::DataTable::CellValue((int64_t)label_map[*s]));
+                            }
+                        }
+                    }
+                    spdlog::info("Prepare: Applied label encoding to {} columns", cat_cols.size());
+                } else {
+                    // One-hot: more complex, log as not fully supported inline
+                    spdlog::info("Prepare: One-hot encoding requires column expansion (use Pipeline for full support)");
+                }
+            }
+        } else {
+            ImGui::TextDisabled("Load dataset in Table Viewer for encoding.");
+            ImGui::BeginDisabled();
+            ImGui::Button(ICON_FA_CHECK " Apply Encoding");
+            ImGui::EndDisabled();
         }
 
         ImGui::Unindent(8);
