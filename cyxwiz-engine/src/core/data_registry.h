@@ -43,7 +43,8 @@ enum class DatasetType {
     HuggingFace,
     Kaggle,
     Custom,
-    HDF5                // HDF5 data files (.h5, .hdf5)
+    HDF5,               // HDF5 data files (.h5, .hdf5)
+    ARFF                // Weka ARFF files (.arff)
 };
 
 /**

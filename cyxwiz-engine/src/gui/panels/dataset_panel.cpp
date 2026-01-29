@@ -74,6 +74,7 @@ const char* DatasetPanel::GetDatasetTypeIcon(cyxwiz::DatasetType type) const {
         case cyxwiz::DatasetType::ImageCSV:
             return ICON_FA_IMAGE;
         case cyxwiz::DatasetType::CSV:
+        case cyxwiz::DatasetType::ARFF:
             return ICON_FA_FILE_CSV;
         case cyxwiz::DatasetType::HuggingFace:
             return ICON_FA_CLOUD;
@@ -352,6 +353,14 @@ void DatasetPanel::RenderSplitter(float height) {
 }
 
 void DatasetPanel::RenderMainContent() {
+    // Helper lambda for programmatic tab switching
+    auto TabFlags = [this](ContentTab tab) -> ImGuiTabItemFlags {
+        if (switch_content_tab_ && pending_content_tab_ == tab) {
+            return ImGuiTabItemFlags_SetSelected;
+        }
+        return ImGuiTabItemFlags_None;
+    };
+
     // Always show tab bar - Load tab is first so user can always load datasets
     if (ImGui::BeginTabBar("ContentTabs", ImGuiTabBarFlags_None)) {
         // Load Dataset tab
@@ -367,6 +376,15 @@ void DatasetPanel::RenderMainContent() {
             active_content_tab_ = ContentTab::Preview;
             ImGui::BeginChild("##PreviewContent", ImVec2(0, 0), false);
             RenderPreviewContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        // Prepare tab (data cleaning, feature engineering, splits)
+        if (ImGui::BeginTabItem(ICON_FA_WAND_MAGIC_SPARKLES " Prepare")) {
+            active_content_tab_ = ContentTab::Prepare;
+            ImGui::BeginChild("##PrepareContent", ImVec2(0, 0), false);
+            RenderPrepareContent();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -397,6 +415,24 @@ void DatasetPanel::RenderMainContent() {
             ImGui::EndTabItem();
         }
 
+        // Evaluate tab (post-training metrics dashboard)
+        if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Evaluate", nullptr, TabFlags(ContentTab::Evaluate))) {
+            active_content_tab_ = ContentTab::Evaluate;
+            ImGui::BeginChild("##EvaluateContent", ImVec2(0, 0), false);
+            RenderEvaluateContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        // Export tab (model I/O)
+        if (ImGui::BeginTabItem(ICON_FA_FILE_EXPORT " Export", nullptr, TabFlags(ContentTab::Export))) {
+            active_content_tab_ = ContentTab::Export;
+            ImGui::BeginChild("##ExportContent", ImVec2(0, 0), false);
+            RenderExportContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
         // Details tab
         if (ImGui::BeginTabItem(ICON_FA_CIRCLE_INFO " Details")) {
             active_content_tab_ = ContentTab::Details;
@@ -407,6 +443,8 @@ void DatasetPanel::RenderMainContent() {
         }
 
         ImGui::EndTabBar();
+        // Clear programmatic tab switch after one frame
+        switch_content_tab_ = false;
     }
 }
 
@@ -579,6 +617,28 @@ void DatasetPanel::RenderPipelineContent() {
 
 void DatasetPanel::RenderTrainingContent() {
     RenderTrainingSection();
+
+    // "Go to Evaluate" button after training completes
+    if (has_eval_results_ || has_trained_model_) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.3f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.4f, 0.7f, 1.0f));
+        if (ImGui::Button(ICON_FA_CHART_BAR " Go to Evaluate >>", ImVec2(180, 0))) {
+            pending_content_tab_ = ContentTab::Evaluate;
+            switch_content_tab_ = true;
+        }
+        ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.4f, 1.0f));
+        if (ImGui::Button(ICON_FA_FILE_EXPORT " Go to Export >>", ImVec2(170, 0))) {
+            pending_content_tab_ = ContentTab::Export;
+            switch_content_tab_ = true;
+        }
+        ImGui::PopStyleColor(2);
+    }
 }
 
 void DatasetPanel::RenderDetailsContent() {
@@ -3189,7 +3249,7 @@ void DatasetPanel::LoadDatasetAsync(const std::string& path) {
     std::string ext = fs_path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-    if (ext == ".csv" || ext == ".txt" || ext == ".tsv" || ext == ".dat") {
+    if (ext == ".csv" || ext == ".txt" || ext == ".tsv" || ext == ".dat" || ext == ".arff") {
         // Text-based tabular files - use Custom loader with appropriate delimiter
         cyxwiz::CustomConfig config;
         config.data_path = path;

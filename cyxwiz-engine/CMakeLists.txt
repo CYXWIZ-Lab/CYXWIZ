@@ -122,6 +122,9 @@ set(ENGINE_SOURCES
     src/gui/panels/dataset_panel_preprocessing.cpp
     src/gui/panels/dataset_panel_datapipeline.cpp
     src/gui/panels/dataset_panel_interactive.cpp
+    src/gui/panels/dataset_panel_prepare.cpp
+    src/gui/panels/dataset_panel_evaluate.cpp
+    src/gui/panels/dataset_panel_export.cpp
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.cpp
     src/gui/annotation/grabcut_editor.cpp

@@ -19,6 +19,7 @@
 #include "../../utils/image_quality_analyzer.h"
 #include "../../utils/image_deduplicator.h"
 #include "../../utils/hdf5_browser.h"
+#include <cyxwiz/model_evaluation.h>
 #include "../preview/preview_renderer.h"
 
 namespace cyxwiz {
@@ -34,12 +35,15 @@ namespace gui {
 
 class NodeEditor;
 
-// Content tabs for main area (DBGate-style layout)
+// Content tabs for main area (ML/DL workflow order)
 enum class ContentTab {
     Preview = 0,
-    Pipeline = 1,
-    Training = 2,
-    Details = 3
+    Prepare = 1,
+    Pipeline = 2,
+    Training = 3,
+    Evaluate = 4,
+    Export = 5,
+    Details = 6
 };
 
 // Legacy tab indices (kept for compatibility)
@@ -129,6 +133,8 @@ private:
     float footer_height_ = 24.0f;
     bool sidebar_collapsed_ = false;
     ContentTab active_content_tab_ = ContentTab::Preview;
+    ContentTab pending_content_tab_ = ContentTab::Preview;
+    bool switch_content_tab_ = false;
 
     // Search buffer for sidebar filtering
     char search_buffer_[256] = "";
@@ -141,12 +147,29 @@ private:
     void RenderSplitter(float height);
     void RenderDatasetTree();
     void RenderPreviewContent();
+    void RenderPrepareContent();
     void RenderPipelineContent();
     void RenderTrainingContent();
+    void RenderEvaluateContent();
+    void RenderExportContent();
     void RenderDetailsContent();
     void RenderQuickLoadSection();
     const char* GetDatasetTypeIcon(cyxwiz::DatasetType type) const;
-    
+
+    // Prepare tab sub-sections
+    void RenderTabularPrepareContent();
+    void RenderImagePrepareContent();
+    void RenderSplitConfigSection();
+
+    // Evaluate tab sub-sections
+    void RenderClassificationEvaluation();
+    void RenderRegressionEvaluation();
+    void RenderInlineConfusionMatrix();
+    void RenderPerClassMetrics();
+    void RenderInlineROCCurve();
+    void RenderInlinePRCurve();
+    void RenderInlineLearningCurves();
+
     // ========== Legacy Methods ==========
     void RenderDatasetSelection();
     void RenderDatasetInfo();
@@ -383,6 +406,73 @@ private:
     bool show_notification_ = false;
     float notification_time_ = 0.0f;
     std::string notification_message_;
+
+    // ========== Prepare Tab State ==========
+    // Missing values
+    int prepare_missing_strategy_ = 0;     // 0=Drop, 1=Mean, 2=Median, 3=Mode, 4=Constant
+    float prepare_missing_fill_value_ = 0.0f;
+    bool prepare_missing_analyzed_ = false;
+    std::string prepare_missing_summary_;
+    std::vector<std::pair<std::string, int>> prepare_missing_columns_;  // col name, missing count
+
+    // Outlier detection
+    int prepare_outlier_method_ = 0;       // 0=IQR, 1=Z-Score, 2=Modified Z-Score
+    int prepare_outlier_action_ = 0;       // 0=Flag, 1=Remove, 2=Clip
+    float prepare_outlier_param_ = 1.5f;   // IQR factor or Z-score threshold
+    int prepare_outlier_col_idx_ = 0;      // Selected column for analysis
+    bool prepare_outlier_analyzed_ = false;
+    int prepare_outlier_count_ = 0;
+    std::string prepare_outlier_summary_;
+
+    // Feature scaling
+    int prepare_scaling_method_ = 0;       // 0=ZScore, 1=MinMax, 2=Robust, 3=MaxAbs, 4=Log, 5=BoxCox, 6=YeoJohnson
+
+    // Categorical encoding
+    int prepare_encoding_method_ = 0;      // 0=OneHot, 1=Label, 2=Ordinal
+
+    // Feature selection
+    int prepare_selection_method_ = 0;     // 0=Correlation, 1=Variance, 2=Mutual Information
+    float prepare_selection_threshold_ = 0.9f;
+    bool prepare_correlation_computed_ = false;
+    std::vector<std::pair<std::string, float>> prepare_high_corr_pairs_;  // Pairs above threshold
+
+    // ========== Evaluate Tab State ==========
+    bool has_eval_results_ = false;
+    int eval_task_type_ = 0;  // 0=Classification, 1=Regression
+    bool eval_cm_normalize_ = false;
+
+    // Classification results (from ModelEvaluation)
+    cyxwiz::ConfusionMatrixData eval_classification_;
+
+    // ROC / PR curve data
+    bool eval_has_roc_data_ = false;
+    cyxwiz::ROCCurveData eval_roc_;
+    bool eval_has_pr_data_ = false;
+    cyxwiz::PRCurveData eval_pr_;
+
+    // Learning curves
+    bool eval_has_learning_curves_ = false;
+    cyxwiz::LearningCurveData eval_learning_curves_;
+
+    // Regression results
+    struct RegressionResults {
+        double mse = 0.0;
+        double rmse = 0.0;
+        double mae = 0.0;
+        double r_squared = 0.0;
+        std::vector<double> y_true;
+        std::vector<double> y_pred;
+        std::vector<double> residuals;
+    };
+    RegressionResults eval_regression_;
+
+    // ========== Export Tab State ==========
+    bool has_trained_model_ = false;
+    std::string trained_model_name_;
+    int export_format_idx_ = 0;  // 0=CyxModel, 1=ONNX, 2=Safetensors, 3=GGUF
+    char export_model_name_[256] = "";
+    char export_author_[256] = "";
+    char export_description_[1024] = "";
 };
 
 } // namespace gui

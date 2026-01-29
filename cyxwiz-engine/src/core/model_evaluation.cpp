@@ -659,6 +659,54 @@ ClassificationReport ModelEvaluation::GenerateClassificationReport(
     return report;
 }
 
+RegressionMetrics ModelEvaluation::ComputeRegressionMetrics(
+    const std::vector<double>& y_true,
+    const std::vector<double>& y_pred) {
+
+    RegressionMetrics result;
+    if (y_true.size() != y_pred.size() || y_true.empty()) {
+        result.error_message = "Invalid input: empty or mismatched arrays";
+        return result;
+    }
+
+    size_t n = y_true.size();
+
+    // MSE, MAE, max error
+    double sum_sq = 0.0, sum_abs = 0.0, max_err = 0.0;
+    double sum_ape = 0.0;
+    int ape_count = 0;
+
+    for (size_t i = 0; i < n; i++) {
+        double err = y_true[i] - y_pred[i];
+        sum_sq += err * err;
+        double abs_err = std::abs(err);
+        sum_abs += abs_err;
+        if (abs_err > max_err) max_err = abs_err;
+        if (std::abs(y_true[i]) > 1e-10) {
+            sum_ape += abs_err / std::abs(y_true[i]);
+            ape_count++;
+        }
+    }
+
+    result.mse = sum_sq / n;
+    result.rmse = std::sqrt(result.mse);
+    result.mae = sum_abs / n;
+    result.max_error = max_err;
+    result.mape = ape_count > 0 ? (sum_ape / ape_count) * 100.0 : 0.0;
+
+    // R² = 1 - SS_res / SS_tot
+    double mean_y = 0.0;
+    for (auto v : y_true) mean_y += v;
+    mean_y /= n;
+
+    double ss_tot = 0.0;
+    for (auto v : y_true) ss_tot += (v - mean_y) * (v - mean_y);
+
+    result.r_squared = (ss_tot > 1e-10) ? 1.0 - (sum_sq / ss_tot) : 0.0;
+    result.success = true;
+    return result;
+}
+
 double ModelEvaluation::FindOptimalThreshold(
     const std::vector<int>& y_true,
     const std::vector<double>& y_scores,
