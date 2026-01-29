@@ -22,6 +22,26 @@ find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
+# Find libsndfile (for audio I/O)
+find_package(SndFile CONFIG QUIET)
+if(SndFile_FOUND)
+    message(STATUS "libsndfile found - audio processing enabled")
+    set(CYXWIZ_HAS_SNDFILE TRUE)
+else()
+    message(WARNING "libsndfile not found - audio processing disabled")
+    set(CYXWIZ_HAS_SNDFILE FALSE)
+endif()
+
+# Find FFTW3 (for FFT in audio/signal processing)
+find_package(FFTW3 CONFIG QUIET)
+if(FFTW3_FOUND)
+    message(STATUS "FFTW3 found - FFT-based features enabled")
+    set(CYXWIZ_HAS_FFTW TRUE)
+else()
+    message(WARNING "FFTW3 not found - FFT-based features disabled")
+    set(CYXWIZ_HAS_FFTW FALSE)
+endif()
+
 # Find DuckDB (optional - for SQL-based data loading)
 find_package(duckdb CONFIG QUIET)
 if(duckdb_FOUND)
@@ -61,7 +81,10 @@ set(BACKEND_SOURCES
     src/algorithms/optimization.cpp
     src/algorithms/time_series.cpp
     src/algorithms/text_processing.cpp
+    src/algorithms/tokenizer.cpp
+    src/algorithms/audio_processing.cpp
     src/algorithms/utilities.cpp
+    src/algorithms/rl_interface.cpp
     src/core/data_loader.cpp
     # Distributed training
     src/algorithms/distributed/process_group.cpp
@@ -102,6 +125,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/time_series.h
     include/cyxwiz/text_processing.h
     include/cyxwiz/utilities.h
+    include/cyxwiz/rl_interface.h
     include/cyxwiz/data_loader.h
     # Distributed training
     include/cyxwiz/distributed/process_group.h
@@ -194,6 +218,21 @@ if(CYXWIZ_HAS_ARRAYFIRE)
         )
         target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
     endif()
+endif()
+
+# Link libsndfile and FFTW3 if available (for audio processing)
+if(CYXWIZ_HAS_SNDFILE)
+    target_link_libraries(cyxwiz-backend PRIVATE SndFile::sndfile)
+    target_compile_definitions(cyxwiz-backend PRIVATE CYXWIZ_HAS_SNDFILE)
+endif()
+
+if(CYXWIZ_HAS_FFTW)
+    if(TARGET FFTW3::fftw3)
+        target_link_libraries(cyxwiz-backend PRIVATE FFTW3::fftw3)
+    else()
+        target_link_libraries(cyxwiz-backend PRIVATE fftw3)
+    endif()
+    target_compile_definitions(cyxwiz-backend PRIVATE CYXWIZ_HAS_FFTW)
 endif()
 
 # Link DuckDB if available

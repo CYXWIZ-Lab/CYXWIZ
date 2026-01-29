@@ -5,6 +5,9 @@
 #include "cyxwiz/cyxwiz.h"
 #include <pybind11/functional.h>
 #include "cyxwiz/sequential.h"
+#include "cyxwiz/tokenizer.h"
+#include "cyxwiz/audio_processing.h"
+#include "cyxwiz/rl_interface.h"
 #include "cyxwiz/data_loader.h"
 // Distributed training
 #include "cyxwiz/distributed/process_group.h"
@@ -867,6 +870,53 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("set_parameters", &cyxwiz::DropoutLayer::SetParameters,
              py::arg("params"));
 
+    // UpsampleMode enum
+    py::enum_<cyxwiz::UpsampleMode>(m, "UpsampleMode")
+        .value("Nearest", cyxwiz::UpsampleMode::Nearest)
+        .value("Bilinear", cyxwiz::UpsampleMode::Bilinear);
+
+    // ConvTranspose2D Layer
+    py::class_<cyxwiz::ConvTranspose2DLayer, cyxwiz::Layer>(m, "ConvTranspose2D")
+        .def(py::init<int, int, int, int, int, int, bool>(),
+             py::arg("in_channels"), py::arg("out_channels"), py::arg("kernel_size"),
+             py::arg("stride") = 1, py::arg("padding") = 0,
+             py::arg("output_padding") = 0, py::arg("use_bias") = true,
+             "Create a 2D transposed convolution layer")
+        .def("forward", &cyxwiz::ConvTranspose2DLayer::Forward, py::arg("input"))
+        .def("backward", &cyxwiz::ConvTranspose2DLayer::Backward, py::arg("grad_output"))
+        .def("get_parameters", &cyxwiz::ConvTranspose2DLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::ConvTranspose2DLayer::SetParameters, py::arg("params"))
+        .def_property_readonly("in_channels", &cyxwiz::ConvTranspose2DLayer::GetInChannels)
+        .def_property_readonly("out_channels", &cyxwiz::ConvTranspose2DLayer::GetOutChannels)
+        .def_property_readonly("kernel_size", &cyxwiz::ConvTranspose2DLayer::GetKernelSize)
+        .def_property_readonly("stride", &cyxwiz::ConvTranspose2DLayer::GetStride)
+        .def_property_readonly("padding", &cyxwiz::ConvTranspose2DLayer::GetPadding)
+        .def_property_readonly("output_padding", &cyxwiz::ConvTranspose2DLayer::GetOutputPadding);
+
+    // Upsample2D Layer
+    py::class_<cyxwiz::Upsample2DLayer, cyxwiz::Layer>(m, "Upsample2D")
+        .def(py::init<int, cyxwiz::UpsampleMode>(),
+             py::arg("scale_factor") = 2,
+             py::arg("mode") = cyxwiz::UpsampleMode::Nearest,
+             "Create a 2D upsampling layer (no learnable parameters)")
+        .def("forward", &cyxwiz::Upsample2DLayer::Forward, py::arg("input"))
+        .def("backward", &cyxwiz::Upsample2DLayer::Backward, py::arg("grad_output"))
+        .def("get_parameters", &cyxwiz::Upsample2DLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::Upsample2DLayer::SetParameters, py::arg("params"))
+        .def_property_readonly("scale_factor", &cyxwiz::Upsample2DLayer::GetScaleFactor)
+        .def_property_readonly("mode", &cyxwiz::Upsample2DLayer::GetMode);
+
+    // PixelShuffle Layer
+    py::class_<cyxwiz::PixelShuffleLayer, cyxwiz::Layer>(m, "PixelShuffle")
+        .def(py::init<int>(),
+             py::arg("upscale_factor"),
+             "Create a PixelShuffle layer (depth to space rearrangement)")
+        .def("forward", &cyxwiz::PixelShuffleLayer::Forward, py::arg("input"))
+        .def("backward", &cyxwiz::PixelShuffleLayer::Backward, py::arg("grad_output"))
+        .def("get_parameters", &cyxwiz::PixelShuffleLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::PixelShuffleLayer::SetParameters, py::arg("params"))
+        .def_property_readonly("upscale_factor", &cyxwiz::PixelShuffleLayer::GetUpscaleFactor);
+
     // Base Loss class (abstract - for type hierarchy)
     py::class_<cyxwiz::Loss>(m, "Loss")
         .def("forward", &cyxwiz::Loss::Forward,
@@ -1444,6 +1494,113 @@ PYBIND11_MODULE(pycyxwiz, m) {
     timeseries.def("rolling_std", [](const std::vector<double>& data, int window) {
         return cyxwiz::TimeSeries::RollingStd(data, window);
     }, "Rolling standard deviation", py::arg("data"), py::arg("window"));
+
+    // WindowConfig struct
+    py::class_<cyxwiz::TimeSeries::WindowConfig>(timeseries, "WindowConfig")
+        .def(py::init<>())
+        .def_readwrite("window_size", &cyxwiz::TimeSeries::WindowConfig::window_size)
+        .def_readwrite("forecast_horizon", &cyxwiz::TimeSeries::WindowConfig::forecast_horizon)
+        .def_readwrite("stride", &cyxwiz::TimeSeries::WindowConfig::stride)
+        .def_readwrite("lag_values", &cyxwiz::TimeSeries::WindowConfig::lag_values)
+        .def_readwrite("rolling_windows", &cyxwiz::TimeSeries::WindowConfig::rolling_windows)
+        .def_readwrite("add_diff_features", &cyxwiz::TimeSeries::WindowConfig::add_diff_features)
+        .def_readwrite("normalize", &cyxwiz::TimeSeries::WindowConfig::normalize);
+
+    // WindowResult struct
+    py::class_<cyxwiz::TimeSeries::WindowResult>(timeseries, "WindowResult")
+        .def_readonly("X", &cyxwiz::TimeSeries::WindowResult::X)
+        .def_readonly("y", &cyxwiz::TimeSeries::WindowResult::y)
+        .def_readonly("num_windows", &cyxwiz::TimeSeries::WindowResult::num_windows)
+        .def_readonly("input_features", &cyxwiz::TimeSeries::WindowResult::input_features)
+        .def_readonly("target_features", &cyxwiz::TimeSeries::WindowResult::target_features)
+        .def_readonly("success", &cyxwiz::TimeSeries::WindowResult::success)
+        .def_readonly("error_message", &cyxwiz::TimeSeries::WindowResult::error_message);
+
+    timeseries.def("create_windows", [](const std::vector<double>& data,
+                                        const cyxwiz::TimeSeries::WindowConfig& config) {
+        return cyxwiz::TimeSeries::CreateWindows(data, config);
+    }, "Create sliding windows for ML", py::arg("data"), py::arg("config"));
+
+    timeseries.def("create_multivariate_windows", [](const std::vector<std::vector<double>>& data,
+                                                     int target_col,
+                                                     const cyxwiz::TimeSeries::WindowConfig& config) {
+        return cyxwiz::TimeSeries::CreateMultivariateWindows(data, target_col, config);
+    }, "Create multivariate sliding windows", py::arg("data"), py::arg("target_col"), py::arg("config"));
+
+    timeseries.def("add_features", [](const std::vector<double>& data,
+                                      const std::vector<int>& lags,
+                                      const std::vector<int>& rolling,
+                                      bool add_diff) {
+        return cyxwiz::TimeSeries::AddFeatures(data, lags, rolling, add_diff);
+    }, "Add engineered time-series features",
+       py::arg("data"), py::arg("lag_values") = std::vector<int>{},
+       py::arg("rolling_windows") = std::vector<int>{}, py::arg("add_diff") = false);
+
+    timeseries.def("chronological_split", [](size_t n, double train, double val) {
+        return cyxwiz::TimeSeries::ChronologicalSplit(n, train, val);
+    }, "Chronological train/val/test split",
+       py::arg("num_samples"), py::arg("train_ratio") = 0.7, py::arg("val_ratio") = 0.15);
+
+    // ============================================================================
+    // Audio Processing
+    // ============================================================================
+
+    py::class_<cyxwiz::AudioData>(m, "AudioData")
+        .def(py::init<>())
+        .def_readwrite("samples", &cyxwiz::AudioData::samples)
+        .def_readwrite("sample_rate", &cyxwiz::AudioData::sample_rate)
+        .def_readwrite("num_samples", &cyxwiz::AudioData::num_samples)
+        .def_readwrite("duration_seconds", &cyxwiz::AudioData::duration_seconds)
+        .def_readonly("valid", &cyxwiz::AudioData::valid)
+        .def_readonly("error_message", &cyxwiz::AudioData::error_message);
+
+    py::class_<cyxwiz::SpectrogramConfig>(m, "SpectrogramConfig")
+        .def(py::init<>())
+        .def_readwrite("n_fft", &cyxwiz::SpectrogramConfig::n_fft)
+        .def_readwrite("hop_length", &cyxwiz::SpectrogramConfig::hop_length)
+        .def_readwrite("win_length", &cyxwiz::SpectrogramConfig::win_length)
+        .def_readwrite("center", &cyxwiz::SpectrogramConfig::center)
+        .def_readwrite("window_type", &cyxwiz::SpectrogramConfig::window_type);
+
+    py::class_<cyxwiz::MelConfig, cyxwiz::SpectrogramConfig>(m, "MelConfig")
+        .def(py::init<>())
+        .def_readwrite("n_mels", &cyxwiz::MelConfig::n_mels)
+        .def_readwrite("fmin", &cyxwiz::MelConfig::fmin)
+        .def_readwrite("fmax", &cyxwiz::MelConfig::fmax);
+
+    py::class_<cyxwiz::MFCCConfig, cyxwiz::MelConfig>(m, "MFCCConfig")
+        .def(py::init<>())
+        .def_readwrite("n_mfcc", &cyxwiz::MFCCConfig::n_mfcc)
+        .def_readwrite("use_energy", &cyxwiz::MFCCConfig::use_energy);
+
+    py::class_<cyxwiz::AudioFeatures>(m, "AudioFeatures")
+        .def_readonly("data", &cyxwiz::AudioFeatures::data)
+        .def_readonly("rows", &cyxwiz::AudioFeatures::rows)
+        .def_readonly("cols", &cyxwiz::AudioFeatures::cols)
+        .def_readonly("valid", &cyxwiz::AudioFeatures::valid)
+        .def_readonly("error_message", &cyxwiz::AudioFeatures::error_message);
+
+    py::class_<cyxwiz::AudioProcessing>(m, "AudioProcessing")
+        .def_static("load_audio", &cyxwiz::AudioProcessing::LoadAudio,
+                    py::arg("filepath"), py::arg("target_sr") = 16000)
+        .def_static("compute_spectrogram", &cyxwiz::AudioProcessing::ComputeSpectrogram,
+                    py::arg("audio"), py::arg("config") = cyxwiz::SpectrogramConfig{})
+        .def_static("compute_mel_spectrogram", &cyxwiz::AudioProcessing::ComputeMelSpectrogram,
+                    py::arg("audio"), py::arg("config") = cyxwiz::MelConfig{})
+        .def_static("compute_mfcc", &cyxwiz::AudioProcessing::ComputeMFCC,
+                    py::arg("audio"), py::arg("config") = cyxwiz::MFCCConfig{})
+        .def_static("add_noise", &cyxwiz::AudioProcessing::AddNoise,
+                    py::arg("audio"), py::arg("snr_db") = 20.0f)
+        .def_static("time_stretch", &cyxwiz::AudioProcessing::TimeStretch,
+                    py::arg("audio"), py::arg("rate") = 1.0f)
+        .def_static("pitch_shift", &cyxwiz::AudioProcessing::PitchShift,
+                    py::arg("audio"), py::arg("semitones") = 0.0f)
+        .def_static("resample", &cyxwiz::AudioProcessing::Resample,
+                    py::arg("audio"), py::arg("target_sr"))
+        .def_static("normalize", &cyxwiz::AudioProcessing::Normalize,
+                    py::arg("audio"))
+        .def_static("trim_silence", &cyxwiz::AudioProcessing::TrimSilence,
+                    py::arg("audio"), py::arg("threshold_db") = -40.0f);
 
     // ============================================================================
     // Activation Functions
@@ -2274,5 +2431,147 @@ Example queries:
         .def("get_model", &cyxwiz::DistributedTrainer::GetModel,
             py::return_value_policy::reference,
             "Get the underlying model");
+
+    // ====================================================================
+    // Tokenizer Bindings
+    // ====================================================================
+
+    py::enum_<cyxwiz::TokenizerType>(m, "TokenizerType")
+        .value("Whitespace", cyxwiz::TokenizerType::Whitespace)
+        .value("Word", cyxwiz::TokenizerType::Word)
+        .value("Character", cyxwiz::TokenizerType::Character)
+        .export_values();
+
+    py::class_<cyxwiz::Vocabulary>(m, "Vocabulary")
+        .def(py::init<>())
+        .def("build_from_documents", &cyxwiz::Vocabulary::BuildFromDocuments,
+            py::arg("documents"),
+            py::arg("min_freq") = 1,
+            py::arg("max_vocab_size") = -1,
+            py::arg("lowercase") = true,
+            "Build vocabulary from a list of documents")
+        .def("set_vocabulary", &cyxwiz::Vocabulary::SetVocabulary,
+            py::arg("words"), "Set vocabulary from a list of words")
+        .def("add_word", &cyxwiz::Vocabulary::AddWord,
+            py::arg("word"), "Add a word, returns its index")
+        .def("word_to_index", &cyxwiz::Vocabulary::WordToIndex,
+            py::arg("word"), "Get index for a word ([UNK] if not found)")
+        .def("index_to_word", &cyxwiz::Vocabulary::IndexToWord,
+            py::arg("index"), "Get word for an index")
+        .def("has_word", &cyxwiz::Vocabulary::HasWord,
+            py::arg("word"), "Check if word is in vocabulary")
+        .def("size", &cyxwiz::Vocabulary::Size, "Get vocabulary size")
+        .def("save_to_file", &cyxwiz::Vocabulary::SaveToFile,
+            py::arg("filepath"), "Save vocabulary to file")
+        .def("load_from_file", &cyxwiz::Vocabulary::LoadFromFile,
+            py::arg("filepath"), "Load vocabulary from file")
+        .def_property_readonly("pad_index", &cyxwiz::Vocabulary::PadIndex)
+        .def_property_readonly("unk_index", &cyxwiz::Vocabulary::UnkIndex)
+        .def_property_readonly("bos_index", &cyxwiz::Vocabulary::BosIndex)
+        .def_property_readonly("eos_index", &cyxwiz::Vocabulary::EosIndex);
+
+    py::class_<cyxwiz::Tokenizer>(m, "Tokenizer")
+        .def(py::init<cyxwiz::TokenizerType>(),
+            py::arg("type") = cyxwiz::TokenizerType::Word,
+            "Create a tokenizer")
+        .def("encode", &cyxwiz::Tokenizer::Encode,
+            py::arg("text"), "Encode text to token IDs")
+        .def("decode", &cyxwiz::Tokenizer::Decode,
+            py::arg("token_ids"), "Decode token IDs to text")
+        .def("encode_batch", &cyxwiz::Tokenizer::EncodeBatch,
+            py::arg("texts"), "Encode batch of texts")
+        .def("decode_batch", &cyxwiz::Tokenizer::DecodeBatch,
+            py::arg("batch"), "Decode batch of token IDs")
+        .def("pad_batch", &cyxwiz::Tokenizer::PadBatch,
+            py::arg("batch"), py::arg("max_length") = -1,
+            "Pad a batch to uniform length")
+        .def("train", &cyxwiz::Tokenizer::Train,
+            py::arg("documents"),
+            py::arg("min_freq") = 1,
+            py::arg("max_vocab_size") = -1,
+            "Train tokenizer on documents (builds vocabulary)")
+        .def("set_vocabulary", &cyxwiz::Tokenizer::SetVocabulary)
+        .def("get_vocabulary", static_cast<cyxwiz::Vocabulary& (cyxwiz::Tokenizer::*)()>(&cyxwiz::Tokenizer::GetVocabulary),
+            py::return_value_policy::reference_internal,
+            "Get the vocabulary")
+        .def("set_lowercase", &cyxwiz::Tokenizer::SetLowercase)
+        .def("set_max_length", &cyxwiz::Tokenizer::SetMaxLength)
+        .def("set_padding", &cyxwiz::Tokenizer::SetPadding)
+        .def("set_truncation", &cyxwiz::Tokenizer::SetTruncation)
+        .def("set_add_bos", &cyxwiz::Tokenizer::SetAddBos)
+        .def("set_add_eos", &cyxwiz::Tokenizer::SetAddEos)
+        .def_property_readonly("vocab_size", [](const cyxwiz::Tokenizer& t) {
+            return t.GetVocabulary().Size();
+        });
+
+    // ============================================================================
+    // Reinforcement Learning
+    // ============================================================================
+
+    py::class_<cyxwiz::RLTransition>(m, "RLTransition")
+        .def(py::init<>())
+        .def_readwrite("state", &cyxwiz::RLTransition::state)
+        .def_readwrite("action", &cyxwiz::RLTransition::action)
+        .def_readwrite("reward", &cyxwiz::RLTransition::reward)
+        .def_readwrite("next_state", &cyxwiz::RLTransition::next_state)
+        .def_readwrite("done", &cyxwiz::RLTransition::done);
+
+    py::class_<cyxwiz::RLBatch>(m, "RLBatch")
+        .def_readonly("states", &cyxwiz::RLBatch::states)
+        .def_readonly("actions", &cyxwiz::RLBatch::actions)
+        .def_readonly("rewards", &cyxwiz::RLBatch::rewards)
+        .def_readonly("next_states", &cyxwiz::RLBatch::next_states)
+        .def_readonly("dones", &cyxwiz::RLBatch::dones)
+        .def_readonly("size", &cyxwiz::RLBatch::size);
+
+    py::class_<cyxwiz::StepResult>(m, "StepResult")
+        .def(py::init<>())
+        .def_readwrite("observation", &cyxwiz::StepResult::observation)
+        .def_readwrite("reward", &cyxwiz::StepResult::reward)
+        .def_readwrite("done", &cyxwiz::StepResult::done)
+        .def_readwrite("truncated", &cyxwiz::StepResult::truncated)
+        .def_readwrite("info", &cyxwiz::StepResult::info);
+
+    py::class_<cyxwiz::EnvInfo>(m, "EnvInfo")
+        .def(py::init<>())
+        .def_readonly("name", &cyxwiz::EnvInfo::name)
+        .def_readonly("observation_dim", &cyxwiz::EnvInfo::observation_dim)
+        .def_readonly("action_dim", &cyxwiz::EnvInfo::action_dim)
+        .def_readonly("discrete_actions", &cyxwiz::EnvInfo::discrete_actions)
+        .def_readonly("num_actions", &cyxwiz::EnvInfo::num_actions)
+        .def_readonly("action_low", &cyxwiz::EnvInfo::action_low)
+        .def_readonly("action_high", &cyxwiz::EnvInfo::action_high)
+        .def_readonly("valid", &cyxwiz::EnvInfo::valid)
+        .def_readonly("error_message", &cyxwiz::EnvInfo::error_message);
+
+    py::class_<cyxwiz::ReplayBuffer>(m, "ReplayBuffer")
+        .def(py::init<size_t, unsigned int>(),
+            py::arg("capacity") = 100000, py::arg("seed") = 42,
+            "Create a replay buffer with given capacity")
+        .def("push", py::overload_cast<const cyxwiz::RLTransition&>(&cyxwiz::ReplayBuffer::Push),
+            py::arg("transition"), "Add a transition")
+        .def("push", py::overload_cast<const std::vector<float>&, const std::vector<float>&,
+                                        float, const std::vector<float>&, bool>(&cyxwiz::ReplayBuffer::Push),
+            py::arg("state"), py::arg("action"), py::arg("reward"),
+            py::arg("next_state"), py::arg("done"),
+            "Add a transition from components")
+        .def("sample", &cyxwiz::ReplayBuffer::Sample,
+            py::arg("batch_size"), "Sample a random batch")
+        .def("size", &cyxwiz::ReplayBuffer::Size, "Current buffer size")
+        .def("capacity", &cyxwiz::ReplayBuffer::Capacity, "Maximum capacity")
+        .def("can_sample", &cyxwiz::ReplayBuffer::CanSample,
+            py::arg("batch_size"), "Check if enough samples available")
+        .def("clear", &cyxwiz::ReplayBuffer::Clear, "Clear all transitions")
+        .def("__len__", &cyxwiz::ReplayBuffer::Size);
+
+    py::class_<cyxwiz::EpsilonSchedule>(m, "EpsilonSchedule")
+        .def(py::init<float, float, int>(),
+            py::arg("start") = 1.0f, py::arg("end") = 0.01f,
+            py::arg("decay_steps") = 10000,
+            "Create linear epsilon decay schedule")
+        .def("step", &cyxwiz::EpsilonSchedule::Step, "Decay epsilon by one step")
+        .def("reset", &cyxwiz::EpsilonSchedule::Reset, "Reset to initial epsilon")
+        .def_property_readonly("epsilon", &cyxwiz::EpsilonSchedule::GetEpsilon)
+        .def_property_readonly("current_step", &cyxwiz::EpsilonSchedule::GetStep);
 
 }

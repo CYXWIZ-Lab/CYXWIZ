@@ -96,6 +96,35 @@ void NodeEditor::InitializeSearchableNodes() {
     addNode(NodeType::Normalize, "Normalize", "Data Pipeline", "normalize mean std scale");
     addNode(NodeType::OneHotEncode, "OneHotEncode", "Data Pipeline", "one hot encoding labels categorical");
 
+    // Text Processing
+    addNode(NodeType::TextTokenizer, "TextTokenizer", "Text Processing", "tokenize text nlp word bpe encode");
+    addNode(NodeType::TextVocabulary, "TextVocabulary", "Text Processing", "vocabulary word index mapping nlp");
+    addNode(NodeType::TextPadding, "TextPadding", "Text Processing", "pad truncate sequence length nlp");
+
+    // Upsampling
+    addNode(NodeType::ConvTranspose2D, "ConvTranspose2D", "Layers > Upsampling", "deconvolution transposed upsample decoder");
+    addNode(NodeType::Upsample, "Upsample", "Layers > Upsampling", "nearest bilinear interpolation resize upscale");
+    addNode(NodeType::PixelShuffle, "PixelShuffle", "Layers > Upsampling", "sub pixel shuffle super resolution");
+
+    // Time-Series
+    addNode(NodeType::TimeSeriesWindow, "TimeSeriesWindow", "Time-Series", "sliding window lookback forecast sequential");
+    addNode(NodeType::TimeSeriesFeatures, "TimeSeriesFeatures", "Time-Series", "lag rolling diff feature engineering");
+    addNode(NodeType::TimeSeriesSplit, "TimeSeriesSplit", "Time-Series", "chronological train val test time split");
+
+    // Audio Processing
+    addNode(NodeType::AudioInput, "AudioInput", "Audio Processing", "audio wav mp3 load sound");
+    addNode(NodeType::Spectrogram, "Spectrogram", "Audio Processing", "fft frequency spectrum audio");
+    addNode(NodeType::MelSpectrogram, "MelSpectrogram", "Audio Processing", "mel frequency spectrogram audio");
+    addNode(NodeType::MFCC, "MFCC", "Audio Processing", "mfcc cepstral coefficients audio speech");
+    addNode(NodeType::AudioAugmentation, "AudioAugmentation", "Audio Processing", "noise pitch stretch augment audio");
+
+    // Reinforcement Learning
+    addNode(NodeType::GymEnvironment, "GymEnvironment", "Reinforcement Learning", "gym openai atari cartpole environment rl");
+    addNode(NodeType::ReplayBufferNode, "ReplayBuffer", "Reinforcement Learning", "experience replay buffer memory rl");
+    addNode(NodeType::PolicyNetwork, "PolicyNetwork", "Reinforcement Learning", "actor policy network rl agent");
+    addNode(NodeType::ValueNetwork, "ValueNetwork", "Reinforcement Learning", "critic value network rl baseline");
+    addNode(NodeType::RLTraining, "RLTraining", "Reinforcement Learning", "reinforcement learning training loop episode");
+
     // Layers > Dense/Linear
     addNode(NodeType::Dense, "Dense", "Layers > Dense/Linear", "fully connected linear fc nn");
     addNode(NodeType::Embedding, "Embedding", "Layers > Dense/Linear", "word vector lookup nlp");

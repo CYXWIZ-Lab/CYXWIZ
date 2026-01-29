@@ -367,6 +367,107 @@ void NodeEditor::ShowContextMenu() {
         ImGui::EndMenu();
     }
 
+    // ===== TEXT PROCESSING =====
+    if (ImGui::BeginMenu("Text Processing")) {
+        if (ImGui::MenuItem("Text Tokenizer")) {
+            AddNode(NodeType::TextTokenizer, "TextTokenizer");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Vocabulary")) {
+            AddNode(NodeType::TextVocabulary, "TextVocabulary");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Text Padding")) {
+            AddNode(NodeType::TextPadding, "TextPadding");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
+    // ===== UPSAMPLING =====
+    if (ImGui::BeginMenu("Upsampling")) {
+        if (ImGui::MenuItem("ConvTranspose2D")) {
+            AddNode(NodeType::ConvTranspose2D, "ConvTranspose2D");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Upsample")) {
+            AddNode(NodeType::Upsample, "Upsample");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("PixelShuffle")) {
+            AddNode(NodeType::PixelShuffle, "PixelShuffle");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
+    // ===== TIME-SERIES =====
+    if (ImGui::BeginMenu("Time-Series")) {
+        if (ImGui::MenuItem("Sliding Window")) {
+            AddNode(NodeType::TimeSeriesWindow, "TimeSeriesWindow");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Feature Engineering")) {
+            AddNode(NodeType::TimeSeriesFeatures, "TimeSeriesFeatures");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Chronological Split")) {
+            AddNode(NodeType::TimeSeriesSplit, "TimeSeriesSplit");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
+    // ===== AUDIO PROCESSING =====
+    if (ImGui::BeginMenu("Audio Processing")) {
+        if (ImGui::MenuItem("Audio Input")) {
+            AddNode(NodeType::AudioInput, "AudioInput");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Spectrogram")) {
+            AddNode(NodeType::Spectrogram, "Spectrogram");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Mel Spectrogram")) {
+            AddNode(NodeType::MelSpectrogram, "MelSpectrogram");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("MFCC")) {
+            AddNode(NodeType::MFCC, "MFCC");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Audio Augmentation")) {
+            AddNode(NodeType::AudioAugmentation, "AudioAugmentation");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
+    // ===== REINFORCEMENT LEARNING =====
+    if (ImGui::BeginMenu("Reinforcement Learning")) {
+        if (ImGui::MenuItem("Gym Environment")) {
+            AddNode(NodeType::GymEnvironment, "GymEnvironment");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Replay Buffer")) {
+            AddNode(NodeType::ReplayBufferNode, "ReplayBuffer");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Policy Network")) {
+            AddNode(NodeType::PolicyNetwork, "PolicyNetwork");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Value Network")) {
+            AddNode(NodeType::ValueNetwork, "ValueNetwork");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("RL Training")) {
+            AddNode(NodeType::RLTraining, "RLTraining");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
     ImGui::Separator();
 
     // ===== LOSS FUNCTIONS =====

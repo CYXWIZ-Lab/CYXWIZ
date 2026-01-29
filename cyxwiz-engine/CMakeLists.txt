@@ -83,6 +83,10 @@ set(ENGINE_SOURCES
     src/core/model_converter.cpp
     src/core/file_dialogs.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/text_dataset.cpp
+    src/core/formats/timeseries_dataset.cpp
+    src/core/formats/audio_dataset.cpp
+    src/core/gym_connector.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_clipboard.cpp

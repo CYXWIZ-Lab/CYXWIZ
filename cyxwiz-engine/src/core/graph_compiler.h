@@ -44,6 +44,12 @@ struct CompiledLayer {
     float negative_slope = 0.01f; // LeakyReLU slope
     float alpha = 1.0f;         // ELU alpha
 
+    // For ConvTranspose2D / Upsampling
+    int in_channels = 0;        // ConvTranspose2D input channels
+    int output_padding = 0;     // ConvTranspose2D output padding
+    int scale_factor = 2;       // Upsample/PixelShuffle scale factor
+    int upsample_mode = 0;      // 0=Nearest, 1=Bilinear
+
     // Computed shapes (after compilation)
     std::vector<size_t> input_shape;
     std::vector<size_t> output_shape;

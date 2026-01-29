@@ -1230,6 +1230,367 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        // ========== Text Processing Nodes ==========
+
+        case NodeType::TextTokenizer: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Text Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Token IDs";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["tokenizer_type"] = "1"; // 0=Whitespace, 1=Word, 2=Character
+            node.parameters["max_length"] = "512";
+            node.parameters["lowercase"] = "true";
+            node.parameters["padding"] = "true";
+            node.parameters["truncation"] = "true";
+            node.parameters["min_freq"] = "1";
+            node.parameters["max_vocab_size"] = "-1";
+            break;
+        }
+
+        case NodeType::TextVocabulary: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Text Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Vocabulary";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["min_freq"] = "1";
+            node.parameters["max_vocab_size"] = "-1";
+            node.parameters["vocab_file"] = "";
+            break;
+        }
+
+        case NodeType::TextPadding: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Sequences";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Padded";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["max_length"] = "512";
+            node.parameters["pad_value"] = "0";
+            break;
+        }
+
+        // ========== Upsampling Layers ==========
+
+        case NodeType::ConvTranspose2D: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Input";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Output";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["in_channels"] = "64";
+            node.parameters["out_channels"] = "32";
+            node.parameters["kernel_size"] = "3";
+            node.parameters["stride"] = "2";
+            node.parameters["padding"] = "1";
+            node.parameters["output_padding"] = "1";
+            break;
+        }
+
+        case NodeType::Upsample: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Input";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Output";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["scale_factor"] = "2";
+            node.parameters["mode"] = "0"; // 0=Nearest, 1=Bilinear
+            break;
+        }
+
+        case NodeType::PixelShuffle: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Input";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Output";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["upscale_factor"] = "2";
+            break;
+        }
+
+        // ========== Time-Series Nodes ==========
+
+        case NodeType::TimeSeriesWindow: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Sequential Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out_x;
+            out_x.id = next_pin_id_++;
+            out_x.type = PinType::Tensor;
+            out_x.name = "Windows";
+            out_x.is_input = false;
+            node.outputs.push_back(out_x);
+            NodePin out_y;
+            out_y.id = next_pin_id_++;
+            out_y.type = PinType::Labels;
+            out_y.name = "Targets";
+            out_y.is_input = false;
+            node.outputs.push_back(out_y);
+            node.parameters["window_size"] = "10";
+            node.parameters["forecast_horizon"] = "1";
+            node.parameters["stride"] = "1";
+            break;
+        }
+
+        case NodeType::TimeSeriesFeatures: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Input";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Enriched";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["lag_values"] = "1,7,30";
+            node.parameters["rolling_windows"] = "7,30";
+            node.parameters["add_diff"] = "false";
+            break;
+        }
+
+        case NodeType::TimeSeriesSplit: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin train_out;
+            train_out.id = next_pin_id_++;
+            train_out.type = PinType::Tensor;
+            train_out.name = "Train";
+            train_out.is_input = false;
+            node.outputs.push_back(train_out);
+            NodePin val_out;
+            val_out.id = next_pin_id_++;
+            val_out.type = PinType::Tensor;
+            val_out.name = "Validation";
+            val_out.is_input = false;
+            node.outputs.push_back(val_out);
+            NodePin test_out;
+            test_out.id = next_pin_id_++;
+            test_out.type = PinType::Tensor;
+            test_out.name = "Test";
+            test_out.is_input = false;
+            node.outputs.push_back(test_out);
+            node.parameters["train_ratio"] = "0.7";
+            node.parameters["val_ratio"] = "0.15";
+            break;
+        }
+
+        // ========== Audio Processing Nodes ==========
+
+        case NodeType::AudioInput: {
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Waveform";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            NodePin labels_out;
+            labels_out.id = next_pin_id_++;
+            labels_out.type = PinType::Labels;
+            labels_out.name = "Labels";
+            labels_out.is_input = false;
+            node.outputs.push_back(labels_out);
+            node.parameters["sample_rate"] = "16000";
+            node.parameters["duration_ms"] = "3000";
+            node.parameters["dataset_path"] = "";
+            break;
+        }
+
+        case NodeType::Spectrogram:
+        case NodeType::MelSpectrogram: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Waveform";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Spectrogram";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["n_fft"] = "512";
+            node.parameters["hop_length"] = "256";
+            if (type == NodeType::MelSpectrogram) {
+                node.parameters["n_mels"] = "128";
+            }
+            node.parameters["log_scale"] = "true";
+            break;
+        }
+
+        case NodeType::MFCC: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Waveform";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "MFCC";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["n_mfcc"] = "13";
+            node.parameters["n_fft"] = "512";
+            break;
+        }
+
+        case NodeType::AudioAugmentation: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Audio";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Augmented";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["noise_level"] = "0.01";
+            node.parameters["time_stretch"] = "false";
+            node.parameters["pitch_shift"] = "false";
+            break;
+        }
+
+        // ========== Reinforcement Learning Nodes ==========
+
+        case NodeType::GymEnvironment: {
+            NodePin obs_out;
+            obs_out.id = next_pin_id_++;
+            obs_out.type = PinType::Tensor;
+            obs_out.name = "Observation";
+            obs_out.is_input = false;
+            node.outputs.push_back(obs_out);
+            NodePin reward_out;
+            reward_out.id = next_pin_id_++;
+            reward_out.type = PinType::Tensor;
+            reward_out.name = "Reward";
+            reward_out.is_input = false;
+            node.outputs.push_back(reward_out);
+            node.parameters["env_name"] = "CartPole-v1";
+            node.parameters["render"] = "false";
+            break;
+        }
+
+        case NodeType::ReplayBufferNode: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Transition";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Batch";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["capacity"] = "10000";
+            node.parameters["batch_size"] = "64";
+            break;
+        }
+
+        case NodeType::PolicyNetwork:
+        case NodeType::ValueNetwork: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "State";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = type == NodeType::PolicyNetwork ? "Action" : "Value";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["hidden_size"] = "128";
+            node.parameters["num_layers"] = "2";
+            break;
+        }
+
+        case NodeType::RLTraining: {
+            NodePin policy_in;
+            policy_in.id = next_pin_id_++;
+            policy_in.type = PinType::Tensor;
+            policy_in.name = "Policy";
+            policy_in.is_input = true;
+            node.inputs.push_back(policy_in);
+            NodePin env_in;
+            env_in.id = next_pin_id_++;
+            env_in.type = PinType::Tensor;
+            env_in.name = "Environment";
+            env_in.is_input = true;
+            node.inputs.push_back(env_in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Metrics";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["algorithm"] = "PPO";
+            node.parameters["episodes"] = "1000";
+            node.parameters["gamma"] = "0.99";
+            node.parameters["epsilon"] = "0.2";
+            break;
+        }
+
         default:
             // Default: input and output pins
             NodePin input_pin;
@@ -1518,6 +1879,52 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::OneHotEncode:
             return IM_COL32(0, 131, 143, 255);
 
+        // ===== Text Processing - Teal =====
+        case NodeType::TextTokenizer:
+            return IM_COL32(0, 150, 136, 255);
+        case NodeType::TextVocabulary:
+            return IM_COL32(38, 166, 154, 255);
+        case NodeType::TextPadding:
+            return IM_COL32(77, 182, 172, 255);
+
+        // ===== Upsampling - Indigo =====
+        case NodeType::ConvTranspose2D:
+            return IM_COL32(92, 107, 192, 255);
+        case NodeType::Upsample:
+            return IM_COL32(121, 134, 203, 255);
+        case NodeType::PixelShuffle:
+            return IM_COL32(159, 168, 218, 255);
+
+        // ===== Time-Series - Amber =====
+        case NodeType::TimeSeriesWindow:
+            return IM_COL32(255, 160, 0, 255);
+        case NodeType::TimeSeriesFeatures:
+            return IM_COL32(255, 179, 0, 255);
+        case NodeType::TimeSeriesSplit:
+            return IM_COL32(255, 196, 0, 255);
+
+        // ===== Audio - Deep Purple =====
+        case NodeType::AudioInput:
+            return IM_COL32(103, 58, 183, 255);
+        case NodeType::Spectrogram:
+        case NodeType::MelSpectrogram:
+            return IM_COL32(126, 87, 194, 255);
+        case NodeType::MFCC:
+            return IM_COL32(149, 117, 205, 255);
+        case NodeType::AudioAugmentation:
+            return IM_COL32(179, 157, 219, 255);
+
+        // ===== RL - Red =====
+        case NodeType::GymEnvironment:
+            return IM_COL32(229, 57, 53, 255);
+        case NodeType::ReplayBufferNode:
+            return IM_COL32(239, 83, 80, 255);
+        case NodeType::PolicyNetwork:
+        case NodeType::ValueNetwork:
+            return IM_COL32(244, 113, 108, 255);
+        case NodeType::RLTraining:
+            return IM_COL32(198, 40, 40, 255);
+
         default:
             return IM_COL32(127, 140, 141, 255);
     }
@@ -1710,6 +2117,46 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::ArgMax:
         case NodeType::TopK:
             return ICON_FA_ARROW_UP;
+
+        // Text Processing
+        case NodeType::TextTokenizer:
+            return ICON_FA_FONT;
+        case NodeType::TextVocabulary:
+            return ICON_FA_BOOK;
+        case NodeType::TextPadding:
+            return ICON_FA_ALIGN_LEFT;
+
+        // Upsampling
+        case NodeType::ConvTranspose2D:
+        case NodeType::Upsample:
+        case NodeType::PixelShuffle:
+            return ICON_FA_EXPAND;
+
+        // Time-Series
+        case NodeType::TimeSeriesWindow:
+        case NodeType::TimeSeriesFeatures:
+        case NodeType::TimeSeriesSplit:
+            return ICON_FA_CHART_LINE;
+
+        // Audio
+        case NodeType::AudioInput:
+        case NodeType::AudioAugmentation:
+            return ICON_FA_MUSIC;
+        case NodeType::Spectrogram:
+        case NodeType::MelSpectrogram:
+        case NodeType::MFCC:
+            return ICON_FA_WAVE_SQUARE;
+
+        // RL
+        case NodeType::GymEnvironment:
+            return ICON_FA_BULLSEYE;
+        case NodeType::ReplayBufferNode:
+            return ICON_FA_DATABASE;
+        case NodeType::PolicyNetwork:
+        case NodeType::ValueNetwork:
+            return ICON_FA_BRAIN;
+        case NodeType::RLTraining:
+            return ICON_FA_CROSSHAIRS;
 
         default:
             return ICON_FA_CIRCLE_NODES;
