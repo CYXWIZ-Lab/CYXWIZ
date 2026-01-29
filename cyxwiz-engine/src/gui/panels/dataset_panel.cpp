@@ -129,9 +129,77 @@ void DatasetPanel::RenderToolbar() {
     float settings_x = ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 30;
     ImGui::SameLine(settings_x);
     if (ImGui::Button(ICON_FA_GEAR "##Settings")) {
-        // TODO: Show settings popup
+        ImGui::OpenPopup("DatasetSettings");
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Settings");
+
+    if (ImGui::BeginPopup("DatasetSettings")) {
+        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), ICON_FA_GEAR " Dataset Manager Settings");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Preview settings
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "PREVIEW");
+        ImGui::SetNextItemWidth(120);
+        const char* view_modes[] = {"Single", "Grid", "Table", "Type-Aware"};
+        ImGui::Combo("Default View", &preview_view_mode_, view_modes, IM_ARRAYSIZE(view_modes));
+
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Grid Cols", &preview_grid_cols_);
+        preview_grid_cols_ = std::clamp(preview_grid_cols_, 1, 16);
+
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Grid Rows", &preview_grid_rows_);
+        preview_grid_rows_ = std::clamp(preview_grid_rows_, 1, 16);
+
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Table Rows", &preview_table_rows_);
+        preview_table_rows_ = std::clamp(preview_table_rows_, 5, 100);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Split defaults
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "DEFAULT SPLIT");
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("Train", &split_config_.train_ratio, 0.0f, 0.0f, "%.2f");
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("Val", &split_config_.val_ratio, 0.0f, 0.0f, "%.2f");
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("Test", &split_config_.test_ratio, 0.0f, 0.0f, "%.2f");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Image loading defaults
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "IMAGE LOADING");
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Target Width", &image_target_width_);
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Target Height", &image_target_height_);
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Cache Size", &image_cache_size_);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Memory
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "MEMORY");
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        size_t mem_used = registry.GetTotalMemoryUsage();
+        size_t mem_limit = registry.GetMemoryLimit();
+        ImGui::Text("Used: %.1f MB / %.1f MB", mem_used / (1024.0f * 1024.0f), mem_limit / (1024.0f * 1024.0f));
+        ImGui::Text("Datasets loaded: %zu", registry.GetMemoryStats().datasets_count);
+
+        if (ImGui::Button(ICON_FA_TRASH_CAN " Trim Memory")) {
+            registry.TrimMemory();
+        }
+
+        ImGui::EndPopup();
+    }
 }
 
 void DatasetPanel::RenderSidebar() {
