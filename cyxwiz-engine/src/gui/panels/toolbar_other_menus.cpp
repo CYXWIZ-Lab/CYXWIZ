@@ -423,9 +423,9 @@ void ToolbarPanel::RenderHelpMenu() {
 #ifdef _WIN32
             ShellExecuteA(NULL, "open", "https://github.com/CYXWIZ-Lab/CYXWIZ/issues", NULL, NULL, SW_SHOWNORMAL);
 #elif __APPLE__
-            system("open "https://github.com/CYXWIZ-Lab/CYXWIZ/issues"");
+            system("open https://github.com/CYXWIZ-Lab/CYXWIZ/issues");
 #else
-            system("xdg-open "https://github.com/CYXWIZ-Lab/CYXWIZ/issues"");
+            system("xdg-open https://github.com/CYXWIZ-Lab/CYXWIZ/issues");
 #endif
         }
 

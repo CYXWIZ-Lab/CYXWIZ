@@ -367,6 +367,11 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Flatten:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
+        case gui::NodeType::ConvTranspose2D:
+        case gui::NodeType::Upsample:
+        case gui::NodeType::PixelShuffle:
+        case gui::NodeType::PolicyNetwork:
+        case gui::NodeType::ValueNetwork:
             return true;
         default:
             return false;
@@ -398,6 +403,17 @@ bool GraphCompiler::IsPreprocessing(gui::NodeType type) const {
         case gui::NodeType::DataSplit:
         case gui::NodeType::DataLoader:
         case gui::NodeType::Augmentation:
+        case gui::NodeType::TextTokenizer:
+        case gui::NodeType::TextVocabulary:
+        case gui::NodeType::TextPadding:
+        case gui::NodeType::TimeSeriesWindow:
+        case gui::NodeType::TimeSeriesFeatures:
+        case gui::NodeType::TimeSeriesSplit:
+        case gui::NodeType::AudioInput:
+        case gui::NodeType::Spectrogram:
+        case gui::NodeType::MelSpectrogram:
+        case gui::NodeType::MFCC:
+        case gui::NodeType::AudioAugmentation:
             return true;
         default:
             return false;
@@ -457,6 +473,33 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
         case gui::NodeType::ELU:
             if (node.parameters.count("alpha"))
                 layer.alpha = std::stof(node.parameters.at("alpha"));
+            break;
+
+        case gui::NodeType::ConvTranspose2D:
+            if (node.parameters.count("in_channels"))
+                layer.in_channels = std::stoi(node.parameters.at("in_channels"));
+            if (node.parameters.count("out_channels"))
+                layer.filters = std::stoi(node.parameters.at("out_channels"));
+            if (node.parameters.count("kernel_size"))
+                layer.kernel_size = std::stoi(node.parameters.at("kernel_size"));
+            if (node.parameters.count("stride"))
+                layer.stride = std::stoi(node.parameters.at("stride"));
+            if (node.parameters.count("padding"))
+                layer.padding = std::stoi(node.parameters.at("padding"));
+            if (node.parameters.count("output_padding"))
+                layer.output_padding = std::stoi(node.parameters.at("output_padding"));
+            break;
+
+        case gui::NodeType::Upsample:
+            if (node.parameters.count("scale_factor"))
+                layer.scale_factor = std::stoi(node.parameters.at("scale_factor"));
+            if (node.parameters.count("mode"))
+                layer.upsample_mode = std::stoi(node.parameters.at("mode"));
+            break;
+
+        case gui::NodeType::PixelShuffle:
+            if (node.parameters.count("upscale_factor"))
+                layer.scale_factor = std::stoi(node.parameters.at("upscale_factor"));
             break;
 
         default:

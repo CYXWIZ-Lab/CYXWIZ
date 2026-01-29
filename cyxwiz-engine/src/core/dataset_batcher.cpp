@@ -140,7 +140,7 @@ Batch DatasetBatcher::GetNextBatch() {
         std::vector<float> data_vec(data_ptr, data_ptr + num_elements);
         NormalizeData(data_vec);
         batch.data = VectorToTensor(data_vec, data_shape);
-        spdlog::warn("DatasetBatcher: Using deprecated SetNormalization(). Consider using preprocessing pipeline instead.");
+        static bool warned_once = false; if (!warned_once) { spdlog::warn("DatasetBatcher: Using deprecated SetNormalization(). Consider using preprocessing pipeline instead."); warned_once = true; }
     }
 
     if (one_hot_) {

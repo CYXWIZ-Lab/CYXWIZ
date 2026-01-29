@@ -237,6 +237,11 @@ MainWindow::MainWindow()
         data_explorer_panel_->SetVisualizationPanel(visualization_panel_.get());
     }
 
+    // Connect TableViewer to VisualizationPanel
+    if (table_viewer_ && visualization_panel_) {
+        table_viewer_->SetVisualizationPanel(visualization_panel_.get());
+    }
+
     // Advanced Tools panels (Phase 5)
     dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
     gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
@@ -2527,6 +2532,13 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (cloud_dataset_manager_panel_) {
         dock_style.RegisterPanel("Cloud Manager", ICON_FA_DATABASE, cloud_dataset_manager_panel_->GetVisiblePtr());
+    }
+
+    // Command Palette - action button (not a panel toggle)
+    if (toolbar_) {
+        dock_style.RegisterPanel("Command Palette", ICON_FA_MAGNIFYING_GLASS, nullptr, [this]() {
+            toolbar_->OpenCommandPalette();
+        });
     }
 
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());

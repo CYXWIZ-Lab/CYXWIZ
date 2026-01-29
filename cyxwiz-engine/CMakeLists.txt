@@ -70,6 +70,7 @@ set(ENGINE_SOURCES
     src/utils/dataset_analyzer.cpp
     src/utils/image_quality_analyzer.cpp
     src/utils/image_deduplicator.cpp
+    src/utils/hdf5_browser.cpp
     # Dataset utilities (Phase 2)
     src/utils/segmentation_utils.cpp
     src/utils/shape_utils.cpp
@@ -82,6 +83,10 @@ set(ENGINE_SOURCES
     src/core/model_converter.cpp
     src/core/file_dialogs.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/text_dataset.cpp
+    src/core/formats/timeseries_dataset.cpp
+    src/core/formats/audio_dataset.cpp
+    src/core/gym_connector.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_clipboard.cpp
@@ -121,6 +126,9 @@ set(ENGINE_SOURCES
     src/gui/panels/dataset_panel_preprocessing.cpp
     src/gui/panels/dataset_panel_datapipeline.cpp
     src/gui/panels/dataset_panel_interactive.cpp
+    src/gui/panels/dataset_panel_prepare.cpp
+    src/gui/panels/dataset_panel_evaluate.cpp
+    src/gui/panels/dataset_panel_export.cpp
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.cpp
     src/gui/annotation/grabcut_editor.cpp
@@ -220,6 +228,7 @@ set(ENGINE_SOURCES
     src/gui/query/cyxql_parser.cpp
     src/gui/query/cyxql_executor.cpp
     src/data/data_table.cpp
+    src/data/lazy_data_table.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
     src/scripting/scripting_engine.cpp
@@ -228,6 +237,15 @@ set(ENGINE_SOURCES
     src/scripting/startup_script_manager.cpp
     src/scripting/cell_manager.cpp
     src/gui/panels/output_renderer.cpp
+    # Preview system
+    src/gui/preview/preview_renderer.cpp
+    src/gui/preview/text_preview.cpp
+    src/gui/preview/json_tree.cpp
+    src/gui/preview/table_preview.cpp
+    src/gui/preview/image_preview.cpp
+    src/gui/preview/markdown_preview.cpp
+    src/gui/preview/hex_preview.cpp
+    src/gui/preview/hdf5_preview.cpp
     # ImGuiColorTextEdit (text editor component)
     external/ImGuiColorTextEdit/TextEditor.cpp
     # ImNodes (visual node editor)
@@ -526,6 +544,8 @@ if(WIN32)
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX
     )
+    # Link Windows-specific libraries (PDH for CPU metrics in System Monitor)
+    target_link_libraries(cyxwiz-engine PRIVATE pdh)
     # Add icon resource if available
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.rc")
         target_sources(cyxwiz-engine PRIVATE resources/icon.rc)
@@ -733,3 +753,6 @@ endif()
 set_target_properties(test_opencv_integration PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# HDF5 Loading test - run via engine's Python console or dedicated test runner
+# The HDF5Dataset class is tested as part of cyxwiz-engine

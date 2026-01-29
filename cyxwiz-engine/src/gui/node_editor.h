@@ -162,7 +162,36 @@ enum class NodeType {
     NonMaxSuppression,  // NMS for detections
     ArgMax,             // Classification argmax
     TopK,               // Top-K predictions
-    ThresholdFilter     // Filter by confidence
+    ThresholdFilter,    // Filter by confidence
+
+    // ===== Text Processing Nodes =====
+    TextTokenizer,      // Tokenize text -> integer sequences
+    TextVocabulary,     // Manage word<->index vocabulary
+    TextPadding,        // Pad/truncate sequences to fixed length
+
+    // ===== Upsampling Layers =====
+    ConvTranspose2D,    // Learnable transposed convolution
+    Upsample,           // Nearest/bilinear interpolation upsampling
+    PixelShuffle,       // Sub-pixel convolution rearrangement
+
+    // ===== Time-Series Nodes =====
+    TimeSeriesWindow,   // Sliding window for sequential data
+    TimeSeriesFeatures, // Lag, rolling, differencing features
+    TimeSeriesSplit,    // Chronological train/val/test split
+
+    // ===== Audio Processing Nodes =====
+    AudioInput,         // Load audio dataset
+    Spectrogram,        // Compute spectrogram from waveform
+    MelSpectrogram,     // Compute mel-spectrogram
+    MFCC,               // Extract MFCC features
+    AudioAugmentation,  // Time stretch, pitch shift, noise
+
+    // ===== RL Nodes =====
+    GymEnvironment,     // OpenAI Gym environment connector
+    ReplayBufferNode,   // Experience replay buffer
+    PolicyNetwork,      // Actor network for RL
+    ValueNetwork,       // Critic network for RL
+    RLTraining          // RL training loop controller
 };
 
 // Attribute for node pins (inputs/outputs)

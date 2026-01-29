@@ -472,6 +472,87 @@ public:
         double noise_std = 1.0
     );
 
+    // ==================== Windowing for ML ====================
+
+    /**
+     * Configuration for sliding window dataset creation
+     */
+    struct WindowConfig {
+        int window_size = 10;          // Lookback window (number of past timesteps)
+        int forecast_horizon = 1;      // How many steps ahead to predict
+        int stride = 1;               // Step between consecutive windows
+        std::vector<int> lag_values;   // Additional lag features (e.g., {1, 7, 30})
+        std::vector<int> rolling_windows; // Rolling stat windows (e.g., {7, 30})
+        bool add_diff_features = false;   // Add differenced features
+        bool normalize = false;        // Normalize each window
+    };
+
+    /**
+     * Result of windowing operation
+     */
+    struct WindowResult {
+        std::vector<std::vector<double>> X;  // Input windows [num_windows, window_size * features]
+        std::vector<std::vector<double>> y;  // Target values [num_windows, forecast_horizon]
+        size_t num_windows = 0;
+        size_t input_features = 0;     // Features per timestep
+        size_t target_features = 0;
+        bool success = false;
+        std::string error_message;
+    };
+
+    /**
+     * Create sliding window dataset from time series
+     * @param data Input time series (single feature)
+     * @param config Window configuration
+     * @return WindowResult with X (inputs) and y (targets)
+     */
+    static WindowResult CreateWindows(
+        const std::vector<double>& data,
+        const WindowConfig& config
+    );
+
+    /**
+     * Create sliding window dataset from multivariate time series
+     * @param data Input data [num_timesteps][num_features]
+     * @param target_col Index of the target column
+     * @param config Window configuration
+     * @return WindowResult
+     */
+    static WindowResult CreateMultivariateWindows(
+        const std::vector<std::vector<double>>& data,
+        int target_col,
+        const WindowConfig& config
+    );
+
+    /**
+     * Add engineered time-series features to data
+     * @param data Input time series
+     * @param lag_values Lag features to add (e.g., {1, 7, 30})
+     * @param rolling_windows Rolling mean/std windows (e.g., {7, 30})
+     * @param add_diff Add first-difference feature
+     * @return Multivariate data [num_timesteps][num_features]
+     *         Features: [original, lag_1, ..., lag_n, roll_mean_w1, roll_std_w1, ..., diff]
+     */
+    static std::vector<std::vector<double>> AddFeatures(
+        const std::vector<double>& data,
+        const std::vector<int>& lag_values = {},
+        const std::vector<int>& rolling_windows = {},
+        bool add_diff = false
+    );
+
+    /**
+     * Chronological train/val/test split (preserves temporal order)
+     * @param num_samples Total number of samples
+     * @param train_ratio Training ratio (default: 0.7)
+     * @param val_ratio Validation ratio (default: 0.15)
+     * @return Tuple of (train_end_idx, val_end_idx) - test is the rest
+     */
+    static std::pair<size_t, size_t> ChronologicalSplit(
+        size_t num_samples,
+        double train_ratio = 0.7,
+        double val_ratio = 0.15
+    );
+
 private:
     // Helper functions
     static std::vector<double> CenteredMovingAverage(

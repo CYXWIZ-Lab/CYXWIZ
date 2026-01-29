@@ -4137,4 +4137,436 @@ Tensor TransformerDecoderLayer::GenerateCausalMask(int size) {
     return mask;
 }
 
+// ============================================================================
+// ConvTranspose2D Layer Implementation
+// ============================================================================
+
+ConvTranspose2DLayer::ConvTranspose2DLayer(int in_channels, int out_channels,
+                                           int kernel_size, int stride, int padding,
+                                           int output_padding, bool use_bias)
+    : in_channels_(in_channels), out_channels_(out_channels),
+      kernel_size_(kernel_size), stride_(stride), padding_(padding),
+      output_padding_(output_padding), use_bias_(use_bias) {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // Weights: [kernel_size, kernel_size, out_channels, in_channels]
+    // Note: transposed conv weights are "flipped" relative to conv2d
+    int fan_in = in_channels * kernel_size * kernel_size;
+    af::dim4 weight_dims(kernel_size, kernel_size, out_channels, in_channels);
+    af::array w = KaimingUniform(fan_in, weight_dims);
+    weights_ = AfToTensor(w);
+
+    if (use_bias_) {
+        af::array b = af::constant(0.0f, af::dim4(out_channels));
+        bias_ = AfToTensor(b);
+    }
+
+    grad_weights_ = Tensor::Zeros({static_cast<size_t>(kernel_size),
+                                    static_cast<size_t>(kernel_size),
+                                    static_cast<size_t>(out_channels),
+                                    static_cast<size_t>(in_channels)});
+    if (use_bias_) {
+        grad_bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
+    }
+#else
+    weights_ = Tensor::Random({static_cast<size_t>(kernel_size),
+                                static_cast<size_t>(kernel_size),
+                                static_cast<size_t>(out_channels),
+                                static_cast<size_t>(in_channels)});
+    if (use_bias_) {
+        bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
+    }
+    grad_weights_ = Tensor::Zeros({static_cast<size_t>(kernel_size),
+                                    static_cast<size_t>(kernel_size),
+                                    static_cast<size_t>(out_channels),
+                                    static_cast<size_t>(in_channels)});
+    if (use_bias_) {
+        grad_bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
+    }
+#endif
+}
+
+Tensor ConvTranspose2DLayer::Forward(const Tensor& input) {
+    cached_input_ = input;
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        // Input: [H, W, in_channels, batch] (ArrayFire column-major)
+        af::array x = TensorToAf(input);
+        af::array w = TensorToAf(weights_);
+
+        dim_t in_h = x.dims(0);
+        dim_t in_w = x.dims(1);
+        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+
+        // Output size: (in - 1) * stride - 2 * padding + kernel + output_padding
+        dim_t out_h = (in_h - 1) * stride_ - 2 * padding_ + kernel_size_ + output_padding_;
+        dim_t out_w = (in_w - 1) * stride_ - 2 * padding_ + kernel_size_ + output_padding_;
+
+        af::array output = af::constant(0.0f, af::dim4(out_h, out_w, out_channels_, batch_size));
+
+        // Transposed convolution: scatter input values using flipped kernel
+        for (int ic = 0; ic < in_channels_; ic++) {
+            for (int oc = 0; oc < out_channels_; oc++) {
+                af::array filter = w(af::span, af::span, oc, ic);
+
+                for (dim_t b = 0; b < batch_size; b++) {
+                    af::array input_slice = x(af::span, af::span, ic, b);
+
+                    // For each input position, add filter * input_value to output
+                    for (dim_t ih = 0; ih < in_h; ih++) {
+                        for (dim_t iw = 0; iw < in_w; iw++) {
+                            float val = input_slice(ih, iw).scalar<float>();
+                            if (val == 0.0f) continue;
+
+                            dim_t oh_start = ih * stride_ - padding_;
+                            dim_t ow_start = iw * stride_ - padding_;
+
+                            for (int kh = 0; kh < kernel_size_; kh++) {
+                                for (int kw = 0; kw < kernel_size_; kw++) {
+                                    dim_t oh = oh_start + kh;
+                                    dim_t ow = ow_start + kw;
+                                    if (oh >= 0 && oh < out_h && ow >= 0 && ow < out_w) {
+                                        output(oh, ow, oc, b) += val * filter(kh, kw).scalar<float>();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add bias
+        if (use_bias_) {
+            af::array b = TensorToAf(bias_);
+            b = af::moddims(b, af::dim4(1, 1, out_channels_, 1));
+            output = output + af::tile(b, af::dim4(out_h, out_w, 1, batch_size));
+        }
+
+        return AfToTensor(output);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire ConvTranspose2DLayer::Forward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("ConvTranspose2D forward requires ArrayFire");
+}
+
+Tensor ConvTranspose2DLayer::Backward(const Tensor& grad_output) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array grad_out = TensorToAf(grad_output);
+        af::array x = TensorToAf(cached_input_);
+        af::array w = TensorToAf(weights_);
+
+        dim_t in_h = x.dims(0);
+        dim_t in_w = x.dims(1);
+        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+
+        // Gradient w.r.t. bias
+        if (use_bias_) {
+            af::array db = af::sum(af::sum(af::sum(grad_out, 0), 1), 3);
+            db = af::moddims(db, af::dim4(out_channels_));
+            grad_bias_ = AfToTensor(db);
+        }
+
+        // Gradient w.r.t. input: standard convolution of grad_output with weights
+        dim_t out_h = grad_out.dims(0);
+        dim_t out_w = grad_out.dims(1);
+
+        af::array dx = af::constant(0.0f, x.dims());
+
+        for (int ic = 0; ic < in_channels_; ic++) {
+            for (int oc = 0; oc < out_channels_; oc++) {
+                af::array filter = w(af::span, af::span, oc, ic);
+
+                for (dim_t b = 0; b < batch_size; b++) {
+                    af::array grad_slice = grad_out(af::span, af::span, oc, b);
+
+                    for (dim_t ih = 0; ih < in_h; ih++) {
+                        for (dim_t iw = 0; iw < in_w; iw++) {
+                            dim_t oh_start = ih * stride_ - padding_;
+                            dim_t ow_start = iw * stride_ - padding_;
+
+                            float sum = 0.0f;
+                            for (int kh = 0; kh < kernel_size_; kh++) {
+                                for (int kw = 0; kw < kernel_size_; kw++) {
+                                    dim_t oh = oh_start + kh;
+                                    dim_t ow = ow_start + kw;
+                                    if (oh >= 0 && oh < out_h && ow >= 0 && ow < out_w) {
+                                        sum += grad_slice(oh, ow).scalar<float>() * filter(kh, kw).scalar<float>();
+                                    }
+                                }
+                            }
+                            dx(ih, iw, ic, b) += sum;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Gradient w.r.t. weights
+        af::array dW = af::constant(0.0f, w.dims());
+
+        for (int ic = 0; ic < in_channels_; ic++) {
+            for (int oc = 0; oc < out_channels_; oc++) {
+                for (dim_t b = 0; b < batch_size; b++) {
+                    af::array input_slice = x(af::span, af::span, ic, b);
+                    af::array grad_slice = grad_out(af::span, af::span, oc, b);
+
+                    for (int kh = 0; kh < kernel_size_; kh++) {
+                        for (int kw = 0; kw < kernel_size_; kw++) {
+                            float sum = 0.0f;
+                            for (dim_t ih = 0; ih < in_h; ih++) {
+                                for (dim_t iw = 0; iw < in_w; iw++) {
+                                    dim_t oh = ih * stride_ - padding_ + kh;
+                                    dim_t ow = iw * stride_ - padding_ + kw;
+                                    if (oh >= 0 && oh < static_cast<dim_t>(grad_out.dims(0)) &&
+                                        ow >= 0 && ow < static_cast<dim_t>(grad_out.dims(1))) {
+                                        sum += input_slice(ih, iw).scalar<float>() * grad_slice(oh, ow).scalar<float>();
+                                    }
+                                }
+                            }
+                            dW(kh, kw, oc, ic) += sum;
+                        }
+                    }
+                }
+            }
+        }
+        grad_weights_ = AfToTensor(dW);
+
+        return AfToTensor(dx);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire ConvTranspose2DLayer::Backward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("ConvTranspose2D backward requires ArrayFire");
+}
+
+std::map<std::string, Tensor> ConvTranspose2DLayer::GetParameters() {
+    std::map<std::string, Tensor> params;
+    params["weights"] = weights_;
+    params["grad_weights"] = grad_weights_;
+    if (use_bias_) {
+        params["bias"] = bias_;
+        params["grad_bias"] = grad_bias_;
+    }
+    return params;
+}
+
+void ConvTranspose2DLayer::SetParameters(const std::map<std::string, Tensor>& params) {
+    if (params.count("weights")) weights_ = params.at("weights");
+    if (params.count("bias") && use_bias_) bias_ = params.at("bias");
+}
+
+// ============================================================================
+// Upsample2D Layer Implementation
+// ============================================================================
+
+Upsample2DLayer::Upsample2DLayer(int scale_factor, UpsampleMode mode)
+    : scale_factor_(scale_factor), mode_(mode) {
+}
+
+Tensor Upsample2DLayer::Forward(const Tensor& input) {
+    cached_input_ = input;
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array x = TensorToAf(input);
+
+        dim_t in_h = x.dims(0);
+        dim_t in_w = x.dims(1);
+        dim_t channels = x.dims(2);
+        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+
+        dim_t out_h = in_h * scale_factor_;
+        dim_t out_w = in_w * scale_factor_;
+
+        af::array output = af::constant(0.0f, af::dim4(out_h, out_w, channels, batch_size));
+
+        if (mode_ == UpsampleMode::Nearest) {
+            // Nearest neighbor: repeat each pixel scale_factor times
+            for (dim_t c = 0; c < channels; c++) {
+                for (dim_t b = 0; b < batch_size; b++) {
+                    af::array slice = x(af::span, af::span, c, b);
+                    // Use af::resize for nearest interpolation
+                    af::array resized = af::resize(slice, out_h, out_w, AF_INTERP_NEAREST);
+                    output(af::span, af::span, c, b) = resized;
+                }
+            }
+        } else {
+            // Bilinear interpolation
+            for (dim_t c = 0; c < channels; c++) {
+                for (dim_t b = 0; b < batch_size; b++) {
+                    af::array slice = x(af::span, af::span, c, b);
+                    af::array resized = af::resize(slice, out_h, out_w, AF_INTERP_BILINEAR_COSINE);
+                    output(af::span, af::span, c, b) = resized;
+                }
+            }
+        }
+
+        return AfToTensor(output);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire Upsample2DLayer::Forward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("Upsample2D forward requires ArrayFire");
+}
+
+Tensor Upsample2DLayer::Backward(const Tensor& grad_output) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array grad_out = TensorToAf(grad_output);
+        af::array x = TensorToAf(cached_input_);
+
+        dim_t in_h = x.dims(0);
+        dim_t in_w = x.dims(1);
+        dim_t channels = x.dims(2);
+        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+
+        af::array dx = af::constant(0.0f, x.dims());
+
+        if (mode_ == UpsampleMode::Nearest) {
+            // Backward of nearest: sum gradients in each scale_factor block
+            for (dim_t c = 0; c < channels; c++) {
+                for (dim_t b = 0; b < batch_size; b++) {
+                    af::array grad_slice = grad_out(af::span, af::span, c, b);
+                    for (dim_t ih = 0; ih < in_h; ih++) {
+                        for (dim_t iw = 0; iw < in_w; iw++) {
+                            af::array block = grad_slice(
+                                af::seq(ih * scale_factor_, (ih + 1) * scale_factor_ - 1),
+                                af::seq(iw * scale_factor_, (iw + 1) * scale_factor_ - 1));
+                            dx(ih, iw, c, b) = af::sum<float>(af::flat(block));
+                        }
+                    }
+                }
+            }
+        } else {
+            // Bilinear backward: downsample gradient
+            for (dim_t c = 0; c < channels; c++) {
+                for (dim_t b = 0; b < batch_size; b++) {
+                    af::array grad_slice = grad_out(af::span, af::span, c, b);
+                    af::array resized = af::resize(grad_slice, in_h, in_w, AF_INTERP_BILINEAR_COSINE);
+                    dx(af::span, af::span, c, b) = resized * static_cast<float>(scale_factor_ * scale_factor_);
+                }
+            }
+        }
+
+        return AfToTensor(dx);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire Upsample2DLayer::Backward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("Upsample2D backward requires ArrayFire");
+}
+
+// ============================================================================
+// PixelShuffle Layer Implementation
+// ============================================================================
+
+PixelShuffleLayer::PixelShuffleLayer(int upscale_factor)
+    : upscale_factor_(upscale_factor) {
+}
+
+Tensor PixelShuffleLayer::Forward(const Tensor& input) {
+    cached_input_ = input;
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array x = TensorToAf(input);
+
+        dim_t in_h = x.dims(0);
+        dim_t in_w = x.dims(1);
+        dim_t in_c = x.dims(2);
+        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+
+        int r = upscale_factor_;
+        cached_in_channels_ = static_cast<int>(in_c);
+
+        if (in_c % (r * r) != 0) {
+            throw std::runtime_error("PixelShuffle: input channels (" + std::to_string(in_c) +
+                                     ") must be divisible by r^2 (" + std::to_string(r * r) + ")");
+        }
+
+        dim_t out_c = in_c / (r * r);
+        dim_t out_h = in_h * r;
+        dim_t out_w = in_w * r;
+
+        af::array output = af::constant(0.0f, af::dim4(out_h, out_w, out_c, batch_size));
+
+        // Rearrange: (H, W, C*r^2, N) -> (H*r, W*r, C, N)
+        for (dim_t b = 0; b < batch_size; b++) {
+            for (dim_t oc = 0; oc < out_c; oc++) {
+                for (int rh = 0; rh < r; rh++) {
+                    for (int rw = 0; rw < r; rw++) {
+                        dim_t ic = oc * r * r + rh * r + rw;
+                        af::array channel = x(af::span, af::span, ic, b);
+
+                        // Place each pixel from input channel into sub-pixel position
+                        for (dim_t ih = 0; ih < in_h; ih++) {
+                            for (dim_t iw = 0; iw < in_w; iw++) {
+                                output(ih * r + rh, iw * r + rw, oc, b) = channel(ih, iw);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return AfToTensor(output);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire PixelShuffleLayer::Forward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("PixelShuffle forward requires ArrayFire");
+}
+
+Tensor PixelShuffleLayer::Backward(const Tensor& grad_output) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array grad_out = TensorToAf(grad_output);
+
+        dim_t out_h = grad_out.dims(0);
+        dim_t out_w = grad_out.dims(1);
+        dim_t out_c = grad_out.dims(2);
+        dim_t batch_size = (grad_out.numdims() > 3) ? grad_out.dims(3) : 1;
+
+        int r = upscale_factor_;
+        dim_t in_h = out_h / r;
+        dim_t in_w = out_w / r;
+        dim_t in_c = out_c * r * r;
+
+        af::array dx = af::constant(0.0f, af::dim4(in_h, in_w, in_c, batch_size));
+
+        // Inverse rearrange: (H*r, W*r, C, N) -> (H, W, C*r^2, N)
+        for (dim_t b = 0; b < batch_size; b++) {
+            for (dim_t oc = 0; oc < out_c; oc++) {
+                for (int rh = 0; rh < r; rh++) {
+                    for (int rw = 0; rw < r; rw++) {
+                        dim_t ic = oc * r * r + rh * r + rw;
+
+                        for (dim_t ih = 0; ih < in_h; ih++) {
+                            for (dim_t iw = 0; iw < in_w; iw++) {
+                                dx(ih, iw, ic, b) = grad_out(ih * r + rh, iw * r + rw, oc, b);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return AfToTensor(dx);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire PixelShuffleLayer::Backward failed: {}", e.what());
+    }
+#endif
+
+    throw std::runtime_error("PixelShuffle backward requires ArrayFire");
+}
+
 } // namespace cyxwiz

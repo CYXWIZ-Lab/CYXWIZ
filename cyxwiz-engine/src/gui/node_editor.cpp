@@ -1500,6 +1500,164 @@ void NodeEditor::RenderNodes() {
                 break;
             }
 
+            // Text Processing
+            case NodeType::TextTokenizer: {
+                const char* types[] = {"Whitespace", "Word", "Character"};
+                auto type_it = node.parameters.find("tokenizer_type");
+                int type_idx = type_it != node.parameters.end() ? std::stoi(type_it->second) : 1;
+                if (type_idx >= 0 && type_idx < 3) {
+                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Type: %s", types[type_idx]);
+                }
+                auto len_it = node.parameters.find("max_length");
+                if (len_it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Max Len: %s", len_it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::TextVocabulary: {
+                auto it = node.parameters.find("max_vocab_size");
+                if (it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Max Vocab: %s", it->second.c_str());
+                }
+                break;
+            }
+            case NodeType::TextPadding: {
+                auto it = node.parameters.find("max_length");
+                if (it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Pad to: %s", it->second.c_str());
+                }
+                break;
+            }
+
+            // Upsampling
+            case NodeType::ConvTranspose2D: {
+                auto out_ch = node.parameters.find("out_channels");
+                auto k = node.parameters.find("kernel_size");
+                auto s = node.parameters.find("stride");
+                if (out_ch != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Out: %s ch", out_ch->second.c_str());
+                }
+                if (k != node.parameters.end() && s != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "K:%s S:%s", k->second.c_str(), s->second.c_str());
+                }
+                break;
+            }
+            case NodeType::Upsample: {
+                const char* modes[] = {"Nearest", "Bilinear"};
+                auto sf = node.parameters.find("scale_factor");
+                auto mode = node.parameters.find("mode");
+                if (sf != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Scale: %sx", sf->second.c_str());
+                }
+                int m = mode != node.parameters.end() ? std::stoi(mode->second) : 0;
+                if (m >= 0 && m < 2) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Mode: %s", modes[m]);
+                }
+                break;
+            }
+            case NodeType::PixelShuffle: {
+                auto it = node.parameters.find("upscale_factor");
+                if (it != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Factor: %sx", it->second.c_str());
+                }
+                break;
+            }
+
+            // Time-Series
+            case NodeType::TimeSeriesWindow: {
+                auto ws = node.parameters.find("window_size");
+                auto fh = node.parameters.find("forecast_horizon");
+                if (ws != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Window: %s", ws->second.c_str());
+                }
+                if (fh != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Horizon: %s", fh->second.c_str());
+                }
+                break;
+            }
+            case NodeType::TimeSeriesFeatures: {
+                auto lag = node.parameters.find("lag_values");
+                if (lag != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Lags: %s", lag->second.c_str());
+                }
+                break;
+            }
+            case NodeType::TimeSeriesSplit: {
+                auto tr = node.parameters.find("train_ratio");
+                auto vr = node.parameters.find("val_ratio");
+                if (tr != node.parameters.end() && vr != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Train: %s  Val: %s", tr->second.c_str(), vr->second.c_str());
+                }
+                break;
+            }
+
+            // Audio
+            case NodeType::AudioInput: {
+                auto sr = node.parameters.find("sample_rate");
+                if (sr != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "SR: %s Hz", sr->second.c_str());
+                }
+                break;
+            }
+            case NodeType::Spectrogram:
+            case NodeType::MelSpectrogram: {
+                auto nfft = node.parameters.find("n_fft");
+                if (nfft != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "FFT: %s", nfft->second.c_str());
+                }
+                auto mels = node.parameters.find("n_mels");
+                if (mels != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "Mels: %s", mels->second.c_str());
+                }
+                break;
+            }
+            case NodeType::MFCC: {
+                auto n = node.parameters.find("n_mfcc");
+                if (n != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "MFCC: %s", n->second.c_str());
+                }
+                break;
+            }
+            case NodeType::AudioAugmentation: {
+                ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "Audio Augment");
+                break;
+            }
+
+            // RL
+            case NodeType::GymEnvironment: {
+                auto env = node.parameters.find("env_name");
+                if (env != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Env: %s", env->second.c_str());
+                }
+                break;
+            }
+            case NodeType::ReplayBufferNode: {
+                auto cap = node.parameters.find("capacity");
+                if (cap != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Cap: %s", cap->second.c_str());
+                }
+                break;
+            }
+            case NodeType::PolicyNetwork:
+            case NodeType::ValueNetwork: {
+                auto hs = node.parameters.find("hidden_size");
+                if (hs != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Hidden: %s", hs->second.c_str());
+                }
+                break;
+            }
+            case NodeType::RLTraining: {
+                auto algo = node.parameters.find("algorithm");
+                auto eps = node.parameters.find("episodes");
+                if (algo != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Algo: %s", algo->second.c_str());
+                }
+                if (eps != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Episodes: %s", eps->second.c_str());
+                }
+                break;
+            }
+
             default:
                 // For activation layers and other nodes without parameters, show nothing
                 break;

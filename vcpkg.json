@@ -41,7 +41,9 @@
       "platform": "!osx"
     },
     "nativefiledialog-extended",
-    "duckdb"
+    "duckdb",
+    "libsndfile",
+    "fftw3"
   ],
   "builtin-baseline": "594ad8871e1e8e45f8e626c015fd611163430207"
 }

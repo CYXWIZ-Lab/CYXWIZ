@@ -4,6 +4,7 @@
 #include <imgui_internal.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
+#include <cyxwiz/device.h>
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
@@ -544,26 +545,49 @@ void MemoryPanel::FinalizeSnapshot(int epoch, int step) {
 }
 
 void MemoryPanel::UpdateGPUStatus() {
-    // Try to get GPU info from ArrayFire if available
-    // This is a placeholder - actual implementation depends on ArrayFire availability
+    try {
+        auto devices = Device::GetAvailableDevices();
 
-    // For now, provide basic info that the GPU backend would fill in
-    // In a real implementation, this would call af::info() or similar
+        // Find first GPU device (CUDA or OpenCL)
+        for (const auto& dev : devices) {
+            if (dev.type == DeviceType::CUDA || dev.type == DeviceType::OPENCL) {
+                gpu_info_.device_id = dev.device_id;
+                gpu_info_.name = dev.name;
+                gpu_info_.backend = (dev.type == DeviceType::CUDA) ? "CUDA" : "OpenCL";
+                gpu_info_.total_memory = dev.memory_total;
+                gpu_info_.free_memory = dev.memory_available;
 
-    gpu_info_.device_id = 0;  // Placeholder
-    gpu_info_.name = "GPU (Backend not queried)";
-    gpu_info_.backend = "Unknown";
-    gpu_info_.total_memory = 0;
-    gpu_info_.free_memory = 0;
-    gpu_info_.utilization = -1;  // Unknown
-    gpu_info_.temperature = 0;   // Unknown
+                // Calculate utilization percentage
+                if (dev.memory_total > 0) {
+                    size_t used = dev.memory_total - dev.memory_available;
+                    gpu_info_.utilization = 100.0f * static_cast<float>(used) / static_cast<float>(dev.memory_total);
+                } else {
+                    gpu_info_.utilization = 0.0f;
+                }
 
-    // TODO: Query actual GPU info from ArrayFire
-    // #ifdef CYXWIZ_HAS_ARRAYFIRE
-    //   af::deviceInfo(gpu_info_.name, ...);
-    //   gpu_info_.total_memory = af::getDeviceMemorySize();
-    //   gpu_info_.free_memory = gpu_info_.total_memory - af::getAllocatedBytes();
-    // #endif
+                gpu_info_.temperature = 0.0f;  // Not available from Device API
+                return;
+            }
+        }
+
+        // No GPU found - set default values
+        gpu_info_.device_id = -1;
+        gpu_info_.name = "No GPU detected";
+        gpu_info_.backend = "None";
+        gpu_info_.total_memory = 0;
+        gpu_info_.free_memory = 0;
+        gpu_info_.utilization = 0.0f;
+        gpu_info_.temperature = 0.0f;
+    } catch (const std::exception& e) {
+        spdlog::warn("Failed to query GPU status: {}", e.what());
+        gpu_info_.device_id = -1;
+        gpu_info_.name = "Error querying GPU";
+        gpu_info_.backend = "Unknown";
+        gpu_info_.total_memory = 0;
+        gpu_info_.free_memory = 0;
+        gpu_info_.utilization = 0.0f;
+        gpu_info_.temperature = 0.0f;
+    }
 }
 
 void MemoryPanel::Clear() {

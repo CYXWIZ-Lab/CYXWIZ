@@ -17,10 +17,21 @@
 #include <numeric>
 #include <chrono>
 #include <ctime>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
+#include <queue>
 #include <nlohmann/json.hpp>
 
 // stb_image for image loading (implementation in stb_image_impl.cpp)
 #include <stb_image.h>
+
+// HDF5 support (optional - only if HighFive is available)
+#ifdef CYXWIZ_HAS_HDF5
+#include <highfive/H5File.hpp>
+#include <highfive/H5DataSet.hpp>
+#include <highfive/H5DataSpace.hpp>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -399,7 +410,7 @@ public:
         return info;
     }
 
-    const std::vector<std::string>& GetColumnNames() const { return column_names_; }
+    std::vector<std::string> GetColumnNames() const override { return column_names_; }
 
 private:
     void LoadData() {
@@ -483,6 +494,701 @@ private:
     int num_classes_ = 0;
 };
 
+// =============================================================================
+// HDF5 Dataset Implementation
+// =============================================================================
+#ifdef CYXWIZ_HAS_HDF5
+
+/**
+ * HDF5 Dataset Implementation with Lazy Loading
+ *
+ * Features:
+ * - Lazy loading: Only loads chunks on demand
+ * - LRU cache: Keeps recently accessed chunks in memory
+ * - Memory efficient: Suitable for large datasets (100GB+)
+ * - Thread-safe: Mutex-protected file access and cache
+ *
+ * Supports common HDF5 layouts: /images+/labels, /data+/labels, /X+/y, etc.
+ */
+class HDF5Dataset : public Dataset {
+public:
+    HDF5Dataset(const std::string& path, const HDF5Config& config = {})
+        : path_(path), config_(config) {
+        Initialize();
+    }
+
+    ~HDF5Dataset() {
+        // Stop prefetch threads
+        StopPrefetch();
+        // File is closed automatically when unique_ptr is destroyed
+    }
+
+    size_t Size() const override { return num_samples_; }
+
+    std::pair<std::vector<float>, int> GetItem(size_t index) const override {
+        if (index >= num_samples_) return {{}, -1};
+
+        // Get label (labels are always in memory - they're small)
+        int label = labels_.empty() ? 0 : labels_[index];
+
+        // If not using lazy loading, return directly from memory
+        if (!use_lazy_loading_) {
+            return {eager_samples_[index], label};
+        }
+
+        // Trigger prefetch for upcoming chunks
+        if (config_.prefetch_enabled && !prefetch_threads_.empty()) {
+            TriggerPrefetch(index);
+        }
+
+        // Lazy loading path: get sample from chunk cache
+        std::vector<float> sample = GetSampleFromCache(index);
+        return {std::move(sample), label};
+    }
+
+    DatasetInfo GetInfo() const override {
+        DatasetInfo info;
+        info.name = fs::path(path_).stem().string();
+        info.path = path_;
+        info.type = DatasetType::HDF5;
+        info.shape = sample_shape_;
+        info.num_samples = num_samples_;
+        info.num_classes = num_classes_;
+        info.train_count = train_indices_.size();
+        info.val_count = val_indices_.size();
+        info.test_count = test_indices_.size();
+
+        // Memory usage depends on loading mode
+        if (use_lazy_loading_) {
+            // Only cache is in memory
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            info.memory_usage = chunk_cache_.size() * config_.chunk_size * sample_size_ * sizeof(float);
+            info.cache_usage = info.memory_usage;
+            info.is_streaming = true;
+        } else {
+            info.memory_usage = num_samples_ * sample_size_ * sizeof(float);
+            info.cache_usage = 0;
+            info.is_streaming = false;
+        }
+        info.is_loaded = true;
+
+        // Cache statistics
+        info.cache_hits = cache_hits_;
+        info.cache_misses = cache_misses_;
+
+        return info;
+    }
+
+    // Check if using lazy loading
+    bool IsLazyLoading() const { return use_lazy_loading_; }
+
+    // Get cache statistics
+    size_t GetCacheHits() const { return cache_hits_; }
+    size_t GetCacheMisses() const { return cache_misses_; }
+    size_t GetCachedChunks() const {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        return chunk_cache_.size();
+    }
+
+    // Clear cache (useful for memory pressure)
+    void ClearCache() const {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        chunk_cache_.clear();
+        lru_order_.clear();
+        cache_hits_ = 0;
+        cache_misses_ = 0;
+    }
+
+private:
+    // Chunk data structure
+    struct Chunk {
+        std::vector<std::vector<float>> samples;  // samples in this chunk
+        size_t start_index;                        // first sample index
+        size_t count;                              // number of samples
+    };
+
+    bool DetectSchema(HighFive::File& file) {
+        // Common data path names (priority order)
+        const std::vector<std::string> data_names = {
+            "images", "data", "features", "X", "x", "inputs",
+            "x_train", "train/images", "train/data"
+        };
+
+        // Common label path names
+        const std::vector<std::string> label_names = {
+            "labels", "targets", "y", "Y", "outputs",
+            "y_train", "train/labels", "train/targets"
+        };
+
+        // Try to find data dataset
+        for (const auto& name : data_names) {
+            if (file.exist(name)) {
+                try {
+                    auto ds = file.getDataSet(name);
+                    auto dims = ds.getDimensions();
+                    if (dims.size() >= 1) {
+                        data_path_ = name;
+                        break;
+                    }
+                } catch (...) {}
+            }
+        }
+
+        // Try to find labels dataset
+        for (const auto& name : label_names) {
+            if (file.exist(name)) {
+                try {
+                    auto ds = file.getDataSet(name);
+                    auto dims = ds.getDimensions();
+                    if (dims.size() == 1) {
+                        label_path_ = name;
+                        break;
+                    }
+                } catch (...) {}
+            }
+        }
+
+        return !data_path_.empty();
+    }
+
+    void Initialize() {
+        try {
+            HighFive::File file(path_, HighFive::File::ReadOnly);
+
+            // Use config paths or auto-detect
+            if (config_.auto_detect || config_.data_path.empty()) {
+                if (!DetectSchema(file)) {
+                    spdlog::error("HDF5: Could not auto-detect schema in {}", path_);
+                    return;
+                }
+            } else {
+                data_path_ = config_.data_path;
+                label_path_ = config_.label_path;
+            }
+
+            // Get data dataset info
+            auto data_ds = file.getDataSet(data_path_);
+            dims_ = data_ds.getDimensions();
+            dtype_is_uint8_ = (data_ds.getDataType() == HighFive::AtomicType<uint8_t>());
+            dtype_is_float_ = (data_ds.getDataType() == HighFive::AtomicType<float>());
+            dtype_is_double_ = (data_ds.getDataType() == HighFive::AtomicType<double>());
+            dtype_is_int32_ = (data_ds.getDataType() == HighFive::AtomicType<int32_t>());
+
+            if (dims_.empty()) {
+                spdlog::error("HDF5: Empty dataset at {}", data_path_);
+                return;
+            }
+
+            num_samples_ = dims_[0];
+
+            // Calculate sample shape and size
+            sample_shape_.clear();
+            sample_size_ = 1;
+            for (size_t i = 1; i < dims_.size(); i++) {
+                sample_shape_.push_back(dims_[i]);
+                sample_size_ *= dims_[i];
+            }
+
+            // Handle 1D data (tabular)
+            if (dims_.size() == 1) {
+                sample_shape_ = {1};
+                sample_size_ = 1;
+            }
+
+            // Detect NCHW format for 4D image data
+            is_nchw_ = false;
+            if (dims_.size() == 4) {
+                // dims_ = [N, dim1, dim2, dim3]
+                // NCHW: [N, C, H, W] where C is small (1, 3, 4) and H, W are larger
+                // NHWC: [N, H, W, C] where C is small (1, 3, 4) and H, W are larger
+                size_t dim1 = dims_[1];  // C in NCHW, H in NHWC
+                size_t dim2 = dims_[2];  // H in NCHW, W in NHWC
+                size_t dim3 = dims_[3];  // W in NCHW, C in NHWC
+
+                bool dim1_is_channel = (dim1 == 1 || dim1 == 3 || dim1 == 4) && dim2 > 4 && dim3 > 4;
+                bool dim3_is_channel = (dim3 == 1 || dim3 == 3 || dim3 == 4) && dim1 > 4 && dim2 > 4;
+
+                if (config_.force_nchw) {
+                    // User explicitly said it's NCHW
+                    is_nchw_ = true;
+                    spdlog::info("HDF5: Forcing NCHW->NHWC transpose");
+                } else if (config_.auto_detect_nchw && dim1_is_channel && !dim3_is_channel) {
+                    // Auto-detected NCHW format
+                    is_nchw_ = true;
+                    spdlog::info("HDF5: Auto-detected NCHW format [N,{},{},{}], will transpose to NHWC",
+                                 dim1, dim2, dim3);
+                }
+
+                // Adjust sample_shape_ if NCHW -> NHWC
+                if (is_nchw_) {
+                    // Original: [C, H, W] -> Transposed: [H, W, C]
+                    sample_shape_ = {dim2, dim3, dim1};  // [H, W, C]
+                }
+            }
+
+            // Load labels (always load into memory - they're small)
+            LoadLabels(file);
+
+            // Decide whether to use lazy loading
+            use_lazy_loading_ = config_.lazy_loading &&
+                                (num_samples_ > config_.lazy_threshold);
+
+            if (use_lazy_loading_) {
+                // Lazy loading: just store metadata, don't load data
+                spdlog::info("HDF5 dataset initialized (LAZY): {} samples, shape [{}], {} classes, "
+                             "chunk_size={}, cache_size={}",
+                    num_samples_, GetShapeString(), num_classes_,
+                    config_.chunk_size, config_.chunk_cache_size);
+
+                // Start prefetch threads if enabled
+                if (config_.prefetch_enabled && config_.prefetch_threads > 0) {
+                    StartPrefetch();
+                }
+            } else {
+                // Eager loading: load all data into memory
+                LoadAllData(file);
+                spdlog::info("HDF5 dataset loaded (EAGER): {} samples, shape [{}], {} classes",
+                    num_samples_, GetShapeString(), num_classes_);
+            }
+
+            if (num_samples_ > 0) {
+                SetSplit(SplitConfig{});
+            }
+
+        } catch (const std::exception& e) {
+            spdlog::error("HDF5 initialization error: {}", e.what());
+        }
+    }
+
+    void LoadLabels(HighFive::File& file) {
+        std::set<int> unique_labels;
+
+        if (!label_path_.empty() && file.exist(label_path_)) {
+            auto label_ds = file.getDataSet(label_path_);
+            auto label_dtype = label_ds.getDataType();
+
+            if (label_dtype == HighFive::AtomicType<int32_t>()) {
+                label_ds.read(labels_);
+            } else if (label_dtype == HighFive::AtomicType<int64_t>()) {
+                std::vector<int64_t> labels64;
+                label_ds.read(labels64);
+                labels_.resize(labels64.size());
+                for (size_t i = 0; i < labels64.size(); i++) {
+                    labels_[i] = static_cast<int>(labels64[i]);
+                }
+            } else if (label_dtype == HighFive::AtomicType<uint8_t>()) {
+                std::vector<uint8_t> labels8;
+                label_ds.read(labels8);
+                labels_.resize(labels8.size());
+                for (size_t i = 0; i < labels8.size(); i++) {
+                    labels_[i] = static_cast<int>(labels8[i]);
+                }
+            } else if (label_dtype == HighFive::AtomicType<float>()) {
+                std::vector<float> labelsf;
+                label_ds.read(labelsf);
+                labels_.resize(labelsf.size());
+                for (size_t i = 0; i < labelsf.size(); i++) {
+                    labels_[i] = static_cast<int>(labelsf[i]);
+                }
+            }
+
+            for (int label : labels_) {
+                unique_labels.insert(label);
+            }
+        }
+
+        num_classes_ = unique_labels.empty() ? 0 : static_cast<int>(unique_labels.size());
+    }
+
+    void LoadAllData(HighFive::File& file) {
+        auto data_ds = file.getDataSet(data_path_);
+        eager_samples_.resize(num_samples_);
+
+        float scale = (config_.normalize && dtype_is_uint8_) ? 1.0f / 255.0f : 1.0f;
+
+        // Build selection parameters
+        std::vector<size_t> offset(dims_.size(), 0);
+        std::vector<size_t> count(dims_.size(), 1);
+        for (size_t d = 1; d < dims_.size(); d++) {
+            count[d] = dims_[d];
+        }
+
+        for (size_t i = 0; i < num_samples_; i++) {
+            offset[0] = i;
+            eager_samples_[i].resize(sample_size_);
+            ReadSampleInto(data_ds, offset, count, eager_samples_[i], scale);
+        }
+    }
+
+    void ReadSampleInto(HighFive::DataSet& data_ds,
+                        const std::vector<size_t>& offset,
+                        const std::vector<size_t>& count,
+                        std::vector<float>& out,
+                        float scale) const {
+        auto selection = data_ds.select(offset, count);
+
+        if (dims_.size() == 2) {
+            // 2D: [N, features]
+            if (dtype_is_float_) {
+                selection.read(out);
+            } else if (dtype_is_uint8_) {
+                std::vector<uint8_t> raw(sample_size_);
+                selection.read(raw);
+                for (size_t j = 0; j < sample_size_; j++) {
+                    out[j] = static_cast<float>(raw[j]) * scale;
+                }
+            } else if (dtype_is_double_) {
+                std::vector<double> raw(sample_size_);
+                selection.read(raw);
+                for (size_t j = 0; j < sample_size_; j++) {
+                    out[j] = static_cast<float>(raw[j]);
+                }
+            } else if (dtype_is_int32_) {
+                std::vector<int32_t> raw(sample_size_);
+                selection.read(raw);
+                for (size_t j = 0; j < sample_size_; j++) {
+                    out[j] = static_cast<float>(raw[j]);
+                }
+            }
+        } else if (dims_.size() == 3) {
+            // 3D: [N, H, W]
+            ReadAndFlatten3D(selection, out, scale);
+        } else if (dims_.size() == 4) {
+            // 4D: [N, H, W, C]
+            ReadAndFlatten4D(selection, out, scale);
+        }
+    }
+
+    void ReadAndFlatten3D(HighFive::Selection& selection, std::vector<float>& out, float scale) const {
+        size_t k = 0;
+        if (dtype_is_uint8_) {
+            std::vector<std::vector<std::vector<uint8_t>>> data_3d;
+            selection.read(data_3d);
+            for (const auto& plane : data_3d) {
+                for (const auto& row : plane) {
+                    for (auto val : row) {
+                        out[k++] = static_cast<float>(val) * scale;
+                    }
+                }
+            }
+        } else if (dtype_is_float_) {
+            std::vector<std::vector<std::vector<float>>> data_3d;
+            selection.read(data_3d);
+            for (const auto& plane : data_3d) {
+                for (const auto& row : plane) {
+                    for (auto val : row) {
+                        out[k++] = val;
+                    }
+                }
+            }
+        } else if (dtype_is_double_) {
+            std::vector<std::vector<std::vector<double>>> data_3d;
+            selection.read(data_3d);
+            for (const auto& plane : data_3d) {
+                for (const auto& row : plane) {
+                    for (auto val : row) {
+                        out[k++] = static_cast<float>(val);
+                    }
+                }
+            }
+        } else if (dtype_is_int32_) {
+            std::vector<std::vector<std::vector<int32_t>>> data_3d;
+            selection.read(data_3d);
+            for (const auto& plane : data_3d) {
+                for (const auto& row : plane) {
+                    for (auto val : row) {
+                        out[k++] = static_cast<float>(val);
+                    }
+                }
+            }
+        }
+    }
+
+    void ReadAndFlatten4D(HighFive::Selection& selection, std::vector<float>& out, float scale) const {
+        size_t k = 0;
+
+        // Helper lambda to flatten with optional NCHW->NHWC transpose
+        auto flatten_4d = [&](auto& data_4d, float s) {
+            for (const auto& vol : data_4d) {
+                if (is_nchw_) {
+                    // NCHW -> NHWC transpose: vol is [C, H, W], output as [H, W, C]
+                    size_t C = vol.size();
+                    size_t H = C > 0 ? vol[0].size() : 0;
+                    size_t W = (C > 0 && H > 0) ? vol[0][0].size() : 0;
+                    for (size_t h = 0; h < H; h++) {
+                        for (size_t w = 0; w < W; w++) {
+                            for (size_t c = 0; c < C; c++) {
+                                out[k++] = static_cast<float>(vol[c][h][w]) * s;
+                            }
+                        }
+                    }
+                } else {
+                    // NHWC: vol is [H, W, C], output as-is
+                    for (const auto& plane : vol) {
+                        for (const auto& row : plane) {
+                            for (auto val : row) {
+                                out[k++] = static_cast<float>(val) * s;
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        if (dtype_is_uint8_) {
+            std::vector<std::vector<std::vector<std::vector<uint8_t>>>> data_4d;
+            selection.read(data_4d);
+            flatten_4d(data_4d, scale);
+        } else if (dtype_is_float_) {
+            std::vector<std::vector<std::vector<std::vector<float>>>> data_4d;
+            selection.read(data_4d);
+            flatten_4d(data_4d, 1.0f);
+        } else if (dtype_is_double_) {
+            std::vector<std::vector<std::vector<std::vector<double>>>> data_4d;
+            selection.read(data_4d);
+            flatten_4d(data_4d, 1.0f);
+        } else if (dtype_is_int32_) {
+            std::vector<std::vector<std::vector<std::vector<int32_t>>>> data_4d;
+            selection.read(data_4d);
+            flatten_4d(data_4d, 1.0f);
+        }
+    }
+
+    std::vector<float> GetSampleFromCache(size_t index) const {
+        size_t chunk_idx = index / config_.chunk_size;
+        size_t local_idx = index % config_.chunk_size;
+
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+
+        // Check if chunk is in cache
+        auto it = chunk_cache_.find(chunk_idx);
+        if (it != chunk_cache_.end()) {
+            // Cache hit - update LRU order
+            cache_hits_++;
+            lru_order_.remove(chunk_idx);
+            lru_order_.push_front(chunk_idx);
+            return it->second.samples[local_idx];
+        }
+
+        // Cache miss - need to load chunk
+        cache_misses_++;
+
+        // Evict oldest chunks if cache is full
+        while (chunk_cache_.size() >= config_.chunk_cache_size && !lru_order_.empty()) {
+            size_t evict_idx = lru_order_.back();
+            lru_order_.pop_back();
+            chunk_cache_.erase(evict_idx);
+        }
+
+        // Load chunk from file
+        Chunk chunk = LoadChunk(chunk_idx);
+        chunk_cache_[chunk_idx] = std::move(chunk);
+        lru_order_.push_front(chunk_idx);
+
+        return chunk_cache_[chunk_idx].samples[local_idx];
+    }
+
+    Chunk LoadChunk(size_t chunk_idx) const {
+        Chunk chunk;
+        chunk.start_index = chunk_idx * config_.chunk_size;
+        chunk.count = std::min(config_.chunk_size, num_samples_ - chunk.start_index);
+
+        float scale = (config_.normalize && dtype_is_uint8_) ? 1.0f / 255.0f : 1.0f;
+
+        try {
+            // HDF5 is not thread-safe, so we need to serialize file access
+            std::lock_guard<std::mutex> lock(file_mutex_);
+
+            // Open file for reading
+            HighFive::File file(path_, HighFive::File::ReadOnly);
+            auto data_ds = file.getDataSet(data_path_);
+
+            chunk.samples.resize(chunk.count);
+
+            // Build selection parameters for the chunk
+            std::vector<size_t> offset(dims_.size(), 0);
+            std::vector<size_t> count(dims_.size(), 1);
+            for (size_t d = 1; d < dims_.size(); d++) {
+                count[d] = dims_[d];
+            }
+
+            for (size_t i = 0; i < chunk.count; i++) {
+                offset[0] = chunk.start_index + i;
+                chunk.samples[i].resize(sample_size_);
+                ReadSampleInto(data_ds, offset, count, chunk.samples[i], scale);
+            }
+
+        } catch (const std::exception& e) {
+            spdlog::error("HDF5: Failed to load chunk {}: {}", chunk_idx, e.what());
+        }
+
+        return chunk;
+    }
+
+    std::string GetShapeString() const {
+        std::string s;
+        for (size_t i = 0; i < sample_shape_.size(); i++) {
+            if (i > 0) s += ", ";
+            s += std::to_string(sample_shape_[i]);
+        }
+        return s;
+    }
+
+    // ========== Prefetch Methods ==========
+
+    void StartPrefetch() const {
+        prefetch_stop_ = false;
+        size_t num_threads = config_.prefetch_threads;
+        spdlog::info("HDF5: Starting {} prefetch threads", num_threads);
+
+        for (size_t i = 0; i < num_threads; i++) {
+            prefetch_threads_.emplace_back([this]() { PrefetchWorker(); });
+        }
+    }
+
+    void StopPrefetch() const {
+        if (prefetch_threads_.empty()) return;
+
+        // Signal threads to stop
+        {
+            std::lock_guard<std::mutex> lock(prefetch_mutex_);
+            prefetch_stop_ = true;
+        }
+        prefetch_cv_.notify_all();
+
+        // Wait for threads to finish
+        for (auto& t : prefetch_threads_) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+        prefetch_threads_.clear();
+    }
+
+    void TriggerPrefetch(size_t current_index) const {
+        size_t current_chunk = current_index / config_.chunk_size;
+        size_t total_chunks = (num_samples_ + config_.chunk_size - 1) / config_.chunk_size;
+
+        std::lock_guard<std::mutex> lock(prefetch_mutex_);
+
+        // Queue chunks ahead of current position
+        for (size_t i = 1; i <= config_.prefetch_ahead; i++) {
+            size_t chunk_to_prefetch = current_chunk + i;
+            if (chunk_to_prefetch >= total_chunks) break;
+
+            // Skip if already cached or being loaded
+            {
+                std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+                if (chunk_cache_.find(chunk_to_prefetch) != chunk_cache_.end()) continue;
+            }
+            if (prefetch_in_progress_.find(chunk_to_prefetch) != prefetch_in_progress_.end()) continue;
+
+            prefetch_queue_.push(chunk_to_prefetch);
+            prefetch_in_progress_.insert(chunk_to_prefetch);
+        }
+
+        if (!prefetch_queue_.empty()) {
+            prefetch_cv_.notify_one();
+        }
+    }
+
+    void PrefetchWorker() const {
+        while (true) {
+            size_t chunk_idx;
+
+            // Wait for work
+            {
+                std::unique_lock<std::mutex> lock(prefetch_mutex_);
+                prefetch_cv_.wait(lock, [this]() {
+                    return prefetch_stop_ || !prefetch_queue_.empty();
+                });
+
+                if (prefetch_stop_ && prefetch_queue_.empty()) {
+                    return;
+                }
+
+                if (prefetch_queue_.empty()) continue;
+
+                chunk_idx = prefetch_queue_.front();
+                prefetch_queue_.pop();
+            }
+
+            // Load chunk (outside of lock)
+            Chunk chunk = LoadChunk(chunk_idx);
+
+            // Store in cache
+            {
+                std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+
+                // Evict if cache is full
+                while (chunk_cache_.size() >= config_.chunk_cache_size && !lru_order_.empty()) {
+                    size_t evict_idx = lru_order_.back();
+                    lru_order_.pop_back();
+                    chunk_cache_.erase(evict_idx);
+                }
+
+                chunk_cache_[chunk_idx] = std::move(chunk);
+                lru_order_.push_front(chunk_idx);
+            }
+
+            // Remove from in-progress set
+            {
+                std::lock_guard<std::mutex> lock(prefetch_mutex_);
+                prefetch_in_progress_.erase(chunk_idx);
+            }
+        }
+    }
+
+    // Configuration
+    std::string path_;
+    HDF5Config config_;
+    std::string data_path_;
+    std::string label_path_;
+
+    // Dataset metadata
+    std::vector<size_t> dims_;
+    std::vector<size_t> sample_shape_;
+    size_t num_samples_ = 0;
+    size_t sample_size_ = 0;
+    int num_classes_ = 0;
+
+    // Data type flags
+    bool dtype_is_uint8_ = false;
+    bool dtype_is_float_ = false;
+    bool dtype_is_double_ = false;
+    bool dtype_is_int32_ = false;
+
+    // Loading mode
+    bool use_lazy_loading_ = false;
+
+    // NCHW transpose flag (for PyTorch-style datasets)
+    bool is_nchw_ = false;
+
+    // Eager loading storage (used when lazy_loading is disabled)
+    std::vector<std::vector<float>> eager_samples_;
+
+    // Labels (always loaded into memory)
+    std::vector<int> labels_;
+
+    // Lazy loading: chunk cache with LRU eviction
+    mutable std::mutex cache_mutex_;
+    mutable std::mutex file_mutex_;  // Serialize HDF5 file access (not thread-safe)
+    mutable std::unordered_map<size_t, Chunk> chunk_cache_;
+    mutable std::list<size_t> lru_order_;  // front = most recent, back = oldest
+    mutable size_t cache_hits_ = 0;
+    mutable size_t cache_misses_ = 0;
+
+    // Prefetch thread pool for parallel I/O
+    mutable std::vector<std::thread> prefetch_threads_;
+    mutable std::queue<size_t> prefetch_queue_;
+    mutable std::mutex prefetch_mutex_;
+    mutable std::condition_variable prefetch_cv_;
+    mutable std::atomic<bool> prefetch_stop_{false};
+    mutable std::set<size_t> prefetch_in_progress_;  // Chunks currently being loaded
+};
+
+#endif // CYXWIZ_HAS_HDF5
+
 /**
  * TSV Dataset Implementation (Tab-Separated Values)
  */
@@ -515,7 +1221,7 @@ public:
         return info;
     }
 
-    const std::vector<std::string>& GetColumnNames() const { return column_names_; }
+    std::vector<std::string> GetColumnNames() const override { return column_names_; }
 
 private:
     void LoadData() {
@@ -628,6 +1334,8 @@ public:
         return info;
     }
 
+    const void* GetRawJSON() const override { return raw_json_ ? &(*raw_json_) : nullptr; }
+
 private:
     void LoadData() {
         std::ifstream file(path_);
@@ -640,6 +1348,9 @@ private:
             using json = nlohmann::json;
             json j;
             file >> j;
+
+            // Store raw JSON for preview
+            raw_json_ = j;
 
             std::set<int> unique_labels;
 
@@ -717,6 +1428,7 @@ private:
     std::vector<int> labels_;
     int num_features_ = 0;
     int num_classes_ = 0;
+    std::optional<nlohmann::json> raw_json_;
 };
 
 /**
@@ -754,6 +1466,7 @@ public:
 
     // Get raw lines for non-numeric text files
     const std::vector<std::string>& GetLines() const { return raw_lines_; }
+    const std::vector<std::string>& GetTextLines() const override { return raw_lines_; }
 
 private:
     void LoadData() {
@@ -2699,6 +3412,8 @@ DatasetHandle DataRegistry::LoadDataset(const std::string& path, const std::stri
             return LoadTXT(path, name);
         case DatasetType::ImageFolder:
             return LoadImageFolder(path, name);
+        case DatasetType::HDF5:
+            return LoadHDF5(path, name);
         default:
             spdlog::error("Unknown dataset type for path: {}", path);
             return DatasetHandle();
@@ -3048,8 +3763,8 @@ DatasetHandle DataRegistry::LoadKaggle(const KaggleConfig& config, const std::st
 class CustomDataset : public Dataset {
 public:
     CustomDataset(const CustomConfig& config) : config_(config) {
-        // Detect format if not specified
-        if (config_.format.empty()) {
+        // Detect format if not specified or set to "auto"
+        if (config_.format.empty() || config_.format == "auto") {
             config_.format = DetectFormat(config_.data_path);
         }
 
@@ -3060,6 +3775,8 @@ public:
             LoadText(",");
         } else if (config_.format == "tsv") {
             LoadText("\t");
+        } else if (config_.format == "arff") {
+            LoadARFF();
         } else if (config_.format == "binary" || config_.format == "bin") {
             LoadBinary();
         } else if (config_.format == "folder") {
@@ -3098,7 +3815,17 @@ public:
         DatasetInfo info;
         info.name = "custom";
         info.path = config_.data_path;
-        info.type = DatasetType::Custom;
+        // Set type based on format
+        if (config_.format == "arff")
+            info.type = DatasetType::ARFF;
+        else if (config_.format == "csv" || config_.format == "text")
+            info.type = DatasetType::CSV;
+        else if (config_.format == "tsv")
+            info.type = DatasetType::TSV;
+        else if (config_.format == "json")
+            info.type = DatasetType::JSON;
+        else
+            info.type = DatasetType::Custom;
         info.shape = config_.shape;
         info.num_samples = data_.size();
         info.num_classes = config_.num_classes;
@@ -3116,7 +3843,21 @@ public:
         return info;
     }
 
+    std::vector<std::string> GetColumnNames() const override { return column_names_; }
+
+    bool HasFloatLabels() const override { return !float_labels_.empty(); }
+
+    float GetFloatLabel(size_t index) const override {
+        if (index < float_labels_.size()) return float_labels_[index];
+        return 0.0f;
+    }
+
+    int GetLabelColumnIndex() const override { return resolved_label_col_; }
+    int GetOriginalColumnCount() const override { return original_col_count_; }
+
 private:
+    std::vector<std::string> column_names_;
+
     std::string DetectFormat(const std::string& path) {
         namespace fs = std::filesystem;
         fs::path p(path);
@@ -3132,6 +3873,7 @@ private:
         if (ext == ".csv") return "csv";
         if (ext == ".tsv") return "tsv";
         if (ext == ".txt") return "text";
+        if (ext == ".arff") return "arff";
         if (ext == ".bin" || ext == ".dat") return "binary";
         if (ext == ".npy" || ext == ".npz") return "npy";
 
@@ -3233,9 +3975,23 @@ private:
         while (std::getline(file, line)) {
             if (line.empty()) continue;
 
-            // Skip header
+            // Parse or skip header
             if (first_line && config_.has_header) {
                 first_line = false;
+                // Parse header names for column display
+                std::string delim = config_.delimiter.empty() ? delimiter : config_.delimiter;
+                std::string remaining = line;
+                size_t pos = 0;
+                while ((pos = remaining.find(delim)) != std::string::npos) {
+                    std::string tok = remaining.substr(0, pos);
+                    tok.erase(0, tok.find_first_not_of(" \t\r\n"));
+                    if (!tok.empty()) tok.erase(tok.find_last_not_of(" \t\r\n") + 1);
+                    column_names_.push_back(tok);
+                    remaining = remaining.substr(pos + delim.length());
+                }
+                remaining.erase(0, remaining.find_first_not_of(" \t\r\n"));
+                if (!remaining.empty()) remaining.erase(remaining.find_last_not_of(" \t\r\n") + 1);
+                column_names_.push_back(remaining);
                 continue;
             }
             first_line = false;
@@ -3255,19 +4011,28 @@ private:
             }
             tokens.push_back(remaining);
 
-            // Determine label column
+            // Determine label column (-2 = no label, -1 = last, >= 0 = specific)
             int label_col = config_.label_column;
-            if (label_col < 0) {
+            if (label_col == -1) {
                 label_col = static_cast<int>(tokens.size()) - 1;
+            }
+            bool no_label = (label_col == -2);
+
+            // Store original file layout info (once)
+            if (original_col_count_ == 0) {
+                original_col_count_ = static_cast<int>(tokens.size());
+                resolved_label_col_ = no_label ? -2 : label_col;
             }
 
             // Parse values
             int label = 0;
+            float float_label = 0.0f;
             for (size_t i = 0; i < tokens.size(); i++) {
                 try {
                     float val = std::stof(tokens[i]);
-                    if (static_cast<int>(i) == label_col) {
+                    if (!no_label && static_cast<int>(i) == label_col) {
                         label = static_cast<int>(val);
+                        float_label = val;
                     } else {
                         if (config_.normalize && config_.scale != 1.0f) {
                             val *= config_.scale;
@@ -3282,6 +4047,7 @@ private:
             if (!sample.empty()) {
                 data_.push_back(sample);
                 labels_.push_back(label);
+                float_labels_.push_back(float_label);
             }
         }
 
@@ -3289,6 +4055,197 @@ private:
         if (!data_.empty() && config_.shape.empty()) {
             config_.shape = {data_[0].size()};
         }
+
+        // Generate column names if not from header
+        if (column_names_.empty() && !data_.empty()) {
+            for (size_t i = 0; i < data_[0].size(); i++) {
+                column_names_.push_back("Feature_" + std::to_string(i));
+            }
+        }
+    }
+
+    void LoadARFF() {
+        // ARFF (Attribute-Relation File Format) parser
+        // Supports: @RELATION, @ATTRIBUTE (NUMERIC, REAL, INTEGER, STRING, {class1,class2,...}), @DATA
+        std::ifstream file(config_.data_path);
+        if (!file.is_open()) {
+            spdlog::error("Failed to open ARFF file: {}", config_.data_path);
+            CreateSampleData();
+            return;
+        }
+
+        struct AttributeInfo {
+            std::string name;
+            bool is_nominal = false;
+            std::vector<std::string> nominal_values;  // For {val1,val2,...}
+        };
+        std::vector<AttributeInfo> attributes;
+        bool in_data_section = false;
+        std::string relation_name;
+
+        std::string line;
+        while (std::getline(file, line)) {
+            // Trim whitespace
+            size_t start = line.find_first_not_of(" \t\r\n");
+            if (start == std::string::npos) continue;
+            line = line.substr(start);
+
+            // Skip comments
+            if (line[0] == '%') continue;
+
+            // Convert directive to lowercase for comparison
+            std::string lower_line = line;
+            std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+
+            if (!in_data_section) {
+                if (lower_line.rfind("@relation", 0) == 0) {
+                    // @RELATION name
+                    relation_name = line.substr(10);
+                    relation_name.erase(0, relation_name.find_first_not_of(" \t'\""));
+                    relation_name.erase(relation_name.find_last_not_of(" \t'\"") + 1);
+                } else if (lower_line.rfind("@attribute", 0) == 0) {
+                    // @ATTRIBUTE name type
+                    AttributeInfo attr;
+                    std::string rest = line.substr(11);
+                    rest.erase(0, rest.find_first_not_of(" \t"));
+
+                    // Extract attribute name (may be quoted)
+                    size_t name_end;
+                    if (!rest.empty() && (rest[0] == '\'' || rest[0] == '"')) {
+                        char quote = rest[0];
+                        name_end = rest.find(quote, 1);
+                        attr.name = rest.substr(1, name_end - 1);
+                        rest = rest.substr(name_end + 1);
+                    } else {
+                        name_end = rest.find_first_of(" \t");
+                        attr.name = rest.substr(0, name_end);
+                        rest = (name_end != std::string::npos) ? rest.substr(name_end) : "";
+                    }
+
+                    rest.erase(0, rest.find_first_not_of(" \t"));
+                    std::string type_lower = rest;
+                    std::transform(type_lower.begin(), type_lower.end(), type_lower.begin(), ::tolower);
+
+                    if (type_lower.find('{') != std::string::npos) {
+                        // Nominal: {val1,val2,val3}
+                        attr.is_nominal = true;
+                        size_t brace_start = rest.find('{');
+                        size_t brace_end = rest.find('}');
+                        if (brace_start != std::string::npos && brace_end != std::string::npos) {
+                            std::string vals = rest.substr(brace_start + 1, brace_end - brace_start - 1);
+                            std::stringstream vss(vals);
+                            std::string val;
+                            while (std::getline(vss, val, ',')) {
+                                val.erase(0, val.find_first_not_of(" \t'\""));
+                                val.erase(val.find_last_not_of(" \t'\"") + 1);
+                                attr.nominal_values.push_back(val);
+                            }
+                        }
+                    }
+                    // NUMERIC, REAL, INTEGER, STRING all treated as numeric/feature
+
+                    attributes.push_back(attr);
+                    column_names_.push_back(attr.name);
+                } else if (lower_line.rfind("@data", 0) == 0) {
+                    in_data_section = true;
+                }
+            } else {
+                // Data section: comma-separated values
+                if (line.empty() || line[0] == '%') continue;
+
+                std::vector<std::string> tokens;
+                std::stringstream ss(line);
+                std::string token;
+                while (std::getline(ss, token, ',')) {
+                    token.erase(0, token.find_first_not_of(" \t'\""));
+                    token.erase(token.find_last_not_of(" \t'\"") + 1);
+                    tokens.push_back(token);
+                }
+
+                if (tokens.size() != attributes.size()) continue;
+
+                // Determine label column: use last nominal attribute, or last column
+                int label_col = config_.label_column;
+                if (label_col == -1) {
+                    label_col = (int)attributes.size() - 1;
+                }
+                bool no_label = (label_col == -2);
+
+                // Store original layout info once
+                if (original_col_count_ == 0) {
+                    original_col_count_ = (int)tokens.size();
+                    resolved_label_col_ = no_label ? -2 : label_col;
+                }
+
+                std::vector<float> sample;
+                int label = 0;
+                float float_label = 0.0f;
+
+                for (size_t i = 0; i < tokens.size(); i++) {
+                    if (tokens[i] == "?") continue;  // Missing value
+
+                    if (!no_label && (int)i == label_col) {
+                        // Label column
+                        if (attributes[i].is_nominal) {
+                            // Map nominal value to integer index
+                            auto& vals = attributes[i].nominal_values;
+                            auto it = std::find(vals.begin(), vals.end(), tokens[i]);
+                            if (it != vals.end()) {
+                                label = (int)std::distance(vals.begin(), it);
+                                float_label = (float)label;
+                            }
+                            // Store class names from first nominal label attribute
+                            if (config_.class_names.empty()) {
+                                for (auto& v : vals) config_.class_names.push_back(v);
+                                config_.num_classes = vals.size();
+                            }
+                        } else {
+                            try {
+                                float val = std::stof(tokens[i]);
+                                label = (int)val;
+                                float_label = val;
+                            } catch (...) {}
+                        }
+                    } else {
+                        // Feature column
+                        if (attributes[i].is_nominal) {
+                            // Encode nominal as integer
+                            auto& vals = attributes[i].nominal_values;
+                            auto it = std::find(vals.begin(), vals.end(), tokens[i]);
+                            if (it != vals.end()) {
+                                sample.push_back((float)std::distance(vals.begin(), it));
+                            } else {
+                                sample.push_back(0.0f);
+                            }
+                        } else {
+                            try {
+                                float val = std::stof(tokens[i]);
+                                if (config_.normalize && config_.scale != 1.0f) {
+                                    val *= config_.scale;
+                                }
+                                sample.push_back(val);
+                            } catch (...) {
+                                sample.push_back(0.0f);
+                            }
+                        }
+                    }
+                }
+
+                if (!sample.empty()) {
+                    data_.push_back(sample);
+                    labels_.push_back(label);
+                    float_labels_.push_back(float_label);
+                }
+            }
+        }
+
+        // Infer shape
+        if (!data_.empty() && config_.shape.empty()) {
+            config_.shape = {data_[0].size()};
+        }
+
+        spdlog::info("ARFF loaded: relation='{}', {} attributes, {} samples",
+                     relation_name, attributes.size(), data_.size());
     }
 
     void LoadBinary() {
@@ -3426,6 +4383,9 @@ private:
     CustomConfig config_;
     std::vector<std::vector<float>> data_;
     std::vector<int> labels_;
+    std::vector<float> float_labels_;  // Raw float labels for regression data
+    int resolved_label_col_ = -2;     // Actual label column index in original file
+    int original_col_count_ = 0;      // Total columns in original file
 };
 
 DatasetHandle DataRegistry::LoadCustom(const CustomConfig& config, const std::string& name) {
@@ -3461,6 +4421,218 @@ DatasetHandle DataRegistry::LoadCustom(const CustomConfig& config, const std::st
         spdlog::error("Failed to load custom dataset: {}", e.what());
         return DatasetHandle();
     }
+}
+
+DatasetHandle DataRegistry::LoadHDF5(const std::string& path, const std::string& name,
+                                      const HDF5Config& config) {
+#ifdef CYXWIZ_HAS_HDF5
+    std::string base_name = name.empty() ? fs::path(path).stem().string() : name;
+    std::string unique_name = GenerateUniqueName(base_name);
+
+    try {
+        auto dataset = std::make_shared<HDF5Dataset>(path, config);
+        if (dataset->Size() == 0) {
+            spdlog::warn("HDF5 dataset is empty: {}", path);
+            return DatasetHandle();
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            datasets_[unique_name] = dataset;
+        }
+
+        auto handle = DatasetHandle(dataset, unique_name);
+
+        if (on_loaded_) {
+            on_loaded_(unique_name, handle.GetInfo());
+        }
+
+        spdlog::info("Registered HDF5 dataset '{}': {} samples", unique_name, dataset->Size());
+        return handle;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to load HDF5 dataset: {}", e.what());
+        return DatasetHandle();
+    }
+#else
+    spdlog::error("HDF5 support not compiled (HighFive library missing)");
+    return DatasetHandle();
+#endif
+}
+
+bool DataRegistry::ExportHDF5(const std::string& name, const std::string& filepath,
+                               const HDF5ExportConfig& config) {
+    auto handle = GetDataset(name);
+    if (!handle.IsValid()) {
+        spdlog::error("ExportHDF5: Dataset '{}' not found", name);
+        return false;
+    }
+    return ExportHDF5(handle, filepath, config);
+}
+
+bool DataRegistry::ExportHDF5(DatasetHandle handle, const std::string& filepath,
+                               const HDF5ExportConfig& config) {
+#ifdef CYXWIZ_HAS_HDF5
+    if (!handle.IsValid()) {
+        spdlog::error("ExportHDF5: Invalid dataset handle");
+        return false;
+    }
+
+    try {
+        auto info = handle.GetInfo();
+        spdlog::info("Exporting dataset to HDF5: {} ({} samples)", filepath, info.num_samples);
+
+        // Create HDF5 file
+        HighFive::File file(filepath, HighFive::File::Overwrite);
+
+        // Get sample shape
+        std::vector<size_t> sample_shape = info.shape;
+        if (sample_shape.empty()) {
+            sample_shape = {1};  // Scalar samples
+        }
+
+        // Calculate total data shape: [N, ...sample_shape]
+        std::vector<size_t> data_shape;
+        data_shape.push_back(info.num_samples);
+
+        // Handle NCHW transpose if requested
+        bool do_nchw = config.store_as_nchw && sample_shape.size() == 3;
+        if (do_nchw) {
+            // Input is NHWC [H, W, C], output should be NCHW [C, H, W]
+            data_shape.push_back(sample_shape[2]);  // C
+            data_shape.push_back(sample_shape[0]);  // H
+            data_shape.push_back(sample_shape[1]);  // W
+        } else {
+            for (auto d : sample_shape) {
+                data_shape.push_back(d);
+            }
+        }
+
+        // Set up chunking
+        std::vector<size_t> chunk_dims = data_shape;
+        if (config.chunked && info.num_samples > config.chunk_samples) {
+            chunk_dims[0] = std::min(config.chunk_samples, info.num_samples);
+        }
+
+        // Create property list for compression and chunking
+        HighFive::DataSetCreateProps props;
+        if (config.chunked) {
+            props.add(HighFive::Chunking(chunk_dims));
+        }
+        if (config.compress && config.chunked) {
+            props.add(HighFive::Deflate(config.compression_level));
+        }
+
+        // Calculate sample size
+        size_t sample_size = 1;
+        for (auto d : sample_shape) {
+            sample_size *= d;
+        }
+
+        // Read all data from dataset
+        spdlog::info("Reading {} samples from dataset...", info.num_samples);
+        std::vector<float> all_data;
+        all_data.reserve(info.num_samples * sample_size);
+
+        std::vector<int> all_labels;
+        all_labels.reserve(info.num_samples);
+
+        for (size_t i = 0; i < info.num_samples; i++) {
+            auto [data, label] = handle.GetSample(i);
+
+            // Transpose NHWC to NCHW if requested
+            if (do_nchw && sample_shape.size() == 3) {
+                size_t H = sample_shape[0];
+                size_t W = sample_shape[1];
+                size_t C = sample_shape[2];
+                std::vector<float> transposed(sample_size);
+
+                // NHWC [h, w, c] -> NCHW [c, h, w]
+                for (size_t h = 0; h < H; h++) {
+                    for (size_t w = 0; w < W; w++) {
+                        for (size_t c = 0; c < C; c++) {
+                            size_t src_idx = h * W * C + w * C + c;  // NHWC
+                            size_t dst_idx = c * H * W + h * W + w;  // NCHW
+                            transposed[dst_idx] = data[src_idx];
+                        }
+                    }
+                }
+                all_data.insert(all_data.end(), transposed.begin(), transposed.end());
+            } else {
+                all_data.insert(all_data.end(), data.begin(), data.end());
+            }
+
+            all_labels.push_back(label);
+
+            if ((i + 1) % 1000 == 0) {
+                spdlog::info("Read {}/{} samples", i + 1, info.num_samples);
+            }
+        }
+
+        // Create and write data dataset
+        if (config.store_as_uint8) {
+            // Convert float [0,1] to uint8 [0,255]
+            std::vector<uint8_t> uint8_data(all_data.size());
+            for (size_t i = 0; i < all_data.size(); i++) {
+                float val = std::clamp(all_data[i], 0.0f, 1.0f) * 255.0f;
+                uint8_data[i] = static_cast<uint8_t>(val);
+            }
+
+            auto data_ds = file.createDataSet<uint8_t>(config.data_path,
+                HighFive::DataSpace(data_shape), props);
+            data_ds.write_raw(uint8_data.data());
+            spdlog::info("Wrote data as uint8 to {}", config.data_path);
+        } else {
+            auto data_ds = file.createDataSet<float>(config.data_path,
+                HighFive::DataSpace(data_shape), props);
+            data_ds.write_raw(all_data.data());
+            spdlog::info("Wrote data as float32 to {}", config.data_path);
+        }
+
+        // Create and write labels dataset
+        auto label_ds = file.createDataSet<int>(config.label_path,
+            HighFive::DataSpace({info.num_samples}));
+        label_ds.write(all_labels);
+        spdlog::info("Wrote {} labels to {}", info.num_samples, config.label_path);
+
+        // Write metadata
+        if (config.include_metadata) {
+            auto root = file.getGroup("/");
+
+            // Number of samples
+            root.createAttribute("num_samples", info.num_samples);
+
+            // Number of classes
+            root.createAttribute("num_classes", info.num_classes);
+
+            // Sample shape
+            if (!sample_shape.empty()) {
+                root.createAttribute("sample_shape", sample_shape);
+            }
+
+            // Data format
+            std::string format = do_nchw ? "NCHW" : "NHWC";
+            root.createAttribute("data_format", format);
+
+            // Class names if provided
+            if (!config.class_names.empty()) {
+                root.createAttribute("class_names", config.class_names);
+            }
+
+            spdlog::info("Wrote metadata attributes");
+        }
+
+        spdlog::info("Successfully exported dataset to: {}", filepath);
+        return true;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to export HDF5 dataset: {}", e.what());
+        return false;
+    }
+#else
+    spdlog::error("HDF5 support not compiled (HighFive library missing)");
+    return false;
+#endif
 }
 
 void DataRegistry::UnloadDataset(const std::string& name) {
@@ -3681,6 +4853,7 @@ DatasetType DataRegistry::DetectType(const std::string& path) {
         if (ext == ".tsv") return DatasetType::TSV;
         if (ext == ".json") return DatasetType::JSON;
         if (ext == ".txt") return DatasetType::TXT;
+        if (ext == ".h5" || ext == ".hdf5" || ext == ".hdf") return DatasetType::HDF5;
     }
 
     return DatasetType::None;
@@ -3702,6 +4875,7 @@ std::string DataRegistry::TypeToString(DatasetType type) {
         case DatasetType::HuggingFace: return "HuggingFace";
         case DatasetType::Kaggle: return "Kaggle";
         case DatasetType::Custom: return "Custom";
+        case DatasetType::HDF5: return "HDF5";
         default: return "Unknown";
     }
 }

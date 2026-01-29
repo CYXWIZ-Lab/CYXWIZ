@@ -155,7 +155,7 @@ DatasetStatistics StatisticsCalculator::Compute(
             }
 
             // Update progress every 10% during data loading
-            if (progress_callback && i % std::max(1ULL, n_samples / 10) == 0) {
+            if (progress_callback && i % std::max(size_t(1), n_samples / 10) == 0) {
                 progress_callback(0.75f + 0.1f * (float(i) / n_samples));
             }
         }

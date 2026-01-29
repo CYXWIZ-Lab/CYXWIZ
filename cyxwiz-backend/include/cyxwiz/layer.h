@@ -901,4 +901,107 @@ private:
     Tensor cached_residual3_;
 };
 
+// ============================================================================
+// ConvTranspose2D Layer - 2D Transposed Convolution (Deconvolution)
+// ============================================================================
+
+class CYXWIZ_API ConvTranspose2DLayer : public Layer {
+public:
+    /**
+     * Create a 2D transposed convolutional layer
+     * @param in_channels Number of input channels
+     * @param out_channels Number of output channels
+     * @param kernel_size Size of the convolution kernel (assumes square)
+     * @param stride Stride of the convolution (default: 1)
+     * @param padding Padding subtracted from output (default: 0)
+     * @param output_padding Additional size added to output (default: 0)
+     * @param use_bias Whether to include bias (default: true)
+     */
+    ConvTranspose2DLayer(int in_channels, int out_channels, int kernel_size,
+                         int stride = 1, int padding = 0, int output_padding = 0,
+                         bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "ConvTranspose2D"; }
+
+    // Accessors
+    int GetInChannels() const { return in_channels_; }
+    int GetOutChannels() const { return out_channels_; }
+    int GetKernelSize() const { return kernel_size_; }
+    int GetStride() const { return stride_; }
+    int GetPadding() const { return padding_; }
+    int GetOutputPadding() const { return output_padding_; }
+
+private:
+    int in_channels_;
+    int out_channels_;
+    int kernel_size_;
+    int stride_;
+    int padding_;
+    int output_padding_;
+    bool use_bias_;
+
+    Tensor weights_;      // [kernel_size, kernel_size, out_channels, in_channels]
+    Tensor bias_;         // [out_channels]
+    Tensor grad_weights_;
+    Tensor grad_bias_;
+};
+
+// ============================================================================
+// Upsample2D Layer - Spatial Upsampling (Nearest / Bilinear)
+// ============================================================================
+
+enum class UpsampleMode { Nearest, Bilinear };
+
+class CYXWIZ_API Upsample2DLayer : public Layer {
+public:
+    /**
+     * Create a 2D upsampling layer (no learnable parameters)
+     * @param scale_factor Upsampling factor (default: 2)
+     * @param mode Interpolation mode (default: Nearest)
+     */
+    explicit Upsample2DLayer(int scale_factor = 2, UpsampleMode mode = UpsampleMode::Nearest);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, Tensor>&) override {}
+    std::string GetName() const override { return "Upsample2D"; }
+
+    int GetScaleFactor() const { return scale_factor_; }
+    UpsampleMode GetMode() const { return mode_; }
+
+private:
+    int scale_factor_;
+    UpsampleMode mode_;
+};
+
+// ============================================================================
+// PixelShuffle Layer - Sub-Pixel Convolution (Depth to Space)
+// ============================================================================
+
+class CYXWIZ_API PixelShuffleLayer : public Layer {
+public:
+    /**
+     * Rearranges elements: (H, W, C*r^2) -> (H*r, W*r, C)
+     * @param upscale_factor Upscaling factor r
+     */
+    explicit PixelShuffleLayer(int upscale_factor);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, Tensor>&) override {}
+    std::string GetName() const override { return "PixelShuffle"; }
+
+    int GetUpscaleFactor() const { return upscale_factor_; }
+
+private:
+    int upscale_factor_;
+    int cached_in_channels_ = 0;
+};
+
 } // namespace cyxwiz

@@ -13,6 +13,7 @@
 #include "job.pb.h"
 #include <imgui.h>
 #include <implot.h>
+#include <glad/glad.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -73,6 +74,7 @@ const char* DatasetPanel::GetDatasetTypeIcon(cyxwiz::DatasetType type) const {
         case cyxwiz::DatasetType::ImageCSV:
             return ICON_FA_IMAGE;
         case cyxwiz::DatasetType::CSV:
+        case cyxwiz::DatasetType::ARFF:
             return ICON_FA_FILE_CSV;
         case cyxwiz::DatasetType::HuggingFace:
             return ICON_FA_CLOUD;
@@ -128,9 +130,77 @@ void DatasetPanel::RenderToolbar() {
     float settings_x = ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 30;
     ImGui::SameLine(settings_x);
     if (ImGui::Button(ICON_FA_GEAR "##Settings")) {
-        // TODO: Show settings popup
+        ImGui::OpenPopup("DatasetSettings");
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Settings");
+
+    if (ImGui::BeginPopup("DatasetSettings")) {
+        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), ICON_FA_GEAR " Dataset Manager Settings");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Preview settings
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "PREVIEW");
+        ImGui::SetNextItemWidth(120);
+        const char* view_modes[] = {"Single", "Grid", "Table", "Type-Aware"};
+        ImGui::Combo("Default View", &preview_view_mode_, view_modes, IM_ARRAYSIZE(view_modes));
+
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Grid Cols", &preview_grid_cols_);
+        preview_grid_cols_ = std::clamp(preview_grid_cols_, 1, 16);
+
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Grid Rows", &preview_grid_rows_);
+        preview_grid_rows_ = std::clamp(preview_grid_rows_, 1, 16);
+
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Table Rows", &preview_table_rows_);
+        preview_table_rows_ = std::clamp(preview_table_rows_, 5, 100);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Split defaults
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "DEFAULT SPLIT");
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("Train", &split_config_.train_ratio, 0.0f, 0.0f, "%.2f");
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("Val", &split_config_.val_ratio, 0.0f, 0.0f, "%.2f");
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("Test", &split_config_.test_ratio, 0.0f, 0.0f, "%.2f");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Image loading defaults
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "IMAGE LOADING");
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Target Width", &image_target_width_);
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Target Height", &image_target_height_);
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Cache Size", &image_cache_size_);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Memory
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "MEMORY");
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        size_t mem_used = registry.GetTotalMemoryUsage();
+        size_t mem_limit = registry.GetMemoryLimit();
+        ImGui::Text("Used: %.1f MB / %.1f MB", mem_used / (1024.0f * 1024.0f), mem_limit / (1024.0f * 1024.0f));
+        ImGui::Text("Datasets loaded: %zu", registry.GetMemoryStats().datasets_count);
+
+        if (ImGui::Button(ICON_FA_TRASH_CAN " Trim Memory")) {
+            registry.TrimMemory();
+        }
+
+        ImGui::EndPopup();
+    }
 }
 
 void DatasetPanel::RenderSidebar() {
@@ -283,6 +353,14 @@ void DatasetPanel::RenderSplitter(float height) {
 }
 
 void DatasetPanel::RenderMainContent() {
+    // Helper lambda for programmatic tab switching
+    auto TabFlags = [this](ContentTab tab) -> ImGuiTabItemFlags {
+        if (switch_content_tab_ && pending_content_tab_ == tab) {
+            return ImGuiTabItemFlags_SetSelected;
+        }
+        return ImGuiTabItemFlags_None;
+    };
+
     // Always show tab bar - Load tab is first so user can always load datasets
     if (ImGui::BeginTabBar("ContentTabs", ImGuiTabBarFlags_None)) {
         // Load Dataset tab
@@ -298,6 +376,15 @@ void DatasetPanel::RenderMainContent() {
             active_content_tab_ = ContentTab::Preview;
             ImGui::BeginChild("##PreviewContent", ImVec2(0, 0), false);
             RenderPreviewContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        // Prepare tab (data cleaning, feature engineering, splits)
+        if (ImGui::BeginTabItem(ICON_FA_WAND_MAGIC_SPARKLES " Prepare")) {
+            active_content_tab_ = ContentTab::Prepare;
+            ImGui::BeginChild("##PrepareContent", ImVec2(0, 0), false);
+            RenderPrepareContent();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -328,6 +415,24 @@ void DatasetPanel::RenderMainContent() {
             ImGui::EndTabItem();
         }
 
+        // Evaluate tab (post-training metrics dashboard)
+        if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Evaluate", nullptr, TabFlags(ContentTab::Evaluate))) {
+            active_content_tab_ = ContentTab::Evaluate;
+            ImGui::BeginChild("##EvaluateContent", ImVec2(0, 0), false);
+            RenderEvaluateContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        // Export tab (model I/O)
+        if (ImGui::BeginTabItem(ICON_FA_FILE_EXPORT " Export", nullptr, TabFlags(ContentTab::Export))) {
+            active_content_tab_ = ContentTab::Export;
+            ImGui::BeginChild("##ExportContent", ImVec2(0, 0), false);
+            RenderExportContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
         // Details tab
         if (ImGui::BeginTabItem(ICON_FA_CIRCLE_INFO " Details")) {
             active_content_tab_ = ContentTab::Details;
@@ -338,65 +443,172 @@ void DatasetPanel::RenderMainContent() {
         }
 
         ImGui::EndTabBar();
+        // Clear programmatic tab switch after one frame
+        switch_content_tab_ = false;
     }
 }
 
 void DatasetPanel::RenderPreviewContent() {
+    // Determine dataset type for mode availability
+    bool is_image = (cached_info_.type == cyxwiz::DatasetType::ImageFolder ||
+                     cached_info_.type == cyxwiz::DatasetType::ImageCSV ||
+                     cached_info_.type == cyxwiz::DatasetType::MNIST ||
+                     cached_info_.type == cyxwiz::DatasetType::CIFAR10 ||
+                     cached_info_.type == cyxwiz::DatasetType::FashionMNIST ||
+                     cached_info_.type == cyxwiz::DatasetType::CIFAR100);
+
+    bool is_tabular = (cached_info_.type == cyxwiz::DatasetType::CSV ||
+                       cached_info_.type == cyxwiz::DatasetType::TSV);
+
+    bool is_json = (cached_info_.type == cyxwiz::DatasetType::JSON);
+
+    bool is_text = (cached_info_.type == cyxwiz::DatasetType::TXT);
+
+    bool is_hdf5 = (cached_info_.type == cyxwiz::DatasetType::HDF5);
+
+    // View mode toolbar
     ImGui::Text("View:");
     ImGui::SameLine();
 
     bool single = preview_view_mode_ == 0;
     bool grid = preview_view_mode_ == 1;
     bool table = preview_view_mode_ == 2;
+    bool type_aware = preview_view_mode_ == 3;
 
+    // Single sample mode (for images and tabular)
     if (single) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
     if (ImGui::Button(ICON_FA_SQUARE "##Single")) preview_view_mode_ = 0;
     if (single) ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Single Sample");
 
-    ImGui::SameLine();
-    if (grid) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
-    if (ImGui::Button(ICON_FA_GRIP "##Grid")) preview_view_mode_ = 1;
-    if (grid) ImGui::PopStyleColor();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grid View");
+    // Grid mode (mainly for images)
+    if (is_image) {
+        ImGui::SameLine();
+        if (grid) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+        if (ImGui::Button(ICON_FA_GRIP "##Grid")) preview_view_mode_ = 1;
+        if (grid) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grid View");
+    }
 
+    // Table mode (for tabular data samples)
     ImGui::SameLine();
     if (table) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
     if (ImGui::Button(ICON_FA_TABLE "##Table")) preview_view_mode_ = 2;
     if (table) ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Table View");
 
-    ImGui::SameLine(0, 20);
-    ImGui::Text("#");
-    ImGui::SameLine();
-
-    int max_idx = static_cast<int>(current_dataset_.Size()) - 1;
-    if (max_idx < 0) max_idx = 0;
-
-    ImGui::SetNextItemWidth(120);
-    ImGui::SliderInt("##SampleIdx", &preview_sample_idx_, 0, max_idx);
-
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_SHUFFLE "##Random")) {
-        if (current_dataset_.Size() > 0) {
-            preview_sample_idx_ = rand() % static_cast<int>(current_dataset_.Size());
-        }
+    // Type-aware rich preview mode (shows raw data with smart rendering)
+    if (is_tabular || is_json || is_text || is_hdf5) {
+        ImGui::SameLine();
+        if (type_aware) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+        if (ImGui::Button(ICON_FA_CODE "##TypeAware")) preview_view_mode_ = 3;
+        if (type_aware) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rich Preview (type-aware)");
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Random Sample");
+
+    // Sample navigation (for non-type-aware modes)
+    if (preview_view_mode_ != 3) {
+        ImGui::SameLine(0, 20);
+        ImGui::Text("#");
+        ImGui::SameLine();
+
+        int max_idx = static_cast<int>(current_dataset_.Size()) - 1;
+        if (max_idx < 0) max_idx = 0;
+
+        ImGui::SetNextItemWidth(120);
+        ImGui::SliderInt("##SampleIdx", &preview_sample_idx_, 0, max_idx);
+
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_SHUFFLE "##Random")) {
+            if (current_dataset_.Size() > 0) {
+                preview_sample_idx_ = rand() % static_cast<int>(current_dataset_.Size());
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Random Sample");
+    }
 
     ImGui::Separator();
 
     size_t dataset_size = current_dataset_.Size();
-    bool is_image = (cached_info_.type == cyxwiz::DatasetType::ImageFolder ||
-                     cached_info_.type == cyxwiz::DatasetType::ImageCSV ||
-                     cached_info_.type == cyxwiz::DatasetType::MNIST ||
-                     cached_info_.type == cyxwiz::DatasetType::CIFAR10);
 
     switch (preview_view_mode_) {
         case 0: RenderSingleSamplePreview(dataset_size, is_image); break;
         case 1: RenderGridPreview(dataset_size, is_image); break;
         case 2: RenderTablePreview(dataset_size); break;
+        case 3: RenderTypeAwarePreview(); break;
     }
+}
+
+void DatasetPanel::RenderTypeAwarePreview() {
+    // Type-aware preview using PreviewRenderer
+    if (!IsDatasetLoaded()) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No dataset loaded.");
+        return;
+    }
+
+    // Detect content type and render appropriately
+    auto content_type = preview_renderer_.DetectDatasetType(cached_info_);
+
+    ImGui::BeginChild("##TypeAwareContent", ImVec2(0, 0), false);
+
+    switch (content_type) {
+        case gui::PreviewContentType::DatasetTabular: {
+            // CSV/TSV with real column headers
+            auto* dataset = current_dataset_.GetUnderlyingDataset();
+            if (dataset) {
+                auto col_names = dataset->GetColumnNames();
+                if (!col_names.empty()) {
+                    preview_renderer_.RenderDatasetPreview(current_dataset_, cached_info_,
+                        preview_sample_idx_, preview_view_mode_, preview_zoom_,
+                        preview_grid_cols_, preview_grid_rows_, class_names_);
+                } else {
+                    // Fallback to default table view
+                    RenderTablePreview(current_dataset_.Size());
+                }
+            }
+            break;
+        }
+
+        case gui::PreviewContentType::DatasetJSON: {
+            // JSON tree view
+            preview_renderer_.RenderDatasetPreview(current_dataset_, cached_info_,
+                preview_sample_idx_, preview_view_mode_, preview_zoom_,
+                preview_grid_cols_, preview_grid_rows_, class_names_);
+            break;
+        }
+
+        case gui::PreviewContentType::DatasetText: {
+            // Text with line numbers
+            preview_renderer_.RenderDatasetPreview(current_dataset_, cached_info_,
+                preview_sample_idx_, preview_view_mode_, preview_zoom_,
+                preview_grid_cols_, preview_grid_rows_, class_names_);
+            break;
+        }
+
+        case gui::PreviewContentType::DatasetImage: {
+            // Use existing image preview
+            RenderSingleSamplePreview(current_dataset_.Size(), true);
+            break;
+        }
+
+        case gui::PreviewContentType::DatasetHDF5: {
+            // HDF5 tree view using original file path
+            if (!cached_info_.path.empty()) {
+                preview_renderer_.RenderHDF5Preview(cached_info_.path);
+            } else {
+                ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "HDF5 path not available");
+            }
+            break;
+        }
+
+        default: {
+            // Fallback to table view
+            RenderTablePreview(current_dataset_.Size());
+            break;
+        }
+    }
+
+    ImGui::EndChild();
 }
 
 void DatasetPanel::RenderPipelineContent() {
@@ -404,7 +616,51 @@ void DatasetPanel::RenderPipelineContent() {
 }
 
 void DatasetPanel::RenderTrainingContent() {
+    // Poll TrainingManager for trained model availability
+    auto& tmgr = cyxwiz::TrainingManager::Instance();
+    if (tmgr.HasTrainedModel() && !has_trained_model_) {
+        has_trained_model_ = true;
+        trained_model_name_ = cached_info_.name.empty() ? "Trained Model" : cached_info_.name + " Model";
+        // Populate eval results from training metrics
+        auto metrics = tmgr.GetLastMetrics();
+        if (metrics.is_complete) {
+            has_eval_results_ = true;
+            eval_task_type_ = 0; // Default to classification
+            // Store learning curve data
+            eval_has_learning_curves_ = true;
+            // Map training history to LearningCurveData fields
+            eval_learning_curves_.scoring_metric = "Loss";
+            eval_learning_curves_.train_scores_mean = std::vector<double>(metrics.loss_history.begin(), metrics.loss_history.end());
+            eval_learning_curves_.val_scores_mean = std::vector<double>(metrics.val_loss_history.begin(), metrics.val_loss_history.end());
+            for (int i = 1; i <= (int)metrics.loss_history.size(); i++)
+                eval_learning_curves_.train_sizes.push_back(i);
+            eval_learning_curves_.success = true;
+        }
+    }
+
     RenderTrainingSection();
+
+    // "Go to Evaluate" button after training completes
+    if (has_eval_results_ || has_trained_model_) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.3f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.4f, 0.7f, 1.0f));
+        if (ImGui::Button(ICON_FA_CHART_BAR " Go to Evaluate >>", ImVec2(180, 0))) {
+            pending_content_tab_ = ContentTab::Evaluate;
+            switch_content_tab_ = true;
+        }
+        ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.4f, 1.0f));
+        if (ImGui::Button(ICON_FA_FILE_EXPORT " Go to Export >>", ImVec2(170, 0))) {
+            pending_content_tab_ = ContentTab::Export;
+            switch_content_tab_ = true;
+        }
+        ImGui::PopStyleColor(2);
+    }
 }
 
 void DatasetPanel::RenderDetailsContent() {
@@ -614,15 +870,17 @@ void DatasetPanel::RenderDatasetSelection() {
     ImGui::Spacing();
 
     // Dataset type selection (merged Images + CSV into single "Images" option)
-    const char* types[] = {"CSV", "Images", "MNIST", "CIFAR-10", "HuggingFace", "Kaggle", "Custom"};
+    const char* types[] = {"CSV", "Images", "MNIST", "CIFAR-10", "HDF5", "ARFF", "HuggingFace", "Kaggle", "Custom"};
     int current_type = 0;
     if (selected_type_ == cyxwiz::DatasetType::CSV) current_type = 0;
     else if (selected_type_ == cyxwiz::DatasetType::ImageFolder || selected_type_ == cyxwiz::DatasetType::ImageCSV) current_type = 1;
     else if (selected_type_ == cyxwiz::DatasetType::MNIST) current_type = 2;
     else if (selected_type_ == cyxwiz::DatasetType::CIFAR10) current_type = 3;
-    else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) current_type = 4;
-    else if (selected_type_ == cyxwiz::DatasetType::Kaggle) current_type = 5;
-    else if (selected_type_ == cyxwiz::DatasetType::Custom) current_type = 6;
+    else if (selected_type_ == cyxwiz::DatasetType::HDF5) current_type = 4;
+    else if (selected_type_ == cyxwiz::DatasetType::ARFF) current_type = 5;
+    else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) current_type = 6;
+    else if (selected_type_ == cyxwiz::DatasetType::Kaggle) current_type = 7;
+    else if (selected_type_ == cyxwiz::DatasetType::Custom) current_type = 8;
 
     ImGui::SetNextItemWidth(-1);
     if (ImGui::Combo("##Type", &current_type, types, IM_ARRAYSIZE(types))) {
@@ -631,16 +889,106 @@ void DatasetPanel::RenderDatasetSelection() {
             case 1: selected_type_ = cyxwiz::DatasetType::ImageCSV; break;  // Unified Images type
             case 2: selected_type_ = cyxwiz::DatasetType::MNIST; break;
             case 3: selected_type_ = cyxwiz::DatasetType::CIFAR10; break;
-            case 4: selected_type_ = cyxwiz::DatasetType::HuggingFace; break;
-            case 5: selected_type_ = cyxwiz::DatasetType::Kaggle; break;
-            case 6: selected_type_ = cyxwiz::DatasetType::Custom; break;
+            case 4: selected_type_ = cyxwiz::DatasetType::HDF5; break;
+            case 5: selected_type_ = cyxwiz::DatasetType::ARFF; break;
+            case 6: selected_type_ = cyxwiz::DatasetType::HuggingFace; break;
+            case 7: selected_type_ = cyxwiz::DatasetType::Kaggle; break;
+            case 8: selected_type_ = cyxwiz::DatasetType::Custom; break;
         }
     }
 
     ImGui::Spacing();
 
     // Show different input based on type
-    if (selected_type_ == cyxwiz::DatasetType::HuggingFace) {
+    if (selected_type_ == cyxwiz::DatasetType::HDF5) {
+        // HDF5 file input
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "HDF5 FILE");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
+        ImGui::InputText("##HDF5Path", file_path_buffer_, sizeof(file_path_buffer_));
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN "##HDF5Browse", ImVec2(70, 0))) {
+            ShowFileBrowser();
+        }
+
+        ImGui::Spacing();
+
+        // Browse Structure button - opens dialog to explore HDF5 file
+        std::string current_path = file_path_buffer_;
+        bool can_browse = !current_path.empty() && std::filesystem::exists(current_path);
+
+        if (!can_browse) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_FA_SITEMAP " Browse Structure...", ImVec2(-1, 0))) {
+            hdf5_dialog_path_ = current_path;
+            hdf5_file_scanned_ = false;
+            hdf5_selected_data_idx_ = -1;
+            hdf5_selected_label_idx_ = -1;
+            show_hdf5_dialog_ = true;
+        }
+        if (!can_browse) ImGui::EndDisabled();
+
+        ImGui::Spacing();
+
+        // Show selected paths
+        if (strlen(hdf5_data_path_) > 0 || strlen(hdf5_label_path_) > 0) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+            ImGui::BeginChild("##HDF5Selection", ImVec2(-1, 60), true);
+
+            if (strlen(hdf5_data_path_) > 0) {
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), ICON_FA_DATABASE " Data:");
+                ImGui::SameLine();
+                ImGui::Text("%s", hdf5_data_path_);
+            }
+            if (strlen(hdf5_label_path_) > 0) {
+                ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), ICON_FA_TAGS " Labels:");
+                ImGui::SameLine();
+                ImGui::Text("%s", hdf5_label_path_);
+            }
+
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
+
+        // Options
+        ImGui::Checkbox("Normalize uint8 to [0,1]", &hdf5_normalize_);
+
+        ImGui::Spacing();
+
+        // Load button
+        bool can_load = can_browse;
+        if (!can_load) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_FA_DOWNLOAD " Load HDF5", ImVec2(120, 0))) {
+            if (!current_path.empty()) {
+                LoadHDF5DatasetAsync(current_path);
+            }
+        }
+        if (!can_load) ImGui::EndDisabled();
+
+        // Render the HDF5 config dialog if open
+        RenderHDF5ConfigDialog();
+    } else if (selected_type_ == cyxwiz::DatasetType::ARFF) {
+        // ARFF file input
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "ARFF FILE");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
+        ImGui::InputText("##ARFFPath", file_path_buffer_, sizeof(file_path_buffer_));
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN "##ARFFBrowse", ImVec2(70, 0))) {
+            ShowFileBrowser();
+        }
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Weka Attribute-Relation File Format (.arff)");
+        ImGui::Spacing();
+
+        std::string current_path = file_path_buffer_;
+        bool can_load = !current_path.empty() && std::filesystem::exists(current_path);
+        if (!can_load) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_FA_UPLOAD " Load ARFF", ImVec2(140, 0))) {
+            if (!current_path.empty()) {
+                LoadDatasetAsync(current_path);
+            }
+        }
+        if (!can_load) ImGui::EndDisabled();
+    } else if (selected_type_ == cyxwiz::DatasetType::HuggingFace) {
         // HuggingFace dataset name input
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "DATASET NAME");
         ImGui::SetNextItemWidth(-1);
@@ -671,7 +1019,7 @@ void DatasetPanel::RenderDatasetSelection() {
             }
         }
     } else if (selected_type_ == cyxwiz::DatasetType::Custom) {
-        // Custom dataset configuration
+        // ── Data Path ──
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "DATA PATH");
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
         ImGui::InputText("##CustomPath", file_path_buffer_, sizeof(file_path_buffer_));
@@ -682,55 +1030,198 @@ void DatasetPanel::RenderDatasetSelection() {
 
         ImGui::Spacing();
 
-        // Format selection
-        static int format_idx = 0;
-        const char* formats[] = {"Auto-detect", "JSON", "CSV", "TSV", "Binary", "Folder"};
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "FORMAT");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::Combo("##CustomFormat", &format_idx, formats, IM_ARRAYSIZE(formats));
-
-        ImGui::Spacing();
-
-        // Schema configuration (collapsible)
-        if (ImGui::CollapsingHeader("Schema Configuration")) {
-            static char data_key[64] = "data";
-            static char labels_key[64] = "labels";
-            static int label_column = -1;
-            static bool has_header = false;
-            static bool normalize = true;
-            static float scale = 1.0f;
-
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputTextWithHint("##DataKey", "Data Key (JSON)", data_key, sizeof(data_key));
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputTextWithHint("##LabelsKey", "Labels Key (JSON)", labels_key, sizeof(labels_key));
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Label Column", &label_column);
-            ImGui::Checkbox("Has Header", &has_header);
-            ImGui::SameLine();
-            ImGui::Checkbox("Normalize", &normalize);
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputFloat("Scale", &scale, 0.001f, 0.01f, "%.4f");
+        // ── Labels Path (optional) ──
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "LABELS PATH");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(optional)");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
+        ImGui::InputTextWithHint("##CustomLabelsPath", "Separate labels file...", custom_labels_path_, sizeof(custom_labels_path_));
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN "##CustomLabels", ImVec2(70, 0))) {
+            auto result = cyxwiz::FileDialogs::OpenFile("Select Labels File", {{"All Files", "*"}});
+            if (result) {
+                strncpy(custom_labels_path_, result->c_str(), sizeof(custom_labels_path_) - 1);
+                custom_labels_path_[sizeof(custom_labels_path_) - 1] = '\0';
+            }
         }
 
         ImGui::Spacing();
 
-        // Load button for Custom
-        if (ImGui::Button(ICON_FA_DOWNLOAD " Load Custom", ImVec2(130, 0))) {
+        // ── Format ──
+        const char* formats[] = {"Auto-detect", "JSON", "CSV", "TSV", "Binary", "Folder"};
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "FORMAT");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##CustomFormat", &custom_format_idx_, formats, IM_ARRAYSIZE(formats));
+
+        ImGui::Spacing();
+
+        bool is_json = (custom_format_idx_ == 1);
+        bool is_csv_tsv = (custom_format_idx_ == 2 || custom_format_idx_ == 3);
+        bool is_binary = (custom_format_idx_ == 4);
+        bool is_folder = (custom_format_idx_ == 5);
+        bool is_auto = (custom_format_idx_ == 0);
+
+        // ── Schema Configuration ──
+        if (ImGui::CollapsingHeader(ICON_FA_DATABASE " Schema Configuration", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Indent(8.0f);
+
+            // JSON keys (shown for JSON or Auto)
+            if (is_json || is_auto) {
+                ImGui::TextDisabled("JSON Keys");
+                ImGui::SetNextItemWidth(180);
+                ImGui::InputTextWithHint("##DataKey", "e.g. images, X, features", custom_data_key_, sizeof(custom_data_key_));
+                ImGui::SameLine();
+                ImGui::TextDisabled("Data");
+
+                ImGui::SetNextItemWidth(180);
+                ImGui::InputTextWithHint("##LabelsKey", "e.g. labels, y, targets", custom_labels_key_, sizeof(custom_labels_key_));
+                ImGui::SameLine();
+                ImGui::TextDisabled("Labels");
+
+                ImGui::Spacing();
+            }
+
+            // Shape (shown for Binary or Auto)
+            if (is_binary || is_auto) {
+                ImGui::TextDisabled("Sample Shape");
+                ImGui::SetNextItemWidth(180);
+                ImGui::InputTextWithHint("##Shape", "e.g. 28,28,1 or 784", custom_shape_str_, sizeof(custom_shape_str_));
+                ImGui::SameLine();
+                ImGui::TextDisabled("(H,W,C)");
+
+                // Dtype
+                const char* dtypes[] = {"float32", "float64", "uint8", "int32"};
+                ImGui::SetNextItemWidth(120);
+                ImGui::Combo("Dtype##Custom", &custom_dtype_idx_, dtypes, IM_ARRAYSIZE(dtypes));
+
+                ImGui::Spacing();
+            }
+
+            // CSV/TSV options
+            if (is_csv_tsv || is_auto) {
+                ImGui::TextDisabled("Text/CSV Options");
+                ImGui::Checkbox("Has Header##Custom", &custom_has_header_);
+                ImGui::SameLine(0, 20);
+                ImGui::SetNextItemWidth(80);
+                ImGui::InputInt("Label Col##Custom", &custom_label_column_);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("-1 = last column, -2 = no label (regression)");
+
+                ImGui::SetNextItemWidth(40);
+                ImGui::InputText("Delimiter##Custom", custom_delimiter_, sizeof(custom_delimiter_));
+                ImGui::SameLine();
+                ImGui::TextDisabled("( , or \\t )");
+
+                ImGui::Spacing();
+            }
+
+            ImGui::Unindent(8.0f);
+        }
+
+        // ── Preprocessing ──
+        if (ImGui::CollapsingHeader(ICON_FA_SLIDERS " Preprocessing")) {
+            ImGui::Indent(8.0f);
+
+            ImGui::Checkbox("Normalize##Custom", &custom_normalize_);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Normalize values to [0, 1] range");
+
+            ImGui::SameLine(0, 20);
+            ImGui::SetNextItemWidth(100);
+            ImGui::InputFloat("Scale##Custom", &custom_scale_, 0.0f, 0.0f, "%.6f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("e.g. 0.003922 = 1/255 for uint8 images");
+
+            if (ImGui::Button("1/255##ScalePreset")) {
+                custom_scale_ = 1.0f / 255.0f;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("1/128##ScalePreset2")) {
+                custom_scale_ = 1.0f / 128.0f;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset##ScaleReset")) {
+                custom_scale_ = 1.0f;
+            }
+
+            ImGui::Unindent(8.0f);
+        }
+
+        // ── Classes ──
+        if (ImGui::CollapsingHeader(ICON_FA_TAGS " Classes")) {
+            ImGui::Indent(8.0f);
+
+            ImGui::SetNextItemWidth(100);
+            ImGui::InputInt("Num Classes##Custom", &custom_num_classes_);
+            if (custom_num_classes_ < 0) custom_num_classes_ = 0;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = auto-detect from labels");
+
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##ClassNames", "cat,dog,bird (comma-separated)", custom_class_names_, sizeof(custom_class_names_));
+
+            ImGui::Unindent(8.0f);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ── Load button ──
+        if (ImGui::Button(ICON_FA_DOWNLOAD " Load Custom", ImVec2(140, 28))) {
             std::string path = file_path_buffer_;
             if (!path.empty()) {
-                // Build config
                 cyxwiz::CustomConfig config;
                 config.data_path = path;
+                config.labels_path = custom_labels_path_;
 
-                // Set format based on selection
-                switch (format_idx) {
-                    case 0: config.format = ""; break;  // Auto-detect
+                // Format
+                switch (custom_format_idx_) {
+                    case 0: config.format = ""; break;
                     case 1: config.format = "json"; break;
                     case 2: config.format = "csv"; break;
                     case 3: config.format = "tsv"; break;
                     case 4: config.format = "binary"; break;
                     case 5: config.format = "folder"; break;
+                }
+
+                // Schema
+                config.data_key = custom_data_key_;
+                config.labels_key = custom_labels_key_;
+                config.label_column = custom_label_column_;
+                config.has_header = custom_has_header_;
+                config.delimiter = custom_delimiter_;
+
+                // Shape (parse comma-separated string)
+                std::string shape_str = custom_shape_str_;
+                if (!shape_str.empty()) {
+                    config.shape.clear();
+                    std::stringstream ss(shape_str);
+                    std::string dim;
+                    while (std::getline(ss, dim, ',')) {
+                        try {
+                            config.shape.push_back(std::stoull(dim));
+                        } catch (...) {}
+                    }
+                }
+
+                // Dtype
+                const char* dtype_names[] = {"float32", "float64", "uint8", "int32"};
+                config.dtype = dtype_names[custom_dtype_idx_];
+
+                // Preprocessing
+                config.normalize = custom_normalize_;
+                config.scale = custom_scale_;
+
+                // Classes
+                config.num_classes = static_cast<size_t>(custom_num_classes_);
+                std::string class_str = custom_class_names_;
+                if (!class_str.empty()) {
+                    config.class_names.clear();
+                    std::stringstream cs(class_str);
+                    std::string name;
+                    while (std::getline(cs, name, ',')) {
+                        // Trim
+                        name.erase(0, name.find_first_not_of(" "));
+                        if (!name.empty()) name.erase(name.find_last_not_of(" ") + 1);
+                        if (!name.empty()) config.class_names.push_back(name);
+                    }
                 }
 
                 LoadCustomDatasetAsync(config);
@@ -894,7 +1385,7 @@ void DatasetPanel::RenderDatasetSelection() {
     // Config Export/Import section (collapsible)
     if (ImGui::CollapsingHeader("Configuration")) {
         if (IsDatasetLoaded()) {
-            if (ImGui::Button(ICON_FA_FILE_EXPORT " Export", ImVec2(90, 0))) {
+            if (ImGui::Button(ICON_FA_FILE_EXPORT " Config", ImVec2(80, 0))) {
                 auto result = cyxwiz::FileDialogs::SaveFile(
                     "Export Dataset Config",
                     {{"JSON Files", "json"}, {"All Files", "*"}},
@@ -910,6 +1401,81 @@ void DatasetPanel::RenderDatasetSelection() {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Export dataset configuration to JSON file");
+            }
+            ImGui::SameLine();
+
+            // HDF5 Data Export button
+            if (ImGui::Button(ICON_FA_DATABASE " HDF5", ImVec2(70, 0))) {
+                ImGui::OpenPopup("HDF5 Export Options");
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Export dataset data to HDF5 file");
+            }
+
+            // HDF5 Export popup with options
+            if (ImGui::BeginPopup("HDF5 Export Options")) {
+                ImGui::Text("HDF5 Export Options");
+                ImGui::Separator();
+
+                static cyxwiz::HDF5ExportConfig hdf5_export_config;
+                static char data_path[128] = "/images";
+                static char label_path[128] = "/labels";
+
+                ImGui::InputText("Data Path", data_path, sizeof(data_path));
+                ImGui::InputText("Label Path", label_path, sizeof(label_path));
+
+                ImGui::Checkbox("Compress (GZIP)", &hdf5_export_config.compress);
+                if (hdf5_export_config.compress) {
+                    ImGui::SliderInt("Compression Level", &hdf5_export_config.compression_level, 1, 9);
+                }
+
+                ImGui::Checkbox("Chunked Storage", &hdf5_export_config.chunked);
+                if (hdf5_export_config.chunked) {
+                    int chunk_samples = static_cast<int>(hdf5_export_config.chunk_samples);
+                    if (ImGui::InputInt("Chunk Size", &chunk_samples)) {
+                        hdf5_export_config.chunk_samples = static_cast<size_t>(std::max(1, chunk_samples));
+                    }
+                }
+
+                ImGui::Checkbox("Store as uint8", &hdf5_export_config.store_as_uint8);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Convert float [0,1] to uint8 [0,255]");
+                }
+
+                ImGui::Checkbox("Store as NCHW", &hdf5_export_config.store_as_nchw);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Transpose NHWC to NCHW for PyTorch");
+                }
+
+                ImGui::Checkbox("Include Metadata", &hdf5_export_config.include_metadata);
+
+                ImGui::Separator();
+                if (ImGui::Button("Export...", ImVec2(100, 0))) {
+                    auto result = cyxwiz::FileDialogs::SaveFile(
+                        "Export to HDF5",
+                        {{"HDF5 Files", "h5"}, {"All Files", "*"}},
+                        nullptr,
+                        (cached_info_.name + "_export.h5").c_str()
+                    );
+                    if (result) {
+                        hdf5_export_config.data_path = data_path;
+                        hdf5_export_config.label_path = label_path;
+
+                        auto& registry = cyxwiz::DataRegistry::Instance();
+                        if (registry.ExportHDF5(cached_info_.name, *result, hdf5_export_config)) {
+                            spdlog::info("Exported HDF5 to: {}", *result);
+                        } else {
+                            spdlog::error("Failed to export HDF5");
+                        }
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(70, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
             }
             ImGui::SameLine();
         }
@@ -1604,19 +2170,43 @@ void DatasetPanel::RenderGridPreview(size_t dataset_size, bool is_image_data) {
 }
 
 void DatasetPanel::RenderTablePreview(size_t dataset_size) {
-    // Table settings
-    ImGui::Text("Rows per page:");
+    // Get feature count and column names
+    auto [first_sample, _] = current_dataset_.GetSample(0);
+    int num_features = static_cast<int>(first_sample.size());
+
+    // Try to get real column names from dataset
+    std::vector<std::string> column_names;
+    auto* dataset = current_dataset_.GetUnderlyingDataset();
+    if (dataset) {
+        column_names = dataset->GetColumnNames();
+    }
+
+    // Table settings toolbar
+    ImGui::Text("Rows:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(60);
+    ImGui::SetNextItemWidth(50);
     ImGui::InputInt("##TableRows", &preview_table_rows_, 0, 0);
     preview_table_rows_ = std::clamp(preview_table_rows_, 5, 100);
 
     ImGui::SameLine();
+    ImGui::Text("Cols:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(50);
+    ImGui::InputInt("##TableCols", &preview_table_cols_, 0, 0);
+    preview_table_cols_ = std::clamp(preview_table_cols_, 1, std::max(1, num_features));
+
+    ImGui::SameLine();
+    if (ImGui::Button("All##AllCols")) {
+        preview_table_cols_ = num_features;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show all %d columns", num_features);
+
+    ImGui::SameLine(0, 20);
     ImGui::Text("Page:");
     ImGui::SameLine();
     int page = preview_sample_idx_ / preview_table_rows_;
     int total_pages = static_cast<int>((dataset_size + preview_table_rows_ - 1) / preview_table_rows_);
-    ImGui::SetNextItemWidth(60);
+    ImGui::SetNextItemWidth(50);
     if (ImGui::InputInt("##Page", &page, 0, 0)) {
         page = std::clamp(page, 0, total_pages - 1);
         preview_sample_idx_ = page * preview_table_rows_;
@@ -1625,34 +2215,66 @@ void DatasetPanel::RenderTablePreview(size_t dataset_size) {
     ImGui::Text("/ %d", total_pages);
 
     ImGui::SameLine();
-    if (ImGui::Button("<##PrevPage") && page > 0) {
+    if (ImGui::Button(ICON_FA_CHEVRON_LEFT "##PrevPage") && page > 0) {
         preview_sample_idx_ = (page - 1) * preview_table_rows_;
     }
     ImGui::SameLine();
-    if (ImGui::Button(">##NextPage") && page < total_pages - 1) {
+    if (ImGui::Button(ICON_FA_CHEVRON_RIGHT "##NextPage") && page < total_pages - 1) {
         preview_sample_idx_ = (page + 1) * preview_table_rows_;
     }
 
     ImGui::Spacing();
 
-    // Get feature count from first sample
-    auto [first_sample, _] = current_dataset_.GetSample(0);
-    int num_features = static_cast<int>(first_sample.size());
-    int display_cols = std::min(num_features, 10);  // Limit columns displayed
+    int display_cols = std::min(preview_table_cols_, num_features);
 
     ImGui::BeginChild("TablePreview", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
 
-    if (ImGui::BeginTable("DataTable", display_cols + 2,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
-            ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable)) {
+    // Determine original file layout
+    int label_col_idx = dataset ? dataset->GetLabelColumnIndex() : -1;
+    int orig_col_count = dataset ? dataset->GetOriginalColumnCount() : -1;
+    bool has_orig_layout = (orig_col_count > 0 && label_col_idx >= 0);
 
-        // Header
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 40);
-        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 60);
-        for (int i = 0; i < display_cols; ++i) {
-            char col_name[16];
-            snprintf(col_name, sizeof(col_name), "F%d", i);
-            ImGui::TableSetupColumn(col_name, ImGuiTableColumnFlags_WidthFixed, 70);
+    // Total display columns = original file columns if layout known, else features + label
+    int total_data_cols = has_orig_layout ? orig_col_count : (display_cols + 1);
+
+    if (ImGui::BeginTable("DataTable", total_data_cols + 1,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
+            ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
+            ImGuiTableFlags_Hideable)) {
+
+        ImGui::TableSetupScrollFreeze(1, 1);  // Freeze index column and header row
+
+        // Index column
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 50);
+
+        if (has_orig_layout) {
+            // Show columns in original file order, label column highlighted
+            int feat_idx = 0;
+            for (int c = 0; c < orig_col_count; ++c) {
+                std::string col_name;
+                if (c < static_cast<int>(column_names.size()) && !column_names[c].empty()) {
+                    col_name = column_names[c];
+                } else if (c == label_col_idx) {
+                    col_name = "Target";
+                } else {
+                    col_name = "Feature_" + std::to_string(feat_idx);
+                }
+                if (c == label_col_idx) col_name += " *";
+                ImGui::TableSetupColumn(col_name.c_str(), ImGuiTableColumnFlags_WidthFixed, 90);
+                if (c != label_col_idx) feat_idx++;
+            }
+        } else {
+            // Fallback: Label + features
+            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 80);
+            for (int i = 0; i < display_cols; ++i) {
+                std::string col_name;
+                if (i < static_cast<int>(column_names.size()) && !column_names[i].empty()) {
+                    col_name = column_names[i];
+                } else {
+                    col_name = "Col " + std::to_string(i);
+                }
+                ImGui::TableSetupColumn(col_name.c_str(), ImGuiTableColumnFlags_WidthFixed, 80);
+            }
         }
         ImGui::TableHeadersRow();
 
@@ -1667,29 +2289,55 @@ void DatasetPanel::RenderTablePreview(size_t dataset_size) {
 
             // Index
             ImGui::TableNextColumn();
-            ImGui::Text("%d", i);
+            ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "%d", i);
 
-            // Label
-            ImGui::TableNextColumn();
-            if (label >= 0 && label < static_cast<int>(class_names_.size())) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", class_names_[label].c_str());
+            if (has_orig_layout) {
+                // Render in original file order
+                int feat_idx = 0;
+                for (int c = 0; c < orig_col_count; ++c) {
+                    ImGui::TableNextColumn();
+                    if (c == label_col_idx) {
+                        // Label column - show float if available
+                        if (dataset->HasFloatLabels()) {
+                            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%.4f", dataset->GetFloatLabel(i));
+                        } else if (label >= 0 && label < static_cast<int>(class_names_.size())) {
+                            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", class_names_[label].c_str());
+                        } else {
+                            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%d", label);
+                        }
+                    } else {
+                        // Feature column
+                        if (feat_idx < static_cast<int>(sample.size())) {
+                            ImGui::Text("%.4f", sample[feat_idx]);
+                        }
+                        feat_idx++;
+                    }
+                }
             } else {
-                ImGui::Text("%d", label);
-            }
-
-            // Features
-            for (int j = 0; j < display_cols && j < static_cast<int>(sample.size()); ++j) {
+                // Fallback: label then features
                 ImGui::TableNextColumn();
-                ImGui::Text("%.4f", sample[j]);
+                if (dataset && dataset->HasFloatLabels()) {
+                    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%.4f", dataset->GetFloatLabel(i));
+                } else if (label >= 0 && label < static_cast<int>(class_names_.size())) {
+                    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", class_names_[label].c_str());
+                } else {
+                    ImGui::Text("%d", label);
+                }
+
+                for (int j = 0; j < display_cols && j < static_cast<int>(sample.size()); ++j) {
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.4f", sample[j]);
+                }
             }
         }
 
         ImGui::EndTable();
     }
 
-    if (num_features > display_cols) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Showing %d of %d features", display_cols, num_features);
-    }
+    // Info bar
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        "%zu samples | %d features | Showing cols 0-%d",
+        dataset_size, num_features, display_cols - 1);
 
     ImGui::EndChild();
 }
@@ -1735,6 +2383,322 @@ void DatasetPanel::ShowCSVFileBrowser() {
         csv_path_buffer_[sizeof(csv_path_buffer_) - 1] = '\0';
         spdlog::info("Selected CSV file: {}", csv_path_buffer_);
     }
+}
+
+void DatasetPanel::ScanHDF5File(const std::string& path) {
+    hdf5_dataset_paths_.clear();
+    hdf5_dataset_info_.clear();
+
+    auto datasets = cyxwiz::HDF5Browser::ListDatasets(path);
+
+    for (const auto& ds : datasets) {
+        hdf5_dataset_paths_.push_back(ds.path);
+
+        // Build info string
+        std::string info = ds.path + "  " + ds.GetShapeString() + "  " + ds.dtype;
+        if (ds.size_bytes > 0) {
+            info += "  (" + ds.GetSizeString() + ")";
+        }
+        hdf5_dataset_info_.push_back(info);
+    }
+
+    // Auto-select likely data and label datasets
+    std::string auto_data, auto_label;
+    if (cyxwiz::HDF5Browser::AutoDetectPaths(path, auto_data, auto_label)) {
+        for (size_t i = 0; i < hdf5_dataset_paths_.size(); i++) {
+            if (hdf5_dataset_paths_[i] == auto_data) {
+                hdf5_selected_data_idx_ = static_cast<int>(i);
+            }
+            if (hdf5_dataset_paths_[i] == auto_label) {
+                hdf5_selected_label_idx_ = static_cast<int>(i);
+            }
+        }
+    }
+
+    hdf5_file_scanned_ = true;
+}
+
+void DatasetPanel::UpdateHDF5Preview() {
+    if (hdf5_selected_data_idx_ < 0 ||
+        hdf5_selected_data_idx_ >= static_cast<int>(hdf5_dataset_paths_.size())) {
+        return;
+    }
+
+    const std::string& data_path = hdf5_dataset_paths_[hdf5_selected_data_idx_];
+
+    // Read preview samples
+    if (!cyxwiz::HDF5Browser::ReadPreviewSamples(
+            hdf5_dialog_path_, data_path, 4,
+            hdf5_preview_data_, hdf5_preview_shape_)) {
+        return;
+    }
+
+    // If image data, create a preview texture
+    if (hdf5_preview_shape_.size() >= 2) {
+        int h = static_cast<int>(hdf5_preview_shape_[0]);
+        int w = static_cast<int>(hdf5_preview_shape_[1]);
+        int c = hdf5_preview_shape_.size() >= 3 ? static_cast<int>(hdf5_preview_shape_[2]) : 1;
+
+        // Only create texture for reasonable sizes
+        if (w >= 8 && w <= 512 && h >= 8 && h <= 512) {
+            // Delete old texture
+            if (hdf5_preview_texture_ != 0) {
+                glDeleteTextures(1, &hdf5_preview_texture_);
+                hdf5_preview_texture_ = 0;
+            }
+
+            // Create new texture for first sample
+            glGenTextures(1, &hdf5_preview_texture_);
+            glBindTexture(GL_TEXTURE_2D, hdf5_preview_texture_);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+            // Convert to RGBA
+            std::vector<unsigned char> rgba(w * h * 4);
+            size_t sample_size = w * h * c;
+
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int idx = (y * w + x);
+                    if (c == 1) {
+                        // Grayscale
+                        unsigned char v = static_cast<unsigned char>(
+                            std::clamp(hdf5_preview_data_[idx] * 255.0f, 0.0f, 255.0f));
+                        rgba[idx * 4 + 0] = v;
+                        rgba[idx * 4 + 1] = v;
+                        rgba[idx * 4 + 2] = v;
+                        rgba[idx * 4 + 3] = 255;
+                    } else if (c >= 3) {
+                        // RGB
+                        rgba[idx * 4 + 0] = static_cast<unsigned char>(
+                            std::clamp(hdf5_preview_data_[idx * c + 0] * 255.0f, 0.0f, 255.0f));
+                        rgba[idx * 4 + 1] = static_cast<unsigned char>(
+                            std::clamp(hdf5_preview_data_[idx * c + 1] * 255.0f, 0.0f, 255.0f));
+                        rgba[idx * 4 + 2] = static_cast<unsigned char>(
+                            std::clamp(hdf5_preview_data_[idx * c + 2] * 255.0f, 0.0f, 255.0f));
+                        rgba[idx * 4 + 3] = 255;
+                    }
+                }
+            }
+
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+            hdf5_preview_tex_w_ = w;
+            hdf5_preview_tex_h_ = h;
+        }
+    }
+}
+
+void DatasetPanel::RenderHDF5ConfigDialog() {
+    if (!show_hdf5_dialog_) return;
+
+    ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("HDF5 Dataset Configuration", &show_hdf5_dialog_,
+                     ImGuiWindowFlags_NoCollapse)) {
+
+        // File path header
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "File:");
+        ImGui::SameLine();
+        ImGui::Text("%s", hdf5_dialog_path_.c_str());
+
+        ImGui::Separator();
+
+        // Scan file if not already done
+        if (!hdf5_file_scanned_) {
+            ScanHDF5File(hdf5_dialog_path_);
+        }
+
+        // Main content: two-column layout
+        float panel_width = ImGui::GetContentRegionAvail().x;
+
+        // Left panel: Dataset list
+        ImGui::BeginChild("##HDF5Datasets", ImVec2(panel_width * 0.55f, -60), true);
+
+        ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.5f, 1.0f), ICON_FA_DATABASE " Datasets in File");
+        ImGui::Separator();
+
+        if (hdf5_dataset_paths_.empty()) {
+            ImGui::TextColored(ImVec4(0.7f, 0.5f, 0.5f, 1.0f), "No datasets found");
+        } else {
+            // Headers
+            ImGui::Columns(2, "##HDF5Cols", true);
+            ImGui::SetColumnWidth(0, 100);
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Use As");
+            ImGui::NextColumn();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Dataset Info");
+            ImGui::NextColumn();
+            ImGui::Separator();
+
+            for (size_t i = 0; i < hdf5_dataset_paths_.size(); i++) {
+                ImGui::PushID(static_cast<int>(i));
+
+                // Radio buttons for data/label selection
+                bool is_data = (hdf5_selected_data_idx_ == static_cast<int>(i));
+                bool is_label = (hdf5_selected_label_idx_ == static_cast<int>(i));
+
+                // Data checkbox
+                ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
+                if (ImGui::RadioButton("D", is_data)) {
+                    if (is_data) {
+                        hdf5_selected_data_idx_ = -1;  // Deselect
+                    } else {
+                        hdf5_selected_data_idx_ = static_cast<int>(i);
+                        // Remove from labels if was selected
+                        if (hdf5_selected_label_idx_ == static_cast<int>(i)) {
+                            hdf5_selected_label_idx_ = -1;
+                        }
+                        UpdateHDF5Preview();
+                    }
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use as Data");
+
+                ImGui::SameLine();
+
+                // Label checkbox
+                ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.4f, 0.6f, 0.9f, 1.0f));
+                if (ImGui::RadioButton("L", is_label)) {
+                    if (is_label) {
+                        hdf5_selected_label_idx_ = -1;  // Deselect
+                    } else {
+                        hdf5_selected_label_idx_ = static_cast<int>(i);
+                        // Remove from data if was selected
+                        if (hdf5_selected_data_idx_ == static_cast<int>(i)) {
+                            hdf5_selected_data_idx_ = -1;
+                        }
+                    }
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use as Labels");
+
+                ImGui::NextColumn();
+
+                // Dataset info with color coding
+                if (is_data) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s", hdf5_dataset_info_[i].c_str());
+                } else if (is_label) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), "%s", hdf5_dataset_info_[i].c_str());
+                } else {
+                    ImGui::Text("%s", hdf5_dataset_info_[i].c_str());
+                }
+
+                ImGui::NextColumn();
+                ImGui::PopID();
+            }
+
+            ImGui::Columns(1);
+        }
+
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // Right panel: Preview
+        ImGui::BeginChild("##HDF5Preview", ImVec2(0, -60), true);
+
+        ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.5f, 1.0f), ICON_FA_EYE " Preview");
+        ImGui::Separator();
+
+        if (hdf5_selected_data_idx_ >= 0 && hdf5_preview_texture_ != 0) {
+            // Show image preview
+            float avail_w = ImGui::GetContentRegionAvail().x;
+            float avail_h = ImGui::GetContentRegionAvail().y - 30;
+
+            float scale = std::min(avail_w / hdf5_preview_tex_w_,
+                                   avail_h / hdf5_preview_tex_h_);
+            scale = std::min(scale, 4.0f);  // Max 4x zoom
+
+            float disp_w = hdf5_preview_tex_w_ * scale;
+            float disp_h = hdf5_preview_tex_h_ * scale;
+
+            // Center the image
+            float offset_x = (avail_w - disp_w) * 0.5f;
+            if (offset_x > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset_x);
+
+            ImGui::Image((ImTextureID)(intptr_t)hdf5_preview_texture_,
+                         ImVec2(disp_w, disp_h));
+
+            // Show shape info
+            std::string shape_str = "Shape: [";
+            for (size_t i = 0; i < hdf5_preview_shape_.size(); i++) {
+                if (i > 0) shape_str += ", ";
+                shape_str += std::to_string(hdf5_preview_shape_[i]);
+            }
+            shape_str += "]";
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", shape_str.c_str());
+        } else if (hdf5_selected_data_idx_ >= 0) {
+            // Show text preview for non-image data
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Select a dataset to preview");
+            if (!hdf5_preview_shape_.empty()) {
+                std::string shape_str = "Shape: [";
+                for (size_t i = 0; i < hdf5_preview_shape_.size(); i++) {
+                    if (i > 0) shape_str += ", ";
+                    shape_str += std::to_string(hdf5_preview_shape_[i]);
+                }
+                shape_str += "]";
+                ImGui::Text("%s", shape_str.c_str());
+
+                // Show first few values
+                if (!hdf5_preview_data_.empty()) {
+                    ImGui::Text("First values: ");
+                    for (size_t i = 0; i < std::min(hdf5_preview_data_.size(), size_t(8)); i++) {
+                        if (i > 0) ImGui::SameLine();
+                        ImGui::Text("%.3f", hdf5_preview_data_[i]);
+                    }
+                    if (hdf5_preview_data_.size() > 8) {
+                        ImGui::SameLine();
+                        ImGui::Text("...");
+                    }
+                }
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+                "Select a dataset (D) to see preview");
+        }
+
+        ImGui::EndChild();
+
+        ImGui::Separator();
+
+        // Legend and buttons
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Legend:");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "D = Data");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), "L = Labels");
+
+        ImGui::SameLine(ImGui::GetWindowWidth() - 220);
+
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            show_hdf5_dialog_ = false;
+        }
+
+        ImGui::SameLine();
+
+        bool can_apply = hdf5_selected_data_idx_ >= 0;
+        if (!can_apply) ImGui::BeginDisabled();
+        if (ImGui::Button("Apply", ImVec2(100, 0))) {
+            // Copy selected paths to the main UI
+            if (hdf5_selected_data_idx_ >= 0) {
+                strncpy(hdf5_data_path_,
+                        hdf5_dataset_paths_[hdf5_selected_data_idx_].c_str(),
+                        sizeof(hdf5_data_path_) - 1);
+            } else {
+                hdf5_data_path_[0] = '\0';
+            }
+
+            if (hdf5_selected_label_idx_ >= 0) {
+                strncpy(hdf5_label_path_,
+                        hdf5_dataset_paths_[hdf5_selected_label_idx_].c_str(),
+                        sizeof(hdf5_label_path_) - 1);
+            } else {
+                hdf5_label_path_[0] = '\0';
+            }
+
+            show_hdf5_dialog_ = false;
+        }
+        if (!can_apply) ImGui::EndDisabled();
+    }
+    ImGui::End();
 }
 
 bool DatasetPanel::LoadDataset(const std::string& path) {
@@ -1946,6 +2910,63 @@ void DatasetPanel::LoadCSVDatasetAsync(const std::string& path) {
             loading_status_message_.clear();
             if (!success) {
                 spdlog::error("Async CSV load failed: {}", error);
+            }
+        }
+    );
+}
+
+void DatasetPanel::LoadHDF5DatasetAsync(const std::string& path) {
+    if (is_loading_.load()) {
+        spdlog::warn("Already loading a dataset, please wait...");
+        return;
+    }
+
+    is_loading_.store(true);
+    loading_progress_.store(0.0f);
+    loading_status_message_ = "Starting...";
+
+    // Capture HDF5 config from UI
+    cyxwiz::HDF5Config hdf5_config;
+    hdf5_config.data_path = hdf5_data_path_;
+    hdf5_config.label_path = hdf5_label_path_;
+    hdf5_config.normalize = hdf5_normalize_;
+    hdf5_config.auto_detect = hdf5_config.data_path.empty();  // Auto-detect if no custom path
+
+    loading_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Loading HDF5: " + std::filesystem::path(path).filename().string(),
+        [this, path, hdf5_config](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.1f, "Opening HDF5 file...");
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+
+            task.ReportProgress(0.3f, "Parsing HDF5 data...");
+            if (task.ShouldStop()) return;
+
+            auto handle = registry.LoadHDF5(path, "", hdf5_config);
+
+            task.ReportProgress(0.8f, "Processing dataset...");
+            if (task.ShouldStop()) return;
+
+            if (handle.IsValid()) {
+                current_dataset_ = handle;
+                cached_info_ = current_dataset_.GetInfo();
+                ApplySplit();
+                UpdateClassCounts();
+                task.ReportProgress(1.0f, "Complete");
+                task.MarkCompleted();
+            } else {
+                task.MarkFailed("Failed to load HDF5 file");
+            }
+        },
+        [this](float progress, const std::string& msg) {
+            loading_progress_.store(progress);
+            loading_status_message_ = msg;
+        },
+        [this](bool success, const std::string& error) {
+            is_loading_.store(false);
+            loading_status_message_.clear();
+            if (!success) {
+                spdlog::error("Async HDF5 load failed: {}", error);
             }
         }
     );
@@ -2275,8 +3296,22 @@ void DatasetPanel::LoadDatasetAsync(const std::string& path) {
     std::string ext = fs_path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-    if (ext == ".csv") {
-        LoadCSVDatasetAsync(path);
+    if (ext == ".csv" || ext == ".txt" || ext == ".tsv" || ext == ".dat" || ext == ".arff") {
+        // Text-based tabular files - use Custom loader with appropriate delimiter
+        cyxwiz::CustomConfig config;
+        config.data_path = path;
+        config.format = "auto";
+        if (ext == ".tsv") {
+            config.delimiter = "\t";
+        } else {
+            config.delimiter = ",";
+        }
+        config.label_column = -1;  // Last column as label/target
+        config.normalize = false;
+        config.scale = 1.0f;
+        LoadCustomDatasetAsync(config);
+    } else if (ext == ".h5" || ext == ".hdf5" || ext == ".hdf") {
+        LoadHDF5DatasetAsync(path);
     } else if (std::filesystem::is_directory(fs_path)) {
         // Check for MNIST/CIFAR-10 patterns
         if (std::filesystem::exists(fs_path / "train-images-idx3-ubyte") ||
@@ -2367,6 +3402,27 @@ void DatasetPanel::ClearDataset() {
     class_counts_.clear();
     class_names_.clear();
     preview_sample_idx_ = 0;
+
+    // Clear Prepare tab state
+    prepare_missing_analyzed_ = false;
+    prepare_missing_summary_.clear();
+    prepare_missing_columns_.clear();
+    prepare_outlier_analyzed_ = false;
+    prepare_outlier_count_ = 0;
+    prepare_outlier_summary_.clear();
+    prepare_correlation_computed_ = false;
+    prepare_high_corr_pairs_.clear();
+
+    // Clear Evaluate tab state
+    has_eval_results_ = false;
+    eval_has_roc_data_ = false;
+    eval_has_pr_data_ = false;
+    eval_has_learning_curves_ = false;
+    eval_learning_curves_ = {};
+
+    // Clear Export tab state
+    has_trained_model_ = false;
+    trained_model_name_.clear();
 
     spdlog::info("Dataset cleared");
 }

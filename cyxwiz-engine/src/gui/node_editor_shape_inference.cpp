@@ -297,7 +297,7 @@ std::vector<size_t> ShapeInferenceEngine::InferNodeOutputShape(
             // Unknown node type - pass through input shape
             if (!input_shape.empty()) {
                 output_shape = input_shape;
-                spdlog::warn("ShapeInferenceEngine: Unknown node type, passing through input shape");
+                // Removed warning for cleaner logs
             }
             break;
     }

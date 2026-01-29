@@ -103,6 +103,19 @@ struct CYXWIZ_API ClassificationReport {
     std::string error_message;
 };
 
+// Regression metrics
+struct CYXWIZ_API RegressionMetrics {
+    double mse = 0.0;       // Mean Squared Error
+    double rmse = 0.0;      // Root Mean Squared Error
+    double mae = 0.0;       // Mean Absolute Error
+    double r_squared = 0.0; // Coefficient of determination (R²)
+    double mape = 0.0;      // Mean Absolute Percentage Error
+    double max_error = 0.0; // Maximum absolute error
+
+    bool success = false;
+    std::string error_message;
+};
+
 // Binary classification metrics at a specific threshold
 struct CYXWIZ_API BinaryMetrics {
     double threshold = 0.5;
@@ -180,6 +193,11 @@ public:
         const std::vector<int>& y_true,
         const std::vector<int>& y_pred,
         const std::vector<std::string>& class_names = {});
+
+    // Regression metrics
+    static RegressionMetrics ComputeRegressionMetrics(
+        const std::vector<double>& y_true,
+        const std::vector<double>& y_pred);
 
     // Optimal threshold finder (maximizes F1 or Youden's J)
     static double FindOptimalThreshold(
