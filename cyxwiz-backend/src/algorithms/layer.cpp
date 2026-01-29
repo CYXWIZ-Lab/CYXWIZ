@@ -4271,19 +4271,24 @@ Tensor ConvTranspose2DLayer::Backward(const Tensor& grad_output) {
             grad_bias_ = AfToTensor(db);
         }
 
-        // Gradient w.r.t. input: standard convolution of grad_output with weights
+        // Gradient w.r.t. input: accumulate on host to avoid AF per-element indexing
         dim_t out_h = grad_out.dims(0);
         dim_t out_w = grad_out.dims(1);
 
-        af::array dx = af::constant(0.0f, x.dims());
+        // Copy data to host for efficient element-wise access
+        std::vector<float> h_grad(grad_out.elements());
+        grad_out.host(h_grad.data());
+        std::vector<float> h_w(w.elements());
+        w.host(h_w.data());
+        std::vector<float> h_x(x.elements());
+        x.host(h_x.data());
+
+        // Host-side dx accumulation
+        std::vector<float> h_dx(x.elements(), 0.0f);
 
         for (int ic = 0; ic < in_channels_; ic++) {
             for (int oc = 0; oc < out_channels_; oc++) {
-                af::array filter = w(af::span, af::span, oc, ic);
-
                 for (dim_t b = 0; b < batch_size; b++) {
-                    af::array grad_slice = grad_out(af::span, af::span, oc, b);
-
                     for (dim_t ih = 0; ih < in_h; ih++) {
                         for (dim_t iw = 0; iw < in_w; iw++) {
                             dim_t oh_start = ih * stride_ - padding_;
@@ -4295,26 +4300,28 @@ Tensor ConvTranspose2DLayer::Backward(const Tensor& grad_output) {
                                     dim_t oh = oh_start + kh;
                                     dim_t ow = ow_start + kw;
                                     if (oh >= 0 && oh < out_h && ow >= 0 && ow < out_w) {
-                                        sum += grad_slice(oh, ow).scalar<float>() * filter(kh, kw).scalar<float>();
+                                        // AF column-major: [H, W, C, N]
+                                        size_t g_idx = oh + ow * out_h + oc * out_h * out_w + b * out_h * out_w * out_channels_;
+                                        size_t w_idx = kh + kw * kernel_size_ + oc * kernel_size_ * kernel_size_ + ic * kernel_size_ * kernel_size_ * out_channels_;
+                                        sum += h_grad[g_idx] * h_w[w_idx];
                                     }
                                 }
                             }
-                            dx(ih, iw, ic, b) += sum;
+                            size_t dx_idx = ih + iw * in_h + ic * in_h * in_w + b * in_h * in_w * in_channels_;
+                            h_dx[dx_idx] += sum;
                         }
                     }
                 }
             }
         }
+        af::array dx = af::array(x.dims(), h_dx.data());
 
-        // Gradient w.r.t. weights
-        af::array dW = af::constant(0.0f, w.dims());
+        // Host-side dW accumulation
+        std::vector<float> h_dW(w.elements(), 0.0f);
 
         for (int ic = 0; ic < in_channels_; ic++) {
             for (int oc = 0; oc < out_channels_; oc++) {
                 for (dim_t b = 0; b < batch_size; b++) {
-                    af::array input_slice = x(af::span, af::span, ic, b);
-                    af::array grad_slice = grad_out(af::span, af::span, oc, b);
-
                     for (int kh = 0; kh < kernel_size_; kh++) {
                         for (int kw = 0; kw < kernel_size_; kw++) {
                             float sum = 0.0f;
@@ -4322,19 +4329,21 @@ Tensor ConvTranspose2DLayer::Backward(const Tensor& grad_output) {
                                 for (dim_t iw = 0; iw < in_w; iw++) {
                                     dim_t oh = ih * stride_ - padding_ + kh;
                                     dim_t ow = iw * stride_ - padding_ + kw;
-                                    if (oh >= 0 && oh < static_cast<dim_t>(grad_out.dims(0)) &&
-                                        ow >= 0 && ow < static_cast<dim_t>(grad_out.dims(1))) {
-                                        sum += input_slice(ih, iw).scalar<float>() * grad_slice(oh, ow).scalar<float>();
+                                    if (oh >= 0 && oh < out_h && ow >= 0 && ow < out_w) {
+                                        size_t x_idx = ih + iw * in_h + ic * in_h * in_w + b * in_h * in_w * in_channels_;
+                                        size_t g_idx = oh + ow * out_h + oc * out_h * out_w + b * out_h * out_w * out_channels_;
+                                        sum += h_x[x_idx] * h_grad[g_idx];
                                     }
                                 }
                             }
-                            dW(kh, kw, oc, ic) += sum;
+                            size_t w_idx = kh + kw * kernel_size_ + oc * kernel_size_ * kernel_size_ + ic * kernel_size_ * kernel_size_ * out_channels_;
+                            h_dW[w_idx] += sum;
                         }
                     }
                 }
             }
         }
-        grad_weights_ = AfToTensor(dW);
+        grad_weights_ = AfToTensor(af::array(w.dims(), h_dW.data()));
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {

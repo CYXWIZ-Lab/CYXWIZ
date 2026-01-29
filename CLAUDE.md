@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current Work Status (Updated: 2026-01-11)
+## Current Work Status (Updated: 2026-01-29)
 
 ### CyxWiz Engine - Dataset Manager Redesign ✅ (NEW)
 
@@ -91,25 +91,45 @@ ann_mgr.ExportVOC("dataset", "voc/");         // For Pascal VOC tools
 
 ---
 
-### CyxWiz Backend - Recently Completed
+### CyxWiz Backend - Feature Gap Implementation ✅ (5 Phases Complete)
 
-**Transformer & RNN Layers:**
+**Phase 1: Text Tokenization** — Vocabulary, Tokenizer (Word/Whitespace/Character), TextDataset
+**Phase 2: Upsampling Layers** — ConvTranspose2D, Upsample2D, PixelShuffle
+**Phase 3: Time-Series Windowing** — Sliding windows, lag/rolling/diff features, chronological split
+**Phase 4: Audio Processing** — libsndfile I/O, Spectrogram, Mel, MFCC, augmentation (via FFTW3)
+**Phase 5: RL Interface** — ReplayBuffer, EpsilonSchedule, GymConnector (Python bridge)
+
+**Key Files:**
+| Component | Header | Implementation |
+|-----------|--------|---------------|
+| Tokenizer | `cyxwiz-backend/include/cyxwiz/tokenizer.h` | `src/algorithms/tokenizer.cpp` |
+| Upsampling | `cyxwiz-backend/include/cyxwiz/layer.h` | `src/algorithms/layer.cpp` |
+| Time-Series | `cyxwiz-backend/include/cyxwiz/time_series.h` | `src/algorithms/time_series.cpp` |
+| Audio | `cyxwiz-backend/include/cyxwiz/audio_processing.h` | `src/algorithms/audio_processing.cpp` |
+| RL | `cyxwiz-backend/include/cyxwiz/rl_interface.h` | `src/algorithms/rl_interface.cpp` |
+| GymConnector | `cyxwiz-engine/src/core/gym_connector.h` | `src/core/gym_connector.cpp` |
+| TextDataset | `cyxwiz-engine/src/core/formats/text_dataset.h` | `src/core/formats/text_dataset.cpp` |
+| TimeSeriesDataset | `cyxwiz-engine/src/core/formats/timeseries_dataset.h` | `src/core/formats/timeseries_dataset.cpp` |
+| AudioDataset | `cyxwiz-engine/src/core/formats/audio_dataset.h` | `src/core/formats/audio_dataset.cpp` |
+
+**Node Editor nodes added:** TextTokenizer, TextVocabulary, TextPadding, ConvTranspose2D, Upsample, PixelShuffle, TimeSeriesWindow, TimeSeriesFeatures, TimeSeriesSplit, AudioInput, Spectrogram, MelSpectrogram, MFCC, AudioAugmentation, GymEnvironment, ReplayBuffer, PolicyNetwork, ValueNetwork, RLTraining
+
+**Python bindings:** All 5 phases exposed via pybind11 in `cyxwiz-backend/python/bindings.cpp`
+
+**Documentation:** `docs/feature_usage_examples.md` — comprehensive reference with 16 sections and 5 end-to-end examples
+
+---
+
+### CyxWiz Backend - Transformer & RNN Layers ✅
+
 - ✅ EmbeddingLayer (pretrained weights, padding_idx, max_norm)
 - ✅ LSTMLayer (multi-layer, bidirectional, dropout)
 - ✅ GRULayer (multi-layer, bidirectional, dropout)
 - ✅ MultiHeadAttentionLayer (self/cross attention)
 - ✅ TransformerEncoderLayer (Pre-LN and Post-LN)
 - ✅ TransformerDecoderLayer (cross-attention, causal masking)
-
-**Loss Functions:**
-- ✅ FocalLoss (class imbalance, alpha/gamma parameters)
-- ✅ TripletLoss (metric learning, Euclidean/Cosine distance)
-- ✅ ContrastiveLoss (similarity learning, margin-based)
-
-**Python Bindings:**
-- ✅ All new layers exposed via pybind11
-- ✅ All new losses exposed via pybind11
-- ✅ Python examples in `cyxwiz-backend/examples/python/`
+- ✅ FocalLoss, TripletLoss, ContrastiveLoss
+- ✅ All exposed via pybind11
 
 ---
 

@@ -180,9 +180,7 @@ std::vector<std::string> Tokenizer::Split(const std::string& text) const {
         case TokenizerType::Character: {
             std::vector<std::string> chars;
             for (char c : processed) {
-                if (c != ' ' || type_ == TokenizerType::Character) {
-                    chars.push_back(std::string(1, c));
-                }
+                chars.push_back(std::string(1, c));
             }
             return chars;
         }
