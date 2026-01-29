@@ -335,6 +335,10 @@ public:
 
     // Raw data access for preview (overridden by specific dataset types)
     virtual std::vector<std::string> GetColumnNames() const { return {}; }
+    virtual float GetFloatLabel(size_t index) const { (void)index; return 0.0f; }
+    virtual bool HasFloatLabels() const { return false; }
+    virtual int GetLabelColumnIndex() const { return -1; }  // Original file column index of label (-2 = none)
+    virtual int GetOriginalColumnCount() const { return -1; }  // Total columns in original file
     virtual const std::vector<std::string>& GetTextLines() const { static std::vector<std::string> empty; return empty; }
     virtual const void* GetRawJSON() const { return nullptr; }
 

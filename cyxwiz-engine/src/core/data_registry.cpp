@@ -3763,8 +3763,8 @@ DatasetHandle DataRegistry::LoadKaggle(const KaggleConfig& config, const std::st
 class CustomDataset : public Dataset {
 public:
     CustomDataset(const CustomConfig& config) : config_(config) {
-        // Detect format if not specified
-        if (config_.format.empty()) {
+        // Detect format if not specified or set to "auto"
+        if (config_.format.empty() || config_.format == "auto") {
             config_.format = DetectFormat(config_.data_path);
         }
 
@@ -3831,7 +3831,21 @@ public:
         return info;
     }
 
+    std::vector<std::string> GetColumnNames() const override { return column_names_; }
+
+    bool HasFloatLabels() const override { return !float_labels_.empty(); }
+
+    float GetFloatLabel(size_t index) const override {
+        if (index < float_labels_.size()) return float_labels_[index];
+        return 0.0f;
+    }
+
+    int GetLabelColumnIndex() const override { return resolved_label_col_; }
+    int GetOriginalColumnCount() const override { return original_col_count_; }
+
 private:
+    std::vector<std::string> column_names_;
+
     std::string DetectFormat(const std::string& path) {
         namespace fs = std::filesystem;
         fs::path p(path);
@@ -3948,9 +3962,23 @@ private:
         while (std::getline(file, line)) {
             if (line.empty()) continue;
 
-            // Skip header
+            // Parse or skip header
             if (first_line && config_.has_header) {
                 first_line = false;
+                // Parse header names for column display
+                std::string delim = config_.delimiter.empty() ? delimiter : config_.delimiter;
+                std::string remaining = line;
+                size_t pos = 0;
+                while ((pos = remaining.find(delim)) != std::string::npos) {
+                    std::string tok = remaining.substr(0, pos);
+                    tok.erase(0, tok.find_first_not_of(" \t\r\n"));
+                    if (!tok.empty()) tok.erase(tok.find_last_not_of(" \t\r\n") + 1);
+                    column_names_.push_back(tok);
+                    remaining = remaining.substr(pos + delim.length());
+                }
+                remaining.erase(0, remaining.find_first_not_of(" \t\r\n"));
+                if (!remaining.empty()) remaining.erase(remaining.find_last_not_of(" \t\r\n") + 1);
+                column_names_.push_back(remaining);
                 continue;
             }
             first_line = false;
@@ -3970,19 +3998,28 @@ private:
             }
             tokens.push_back(remaining);
 
-            // Determine label column
+            // Determine label column (-2 = no label, -1 = last, >= 0 = specific)
             int label_col = config_.label_column;
-            if (label_col < 0) {
+            if (label_col == -1) {
                 label_col = static_cast<int>(tokens.size()) - 1;
+            }
+            bool no_label = (label_col == -2);
+
+            // Store original file layout info (once)
+            if (original_col_count_ == 0) {
+                original_col_count_ = static_cast<int>(tokens.size());
+                resolved_label_col_ = no_label ? -2 : label_col;
             }
 
             // Parse values
             int label = 0;
+            float float_label = 0.0f;
             for (size_t i = 0; i < tokens.size(); i++) {
                 try {
                     float val = std::stof(tokens[i]);
-                    if (static_cast<int>(i) == label_col) {
+                    if (!no_label && static_cast<int>(i) == label_col) {
                         label = static_cast<int>(val);
+                        float_label = val;
                     } else {
                         if (config_.normalize && config_.scale != 1.0f) {
                             val *= config_.scale;
@@ -3997,12 +4034,20 @@ private:
             if (!sample.empty()) {
                 data_.push_back(sample);
                 labels_.push_back(label);
+                float_labels_.push_back(float_label);
             }
         }
 
         // Infer shape
         if (!data_.empty() && config_.shape.empty()) {
             config_.shape = {data_[0].size()};
+        }
+
+        // Generate column names if not from header
+        if (column_names_.empty() && !data_.empty()) {
+            for (size_t i = 0; i < data_[0].size(); i++) {
+                column_names_.push_back("Feature_" + std::to_string(i));
+            }
         }
     }
 
@@ -4141,6 +4186,9 @@ private:
     CustomConfig config_;
     std::vector<std::vector<float>> data_;
     std::vector<int> labels_;
+    std::vector<float> float_labels_;  // Raw float labels for regression data
+    int resolved_label_col_ = -2;     // Actual label column index in original file
+    int original_col_count_ = 0;      // Total columns in original file
 };
 
 DatasetHandle DataRegistry::LoadCustom(const CustomConfig& config, const std::string& name) {

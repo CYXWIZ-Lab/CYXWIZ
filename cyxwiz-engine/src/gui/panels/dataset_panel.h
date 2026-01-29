@@ -265,6 +265,21 @@ private:
     int image_target_height_ = 224;    // Target image height for ImageCSV
     int image_cache_size_ = 100;       // LRU cache size for lazy loading
 
+    // Custom dataset loader state
+    char custom_labels_path_[512] = "";        // Separate labels file
+    int custom_format_idx_ = 0;                // 0=Auto, 1=JSON, 2=CSV, 3=TSV, 4=Binary, 5=Folder
+    char custom_data_key_[64] = "data";        // JSON/NPZ data key
+    char custom_labels_key_[64] = "labels";    // JSON/NPZ labels key
+    char custom_shape_str_[64] = "";           // Shape per sample, e.g. "28,28,1"
+    int custom_dtype_idx_ = 0;                 // 0=float32, 1=float64, 2=uint8, 3=int32
+    int custom_label_column_ = -1;             // Label column (-1 = last)
+    bool custom_has_header_ = false;           // CSV/TSV has header row
+    bool custom_normalize_ = true;             // Normalize to [0,1]
+    float custom_scale_ = 1.0f;               // Scale factor
+    char custom_delimiter_[8] = ",";           // Delimiter for text files
+    int custom_num_classes_ = 0;               // 0 = auto-detect
+    char custom_class_names_[512] = "";        // Comma-separated class names
+
     // Popular datasets (unified HuggingFace/Kaggle)
     int popular_dataset_source_ = 0;   // 0=HuggingFace, 1=Kaggle
     int popular_dataset_index_ = 0;    // Selected dataset in dropdown
