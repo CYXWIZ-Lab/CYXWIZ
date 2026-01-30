@@ -1,0 +1,80 @@
+#include "plugin_node_registry.h"
+#include <spdlog/spdlog.h>
+
+namespace cyxwiz::plugin {
+
+PluginNodeRegistry& PluginNodeRegistry::Instance() {
+    static PluginNodeRegistry instance;
+    return instance;
+}
+
+void PluginNodeRegistry::Register(const std::string& plugin_id, INodeProvider* provider) {
+    if (!provider) return;
+
+    auto types = provider->GetNodeTypes();
+    std::lock_guard lock(mutex_);
+
+    for (auto& info : types) {
+        std::string qname = plugin_id + ":" + info.type_name;
+        if (nodes_.count(qname)) {
+            spdlog::warn("PluginNodeRegistry: Duplicate node type {}, skipping", qname);
+            continue;
+        }
+        spdlog::info("PluginNodeRegistry: Registered node {} ({})", info.display_name, qname);
+        nodes_[qname] = NodeEntry{plugin_id, std::move(info), provider};
+    }
+}
+
+void PluginNodeRegistry::RemoveByPlugin(const std::string& plugin_id) {
+    std::lock_guard lock(mutex_);
+    for (auto it = nodes_.begin(); it != nodes_.end();) {
+        if (it->second.plugin_id == plugin_id)
+            it = nodes_.erase(it);
+        else
+            ++it;
+    }
+}
+
+std::vector<PluginNodeTypeInfo> PluginNodeRegistry::GetAllNodeTypes() const {
+    std::lock_guard lock(mutex_);
+    std::vector<PluginNodeTypeInfo> result;
+    result.reserve(nodes_.size());
+    for (const auto& [_, entry] : nodes_)
+        result.push_back(entry.info);
+    return result;
+}
+
+bool PluginNodeRegistry::HasNodeType(const std::string& qualified_name) const {
+    std::lock_guard lock(mutex_);
+    return nodes_.count(qualified_name) > 0;
+}
+
+const PluginNodeTypeInfo* PluginNodeRegistry::GetNodeTypeInfo(const std::string& qualified_name) const {
+    std::lock_guard lock(mutex_);
+    auto it = nodes_.find(qualified_name);
+    return it != nodes_.end() ? &it->second.info : nullptr;
+}
+
+std::string PluginNodeRegistry::GenerateCode(
+    const std::string& qualified_name,
+    const std::map<std::string, std::string>& parameters,
+    const std::string& framework
+) const {
+    std::lock_guard lock(mutex_);
+    auto it = nodes_.find(qualified_name);
+    if (it == nodes_.end() || !it->second.provider) return "";
+
+    try {
+        return it->second.provider->GenerateCode(it->second.info.type_name, parameters, framework);
+    } catch (const std::exception& e) {
+        spdlog::error("PluginNodeRegistry: Code generation failed for {}: {}", qualified_name, e.what());
+        return "";
+    }
+}
+
+size_t PluginNodeRegistry::GetCount() const {
+    std::lock_guard lock(mutex_);
+    return nodes_.size();
+}
+
+} // namespace cyxwiz::plugin

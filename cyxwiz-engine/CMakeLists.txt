@@ -54,6 +54,15 @@ set(ENGINE_SOURCES
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
+    # Plugin system
+    src/plugin/plugin_loader.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/plugin_context.cpp
+    src/plugin/registries/plugin_node_registry.cpp
+    src/plugin/registries/plugin_panel_registry.cpp
+    src/plugin/registries/plugin_data_loader_registry.cpp
+    src/plugin/registries/plugin_training_hook_manager.cpp
+    src/plugin/registries/plugin_analytics_registry.cpp
     # Preprocessing system
     src/preprocessing/preprocessing_config.cpp
     src/preprocessing/statistics_calculator.cpp
