@@ -171,11 +171,14 @@ PluginPermissionFlags PermissionStore::GetGrantedPermissions(
 void PermissionStore::ClearPlugin(const std::string& plugin_id) {
     std::lock_guard lock(mutex_);
     for (auto it = records_.begin(); it != records_.end();) {
-        // Key format: "plugin_id:version"
-        if (it->first.starts_with(plugin_id + ":"))
+        // Key format: "plugin_id:version" — extract exact ID before first colon
+        auto colon_pos = it->first.find(':');
+        if (colon_pos != std::string::npos &&
+            it->first.substr(0, colon_pos) == plugin_id) {
             it = records_.erase(it);
-        else
+        } else {
             ++it;
+        }
     }
 }
 

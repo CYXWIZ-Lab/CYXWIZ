@@ -6,7 +6,8 @@ namespace cyxwiz::plugin::security {
 
 bool PermissionDialog::RequestApproval(
     const PluginManifest& manifest,
-    const std::vector<PluginPermission>& undecided_perms)
+    const std::vector<PluginPermission>& undecided_perms,
+    DecisionCallback callback)
 {
     if (undecided_perms.empty()) return false;
 
@@ -17,16 +18,55 @@ bool PermissionDialog::RequestApproval(
     pending.plugin_author = manifest.author;
     pending.permissions = undecided_perms;
     pending.allowed.resize(undecided_perms.size(), false);
+    pending.callback = std::move(callback);
 
-    current_ = std::move(pending);
-    open_requested_ = true;
+    {
+        std::lock_guard lock(mutex_);
+        pending_queue_.push(std::move(pending));
+    }
 
-    spdlog::info("PermissionDialog: Requesting approval for plugin '{}' ({} permissions)",
+    spdlog::info("PermissionDialog: Queued approval for plugin '{}' ({} permissions)",
                  manifest.name, undecided_perms.size());
     return true;
 }
 
+bool PermissionDialog::HasPending() const {
+    std::lock_guard lock(mutex_);
+    return (current_.has_value() && !current_->resolved) || !pending_queue_.empty();
+}
+
+void PermissionDialog::ClearPendingForPlugin(const std::string& plugin_id) {
+    std::lock_guard lock(mutex_);
+
+    // Clear current if it matches
+    if (current_.has_value() && current_->plugin_id == plugin_id) {
+        current_.reset();
+        open_requested_ = false;
+    }
+
+    // Remove from queue
+    std::queue<PendingApproval> filtered;
+    while (!pending_queue_.empty()) {
+        auto item = std::move(pending_queue_.front());
+        pending_queue_.pop();
+        if (item.plugin_id != plugin_id) {
+            filtered.push(std::move(item));
+        }
+    }
+    pending_queue_ = std::move(filtered);
+}
+
 bool PermissionDialog::Render() {
+    // Advance queue if no current dialog
+    {
+        std::lock_guard lock(mutex_);
+        if ((!current_.has_value() || current_->resolved) && !pending_queue_.empty()) {
+            current_ = std::move(pending_queue_.front());
+            pending_queue_.pop();
+            open_requested_ = true;
+        }
+    }
+
     if (!current_.has_value() || current_->resolved) return false;
 
     if (open_requested_) {
@@ -69,6 +109,7 @@ bool PermissionDialog::Render() {
             bool checked = pending.allowed[i];
             ImGui::Checkbox(name, &checked);
             pending.allowed[i] = checked;
+
             ImGui::SameLine();
             ImGui::TextDisabled("(?)");
             if (ImGui::IsItemHovered()) {
@@ -102,7 +143,6 @@ bool PermissionDialog::Render() {
         if (ImGui::Button("Deny All", ImVec2(button_width, 0))) {
             pending.accepted = false;
             pending.resolved = true;
-            // Set all to denied
             std::fill(pending.allowed.begin(), pending.allowed.end(), false);
             decision_made = true;
             spdlog::info("PermissionDialog: User denied all permissions for '{}'",
@@ -113,8 +153,8 @@ bool PermissionDialog::Render() {
         ImGui::EndPopup();
     }
 
-    if (decision_made && callback_) {
-        callback_(*current_);
+    if (decision_made && current_->callback) {
+        current_->callback(*current_);
     }
 
     return decision_made;

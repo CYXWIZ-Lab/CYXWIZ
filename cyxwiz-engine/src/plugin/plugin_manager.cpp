@@ -139,8 +139,7 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
 
         if (!undecided.empty()) {
             // Queue permission dialog — initialization will be deferred
-            if (permission_dialog_.RequestApproval(plugin->manifest, undecided)) {
-                permission_dialog_.SetCallback(
+            if (permission_dialog_.RequestApproval(plugin->manifest, undecided,
                     [this, plugin_id](const security::PermissionDialog::PendingApproval& approval) {
                         auto& store = security::PermissionStore::Instance();
                         for (size_t i = 0; i < approval.permissions.size(); ++i) {
@@ -155,7 +154,7 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                                      approval.plugin_name);
                         // Retry initialization now that decisions are stored
                         InitializePlugin(plugin_id);
-                    });
+                    })) {
                 spdlog::info("PluginManager: Plugin {} awaiting permission approval", plugin_id);
                 return false;
             }
@@ -264,6 +263,9 @@ void PluginManager::ShutdownAll() {
 
 void PluginManager::UnloadPlugin(const std::string& plugin_id) {
     std::lock_guard lock(mutex_);
+
+    // Clear any pending permission requests for this plugin
+    permission_dialog_.ClearPendingForPlugin(plugin_id);
 
     auto it = plugins_.find(plugin_id);
     if (it == plugins_.end()) return;

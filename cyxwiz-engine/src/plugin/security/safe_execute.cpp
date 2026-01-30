@@ -1,5 +1,7 @@
 #include "safe_execute.h"
 #include <spdlog/spdlog.h>
+#include <sstream>
+#include <iomanip>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -76,10 +78,12 @@ SafeExecuteResult SafeExecute(
     } else {
         result.crashed = true;
         result.fault_code = exception_code;
+        std::ostringstream hex_code;
+        hex_code << "0x" << std::hex << std::uppercase << exception_code;
         result.error_message = std::string("Plugin '") + plugin_id +
             "' crashed during " + operation + ": " +
             ExceptionCodeToString(exception_code) +
-            " (0x" + std::to_string(exception_code) + ")";
+            " (" + hex_code.str() + ")";
         spdlog::error("{}", result.error_message);
     }
 
@@ -166,12 +170,17 @@ SafeExecuteResult SafeExecuteBool(
     bool& result_out)
 {
     result_out = false;
+    bool temp_result = false;
 
     // First try C++ exception handling around the SEH wrapper
     try {
         auto seh_result = SafeExecute(plugin_id, operation, [&]() {
-            result_out = callback();
+            temp_result = callback();
         });
+        // Only propagate result if execution succeeded (no crash)
+        if (seh_result.success) {
+            result_out = temp_result;
+        }
         return seh_result;
     } catch (const std::exception& e) {
         SafeExecuteResult result;
