@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 
 namespace cyxwiz {
 
@@ -34,6 +35,18 @@ static ImVec4 StateColor(plugin::PluginState state) {
     }
 }
 
+static const char* StateLabel(plugin::PluginState state) {
+    switch (state) {
+        case plugin::PluginState::Initialized: return "Initialized";
+        case plugin::PluginState::Active:      return "Active";
+        case plugin::PluginState::Loaded:      return "Loaded";
+        case plugin::PluginState::Failed:      return "Failed";
+        case plugin::PluginState::Disabled:    return "Disabled";
+        case plugin::PluginState::Unloaded:    return "Unloaded";
+        default:                               return "Unknown";
+    }
+}
+
 PluginManagerPanel::PluginManagerPanel()
     : Panel("Plugin Manager", false) {
 }
@@ -51,11 +64,22 @@ void PluginManagerPanel::Render() {
         return;
     }
 
+    // Fetch plugins once per frame (MEDIUM-9)
+    auto& mgr = plugin::PluginManager::Instance();
+    auto plugins = mgr.GetAllPlugins();
+
     RenderToolbar();
     ImGui::Separator();
-    RenderPluginList();
+    RenderPluginList(plugins);
     ImGui::Separator();
-    RenderStatusBar();
+    RenderStatusBar(plugins);
+
+    // Apply deferred unloads after iteration is complete (CRITICAL-1/HIGH-4)
+    for (const auto& id : deferred_unloads_) {
+        mgr.UnloadPlugin(id);
+        spdlog::info("PluginManagerPanel: Unloaded plugin {}", id);
+    }
+    deferred_unloads_.clear();
 
     ImGui::End();
 
@@ -94,9 +118,7 @@ void PluginManagerPanel::RenderToolbar() {
 // Plugin List
 // ============================================================================
 
-void PluginManagerPanel::RenderPluginList() {
-    auto& mgr = plugin::PluginManager::Instance();
-    auto plugins = mgr.GetAllPlugins();
+void PluginManagerPanel::RenderPluginList(const std::vector<const plugin::LoadedPlugin*>& plugins) {
     std::string filter(search_buf_);
 
     float height = ImGui::GetContentRegionAvail().y - 30.0f; // reserve for status bar
@@ -105,7 +127,9 @@ void PluginManagerPanel::RenderPluginList() {
             ImGui::TextDisabled("No plugins loaded.");
             ImGui::TextDisabled("Use the search paths or Install button to add plugins.");
         } else {
-            for (const auto* p : plugins) {
+            size_t match_count = 0;
+            for (size_t i = 0; i < plugins.size(); ++i) {
+                const auto* p = plugins[i];
                 if (!p) continue;
 
                 // Filter
@@ -117,8 +141,16 @@ void PluginManagerPanel::RenderPluginList() {
                     if (!match) continue;
                 }
 
+                match_count++;
+                ImGui::PushID(static_cast<int>(i));
                 RenderPluginCard(p);
                 ImGui::Spacing();
+                ImGui::PopID();
+            }
+
+            // No results message (LOW-15)
+            if (match_count == 0 && !filter.empty()) {
+                ImGui::TextDisabled("No plugins match '%s'", filter.c_str());
             }
         }
     }
@@ -130,20 +162,26 @@ void PluginManagerPanel::RenderPluginList() {
 // ============================================================================
 
 void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
-    ImGui::PushID(p->manifest.id.c_str());
-
-    // Card background
-    ImVec2 cursor = ImGui::GetCursorScreenPos();
     float card_width = ImGui::GetContentRegionAvail().x;
-    float card_height = 0; // auto
 
     // State dot + Name + Version
     ImVec4 color = StateColor(p->state);
     ImGui::TextColored(color, ICON_FA_CIRCLE);
+
+    // State tooltip (LOW-12)
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::Text("State: %s", StateLabel(p->state));
+        ImGui::EndTooltip();
+    }
+
     ImGui::SameLine();
     ImGui::Text("%s", p->manifest.name.c_str());
-    ImGui::SameLine(card_width - 60.0f);
-    ImGui::TextDisabled("v%s", p->manifest.version.ToString().c_str());
+
+    std::string version_str = "v" + p->manifest.version.ToString();
+    float version_width = ImGui::CalcTextSize(version_str.c_str()).x;
+    ImGui::SameLine(card_width - version_width - 10.0f);
+    ImGui::TextDisabled("%s", version_str.c_str());
 
     // Author
     if (!p->manifest.author.empty()) {
@@ -165,7 +203,7 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
     ImGui::SameLine();
 
     // Permission badges
-    static const plugin::PluginPermission all_perms[] = {
+    static constexpr plugin::PluginPermission all_perms[] = {
         plugin::PluginPermission::FileSystem,
         plugin::PluginPermission::Network,
         plugin::PluginPermission::SystemCommands,
@@ -189,29 +227,30 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
     ImGui::SameLine(card_width - buttons_width);
 
     auto& mgr = plugin::PluginManager::Instance();
+    std::string plugin_id = p->manifest.id;  // Copy ID before any mutation
 
     switch (p->state) {
         case plugin::PluginState::Initialized:
         case plugin::PluginState::Active:
             if (ImGui::SmallButton("Disable")) {
-                mgr.DisablePlugin(p->manifest.id);
+                mgr.DisablePlugin(plugin_id);
             }
             break;
         case plugin::PluginState::Loaded:
             if (ImGui::SmallButton("Initialize")) {
-                mgr.InitializePlugin(p->manifest.id);
+                mgr.InitializePlugin(plugin_id);
             }
             break;
         case plugin::PluginState::Failed:
             if (ImGui::SmallButton("Retry")) {
-                mgr.SetPluginState(p->manifest.id, plugin::PluginState::Loaded);
-                mgr.InitializePlugin(p->manifest.id);
+                mgr.SetPluginState(plugin_id, plugin::PluginState::Loaded);
+                mgr.InitializePlugin(plugin_id);
             }
             break;
         case plugin::PluginState::Disabled:
             if (ImGui::SmallButton("Enable")) {
-                if (mgr.EnablePlugin(p->manifest.id)) {
-                    mgr.InitializePlugin(p->manifest.id);
+                if (mgr.EnablePlugin(plugin_id)) {
+                    mgr.InitializePlugin(plugin_id);
                 }
             }
             break;
@@ -221,13 +260,12 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
 
     ImGui::SameLine();
     if (ImGui::SmallButton("Unload")) {
-        mgr.UnloadPlugin(p->manifest.id);
+        // Defer unload to after iteration (CRITICAL-1/HIGH-4)
+        deferred_unloads_.push_back(plugin_id);
     }
 
     // Separator between cards
     ImGui::Separator();
-
-    ImGui::PopID();
 }
 
 // ============================================================================
@@ -262,10 +300,7 @@ void PluginManagerPanel::RenderPermissionBadge(plugin::PluginPermission perm, bo
 // Status Bar
 // ============================================================================
 
-void PluginManagerPanel::RenderStatusBar() {
-    auto& mgr = plugin::PluginManager::Instance();
-    auto plugins = mgr.GetAllPlugins();
-
+void PluginManagerPanel::RenderStatusBar(const std::vector<const plugin::LoadedPlugin*>& plugins) {
     int active = 0, disabled = 0, failed = 0;
     for (const auto* p : plugins) {
         if (!p) continue;
@@ -286,8 +321,10 @@ void PluginManagerPanel::RenderStatusBar() {
     }
 
     ImGui::TextDisabled("%d active, %d failed, %d disabled", active, failed, disabled);
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80.0f);
-    ImGui::TextDisabled("%zu plugins", plugins.size());
+    std::string count_text = std::to_string(plugins.size()) + " plugins";
+    float count_width = ImGui::CalcTextSize(count_text.c_str()).x;
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - count_width - 10.0f);
+    ImGui::TextDisabled("%s", count_text.c_str());
 }
 
 // ============================================================================
@@ -298,6 +335,12 @@ void PluginManagerPanel::RenderInstallPopup() {
     if (show_install_popup_) {
         ImGui::OpenPopup("Install Plugin###InstallPluginPopup");
         show_install_popup_ = false;
+    }
+
+    // Install error popup (HIGH-6)
+    if (show_install_error_) {
+        ImGui::OpenPopup("Install Error###InstallErrorPopup");
+        show_install_error_ = false;
     }
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -321,17 +364,43 @@ void PluginManagerPanel::RenderInstallPopup() {
 
         if (ImGui::Button("Install", ImVec2(button_width, 0))) {
             std::string path_str(install_path_buf_);
-            if (!path_str.empty()) {
-                auto& mgr = plugin::PluginManager::Instance();
+            // Trim whitespace (HIGH-3)
+            path_str.erase(0, path_str.find_first_not_of(" \t\n\r"));
+            if (!path_str.empty())
+                path_str.erase(path_str.find_last_not_of(" \t\n\r") + 1);
+
+            if (path_str.empty()) {
+                install_error_ = "Please enter a path.";
+                show_install_error_ = true;
+            } else {
                 std::filesystem::path dir(path_str);
-                if (mgr.LoadPlugin(dir)) {
-                    // Find the newly loaded plugin by matching its path
-                    for (const auto* p : mgr.GetAllPlugins()) {
-                        if (p && p->state == plugin::PluginState::Loaded) {
-                            mgr.InitializePlugin(p->manifest.id);
+                std::error_code ec;
+
+                // Validate path exists (HIGH-3)
+                if (!std::filesystem::exists(dir, ec)) {
+                    install_error_ = "Path does not exist: " + path_str;
+                    show_install_error_ = true;
+                } else if (!std::filesystem::is_directory(dir, ec)) {
+                    install_error_ = "Not a directory: " + path_str;
+                    show_install_error_ = true;
+                } else if (!std::filesystem::exists(dir / "plugin.json", ec)) {
+                    install_error_ = "No plugin.json found in: " + path_str;
+                    show_install_error_ = true;
+                } else {
+                    auto& mgr = plugin::PluginManager::Instance();
+                    if (mgr.LoadPlugin(dir)) {
+                        // Initialize only the plugin we just loaded by matching directory (CRITICAL-2)
+                        for (const auto* p : mgr.GetAllPlugins()) {
+                            if (p && p->plugin_dir == dir) {
+                                mgr.InitializePlugin(p->manifest.id);
+                                break;
+                            }
                         }
+                        spdlog::info("PluginManagerPanel: Installed plugin from {}", path_str);
+                    } else {
+                        install_error_ = "Failed to load plugin. Check console for details.";
+                        show_install_error_ = true;
                     }
-                    spdlog::info("PluginManagerPanel: Installed plugin from {}", path_str);
                 }
             }
             ImGui::CloseCurrentPopup();
@@ -343,6 +412,20 @@ void PluginManagerPanel::RenderInstallPopup() {
             ImGui::CloseCurrentPopup();
         }
 
+        ImGui::EndPopup();
+    }
+
+    // Error popup (HIGH-6)
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Install Error###InstallErrorPopup", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", install_error_.c_str());
+        ImGui::Spacing();
+        float ok_width = 80.0f;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ok_width) * 0.5f);
+        if (ImGui::Button("OK", ImVec2(ok_width, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 }
