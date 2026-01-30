@@ -347,7 +347,7 @@ MainWindow::MainWindow()
     script_editor_->SetScriptingEngine(scripting_engine_);
 
     // Expose TrainingPlotPanel to Python scripts through the scripting engine
-    // This avoids DLL boundary issues by using pybind11 directly
+    // Registration is deferred - actual Python import happens on first script execution
     if (scripting_engine_) {
         scripting_engine_->RegisterTrainingDashboard(training_plot_panel_.get());
     }
@@ -1898,22 +1898,18 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         connection_dialog_->SetNodeEditor(node_editor_.get());
     }
 
-    // Create and wire up ReservationClient for node reservation
+    // Create and wire up ReservationClient for node reservation (async connect to avoid blocking startup)
     if (connection_dialog_ && client) {
         auto reservation_client = std::make_shared<network::ReservationClient>();
-        // Get server address from existing client (assuming same server hosts reservation service)
-        if (reservation_client->Connect(cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress())) {
-            // Set auth token from AuthClient if authenticated
-            auto& auth = cyxwiz::auth::AuthClient::Instance();
-            if (auth.IsAuthenticated()) {
-                reservation_client->SetAuthToken(auth.GetJwtToken());
-                spdlog::info("ReservationClient auth token set from AuthClient");
-            }
-            connection_dialog_->SetReservationClient(reservation_client);
-            spdlog::info("ReservationClient connected and wired to ConnectionDialog");
-        } else {
-            spdlog::warn("Failed to connect ReservationClient - reservation feature disabled");
+        // Set auth token from AuthClient if authenticated
+        auto& auth = cyxwiz::auth::AuthClient::Instance();
+        if (auth.IsAuthenticated()) {
+            reservation_client->SetAuthToken(auth.GetJwtToken());
         }
+        // Connect asynchronously - won't block the main thread
+        reservation_client->ConnectAsync(cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress());
+        connection_dialog_->SetReservationClient(reservation_client);
+        spdlog::info("ReservationClient wired to ConnectionDialog (connecting in background)");
     }
 
     // Create a shared P2PClient for reservation-based connections

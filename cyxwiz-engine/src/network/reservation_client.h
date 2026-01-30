@@ -59,6 +59,7 @@ public:
 
     // Connection management
     bool Connect(const std::string& server_address);
+    void ConnectAsync(const std::string& server_address);
     void Disconnect();
     bool IsConnected() const { return connected_; }
 
@@ -162,10 +163,11 @@ private:
     bool SendHeartbeat();
 
     // Connection state
-    bool connected_;
+    std::atomic<bool> connected_;
     std::string server_address_;
     std::string last_error_;
     std::string auth_token_;
+    std::thread connect_thread_;
 
     // gRPC
     std::shared_ptr<grpc::Channel> channel_;

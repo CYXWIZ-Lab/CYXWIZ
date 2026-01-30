@@ -131,10 +131,14 @@ public:
     // Check if engine is initialized
     bool IsInitialized() const;
 
-    // Register Training Dashboard with Python module
+    // Register Training Dashboard with Python module (deferred - stores panel pointer)
     void RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel);
+    // Actually register with Python (called lazily when scripts run)
+    void EnsureTrainingDashboardRegistered();
 
 private:
+    cyxwiz::TrainingPlotPanel* training_plot_panel_{nullptr};
+    bool training_dashboard_registered_{false};
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<PythonSandbox> sandbox_;
     OutputCallback output_callback_;
