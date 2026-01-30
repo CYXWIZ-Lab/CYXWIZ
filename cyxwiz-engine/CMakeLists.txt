@@ -279,6 +279,7 @@ set(ENGINE_SOURCES
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/job_status_panel.cpp
     src/gui/panels/wallet_panel.cpp
+    src/gui/panels/plugin_manager_panel.cpp
     src/gui/theme.cpp
     src/gui/dock_style.cpp
     # Plotting system

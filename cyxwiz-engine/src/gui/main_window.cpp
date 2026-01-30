@@ -114,6 +114,8 @@
 #include "panels/regex_tester_panel.h"
 #include "panels/cloud_browser.h"
 #include "panels/cloud_dataset_manager.h"
+#include "panels/plugin_manager_panel.h"
+#include "../plugin/plugin_manager.h"
 #include "../plugin/registries/plugin_panel_registry.h"
 #include "tutorial/tutorial_system.h"
 #include "../scripting/scripting_engine.h"
@@ -321,6 +323,9 @@ MainWindow::MainWindow()
     // Cloud panels (DataStream)
     cloud_browser_panel_ = std::make_unique<gui::CloudBrowserPanel>();
     cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();
+
+    // Plugin Manager panel
+    plugin_manager_panel_ = std::make_unique<cyxwiz::PluginManagerPanel>();
 
     // Set NAS panel callbacks for node editor integration
     nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
@@ -2247,8 +2252,14 @@ void MainWindow::Render() {
     if (cloud_browser_panel_) cloud_browser_panel_->Render();
     if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->Render();
 
-    // Render plugin panels
+    // Plugin Manager panel
+    if (plugin_manager_panel_) plugin_manager_panel_->Render();
+
+    // Render plugin-provided panels
     cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
+
+    // Render permission approval dialogs
+    cyxwiz::plugin::PluginManager::Instance().RenderPermissionDialogs();
 
     // Render original panels
     if (node_editor_) node_editor_->Render();
@@ -2534,6 +2545,11 @@ void MainWindow::RegisterPanelsWithSidebar() {
         dock_style.RegisterPanel("Cloud Manager", ICON_FA_DATABASE, cloud_dataset_manager_panel_->GetVisiblePtr());
     }
 
+    // Plugin Manager panel
+    if (plugin_manager_panel_) {
+        dock_style.RegisterPanel("Plugin Manager", ICON_FA_PLUG, plugin_manager_panel_->GetVisiblePtr());
+    }
+
     // Plugin panels
     {
         auto& panel_reg = cyxwiz::plugin::PluginPanelRegistry::Instance();
@@ -2686,6 +2702,9 @@ void MainWindow::SetDefaultPanelVisibility() {
     // Cloud panels (hidden by default - access via sidebar/view menu)
     if (cloud_browser_panel_) cloud_browser_panel_->SetVisible(false);
     if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->SetVisible(false);
+
+    // Plugin Manager (hidden by default)
+    if (plugin_manager_panel_) plugin_manager_panel_->SetVisible(false);
 
     spdlog::info("Default panel visibility set - showing only core panels");
 }

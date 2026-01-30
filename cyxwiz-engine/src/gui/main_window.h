@@ -125,6 +125,8 @@ class RandomGeneratorPanel;
 class HashGeneratorPanel;
 class JSONViewerPanel;
 class RegexTesterPanel;
+// Plugin Manager panel
+class PluginManagerPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -347,6 +349,9 @@ private:
     // Cloud panels (DataStream)
     std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
     std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
+
+    // Plugin Manager
+    std::unique_ptr<cyxwiz::PluginManagerPanel> plugin_manager_panel_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
