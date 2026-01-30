@@ -13,21 +13,16 @@ namespace cyxwiz::plugin::examples {
 bool MLflowLoggerPlugin::OnLoad(PluginContext& ctx) {
     ctx.LogInfo("MLflow Logger: OnLoad");
 
-    // Read optional config file from plugin directory
-    // In a real plugin, this would parse mlflow_config.json for tracking URI etc.
-    auto config_path = manifest_.plugin_dir / "mlflow_config.json";
-    std::ifstream f(config_path);
-    if (f.is_open()) {
-        try {
-            nlohmann::json config = nlohmann::json::parse(f);
-            tracking_uri_ = config.value("tracking_uri", tracking_uri_);
-            experiment_name_ = config.value("experiment_name", experiment_name_);
-            patience_ = config.value("early_stopping_patience", patience_);
-            ctx.LogInfo("MLflow Logger: Loaded config from mlflow_config.json");
-        } catch (const std::exception& e) {
-            ctx.LogWarn("MLflow Logger: Failed to parse config: " + std::string(e.what()));
-        }
-    }
+    // Note: The engine owns the canonical manifest (LoadedPlugin::manifest).
+    // The plugin's own manifest_ is for self-reference only.
+    // Config files should be loaded relative to the plugin directory,
+    // which the engine resolves before calling OnLoad.
+
+    // Read optional config file from plugin directory.
+    // In a production plugin, you would receive the plugin_dir from the engine
+    // or store it during construction. Here we skip config loading for simplicity.
+    // A real plugin would do:
+    //   auto config_path = plugin_dir / "mlflow_config.json";
 
     state_ = PluginState::Loaded;
     return true;
@@ -65,6 +60,9 @@ void MLflowLoggerPlugin::OnUnload(PluginContext& ctx) {
 // =============================================================================
 
 void MLflowLoggerPlugin::OnTrainingStart(TrainingContext& ctx) {
+    // Note: ITrainingHook callbacks receive TrainingContext, not PluginContext,
+    // so we use spdlog directly for logging here.
+
     // Reset early stopping state
     epochs_without_improvement_ = 0;
     best_val_loss_ = std::numeric_limits<float>::max();

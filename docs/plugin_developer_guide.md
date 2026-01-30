@@ -37,8 +37,10 @@ my_plugin/
 ### 3. Implement `IPlugin`
 
 ```cpp
-#include <cyxwiz/plugin/plugin_types.h>
-#include <cyxwiz/plugin/plugin_context.h>
+// Include paths are relative to cyxwiz-engine/src/
+// Set your include directory to point to cyxwiz-engine/src/
+#include "plugin/plugin_types.h"
+#include "plugin/plugin_context.h"
 
 class MyPlugin : public cyxwiz::plugin::IPlugin {
 public:
@@ -177,6 +179,10 @@ Unloaded ─────────────────────> Loaded
 
 If the user hasn't approved dangerous permissions yet, `OnInitialize` is deferred until approval.
 
+### Manifest Ownership
+
+The engine owns the canonical `PluginManifest` (stored in `LoadedPlugin::manifest`), populated from `plugin.json` during loading. The plugin's own `manifest_` member returned by `GetManifest()` is for self-reference only and is **not** populated by the engine. Do not rely on `manifest_.plugin_dir` or other fields being set — use `PluginContext` methods or constructor parameters to obtain runtime paths.
+
 ---
 
 ## Interfaces
@@ -185,9 +191,15 @@ If the user hasn't approved dangerous permissions yet, `OnInitialize` is deferre
 
 Every plugin must implement this base interface. See Quick Start above.
 
+**Headers**: `plugin/plugin_types.h` (types, enums, manifest), `plugin/plugin_context.h` (PluginContext)
+
 ### ITrainingHook
 
+**Header**: `plugin/interfaces/i_training_hook.h`
+
 Hook into the training lifecycle to log metrics, implement early stopping, etc.
+
+> **Note**: `ITrainingHook` callbacks receive `TrainingContext&`, not `PluginContext&`. Use `spdlog` directly for logging within training hooks.
 
 ```cpp
 class ITrainingHook {
@@ -212,6 +224,8 @@ ctx.RegisterTrainingHook(this);  // Requires Training permission
 See `plugins/examples/mlflow_logger/` for a complete example.
 
 ### INodeProvider
+
+**Header**: `plugin/interfaces/i_node_provider.h`
 
 Add custom node types to the visual graph editor.
 
@@ -243,6 +257,8 @@ See `plugins/examples/image_nodes/` for a complete example.
 
 ### IPanelProvider
 
+**Header**: `plugin/interfaces/i_panel_provider.h`
+
 Add custom ImGui panels to the engine.
 
 ```cpp
@@ -261,6 +277,8 @@ ctx.RegisterPanelProvider(this);  // Requires UIModify permission
 ```
 
 ### IDataProvider
+
+**Header**: `plugin/interfaces/i_data_provider.h`
 
 Add custom dataset loaders (e.g. Parquet, Arrow, custom binary formats).
 
@@ -281,6 +299,8 @@ ctx.RegisterDataProvider(this);  // Requires DataRegistry permission
 ```
 
 ### IAnalyticsProvider
+
+**Header**: `plugin/interfaces/i_analytics_provider.h`
 
 Add custom data quality/profiling computations.
 
@@ -377,7 +397,13 @@ target_include_directories(my_plugin PRIVATE
     ${CYXWIZ_ENGINE_DIR}/src
 )
 
-# Link against ImGui if providing panels
+# Common dependencies (adjust based on your plugin's needs)
+find_package(spdlog CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+target_link_libraries(my_plugin PRIVATE spdlog::spdlog nlohmann_json::nlohmann_json)
+
+# Link against ImGui if providing panels (IPanelProvider)
+# find_package(imgui CONFIG REQUIRED)
 # target_link_libraries(my_plugin PRIVATE imgui::imgui)
 
 # Output to bin/ subdirectory
