@@ -2,6 +2,7 @@
 
 #include "plugin_types.h"
 #include "plugin_loader.h"
+#include "security/permission_dialog.h"
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -101,6 +102,11 @@ public:
     // Get load order respecting dependencies (topological sort)
     std::vector<std::string> ResolveLoadOrder() const;
 
+    // ===== Security =====
+
+    // Render permission approval dialogs (call from main render loop)
+    void RenderPermissionDialogs();
+
 private:
     PluginManager() = default;
     ~PluginManager();
@@ -116,6 +122,9 @@ private:
 
     // Thread safety
     mutable std::recursive_mutex mutex_;
+
+    // Permission approval dialog
+    security::PermissionDialog permission_dialog_;
 
     // Topological sort for dependency resolution (Kahn's algorithm)
     // Must be called with mutex_ already held.

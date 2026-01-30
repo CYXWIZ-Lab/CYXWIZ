@@ -1,4 +1,5 @@
 #include "plugin_loader.h"
+#include "security/plugin_signature.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
 
@@ -236,6 +237,28 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     }
 
     loaded->dll_path = dll_path;
+
+    // 3b. Verify Ed25519 signature
+    {
+        auto sig_result = security::PluginSignature::Verify(dll_path, loaded->manifest.signature);
+        switch (sig_result.status) {
+            case security::SignatureStatus::Valid:
+                spdlog::info("Plugin {}: signature valid", loaded->manifest.id);
+                break;
+            case security::SignatureStatus::Invalid:
+                spdlog::error("Plugin {}: INVALID signature — {}", loaded->manifest.id, sig_result.message);
+                error_out = "Invalid signature: " + sig_result.message;
+                loaded->state = PluginState::Failed;
+                loaded->error_message = error_out;
+                return nullptr;
+            case security::SignatureStatus::Missing:
+                spdlog::warn("Plugin {}: unsigned (no signature in manifest)", loaded->manifest.id);
+                break;
+            case security::SignatureStatus::FileError:
+                spdlog::warn("Plugin {}: could not verify signature — {}", loaded->manifest.id, sig_result.message);
+                break;
+        }
+    }
 
     // 4. Load DLL
     loaded->dll_handle = LoadDLL(dll_path, error_out);

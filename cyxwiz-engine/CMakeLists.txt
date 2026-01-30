@@ -63,6 +63,12 @@ set(ENGINE_SOURCES
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_training_hook_manager.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
+    # Plugin security
+    src/plugin/security/safe_execute.cpp
+    src/plugin/security/permission_store.cpp
+    src/plugin/security/permission_dialog.cpp
+    src/plugin/security/plugin_signature.cpp
+    src/plugin/security/tweetnacl.c
     # Preprocessing system
     src/preprocessing/preprocessing_config.cpp
     src/preprocessing/statistics_calculator.cpp

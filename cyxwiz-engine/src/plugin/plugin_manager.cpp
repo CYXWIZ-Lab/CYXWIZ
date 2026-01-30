@@ -1,5 +1,7 @@
 #include "plugin_manager.h"
 #include "plugin_context.h"
+#include "security/safe_execute.h"
+#include "security/permission_store.h"
 #include "registries/plugin_node_registry.h"
 #include "registries/plugin_panel_registry.h"
 #include "registries/plugin_data_loader_registry.h"
@@ -129,47 +131,74 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         return false;
     }
 
+    // Check for undecided dangerous permissions
+    {
+        auto& perm_store = security::PermissionStore::Instance();
+        auto undecided = perm_store.GetUndecidedDangerous(
+            plugin_id, plugin->manifest.version.ToString(), plugin->manifest.permissions);
+
+        if (!undecided.empty()) {
+            // Queue permission dialog — initialization will be deferred
+            if (permission_dialog_.RequestApproval(plugin->manifest, undecided)) {
+                permission_dialog_.SetCallback(
+                    [this, plugin_id](const security::PermissionDialog::PendingApproval& approval) {
+                        auto& store = security::PermissionStore::Instance();
+                        for (size_t i = 0; i < approval.permissions.size(); ++i) {
+                            store.SetDecision(
+                                approval.plugin_id, approval.plugin_version,
+                                approval.permissions[i],
+                                approval.allowed[i] ? security::PermissionDecision::Allowed
+                                                    : security::PermissionDecision::Denied);
+                        }
+                        store.Save();
+                        spdlog::info("PluginManager: Permission decisions saved for '{}', retrying init",
+                                     approval.plugin_name);
+                        // Retry initialization now that decisions are stored
+                        InitializePlugin(plugin_id);
+                    });
+                spdlog::info("PluginManager: Plugin {} awaiting permission approval", plugin_id);
+                return false;
+            }
+        }
+    }
+
     // Create PluginContext for this plugin
     auto ctx = std::make_unique<PluginContext>(plugin_id, plugin->instance);
 
-    // Call OnLoad
-    try {
-        if (!plugin->instance->OnLoad(*ctx)) {
+    // Call OnLoad (with crash isolation)
+    {
+        bool load_ok = false;
+        auto result = security::SafeExecuteBool(plugin_id, "OnLoad",
+            [&]() { return plugin->instance->OnLoad(*ctx); }, load_ok);
+        if (result.crashed || !result.success) {
+            plugin->state = PluginState::Failed;
+            plugin->error_message = result.crashed ? result.error_message : "OnLoad() failed";
+            return false;
+        }
+        if (!load_ok) {
             spdlog::error("PluginManager: Plugin {} OnLoad() returned false", plugin_id);
             plugin->state = PluginState::Failed;
             plugin->error_message = "OnLoad() returned false";
             return false;
         }
-    } catch (const std::exception& e) {
-        spdlog::error("PluginManager: Plugin {} OnLoad() threw: {}", plugin_id, e.what());
-        plugin->state = PluginState::Failed;
-        plugin->error_message = "OnLoad() threw: " + std::string(e.what());
-        return false;
-    } catch (...) {
-        spdlog::error("PluginManager: Plugin {} OnLoad() threw unknown exception", plugin_id);
-        plugin->state = PluginState::Failed;
-        plugin->error_message = "OnLoad() threw unknown exception";
-        return false;
     }
 
-    // Call OnInitialize
-    try {
-        if (!plugin->instance->OnInitialize(*ctx)) {
+    // Call OnInitialize (with crash isolation)
+    {
+        bool init_ok = false;
+        auto result = security::SafeExecuteBool(plugin_id, "OnInitialize",
+            [&]() { return plugin->instance->OnInitialize(*ctx); }, init_ok);
+        if (result.crashed || !result.success) {
+            plugin->state = PluginState::Failed;
+            plugin->error_message = result.crashed ? result.error_message : "OnInitialize() failed";
+            return false;
+        }
+        if (!init_ok) {
             spdlog::error("PluginManager: Plugin {} OnInitialize() returned false", plugin_id);
             plugin->state = PluginState::Failed;
             plugin->error_message = "OnInitialize() returned false";
             return false;
         }
-    } catch (const std::exception& e) {
-        spdlog::error("PluginManager: Plugin {} OnInitialize() threw: {}", plugin_id, e.what());
-        plugin->state = PluginState::Failed;
-        plugin->error_message = "OnInitialize() threw: " + std::string(e.what());
-        return false;
-    } catch (...) {
-        spdlog::error("PluginManager: Plugin {} OnInitialize() threw unknown exception", plugin_id);
-        plugin->state = PluginState::Failed;
-        plugin->error_message = "OnInitialize() threw unknown exception";
-        return false;
     }
 
     plugin->state = PluginState::Initialized;
@@ -207,13 +236,8 @@ void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
     auto ctx_it = contexts_.find(plugin_id);
     if (ctx_it == contexts_.end()) return;
 
-    try {
-        plugin->instance->OnShutdown(*ctx_it->second);
-    } catch (const std::exception& e) {
-        spdlog::error("PluginManager: Plugin {} OnShutdown() threw: {}", plugin_id, e.what());
-    } catch (...) {
-        spdlog::error("PluginManager: Plugin {} OnShutdown() threw unknown exception", plugin_id);
-    }
+    security::SafeExecute(plugin_id, "OnShutdown",
+        [&]() { plugin->instance->OnShutdown(*ctx_it->second); });
 
     // Cleanup all registry registrations for this plugin
     PluginNodeRegistry::Instance().RemoveByPlugin(plugin_id);
@@ -250,24 +274,16 @@ void PluginManager::UnloadPlugin(const std::string& plugin_id) {
     // Shutdown if initialized/active
     if (plugin->state == PluginState::Initialized || plugin->state == PluginState::Active) {
         if (plugin->instance && ctx_it != contexts_.end()) {
-            try {
-                plugin->instance->OnShutdown(*ctx_it->second);
-            } catch (const std::exception& e) {
-                spdlog::error("PluginManager: Plugin {} OnShutdown() threw: {}", plugin_id, e.what());
-            } catch (...) {
-                spdlog::error("PluginManager: Plugin {} OnShutdown() threw unknown exception", plugin_id);
-            }
+            security::SafeExecute(plugin_id, "OnShutdown",
+                [&]() { plugin->instance->OnShutdown(*ctx_it->second); });
         }
         plugin->state = PluginState::Loaded;
     }
 
-    // Call OnUnload while context still exists
+    // Call OnUnload while context still exists (with crash isolation)
     if (plugin->instance && ctx_it != contexts_.end()) {
-        try {
-            plugin->instance->OnUnload(*ctx_it->second);
-        } catch (...) {
-            spdlog::error("PluginManager: Plugin {} OnUnload() threw", plugin_id);
-        }
+        security::SafeExecute(plugin_id, "OnUnload",
+            [&]() { plugin->instance->OnUnload(*ctx_it->second); });
     }
 
     spdlog::info("PluginManager: Unloading plugin {}", plugin_id);
@@ -465,6 +481,14 @@ std::vector<std::string> PluginManager::TopologicalSortInternal(
     }
 
     return order;
+}
+
+// ============================================================================
+// Security — Permission Dialog Rendering
+// ============================================================================
+
+void PluginManager::RenderPermissionDialogs() {
+    permission_dialog_.Render();
 }
 
 } // namespace cyxwiz::plugin

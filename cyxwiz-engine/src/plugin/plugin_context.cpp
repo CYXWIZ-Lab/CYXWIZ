@@ -1,4 +1,5 @@
 #include "plugin_context.h"
+#include "security/permission_store.h"
 #include "registries/plugin_node_registry.h"
 #include "registries/plugin_panel_registry.h"
 #include "registries/plugin_data_loader_registry.h"
@@ -27,12 +28,27 @@ bool PluginContext::CheckPermission(PluginPermission required, const char* actio
         spdlog::error("[Plugin:{}] No plugin instance for permission check", plugin_id_);
         return false;
     }
-    PluginPermissionFlags flags = plugin_->GetRequiredPermissions();
-    if (!HasPermission(flags, required)) {
-        spdlog::warn("[Plugin:{}] Permission denied for {}: missing {}",
+
+    // Check manifest declares the permission
+    PluginPermissionFlags requested = plugin_->GetRequiredPermissions();
+    if (!HasPermission(requested, required)) {
+        spdlog::warn("[Plugin:{}] Permission denied for {}: not declared in manifest ({})",
                      plugin_id_, action, PermissionName(required));
         return false;
     }
+
+    // For dangerous permissions, also check PermissionStore approval
+    if (security::PermissionStore::IsDangerousPermission(required)) {
+        auto& manifest = plugin_->GetManifest();
+        auto granted = security::PermissionStore::Instance().GetGrantedPermissions(
+            plugin_id_, manifest.version.ToString(), requested);
+        if (!HasPermission(granted, required)) {
+            spdlog::warn("[Plugin:{}] Permission denied for {}: {} not approved by user",
+                         plugin_id_, action, PermissionName(required));
+            return false;
+        }
+    }
+
     return true;
 }
 

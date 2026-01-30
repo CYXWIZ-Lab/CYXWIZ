@@ -197,6 +197,9 @@ struct PluginManifest {
     // Platform-specific library path (relative to plugin directory)
     std::string library;                // e.g. "bin/myplugin.dll"
 
+    // Ed25519 signature of the DLL (hex-encoded)
+    std::string signature;
+
     // Plugin directory (set at load time, not from JSON)
     std::filesystem::path plugin_dir;
 
@@ -261,6 +264,9 @@ struct PluginManifest {
         if (m.library.empty()) {
             m.library = j.value("library", "");
         }
+
+        // Signature
+        m.signature = j.value("signature", "");
 
         return m;
     }
