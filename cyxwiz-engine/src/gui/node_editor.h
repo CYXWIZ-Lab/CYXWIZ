@@ -191,7 +191,10 @@ enum class NodeType {
     ReplayBufferNode,   // Experience replay buffer
     PolicyNetwork,      // Actor network for RL
     ValueNetwork,       // Critic network for RL
-    RLTraining          // RL training loop controller
+    RLTraining,         // RL training loop controller
+
+    // Plugin-defined nodes (sentinel — actual type resolved via string lookup)
+    PluginCustom
 };
 
 // Attribute for node pins (inputs/outputs)
@@ -314,6 +317,7 @@ struct SearchableNode {
     std::string name;      // Display name (e.g., "Dense (512 units)")
     std::string category;  // Category (e.g., "Layers > Dense / Linear")
     std::string keywords;  // Additional keywords for search
+    std::string plugin_qualified_name;  // For PluginCustom: "plugin_id:type_name"
 };
 
 // Alignment types for arranging selected nodes

@@ -1,6 +1,7 @@
 #include "node_editor.h"
 #include "panels/script_editor.h"
 #include "../core/async_task_manager.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -792,6 +793,13 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             break;
         }
 
+        case NodeType::PluginCustom: {
+            auto it = node.parameters.find("plugin_qualified_name");
+            if (it != node.parameters.end())
+                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "pytorch");
+            break;
+        }
+
         default:
             // Activation functions and others don't need layers in __init__
             code = "";
@@ -884,6 +892,13 @@ std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*laye
         case NodeType::ReLU:
             code = "layers.ReLU()";
             break;
+
+        case NodeType::PluginCustom: {
+            auto it = node.parameters.find("plugin_qualified_name");
+            if (it != node.parameters.end())
+                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "tensorflow");
+            break;
+        }
 
         default:
             // Activation functions and others don't need layers in __init__
@@ -998,6 +1013,13 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
         case NodeType::GELU:
             code = "layers.Activation('gelu')";
             break;
+
+        case NodeType::PluginCustom: {
+            auto it = node.parameters.find("plugin_qualified_name");
+            if (it != node.parameters.end())
+                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "keras");
+            break;
+        }
 
         default:
             code = "";
@@ -1241,6 +1263,13 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             auto it = node.parameters.find("dim");
             if (it != node.parameters.end()) dim = it->second;
             code = "cx.Concatenate(dim=" + dim + ")";
+            break;
+        }
+
+        case NodeType::PluginCustom: {
+            auto it = node.parameters.find("plugin_qualified_name");
+            if (it != node.parameters.end())
+                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "pycyxwiz");
             break;
         }
 

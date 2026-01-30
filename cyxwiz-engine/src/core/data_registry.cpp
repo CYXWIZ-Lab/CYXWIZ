@@ -3,6 +3,7 @@
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../transforms/transform.h"
+#include "../plugin/registries/plugin_data_loader_registry.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
@@ -3414,9 +3415,20 @@ DatasetHandle DataRegistry::LoadDataset(const std::string& path, const std::stri
             return LoadImageFolder(path, name);
         case DatasetType::HDF5:
             return LoadHDF5(path, name);
-        default:
+        default: {
+            // Check if a plugin data loader can handle this format
+            try {
+                auto ext = std::filesystem::path(path).extension().string();
+                if (!ext.empty() && cyxwiz::plugin::PluginDataLoaderRegistry::Instance().HasLoaderForExtension(ext)) {
+                    spdlog::info("DataRegistry: Plugin data loader available for '{}' (bridge not yet implemented)", path);
+                    // TODO: Bridge PluginDataset to DatasetHandle with adapter class
+                }
+            } catch (const std::exception& e) {
+                spdlog::warn("DataRegistry: Plugin loader check failed: {}", e.what());
+            }
             spdlog::error("Unknown dataset type for path: {}", path);
             return DatasetHandle();
+        }
     }
 }
 

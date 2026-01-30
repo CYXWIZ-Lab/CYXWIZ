@@ -114,6 +114,7 @@
 #include "panels/regex_tester_panel.h"
 #include "panels/cloud_browser.h"
 #include "panels/cloud_dataset_manager.h"
+#include "../plugin/registries/plugin_panel_registry.h"
 #include "tutorial/tutorial_system.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
@@ -2246,6 +2247,9 @@ void MainWindow::Render() {
     if (cloud_browser_panel_) cloud_browser_panel_->Render();
     if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->Render();
 
+    // Render plugin panels
+    cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
+
     // Render original panels
     if (node_editor_) node_editor_->Render();
     if (console_) console_->Render();
@@ -2528,6 +2532,17 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (cloud_dataset_manager_panel_) {
         dock_style.RegisterPanel("Cloud Manager", ICON_FA_DATABASE, cloud_dataset_manager_panel_->GetVisiblePtr());
+    }
+
+    // Plugin panels
+    {
+        auto& panel_reg = cyxwiz::plugin::PluginPanelRegistry::Instance();
+        for (const auto& info : panel_reg.GetAllPanels()) {
+            dock_style.RegisterPanel(info.title.c_str(), info.icon.empty() ? ICON_FA_PLUG : info.icon.c_str(),
+                nullptr, [id = info.panel_id]() {
+                    cyxwiz::plugin::PluginPanelRegistry::Instance().TogglePanelVisible(id);
+                });
+        }
     }
 
     // Command Palette - action button (not a panel toggle)

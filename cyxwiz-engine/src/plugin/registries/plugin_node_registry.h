@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <functional>
+#include <optional>
 
 namespace cyxwiz::plugin {
 
@@ -24,8 +25,11 @@ public:
 
     // Query
     std::vector<PluginNodeTypeInfo> GetAllNodeTypes() const;
+    // Returns (qualified_name, info) pairs for search catalog integration
+    std::vector<std::pair<std::string, PluginNodeTypeInfo>> GetAllNodeTypesWithNames() const;
     bool HasNodeType(const std::string& qualified_name) const;   // "plugin_id:type_name"
     const PluginNodeTypeInfo* GetNodeTypeInfo(const std::string& qualified_name) const;
+    std::optional<PluginNodeTypeInfo> GetNodeTypeInfoCopy(const std::string& qualified_name) const;
 
     // Code generation
     std::string GenerateCode(

@@ -1,4 +1,5 @@
 #include "application.h"
+#include "plugin/plugin_manager.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -47,12 +48,33 @@ int main(int argc, char** argv) {
     try {
         CyxWizApp app(argc, argv);
 
-        // Log device info to GUI console after app is initialized
-        // Note: This will be displayed when the first frame renders
+        // Initialize plugin system
+        {
+            auto& pm = cyxwiz::plugin::PluginManager::Instance();
+            std::filesystem::path exe_dir = std::filesystem::current_path();
+            std::filesystem::path user_dir;
+#ifdef _WIN32
+            if (auto* appdata = std::getenv("APPDATA"))
+                user_dir = std::filesystem::path(appdata) / "cyxwiz" / "plugins";
+#else
+            if (auto* home = std::getenv("HOME"))
+                user_dir = std::filesystem::path(home) / ".cyxwiz" / "plugins";
+#endif
+            std::vector<std::filesystem::path> search_paths;
+            search_paths.push_back(exe_dir / "plugins");
+            if (!user_dir.empty()) search_paths.push_back(user_dir);
+            pm.SetSearchPaths(search_paths);
+            pm.LoadAllFromSearchPaths();
+            pm.InitializeAll();
+            spdlog::info("Plugin system: {} plugins loaded", pm.GetPluginCount());
+        }
 
         int result = app.Run();
 
-        // Cleanup
+        // Cleanup plugins before backend
+        cyxwiz::plugin::PluginManager::Instance().ShutdownAll();
+        cyxwiz::plugin::PluginManager::Instance().UnloadAll();
+
         cyxwiz::Shutdown();
 
         return result;

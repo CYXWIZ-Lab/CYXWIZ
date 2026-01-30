@@ -1,6 +1,7 @@
 #include "node_editor.h"
 #include "properties.h"
 #include "icons.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -1591,6 +1592,36 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        case NodeType::PluginCustom: {
+            // Copy node info to avoid use-after-free if plugin unloads
+            auto info_opt = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeTypeInfoCopy(name);
+            node.parameters["plugin_qualified_name"] = name;
+            if (info_opt.has_value()) {
+                const auto& info = info_opt.value();
+                node.name = info.display_name;
+                for (const auto& pin : info.pins) {
+                    NodePin p;
+                    p.id = next_pin_id_++;
+                    p.type = PinType::Tensor;  // Default; plugins use Tensor type
+                    p.name = pin.name;
+                    p.is_input = pin.is_input;
+                    if (pin.is_input) node.inputs.push_back(p);
+                    else node.outputs.push_back(p);
+                }
+                for (const auto& [key, val] : info.default_parameters) {
+                    node.parameters[key] = val;
+                }
+            } else {
+                // Fallback: plugin not loaded, create generic node
+                node.name = "Plugin Node (Missing)";
+                NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+                in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+                NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+                out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            }
+            break;
+        }
+
         default:
             // Default: input and output pins
             NodePin input_pin;
@@ -1925,6 +1956,9 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::RLTraining:
             return IM_COL32(198, 40, 40, 255);
 
+        case NodeType::PluginCustom:
+            return IM_COL32(68, 136, 170, 255);
+
         default:
             return IM_COL32(127, 140, 141, 255);
     }
@@ -2157,6 +2191,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_BRAIN;
         case NodeType::RLTraining:
             return ICON_FA_CROSSHAIRS;
+
+        case NodeType::PluginCustom:
+            return ICON_FA_PLUG;
 
         default:
             return ICON_FA_CIRCLE_NODES;

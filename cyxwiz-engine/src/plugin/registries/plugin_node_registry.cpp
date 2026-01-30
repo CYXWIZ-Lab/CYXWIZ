@@ -44,6 +44,15 @@ std::vector<PluginNodeTypeInfo> PluginNodeRegistry::GetAllNodeTypes() const {
     return result;
 }
 
+std::vector<std::pair<std::string, PluginNodeTypeInfo>> PluginNodeRegistry::GetAllNodeTypesWithNames() const {
+    std::lock_guard lock(mutex_);
+    std::vector<std::pair<std::string, PluginNodeTypeInfo>> result;
+    result.reserve(nodes_.size());
+    for (const auto& [qname, entry] : nodes_)
+        result.emplace_back(qname, entry.info);
+    return result;
+}
+
 bool PluginNodeRegistry::HasNodeType(const std::string& qualified_name) const {
     std::lock_guard lock(mutex_);
     return nodes_.count(qualified_name) > 0;
@@ -53,6 +62,14 @@ const PluginNodeTypeInfo* PluginNodeRegistry::GetNodeTypeInfo(const std::string&
     std::lock_guard lock(mutex_);
     auto it = nodes_.find(qualified_name);
     return it != nodes_.end() ? &it->second.info : nullptr;
+}
+
+std::optional<PluginNodeTypeInfo> PluginNodeRegistry::GetNodeTypeInfoCopy(const std::string& qualified_name) const {
+    std::lock_guard lock(mutex_);
+    auto it = nodes_.find(qualified_name);
+    if (it != nodes_.end())
+        return it->second.info;
+    return std::nullopt;
 }
 
 std::string PluginNodeRegistry::GenerateCode(
