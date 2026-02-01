@@ -63,6 +63,50 @@ target_link_libraries(my_plugin PRIVATE cyxwiz-plugin-sdk)
 
 ---
 
+### CyxWiz Engine - MuJoCo Simulation Plugin ✅ (Phase 1 Complete)
+
+**Production-grade MuJoCo physics integration as a plugin (DLL):**
+
+- ✅ **Phase 1**: Core plugin — physics wrapper, 3D renderer, viewport panel, environment library (7 envs)
+- ✅ **Phase 2**: Node editor integration — 4 RL node types with code generation
+- 🔲 **Phase 3 (Planned)**: Simulink-style dynamic pins, simulation executor, signal source nodes, Menagerie library
+
+**Current Architecture:**
+```
+plugins/simulation/mujoco/
+  ├── src/mujoco_plugin.h/cpp       — Plugin lifecycle, node types, code gen
+  ├── src/mj_env_manager.h/cpp      — MuJoCo physics wrapper (step/reset/observe)
+  ├── src/mj_renderer.h/cpp         — 3D OpenGL rendering (CPU readback → ImGui texture)
+  ├── src/mj_viewport_panel.h/cpp   — Live 3D viewport with Play/Pause/Step
+  ├── src/mj_env_library.h/cpp      — Environment catalog (7 built-in)
+  ├── src/mj_env_browser_panel.h/cpp — Browse/load environments UI
+  ├── assets/*.xml                   — 7 MJCF model files
+  └── CMakeLists.txt                 — Links mujoco, glad, glfw, plugin-sdk
+```
+
+**Built-in Environments:**
+- Classic Control: InvertedPendulum, CartPole, Reacher
+- Locomotion: Hopper, Walker2D, HalfCheetah
+- Manipulation: Pusher
+
+**Node Editor Nodes (RL / Simulation category):**
+| Node | Purpose |
+|------|---------|
+| MuJoCoEnv | Load MJCF model as Gymnasium env |
+| RewardFunction | Reward shaping (alive bonus, control cost, velocity) |
+| ObservationFilter | Filter/normalize observations (qpos, qvel, sensors) |
+| RLAgent | PPO/SAC agent with Stable-Baselines3 code gen |
+
+**Phase 3 Plan** (see `docs/mujoco_menagerie_plan.md` and `docs/mujoco_ux_walkthrough.md`):
+- Dynamic pins from MJCF parsing (per-actuator/sensor pins)
+- MuJoCo Plant node (Simulink-style)
+- Signal source nodes (Constant, Slider, Sine, Scope)
+- Simulation executor (real-time physics stepping from node graph)
+- RL training executor (episode loop with live 3D visualization)
+- MuJoCo Menagerie library (70+ robot models, bundled + downloadable)
+
+---
+
 ### CyxWiz Engine - Dataset Manager Redesign ✅
 
 **Professional DBGate-style 3-pane layout:**
