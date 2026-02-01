@@ -8,6 +8,7 @@
 //   - Code generation for PyTorch framework
 //   - Multiple interface implementation in one plugin
 
+#include <imgui.h>
 #include "../../cyxwiz-engine/src/plugin/plugin_types.h"
 #include "../../cyxwiz-engine/src/plugin/plugin_context.h"
 #include "../../cyxwiz-engine/src/plugin/interfaces/i_node_provider.h"
@@ -37,6 +38,12 @@ public:
                static_cast<uint32_t>(PluginPermission::DataRegistry);
     }
     PluginState GetState() const override { return state_; }
+    void SetImGuiContext(void* ctx) override { ImGui::SetCurrentContext(static_cast<ImGuiContext*>(ctx)); }
+    void* QueryInterface(const char* name) override {
+        if (std::string(name) == "INodeProvider") return static_cast<INodeProvider*>(this);
+        if (std::string(name) == "IPanelProvider") return static_cast<IPanelProvider*>(this);
+        return nullptr;
+    }
 
     // ===== INodeProvider =====
     std::vector<PluginNodeTypeInfo> GetNodeTypes() override;

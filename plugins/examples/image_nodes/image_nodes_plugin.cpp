@@ -18,21 +18,9 @@ bool ImageNodesPlugin::OnLoad(PluginContext& ctx) {
 bool ImageNodesPlugin::OnInitialize(PluginContext& ctx) {
     ctx.LogInfo("Image Nodes: OnInitialize");
 
-    // Register node types — requires UIModify permission
-    if (!ctx.RegisterNodeProvider(this)) {
-        ctx.LogError("Image Nodes: Failed to register node provider");
-        state_ = PluginState::Failed;
-        return false;
-    }
+    // Note: Registration of interfaces (INodeProvider, IPanelProvider) is handled
+    // engine-side via QueryInterface in PluginManager to avoid DLL singleton duplication.
 
-    // Register settings panel — requires UIModify permission
-    if (!ctx.RegisterPanelProvider(this)) {
-        ctx.LogError("Image Nodes: Failed to register panel provider");
-        state_ = PluginState::Failed;
-        return false;
-    }
-
-    ctx.LogInfo("Image Nodes: Registered 3 node types and 1 panel");
     state_ = PluginState::Active;
     return true;
 }

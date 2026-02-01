@@ -37,6 +37,31 @@ set(CYXWIZ_HAS_OPENCV ON)
 # ImNodes for visual node editor - integrated manually
 # Source: https://github.com/Nelarius/imnodes
 
+# Plugin SDK static library (shared between engine and plugins)
+add_library(cyxwiz-plugin-sdk STATIC
+    src/plugin/plugin_context.cpp
+    src/plugin/registries/plugin_node_registry.cpp
+    src/plugin/registries/plugin_panel_registry.cpp
+    src/plugin/registries/plugin_data_loader_registry.cpp
+    src/plugin/registries/plugin_training_hook_manager.cpp
+    src/plugin/registries/plugin_analytics_registry.cpp
+    src/plugin/security/permission_store.cpp
+    src/plugin/security/permission_dialog.cpp
+    src/plugin/security/plugin_signature.cpp
+    src/plugin/security/safe_execute.cpp
+    src/plugin/security/tweetnacl.c
+)
+target_include_directories(cyxwiz-plugin-sdk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(cyxwiz-plugin-sdk PUBLIC
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    imgui::imgui
+)
+set_target_properties(cyxwiz-plugin-sdk PROPERTIES
+    CXX_STANDARD 20
+    POSITION_INDEPENDENT_CODE ON
+)
+
 # Source files
 set(ENGINE_SOURCES
     src/main.cpp
@@ -54,21 +79,9 @@ set(ENGINE_SOURCES
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
-    # Plugin system
+    # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
-    src/plugin/plugin_context.cpp
-    src/plugin/registries/plugin_node_registry.cpp
-    src/plugin/registries/plugin_panel_registry.cpp
-    src/plugin/registries/plugin_data_loader_registry.cpp
-    src/plugin/registries/plugin_training_hook_manager.cpp
-    src/plugin/registries/plugin_analytics_registry.cpp
-    # Plugin security
-    src/plugin/security/safe_execute.cpp
-    src/plugin/security/permission_store.cpp
-    src/plugin/security/permission_dialog.cpp
-    src/plugin/security/plugin_signature.cpp
-    src/plugin/security/tweetnacl.c
     # Preprocessing system
     src/preprocessing/preprocessing_config.cpp
     src/preprocessing/statistics_calculator.cpp
@@ -526,6 +539,7 @@ target_link_libraries(cyxwiz-engine PRIVATE
     OpenSSL::Crypto
     cyxwiz-backend
     cyxwiz-protocol
+    cyxwiz-plugin-sdk
     nfd::nfd
 )
 

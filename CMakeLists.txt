@@ -359,6 +359,13 @@ if(NOT CYXWIZ_ANDROID_BUILD)
     endif()
 endif()
 
+# Example plugins (shared libraries)
+if(CYXWIZ_BUILD_ENGINE AND NOT CYXWIZ_ANDROID_BUILD)
+    add_subdirectory(plugins/examples/mlflow_logger)
+    add_subdirectory(plugins/examples/image_nodes)
+    add_subdirectory(plugins/simulation/mujoco)
+endif()
+
 # Central server is built with Rust (see cyxwiz-central-server/Cargo.toml)
 if(CYXWIZ_BUILD_CENTRAL_SERVER AND NOT CYXWIZ_ANDROID_BUILD)
     message(STATUS "Central Server will be built using Cargo (Rust)")

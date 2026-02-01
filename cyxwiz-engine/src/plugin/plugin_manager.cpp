@@ -1,5 +1,6 @@
 #include "plugin_manager.h"
 #include "plugin_context.h"
+#include <imgui.h>
 #include "security/safe_execute.h"
 #include "security/permission_store.h"
 #include "registries/plugin_node_registry.h"
@@ -7,6 +8,11 @@
 #include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_training_hook_manager.h"
 #include "registries/plugin_analytics_registry.h"
+#include "interfaces/i_panel_provider.h"
+#include "interfaces/i_node_provider.h"
+#include "interfaces/i_training_hook.h"
+#include "interfaces/i_data_provider.h"
+#include "interfaces/i_analytics_provider.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <queue>
@@ -164,6 +170,9 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
     // Create PluginContext for this plugin
     auto ctx = std::make_unique<PluginContext>(plugin_id, plugin->instance);
 
+    // Share engine's ImGui context with the DLL so plugin UI rendering works
+    plugin->instance->SetImGuiContext(ImGui::GetCurrentContext());
+
     // Call OnLoad (with crash isolation)
     {
         bool load_ok = false;
@@ -197,6 +206,40 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             plugin->state = PluginState::Failed;
             plugin->error_message = "OnInitialize() returned false";
             return false;
+        }
+    }
+
+    // Engine-side registration via QueryInterface (bypasses DLL singleton duplication).
+    // Virtual dispatch on IPlugin* resolves to DLL code, returning correct interface pointers.
+    {
+        auto* instance = plugin->instance;
+        if (auto* p = static_cast<IPanelProvider*>(instance->QueryInterface("IPanelProvider"))) {
+            // Call GetPanels() here in engine code, then register each panel
+            // with engine-side string copies to avoid DLL std::vector/string ABI issues.
+            auto dll_panels = p->GetPanels();
+            for (const auto& pi : dll_panels) {
+                PluginPanelRegistry::Instance().RegisterDirect(
+                    plugin_id,
+                    std::string(pi.panel_id.c_str()),
+                    std::string(pi.title.c_str()),
+                    std::string(pi.category.c_str()),
+                    pi.show_by_default, p);
+            }
+            spdlog::info("PluginManager: Registered {} panels for '{}'", dll_panels.size(), plugin_id);
+        }
+        if (auto* p = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"))) {
+            PluginNodeRegistry::Instance().Register(plugin_id, p);
+            spdlog::info("PluginManager: Registered INodeProvider for '{}'", plugin_id);
+        }
+        if (auto* p = static_cast<ITrainingHook*>(instance->QueryInterface("ITrainingHook"))) {
+            PluginTrainingHookManager::Instance().RegisterHook(plugin_id, p);
+            spdlog::info("PluginManager: Registered ITrainingHook for '{}'", plugin_id);
+        }
+        if (auto* p = static_cast<IDataProvider*>(instance->QueryInterface("IDataProvider"))) {
+            PluginDataLoaderRegistry::Instance().Register(plugin_id, p);
+        }
+        if (auto* p = static_cast<IAnalyticsProvider*>(instance->QueryInterface("IAnalyticsProvider"))) {
+            PluginAnalyticsRegistry::Instance().Register(plugin_id, p);
         }
     }
 

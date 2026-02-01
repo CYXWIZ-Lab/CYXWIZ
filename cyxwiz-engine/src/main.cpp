@@ -64,9 +64,8 @@ int main(int argc, char** argv) {
             search_paths.push_back(exe_dir / "plugins");
             if (!user_dir.empty()) search_paths.push_back(user_dir);
             pm.SetSearchPaths(search_paths);
-            pm.LoadAllFromSearchPaths();
-            pm.InitializeAll();
-            spdlog::info("Plugin system: {} plugins loaded", pm.GetPluginCount());
+            // Plugins are loaded on-demand from the Plugin Manager panel (sidebar)
+            spdlog::info("Plugin system: {} search paths configured", search_paths.size());
         }
 
         int result = app.Run();

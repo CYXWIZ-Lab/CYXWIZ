@@ -2,9 +2,68 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current Work Status (Updated: 2026-01-29)
+## Current Work Status (Updated: 2026-01-31)
 
-### CyxWiz Engine - Dataset Manager Redesign ✅ (NEW)
+### CyxWiz Engine - Plugin System ✅ (NEW)
+
+**Complete plugin architecture with dynamic DLL loading, permission security, and crash isolation:**
+
+- ✅ **Phase 1**: Plugin types, interfaces (`IPlugin`, `ITrainingHook`, `INodeProvider`, `IPanelProvider`, `IDataProvider`, `IAnalyticsProvider`), manifest parsing
+- ✅ **Phase 2**: `PluginContext` (sandboxed API surface), permission system (dangerous vs safe), crash isolation (SEH/signals)
+- ✅ **Phase 3**: `PluginLoader` (DLL loading via LoadLibrary/dlopen, Ed25519 signature verification)
+- ✅ **Phase 4**: `PluginRegistry` integration — 5 registries connecting plugins to engine subsystems
+- ✅ **Phase 5**: Plugin Manager UI panel (ImGui) — install, enable/disable, unload, permission badges
+- ✅ **Phase 6**: Example plugins (MLflow Logger, Image Nodes) + Developer Guide
+
+**Architecture:**
+```
+Plugin DLL (.dll/.so/.dylib)
+  ├── Links: cyxwiz-plugin-sdk (static lib)
+  └── Exports: CreatePlugin() / DestroyPlugin()
+
+Engine
+  ├── PluginManager      — discovery, loading, lifecycle
+  ├── PluginLoader       — DLL loading, manifest parsing, signature verification
+  ├── PluginContext       — sandboxed API (logging + 5 registration methods)
+  ├── 5 Registries       — NodeRegistry, PanelRegistry, DataLoaderRegistry,
+  │                        TrainingHookManager, AnalyticsRegistry
+  ├── PermissionStore    — persisted user approval decisions
+  ├── PermissionDialog   — ImGui approval UI for dangerous permissions
+  └── SafeExecute        — crash isolation (SEH on Windows, signals on Unix)
+```
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/plugin/plugin_types.h` | All types, enums, manifest, interfaces, entry macro |
+| `src/plugin/plugin_context.h/cpp` | Sandboxed API surface for plugins |
+| `src/plugin/plugin_loader.h/cpp` | DLL loading, manifest parsing, signature verification |
+| `src/plugin/plugin_manager.h/cpp` | Discovery, lifecycle orchestration |
+| `src/plugin/interfaces/i_*.h` | 5 optional plugin interfaces |
+| `src/plugin/registries/*.h/cpp` | 5 engine-side registries |
+| `src/plugin/security/*.h/cpp` | Permission store/dialog, crash isolation, Ed25519 |
+| `src/gui/panels/plugin_manager_panel.h/cpp` | Plugin Manager UI panel |
+| `plugins/examples/mlflow_logger/` | Example: training hooks + early stopping |
+| `plugins/examples/image_nodes/` | Example: custom nodes + settings panel |
+| `docs/plugin_developer_guide.md` | Full developer documentation |
+
+**Plugin Search Paths:**
+- `<cwd>/plugins/` (project-specific)
+- `%APPDATA%/cyxwiz/plugins/` (Windows user) or `~/.cyxwiz/plugins/` (Linux/macOS)
+
+**Building Plugins:**
+```cmake
+add_library(my_plugin SHARED my_plugin.cpp)
+target_link_libraries(my_plugin PRIVATE cyxwiz-plugin-sdk)
+```
+
+**Permission Model:**
+- Safe (auto-granted): GPU, DataRegistry, Training, UIModify
+- Dangerous (user approval required): FileSystem, Network, SystemCommands, Python
+
+---
+
+### CyxWiz Engine - Dataset Manager Redesign ✅
 
 **Professional DBGate-style 3-pane layout:**
 
@@ -1015,6 +1074,9 @@ High-priority tasks marked with `// TODO:` throughout codebase:
 - **Engine GUI panels**: `cyxwiz-engine/src/gui/panels/*.cpp`
 - **Engine core**: `cyxwiz-engine/src/core/*.cpp` (ProjectManager, etc.)
 - **Engine scripting**: `cyxwiz-engine/src/scripting/*.cpp`
+- **Plugin system**: `cyxwiz-engine/src/plugin/` (loader, manager, context, registries, security)
+- **Plugin examples**: `plugins/examples/` (mlflow_logger, image_nodes)
+- **Plugin docs**: `docs/plugin_developer_guide.md`
 - **Build output**: `build/<preset>/bin/` and `build/<preset>/lib/`
 - **Tests**: `tests/unit/*.cpp`
 - **Resources**: `cyxwiz-engine/resources/` (fonts, icons, etc.)

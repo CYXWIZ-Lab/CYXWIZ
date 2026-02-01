@@ -103,6 +103,7 @@ void PluginManagerPanel::RenderToolbar() {
     if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Refresh")) {
         auto& mgr = plugin::PluginManager::Instance();
         mgr.LoadAllFromSearchPaths();
+        mgr.InitializeAll();
         spdlog::info("PluginManagerPanel: Refreshed plugin list");
     }
 

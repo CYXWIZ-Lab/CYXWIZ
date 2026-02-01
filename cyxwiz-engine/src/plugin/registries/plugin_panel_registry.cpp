@@ -25,6 +25,27 @@ void PluginPanelRegistry::Register(const std::string& plugin_id, IPanelProvider*
     }
 }
 
+void PluginPanelRegistry::RegisterDirect(const std::string& plugin_id,
+                                          const std::string& panel_id,
+                                          const std::string& title,
+                                          const std::string& category,
+                                          bool show_by_default,
+                                          IPanelProvider* provider) {
+    if (!provider) return;
+    std::lock_guard lock(mutex_);
+    if (panels_.count(panel_id)) {
+        spdlog::warn("PluginPanelRegistry: Duplicate panel {}, skipping", panel_id);
+        return;
+    }
+    PluginPanelInfo info;
+    info.panel_id = panel_id;
+    info.title = title;
+    info.category = category;
+    info.show_by_default = show_by_default;
+    spdlog::info("PluginPanelRegistry: Registered panel '{}' ({})", title, panel_id);
+    panels_[panel_id] = PanelEntry{plugin_id, std::move(info), provider, show_by_default};
+}
+
 void PluginPanelRegistry::RemoveByPlugin(const std::string& plugin_id) {
     std::lock_guard lock(mutex_);
     for (auto it = panels_.begin(); it != panels_.end();) {
@@ -101,6 +122,14 @@ void PluginPanelRegistry::TogglePanelVisible(const std::string& panel_id) {
     auto it = panels_.find(panel_id);
     if (it != panels_.end())
         it->second.visible = !it->second.visible;
+}
+
+bool* PluginPanelRegistry::GetVisiblePtr(const std::string& panel_id) {
+    std::lock_guard lock(mutex_);
+    auto it = panels_.find(panel_id);
+    if (it != panels_.end())
+        return &it->second.visible;
+    return nullptr;
 }
 
 size_t PluginPanelRegistry::GetCount() const {

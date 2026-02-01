@@ -301,6 +301,7 @@ private:
     void SearchInFiles(const std::string& search_text, const std::string& search_path,
                        const std::string& file_patterns, bool case_sensitive,
                        bool whole_word, bool use_regex);
+    void RenderAppsMenu();
     void RenderHelpMenu();
     void RenderUserAvatar();
     void RenderUserProfilePopup();

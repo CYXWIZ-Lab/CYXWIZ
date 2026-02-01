@@ -2550,17 +2550,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
         dock_style.RegisterPanel("Plugin Manager", ICON_FA_PLUG, plugin_manager_panel_->GetVisiblePtr());
     }
 
-    // Plugin panels
-    {
-        auto& panel_reg = cyxwiz::plugin::PluginPanelRegistry::Instance();
-        for (const auto& info : panel_reg.GetAllPanels()) {
-            dock_style.RegisterPanel(info.title.c_str(), info.icon.empty() ? ICON_FA_PLUG : info.icon.c_str(),
-                nullptr, [id = info.panel_id]() {
-                    cyxwiz::plugin::PluginPanelRegistry::Instance().TogglePanelVisible(id);
-                });
-        }
-    }
-
     // Command Palette - action button (not a panel toggle)
     if (toolbar_) {
         dock_style.RegisterPanel("Command Palette", ICON_FA_MAGNIFYING_GLASS, nullptr, [this]() {

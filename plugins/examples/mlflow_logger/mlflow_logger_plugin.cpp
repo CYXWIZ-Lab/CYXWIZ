@@ -31,12 +31,8 @@ bool MLflowLoggerPlugin::OnLoad(PluginContext& ctx) {
 bool MLflowLoggerPlugin::OnInitialize(PluginContext& ctx) {
     ctx.LogInfo("MLflow Logger: OnInitialize");
 
-    // Register as a training hook — requires Training permission
-    if (!ctx.RegisterTrainingHook(this)) {
-        ctx.LogError("MLflow Logger: Failed to register training hook");
-        state_ = PluginState::Failed;
-        return false;
-    }
+    // Note: Registration of ITrainingHook is handled engine-side via QueryInterface
+    // in PluginManager to avoid DLL singleton duplication.
 
     ctx.LogInfo("MLflow Logger: Registered training hook (tracking_uri=" + tracking_uri_ + ")");
     state_ = PluginState::Active;

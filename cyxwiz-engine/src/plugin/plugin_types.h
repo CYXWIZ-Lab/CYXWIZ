@@ -311,6 +311,16 @@ public:
     virtual const PluginManifest& GetManifest() const = 0;
     virtual PluginPermissionFlags GetRequiredPermissions() const = 0;
     virtual PluginState GetState() const = 0;
+
+    // Interface query (COM-style) — returns typed pointer for cross-DLL safety.
+    // Plugins override to return their interface pointers (e.g. IPanelProvider*, INodeProvider*).
+    // This avoids static singleton duplication across DLL boundaries.
+    virtual void* QueryInterface(const char* /*interface_name*/) { return nullptr; }
+
+    // Set the engine's ImGui context so DLL plugins share the same UI state.
+    // Called by engine before OnInitialize. Plugins must call ImGui::SetCurrentContext(ctx)
+    // in their implementation to ensure ImGui calls work across DLL boundaries.
+    virtual void SetImGuiContext(void* /*ctx*/) {}
 };
 
 // ============================================================================

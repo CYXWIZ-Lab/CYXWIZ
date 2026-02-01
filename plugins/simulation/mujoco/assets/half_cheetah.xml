@@ -1,0 +1,63 @@
+<mujoco model="half_cheetah">
+  <compiler angle="degree" inertiafromgeom="true"/>
+  <option timestep="0.01"/>
+
+  <default>
+    <joint limited="true" damping="0.5" armature="0.1" stiffness="0"/>
+    <geom contype="1" conaffinity="1" condim="3" friction="0.8 0.1 0.1" rgba="0.8 0.5 0.2 1"/>
+  </default>
+
+  <worldbody>
+    <light diffuse="0.8 0.8 0.8" pos="0 0 3" dir="0 0 -1"/>
+    <geom type="plane" size="40 40 0.1" rgba="0.8 0.9 0.8 1"/>
+
+    <body name="torso" pos="0 0 0.7">
+      <joint name="rootx" type="slide" axis="1 0 0" limited="false"/>
+      <joint name="rootz" type="slide" axis="0 0 1" limited="false"/>
+      <joint name="rooty" type="hinge" axis="0 1 0" limited="false"/>
+      <geom type="capsule" fromto="-0.5 0 0  0.5 0 0" size="0.046" mass="6.25"/>
+
+      <!-- Head -->
+      <body name="head" pos="0.5 0 0">
+        <geom type="capsule" fromto="0 0 0  0.15 0 0.1" size="0.046" mass="1.2" rgba="0.9 0.6 0.3 1"/>
+      </body>
+
+      <!-- Back thigh -->
+      <body name="bthigh" pos="-0.5 0 0">
+        <joint name="bthigh_joint" type="hinge" axis="0 1 0" range="-60 90"/>
+        <geom type="capsule" fromto="0 0 0  0.1 0 -0.15" size="0.046" mass="2.3"/>
+        <body name="bshin" pos="0.1 0 -0.15">
+          <joint name="bshin_joint" type="hinge" axis="0 1 0" range="-70 -10"/>
+          <geom type="capsule" fromto="0 0 0  -0.14 0 -0.17" size="0.046" mass="1.6"/>
+          <body name="bfoot" pos="-0.14 0 -0.17">
+            <joint name="bfoot_joint" type="hinge" axis="0 1 0" range="-30 50"/>
+            <geom type="capsule" fromto="0 0 0  -0.07 0 -0.07" size="0.046" mass="1.0"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Front thigh -->
+      <body name="fthigh" pos="0.5 0 0">
+        <joint name="fthigh_joint" type="hinge" axis="0 1 0" range="-60 90"/>
+        <geom type="capsule" fromto="0 0 0  -0.1 0 -0.15" size="0.046" mass="2.3"/>
+        <body name="fshin" pos="-0.1 0 -0.15">
+          <joint name="fshin_joint" type="hinge" axis="0 1 0" range="-70 -10"/>
+          <geom type="capsule" fromto="0 0 0  0.14 0 -0.17" size="0.046" mass="1.6"/>
+          <body name="ffoot" pos="0.14 0 -0.17">
+            <joint name="ffoot_joint" type="hinge" axis="0 1 0" range="-30 50"/>
+            <geom type="capsule" fromto="0 0 0  0.07 0 -0.07" size="0.046" mass="1.0"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor joint="bthigh_joint" gear="120" ctrlrange="-1 1" ctrllimited="true"/>
+    <motor joint="bshin_joint" gear="90" ctrlrange="-1 1" ctrllimited="true"/>
+    <motor joint="bfoot_joint" gear="60" ctrlrange="-1 1" ctrllimited="true"/>
+    <motor joint="fthigh_joint" gear="120" ctrlrange="-1 1" ctrllimited="true"/>
+    <motor joint="fshin_joint" gear="90" ctrlrange="-1 1" ctrllimited="true"/>
+    <motor joint="ffoot_joint" gear="60" ctrlrange="-1 1" ctrllimited="true"/>
+  </actuator>
+</mujoco>

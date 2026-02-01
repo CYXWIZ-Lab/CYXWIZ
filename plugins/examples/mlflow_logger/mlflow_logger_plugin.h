@@ -8,6 +8,7 @@
 //   - Early stopping via ShouldStopEarly()
 //   - CYXWIZ_PLUGIN_ENTRY macro usage
 
+#include <imgui.h>
 #include "../../cyxwiz-engine/src/plugin/plugin_types.h"
 #include "../../cyxwiz-engine/src/plugin/plugin_context.h"
 #include "../../cyxwiz-engine/src/plugin/interfaces/i_training_hook.h"
@@ -34,6 +35,11 @@ public:
                static_cast<uint32_t>(PluginPermission::Training);
     }
     PluginState GetState() const override { return state_; }
+    void SetImGuiContext(void* ctx) override { ImGui::SetCurrentContext(static_cast<ImGuiContext*>(ctx)); }
+    void* QueryInterface(const char* name) override {
+        if (std::string(name) == "ITrainingHook") return static_cast<ITrainingHook*>(this);
+        return nullptr;
+    }
 
     // ===== ITrainingHook =====
     void OnTrainingStart(TrainingContext& ctx) override;

@@ -16,6 +16,10 @@ public:
     PluginPanelRegistry& operator=(const PluginPanelRegistry&) = delete;
 
     void Register(const std::string& plugin_id, IPanelProvider* provider);
+    // Direct registration — avoids calling GetPanels() across DLL boundary
+    void RegisterDirect(const std::string& plugin_id, const std::string& panel_id,
+                        const std::string& title, const std::string& category,
+                        bool show_by_default, IPanelProvider* provider);
     void RemoveByPlugin(const std::string& plugin_id);
 
     // Query
@@ -29,6 +33,7 @@ public:
     bool IsPanelVisible(const std::string& panel_id) const;
     void SetPanelVisible(const std::string& panel_id, bool visible);
     void TogglePanelVisible(const std::string& panel_id);
+    bool* GetVisiblePtr(const std::string& panel_id);
 
     size_t GetCount() const;
 

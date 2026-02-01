@@ -276,6 +276,7 @@ void ToolbarPanel::Render() {
         RenderScriptMenu();
         RenderPlotsMenu();
         RenderDeployMenu();
+        RenderAppsMenu();
         RenderHelpMenu();
 
         // Show current project name in menu bar if active
