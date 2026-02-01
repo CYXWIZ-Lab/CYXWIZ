@@ -39,10 +39,19 @@ bool MjRenderer::Initialize(const mjModel* model, int width, int height,
     // Step 2: Initialize MuJoCo visualization structs (in compat context)
     MakeCompatContextCurrent();
 
+    // Load glad for the compat context (DLL has its own glad copy)
+    gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress));
+
     mjv_defaultCamera(&cam_);
     mjv_defaultOption(&opt_);
     mjv_defaultScene(&scn_);
     mjr_defaultContext(&con_);
+
+    // Enable headlight for consistent scene lighting
+    scn_.enabletransform = 0;
+    scn_.flags[mjRND_SHADOW] = 1;
+    scn_.flags[mjRND_REFLECTION] = 0;
+    scn_.flags[mjRND_SKYBOX] = 1;
 
     // Create MuJoCo scene (up to 2000 geometric objects)
     mjv_makeScene(model, &scn_, 2000);
@@ -58,7 +67,18 @@ bool MjRenderer::Initialize(const mjModel* model, int width, int height,
         return false;
     }
 
-    spdlog::info("[MjRenderer] MuJoCo rendering context created ({}x{})", width_, height_);
+    // Use the actual offscreen FBO size — may be smaller than requested
+    if (con_.offWidth > 0 && con_.offHeight > 0) {
+        if (con_.offWidth < width_ || con_.offHeight < height_) {
+            spdlog::warn("[MjRenderer] Offscreen FBO {}x{} smaller than requested {}x{}, clamping",
+                         con_.offWidth, con_.offHeight, width_, height_);
+            width_ = con_.offWidth;
+            height_ = con_.offHeight;
+        }
+    }
+
+    spdlog::info("[MjRenderer] MuJoCo rendering context created ({}x{}, offscreen={}x{})",
+                 width_, height_, con_.offWidth, con_.offHeight);
 
     // Step 3: Switch back to main context and create display texture
     MakeMainContextCurrent();
@@ -128,16 +148,24 @@ unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
         // Reallocate CPU buffer
         pixel_buffer_.resize(width_ * height_ * 3);
 
-        // Reallocate display texture (main context)
-        FreeDisplayTexture();
-        AllocateDisplayTexture();
-
         // Recreate MuJoCo context with new size (compat context)
         MakeCompatContextCurrent();
         mjr_freeContext(&con_);
         mjr_defaultContext(&con_);
         mjr_makeContext(model, &con_, mjFONTSCALE_150);
+
+        // Clamp to actual offscreen FBO size
+        if (con_.offWidth > 0 && con_.offHeight > 0) {
+            if (con_.offWidth < width_) width_ = con_.offWidth;
+            if (con_.offHeight < height_) height_ = con_.offHeight;
+            pixel_buffer_.resize(width_ * height_ * 3);
+        }
+
+        // Switch back to main context and reallocate display texture
         MakeMainContextCurrent();
+        gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress));
+        FreeDisplayTexture();
+        AllocateDisplayTexture();
     }
 
     // Step 1: Render in compatibility context
@@ -153,18 +181,28 @@ unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
     mjr_render(viewport, &scn_, &con_);
 
     // Read pixels into CPU buffer (RGB, bottom-up)
+    // Re-set offscreen buffer (mjr_render may change it) and set pack alignment
+    // for tightly packed RGB rows (mjr_readPixels calls glReadPixels internally)
+    mjr_setBuffer(mjFB_OFFSCREEN, &con_);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
     mjr_readPixels(pixel_buffer_.data(), nullptr, viewport, &con_);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
 
     // Step 2: Upload to display texture (main context)
     MakeMainContextCurrent();
 
     glBindTexture(GL_TEXTURE_2D, display_texture_);
 
+    // RGB data (3 bytes/pixel) rows may not be 4-byte aligned.
+    // Set alignment to 1 to avoid shifted/garbled pixel rows.
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
     // MuJoCo outputs bottom-up RGB. OpenGL glTexImage2D with default
     // unpack settings also expects bottom-up, so no flip needed.
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width_, height_,
                     GL_RGB, GL_UNSIGNED_BYTE, pixel_buffer_.data());
 
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);  // Restore default
     glBindTexture(GL_TEXTURE_2D, 0);
 
     return display_texture_;
@@ -200,11 +238,13 @@ void MjRenderer::PanCamera(float dx, float dy) {
 void MjRenderer::ResetCamera(const mjModel* model) {
     mjv_defaultCamera(&cam_);
     if (model) {
-        // Point camera at model center
+        // Point camera at model center with good viewing angle
         cam_.lookat[0] = model->stat.center[0];
         cam_.lookat[1] = model->stat.center[1];
-        cam_.lookat[2] = model->stat.center[2];
-        cam_.distance = 1.5 * model->stat.extent;
+        cam_.lookat[2] = model->stat.center[2] + 0.3 * model->stat.extent;
+        cam_.distance = 2.0 * model->stat.extent;
+        cam_.azimuth = 135.0;    // 3/4 view
+        cam_.elevation = -20.0;  // Slightly above
     }
 }
 
@@ -270,6 +310,7 @@ bool MjRenderer::AllocateDisplayTexture() {
     }
 
     glBindTexture(GL_TEXTURE_2D, display_texture_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width_, height_, 0,
                  GL_RGB, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);

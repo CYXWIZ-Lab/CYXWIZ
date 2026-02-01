@@ -7,6 +7,10 @@
 -->
 <mujoco model="inverted pendulum">
   <compiler angle="radian" inertiafromgeom="true"/>
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.15 0.15 0.15" specular="0.3 0.3 0.3"/>
+    <quality shadowsize="2048"/>
+  </visual>
   <default>
     <joint armature="0" damping="1" limited="true"/>
     <geom contype="0" friction="1 0.1 0.1" rgba="0.7 0.7 0 1"/>
@@ -15,7 +19,10 @@
   <size nstack="3000"/>
 
   <worldbody>
-    <light diffuse=".5 .5 .5" pos="0 0 3" dir="0 0 -1"/>
+    <light diffuse=".8 .8 .8" specular=".3 .3 .3" pos="0 0 4" dir="0 0 -1"/>
+    <light diffuse=".4 .4 .4" pos="2 2 3" dir="-1 -1 -1"/>
+    <geom name="floor" type="plane" size="2 2 0.1" rgba="0.4 0.4 0.5 1"
+          conaffinity="1" condim="3"/>
     <geom name="rail" pos="0 0 0" quat="0.707 0 0.707 0"
           rgba="0.3 0.3 0.7 1" size="0.02 1" type="capsule"/>
     <body name="cart" pos="0 0 0">

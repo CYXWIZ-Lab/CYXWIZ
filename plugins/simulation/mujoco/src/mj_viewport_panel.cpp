@@ -116,14 +116,24 @@ void MjViewportPanel::RenderViewport(MjEnvManager& env, MjRenderer& renderer) {
     }
     if (avail.x < 10.0f || avail.y < 10.0f) return;
 
-    // Update renderer resolution if viewport size changed
+    // Debounced resize — avoid expensive MuJoCo context recreation every frame
+    // during drag. Only apply after size is stable for N frames.
     int new_w = static_cast<int>(avail.x);
     int new_h = static_cast<int>(avail.y);
-    if (new_w != renderer.GetWidth() || new_h != renderer.GetHeight()) {
-        renderer.SetResolution(new_w, new_h);
+    if (new_w != pending_w_ || new_h != pending_h_) {
+        pending_w_ = new_w;
+        pending_h_ = new_h;
+        stable_frames_ = 0;
+    } else {
+        stable_frames_++;
+    }
+    if (stable_frames_ == kResizeDebounceFrames) {
+        if (pending_w_ != renderer.GetWidth() || pending_h_ != renderer.GetHeight()) {
+            renderer.SetResolution(pending_w_, pending_h_);
+        }
     }
 
-    // Render frame
+    // Render frame at current renderer resolution
     unsigned int tex_id = renderer.RenderFrame(env.GetModel(), env.GetData());
     if (tex_id == 0) {
         ImGui::TextDisabled("Rendering disabled or failed.");
@@ -131,9 +141,10 @@ void MjViewportPanel::RenderViewport(MjEnvManager& env, MjRenderer& renderer) {
     }
 
     // Display texture (flip V because MuJoCo outputs bottom-up)
+    // Stretch to fill available area; aspect ratio may differ during resize
     ImVec2 uv0(0.0f, 1.0f);  // Bottom-left of texture
     ImVec2 uv1(1.0f, 0.0f);  // Top-right of texture
-    ImGui::Image(static_cast<ImTextureID>(tex_id),
+    ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(tex_id)),
                  avail, uv0, uv1);
 
     // Mouse camera controls when hovering viewport

@@ -32,6 +32,12 @@ private:
     bool show_settings_ = false;
     float playback_speed_ = 1.0f;
     int steps_per_frame_ = 1;
+
+    // Resize debouncing — only apply after user stops resizing
+    int pending_w_ = 0;
+    int pending_h_ = 0;
+    int stable_frames_ = 0;  // Frames since last size change
+    static constexpr int kResizeDebounceFrames = 10;
 };
 
 } // namespace cyxwiz::plugin::mujoco
