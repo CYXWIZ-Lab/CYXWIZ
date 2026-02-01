@@ -31,6 +31,12 @@ public:
     const PluginNodeTypeInfo* GetNodeTypeInfo(const std::string& qualified_name) const;
     std::optional<PluginNodeTypeInfo> GetNodeTypeInfoCopy(const std::string& qualified_name) const;
 
+    // Resolve dynamic pins for a node instance
+    DynamicPinResult ResolveDynamicPins(
+        const std::string& qualified_name,
+        const std::map<std::string, std::string>& parameters
+    ) const;
+
     // Code generation
     std::string GenerateCode(
         const std::string& qualified_name,

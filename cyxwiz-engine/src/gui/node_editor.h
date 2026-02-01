@@ -132,6 +132,13 @@ enum class NodeType {
     Constant,
     Parameter,
 
+    // ===== Signal / Control Nodes =====
+    SignalSlider,       // Interactive slider outputting scalar value
+    SineWave,           // Sine wave generator (amplitude, frequency, phase)
+    StepSignal,         // Step function (0 before t, value after t)
+    RampSignal,         // Linear ramp from start to end value
+    SignalScope,        // Real-time signal plotter (input visualization)
+
     // ===== Data Pipeline Nodes =====
     DatasetInput,       // Load dataset from DataRegistry
     DataLoader,         // Batch iterator with shuffle/drop_last
@@ -247,6 +254,12 @@ struct MLNode {
     float initial_pos_x = 0.0f;
     float initial_pos_y = 0.0f;
     bool has_initial_position = false;  // True if position should be applied when inserting
+
+    // Dynamic pins (for plugin nodes like MuJoCo Plant that change pins based on parameters)
+    bool has_dynamic_pins = false;
+    std::string dynamic_pin_trigger;     // Parameter name that triggers pin rebuild
+    std::string resolved_config;         // Last resolved config value (to detect changes)
+    std::string plugin_qualified_name;   // "plugin_id:type_name" for calling ResolveDynamicPins
 };
 
 // Connection/Link types for visual differentiation
@@ -400,6 +413,10 @@ public:
 
     // Update DatasetInput node name based on loaded dataset
     void UpdateDatasetNodeName(const std::string& dataset_name);
+
+    // Dynamic pins: rebuild a node's pins from plugin-provided data.
+    // Called when a trigger parameter changes on a supports_dynamic_pins node.
+    void ResolveDynamicPins(int node_id);
 
     // Pattern insertion - add multiple nodes and links from a pattern template
     void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);

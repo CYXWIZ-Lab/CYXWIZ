@@ -18,12 +18,23 @@ struct PluginNodeTypeInfo {
 
     struct PinInfo {
         std::string name;
-        std::string type;               // "Tensor", "Image", "Scalar", etc.
+        std::string type;               // "Tensor", "Image", "Scalar", "Signal", etc.
         bool is_input = true;
     };
     std::vector<PinInfo> pins;
 
     std::map<std::string, std::string> default_parameters;
+
+    // Dynamic pins: if true, pins can change based on parameters (e.g. MJCF model).
+    // When a parameter changes, the engine calls INodeProvider::ResolveDynamicPins().
+    bool supports_dynamic_pins = false;
+    std::string dynamic_pin_trigger;    // Parameter name that triggers pin resolution (e.g. "mjcf_path")
+};
+
+// Result from resolving dynamic pins for a node instance
+struct DynamicPinResult {
+    std::vector<PluginNodeTypeInfo::PinInfo> pins;
+    std::map<std::string, std::string> metadata;  // e.g. "model_name" -> "UR5e"
 };
 
 class INodeProvider {
@@ -38,6 +49,15 @@ public:
         const std::map<std::string, std::string>& parameters,
         const std::string& framework          // "pytorch", "tensorflow", "keras"
     ) = 0;
+
+    // Resolve dynamic pins based on current parameters.
+    // Called when a parameter listed in dynamic_pin_trigger changes.
+    // Default returns empty (no dynamic pins).
+    virtual DynamicPinResult ResolveDynamicPins(
+        const std::string& node_type_name,
+        const std::map<std::string, std::string>& parameters) {
+        return {};
+    }
 };
 
 } // namespace cyxwiz::plugin

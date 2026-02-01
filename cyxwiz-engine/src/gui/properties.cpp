@@ -1,6 +1,7 @@
 #include "properties.h"
 #include "node_editor.h"
 #include "../core/data_registry.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
@@ -1456,6 +1457,191 @@ void Properties::RenderNodeProperties(MLNode& node) {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Flattens input to 1D vector");
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[H, W, C] -> [H * W * C]");
             break;
+
+        case NodeType::SignalSlider: {
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Signal Slider");
+            ImGui::Spacing();
+
+            std::string& val_str = node.parameters["value"];
+            std::string& min_str = node.parameters["min"];
+            std::string& max_str = node.parameters["max"];
+            float val = std::stof(val_str.empty() ? "0" : val_str);
+            float mn = std::stof(min_str.empty() ? "-1" : min_str);
+            float mx = std::stof(max_str.empty() ? "1" : max_str);
+
+            ImGui::Text("Value:");
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::SliderFloat("##slider_val", &val, mn, mx)) {
+                char buf[32]; snprintf(buf, sizeof(buf), "%.4f", val);
+                val_str = buf;
+            }
+
+            ImGui::Text("Range:");
+            ImGui::SetNextItemWidth(90.0f);
+            if (ImGui::InputFloat("##slider_min", &mn, 0, 0, "%.2f")) {
+                char buf[32]; snprintf(buf, sizeof(buf), "%.2f", mn);
+                min_str = buf;
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
+            if (ImGui::InputFloat("##slider_max", &mx, 0, 0, "%.2f")) {
+                char buf[32]; snprintf(buf, sizeof(buf), "%.2f", mx);
+                max_str = buf;
+            }
+            break;
+        }
+
+        case NodeType::SineWave: {
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Sine Wave Generator");
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "A*sin(2*pi*f*t + phase) + offset");
+            ImGui::Spacing();
+
+            auto floatParam = [&](const char* label, const char* key, float step = 0.1f) {
+                std::string& s = node.parameters[key];
+                float v = std::stof(s.empty() ? "0" : s);
+                ImGui::Text("%s:", label);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f);
+                std::string id = std::string("##sine_") + key;
+                if (ImGui::InputFloat(id.c_str(), &v, step, step * 10, "%.3f")) {
+                    char buf[32]; snprintf(buf, sizeof(buf), "%.3f", v);
+                    s = buf;
+                }
+            };
+            floatParam("Amplitude", "amplitude");
+            floatParam("Frequency", "frequency");
+            floatParam("Phase", "phase");
+            floatParam("Offset", "offset");
+            break;
+        }
+
+        case NodeType::StepSignal: {
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Step Signal");
+            ImGui::Spacing();
+
+            auto floatParam = [&](const char* label, const char* key) {
+                std::string& s = node.parameters[key];
+                float v = std::stof(s.empty() ? "0" : s);
+                ImGui::Text("%s:", label);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f);
+                std::string id = std::string("##step_") + key;
+                if (ImGui::InputFloat(id.c_str(), &v, 0.1f, 1.0f, "%.3f")) {
+                    char buf[32]; snprintf(buf, sizeof(buf), "%.3f", v);
+                    s = buf;
+                }
+            };
+            floatParam("Step Time", "step_time");
+            floatParam("Initial Value", "initial_value");
+            floatParam("Final Value", "final_value");
+            break;
+        }
+
+        case NodeType::RampSignal: {
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Ramp Signal");
+            ImGui::Spacing();
+
+            auto floatParam = [&](const char* label, const char* key) {
+                std::string& s = node.parameters[key];
+                float v = std::stof(s.empty() ? "0" : s);
+                ImGui::Text("%s:", label);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f);
+                std::string id = std::string("##ramp_") + key;
+                if (ImGui::InputFloat(id.c_str(), &v, 0.1f, 1.0f, "%.3f")) {
+                    char buf[32]; snprintf(buf, sizeof(buf), "%.3f", v);
+                    s = buf;
+                }
+            };
+            floatParam("Start Value", "start_value");
+            floatParam("End Value", "end_value");
+            floatParam("Duration", "duration");
+            break;
+        }
+
+        case NodeType::SignalScope: {
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Signal Scope");
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Plots incoming signal values in real-time");
+            ImGui::Spacing();
+
+            std::string& ws = node.parameters["window_size"];
+            int win = std::stoi(ws.empty() ? "500" : ws);
+            ImGui::Text("Window Size:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputInt("##scope_win", &win)) {
+                if (win < 10) win = 10;
+                ws = std::to_string(win);
+            }
+
+            std::string& as = node.parameters["auto_scale"];
+            bool auto_s = (as == "true");
+            if (ImGui::Checkbox("Auto Scale", &auto_s)) {
+                as = auto_s ? "true" : "false";
+            }
+            break;
+        }
+
+        case NodeType::PluginCustom: {
+            // Get plugin info for display
+            auto info_opt = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeTypeInfoCopy(
+                node.plugin_qualified_name);
+
+            if (info_opt.has_value()) {
+                const auto& info = info_opt.value();
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.8f, 1.0f), "%s", info.display_name.c_str());
+                if (!info.description.empty()) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", info.description.c_str());
+                }
+                ImGui::Separator();
+            }
+
+            // Render editable parameters (skip internal keys)
+            for (auto& [key, value] : node.parameters) {
+                if (key == "plugin_qualified_name") continue;
+                if (key.starts_with("_meta_")) continue;
+
+                char buf[512];
+                strncpy(buf, value.c_str(), sizeof(buf) - 1);
+                buf[sizeof(buf) - 1] = '\0';
+
+                ImGui::Text("%s:", key.c_str());
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(200.0f);
+                std::string label = "##plugin_param_" + key;
+                if (ImGui::InputText(label.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    value = buf;
+
+                    // If this parameter is the dynamic pin trigger, resolve pins
+                    if (node.has_dynamic_pins && key == node.dynamic_pin_trigger && node_editor_) {
+                        node_editor_->ResolveDynamicPins(node.id);
+                    }
+
+                    InvalidateShapes();
+                }
+            }
+
+            // Show dynamic pin metadata if available
+            bool has_meta = false;
+            for (const auto& [key, value] : node.parameters) {
+                if (key.starts_with("_meta_")) {
+                    if (!has_meta) {
+                        ImGui::Separator();
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Model Info:");
+                        has_meta = true;
+                    }
+                    std::string display_key = key.substr(6);  // strip "_meta_"
+                    ImGui::Text("  %s: %s", display_key.c_str(), value.c_str());
+                }
+            }
+
+            // Show pin summary
+            ImGui::Separator();
+            ImGui::Text("Inputs: %d  Outputs: %d",
+                        static_cast<int>(node.inputs.size()),
+                        static_cast<int>(node.outputs.size()));
+            break;
+        }
 
         default:
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No editable parameters for this node type");

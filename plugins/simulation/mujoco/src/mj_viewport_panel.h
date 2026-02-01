@@ -10,6 +10,9 @@
 
 namespace cyxwiz::plugin::mujoco {
 
+// Forward declaration
+class MjSimulationExecutor;
+
 class MjViewportPanel {
 public:
     MjViewportPanel() = default;
@@ -19,15 +22,20 @@ public:
     // |env| and |renderer| must be valid. |visible| controls panel open state.
     void Render(MjEnvManager& env, MjRenderer& renderer, bool* visible);
 
+    // Set simulation executor for Play/Pause/Step controls
+    void SetSimExecutor(MjSimulationExecutor* exec) { sim_executor_ = exec; }
+
     // Playback state
     bool IsPlaying() const { return playing_; }
     void SetPlaying(bool playing) { playing_ = playing; }
 
 private:
     void RenderToolbar(MjEnvManager& env, MjRenderer& renderer);
+    void RenderSimControls();
     void RenderViewport(MjEnvManager& env, MjRenderer& renderer);
     void RenderSettings(MjRenderer& renderer);
 
+    MjSimulationExecutor* sim_executor_ = nullptr;
     bool playing_ = false;
     bool show_settings_ = false;
     float playback_speed_ = 1.0f;

@@ -72,6 +72,22 @@ std::optional<PluginNodeTypeInfo> PluginNodeRegistry::GetNodeTypeInfoCopy(const 
     return std::nullopt;
 }
 
+DynamicPinResult PluginNodeRegistry::ResolveDynamicPins(
+    const std::string& qualified_name,
+    const std::map<std::string, std::string>& parameters
+) const {
+    std::lock_guard lock(mutex_);
+    auto it = nodes_.find(qualified_name);
+    if (it == nodes_.end() || !it->second.provider) return {};
+
+    try {
+        return it->second.provider->ResolveDynamicPins(it->second.info.type_name, parameters);
+    } catch (const std::exception& e) {
+        spdlog::error("PluginNodeRegistry: ResolveDynamicPins failed for {}: {}", qualified_name, e.what());
+        return {};
+    }
+}
+
 std::string PluginNodeRegistry::GenerateCode(
     const std::string& qualified_name,
     const std::map<std::string, std::string>& parameters,

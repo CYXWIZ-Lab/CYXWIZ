@@ -6,6 +6,7 @@
 
 #include "node_editor.h"
 #include "node_editor_shape_inference.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <set>
 #include <queue>
@@ -173,6 +174,116 @@ bool NodeEditor::IsGraphValid() const {
 
     // For training we need: dataset input, model layers, and loss
     return has_dataset_input && has_model_layer && has_loss;
+}
+
+void NodeEditor::ResolveDynamicPins(int node_id) {
+    // Find the node
+    MLNode* node = nullptr;
+    for (auto& n : nodes_) {
+        if (n.id == node_id) { node = &n; break; }
+    }
+    if (!node || !node->has_dynamic_pins || node->plugin_qualified_name.empty()) return;
+
+    // Check if trigger value actually changed
+    const std::string& trigger = node->dynamic_pin_trigger;
+    std::string trigger_value;
+    if (!trigger.empty()) {
+        auto it = node->parameters.find(trigger);
+        if (it != node->parameters.end()) trigger_value = it->second;
+    }
+    if (trigger_value == node->resolved_config) return;  // No change
+
+    SaveUndoState();
+
+    // Call plugin to resolve new pins
+    auto result = cyxwiz::plugin::PluginNodeRegistry::Instance().ResolveDynamicPins(
+        node->plugin_qualified_name, node->parameters);
+
+    if (result.pins.empty()) {
+        spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->plugin_qualified_name);
+        return;
+    }
+
+    // Save existing connections by pin name so we can restore matching ones
+    struct SavedLink {
+        std::string pin_name;
+        bool is_input;
+        int other_node;
+        int other_pin;
+        LinkType type;
+    };
+    std::vector<SavedLink> saved;
+
+    // Collect all pin IDs belonging to this node
+    std::map<int, std::string> pin_id_to_name;
+    for (const auto& p : node->inputs) pin_id_to_name[p.id] = p.name;
+    for (const auto& p : node->outputs) pin_id_to_name[p.id] = p.name;
+
+    // Save links connected to this node's pins
+    for (const auto& link : links_) {
+        auto from_it = pin_id_to_name.find(link.from_pin);
+        if (from_it != pin_id_to_name.end()) {
+            saved.push_back({from_it->second, false, link.to_node, link.to_pin, link.type});
+        }
+        auto to_it = pin_id_to_name.find(link.to_pin);
+        if (to_it != pin_id_to_name.end()) {
+            saved.push_back({to_it->second, true, link.from_node, link.from_pin, link.type});
+        }
+    }
+
+    // Remove all links connected to this node
+    links_.erase(std::remove_if(links_.begin(), links_.end(), [&](const NodeLink& l) {
+        return pin_id_to_name.count(l.from_pin) || pin_id_to_name.count(l.to_pin);
+    }), links_.end());
+
+    // Rebuild pins from plugin result
+    node->inputs.clear();
+    node->outputs.clear();
+
+    std::map<std::string, int> new_pin_ids;  // pin name -> new pin id
+    for (const auto& pin_info : result.pins) {
+        NodePin p;
+        p.id = next_pin_id_++;
+        p.type = PinType::Tensor;
+        p.name = pin_info.name;
+        p.is_input = pin_info.is_input;
+        if (p.is_input) node->inputs.push_back(p);
+        else node->outputs.push_back(p);
+        new_pin_ids[pin_info.name] = p.id;
+    }
+
+    // Store metadata in parameters
+    for (const auto& [k, v] : result.metadata) {
+        node->parameters["_meta_" + k] = v;
+    }
+
+    // Restore connections where pin names match
+    for (const auto& s : saved) {
+        auto it = new_pin_ids.find(s.pin_name);
+        if (it == new_pin_ids.end()) continue;
+        int new_pin = it->second;
+
+        NodeLink link;
+        link.id = next_link_id_++;
+        link.type = s.type;
+        if (s.is_input) {
+            link.from_node = s.other_node;
+            link.from_pin = s.other_pin;
+            link.to_node = node_id;
+            link.to_pin = new_pin;
+        } else {
+            link.from_node = node_id;
+            link.from_pin = new_pin;
+            link.to_node = s.other_node;
+            link.to_pin = s.other_pin;
+        }
+        links_.push_back(link);
+    }
+
+    node->resolved_config = trigger_value;
+
+    spdlog::info("ResolveDynamicPins: node {} rebuilt with {} inputs, {} outputs",
+                 node->name, node->inputs.size(), node->outputs.size());
 }
 
 void NodeEditor::UpdateDatasetNodeName(const std::string& dataset_name) {

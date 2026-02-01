@@ -1117,6 +1117,79 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        case NodeType::SignalSlider: {
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Value";
+            out.is_input = false;
+            node.outputs.push_back(out);
+
+            node.parameters["min"] = "-1.0";
+            node.parameters["max"] = "1.0";
+            node.parameters["value"] = "0.0";
+            node.parameters["label"] = name;
+            break;
+        }
+
+        case NodeType::SineWave: {
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Signal";
+            out.is_input = false;
+            node.outputs.push_back(out);
+
+            node.parameters["amplitude"] = "1.0";
+            node.parameters["frequency"] = "1.0";
+            node.parameters["phase"] = "0.0";
+            node.parameters["offset"] = "0.0";
+            break;
+        }
+
+        case NodeType::StepSignal: {
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Signal";
+            out.is_input = false;
+            node.outputs.push_back(out);
+
+            node.parameters["step_time"] = "1.0";
+            node.parameters["initial_value"] = "0.0";
+            node.parameters["final_value"] = "1.0";
+            break;
+        }
+
+        case NodeType::RampSignal: {
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Signal";
+            out.is_input = false;
+            node.outputs.push_back(out);
+
+            node.parameters["start_value"] = "0.0";
+            node.parameters["end_value"] = "1.0";
+            node.parameters["duration"] = "5.0";
+            break;
+        }
+
+        case NodeType::SignalScope: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Signal";
+            in.is_input = true;
+            in.is_variadic = true;
+            in.max_connections = PIN_UNLIMITED;
+            node.inputs.push_back(in);
+
+            node.parameters["window_size"] = "500";
+            node.parameters["auto_scale"] = "true";
+            break;
+        }
+
         case NodeType::Parameter: {
             NodePin output_pin;
             output_pin.id = next_pin_id_++;
@@ -1596,6 +1669,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // Copy node info to avoid use-after-free if plugin unloads
             auto info_opt = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeTypeInfoCopy(name);
             node.parameters["plugin_qualified_name"] = name;
+            node.plugin_qualified_name = name;
             if (info_opt.has_value()) {
                 const auto& info = info_opt.value();
                 node.name = info.display_name;
@@ -1610,6 +1684,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
                 }
                 for (const auto& [key, val] : info.default_parameters) {
                     node.parameters[key] = val;
+                }
+                // Dynamic pin support
+                if (info.supports_dynamic_pins) {
+                    node.has_dynamic_pins = true;
+                    node.dynamic_pin_trigger = info.dynamic_pin_trigger;
                 }
             } else {
                 // Fallback: plugin not loaded, create generic node
@@ -1894,6 +1973,18 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::Parameter:
             return IM_COL32(158, 158, 158, 255);
 
+        // ===== Signal / Control - Teal =====
+        case NodeType::SignalSlider:
+            return IM_COL32(0, 150, 136, 255);
+        case NodeType::SineWave:
+            return IM_COL32(38, 166, 154, 255);
+        case NodeType::StepSignal:
+            return IM_COL32(77, 182, 172, 255);
+        case NodeType::RampSignal:
+            return IM_COL32(77, 182, 172, 255);
+        case NodeType::SignalScope:
+            return IM_COL32(0, 121, 107, 255);
+
         // ===== Data Pipeline - Cyan =====
         case NodeType::DatasetInput:
             return IM_COL32(0, 188, 212, 255);
@@ -2123,6 +2214,18 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_CIRCLE;
         case NodeType::Parameter:
             return ICON_FA_GEAR;
+
+        // Signal / Control
+        case NodeType::SignalSlider:
+            return ICON_FA_SLIDERS;
+        case NodeType::SineWave:
+            return ICON_FA_WAVE_SQUARE;
+        case NodeType::StepSignal:
+            return ICON_FA_WAVE_SQUARE;
+        case NodeType::RampSignal:
+            return ICON_FA_ARROW_TREND_UP;
+        case NodeType::SignalScope:
+            return ICON_FA_CHART_LINE;
 
         // Subgraph
         case NodeType::Subgraph:

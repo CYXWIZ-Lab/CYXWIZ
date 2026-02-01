@@ -13,6 +13,7 @@
 
 #include <imgui.h>
 #include "plugin/plugin_types.h"
+#include "mj_simulation_executor.h"
 #include "plugin/plugin_context.h"
 #include "plugin/interfaces/i_training_hook.h"
 #include "plugin/interfaces/i_panel_provider.h"
@@ -76,6 +77,10 @@ public:
         const std::map<std::string, std::string>& parameters,
         const std::string& framework
     ) override;
+    DynamicPinResult ResolveDynamicPins(
+        const std::string& node_type_name,
+        const std::map<std::string, std::string>& parameters
+    ) override;
 
     // ===== Public API =====
     MjEnvManager& GetEnvManager() { return env_manager_; }
@@ -84,6 +89,7 @@ public:
 
     bool LoadEnvironment(const std::string& mjcf_path);
     bool IsEnvironmentLoaded() const { return env_manager_.IsLoaded(); }
+    MjSimulationExecutor& GetSimExecutor() { return sim_executor_; }
 
     void SetMainWindow(GLFWwindow* window) { main_window_ = window; }
 
@@ -94,6 +100,7 @@ private:
     MjEnvManager env_manager_;
     MjEnvLibrary env_library_;
     MjRenderer renderer_;
+    MjSimulationExecutor sim_executor_;
     MjViewportPanel viewport_panel_;
     MjEnvBrowserPanel browser_panel_;
 

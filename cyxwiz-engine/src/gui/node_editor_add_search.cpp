@@ -233,6 +233,13 @@ void NodeEditor::InitializeSearchableNodes() {
     addNode(NodeType::Constant, "Constant", "Utilities", "constant fixed value");
     addNode(NodeType::Parameter, "Parameter", "Utilities", "parameter learnable tensor");
 
+    // Signal / Control
+    addNode(NodeType::SignalSlider, "Slider", "Signal / Control", "slider interactive value knob");
+    addNode(NodeType::SineWave, "Sine Wave", "Signal / Control", "sine wave oscillator periodic signal");
+    addNode(NodeType::StepSignal, "Step", "Signal / Control", "step function signal heaviside");
+    addNode(NodeType::RampSignal, "Ramp", "Signal / Control", "ramp linear gradient signal");
+    addNode(NodeType::SignalScope, "Scope", "Signal / Control", "scope plot visualize signal chart");
+
     // Composite
     addNode(NodeType::Subgraph, "Subgraph", "Composite", "subgraph module encapsulate block");
 

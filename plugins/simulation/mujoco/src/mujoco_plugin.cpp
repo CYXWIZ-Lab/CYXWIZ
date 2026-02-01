@@ -1,4 +1,5 @@
 #include "mujoco_plugin.h"
+#include "mj_mjcf_parser.h"
 
 #include <spdlog/spdlog.h>
 #include <mujoco/mujoco.h>
@@ -77,6 +78,11 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
 
     // Reset environment to get initial state
     env_manager_.Reset();
+
+    // Wire simulation executor and viewport
+    sim_executor_.Stop();
+    sim_executor_.SetEnvManager(&env_manager_);
+    viewport_panel_.SetSimExecutor(&sim_executor_);
 
     // NOTE: Renderer is NOT initialized here. It will be lazily initialized
     // by the viewport panel on first render, using the engine's GL context
@@ -261,6 +267,35 @@ std::vector<PluginNodeTypeInfo> MuJoCoPlugin::GetNodeTypes() {
         nodes.push_back(std::move(n));
     }
 
+    // --- MuJoCo Plant node (Simulink-style) ---
+    // Loads an MJCF model; pins are dynamically resolved per-actuator/sensor
+    {
+        PluginNodeTypeInfo n;
+        n.type_name    = "MuJoCoPlant";
+        n.display_name = "MuJoCo Plant";
+        n.category     = "Simulation / Control";
+        n.description  = "Simulink-style plant block: per-actuator inputs, sensor/image outputs. "
+                         "Set mjcf_path to auto-discover actuators and sensors.";
+        n.color        = 0xFF22BB66;  // Green
+
+        // Default pins (before MJCF is loaded)
+        n.pins.push_back({"u", "Tensor", true});       // control vector input
+        n.pins.push_back({"sensor", "Tensor", false});  // sensor output
+        n.pins.push_back({"rgb", "Image", false});      // camera image
+        n.pins.push_back({"depth", "Image", false});    // depth image
+
+        n.default_parameters["mjcf_path"]    = "";
+        n.default_parameters["timestep"]     = "0.002";
+        n.default_parameters["frame_skip"]   = "1";
+        n.default_parameters["interface"]    = "bus";   // "bus" = per-actuator pins, "vector" = single u
+        n.default_parameters["camera"]       = "0";
+
+        n.supports_dynamic_pins = true;
+        n.dynamic_pin_trigger   = "mjcf_path";
+
+        nodes.push_back(std::move(n));
+    }
+
     return nodes;
 }
 
@@ -380,7 +415,102 @@ std::string MuJoCoPlugin::GenerateCode(
         }
     }
 
+    if (node_type_name == "MuJoCoPlant") {
+        std::string mjcf = get("mjcf_path", "model.xml");
+        std::string timestep = get("timestep", "0.002");
+        std::string frame_skip = get("frame_skip", "1");
+        std::string iface = get("interface", "bus");
+        return
+            "import mujoco\n"
+            "import numpy as np\n"
+            "\n"
+            "model = mujoco.MjModel.from_xml_path('" + mjcf + "')\n"
+            "data = mujoco.MjData(model)\n"
+            "\n"
+            "# Simulation step\n"
+            "def plant_step(ctrl):\n"
+            "    data.ctrl[:] = ctrl\n"
+            "    for _ in range(" + frame_skip + "):\n"
+            "        mujoco.mj_step(model, data)\n"
+            "    sensor = data.sensordata.copy()\n"
+            "    return sensor\n";
+    }
+
     return "# Unknown MuJoCo node type: " + node_type_name + "\n";
+}
+
+DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
+    const std::string& node_type_name,
+    const std::map<std::string, std::string>& parameters)
+{
+    if (node_type_name != "MuJoCoPlant") return {};
+
+    auto it = parameters.find("mjcf_path");
+    if (it == parameters.end() || it->second.empty()) return {};
+
+    // Parse the MJCF file to discover actuators and sensors
+    MjcfModelInfo info = ParseMjcfFile(it->second);
+    if (!info.valid) {
+        spdlog::warn("MuJoCoPlant: Failed to parse MJCF '{}': {}", it->second, info.error);
+        return {};
+    }
+
+    DynamicPinResult result;
+
+    // Check interface mode
+    auto iface_it = parameters.find("interface");
+    std::string iface = (iface_it != parameters.end()) ? iface_it->second : "bus";
+
+    if (iface == "bus") {
+        // Per-actuator input pins
+        for (const auto& act : info.actuators) {
+            PluginNodeTypeInfo::PinInfo pin;
+            pin.name = act.name;
+            pin.type = "Scalar";
+            pin.is_input = true;
+            result.pins.push_back(std::move(pin));
+        }
+    } else {
+        // Single vector input
+        PluginNodeTypeInfo::PinInfo pin;
+        pin.name = "u";
+        pin.type = "Tensor";
+        pin.is_input = true;
+        result.pins.push_back(std::move(pin));
+    }
+
+    // Per-sensor output pins (bus mode) or single sensor vector
+    if (iface == "bus") {
+        for (const auto& sens : info.sensors) {
+            PluginNodeTypeInfo::PinInfo pin;
+            pin.name = sens.name;
+            pin.type = (sens.dim == 1) ? "Scalar" : "Tensor";
+            pin.is_input = false;
+            result.pins.push_back(std::move(pin));
+        }
+    } else {
+        PluginNodeTypeInfo::PinInfo pin;
+        pin.name = "sensor";
+        pin.type = "Tensor";
+        pin.is_input = false;
+        result.pins.push_back(std::move(pin));
+    }
+
+    // Always add image outputs
+    result.pins.push_back({"rgb", "Image", false});
+    result.pins.push_back({"depth", "Image", false});
+
+    // Metadata
+    result.metadata["model_name"] = info.model_name;
+    result.metadata["nu"] = std::to_string(info.nu);
+    result.metadata["nq"] = std::to_string(info.nq);
+    result.metadata["nv"] = std::to_string(info.nv);
+    result.metadata["nsensor"] = std::to_string(info.nsensor);
+    result.metadata["timestep"] = std::to_string(info.timestep);
+
+    spdlog::info("MuJoCoPlant: Resolved {} pins for '{}' ({})",
+                 result.pins.size(), it->second, info.model_name);
+    return result;
 }
 
 } // namespace cyxwiz::plugin::mujoco

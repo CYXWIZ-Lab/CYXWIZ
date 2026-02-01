@@ -80,6 +80,8 @@ add_library(mujoco_plugin SHARED
     src/mj_env_browser_panel.cpp
     src/mj_renderer.cpp
     src/mj_viewport_panel.cpp
+    src/mj_mjcf_parser.cpp
+    src/mj_simulation_executor.cpp
 )
 
 target_include_directories(mujoco_plugin PRIVATE

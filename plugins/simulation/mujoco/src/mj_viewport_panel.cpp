@@ -1,4 +1,5 @@
 #include "mj_viewport_panel.h"
+#include "mj_simulation_executor.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -30,6 +31,9 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
     }
 
     RenderToolbar(env, renderer);
+    if (sim_executor_) {
+        RenderSimControls();
+    }
     ImGui::Separator();
     RenderViewport(env, renderer);
 
@@ -166,6 +170,73 @@ void MjViewportPanel::RenderViewport(MjEnvManager& env, MjRenderer& renderer) {
         // Scroll wheel: zoom
         if (io.MouseWheel != 0.0f) {
             renderer.ZoomCamera(io.MouseWheel);
+        }
+    }
+}
+
+// =============================================================================
+// Simulation Controls (when executor is attached)
+// =============================================================================
+
+void MjViewportPanel::RenderSimControls() {
+    if (!sim_executor_) return;
+
+    auto state = sim_executor_->GetState();
+    auto mode = sim_executor_->GetMode();
+
+    // Mode selector + controls on same line
+    ImGui::Spacing();
+
+    if (mode == SimMode::Stopped) {
+        if (ImGui::Button("Manual Control")) {
+            sim_executor_->StartManualControl();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("RL Training")) {
+            sim_executor_->StartRLTraining();
+        }
+    } else {
+        // Play/Pause/Step/Stop
+        if (state == SimState::Running) {
+            if (ImGui::Button("Pause##sim")) {
+                sim_executor_->Pause();
+            }
+        } else if (state == SimState::Paused) {
+            if (ImGui::Button("Resume##sim")) {
+                sim_executor_->Resume();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Step##sim")) {
+            sim_executor_->SingleStep();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Stop##sim")) {
+            sim_executor_->Stop();
+        }
+
+        // Real-time factor slider
+        ImGui::SameLine();
+        ImGui::Text("|");
+        ImGui::SameLine();
+        float rtf = sim_executor_->GetRealtimeFactor();
+        ImGui::SetNextItemWidth(100.0f);
+        if (ImGui::SliderFloat("##rtf", &rtf, 0.0f, 5.0f, "%.1fx")) {
+            sim_executor_->SetRealtimeFactor(rtf);
+        }
+        ImGui::SameLine();
+        ImGui::Text("RT");
+
+        // Metrics
+        auto metrics = sim_executor_->GetMetrics();
+        ImGui::SameLine(ImGui::GetWindowWidth() - 350);
+        if (mode == SimMode::ManualControl) {
+            ImGui::Text("t=%.3fs | Steps: %d | RTF: %.1f",
+                        metrics.sim_time, metrics.step_count, metrics.real_time_factor);
+        } else {
+            ImGui::Text("Steps: %d | Ep: %d | R: %.1f | Mean: %.1f",
+                        metrics.step_count, metrics.episode_count,
+                        metrics.episode_reward, metrics.mean_reward);
         }
     }
 }

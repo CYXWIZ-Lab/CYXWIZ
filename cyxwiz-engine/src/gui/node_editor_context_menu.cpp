@@ -636,6 +636,31 @@ void NodeEditor::ShowContextMenu() {
         ImGui::EndMenu();
     }
 
+    // ===== SIGNAL / CONTROL =====
+    if (ImGui::BeginMenu("Signal / Control")) {
+        if (ImGui::MenuItem("Slider")) {
+            AddNode(NodeType::SignalSlider, "Slider");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Sine Wave")) {
+            AddNode(NodeType::SineWave, "Sine Wave");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Step")) {
+            AddNode(NodeType::StepSignal, "Step");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Ramp")) {
+            AddNode(NodeType::RampSignal, "Ramp");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Scope")) {
+            AddNode(NodeType::SignalScope, "Scope");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
     ImGui::Separator();
 
     // ===== OUTPUT =====
