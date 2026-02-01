@@ -17,8 +17,13 @@ public:
     PluginNodeRegistry(const PluginNodeRegistry&) = delete;
     PluginNodeRegistry& operator=(const PluginNodeRegistry&) = delete;
 
-    // Register all node types from a provider
+    // Register all node types from a provider (calls GetNodeTypes across DLL boundary)
     void Register(const std::string& plugin_id, INodeProvider* provider);
+
+    // Register a single node type with engine-side copies (safe for cross-DLL use)
+    void RegisterDirect(const std::string& plugin_id,
+                        PluginNodeTypeInfo&& info,
+                        INodeProvider* provider);
 
     // Remove all registrations for a plugin
     void RemoveByPlugin(const std::string& plugin_id);

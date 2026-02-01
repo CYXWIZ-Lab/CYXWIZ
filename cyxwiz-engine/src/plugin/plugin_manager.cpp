@@ -79,6 +79,20 @@ std::vector<std::filesystem::path> PluginManager::DiscoverPlugins() const {
 // ============================================================================
 
 bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
+    // Pre-check: parse manifest to get ID before loading DLL.
+    // Avoids loading (and then unloading) a DLL that's already in use,
+    // which would FreeLibrary the active plugin's code and crash.
+    {
+        PluginManifest manifest;
+        std::string manifest_error;
+        if (PluginLoader::ParseManifest(plugin_dir, manifest, manifest_error)) {
+            std::lock_guard lock(mutex_);
+            if (plugins_.count(manifest.id)) {
+                return false;  // Already loaded, skip silently
+            }
+        }
+    }
+
     std::string error;
     auto loaded = PluginLoader::LoadFromDirectory(plugin_dir, error);
 
@@ -91,7 +105,7 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
 
     std::lock_guard lock(mutex_);
 
-    // Check for duplicate
+    // Double-check for duplicate (race condition guard)
     if (plugins_.count(id)) {
         spdlog::warn("PluginManager: Plugin {} already loaded, skipping", id);
         return false;
@@ -228,8 +242,53 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             spdlog::info("PluginManager: Registered {} panels for '{}'", dll_panels.size(), plugin_id);
         }
         if (auto* p = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"))) {
-            PluginNodeRegistry::Instance().Register(plugin_id, p);
-            spdlog::info("PluginManager: Registered INodeProvider for '{}'", plugin_id);
+            // Use EnumerateNodeTypes callback to avoid passing std::vector across DLL boundary.
+            // The DLL iterates its own vector and passes C strings via callback — no cross-DLL
+            // allocation issues since all std::string construction happens in the engine.
+            struct EnumState {
+                std::string plugin_id;
+                INodeProvider* provider;
+                PluginNodeTypeInfo current;
+                size_t count = 0;
+            };
+            EnumState state;
+            state.plugin_id = plugin_id;
+            state.provider = p;
+
+            NodeTypeCallback cb{};
+            cb.user_data = &state;
+            cb.on_node = [](void* ud, const char* type_name, const char* display_name,
+                           const char* category, const char* description,
+                           uint32_t color, const char* icon,
+                           bool supports_dynamic_pins, const char* dynamic_pin_trigger) {
+                auto* s = static_cast<EnumState*>(ud);
+                s->current = PluginNodeTypeInfo{};
+                s->current.type_name = type_name;
+                s->current.display_name = display_name;
+                s->current.category = category;
+                s->current.description = description;
+                s->current.color = color;
+                s->current.icon = icon;
+                s->current.supports_dynamic_pins = supports_dynamic_pins;
+                s->current.dynamic_pin_trigger = dynamic_pin_trigger;
+            };
+            cb.on_pin = [](void* ud, const char* name, const char* type, bool is_input) {
+                auto* s = static_cast<EnumState*>(ud);
+                s->current.pins.push_back({name, type, is_input});
+            };
+            cb.on_param = [](void* ud, const char* key, const char* value) {
+                auto* s = static_cast<EnumState*>(ud);
+                s->current.default_parameters[key] = value;
+            };
+            cb.on_node_done = [](void* ud) {
+                auto* s = static_cast<EnumState*>(ud);
+                PluginNodeRegistry::Instance().RegisterDirect(
+                    s->plugin_id, std::move(s->current), s->provider);
+                s->count++;
+            };
+
+            p->EnumerateNodeTypes(cb);
+            spdlog::info("PluginManager: Registered {} nodes for '{}'", state.count, plugin_id);
         }
         if (auto* p = static_cast<ITrainingHook*>(instance->QueryInterface("ITrainingHook"))) {
             PluginTrainingHookManager::Instance().RegisterHook(plugin_id, p);

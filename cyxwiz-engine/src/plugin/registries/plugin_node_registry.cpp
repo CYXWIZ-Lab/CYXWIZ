@@ -11,6 +11,9 @@ PluginNodeRegistry& PluginNodeRegistry::Instance() {
 void PluginNodeRegistry::Register(const std::string& plugin_id, INodeProvider* provider) {
     if (!provider) return;
 
+    // NOTE: This calls GetNodeTypes() across the DLL boundary, returning a
+    // DLL-allocated std::vector. Prefer RegisterDirect() from plugin_manager.cpp
+    // where we can deep-copy strings before the DLL vector is destroyed.
     auto types = provider->GetNodeTypes();
     std::lock_guard lock(mutex_);
 
@@ -23,6 +26,19 @@ void PluginNodeRegistry::Register(const std::string& plugin_id, INodeProvider* p
         spdlog::info("PluginNodeRegistry: Registered node {} ({})", info.display_name, qname);
         nodes_[qname] = NodeEntry{plugin_id, std::move(info), provider};
     }
+}
+
+void PluginNodeRegistry::RegisterDirect(const std::string& plugin_id,
+                                         PluginNodeTypeInfo&& info,
+                                         INodeProvider* provider) {
+    std::lock_guard lock(mutex_);
+    std::string qname = plugin_id + ":" + info.type_name;
+    if (nodes_.count(qname)) {
+        spdlog::warn("PluginNodeRegistry: Duplicate node type {}, skipping", qname);
+        return;
+    }
+    spdlog::info("PluginNodeRegistry: Registered node {} ({})", info.display_name, qname);
+    nodes_[qname] = NodeEntry{plugin_id, std::move(info), provider};
 }
 
 void PluginNodeRegistry::RemoveByPlugin(const std::string& plugin_id) {

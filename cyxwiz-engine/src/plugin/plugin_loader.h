@@ -47,19 +47,19 @@ public:
     // Unload a plugin (destroy instance, free DLL)
     static void Unload(LoadedPlugin& plugin);
 
+    // Parse plugin.json from directory (public for pre-load duplicate checks)
+    static bool ParseManifest(
+        const std::filesystem::path& plugin_dir,
+        PluginManifest& manifest_out,
+        std::string& error_out
+    );
+
 private:
     // Platform abstraction
     static void* LoadDLL(const std::filesystem::path& path, std::string& error_out);
     static void  UnloadDLL(void* handle);
     static void* GetSymbol(void* handle, const char* name);
     static std::string GetLastDLLError();
-
-    // Parse plugin.json from directory
-    static bool ParseManifest(
-        const std::filesystem::path& plugin_dir,
-        PluginManifest& manifest_out,
-        std::string& error_out
-    );
 
     // Validate API version compatibility
     static bool ValidateApiVersion(

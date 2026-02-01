@@ -37,11 +37,47 @@ struct DynamicPinResult {
     std::map<std::string, std::string> metadata;  // e.g. "model_name" -> "UR5e"
 };
 
+// Callback for enumerating node types across DLL boundary without returning std::vector.
+// The DLL calls this callback for each node type, passing C strings that the engine copies.
+struct NodeTypeCallback {
+    void* user_data;
+    void (*on_node)(void* user_data,
+                    const char* type_name, const char* display_name,
+                    const char* category, const char* description,
+                    uint32_t color, const char* icon,
+                    bool supports_dynamic_pins, const char* dynamic_pin_trigger);
+    void (*on_pin)(void* user_data,
+                   const char* name, const char* type, bool is_input);
+    void (*on_param)(void* user_data,
+                     const char* key, const char* value);
+    void (*on_node_done)(void* user_data);  // Signals end of current node's pins/params
+};
+
 class INodeProvider {
 public:
     virtual ~INodeProvider() = default;
 
     virtual std::vector<PluginNodeTypeInfo> GetNodeTypes() = 0;
+
+    // Safe cross-DLL enumeration: DLL iterates its own vector and calls back with C strings.
+    // Default implementation delegates to GetNodeTypes() — plugins don't need to override.
+    virtual void EnumerateNodeTypes(const NodeTypeCallback& cb) {
+        auto types = GetNodeTypes();
+        for (const auto& info : types) {
+            cb.on_node(cb.user_data,
+                       info.type_name.c_str(), info.display_name.c_str(),
+                       info.category.c_str(), info.description.c_str(),
+                       info.color, info.icon.c_str(),
+                       info.supports_dynamic_pins, info.dynamic_pin_trigger.c_str());
+            for (const auto& pin : info.pins) {
+                cb.on_pin(cb.user_data, pin.name.c_str(), pin.type.c_str(), pin.is_input);
+            }
+            for (const auto& [k, v] : info.default_parameters) {
+                cb.on_param(cb.user_data, k.c_str(), v.c_str());
+            }
+            cb.on_node_done(cb.user_data);
+        }
+    }
 
     // Generate framework code for a node instance
     virtual std::string GenerateCode(
