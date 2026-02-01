@@ -29,10 +29,14 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     // At runtime, resolve relative to known plugin search paths.
     env_library_.SetAssetsDir("plugins/simulation/mujoco/assets");
 
-    // Wire browser panel load callback to our LoadEnvironment method
+    // Scan for previously downloaded Menagerie models
+    env_library_.ScanDownloadedModels();
+
+    // Wire browser panel load callback and downloader
     browser_panel_.SetLoadCallback([this](const std::string& path) {
         return LoadEnvironment(path);
     });
+    browser_panel_.SetDownloader(&menagerie_downloader_);
 
     state_ = PluginState::Loaded;
     return true;

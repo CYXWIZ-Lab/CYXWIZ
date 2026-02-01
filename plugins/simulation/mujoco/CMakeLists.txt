@@ -15,6 +15,8 @@ set(CMAKE_CXX_STANDARD 20)
 
 # Try find_package first (works if MuJoCo is installed or MUJOCO_DIR is set)
 find_package(mujoco QUIET)
+find_package(httplib CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 if(NOT mujoco_FOUND)
     # Look in common locations
@@ -82,6 +84,7 @@ add_library(mujoco_plugin SHARED
     src/mj_viewport_panel.cpp
     src/mj_mjcf_parser.cpp
     src/mj_simulation_executor.cpp
+    src/mj_menagerie_downloader.cpp
 )
 
 target_include_directories(mujoco_plugin PRIVATE
@@ -95,6 +98,9 @@ target_link_libraries(mujoco_plugin PRIVATE
     mujoco::mujoco
     glad::glad
     glfw
+    httplib::httplib
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 # =============================================================================

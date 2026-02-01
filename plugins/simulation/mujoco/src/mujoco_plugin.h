@@ -14,6 +14,7 @@
 #include <imgui.h>
 #include "plugin/plugin_types.h"
 #include "mj_simulation_executor.h"
+#include "mj_menagerie_downloader.h"
 #include "plugin/plugin_context.h"
 #include "plugin/interfaces/i_training_hook.h"
 #include "plugin/interfaces/i_panel_provider.h"
@@ -101,6 +102,7 @@ private:
     MjEnvLibrary env_library_;
     MjRenderer renderer_;
     MjSimulationExecutor sim_executor_;
+    MjMenagerieDownloader menagerie_downloader_;
     MjViewportPanel viewport_panel_;
     MjEnvBrowserPanel browser_panel_;
 

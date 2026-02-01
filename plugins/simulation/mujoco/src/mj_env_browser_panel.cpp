@@ -1,4 +1,5 @@
 #include "mj_env_browser_panel.h"
+#include "mj_menagerie_downloader.h"
 
 #include <imgui.h>
 #include <algorithm>
@@ -22,7 +23,7 @@ void MjEnvBrowserPanel::Render(MjEnvLibrary& library,
         }
     }
 
-    ImGui::SetNextWindowSize(ImVec2(520, 480), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(580, 520), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Environment Library", visible)) {
         ImGui::End();
         return;
@@ -43,7 +44,7 @@ void MjEnvBrowserPanel::Render(MjEnvLibrary& library,
     int cols = std::max(1, static_cast<int>(panel_width / card_width));
 
     int col = 0;
-    for (const auto& info : library.GetAll()) {
+    for (auto& info : const_cast<std::vector<EnvInfo>&>(library.GetAll())) {
         // Category filter
         if (!selected_category_.empty() && info.category != selected_category_)
             continue;
@@ -103,7 +104,7 @@ void MjEnvBrowserPanel::RenderCategoryTabs(const MjEnvLibrary& library) {
 }
 
 void MjEnvBrowserPanel::RenderEnvCard(const EnvInfo& info,
-                                       const MjEnvLibrary& library,
+                                       MjEnvLibrary& library,
                                        bool is_loaded) {
     ImGui::PushID(info.id.c_str());
 
@@ -124,9 +125,17 @@ void MjEnvBrowserPanel::RenderEnvCard(const EnvInfo& info,
     // Name
     ImGui::TextColored(ImVec4(0.9f, 0.9f, 1.0f, 1.0f), "%s", info.name.c_str());
 
-    // Category badge
-    ImGui::SameLine(card_w - 90);
-    ImGui::TextDisabled("%s", info.category.c_str());
+    // Source badge + category
+    ImGui::SameLine(card_w - 110);
+    if (info.source == EnvSource::Menagerie) {
+        if (info.requires_download) {
+            ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "[Cloud]");
+        } else {
+            ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "[Downloaded]");
+        }
+    } else {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[Builtin]");
+    }
 
     // Description (truncated)
     ImGui::SetCursorScreenPos(ImVec2(card_start.x + 10, card_start.y + 30));
@@ -136,19 +145,51 @@ void MjEnvBrowserPanel::RenderEnvCard(const EnvInfo& info,
 
     // Metadata row
     ImGui::SetCursorScreenPos(ImVec2(card_start.x + 10, card_start.y + 80));
-    ImGui::Text("Obs: %d", info.obs_dim);
-    ImGui::SameLine();
     ImGui::Text("Act: %d", info.act_dim);
     ImGui::SameLine();
-    ImGui::Text("Steps: %d", info.max_steps);
+    ImGui::Text("Obs: %d", info.obs_dim);
+    if (info.source == EnvSource::Menagerie) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", info.category.c_str());
+    } else {
+        ImGui::SameLine();
+        ImGui::Text("Steps: %d", info.max_steps);
+    }
 
-    // Load button
+    // Action button area
     ImGui::SetCursorScreenPos(ImVec2(card_start.x + 10, card_start.y + 108));
+
+    bool is_downloading = (downloader_ && downloader_->IsDownloading() && downloading_env_id_ == info.id);
+
     if (is_loaded) {
         ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "Loaded");
+    } else if (is_downloading) {
+        // Progress bar
+        float progress = downloader_->GetProgress();
+        ImGui::SetNextItemWidth(card_w - 20);
+        ImGui::ProgressBar(progress, ImVec2(card_w - 20, 20),
+                           downloader_->GetStatusText().c_str());
+    } else if (info.source == EnvSource::Menagerie && info.requires_download) {
+        // Download button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.35f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.45f, 0.75f, 1.0f));
+        if (ImGui::Button("Download", ImVec2(card_w - 20, 22))) {
+            if (downloader_ && !downloader_->IsDownloading()) {
+                downloading_env_id_ = info.id;
+                std::string dest = library.GetMenagerieModelDir(info);
+                downloader_->DownloadModelAsync(info.repo_path, dest,
+                    [this, id = info.id, &library](bool success, const std::string&) {
+                        if (success) {
+                            library.MarkDownloaded(id);
+                        }
+                        downloading_env_id_.clear();
+                    });
+            }
+        }
+        ImGui::PopStyleColor(2);
     } else {
+        // Load button (builtin or already downloaded)
         if (ImGui::Button("Load", ImVec2(card_w - 20, 22))) {
-            // Defer load to next frame — LoadEnvironment switches GL contexts
             pending_load_path_ = library.GetAssetPath(info);
             pending_load_id_ = info.id;
         }
