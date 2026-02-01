@@ -291,6 +291,7 @@ private:
     void RenderViewMenu();
     void RenderNodesMenu();
     void RenderTrainMenu();
+    void RenderSimulationMenu();
     void RenderDatasetMenu();
     void RenderScriptMenu();
     void RenderPlotsMenu();

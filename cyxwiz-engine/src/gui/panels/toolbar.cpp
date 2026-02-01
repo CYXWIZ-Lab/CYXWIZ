@@ -271,6 +271,7 @@ void ToolbarPanel::Render() {
         RenderViewMenu();
         RenderNodesMenu();
         RenderTrainMenu();
+        RenderSimulationMenu();
         RenderToolsMenu();
         RenderDatasetMenu();
         RenderScriptMenu();

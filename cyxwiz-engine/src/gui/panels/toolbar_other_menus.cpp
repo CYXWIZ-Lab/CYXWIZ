@@ -119,6 +119,56 @@ void ToolbarPanel::RenderTrainMenu() {
     }
 }
 
+void ToolbarPanel::RenderSimulationMenu() {
+    if (ImGui::BeginMenu("Simulation")) {
+        auto& panel_reg = cyxwiz::plugin::PluginPanelRegistry::Instance();
+
+        // Check if MuJoCo viewport is open (indicates plugin is loaded)
+        bool has_viewport = panel_reg.HasPanel("mujoco_viewport");
+        bool viewport_visible = has_viewport && panel_reg.IsPanelVisible("mujoco_viewport");
+
+        if (ImGui::MenuItem(ICON_FA_PLAY " Run Simulation", "Ctrl+F5", false, has_viewport)) {
+            // TODO: Forward to simulation executor
+        }
+
+        if (ImGui::MenuItem(ICON_FA_PAUSE " Pause", "Ctrl+F6", false, has_viewport)) {
+            // TODO: Forward to simulation executor
+        }
+
+        if (ImGui::MenuItem(ICON_FA_STOP " Stop", "Ctrl+F7", false, has_viewport)) {
+            // TODO: Forward to simulation executor
+        }
+
+        if (ImGui::MenuItem(ICON_FA_FORWARD_STEP " Step Once", "F10", false, has_viewport)) {
+            // TODO: Forward to simulation executor
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(ICON_FA_DESKTOP " Open Viewport", nullptr, viewport_visible, has_viewport)) {
+            panel_reg.TogglePanelVisible("mujoco_viewport");
+        }
+
+        bool browser_visible = has_viewport && panel_reg.IsPanelVisible("mujoco_env_browser");
+        if (ImGui::MenuItem(ICON_FA_MICROCHIP " Environment Library", nullptr, browser_visible, has_viewport)) {
+            panel_reg.TogglePanelVisible("mujoco_env_browser");
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(ICON_FA_FILE_IMPORT " Load MJCF Model...", "Ctrl+Shift+M", false, has_viewport)) {
+            // TODO: Open file dialog for MJCF
+        }
+
+        if (!has_viewport) {
+            ImGui::Separator();
+            ImGui::TextDisabled("MuJoCo plugin not loaded");
+        }
+
+        ImGui::EndMenu();
+    }
+}
+
 void ToolbarPanel::RenderDatasetMenu() {
     if (ImGui::BeginMenu("Dataset")) {
         if (ImGui::MenuItem("Import Dataset...")) {

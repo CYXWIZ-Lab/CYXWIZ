@@ -129,7 +129,8 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "import torch\n";
     code += "import torch.nn as nn\n";
     code += "import torch.nn.functional as F\n";
-    code += "import torch.optim as optim\n\n";
+    code += "import torch.optim as optim\n";
+    code += "import numpy as np\n\n";
 
     // Model class
     code += "class GeneratedModel(nn.Module):\n";
@@ -260,6 +261,65 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
 
             case NodeType::LinearAttention:
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                break;
+
+            // ===== Signal / Control Nodes =====
+            case NodeType::Constant: {
+                std::string val = "0.0";
+                auto it = node->parameters.find("value");
+                if (it != node->parameters.end() && !it->second.empty()) val = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = " + val + "\n";
+                break;
+            }
+            case NodeType::SignalSlider: {
+                std::string val = "0.0";
+                auto it = node->parameters.find("value");
+                if (it != node->parameters.end() && !it->second.empty()) val = it->second;
+                std::string mn = "-1.0", mx = "1.0";
+                it = node->parameters.find("min");
+                if (it != node->parameters.end() && !it->second.empty()) mn = it->second;
+                it = node->parameters.find("max");
+                if (it != node->parameters.end() && !it->second.empty()) mx = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = " + val + "  # slider [" + mn + ", " + mx + "]\n";
+                break;
+            }
+            case NodeType::SineWave: {
+                std::string amp = "1.0", freq = "1.0", phase = "0.0", offset = "0.0";
+                auto it = node->parameters.find("amplitude");
+                if (it != node->parameters.end() && !it->second.empty()) amp = it->second;
+                it = node->parameters.find("frequency");
+                if (it != node->parameters.end() && !it->second.empty()) freq = it->second;
+                it = node->parameters.find("phase");
+                if (it != node->parameters.end() && !it->second.empty()) phase = it->second;
+                it = node->parameters.find("offset");
+                if (it != node->parameters.end() && !it->second.empty()) offset = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = " + amp + " * np.sin(2 * np.pi * " + freq + " * t + " + phase + ") + " + offset + "\n";
+                break;
+            }
+            case NodeType::StepSignal: {
+                std::string step_t = "0.5", init = "0.0", final_v = "1.0";
+                auto it = node->parameters.find("step_time");
+                if (it != node->parameters.end() && !it->second.empty()) step_t = it->second;
+                it = node->parameters.find("initial_value");
+                if (it != node->parameters.end() && !it->second.empty()) init = it->second;
+                it = node->parameters.find("final_value");
+                if (it != node->parameters.end() && !it->second.empty()) final_v = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = " + final_v + " if t >= " + step_t + " else " + init + "\n";
+                break;
+            }
+            case NodeType::RampSignal: {
+                std::string start = "0.0", end = "1.0", dur = "5.0";
+                auto it = node->parameters.find("start_value");
+                if (it != node->parameters.end() && !it->second.empty()) start = it->second;
+                it = node->parameters.find("end_value");
+                if (it != node->parameters.end() && !it->second.empty()) end = it->second;
+                it = node->parameters.find("duration");
+                if (it != node->parameters.end() && !it->second.empty()) dur = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = np.clip(" + start + " + (" + end + " - " + start + ") * t / " + dur + ", " + start + ", " + end + ")\n";
+                break;
+            }
+            case NodeType::SignalScope:
+                code += "        # Scope: visualize connected signal\n";
                 break;
 
             default:

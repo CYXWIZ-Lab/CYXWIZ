@@ -3,9 +3,15 @@
 #include "../core/data_registry.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
+#include <implot.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <queue>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+#endif
 #include <set>
 #include <algorithm>
 
@@ -1579,6 +1585,54 @@ void Properties::RenderNodeProperties(MLNode& node) {
             if (ImGui::Checkbox("Auto Scale", &auto_s)) {
                 as = auto_s ? "true" : "false";
             }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Real-time signal plot
+            auto& buf = scope_buffers_[node.id];
+            buf.max_samples = win;
+
+            // Generate demo data when no simulation is running
+            // (will be replaced by real simulation data when connected)
+            scope_demo_time_ += ImGui::GetIO().DeltaTime;
+            buf.Push(scope_demo_time_, std::sin(2.0f * 3.14159f * 0.5f * scope_demo_time_));
+
+            if (!buf.times.empty()) {
+                // Copy deque to contiguous arrays for ImPlot
+                std::vector<float> t_arr(buf.times.begin(), buf.times.end());
+                std::vector<float> v_arr(buf.values.begin(), buf.values.end());
+
+                ImPlotFlags plot_flags = ImPlotFlags_NoTitle;
+                if (ImPlot::BeginPlot("##scope_plot", ImVec2(-1, 200), plot_flags)) {
+                    ImPlotAxisFlags x_flags = ImPlotAxisFlags_NoLabel;
+                    ImPlotAxisFlags y_flags = auto_s ? (ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoLabel) : ImPlotAxisFlags_NoLabel;
+                    ImPlot::SetupAxes("Time (s)", "Value", x_flags, y_flags);
+
+                    // Auto-scroll X axis to follow latest data
+                    if (!t_arr.empty()) {
+                        float t_max = t_arr.back();
+                        float t_window = win * 0.016f;  // Approximate window in seconds
+                        if (t_window < 2.0f) t_window = 2.0f;
+                        ImPlot::SetupAxisLimits(ImAxis_X1, t_max - t_window, t_max, ImGuiCond_Always);
+                    }
+
+                    ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.0f, 0.9f, 0.8f, 1.0f));
+                    ImPlot::PlotLine("Signal", t_arr.data(), v_arr.data(), static_cast<int>(t_arr.size()));
+                    ImPlot::PopStyleColor();
+                    ImPlot::EndPlot();
+                }
+            }
+
+            // Controls
+            if (ImGui::Button("Clear")) {
+                buf.Clear();
+                scope_demo_time_ = 0.0f;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Samples: %d", static_cast<int>(buf.times.size()));
+
             break;
         }
 
@@ -1587,8 +1641,10 @@ void Properties::RenderNodeProperties(MLNode& node) {
             auto info_opt = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeTypeInfoCopy(
                 node.plugin_qualified_name);
 
+            std::string node_type_name;
             if (info_opt.has_value()) {
                 const auto& info = info_opt.value();
+                node_type_name = info.type_name;
                 ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.8f, 1.0f), "%s", info.display_name.c_str());
                 if (!info.description.empty()) {
                     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", info.description.c_str());
@@ -1596,50 +1652,186 @@ void Properties::RenderNodeProperties(MLNode& node) {
                 ImGui::Separator();
             }
 
-            // Render editable parameters (skip internal keys)
-            for (auto& [key, value] : node.parameters) {
-                if (key == "plugin_qualified_name") continue;
-                if (key.starts_with("_meta_")) continue;
-
-                char buf[512];
-                strncpy(buf, value.c_str(), sizeof(buf) - 1);
-                buf[sizeof(buf) - 1] = '\0';
-
-                ImGui::Text("%s:", key.c_str());
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(200.0f);
-                std::string label = "##plugin_param_" + key;
-                if (ImGui::InputText(label.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                    value = buf;
-
-                    // If this parameter is the dynamic pin trigger, resolve pins
-                    if (node.has_dynamic_pins && key == node.dynamic_pin_trigger && node_editor_) {
+            // ===== MuJoCo Plant — Custom Properties UI =====
+            if (node_type_name == "MuJoCoPlant") {
+                // MJCF File Path with Browse button
+                ImGui::Text("MJCF Model:");
+                std::string& mjcf_path = node.parameters["mjcf_path"];
+                char path_buf[512];
+                strncpy(path_buf, mjcf_path.c_str(), sizeof(path_buf) - 1);
+                path_buf[sizeof(path_buf) - 1] = '\0';
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.0f);
+                if (ImGui::InputText("##mjcf_path", path_buf, sizeof(path_buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    mjcf_path = path_buf;
+                    if (node.has_dynamic_pins && node_editor_) {
                         node_editor_->ResolveDynamicPins(node.id);
                     }
-
                     InvalidateShapes();
                 }
-            }
-
-            // Show dynamic pin metadata if available
-            bool has_meta = false;
-            for (const auto& [key, value] : node.parameters) {
-                if (key.starts_with("_meta_")) {
-                    if (!has_meta) {
-                        ImGui::Separator();
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Model Info:");
-                        has_meta = true;
+                ImGui::SameLine();
+                if (ImGui::Button("Browse")) {
+#ifdef _WIN32
+                    OPENFILENAMEA ofn = {};
+                    char file[512] = {};
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.lpstrFilter = "MJCF Files (*.xml)\0*.xml\0All Files\0*.*\0";
+                    ofn.lpstrFile = file;
+                    ofn.nMaxFile = sizeof(file);
+                    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+                    if (GetOpenFileNameA(&ofn)) {
+                        mjcf_path = file;
+                        if (node.has_dynamic_pins && node_editor_) {
+                            node_editor_->ResolveDynamicPins(node.id);
+                        }
+                        InvalidateShapes();
                     }
-                    std::string display_key = key.substr(6);  // strip "_meta_"
-                    ImGui::Text("  %s: %s", display_key.c_str(), value.c_str());
+#endif
+                }
+
+                ImGui::Spacing();
+
+                // Interface mode dropdown
+                std::string& iface = node.parameters["interface"];
+                if (iface.empty()) iface = "bus";
+                int iface_idx = (iface == "vector") ? 1 : 0;
+                ImGui::Text("Interface:");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f);
+                const char* iface_items[] = { "Bus (per-actuator)", "Vector (single array)" };
+                if (ImGui::Combo("##iface_mode", &iface_idx, iface_items, 2)) {
+                    iface = (iface_idx == 1) ? "vector" : "bus";
+                    if (node.has_dynamic_pins && node_editor_) {
+                        node_editor_->ResolveDynamicPins(node.id);
+                    }
+                    InvalidateShapes();
+                }
+
+                // Timestep
+                std::string& ts = node.parameters["timestep"];
+                if (ts.empty()) ts = "0.002";
+                float timestep = std::stof(ts);
+                ImGui::Text("Timestep:");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(100.0f);
+                if (ImGui::InputFloat("##timestep", &timestep, 0.001f, 0.01f, "%.4f")) {
+                    if (timestep < 0.0001f) timestep = 0.0001f;
+                    ts = std::to_string(timestep);
+                }
+
+                // Frame skip
+                std::string& fs = node.parameters["frame_skip"];
+                if (fs.empty()) fs = "1";
+                int frame_skip = std::stoi(fs);
+                ImGui::Text("Frame Skip:");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(100.0f);
+                if (ImGui::InputInt("##frame_skip", &frame_skip)) {
+                    if (frame_skip < 1) frame_skip = 1;
+                    fs = std::to_string(frame_skip);
+                }
+
+                // Model info (from dynamic pin metadata)
+                bool has_meta = false;
+                for (const auto& [key, value] : node.parameters) {
+                    if (key.starts_with("_meta_")) {
+                        if (!has_meta) {
+                            ImGui::Spacing();
+                            ImGui::Separator();
+                            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Model Info:");
+                            has_meta = true;
+                        }
+                        std::string display_key = key.substr(6);
+                        ImGui::Text("  %s: %s", display_key.c_str(), value.c_str());
+                    }
+                }
+
+                // Pin summary
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Text("Actuator Inputs: %d", static_cast<int>(node.inputs.size()));
+                ImGui::Text("Sensor Outputs: %d", static_cast<int>(node.outputs.size()));
+
+                // Actuator table
+                if (!node.inputs.empty() && ImGui::TreeNode("Actuator Pins")) {
+                    if (ImGui::BeginTable("##act_table", 2, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg)) {
+                        ImGui::TableSetupColumn("Pin", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                        ImGui::TableHeadersRow();
+                        for (const auto& pin : node.inputs) {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", pin.name.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::TextDisabled("Scalar");
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::TreePop();
+                }
+
+                if (!node.outputs.empty() && ImGui::TreeNode("Sensor Pins")) {
+                    if (ImGui::BeginTable("##sens_table", 2, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg)) {
+                        ImGui::TableSetupColumn("Pin", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                        ImGui::TableHeadersRow();
+                        for (const auto& pin : node.outputs) {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s", pin.name.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::TextDisabled("Tensor");
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::TreePop();
                 }
             }
+            // ===== Generic Plugin Node Properties =====
+            else {
+                // Render editable parameters (skip internal keys)
+                for (auto& [key, value] : node.parameters) {
+                    if (key == "plugin_qualified_name") continue;
+                    if (key.starts_with("_meta_")) continue;
 
-            // Show pin summary
-            ImGui::Separator();
-            ImGui::Text("Inputs: %d  Outputs: %d",
-                        static_cast<int>(node.inputs.size()),
-                        static_cast<int>(node.outputs.size()));
+                    char buf[512];
+                    strncpy(buf, value.c_str(), sizeof(buf) - 1);
+                    buf[sizeof(buf) - 1] = '\0';
+
+                    ImGui::Text("%s:", key.c_str());
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(200.0f);
+                    std::string label = "##plugin_param_" + key;
+                    if (ImGui::InputText(label.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        value = buf;
+
+                        if (node.has_dynamic_pins && key == node.dynamic_pin_trigger && node_editor_) {
+                            node_editor_->ResolveDynamicPins(node.id);
+                        }
+
+                        InvalidateShapes();
+                    }
+                }
+
+                // Show dynamic pin metadata if available
+                bool has_meta = false;
+                for (const auto& [key, value] : node.parameters) {
+                    if (key.starts_with("_meta_")) {
+                        if (!has_meta) {
+                            ImGui::Separator();
+                            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Model Info:");
+                            has_meta = true;
+                        }
+                        std::string display_key = key.substr(6);
+                        ImGui::Text("  %s: %s", display_key.c_str(), value.c_str());
+                    }
+                }
+
+                // Show pin summary
+                ImGui::Separator();
+                ImGui::Text("Inputs: %d  Outputs: %d",
+                            static_cast<int>(node.inputs.size()),
+                            static_cast<int>(node.outputs.size()));
+            }
             break;
         }
 
