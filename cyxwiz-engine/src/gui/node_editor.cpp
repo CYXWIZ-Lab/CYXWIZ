@@ -948,7 +948,15 @@ void NodeEditor::ShowToolbar() {
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.45f, 0.6f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.55f, 0.7f, 1.0f));
-            if (ImGui::Button(ICON_FA_PLAY " Run Sim")) {
+            bool rl_running = rl_executor_ && rl_executor_->IsTraining();
+            if (rl_running) {
+                ImGui::BeginDisabled();
+                ImGui::Button(ICON_FA_PLAY " Run Sim");
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Stop RL training first");
+                }
+            } else if (ImGui::Button(ICON_FA_PLAY " Run Sim")) {
                 OnRunSimulation();
             }
             ImGui::PopStyleColor(2);
@@ -975,7 +983,14 @@ void NodeEditor::ShowToolbar() {
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.5f, 0.3f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.6f, 0.4f, 1.0f));
-            if (ImGui::Button(ICON_FA_PLAY " Train RL")) {
+            if (is_simulating_) {
+                ImGui::BeginDisabled();
+                ImGui::Button(ICON_FA_PLAY " Train RL");
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Stop graph simulation first");
+                }
+            } else if (ImGui::Button(ICON_FA_PLAY " Train RL")) {
                 OnStartRLTraining();
             }
             ImGui::PopStyleColor(2);

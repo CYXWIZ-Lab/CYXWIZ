@@ -29,6 +29,10 @@ public:
     bool IsPlaying() const { return playing_; }
     void SetPlaying(bool playing) { playing_ = playing; }
 
+    // Graph simulation driving physics (disables local sim controls)
+    void SetGraphSimActive(bool active) { graph_sim_active_ = active; graph_sim_frames_ = 0; }
+    bool IsGraphSimActive() const { return graph_sim_active_; }
+
 private:
     void RenderToolbar(MjEnvManager& env, MjRenderer& renderer);
     void RenderSimControls();
@@ -37,6 +41,8 @@ private:
 
     MjSimulationExecutor* sim_executor_ = nullptr;
     bool playing_ = false;
+    bool graph_sim_active_ = false;
+    int graph_sim_frames_ = 0;  // frames since last SetGraphSimActive(true)
     bool show_settings_ = false;
     float playback_speed_ = 1.0f;
     int steps_per_frame_ = 1;

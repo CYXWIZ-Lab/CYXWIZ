@@ -94,6 +94,7 @@ public:
     MjSimulationExecutor& GetSimExecutor() { return sim_executor_; }
 
     void SetMainWindow(GLFWwindow* window) { main_window_ = window; }
+    void SetGraphSimActive(bool active) { viewport_panel_.SetGraphSimActive(active); }
 
 private:
     PluginManifest manifest_;

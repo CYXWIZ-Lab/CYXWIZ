@@ -57,6 +57,7 @@ bool MuJoCoPlugin::OnInitialize(PluginContext& ctx) {
 
 void MuJoCoPlugin::OnShutdown(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnShutdown");
+    sim_executor_.Stop();  // Must stop before freeing model/renderer
     renderer_.Shutdown();
     env_manager_.Close();
     current_env_id_.clear();
@@ -131,6 +132,7 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
     // engine's render loop where the GL context is guaranteed current.
     if (renderer_needs_init_ && env_manager_.IsLoaded() && main_window_) {
         renderer_needs_init_ = false;
+        renderer_.SetPhysicsMutex(&env_manager_.GetPhysicsMutex());
         if (!renderer_.Initialize(env_manager_.GetModel(), 640, 480, main_window_)) {
             spdlog::warn("[MuJoCo] Renderer initialization failed â€” viewport disabled");
         } else {
@@ -465,6 +467,15 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
     PluginNodeEvalResult result;
 
     if (ctx.node_type_name == "MuJoCoPlant") {
+        // If sim_executor is already running (manual control or RL training),
+        // don't step physics here — would cause concurrent access crash
+        if (sim_executor_.GetMode() != SimMode::Stopped) {
+            sim_executor_.Stop();  // Request stop and wait for thread to finish
+        }
+
+        // Signal viewport that graph sim is driving physics
+        viewport_panel_.SetGraphSimActive(true);
+
         if (!env_manager_.IsLoaded()) {
             result.success = false;
             result.error_message = "No MuJoCo model loaded";
@@ -494,25 +505,48 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
             }
         }
 
-        // Apply actuator inputs
-        sim_executor_.SetActuatorInputs(actuators);
+        // Step physics directly (avoid sim_executor thread contention)
+        mjData* d = env_manager_.GetMutableData();
+        const mjModel* m = env_manager_.GetModel();
+        if (!d || !m) {
+            result.success = false;
+            result.error_message = "MuJoCo model/data not available";
+            return result;
+        }
 
-        // Step the simulation
-        sim_executor_.SingleStep();
-
-        // Read sensor outputs
-        auto sensors = sim_executor_.GetSensorOutputs();
-        for (const auto& s : sensors) {
-            if (s.values.size() == 1) {
-                result.output_values[s.name] = s.values[0];
-            } else {
-                result.output_values[s.name] = s.values;
+        // Apply actuator controls
+        for (const auto& act : actuators) {
+            int id = mj_name2id(m, mjOBJ_ACTUATOR, act.name.c_str());
+            if (id >= 0 && id < m->nu) {
+                d->ctrl[id] = act.value;
             }
         }
 
-        // Read qpos and qvel from MuJoCo data
-        const mjData* d = env_manager_.GetData();
-        const mjModel* m = env_manager_.GetModel();
+        // Step physics under physics mutex (prevents concurrent render access)
+        int frame_skip = env_manager_.GetFrameSkip();
+        {
+            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+            for (int i = 0; i < frame_skip; i++) {
+                mj_step(m, d);
+            }
+        }
+
+        // Read sensor outputs
+        for (int i = 0; i < m->nsensor; i++) {
+            const char* name = mj_id2name(m, mjOBJ_SENSOR, i);
+            std::string sname = name ? name : ("sensor_" + std::to_string(i));
+            int dim = m->sensor_dim[i];
+            int adr = m->sensor_adr[i];
+            if (dim == 1 && adr < m->nsensordata) {
+                result.output_values[sname] = static_cast<float>(d->sensordata[adr]);
+            } else {
+                std::vector<float> vals(dim);
+                for (int j = 0; j < dim && (adr + j) < m->nsensordata; j++) {
+                    vals[j] = static_cast<float>(d->sensordata[adr + j]);
+                }
+                result.output_values[sname] = std::move(vals);
+            }
+        }
         if (d && m) {
             std::vector<float> qpos(d->qpos, d->qpos + m->nq);
             std::vector<float> qvel(d->qvel, d->qvel + m->nv);

@@ -12,6 +12,7 @@
 #include <deque>
 #include <map>
 #include <functional>
+#include <mutex>
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -80,6 +81,9 @@ public:
     const mjData* GetData() const { return data_; }
     mjData* GetMutableData() { return data_; }
 
+    // Thread safety: lock before accessing mjData from render thread
+    std::mutex& GetPhysicsMutex() { return physics_mutex_; }
+
 private:
     float ComputeDefaultReward(const std::vector<float>& action) const;
     bool CheckDefaultTermination() const;
@@ -87,6 +91,7 @@ private:
 
     mjModel* model_ = nullptr;
     mjData* data_ = nullptr;
+    mutable std::mutex physics_mutex_;
 
     int max_episode_steps_ = 1000;
     int frame_skip_ = 1;

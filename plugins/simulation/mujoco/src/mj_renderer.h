@@ -15,6 +15,7 @@
 // This decouples MuJoCo's GL requirements from the engine's GL context.
 
 #include <mujoco/mujoco.h>
+#include <mutex>
 
 struct GLFWwindow;  // Forward declare — avoid pulling in GLFW headers
 
@@ -69,6 +70,9 @@ public:
     const mjvCamera& GetCamera() const { return cam_; }
     const mjvOption& GetOption() const { return opt_; }
 
+    // Set physics mutex for thread-safe rendering during simulation
+    void SetPhysicsMutex(std::mutex* mtx) { physics_mutex_ = mtx; }
+
 private:
     bool CreateCompatContext(GLFWwindow* main_window);
     void MakeMainContextCurrent();
@@ -97,6 +101,7 @@ private:
     bool initialized_ = false;
     bool enabled_ = true;
     bool resolution_changed_ = false;
+    std::mutex* physics_mutex_ = nullptr;
 };
 
 } // namespace cyxwiz::plugin::mujoco

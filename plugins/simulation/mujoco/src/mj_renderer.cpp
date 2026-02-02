@@ -175,9 +175,15 @@ unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
     // Step 1: Render in compatibility context
     MakeCompatContextCurrent();
 
-    // Update abstract scene
-    mjv_updateScene(model, const_cast<mjData*>(data), &opt_, nullptr, &cam_,
-                    mjCAT_ALL, &scn_);
+    // Update abstract scene (lock physics mutex to prevent concurrent mjData access)
+    if (physics_mutex_) {
+        std::lock_guard<std::mutex> phys_lock(*physics_mutex_);
+        mjv_updateScene(model, const_cast<mjData*>(data), &opt_, nullptr, &cam_,
+                        mjCAT_ALL, &scn_);
+    } else {
+        mjv_updateScene(model, const_cast<mjData*>(data), &opt_, nullptr, &cam_,
+                        mjCAT_ALL, &scn_);
+    }
 
     // Render to offscreen buffer
     mjrRect viewport = {0, 0, width_, height_};

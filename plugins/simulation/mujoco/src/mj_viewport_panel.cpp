@@ -63,13 +63,14 @@ void MjViewportPanel::RenderToolbar(MjEnvManager& env, MjRenderer& renderer) {
 
     ImGui::SameLine();
     if (ImGui::Button("Reset")) {
+        std::lock_guard phys_lock(env.GetPhysicsMutex());
         env.Reset();
         renderer.ResetCamera(env.GetModel());
     }
 
     ImGui::SameLine();
     if (ImGui::Button("Step")) {
-        // Single step with zero action
+        std::lock_guard phys_lock(env.GetPhysicsMutex());
         std::vector<float> zero_action(env.GetActionDim(), 0.0f);
         env.Step(zero_action);
     }
@@ -102,8 +103,10 @@ void MjViewportPanel::RenderToolbar(MjEnvManager& env, MjRenderer& renderer) {
 // =============================================================================
 
 void MjViewportPanel::RenderViewport(MjEnvManager& env, MjRenderer& renderer) {
-    // Auto-step if playing
-    if (playing_ && env.IsLoaded()) {
+    // Auto-step if playing (only when sim_executor is NOT driving physics)
+    bool sim_driving = sim_executor_ && sim_executor_->GetMode() != SimMode::Stopped;
+    if (playing_ && env.IsLoaded() && !sim_driving && !graph_sim_active_) {
+        std::lock_guard phys_lock(env.GetPhysicsMutex());
         std::vector<float> zero_action(env.GetActionDim(), 0.0f);
         for (int i = 0; i < steps_per_frame_; ++i) {
             auto result = env.Step(zero_action);
@@ -184,16 +187,29 @@ void MjViewportPanel::RenderSimControls() {
     auto state = sim_executor_->GetState();
     auto mode = sim_executor_->GetMode();
 
+    // Auto-clear graph_sim_active if EvaluateNode hasn't been called recently
+    if (graph_sim_active_) {
+        graph_sim_frames_++;
+        if (graph_sim_frames_ > 30) {  // ~0.5s at 60fps without EvaluateNode call
+            graph_sim_active_ = false;
+        }
+    }
+
     // Mode selector + controls on same line
     ImGui::Spacing();
 
     if (mode == SimMode::Stopped) {
-        if (ImGui::Button("Manual Control")) {
-            sim_executor_->StartManualControl();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("RL Training")) {
-            sim_executor_->StartRLTraining();
+        if (graph_sim_active_) {
+            ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f),
+                "Physics driven by Node Editor graph simulation");
+        } else {
+            if (ImGui::Button("Manual Control")) {
+                sim_executor_->StartManualControl();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("RL Training")) {
+                sim_executor_->StartRLTraining();
+            }
         }
     } else {
         // Play/Pause/Step/Stop

@@ -169,25 +169,26 @@ void MjSimulationExecutor::ExecuteOneStep() {
         }
     }
 
-    // Step physics
+    // Step physics and read sensors under physics mutex
     int frame_skip = env_->GetFrameSkip();
-    for (int i = 0; i < frame_skip; i++) {
-        mj_step(m, d);
-    }
-
-    // Read sensor outputs
     std::vector<SensorOutput> outputs;
-    for (int i = 0; i < m->nsensor; i++) {
-        SensorOutput so;
-        const char* name = mj_id2name(m, mjOBJ_SENSOR, i);
-        so.name = name ? name : ("sensor_" + std::to_string(i));
-        int dim = m->sensor_dim[i];
-        int adr = m->sensor_adr[i];
-        so.values.resize(dim);
-        for (int j = 0; j < dim && (adr + j) < m->nsensordata; j++) {
-            so.values[j] = static_cast<float>(d->sensordata[adr + j]);
+    {
+        std::lock_guard phys_lock(env_->GetPhysicsMutex());
+        for (int i = 0; i < frame_skip; i++) {
+            mj_step(m, d);
         }
-        outputs.push_back(std::move(so));
+        for (int i = 0; i < m->nsensor; i++) {
+            SensorOutput so;
+            const char* name = mj_id2name(m, mjOBJ_SENSOR, i);
+            so.name = name ? name : ("sensor_" + std::to_string(i));
+            int dim = m->sensor_dim[i];
+            int adr = m->sensor_adr[i];
+            so.values.resize(dim);
+            for (int j = 0; j < dim && (adr + j) < m->nsensordata; j++) {
+                so.values[j] = static_cast<float>(d->sensordata[adr + j]);
+            }
+            outputs.push_back(std::move(so));
+        }
     }
 
     // Update shared state
@@ -227,7 +228,11 @@ void MjSimulationExecutor::RLTrainingLoop(int total_timesteps) {
             a = static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f;
         }
 
-        auto result = env_->Step(action);
+        StepResult result;
+        {
+            std::lock_guard phys_lock(env_->GetPhysicsMutex());
+            result = env_->Step(action);
+        }
 
         {
             std::lock_guard lock(io_mutex_);
@@ -238,6 +243,7 @@ void MjSimulationExecutor::RLTrainingLoop(int total_timesteps) {
         }
 
         if (result.terminated || result.truncated) {
+            std::lock_guard phys_lock(env_->GetPhysicsMutex());
             env_->Reset();
         }
     }
