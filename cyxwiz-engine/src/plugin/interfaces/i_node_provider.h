@@ -3,9 +3,29 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <variant>
 #include <cstdint>
 
 namespace cyxwiz::plugin {
+
+// Runtime value for graph execution (matches cyxwiz::NodeValue)
+using PluginNodeValue = std::variant<float, std::vector<float>, std::string>;
+
+// Context for runtime node evaluation
+struct PluginNodeEvalContext {
+    std::string node_type_name;
+    std::map<std::string, std::string> parameters;
+    std::map<std::string, PluginNodeValue> input_values;  // pin_name -> value
+    float sim_time = 0.0f;
+    float dt = 0.0f;
+};
+
+// Result from runtime node evaluation
+struct PluginNodeEvalResult {
+    std::map<std::string, PluginNodeValue> output_values;  // pin_name -> value
+    bool success = true;
+    std::string error_message;
+};
 
 struct PluginNodeTypeInfo {
     std::string type_name;              // Unique within plugin (e.g. "GaussianBlur")
@@ -93,6 +113,16 @@ public:
         const std::string& node_type_name,
         const std::map<std::string, std::string>& parameters) {
         return {};
+    }
+
+    // Evaluate a node at runtime (for live simulation / graph execution).
+    // Called by GraphExecutor each tick for plugin nodes.
+    // Default returns failure — plugins must override to support live execution.
+    virtual PluginNodeEvalResult EvaluateNode(const PluginNodeEvalContext& ctx) {
+        PluginNodeEvalResult r;
+        r.success = false;
+        r.error_message = "EvaluateNode not implemented";
+        return r;
     }
 };
 

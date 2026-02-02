@@ -5,6 +5,8 @@
 #include <map>
 #include <memory>
 #include <functional>
+#include <atomic>
+#include <thread>
 #include <imgui.h>
 #include <nlohmann/json_fwd.hpp>
 
@@ -14,6 +16,7 @@ struct ImNodesEditorContext;
 // Forward declarations
 namespace cyxwiz {
 class ScriptEditorPanel;
+class GraphExecutor;
 }
 
 namespace gui {
@@ -745,6 +748,17 @@ private:
 
     // Subgraph data storage
     std::vector<SubgraphData> subgraphs_;
+
+    // ===== Graph Simulation State =====
+    std::unique_ptr<cyxwiz::GraphExecutor> graph_executor_;
+    std::thread sim_thread_;
+    std::atomic<bool> is_simulating_{false};
+    std::atomic<bool> sim_stop_requested_{false};
+    float sim_rate_hz_ = 60.0f;  // Simulation tick rate
+
+    void OnRunSimulation();
+    void OnStopSimulation();
+    bool HasSimulationNodes() const;  // Check if graph contains signal/plant nodes
 };
 
 } // namespace gui

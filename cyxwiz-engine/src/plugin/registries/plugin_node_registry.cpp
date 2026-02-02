@@ -104,6 +104,13 @@ DynamicPinResult PluginNodeRegistry::ResolveDynamicPins(
     }
 }
 
+INodeProvider* PluginNodeRegistry::GetNodeProvider(const std::string& qualified_name) const {
+    std::lock_guard lock(mutex_);
+    auto it = nodes_.find(qualified_name);
+    if (it == nodes_.end()) return nullptr;
+    return it->second.provider;
+}
+
 std::string PluginNodeRegistry::GenerateCode(
     const std::string& qualified_name,
     const std::map<std::string, std::string>& parameters,

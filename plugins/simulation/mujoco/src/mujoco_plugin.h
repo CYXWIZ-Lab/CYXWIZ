@@ -82,6 +82,7 @@ public:
         const std::string& node_type_name,
         const std::map<std::string, std::string>& parameters
     ) override;
+    PluginNodeEvalResult EvaluateNode(const PluginNodeEvalContext& ctx) override;
 
     // ===== Public API =====
     MjEnvManager& GetEnvManager() { return env_manager_; }

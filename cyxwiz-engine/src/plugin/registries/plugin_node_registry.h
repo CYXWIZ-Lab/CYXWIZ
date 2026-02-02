@@ -42,6 +42,9 @@ public:
         const std::map<std::string, std::string>& parameters
     ) const;
 
+    // Get the provider for a qualified node name (for runtime evaluation)
+    INodeProvider* GetNodeProvider(const std::string& qualified_name) const;
+
     // Code generation
     std::string GenerateCode(
         const std::string& qualified_name,

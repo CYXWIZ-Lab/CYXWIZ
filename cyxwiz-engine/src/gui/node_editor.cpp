@@ -9,6 +9,8 @@
 #include "../core/training_manager.h"
 #include "../core/async_task_manager.h"
 #include "../core/project_manager.h"
+#include "../core/graph_executor.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -266,6 +268,7 @@ NodeEditor::NodeEditor()
 }
 
 NodeEditor::~NodeEditor() {
+    OnStopSimulation();
     if (editor_context_) {
         ImNodes::EditorContextFree(editor_context_);
     }
@@ -917,6 +920,34 @@ void NodeEditor::ShowToolbar() {
                     ImGui::SetTooltip("Graph is not valid for training. Need: DatasetInput -> Model layers -> Loss");
                 }
             }
+        }
+    }
+
+    // Simulation controls (for signal/MuJoCo Plant graphs)
+    if (HasSimulationNodes()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+        ImGui::SameLine();
+
+        if (is_simulating_) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+            if (ImGui::Button(ICON_FA_STOP " Stop Sim")) {
+                OnStopSimulation();
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::SameLine();
+            if (graph_executor_) {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "t=%.2fs",
+                    graph_executor_->GetSimTime());
+            }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.45f, 0.6f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.55f, 0.7f, 1.0f));
+            if (ImGui::Button(ICON_FA_PLAY " Run Sim")) {
+                OnRunSimulation();
+            }
+            ImGui::PopStyleColor(2);
         }
     }
 
@@ -2737,6 +2768,136 @@ void NodeEditor::GroupSelectedNodes() {
 void NodeEditor::UngroupSelectedNodes() {
     // TODO: Implement node ungrouping
     spdlog::info("Ungroup selected nodes - not yet implemented");
+}
+
+// ===== Graph Simulation =====
+
+bool NodeEditor::HasSimulationNodes() const {
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::SignalSlider ||
+            node.type == NodeType::SineWave ||
+            node.type == NodeType::StepSignal ||
+            node.type == NodeType::RampSignal ||
+            node.type == NodeType::SignalScope ||
+            node.type == NodeType::Constant) {
+            return true;
+        }
+        // Check for MuJoCo Plant or other simulation plugin nodes
+        if (node.type == NodeType::PluginCustom) {
+            auto qname = node.plugin_qualified_name;
+            if (qname.find("MuJoCoPlant") != std::string::npos ||
+                qname.find("MuJoCoEnv") != std::string::npos) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void NodeEditor::OnRunSimulation() {
+    if (is_simulating_) return;
+
+    spdlog::info("NodeEditor: Starting graph simulation");
+
+    // Create and build executor
+    graph_executor_ = std::make_unique<cyxwiz::GraphExecutor>();
+
+    // Set plugin eval callback: routes to PluginNodeRegistry → plugin DLL
+    graph_executor_->SetPluginEvalCallback(
+        [](const std::string& plugin_qualified_name,
+           const cyxwiz::NodeEvalContext& ctx) -> cyxwiz::NodeEvalResult {
+
+            // Convert to plugin types
+            cyxwiz::plugin::PluginNodeEvalContext pctx;
+            pctx.node_type_name = ctx.node_type_name;
+            pctx.parameters = ctx.parameters;
+            pctx.sim_time = ctx.sim_time;
+            pctx.dt = ctx.dt;
+            for (const auto& [name, val] : ctx.input_values) {
+                if (std::holds_alternative<float>(val)) {
+                    pctx.input_values[name] = std::get<float>(val);
+                } else if (std::holds_alternative<std::vector<float>>(val)) {
+                    pctx.input_values[name] = std::get<std::vector<float>>(val);
+                } else if (std::holds_alternative<std::string>(val)) {
+                    pctx.input_values[name] = std::get<std::string>(val);
+                }
+            }
+
+            // Route to plugin via registry
+            auto provider = cyxwiz::plugin::PluginNodeRegistry::Instance()
+                                .GetNodeProvider(plugin_qualified_name);
+            if (!provider) {
+                cyxwiz::NodeEvalResult r;
+                r.success = false;
+                r.error_message = "No plugin provider for: " + plugin_qualified_name;
+                return r;
+            }
+
+            auto presult = provider->EvaluateNode(pctx);
+
+            // Convert back
+            cyxwiz::NodeEvalResult result;
+            result.success = presult.success;
+            result.error_message = presult.error_message;
+            for (const auto& [name, val] : presult.output_values) {
+                if (std::holds_alternative<float>(val)) {
+                    result.output_values[name] = std::get<float>(val);
+                } else if (std::holds_alternative<std::vector<float>>(val)) {
+                    result.output_values[name] = std::get<std::vector<float>>(val);
+                } else if (std::holds_alternative<std::string>(val)) {
+                    result.output_values[name] = std::get<std::string>(val);
+                }
+            }
+            return result;
+        }
+    );
+
+    if (!graph_executor_->Build(nodes_, links_)) {
+        spdlog::error("NodeEditor: Graph build failed: {}", graph_executor_->GetError());
+        graph_executor_.reset();
+        return;
+    }
+
+    // Launch simulation thread
+    sim_stop_requested_ = false;
+    is_simulating_ = true;
+
+    sim_thread_ = std::thread([this]() {
+        float dt = 1.0f / sim_rate_hz_;
+        auto tick_duration = std::chrono::microseconds(static_cast<int>(1000000.0f / sim_rate_hz_));
+
+        while (!sim_stop_requested_) {
+            auto start = std::chrono::steady_clock::now();
+
+            if (!graph_executor_->Tick(dt)) {
+                spdlog::warn("NodeEditor: Simulation tick failed: {}", graph_executor_->GetError());
+                break;
+            }
+
+            // Sleep to maintain target rate
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            auto remaining = tick_duration - elapsed;
+            if (remaining > std::chrono::microseconds(0)) {
+                std::this_thread::sleep_for(remaining);
+            }
+        }
+
+        is_simulating_ = false;
+        spdlog::info("NodeEditor: Simulation stopped at t={:.2f}s", graph_executor_->GetSimTime());
+    });
+}
+
+void NodeEditor::OnStopSimulation() {
+    if (!is_simulating_) return;
+
+    spdlog::info("NodeEditor: Stopping graph simulation");
+    sim_stop_requested_ = true;
+
+    if (sim_thread_.joinable()) {
+        sim_thread_.join();
+    }
+
+    is_simulating_ = false;
 }
 
 } // namespace gui

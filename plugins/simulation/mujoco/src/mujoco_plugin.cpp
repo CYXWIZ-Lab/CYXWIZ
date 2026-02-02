@@ -445,6 +445,79 @@ std::string MuJoCoPlugin::GenerateCode(
     return "# Unknown MuJoCo node type: " + node_type_name + "\n";
 }
 
+PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx) {
+    PluginNodeEvalResult result;
+
+    if (ctx.node_type_name == "MuJoCoPlant") {
+        if (!env_manager_.IsLoaded()) {
+            result.success = false;
+            result.error_message = "No MuJoCo model loaded";
+            return result;
+        }
+
+        // Gather actuator controls from input pins
+        std::vector<ActuatorInput> actuators;
+        for (const auto& [pin_name, value] : ctx.input_values) {
+            if (pin_name == "u") {
+                // Vector mode: single control vector
+                if (std::holds_alternative<std::vector<float>>(value)) {
+                    const auto& vec = std::get<std::vector<float>>(value);
+                    for (size_t i = 0; i < vec.size(); ++i) {
+                        actuators.push_back({std::to_string(i), vec[i]});
+                    }
+                } else if (std::holds_alternative<float>(value)) {
+                    actuators.push_back({"0", std::get<float>(value)});
+                }
+            } else {
+                // Bus mode: per-actuator scalar pins
+                float v = 0.0f;
+                if (std::holds_alternative<float>(value)) {
+                    v = std::get<float>(value);
+                }
+                actuators.push_back({pin_name, v});
+            }
+        }
+
+        // Apply actuator inputs
+        sim_executor_.SetActuatorInputs(actuators);
+
+        // Step the simulation
+        sim_executor_.SingleStep();
+
+        // Read sensor outputs
+        auto sensors = sim_executor_.GetSensorOutputs();
+        for (const auto& s : sensors) {
+            if (s.values.size() == 1) {
+                result.output_values[s.name] = s.values[0];
+            } else {
+                result.output_values[s.name] = s.values;
+            }
+        }
+
+        // Read qpos and qvel from MuJoCo data
+        const mjData* d = env_manager_.GetData();
+        const mjModel* m = env_manager_.GetModel();
+        if (d && m) {
+            std::vector<float> qpos(d->qpos, d->qpos + m->nq);
+            std::vector<float> qvel(d->qvel, d->qvel + m->nv);
+            result.output_values["qpos"] = std::move(qpos);
+            result.output_values["qvel"] = std::move(qvel);
+        }
+
+        // Sensor vector (concatenation of all sensor readings)
+        if (d && m && m->nsensor > 0) {
+            std::vector<float> sensor_data(d->sensordata, d->sensordata + m->nsensordata);
+            result.output_values["sensor"] = std::move(sensor_data);
+        }
+
+        return result;
+    }
+
+    result.success = false;
+    result.error_message = "EvaluateNode not implemented for: " + ctx.node_type_name;
+    return result;
+}
+
 DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
     const std::string& node_type_name,
     const std::map<std::string, std::string>& parameters)

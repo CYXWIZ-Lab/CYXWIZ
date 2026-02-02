@@ -74,6 +74,7 @@ set(ENGINE_SOURCES
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_executor.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
     src/core/training_executor.cpp
