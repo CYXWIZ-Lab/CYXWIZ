@@ -1,5 +1,7 @@
 #include "mujoco_plugin.h"
 #include "mj_mjcf_parser.h"
+#include "rl/reward_shaper.h"
+#include "rl/observation_filter.h"
 
 #include <spdlog/spdlog.h>
 #include <mujoco/mujoco.h>
@@ -217,12 +219,17 @@ std::vector<PluginNodeTypeInfo> MuJoCoPlugin::GetNodeTypes() {
         n.description  = "Define reward shaping for RL training (alive bonus, control penalty, etc.)";
         n.color        = 0xFF44AADD;  // Orange-gold
 
-        n.pins.push_back({"env", "Environment", true});
-        n.pins.push_back({"env_out", "Environment", false});
+        n.pins.push_back({"qpos", "Tensor", true});
+        n.pins.push_back({"qvel", "Tensor", true});
+        n.pins.push_back({"ctrl", "Tensor", true});
+        n.pins.push_back({"sensor", "Tensor", true});
+        n.pins.push_back({"reward", "Float", false});
 
         n.default_parameters["alive_bonus"]    = "1.0";
         n.default_parameters["ctrl_cost_weight"] = "0.1";
         n.default_parameters["velocity_reward"] = "true";
+        n.default_parameters["height_penalty_threshold"] = "0.0";
+        n.default_parameters["height_penalty_value"] = "10.0";
         nodes.push_back(std::move(n));
     }
 
@@ -236,7 +243,9 @@ std::vector<PluginNodeTypeInfo> MuJoCoPlugin::GetNodeTypes() {
         n.description  = "Filter and normalize environment observations (qpos, qvel, sensors)";
         n.color        = 0xFFAAAA44;  // Blue-ish
 
-        n.pins.push_back({"env", "Environment", true});
+        n.pins.push_back({"qpos", "Tensor", true});
+        n.pins.push_back({"qvel", "Tensor", true});
+        n.pins.push_back({"sensor", "Tensor", true});
         n.pins.push_back({"obs", "Tensor", false});
 
         n.default_parameters["include_qpos"] = "true";
@@ -339,16 +348,20 @@ std::string MuJoCoPlugin::GenerateCode(
         std::string alive = get("alive_bonus", "1.0");
         std::string ctrl_w = get("ctrl_cost_weight", "0.1");
         std::string vel = get("velocity_reward", "true");
-        return
+        std::string h_thresh = get("height_penalty_threshold", "0.0");
+        std::string h_val = get("height_penalty_value", "10.0");
+        std::string code =
+            "import numpy as np\n\n"
             "def compute_reward(obs, action, next_obs, info):\n"
             "    reward = " + alive + "  # alive bonus\n"
-            "    reward -= " + ctrl_w + " * (action ** 2).sum()  # control cost\n" +
-            (vel == "true"
-                ? "    reward += next_obs[0]  # forward velocity reward\n"
-                : "") +
-            "    return reward\n"
-            "\n"
-            "env = gym.wrappers.TransformReward(env, compute_reward)\n";
+            "    reward -= " + ctrl_w + " * np.sum(action ** 2)  # control cost\n";
+        if (vel == "true")
+            code += "    reward += next_obs[0]  # forward velocity reward\n";
+        if (h_thresh != "0.0" && h_thresh != "0")
+            code += "    if len(next_obs) > 2 and next_obs[2] < " + h_thresh + ":\n"
+                    "        reward -= " + h_val + "  # height penalty\n";
+        code += "    return reward\n";
+        return code;
     }
 
     if (node_type_name == "ObservationFilter") {
@@ -510,6 +523,76 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
             result.output_values["sensor"] = std::move(sensor_data);
         }
 
+        return result;
+    }
+
+    // --- RewardFunction node ---
+    if (ctx.node_type_name == "RewardFunction") {
+        rl::RewardConfig cfg = rl::RewardConfig::FromParameters(ctx.parameters);
+        rl::RewardShaper shaper(cfg);
+
+        rl::EnvState state;
+        auto get_vec = [&](const std::string& key) -> std::vector<float> {
+            auto it = ctx.input_values.find(key);
+            if (it == ctx.input_values.end()) return {};
+            if (std::holds_alternative<std::vector<float>>(it->second))
+                return std::get<std::vector<float>>(it->second);
+            if (std::holds_alternative<float>(it->second))
+                return {std::get<float>(it->second)};
+            return {};
+        };
+
+        state.qpos = get_vec("qpos");
+        state.qvel = get_vec("qvel");
+        state.ctrl = get_vec("ctrl");
+        state.sensor = get_vec("sensor");
+        state.sim_time = ctx.sim_time;
+
+        const mjData* d = env_manager_.GetData();
+        const mjModel* m = env_manager_.GetModel();
+        if (d && m) {
+            if (state.qpos.empty()) state.qpos.assign(d->qpos, d->qpos + m->nq);
+            if (state.qvel.empty()) state.qvel.assign(d->qvel, d->qvel + m->nv);
+            if (state.ctrl.empty()) state.ctrl.assign(d->ctrl, d->ctrl + m->nu);
+            if (state.sensor.empty() && m->nsensordata > 0)
+                state.sensor.assign(d->sensordata, d->sensordata + m->nsensordata);
+        }
+
+        float reward = shaper.ComputeReward(state);
+        result.output_values["reward"] = reward;
+        return result;
+    }
+
+    // --- ObservationFilter node ---
+    if (ctx.node_type_name == "ObservationFilter") {
+        rl::ObsFilterConfig cfg = rl::ObsFilterConfig::FromParameters(ctx.parameters);
+
+        auto get_vec = [&](const std::string& key) -> std::vector<float> {
+            auto it = ctx.input_values.find(key);
+            if (it == ctx.input_values.end()) return {};
+            if (std::holds_alternative<std::vector<float>>(it->second))
+                return std::get<std::vector<float>>(it->second);
+            if (std::holds_alternative<float>(it->second))
+                return {std::get<float>(it->second)};
+            return {};
+        };
+
+        std::vector<float> qpos = get_vec("qpos");
+        std::vector<float> qvel = get_vec("qvel");
+        std::vector<float> sensors = get_vec("sensor");
+
+        const mjData* d = env_manager_.GetData();
+        const mjModel* m = env_manager_.GetModel();
+        if (d && m) {
+            if (qpos.empty()) qpos.assign(d->qpos, d->qpos + m->nq);
+            if (qvel.empty()) qvel.assign(d->qvel, d->qvel + m->nv);
+            if (sensors.empty() && m->nsensordata > 0)
+                sensors.assign(d->sensordata, d->sensordata + m->nsensordata);
+        }
+
+        rl::ObservationFilter filter(cfg);
+        std::vector<float> obs = filter.Filter(qpos, qvel, sensors);
+        result.output_values["obs"] = std::move(obs);
         return result;
     }
 
