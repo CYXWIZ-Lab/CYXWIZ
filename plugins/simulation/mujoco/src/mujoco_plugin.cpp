@@ -283,10 +283,12 @@ std::vector<PluginNodeTypeInfo> MuJoCoPlugin::GetNodeTypes() {
         n.color        = 0xFF22BB66;  // Green
 
         // Default pins (before MJCF is loaded)
-        n.pins.push_back({"u", "Tensor", true});       // control vector input
-        n.pins.push_back({"sensor", "Tensor", false});  // sensor output
-        n.pins.push_back({"rgb", "Image", false});      // camera image
-        n.pins.push_back({"depth", "Image", false});    // depth image
+        n.pins.push_back({"u", "Tensor", true});        // control vector input
+        n.pins.push_back({"sensor", "Tensor", false});   // sensor output
+        n.pins.push_back({"qpos", "Tensor", false});     // joint positions
+        n.pins.push_back({"qvel", "Tensor", false});     // joint velocities
+        n.pins.push_back({"rgb", "Image", false});       // camera image
+        n.pins.push_back({"depth", "Image", false});     // depth image
 
         n.default_parameters["mjcf_path"]    = "";
         n.default_parameters["timestep"]     = "0.002";
@@ -500,7 +502,9 @@ DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
         result.pins.push_back(std::move(pin));
     }
 
-    // Always add image outputs
+    // Always add state and image outputs
+    result.pins.push_back({"qpos", "Tensor", false});
+    result.pins.push_back({"qvel", "Tensor", false});
     result.pins.push_back({"rgb", "Image", false});
     result.pins.push_back({"depth", "Image", false});
 
