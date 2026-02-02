@@ -35,6 +35,13 @@ public:
     void DownloadModelAsync(const std::string& repo_path, const std::string& dest_dir,
                             DoneCallback done_cb = {});
 
+    // Download from arbitrary URL (single MJCF file or GitHub repo directory).
+    // Supports: raw file URLs, GitHub blob/tree URLs, raw.githubusercontent.com URLs.
+    // dest_dir: local directory to save files.
+    bool DownloadFromUrl(const std::string& url, const std::string& dest_dir);
+    void DownloadFromUrlAsync(const std::string& url, const std::string& dest_dir,
+                              DoneCallback done_cb = {});
+
     void CancelDownload();
 
     // State queries

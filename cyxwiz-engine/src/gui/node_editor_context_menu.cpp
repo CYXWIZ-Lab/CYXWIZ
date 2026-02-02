@@ -6,6 +6,7 @@
 #include "node_editor.h"
 #include "icons.h"
 #include "../core/project_manager.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <cstring>
 
@@ -465,7 +466,47 @@ void NodeEditor::ShowContextMenu() {
             AddNode(NodeType::RLTraining, "RLTraining");
             ImGui::CloseCurrentPopup();
         }
+
+        // Plugin RL/Simulation nodes
+        {
+            auto plugin_nodes = cyxwiz::plugin::PluginNodeRegistry::Instance().GetAllNodeTypesWithNames();
+            bool has_rl = false;
+            for (const auto& [qname, info] : plugin_nodes) {
+                if (info.category.find("RL") != std::string::npos ||
+                    info.category.find("Simulation") != std::string::npos) {
+                    if (!has_rl) { ImGui::Separator(); has_rl = true; }
+                    if (ImGui::MenuItem(info.display_name.c_str())) {
+                        AddNode(NodeType::PluginCustom, qname);
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+            }
+        }
+
         ImGui::EndMenu();
+    }
+
+    // ===== PLUGIN NODES (non-RL categories) =====
+    {
+        auto plugin_nodes = cyxwiz::plugin::PluginNodeRegistry::Instance().GetAllNodeTypesWithNames();
+        std::map<std::string, std::vector<std::pair<std::string, cyxwiz::plugin::PluginNodeTypeInfo>>> by_category;
+        for (auto& [qname, info] : plugin_nodes) {
+            if (info.category.find("RL") != std::string::npos ||
+                info.category.find("Simulation") != std::string::npos)
+                continue;
+            by_category[info.category].emplace_back(qname, std::move(info));
+        }
+        for (const auto& [category, nodes] : by_category) {
+            if (ImGui::BeginMenu(category.c_str())) {
+                for (const auto& [qname, info] : nodes) {
+                    if (ImGui::MenuItem(info.display_name.c_str())) {
+                        AddNode(NodeType::PluginCustom, qname);
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+                ImGui::EndMenu();
+            }
+        }
     }
 
     ImGui::Separator();

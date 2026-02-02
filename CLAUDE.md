@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current Work Status (Updated: 2026-01-31)
+## Current Work Status (Updated: 2026-02-02)
 
 ### CyxWiz Engine - Plugin System ✅ (NEW)
 
@@ -68,8 +68,9 @@ target_link_libraries(my_plugin PRIVATE cyxwiz-plugin-sdk)
 **Production-grade MuJoCo physics integration as a plugin (DLL):**
 
 - ✅ **Phase 1**: Core plugin — physics wrapper, 3D renderer, viewport panel, environment library (7 envs)
-- ✅ **Phase 2**: Node editor integration — 4 RL node types with code generation
-- 🔲 **Phase 3 (Planned)**: Simulink-style dynamic pins, simulation executor, signal source nodes, Menagerie library
+- ✅ **Phase 2**: Node editor integration — 5 RL node types with code generation
+- ✅ **Phase 3**: Cross-DLL safety (NodeTypeCallback API), plugin nodes in context menu, Menagerie library + URL import
+- 🔲 **Phase 4 (Planned)**: Simulink-style simulation executor, node graph driving physics
 
 **Current Architecture:**
 ```
@@ -78,8 +79,9 @@ plugins/simulation/mujoco/
   ├── src/mj_env_manager.h/cpp      — MuJoCo physics wrapper (step/reset/observe)
   ├── src/mj_renderer.h/cpp         — 3D OpenGL rendering (CPU readback → ImGui texture)
   ├── src/mj_viewport_panel.h/cpp   — Live 3D viewport with Play/Pause/Step
-  ├── src/mj_env_library.h/cpp      — Environment catalog (7 built-in)
-  ├── src/mj_env_browser_panel.h/cpp — Browse/load environments UI
+  ├── src/mj_env_library.h/cpp      — Environment catalog (7 built-in + 30+ Menagerie)
+  ├── src/mj_env_browser_panel.h/cpp — Browse/load/import environments UI
+  ├── src/mj_menagerie_downloader.h/cpp — GitHub Menagerie model downloader + URL import
   ├── assets/*.xml                   — 7 MJCF model files
   └── CMakeLists.txt                 — Links mujoco, glad, glfw, plugin-sdk
 ```
@@ -88,18 +90,26 @@ plugins/simulation/mujoco/
 - Classic Control: InvertedPendulum, CartPole, Reacher
 - Locomotion: Hopper, Walker2D, HalfCheetah
 - Manipulation: Pusher
+- Menagerie (30+ downloadable): Franka Panda, UR5e, Unitree Go2, ANYmal, Spot, Shadow Hand, etc.
 
-**Node Editor Nodes (RL / Simulation category):**
+**Node Editor Nodes (in Reinforcement Learning context menu):**
 | Node | Purpose |
 |------|---------|
 | MuJoCoEnv | Load MJCF model as Gymnasium env |
 | RewardFunction | Reward shaping (alive bonus, control cost, velocity) |
 | ObservationFilter | Filter/normalize observations (qpos, qvel, sensors) |
 | RLAgent | PPO/SAC agent with Stable-Baselines3 code gen |
+| MuJoCo Plant | Simulink-style node with dynamic actuator/sensor pins |
 
-**Phase 3 Plan** (see `docs/mujoco_menagerie_plan.md` and `docs/mujoco_ux_walkthrough.md`):
-- Dynamic pins from MJCF parsing (per-actuator/sensor pins)
-- MuJoCo Plant node (Simulink-style)
+**Cross-DLL Safety:**
+- `NodeTypeCallback` API avoids passing `std::vector`/`std::string` across DLL boundary
+- Plugin nodes dynamically injected into node editor context menu
+- `RegisterDirect()` for engine-side deep copy of node type info
+
+**URL Import:**
+- Paste any GitHub URL (tree/blob) or direct MJCF URL in Environment Library
+- Downloads to `~/.cyxwiz/imported/<model_name>/`
+- Auto-adds to library as "Imported" category
 - Signal source nodes (Constant, Slider, Sine, Scope)
 - Simulation executor (real-time physics stepping from node graph)
 - RL training executor (episode loop with live 3D visualization)

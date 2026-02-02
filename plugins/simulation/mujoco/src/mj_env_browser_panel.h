@@ -27,6 +27,8 @@ private:
     void RenderSearchBar();
     void RenderEnvCard(const EnvInfo& info, MjEnvLibrary& library, bool is_loaded);
 
+    void RenderUrlImport(MjEnvLibrary& library);
+
     EnvLoadCallback load_callback_;
     MjMenagerieDownloader* downloader_ = nullptr;
     std::string filter_text_;
@@ -36,6 +38,12 @@ private:
     std::string pending_load_id_;
     std::string downloading_env_id_; // Currently downloading model ID
     char search_buf_[128] = {};
+
+    // URL import
+    char url_buf_[512] = {};
+    bool url_importing_ = false;
+    std::string url_import_status_;
+    std::string url_import_error_;
 };
 
 } // namespace cyxwiz::plugin::mujoco

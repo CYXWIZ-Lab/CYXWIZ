@@ -26,6 +26,9 @@ struct EnvInfo {
     std::string repo_path;      // Menagerie GitHub dir name (e.g. "franka_emika_panda")
     std::string scene_file;     // File to load within model dir (e.g. "scene.xml")
     bool requires_download = false;
+
+    // URL import: absolute path to downloaded asset
+    std::string custom_asset_path;
 };
 
 class MjEnvLibrary {
@@ -53,6 +56,9 @@ public:
 
     // Scan menagerie dir for previously downloaded models
     void ScanDownloadedModels();
+
+    // Add a custom environment (e.g. from URL import)
+    void AddEnv(EnvInfo info);
 
 private:
     void PopulateBuiltins();

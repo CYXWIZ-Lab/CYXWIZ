@@ -197,6 +197,11 @@ const EnvInfo* MjEnvLibrary::FindById(const std::string& id) const {
 }
 
 std::string MjEnvLibrary::GetAssetPath(const EnvInfo& info) const {
+    // Custom imported models: use absolute path directly
+    if (!info.custom_asset_path.empty()) {
+        return info.custom_asset_path;
+    }
+
     // Menagerie models: look in menagerie download dir
     if (info.source == EnvSource::Menagerie) {
         std::string model_dir = GetMenagerieModelDir(info);
@@ -279,6 +284,15 @@ std::vector<std::string> MjEnvLibrary::GetCategories() const {
         }
     }
     return cats;
+}
+
+void MjEnvLibrary::AddEnv(EnvInfo info) {
+    // Don't add duplicates
+    for (const auto& e : envs_) {
+        if (e.id == info.id) return;
+    }
+    spdlog::info("MjEnvLibrary: Added imported environment '{}'", info.name);
+    envs_.push_back(std::move(info));
 }
 
 } // namespace cyxwiz::plugin::mujoco

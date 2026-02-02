@@ -3,6 +3,8 @@
 
 #include <imgui.h>
 #include <algorithm>
+#include <filesystem>
+#include <cstdlib>
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -29,6 +31,8 @@ void MjEnvBrowserPanel::Render(MjEnvLibrary& library,
         return;
     }
 
+    RenderUrlImport(library);
+    ImGui::Spacing();
     RenderSearchBar();
     RenderCategoryTabs(library);
     ImGui::Separator();
@@ -202,6 +206,111 @@ void MjEnvBrowserPanel::RenderEnvCard(const EnvInfo& info,
     ImGui::Dummy(ImVec2(card_w, 0));
 
     ImGui::PopID();
+}
+
+void MjEnvBrowserPanel::RenderUrlImport(MjEnvLibrary& library) {
+    // Collapsible section for URL import
+    if (!ImGui::CollapsingHeader("Import from URL")) return;
+
+    ImGui::Indent(8.0f);
+
+    float avail = ImGui::GetContentRegionAvail().x - 16.0f;
+    float btn_w = 80.0f;
+
+    ImGui::SetNextItemWidth(avail - btn_w - 8.0f);
+    ImGui::InputTextWithHint("##url_input", "Paste MJCF URL or GitHub directory URL...",
+                              url_buf_, sizeof(url_buf_));
+
+    ImGui::SameLine();
+
+    bool is_downloading = (downloader_ && downloader_->IsDownloading() && url_importing_);
+
+    if (is_downloading) {
+        ImGui::BeginDisabled();
+        ImGui::Button("Importing...", ImVec2(btn_w, 0));
+        ImGui::EndDisabled();
+    } else {
+        if (ImGui::Button("Import", ImVec2(btn_w, 0))) {
+            std::string url = url_buf_;
+            if (!url.empty() && downloader_) {
+                url_importing_ = true;
+                url_import_status_.clear();
+                url_import_error_.clear();
+
+                // Determine destination: ~/.cyxwiz/imported/<model_name>/
+                std::string model_name = "imported_model";
+                // Try to extract a name from the URL
+                auto last_slash = url.rfind('/');
+                if (last_slash != std::string::npos && last_slash + 1 < url.size()) {
+                    std::string tail = url.substr(last_slash + 1);
+                    // Remove .xml extension if present
+                    auto dot = tail.rfind('.');
+                    if (dot != std::string::npos)
+                        model_name = tail.substr(0, dot);
+                    else
+                        model_name = tail;
+                }
+
+                // Build dest dir
+                std::string home;
+#ifdef _WIN32
+                const char* userprofile = std::getenv("USERPROFILE");
+                if (userprofile) home = userprofile;
+#else
+                const char* h = std::getenv("HOME");
+                if (h) home = h;
+#endif
+                namespace fs = std::filesystem;
+                std::string dest_dir = (fs::path(home) / ".cyxwiz" / "imported" / model_name).string();
+
+                downloader_->DownloadFromUrlAsync(url, dest_dir,
+                    [this, model_name, dest_dir, &library](bool success, const std::string& err) {
+                        url_importing_ = false;
+                        if (success) {
+                            url_import_status_ = "Downloaded to " + dest_dir;
+                            // Find the .xml file and add as custom environment
+                            namespace fs = std::filesystem;
+                            for (const auto& entry : fs::recursive_directory_iterator(dest_dir)) {
+                                if (entry.path().extension() == ".xml") {
+                                    EnvInfo info;
+                                    info.id = "imported_" + model_name;
+                                    info.name = model_name;
+                                    info.filename = entry.path().filename().string();
+                                    info.description = "Imported from URL";
+                                    info.category = "Imported";
+                                    info.source = EnvSource::Builtin; // Local file, no download needed
+                                    info.obs_dim = 0;
+                                    info.act_dim = 0;
+                                    info.max_steps = 1000;
+                                    info.custom_asset_path = entry.path().string();
+                                    library.AddEnv(std::move(info));
+                                    break;
+                                }
+                            }
+                        } else {
+                            url_import_error_ = err.empty() ? "Download failed" : err;
+                        }
+                    });
+            }
+        }
+    }
+
+    // Progress bar during download
+    if (is_downloading) {
+        float progress = downloader_->GetProgress();
+        ImGui::ProgressBar(progress, ImVec2(avail, 18),
+                           downloader_->GetStatusText().c_str());
+    }
+
+    // Status/error messages
+    if (!url_import_status_.empty()) {
+        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "%s", url_import_status_.c_str());
+    }
+    if (!url_import_error_.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", url_import_error_.c_str());
+    }
+
+    ImGui::Unindent(8.0f);
 }
 
 } // namespace cyxwiz::plugin::mujoco
