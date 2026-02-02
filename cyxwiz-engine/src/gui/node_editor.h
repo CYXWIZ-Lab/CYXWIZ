@@ -17,6 +17,7 @@ struct ImNodesEditorContext;
 namespace cyxwiz {
 class ScriptEditorPanel;
 class GraphExecutor;
+class RLTrainingExecutor;
 }
 
 namespace gui {
@@ -759,6 +760,12 @@ private:
     void OnRunSimulation();
     void OnStopSimulation();
     bool HasSimulationNodes() const;  // Check if graph contains signal/plant nodes
+
+    // ===== RL Training State =====
+    std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
+    bool HasRLNodes() const;
+    void OnStartRLTraining();
+    void OnStopRLTraining();
 };
 
 } // namespace gui

@@ -10,6 +10,7 @@
 #include "../core/async_task_manager.h"
 #include "../core/project_manager.h"
 #include "../core/graph_executor.h"
+#include "../core/rl_training_executor.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <imnodes.h>
