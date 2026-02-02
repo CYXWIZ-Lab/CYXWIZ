@@ -1,9 +1,11 @@
 #include "cloud_data_registry.h"
 #include <filesystem>
+#include <mutex>
 
 namespace cyxwiz {
 
-static CloudDataRegistry* g_cloud_registry = nullptr;
+static std::unique_ptr<CloudDataRegistry> g_cloud_registry;
+static std::once_flag g_cloud_registry_flag;
 
 CloudDataRegistry::CloudDataRegistry() {
     // Default cache directory
@@ -31,9 +33,9 @@ CloudDataRegistry::~CloudDataRegistry() {
 }
 
 CloudDataRegistry& CloudDataRegistry::Instance() {
-    if (!g_cloud_registry) {
-        g_cloud_registry = new CloudDataRegistry();
-    }
+    std::call_once(g_cloud_registry_flag, []() {
+        g_cloud_registry = std::make_unique<CloudDataRegistry>();
+    });
     return *g_cloud_registry;
 }
 

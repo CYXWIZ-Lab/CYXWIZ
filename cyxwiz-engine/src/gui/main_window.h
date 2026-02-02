@@ -29,7 +29,6 @@ struct NodeLink;
 namespace cyxwiz {
 class ToolbarPanel;
 class AssetBrowserPanel;
-class TrainingDashboardPanel;
 class TrainingPlotPanel;
 class PlotTestControlPanel;
 class CommandWindowPanel;
@@ -227,7 +226,6 @@ private:
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
-    std::unique_ptr<cyxwiz::TrainingDashboardPanel> training_dashboard_;
     std::unique_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
     std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
     std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
@@ -367,6 +365,7 @@ private:
     network::JobManager* job_manager_ = nullptr;
     network::DataStreamClient* datastream_client_ = nullptr;
     std::string monitoring_job_id_;
+
 
     // Exit request callback
     ExitRequestCallback exit_request_callback_;

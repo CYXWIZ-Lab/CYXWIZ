@@ -155,6 +155,7 @@ void MjSimulationExecutor::ExecuteOneStep() {
 
     mjData* d = env_->GetMutableData();
     const mjModel* m = env_->GetModel();
+    if (!d || !m) return;
 
     // Apply actuator inputs
     {
@@ -183,7 +184,7 @@ void MjSimulationExecutor::ExecuteOneStep() {
         int dim = m->sensor_dim[i];
         int adr = m->sensor_adr[i];
         so.values.resize(dim);
-        for (int j = 0; j < dim; j++) {
+        for (int j = 0; j < dim && (adr + j) < m->nsensordata; j++) {
             so.values[j] = static_cast<float>(d->sensordata[adr + j]);
         }
         outputs.push_back(std::move(so));

@@ -48,7 +48,7 @@ void MjEnvBrowserPanel::Render(MjEnvLibrary& library,
     int cols = std::max(1, static_cast<int>(panel_width / card_width));
 
     int col = 0;
-    for (auto& info : const_cast<std::vector<EnvInfo>&>(library.GetAll())) {
+    for (const auto& info : library.GetAll()) {
         // Category filter
         if (!selected_category_.empty() && info.category != selected_category_)
             continue;

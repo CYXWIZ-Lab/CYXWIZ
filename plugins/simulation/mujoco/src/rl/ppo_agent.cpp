@@ -1,3 +1,7 @@
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #include "ppo_agent.h"
 #include <numeric>
 #include <cstring>
@@ -144,7 +148,7 @@ float PPOAgent::GaussianLogProb(const std::vector<float>& action,
     for (int i = 0; i < act_dim_; ++i) {
         float std = std::exp(log_std_[i]);
         float diff = action[i] - mean[i];
-        log_prob += -0.5f * (diff * diff) / (std * std) - log_std_[i] - 0.5f * std::log(2.0f * 3.14159265f);
+        log_prob += -0.5f * (diff * diff) / (std * std) - log_std_[i] - 0.5f * std::log(2.0f * static_cast<float>(M_PI));
     }
     return log_prob;
 }
@@ -311,7 +315,7 @@ void PPOAgent::SGDStep(const std::vector<int>& indices,
         // Entropy bonus (Gaussian entropy = 0.5 * ln(2*pi*e*sigma^2))
         float entropy = 0.0f;
         for (int i = 0; i < act_dim_; ++i) {
-            entropy += log_std_[i] + 0.5f * std::log(2.0f * 3.14159265f * std::exp(1.0f));
+            entropy += log_std_[i] + 0.5f * std::log(2.0f * static_cast<float>(M_PI) * std::exp(1.0f));
         }
         accum.entropy += entropy / bs;
 

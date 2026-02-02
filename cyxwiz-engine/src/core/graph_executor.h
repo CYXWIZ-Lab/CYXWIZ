@@ -101,6 +101,9 @@ private:
     // Find node by ID
     const gui::MLNode* FindNode(int node_id) const;
 
+    // Internal recursive dirty marking with cycle detection
+    void MarkPinDirtyImpl(int pin_id, std::set<int>& visited_pins);
+
     // Graph data (copies)
     std::vector<gui::MLNode> nodes_;
     std::vector<gui::NodeLink> links_;

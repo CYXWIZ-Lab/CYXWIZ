@@ -1,3 +1,7 @@
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #include "mj_renderer.h"
 
 #include <glad/glad.h>
@@ -229,7 +233,7 @@ void MjRenderer::ZoomCamera(float dz) {
 
 void MjRenderer::PanCamera(float dx, float dy) {
     // Pan by adjusting lookat position
-    double azimuth_rad = cam_.azimuth * 3.14159265 / 180.0;
+    double azimuth_rad = cam_.azimuth * M_PI / 180.0;
     cam_.lookat[0] += (-dx * cos(azimuth_rad) - dy * sin(azimuth_rad)) * 0.01;
     cam_.lookat[1] += (dx * sin(azimuth_rad) - dy * cos(azimuth_rad)) * 0.01;
     cam_.lookat[2] += dy * 0.01;

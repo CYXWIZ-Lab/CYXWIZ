@@ -134,14 +134,19 @@ void GraphExecutor::SetPinValue(int pin_id, NodeValue value) {
 }
 
 void GraphExecutor::MarkPinDirty(int pin_id) {
-    // Find which node this pin belongs to, then mark all downstream nodes dirty
+    std::set<int> visited_pins;
+    MarkPinDirtyImpl(pin_id, visited_pins);
+}
+
+void GraphExecutor::MarkPinDirtyImpl(int pin_id, std::set<int>& visited_pins) {
+    if (!visited_pins.insert(pin_id).second) return; // cycle detection
+
     for (const auto& link : links_) {
         if (link.from_pin == pin_id) {
             dirty_nodes_.insert(link.to_node);
-            // Recursively mark downstream
             for (const auto& link2 : links_) {
                 if (link2.from_node == link.to_node) {
-                    MarkPinDirty(link2.from_pin);
+                    MarkPinDirtyImpl(link2.from_pin, visited_pins);
                 }
             }
         }

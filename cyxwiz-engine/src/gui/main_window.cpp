@@ -164,7 +164,6 @@ MainWindow::MainWindow()
     // New panel system
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
-    // training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();  // Removed - merged into TrainingPlotPanel
     training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
 
     // Wire up TrainingPlotPanel to DatasetPanel for local training visualization
@@ -1681,8 +1680,6 @@ MainWindow::~MainWindow() {
     plot_test_control_.reset();
     spdlog::info("~MainWindow: training_plot_panel_ (before scripting_engine)");
     training_plot_panel_.reset();
-    spdlog::info("~MainWindow: training_dashboard_ (before scripting_engine)");
-    training_dashboard_.reset();
 
     // IMPORTANT: Destroy panels that hold shared_ptr<ScriptingEngine> BEFORE
     // the MainWindow's scripting_engine_, so all references are released
@@ -1867,7 +1864,7 @@ MainWindow::~MainWindow() {
     spdlog::info("~MainWindow: data_explorer_panel_");
     data_explorer_panel_.reset();
     // script_editor_, command_window_ already reset at the beginning (with scripting_engine panels)
-    // plot_test_control_, training_plot_panel_, training_dashboard_ already reset at the beginning
+    // plot_test_control_, training_plot_panel_ already reset at the beginning
     spdlog::info("~MainWindow: asset_browser_");
     asset_browser_.reset();
     spdlog::info("~MainWindow: toolbar_");
@@ -2129,7 +2126,6 @@ void MainWindow::Render() {
 
     // Render new panels
     if (asset_browser_) asset_browser_->Render();
-    // if (training_dashboard_) training_dashboard_->Render();  // Removed - merged into TrainingPlotPanel
     if (training_plot_panel_) training_plot_panel_->Render();  // Now "Training Dashboard"
     if (plot_test_control_) plot_test_control_->Render();
     if (command_window_) command_window_->Render();
@@ -2573,7 +2569,6 @@ void MainWindow::SetDefaultPanelVisibility() {
     // They use ImGui window visibility directly. We leave them alone.
     // New-style panels that should be visible:
     if (asset_browser_) asset_browser_->SetVisible(true);
-    if (training_dashboard_) training_dashboard_->SetVisible(true);
 
     // === HIDE ALL OTHER PANELS ===
     // Users can enable these via View menu when needed
