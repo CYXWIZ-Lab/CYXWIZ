@@ -88,6 +88,7 @@ add_library(mujoco_plugin SHARED
     src/rl/reward_shaper.cpp
     src/rl/observation_filter.cpp
     src/rl/ppo_agent.cpp
+    src/export/onnx_exporter.cpp
 )
 
 target_include_directories(mujoco_plugin PRIVATE

@@ -766,6 +766,11 @@ private:
     bool HasRLNodes() const;
     void OnStartRLTraining();
     void OnStopRLTraining();
+    void ExportPolicyONNX(const std::string& output_path);
+    bool export_onnx_dialog_open_ = false;
+
+    // Phase 4.7: Performance metrics
+    float last_eval_time_ms_ = 0.0f;
 };
 
 } // namespace gui

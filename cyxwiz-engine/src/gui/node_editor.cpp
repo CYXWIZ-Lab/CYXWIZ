@@ -18,6 +18,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <memory>
+#include <chrono>
 #include <map>
 #include <set>
 #include <queue>
@@ -981,8 +982,64 @@ void NodeEditor::ShowToolbar() {
         }
     }
 
+    // Export Policy (ONNX) button
+    if (HasRLNodes()) {
+        ImGui::SameLine();
+        bool has_trained = rl_executor_ && !rl_executor_->IsTraining() && rl_executor_->GetMetrics().episode_count > 0;
+        if (!has_trained) {
+            ImGui::BeginDisabled();
+            ImGui::Button(ICON_FA_FILE_EXPORT " Export ONNX");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Train an RL agent first");
+            }
+            ImGui::EndDisabled();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.3f, 0.1f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.4f, 0.2f, 1.0f));
+            if (ImGui::Button(ICON_FA_FILE_EXPORT " Export ONNX")) {
+                export_onnx_dialog_open_ = true;
+            }
+            ImGui::PopStyleColor(2);
+        }
+    }
+
+    // Sim performance metrics (Phase 4.7)
+    if (is_simulating_ && last_eval_time_ms_ > 0.0f) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+        ImGui::SameLine();
+        float fps = (last_eval_time_ms_ > 0.001f) ? 1000.0f / last_eval_time_ms_ : 0.0f;
+        ImVec4 color = (last_eval_time_ms_ < 16.0f) ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.6f, 0.2f, 1.0f);
+        ImGui::TextColored(color, "%.1fms (%.0f FPS)", last_eval_time_ms_, fps);
+    }
+
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
+
+    // ONNX Export dialog
+    if (export_onnx_dialog_open_) {
+        ImGui::OpenPopup("Export Policy (ONNX)");
+        export_onnx_dialog_open_ = false;
+    }
+    if (ImGui::BeginPopupModal("Export Policy (ONNX)", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Export trained RL policy to ONNX format.");
+        ImGui::Separator();
+
+        static char onnx_path[512] = "policy.onnx";
+        ImGui::Text("Output path:");
+        ImGui::InputText("##onnx_path", onnx_path, sizeof(onnx_path));
+        ImGui::Spacing();
+
+        if (ImGui::Button("Export", ImVec2(120, 0))) {
+            ExportPolicyONNX(std::string(onnx_path));
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void NodeEditor::RenderMinimap() {
@@ -3013,6 +3070,55 @@ void NodeEditor::OnStartRLTraining() {
             dashboard->SetRLTrainingState(false);
         }
     );
+}
+
+
+// ===== ONNX Export =====
+
+void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
+    if (!rl_executor_) {
+        spdlog::error("NodeEditor: No RL executor for ONNX export");
+        return;
+    }
+
+    auto metrics = rl_executor_->GetMetrics();
+    if (metrics.episode_count == 0) {
+        spdlog::error("NodeEditor: No trained policy to export");
+        return;
+    }
+
+    // Request export via plugin's EvaluateNode with "export_onnx" command
+    std::string plugin_qname;
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::PluginCustom &&
+            node.plugin_qualified_name.find("MuJoCo") != std::string::npos) {
+            plugin_qname = node.plugin_qualified_name;
+            break;
+        }
+    }
+
+    if (plugin_qname.empty()) {
+        spdlog::error("NodeEditor: No MuJoCo plugin node found for ONNX export");
+        return;
+    }
+
+    auto* provider = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeProvider(plugin_qname);
+    if (!provider) {
+        spdlog::error("NodeEditor: Plugin provider not found");
+        return;
+    }
+
+    cyxwiz::plugin::PluginNodeEvalContext ctx;
+    ctx.node_type_name = "RLAgent";
+    ctx.parameters["command"] = "export_onnx";
+    ctx.parameters["output_path"] = output_path;
+
+    auto result = provider->EvaluateNode(ctx);
+    if (result.success) {
+        spdlog::info("NodeEditor: Policy exported to {}", output_path);
+    } else {
+        spdlog::warn("NodeEditor: ONNX export: {}", result.error_message.empty() ? "not yet fully wired" : result.error_message);
+    }
 }
 
 void NodeEditor::OnStopRLTraining() {

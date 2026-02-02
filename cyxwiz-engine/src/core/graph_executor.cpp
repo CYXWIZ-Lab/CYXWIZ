@@ -179,8 +179,23 @@ bool GraphExecutor::EvaluateSignalNode(const gui::MLNode& node, float dt) {
         case gui::NodeType::SignalSlider: {
             float value = get_float("current_value", 0.0f);
             if (!node.outputs.empty()) {
-                std::lock_guard<std::mutex> lock(values_mutex_);
-                pin_values_[node.outputs[0].id] = value;
+                int pin_id = node.outputs[0].id;
+                bool changed = false;
+                {
+                    std::lock_guard<std::mutex> lock(values_mutex_);
+                    auto it = pin_values_.find(pin_id);
+                    if (it == pin_values_.end()) {
+                        changed = true;
+                    } else if (auto* prev = std::get_if<float>(&it->second)) {
+                        changed = (std::abs(*prev - value) > 1e-7f);
+                    } else {
+                        changed = true;
+                    }
+                    pin_values_[pin_id] = value;
+                }
+                if (changed) {
+                    MarkPinDirty(pin_id);
+                }
             }
             return true;
         }
