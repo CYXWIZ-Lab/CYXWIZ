@@ -3048,11 +3048,15 @@ void NodeEditor::OnStartRLTraining() {
     // Find MuJoCo Plant node for MJCF path and plugin name
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom) {
-            auto qn = node.parameters.find("qualified_name");
-            if (qn != node.parameters.end() && qn->second.find("MuJoCoPlant") != std::string::npos) {
-                config.plugin_qualified_name = qn->second;
+            if (node.plugin_qualified_name.find("MuJoCoPlant") != std::string::npos) {
+                config.plugin_qualified_name = node.plugin_qualified_name;
                 auto mp = node.parameters.find("mjcf_path");
-                if (mp != node.parameters.end()) config.env_mjcf_path = mp->second;
+                if (mp != node.parameters.end() && !mp->second.empty()) {
+                    config.env_mjcf_path = mp->second;
+                } else {
+                    auto meta = node.parameters.find("_meta_loaded_path");
+                    if (meta != node.parameters.end()) config.env_mjcf_path = meta->second;
+                }
                 break;
             }
         }
