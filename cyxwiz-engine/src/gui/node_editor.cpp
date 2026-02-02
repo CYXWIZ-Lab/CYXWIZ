@@ -11,11 +11,13 @@
 #include "../core/project_manager.h"
 #include "../core/graph_executor.h"
 #include "../core/rl_training_executor.h"
+#include "panels/training_dashboard.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <memory>
 #include <map>
 #include <set>
 #include <queue>
@@ -947,6 +949,33 @@ void NodeEditor::ShowToolbar() {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.55f, 0.7f, 1.0f));
             if (ImGui::Button(ICON_FA_PLAY " Run Sim")) {
                 OnRunSimulation();
+            }
+            ImGui::PopStyleColor(2);
+        }
+    }
+
+    // RL Training controls (for graphs with RL nodes)
+    if (HasRLNodes()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+        ImGui::SameLine();
+
+        if (rl_executor_ && rl_executor_->IsTraining()) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+            if (ImGui::Button(ICON_FA_STOP " Stop RL")) {
+                OnStopRLTraining();
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::SameLine();
+            auto metrics = rl_executor_->GetMetrics();
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Ep %d | R:%.1f",
+                metrics.episode_count, metrics.mean_episode_reward);
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.5f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.6f, 0.4f, 1.0f));
+            if (ImGui::Button(ICON_FA_PLAY " Train RL")) {
+                OnStartRLTraining();
             }
             ImGui::PopStyleColor(2);
         }
@@ -2899,6 +2928,99 @@ void NodeEditor::OnStopSimulation() {
     }
 
     is_simulating_ = false;
+}
+
+// ===== RL Training =====
+
+bool NodeEditor::HasRLNodes() const {
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::RLTraining ||
+            node.type == NodeType::PolicyNetwork ||
+            node.type == NodeType::ValueNetwork) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void NodeEditor::OnStartRLTraining() {
+    if (rl_executor_ && rl_executor_->IsTraining()) return;
+
+    spdlog::info("NodeEditor: Starting RL training");
+
+    // Build config from RLTraining node parameters
+    cyxwiz::RLTrainingConfig config;
+
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::RLTraining) {
+            auto it = node.parameters.find("total_timesteps");
+            if (it != node.parameters.end()) config.total_timesteps = std::stoi(it->second);
+            it = node.parameters.find("max_episode_steps");
+            if (it != node.parameters.end()) config.max_episode_steps = std::stoi(it->second);
+            it = node.parameters.find("learning_rate");
+            if (it != node.parameters.end()) config.learning_rate = std::stof(it->second);
+            it = node.parameters.find("gamma");
+            if (it != node.parameters.end()) config.gamma = std::stof(it->second);
+            it = node.parameters.find("clip_range");
+            if (it != node.parameters.end()) config.clip_range = std::stof(it->second);
+            it = node.parameters.find("n_steps");
+            if (it != node.parameters.end()) config.n_steps = std::stoi(it->second);
+            it = node.parameters.find("batch_size");
+            if (it != node.parameters.end()) config.batch_size = std::stoi(it->second);
+            it = node.parameters.find("n_epochs");
+            if (it != node.parameters.end()) config.n_epochs = std::stoi(it->second);
+            break;
+        }
+    }
+
+    // Find MuJoCo Plant node for MJCF path and plugin name
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::PluginCustom) {
+            auto qn = node.parameters.find("qualified_name");
+            if (qn != node.parameters.end() && qn->second.find("MuJoCoPlant") != std::string::npos) {
+                config.plugin_qualified_name = qn->second;
+                auto mp = node.parameters.find("mjcf_path");
+                if (mp != node.parameters.end()) config.env_mjcf_path = mp->second;
+                break;
+            }
+        }
+    }
+
+    // Static dashboard instance for RL metrics display
+    static auto s_rl_dashboard = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+    auto dashboard = s_rl_dashboard;
+
+    dashboard->SetRLTrainingState(true);
+    dashboard->SetVisible(true);
+
+    rl_executor_ = std::make_unique<cyxwiz::RLTrainingExecutor>(config);
+    rl_executor_->Start(
+        // Episode callback -> update dashboard
+        [dashboard](int episode, float reward, float length) {
+            dashboard->UpdateCustomMetric("episode_reward", reward);
+            dashboard->UpdateCustomMetric("episode_length", length);
+        },
+        // Update callback -> update policy diagnostics
+        [dashboard](int timesteps, const cyxwiz::RLTrainingMetrics& metrics) {
+            dashboard->UpdateCustomMetric("policy_loss", metrics.policy_loss);
+            dashboard->UpdateCustomMetric("value_loss", metrics.value_loss);
+            dashboard->UpdateCustomMetric("explained_variance", metrics.explained_variance);
+        },
+        // Complete callback
+        [dashboard](const cyxwiz::RLTrainingMetrics& final_metrics) {
+            spdlog::info("RL Training complete: {} episodes, mean reward: {:.2f}",
+                final_metrics.episode_count, final_metrics.mean_episode_reward);
+            dashboard->SetRLTrainingState(false);
+        }
+    );
+}
+
+void NodeEditor::OnStopRLTraining() {
+    if (!rl_executor_) return;
+
+    spdlog::info("NodeEditor: Stopping RL training");
+    rl_executor_->Stop();
+    rl_executor_.reset();
 }
 
 } // namespace gui

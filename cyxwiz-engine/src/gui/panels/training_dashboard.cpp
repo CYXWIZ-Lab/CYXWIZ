@@ -100,6 +100,19 @@ void TrainingDashboardPanel::InitializePlots() {
     spdlog::info("Training Dashboard plots initialized");
 }
 
+void TrainingDashboardPanel::InitializeRLPlots() {
+    if (rl_plots_initialized_) return;
+
+    RegisterCustomPlot("episode_reward", "Episode Reward", ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
+    RegisterCustomPlot("episode_length", "Episode Length", ImVec4(0.8f, 0.6f, 0.2f, 1.0f));
+    RegisterCustomPlot("policy_loss", "Policy Loss", ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+    RegisterCustomPlot("value_loss", "Value Loss", ImVec4(0.2f, 0.2f, 0.8f, 1.0f));
+    RegisterCustomPlot("explained_variance", "Explained Variance", ImVec4(0.4f, 0.4f, 1.0f, 1.0f));
+
+    rl_plots_initialized_ = true;
+    spdlog::info("Training Dashboard RL plots initialized");
+}
+
 void TrainingDashboardPanel::Render() {
     if (!visible_) return;
 
@@ -111,63 +124,99 @@ void TrainingDashboardPanel::Render() {
     RenderTrainingControls();
     ImGui::Separator();
 
-    // Chart selection
-    ImGui::Checkbox("Loss", &show_loss_chart_);
-    ImGui::SameLine();
-    ImGui::Checkbox("Accuracy", &show_accuracy_chart_);
-    ImGui::SameLine();
-    ImGui::Checkbox("Throughput", &show_throughput_chart_);
-    ImGui::SameLine();
-    ImGui::SliderInt("History", &chart_history_length_, 10, 500);
+    // Tabbed layout for different training modes
+    if (ImGui::BeginTabBar("MetricsTabs")) {
+        if (ImGui::BeginTabItem("Supervised")) {
+            // Chart selection
+            ImGui::Checkbox("Loss", &show_loss_chart_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Accuracy", &show_accuracy_chart_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Throughput", &show_throughput_chart_);
+            ImGui::SameLine();
+            ImGui::SliderInt("History", &chart_history_length_, 10, 500);
 
-    ImGui::Separator();
+            ImGui::Separator();
 
-    // Render charts
-    if (show_loss_chart_) {
-        RenderLossChart();
+            if (show_loss_chart_) RenderLossChart();
+            if (show_accuracy_chart_) RenderAccuracyChart();
+            if (show_throughput_chart_) RenderThroughputChart();
+
+            RenderHyperparameters();
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("Reinforcement Learning")) {
+            RenderRLMetricsTab();
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("Policy Diagnostics")) {
+            RenderPolicyDiagnosticsTab();
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
     }
-
-    if (show_accuracy_chart_) {
-        RenderAccuracyChart();
-    }
-
-    if (show_throughput_chart_) {
-        RenderThroughputChart();
-    }
-
-    RenderHyperparameters();
 
     ImGui::End();
 }
 
 void TrainingDashboardPanel::RenderMetricsOverview() {
-    ImGui::Text("Training Status: %s", is_training_ ? "RUNNING" : "STOPPED");
-    ImGui::SameLine(200);
+    if (is_rl_training_) {
+        ImGui::Text("RL Training Status: %s", is_training_ ? "RUNNING" : "STOPPED");
+    } else {
+        ImGui::Text("Training Status: %s", is_training_ ? "RUNNING" : "STOPPED");
+    }
+    ImGui::SameLine(250);
     ImGui::Text("Epoch: %.0f / %.0f", current_epoch_, total_epochs_);
 
     // Progress bar
     ImGui::ProgressBar(progress_, ImVec2(-1.0f, 0.0f));
 
     // Metrics in columns
-    ImGui::Columns(4, "metrics", false);
+    if (is_rl_training_) {
+        std::lock_guard<std::mutex> lock(custom_metrics_mutex_);
 
-    ImGui::Text("Loss");
-    ImGui::Text("%.6f", current_loss_);
-    ImGui::NextColumn();
+        ImGui::Columns(3, "rl_metrics_overview", false);
 
-    ImGui::Text("Accuracy");
-    ImGui::Text("%.2f%%", current_accuracy_ * 100.0f);
-    ImGui::NextColumn();
+        auto it = custom_metrics_.find("episode_reward");
+        ImGui::Text("Episode Reward");
+        ImGui::Text("%.2f", it != custom_metrics_.end() ? it->second.current_value : 0.0f);
+        ImGui::NextColumn();
 
-    ImGui::Text("Throughput");
-    ImGui::Text("%.0f samples/s", current_throughput_);
-    ImGui::NextColumn();
+        it = custom_metrics_.find("episode_length");
+        ImGui::Text("Episode Length");
+        ImGui::Text("%.0f", it != custom_metrics_.end() ? it->second.current_value : 0.0f);
+        ImGui::NextColumn();
 
-    ImGui::Text("Learning Rate");
-    ImGui::Text("%.6f", current_lr_);
-    ImGui::NextColumn();
+        it = custom_metrics_.find("policy_loss");
+        ImGui::Text("Policy Loss");
+        ImGui::Text("%.6f", it != custom_metrics_.end() ? it->second.current_value : 0.0f);
+        ImGui::NextColumn();
 
-    ImGui::Columns(1);
+        ImGui::Columns(1);
+    } else {
+        ImGui::Columns(4, "metrics", false);
+
+        ImGui::Text("Loss");
+        ImGui::Text("%.6f", current_loss_);
+        ImGui::NextColumn();
+
+        ImGui::Text("Accuracy");
+        ImGui::Text("%.2f%%", current_accuracy_ * 100.0f);
+        ImGui::NextColumn();
+
+        ImGui::Text("Throughput");
+        ImGui::Text("%.0f samples/s", current_throughput_);
+        ImGui::NextColumn();
+
+        ImGui::Text("Learning Rate");
+        ImGui::Text("%.6f", current_lr_);
+        ImGui::NextColumn();
+
+        ImGui::Columns(1);
+    }
 }
 
 void TrainingDashboardPanel::RenderLossChart() {
@@ -175,7 +224,6 @@ void TrainingDashboardPanel::RenderLossChart() {
 
     ImGui::Text("Loss Over Time");
 
-    // Calculate statistics
     if (!loss_history_.empty()) {
         min_loss_ = *std::min_element(loss_history_.begin(), loss_history_.end());
         max_loss_ = *std::max_element(loss_history_.begin(), loss_history_.end());
@@ -184,7 +232,6 @@ void TrainingDashboardPanel::RenderLossChart() {
 
     ImGui::Text("Min: %.6f  Max: %.6f  Avg: %.6f", min_loss_, max_loss_, avg_loss_);
 
-    // Render using PlotManager
     auto& plot_mgr = plotting::PlotManager::GetInstance();
     plot_mgr.RenderImPlot(loss_plot_id_);
 
@@ -196,14 +243,12 @@ void TrainingDashboardPanel::RenderAccuracyChart() {
 
     ImGui::Text("Accuracy Over Time");
 
-    // Calculate best accuracy
     if (!accuracy_history_.empty()) {
         best_accuracy_ = *std::max_element(accuracy_history_.begin(), accuracy_history_.end());
     }
 
     ImGui::Text("Current: %.2f%%  Best: %.2f%%", current_accuracy_ * 100.0f, best_accuracy_ * 100.0f);
 
-    // Render using PlotManager
     auto& plot_mgr = plotting::PlotManager::GetInstance();
     plot_mgr.RenderImPlot(accuracy_plot_id_);
 
@@ -215,7 +260,6 @@ void TrainingDashboardPanel::RenderThroughputChart() {
 
     ImGui::Text("Training Throughput");
 
-    // Calculate average throughput
     float avg_throughput = 0.0f;
     if (!throughput_history_.empty()) {
         avg_throughput = std::accumulate(throughput_history_.begin(), throughput_history_.end(), 0.0f) / throughput_history_.size();
@@ -223,7 +267,6 @@ void TrainingDashboardPanel::RenderThroughputChart() {
 
     ImGui::Text("Current: %.0f samples/s  Average: %.0f samples/s", current_throughput_, avg_throughput);
 
-    // Render using PlotManager
     auto& plot_mgr = plotting::PlotManager::GetInstance();
     plot_mgr.RenderImPlot(throughput_plot_id_);
 
@@ -288,20 +331,139 @@ void TrainingDashboardPanel::RenderTrainingControls() {
 
     ImGui::SameLine();
     if (ImGui::Button("Reset")) {
-        ResetMetrics();
+        if (is_rl_training_) {
+            ResetRLMetrics();
+        } else {
+            ResetMetrics();
+        }
     }
+}
+
+void TrainingDashboardPanel::RenderCustomPlot(const std::string& name) {
+    std::lock_guard<std::mutex> lock(custom_metrics_mutex_);
+
+    auto it = custom_metrics_.find(name);
+    if (it == custom_metrics_.end()) {
+        ImGui::TextDisabled("Metric '%s' not registered", name.c_str());
+        return;
+    }
+
+    auto& metric = it->second;
+
+    ImGui::Text("%s", metric.display_name.c_str());
+
+    if (metric.history.empty()) {
+        ImGui::TextDisabled("No data yet");
+        return;
+    }
+
+    // Stats
+    float min_val = *std::min_element(metric.history.begin(), metric.history.end());
+    float max_val = *std::max_element(metric.history.begin(), metric.history.end());
+    float avg_val = std::accumulate(metric.history.begin(), metric.history.end(), 0.0f) / metric.history.size();
+
+    ImGui::Text("Current: %.4f  Min: %.4f  Max: %.4f  Avg: %.4f",
+                metric.current_value, min_val, max_val, avg_val);
+
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+    plot_mgr.RenderImPlot(metric.plot_id);
+
+    ImGui::Separator();
+}
+
+void TrainingDashboardPanel::RenderRLMetricsTab() {
+    if (!rl_plots_initialized_) {
+        InitializeRLPlots();
+    }
+
+    if (!is_rl_training_) {
+        ImGui::TextDisabled("No RL training active. Start RL training from the Node Editor.");
+        ImGui::Spacing();
+    }
+
+    RenderCustomPlot("episode_reward");
+    RenderCustomPlot("episode_length");
+}
+
+void TrainingDashboardPanel::RenderPolicyDiagnosticsTab() {
+    if (!rl_plots_initialized_) {
+        InitializeRLPlots();
+    }
+
+    if (!is_rl_training_) {
+        ImGui::TextDisabled("No RL training active.");
+        ImGui::Spacing();
+    }
+
+    RenderCustomPlot("policy_loss");
+    RenderCustomPlot("value_loss");
+    RenderCustomPlot("explained_variance");
+}
+
+void TrainingDashboardPanel::RegisterCustomPlot(const std::string& name,
+                                                 const std::string& display_name,
+                                                 ImVec4 color) {
+    std::lock_guard<std::mutex> lock(custom_metrics_mutex_);
+
+    if (custom_metrics_.count(name)) return;
+
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+
+    plotting::PlotManager::PlotConfig config;
+    config.title = display_name;
+    config.x_label = "Step";
+    config.y_label = display_name;
+    config.type = plotting::PlotManager::PlotType::Line;
+    config.backend = plotting::PlotManager::BackendType::ImPlot;
+    config.auto_fit = true;
+    config.show_legend = true;
+    config.show_grid = true;
+    config.width = 600;
+    config.height = 180;
+
+    std::string plot_id = plot_mgr.CreatePlot(config);
+
+    CustomMetric metric;
+    metric.display_name = display_name;
+    metric.color = color;
+    metric.plot_id = plot_id;
+    metric.history.reserve(MAX_HISTORY);
+
+    custom_metrics_[name] = std::move(metric);
+
+    spdlog::debug("Registered custom plot: {} ({})", name, display_name);
+}
+
+void TrainingDashboardPanel::UpdateCustomMetric(const std::string& name, float value) {
+    std::lock_guard<std::mutex> lock(custom_metrics_mutex_);
+
+    auto it = custom_metrics_.find(name);
+    if (it == custom_metrics_.end()) return;
+
+    auto& metric = it->second;
+    metric.current_value = value;
+    metric.update_count++;
+    metric.history.push_back(value);
+
+    if (metric.history.size() > MAX_HISTORY) {
+        metric.history.erase(metric.history.begin());
+    }
+
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+    plot_mgr.UpdateRealtimePlot(metric.plot_id,
+                                static_cast<double>(metric.update_count),
+                                static_cast<double>(value),
+                                name);
 }
 
 void TrainingDashboardPanel::UpdateLoss(float loss) {
     current_loss_ = loss;
     loss_history_.push_back(loss);
 
-    // Keep history bounded
     if (loss_history_.size() > MAX_HISTORY) {
         loss_history_.erase(loss_history_.begin());
     }
 
-    // Update PlotManager
     auto& plot_mgr = plotting::PlotManager::GetInstance();
     plot_mgr.UpdateRealtimePlot(loss_plot_id_, static_cast<double>(current_epoch_),
                                static_cast<double>(loss), "loss");
@@ -319,7 +481,6 @@ void TrainingDashboardPanel::UpdateAccuracy(float accuracy) {
         best_accuracy_ = accuracy;
     }
 
-    // Update PlotManager
     auto& plot_mgr = plotting::PlotManager::GetInstance();
     plot_mgr.UpdateRealtimePlot(accuracy_plot_id_, static_cast<double>(current_epoch_),
                                static_cast<double>(accuracy), "accuracy");
@@ -333,7 +494,6 @@ void TrainingDashboardPanel::UpdateThroughput(float samples_per_sec) {
         throughput_history_.erase(throughput_history_.begin());
     }
 
-    // Update PlotManager
     auto& plot_mgr = plotting::PlotManager::GetInstance();
     plot_mgr.UpdateRealtimePlot(throughput_plot_id_, static_cast<double>(current_epoch_),
                                static_cast<double>(samples_per_sec), "throughput");
@@ -345,6 +505,16 @@ void TrainingDashboardPanel::UpdateLearningRate(float lr) {
 
 void TrainingDashboardPanel::SetTrainingState(bool is_training) {
     is_training_ = is_training;
+}
+
+void TrainingDashboardPanel::SetRLTrainingState(bool is_rl_training) {
+    is_rl_training_ = is_rl_training;
+    if (is_rl_training) {
+        is_training_ = true;
+        if (!rl_plots_initialized_) {
+            InitializeRLPlots();
+        }
+    }
 }
 
 void TrainingDashboardPanel::ResetMetrics() {
@@ -362,6 +532,19 @@ void TrainingDashboardPanel::ResetMetrics() {
     max_loss_ = 0.0f;
     avg_loss_ = 0.0f;
     best_accuracy_ = 0.0f;
+}
+
+void TrainingDashboardPanel::ResetRLMetrics() {
+    std::lock_guard<std::mutex> lock(custom_metrics_mutex_);
+
+    for (auto& [name, metric] : custom_metrics_) {
+        metric.history.clear();
+        metric.current_value = 0.0f;
+        metric.update_count = 0;
+    }
+
+    is_rl_training_ = false;
+    is_training_ = false;
 }
 
 } // namespace cyxwiz
