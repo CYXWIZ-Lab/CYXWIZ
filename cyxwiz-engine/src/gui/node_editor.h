@@ -18,6 +18,7 @@ namespace cyxwiz {
 class ScriptEditorPanel;
 class GraphExecutor;
 class RLTrainingExecutor;
+class TrainingDashboardPanel;
 }
 
 namespace gui {
@@ -763,6 +764,7 @@ private:
 
     // ===== RL Training State =====
     std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
+    std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
     bool HasRLNodes() const;
     void OnStartRLTraining();
     void OnStopRLTraining();

@@ -542,6 +542,11 @@ void NodeEditor::Render() {
     }
     ImGui::End();
 
+    // Render RL Training Dashboard (separate window)
+    if (rl_dashboard_) {
+        rl_dashboard_->Render();
+    }
+
     // ===== Save as Pattern Dialog =====
     if (show_save_pattern_dialog_) {
         ImGui::OpenPopup("Save as Pattern");
@@ -3062,9 +3067,11 @@ void NodeEditor::OnStartRLTraining() {
         }
     }
 
-    // Static dashboard instance for RL metrics display
-    static auto s_rl_dashboard = std::make_shared<cyxwiz::TrainingDashboardPanel>();
-    auto dashboard = s_rl_dashboard;
+    // Create dashboard if needed
+    if (!rl_dashboard_) {
+        rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+    }
+    auto dashboard = rl_dashboard_;
 
     dashboard->SetRLTrainingState(true);
     dashboard->SetVisible(true);
