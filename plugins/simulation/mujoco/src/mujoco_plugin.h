@@ -111,6 +111,7 @@ private:
 
     // RL training config
     std::string current_env_id_;
+    std::string loaded_mjcf_path_;  // Path of the currently loaded MJCF model
     float reward_threshold_ = std::numeric_limits<float>::max();
     bool viewport_visible_ = true;
     bool renderer_needs_init_ = false;

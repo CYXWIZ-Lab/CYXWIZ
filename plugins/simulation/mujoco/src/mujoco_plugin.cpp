@@ -82,6 +82,9 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
         return false;
     }
 
+    // Store the loaded path so ResolveDynamicPins can use it
+    loaded_mjcf_path_ = mjcf_path;
+
     // Reset environment to get initial state
     env_manager_.Reset();
 
@@ -608,12 +611,19 @@ DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
     if (node_type_name != "MuJoCoPlant") return {};
 
     auto it = parameters.find("mjcf_path");
-    if (it == parameters.end() || it->second.empty()) return {};
+    std::string mjcf_path;
+    if (it != parameters.end() && !it->second.empty()) {
+        mjcf_path = it->second;
+    } else if (!loaded_mjcf_path_.empty()) {
+        mjcf_path = loaded_mjcf_path_;
+    } else {
+        return {};
+    }
 
     // Parse the MJCF file to discover actuators and sensors
-    MjcfModelInfo info = ParseMjcfFile(it->second);
+    MjcfModelInfo info = ParseMjcfFile(mjcf_path);
     if (!info.valid) {
-        spdlog::warn("MuJoCoPlant: Failed to parse MJCF '{}': {}", it->second, info.error);
+        spdlog::warn("MuJoCoPlant: Failed to parse MJCF '{}': {}", mjcf_path, info.error);
         return {};
     }
 
@@ -666,6 +676,7 @@ DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
 
     // Metadata
     result.metadata["model_name"] = info.model_name;
+    result.metadata["loaded_path"] = mjcf_path;
     result.metadata["nu"] = std::to_string(info.nu);
     result.metadata["nq"] = std::to_string(info.nq);
     result.metadata["nv"] = std::to_string(info.nv);

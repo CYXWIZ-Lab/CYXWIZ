@@ -1688,6 +1688,27 @@ void Properties::RenderNodeProperties(MLNode& node) {
 #endif
                 }
 
+                // Show loaded model status from Environment Library
+                {
+                    auto meta_path = node.parameters.find("_meta_loaded_path");
+                    if (meta_path != node.parameters.end() && !meta_path->second.empty()) {
+                        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f),
+                            "Loaded from Environment Library:");
+                        ImGui::TextWrapped("%s", meta_path->second.c_str());
+                    } else if (mjcf_path.empty()) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                            "No model set.");
+                        if (node.has_dynamic_pins && node_editor_) {
+                            if (ImGui::Button("Sync from Environment Library")) {
+                                node_editor_->ResolveDynamicPins(node.id);
+                                InvalidateShapes();
+                            }
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("(Load a model in the Env Library first)");
+                        }
+                    }
+                }
+
                 ImGui::Spacing();
 
                 // Interface mode dropdown

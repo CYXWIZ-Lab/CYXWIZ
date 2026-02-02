@@ -130,4 +130,3 @@ if(WIN32 AND MUJOCO_DLLS)
         )
     endforeach()
 endif()
-

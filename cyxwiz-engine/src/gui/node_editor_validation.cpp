@@ -191,7 +191,10 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
         auto it = node->parameters.find(trigger);
         if (it != node->parameters.end()) trigger_value = it->second;
     }
-    if (trigger_value == node->resolved_config) return;  // No change
+    // Skip if trigger value hasn't changed, UNLESS both are empty and pins
+    // haven't been resolved yet (plugin may have a loaded model to use as fallback)
+    bool already_resolved = !node->resolved_config.empty();
+    if (trigger_value == node->resolved_config && already_resolved) return;  // No change
 
     SaveUndoState();
 
@@ -280,7 +283,13 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
         links_.push_back(link);
     }
 
-    node->resolved_config = trigger_value;
+    // Use the actual resolved path (may come from plugin fallback) for change detection
+    auto meta_path_it = node->parameters.find("_meta_loaded_path");
+    if (trigger_value.empty() && meta_path_it != node->parameters.end() && !meta_path_it->second.empty()) {
+        node->resolved_config = "__env_lib:" + meta_path_it->second;
+    } else {
+        node->resolved_config = trigger_value;
+    }
 
     spdlog::info("ResolveDynamicPins: node {} rebuilt with {} inputs, {} outputs",
                  node->name, node->inputs.size(), node->outputs.size());
