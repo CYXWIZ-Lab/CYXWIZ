@@ -369,6 +369,9 @@ MainWindow::MainWindow()
     // Connect Node Editor to Properties panel for node selection display
     node_editor_->SetPropertiesPanel(properties_.get());
 
+    // Connect Node Editor to ScriptingEngine for Python-based RL training
+    node_editor_->SetScriptingEngine(scripting_engine_.get());
+
     // Connect Properties panel to Node Editor for shape inference
     properties_->SetNodeEditor(node_editor_.get());
 

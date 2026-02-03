@@ -14,6 +14,9 @@
 struct ImNodesEditorContext;
 
 // Forward declarations
+// Forward declare ScriptingEngine in global scripting namespace
+namespace scripting { class ScriptingEngine; }
+
 namespace cyxwiz {
 class ScriptEditorPanel;
 class GraphExecutor;
@@ -765,6 +768,13 @@ private:
     // ===== RL Training State =====
     std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
     std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
+    bool rl_script_running_ = false;
+
+    // Scripting engine for Python-based RL training
+    scripting::ScriptingEngine* scripting_engine_ = nullptr;
+public:
+    void SetScriptingEngine(scripting::ScriptingEngine* engine) { scripting_engine_ = engine; }
+private:
     bool HasRLNodes() const;
     void OnStartRLTraining();
     void OnStopRLTraining();

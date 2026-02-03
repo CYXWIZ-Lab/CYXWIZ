@@ -76,6 +76,7 @@ set(ENGINE_SOURCES
     src/core/graph_compiler.cpp
     src/core/graph_executor.cpp
     src/core/rl_training_executor.cpp
+    src/core/rl_script_generator.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
     src/core/training_executor.cpp

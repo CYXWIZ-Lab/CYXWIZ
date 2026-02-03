@@ -12,6 +12,8 @@
 #include "../core/graph_executor.h"
 #include "../core/rl_training_executor.h"
 #include "panels/training_dashboard.h"
+#include "../core/rl_script_generator.h"
+#include "../scripting/scripting_engine.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <imnodes.h>
@@ -974,7 +976,7 @@ void NodeEditor::ShowToolbar() {
         ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
         ImGui::SameLine();
 
-        if (rl_executor_ && rl_executor_->IsTraining()) {
+        if (rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
             if (ImGui::Button(ICON_FA_STOP " Stop RL")) {
@@ -982,9 +984,13 @@ void NodeEditor::ShowToolbar() {
             }
             ImGui::PopStyleColor(2);
             ImGui::SameLine();
-            auto metrics = rl_executor_->GetMetrics();
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Ep %d | R:%.1f",
-                metrics.episode_count, metrics.mean_episode_reward);
+            if (rl_script_running_) {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Training via Python...");
+            } else if (rl_executor_) {
+                auto metrics = rl_executor_->GetMetrics();
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Ep %d | R:%.1f",
+                    metrics.episode_count, metrics.mean_episode_reward);
+            }
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.5f, 0.3f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.6f, 0.4f, 1.0f));
@@ -3021,9 +3027,17 @@ bool NodeEditor::HasRLNodes() const {
 }
 
 void NodeEditor::OnStartRLTraining() {
-    if (rl_executor_ && rl_executor_->IsTraining()) return;
+    if (rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())) return;
+    if (!scripting_engine_) {
+        spdlog::error("NodeEditor: ScriptingEngine not set, cannot run Python RL training");
+        return;
+    }
+    if (scripting_engine_->IsScriptRunning()) {
+        spdlog::warn("NodeEditor: A script is already running");
+        return;
+    }
 
-    spdlog::info("NodeEditor: Starting RL training");
+    spdlog::info("NodeEditor: Starting Python-based RL training");
 
     // Build config from RLTraining node parameters
     cyxwiz::RLTrainingConfig config;
@@ -3050,7 +3064,7 @@ void NodeEditor::OnStartRLTraining() {
         }
     }
 
-    // Find MuJoCo Plant node for MJCF path and plugin name
+    // Find MuJoCo Plant node for MJCF path
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom) {
             if (node.plugin_qualified_name.find("MuJoCoPlant") != std::string::npos) {
@@ -3067,35 +3081,53 @@ void NodeEditor::OnStartRLTraining() {
         }
     }
 
-    // Create dashboard if needed
+    // Extract RewardFunction and ObservationFilter node params
+    std::map<std::string, std::string> reward_params, obs_filter_params;
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::PluginCustom) {
+            if (node.plugin_qualified_name.find("RewardFunction") != std::string::npos) {
+                reward_params = node.parameters;
+            }
+            if (node.plugin_qualified_name.find("ObservationFilter") != std::string::npos) {
+                obs_filter_params = node.parameters;
+            }
+        }
+    }
+
+    // Determine save path
+    std::string save_path = "models/rl_policy";
+
+    // Generate Python script
+    std::string script = cyxwiz::RLScriptGenerator::Generate(
+        config, reward_params, obs_filter_params, save_path);
+
+    // Create/show dashboard
     if (!rl_dashboard_) {
         rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
     }
+    rl_dashboard_->SetRLTrainingState(true);
+    rl_dashboard_->SetVisible(true);
+    rl_dashboard_->ResetRLMetrics();
+
+    // Set up pycyxwiz flags
+    std::string setup_script = "import pycyxwiz\npycyxwiz.rl_set_stop(False)\npycyxwiz.rl_set_paused(False)\n";
+    scripting_engine_->ExecuteCommand(setup_script);
+
+    // Set completion callback
     auto dashboard = rl_dashboard_;
-
-    dashboard->SetRLTrainingState(true);
-    dashboard->SetVisible(true);
-
-    rl_executor_ = std::make_unique<cyxwiz::RLTrainingExecutor>(config);
-    rl_executor_->Start(
-        // Episode callback -> update dashboard
-        [dashboard](int episode, float reward, float length) {
-            dashboard->UpdateCustomMetric("episode_reward", reward);
-            dashboard->UpdateCustomMetric("episode_length", length);
-        },
-        // Update callback -> update policy diagnostics
-        [dashboard](int timesteps, const cyxwiz::RLTrainingMetrics& metrics) {
-            dashboard->UpdateCustomMetric("policy_loss", metrics.policy_loss);
-            dashboard->UpdateCustomMetric("value_loss", metrics.value_loss);
-            dashboard->UpdateCustomMetric("explained_variance", metrics.explained_variance);
-        },
-        // Complete callback
-        [dashboard](const cyxwiz::RLTrainingMetrics& final_metrics) {
-            spdlog::info("RL Training complete: {} episodes, mean reward: {:.2f}",
-                final_metrics.episode_count, final_metrics.mean_episode_reward);
-            dashboard->SetRLTrainingState(false);
+    rl_script_running_ = true;
+    scripting_engine_->SetCompletionCallback([this, dashboard](const scripting::ExecutionResult& result) {
+        rl_script_running_ = false;
+        dashboard->SetRLTrainingState(false);
+        if (!result.success) {
+            spdlog::error("RL training script failed: {}", result.error_message);
+        } else {
+            spdlog::info("RL training script completed successfully");
         }
-    );
+    });
+
+    // Run training script async
+    scripting_engine_->ExecuteScriptAsync(script);
 }
 
 
@@ -3148,11 +3180,25 @@ void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
 }
 
 void NodeEditor::OnStopRLTraining() {
-    if (!rl_executor_) return;
-
     spdlog::info("NodeEditor: Stopping RL training");
-    rl_executor_->Stop();
-    rl_executor_.reset();
+
+    // Stop Python-based training
+    if (rl_script_running_ && scripting_engine_) {
+        // Signal Python to stop via pycyxwiz atomic flag
+        scripting_engine_->ExecuteCommand("import pycyxwiz; pycyxwiz.rl_set_stop(True)");
+        scripting_engine_->StopScript();
+        rl_script_running_ = false;
+    }
+
+    // Stop old C++ executor (for backward compat)
+    if (rl_executor_) {
+        rl_executor_->Stop();
+        rl_executor_.reset();
+    }
+
+    if (rl_dashboard_) {
+        rl_dashboard_->SetRLTrainingState(false);
+    }
 }
 
 } // namespace gui
