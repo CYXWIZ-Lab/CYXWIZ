@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current Work Status (Updated: 2026-02-02)
+## Current Work Status (Updated: 2026-02-04)
 
-### CyxWiz Engine - Plugin System ✅ (NEW)
+### CyxWiz Engine - Plugin System ✅ (UPDATED)
 
 **Complete plugin architecture with dynamic DLL loading, permission security, and crash isolation:**
 
@@ -14,6 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ✅ **Phase 4**: `PluginRegistry` integration — 5 registries connecting plugins to engine subsystems
 - ✅ **Phase 5**: Plugin Manager UI panel (ImGui) — install, enable/disable, unload, permission badges
 - ✅ **Phase 6**: Example plugins (MLflow Logger, Image Nodes) + Developer Guide
+- ✅ **Phase 7**: Crash isolation for QueryInterface registration, recursive plugin discovery for nested plugins
 
 **Architecture:**
 ```
@@ -47,9 +48,14 @@ Engine
 | `plugins/examples/image_nodes/` | Example: custom nodes + settings panel |
 | `docs/plugin_developer_guide.md` | Full developer documentation |
 
-**Plugin Search Paths:**
-- `<cwd>/plugins/` (project-specific)
+**Plugin Search Paths (recursive discovery):**
+- `<cwd>/plugins/` (project-specific) — supports nested dirs like `plugins/simulation/mujoco/`
 - `%APPDATA%/cyxwiz/plugins/` (Windows user) or `~/.cyxwiz/plugins/` (Linux/macOS)
+
+**Recent Fixes (2026-02-04):**
+- Wrapped QueryInterface registration (panels, nodes, hooks) in SafeExecute for crash isolation
+- Fixed std::string ABI issues across DLL boundary in plugin callbacks
+- Changed plugin discovery to recursive for nested plugin directories
 
 **Building Plugins:**
 ```cmake
