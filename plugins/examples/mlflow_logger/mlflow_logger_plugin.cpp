@@ -34,7 +34,8 @@ bool MLflowLoggerPlugin::OnInitialize(PluginContext& ctx) {
     // Note: Registration of ITrainingHook is handled engine-side via QueryInterface
     // in PluginManager to avoid DLL singleton duplication.
 
-    ctx.LogInfo("MLflow Logger: Registered training hook (tracking_uri=" + tracking_uri_ + ")");
+    // Avoid accessing std::string members from DLL - ABI incompatibility causes corruption
+    ctx.LogInfo("MLflow Logger: Initialized successfully");
     state_ = PluginState::Active;
     return true;
 }

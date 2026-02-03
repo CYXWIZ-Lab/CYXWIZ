@@ -56,7 +56,8 @@ std::vector<std::filesystem::path> PluginManager::DiscoverPlugins() const {
         }
 
         try {
-            for (const auto& entry : std::filesystem::directory_iterator(search_path)) {
+            // Use recursive iterator to find nested plugins (e.g., simulation/mujoco/)
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(search_path)) {
                 if (!entry.is_directory()) continue;
 
                 // Check if directory contains plugin.json
@@ -225,26 +226,33 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
 
     // Engine-side registration via QueryInterface (bypasses DLL singleton duplication).
     // Virtual dispatch on IPlugin* resolves to DLL code, returning correct interface pointers.
+    // Each registration is wrapped in SafeExecute to catch crashes from buggy plugins.
     {
         auto* instance = plugin->instance;
+
+        // Register panels (with crash isolation)
         if (auto* p = static_cast<IPanelProvider*>(instance->QueryInterface("IPanelProvider"))) {
-            // Call GetPanels() here in engine code, then register each panel
-            // with engine-side string copies to avoid DLL std::vector/string ABI issues.
-            auto dll_panels = p->GetPanels();
-            for (const auto& pi : dll_panels) {
-                PluginPanelRegistry::Instance().RegisterDirect(
-                    plugin_id,
-                    std::string(pi.panel_id.c_str()),
-                    std::string(pi.title.c_str()),
-                    std::string(pi.category.c_str()),
-                    pi.show_by_default, p);
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterPanels", [&]() {
+                auto dll_panels = p->GetPanels();
+                for (const auto& pi : dll_panels) {
+                    PluginPanelRegistry::Instance().RegisterDirect(
+                        plugin_id,
+                        std::string(pi.panel_id.c_str()),
+                        std::string(pi.title.c_str()),
+                        std::string(pi.category.c_str()),
+                        pi.show_by_default, p);
+                }
+                spdlog::info("PluginManager: Registered {} panels for '{}'", dll_panels.size(), plugin_id);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
             }
-            spdlog::info("PluginManager: Registered {} panels for '{}'", dll_panels.size(), plugin_id);
         }
+
+        // Register nodes (with crash isolation)
         if (auto* p = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"))) {
-            // Use EnumerateNodeTypes callback to avoid passing std::vector across DLL boundary.
-            // The DLL iterates its own vector and passes C strings via callback — no cross-DLL
-            // allocation issues since all std::string construction happens in the engine.
             struct EnumState {
                 std::string plugin_id;
                 INodeProvider* provider;
@@ -263,22 +271,24 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                            bool supports_dynamic_pins, const char* dynamic_pin_trigger) {
                 auto* s = static_cast<EnumState*>(ud);
                 s->current = PluginNodeTypeInfo{};
-                s->current.type_name = type_name;
-                s->current.display_name = display_name;
-                s->current.category = category;
-                s->current.description = description;
+                s->current.type_name = type_name ? type_name : "";
+                s->current.display_name = display_name ? display_name : "";
+                s->current.category = category ? category : "";
+                s->current.description = description ? description : "";
                 s->current.color = color;
-                s->current.icon = icon;
+                s->current.icon = icon ? icon : "";
                 s->current.supports_dynamic_pins = supports_dynamic_pins;
-                s->current.dynamic_pin_trigger = dynamic_pin_trigger;
+                s->current.dynamic_pin_trigger = dynamic_pin_trigger ? dynamic_pin_trigger : "";
             };
             cb.on_pin = [](void* ud, const char* name, const char* type, bool is_input) {
                 auto* s = static_cast<EnumState*>(ud);
-                s->current.pins.push_back({name, type, is_input});
+                s->current.pins.push_back({name ? name : "", type ? type : "", is_input});
             };
             cb.on_param = [](void* ud, const char* key, const char* value) {
                 auto* s = static_cast<EnumState*>(ud);
-                s->current.default_parameters[key] = value;
+                if (key && value) {
+                    s->current.default_parameters[key] = value;
+                }
             };
             cb.on_node_done = [](void* ud) {
                 auto* s = static_cast<EnumState*>(ud);
@@ -287,16 +297,33 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 s->count++;
             };
 
-            p->EnumerateNodeTypes(cb);
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterNodes", [&]() {
+                p->EnumerateNodeTypes(cb);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
             spdlog::info("PluginManager: Registered {} nodes for '{}'", state.count, plugin_id);
         }
+
+        // Register training hook (with crash isolation)
         if (auto* p = static_cast<ITrainingHook*>(instance->QueryInterface("ITrainingHook"))) {
-            PluginTrainingHookManager::Instance().RegisterHook(plugin_id, p);
-            spdlog::info("PluginManager: Registered ITrainingHook for '{}'", plugin_id);
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterTrainingHook", [&]() {
+                PluginTrainingHookManager::Instance().RegisterHook(plugin_id, p);
+            });
+            if (!reg_result.crashed) {
+                spdlog::info("PluginManager: Registered ITrainingHook for '{}'", plugin_id);
+            }
         }
+
+        // Register data provider
         if (auto* p = static_cast<IDataProvider*>(instance->QueryInterface("IDataProvider"))) {
             PluginDataLoaderRegistry::Instance().Register(plugin_id, p);
         }
+
+        // Register analytics provider
         if (auto* p = static_cast<IAnalyticsProvider*>(instance->QueryInterface("IAnalyticsProvider"))) {
             PluginAnalyticsRegistry::Instance().Register(plugin_id, p);
         }
