@@ -1778,6 +1778,17 @@ void ToolbarPanel::Render() {
     if (show_preferences_dialog_) {
         // Note: shortcuts_ is initialized in RenderEditMenu() when Preferences is clicked
 
+        // Initialize Python settings from EngineConfig on first open
+        static bool python_settings_initialized = false;
+        if (!python_settings_initialized) {
+            auto& config = core::EngineConfig::Instance();
+            use_bundled_python_ = config.UseBundledPython();
+            std::strncpy(python_interpreter_path_, config.GetPythonInterpreterPath().c_str(), sizeof(python_interpreter_path_) - 1);
+            python_interpreter_path_[sizeof(python_interpreter_path_) - 1] = '\0';
+            python_settings_changed_ = false;
+            python_settings_initialized = true;
+        }
+
         ImGui::OpenPopup("Preferences");
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -1988,18 +1999,65 @@ void ToolbarPanel::Render() {
                     preferences_tab_ = 4;
                     ImGui::Spacing();
 
-                    // Python Interpreter Path
-                    ImGui::Text("Python Interpreter Path:");
+                    // Python Environment Selection
+                    ImGui::Text("Python Environment");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    // Check if bundled Python exists
+                    auto& config = core::EngineConfig::Instance();
+                    bool has_bundled = config.HasBundledPython();
+                    std::string bundled_path = config.GetBundledPythonHome();
+
+                    // Radio button: Use bundled Python
+                    bool prev_use_bundled = use_bundled_python_;
+                    if (ImGui::RadioButton("Use bundled Python 3.12 (Recommended)", use_bundled_python_)) {
+                        use_bundled_python_ = true;
+                    }
+                    if (has_bundled) {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(%s)", bundled_path.c_str());
+                    } else {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "(not found - will use system)");
+                    }
+
+                    // Radio button: Use custom Python
+                    if (ImGui::RadioButton("Use custom Python interpreter:", !use_bundled_python_)) {
+                        use_bundled_python_ = false;
+                    }
+
+                    // Track if setting changed (for restart warning)
+                    if (prev_use_bundled != use_bundled_python_) {
+                        python_settings_changed_ = true;
+                    }
+
+                    // Custom Python path input (only enabled when custom is selected)
+                    ImGui::BeginDisabled(use_bundled_python_);
+                    ImGui::Indent(25.0f);
                     ImGui::SetNextItemWidth(-100);
-                    ImGui::InputText("##python_path", python_interpreter_path_, sizeof(python_interpreter_path_));
+                    if (ImGui::InputText("##python_path", python_interpreter_path_, sizeof(python_interpreter_path_))) {
+                        python_settings_changed_ = true;
+                    }
                     ImGui::SameLine();
                     if (ImGui::Button("Browse##python")) {
                         std::string path = OpenFileDialog("Python Executable (python.exe)\0python.exe\0All Files (*.*)\0*.*\0", "Select Python Interpreter");
                         if (!path.empty()) {
                             strncpy(python_interpreter_path_, path.c_str(), sizeof(python_interpreter_path_) - 1);
+                            python_settings_changed_ = true;
                         }
                     }
                     ImGui::TextDisabled("Leave empty to use system default");
+                    ImGui::Unindent(25.0f);
+                    ImGui::EndDisabled();
+
+                    // Restart warning
+                    if (python_settings_changed_) {
+                        ImGui::Spacing();
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+                        ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION " Python settings will take effect after restart.");
+                        ImGui::PopStyleColor();
+                    }
 
                     ImGui::Spacing();
                     ImGui::Separator();
@@ -2332,12 +2390,24 @@ void ToolbarPanel::Render() {
             ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total_width) * 0.5f);
 
             if (ImGui::Button("OK", ImVec2(button_width, 0))) {
+                // Save Python settings to EngineConfig
+                auto& config = core::EngineConfig::Instance();
+                config.SetUseBundledPython(use_bundled_python_);
+                config.SetPythonInterpreterPath(python_interpreter_path_);
+                config.Save();
+
                 // Save preferences to project if one is open
                 if (save_project_settings_callback_) {
                     save_project_settings_callback_();
                 }
                 show_preferences_dialog_ = false;
                 spdlog::info("Preferences saved");
+
+                // Show restart dialog if Python settings changed
+                if (python_settings_changed_) {
+                    spdlog::info("Python settings changed - restart required");
+                    python_settings_changed_ = false;
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {

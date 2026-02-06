@@ -83,6 +83,16 @@ public:
 
     // ===== Python Settings =====
 
+    // Use bundled Python (true) or custom/system Python (false)
+    bool UseBundledPython() const;
+    void SetUseBundledPython(bool use_bundled);
+
+    // Get bundled Python home directory (e.g., "<exe_dir>/python")
+    std::string GetBundledPythonHome() const;
+
+    // Check if bundled Python exists on disk
+    bool HasBundledPython() const;
+
     // Get Python interpreter path (empty = use system/global Python)
     std::string GetPythonInterpreterPath() const;
     void SetPythonInterpreterPath(const std::string& path);
@@ -92,6 +102,10 @@ public:
 
     // Get Python packages directory (derived from interpreter path)
     std::string GetPythonPackagesDir() const;
+
+    // Get the effective PYTHONHOME based on current settings
+    // Returns: bundled path, custom path parent, or empty for system Python
+    std::string GetEffectivePythonHome() const;
 
     // Check if configuration has been modified
     bool IsModified() const { return modified_; }
@@ -128,7 +142,8 @@ private:
     int request_timeout_ = 30;     // seconds
 
     // Python settings
-    std::string python_interpreter_path_;  // Empty = use system/global Python
+    bool use_bundled_python_ = true;       // True = use bundled Python, false = custom/system
+    std::string python_interpreter_path_;  // Custom interpreter path (when use_bundled_python_ = false)
 };
 
 } // namespace cyxwiz::core

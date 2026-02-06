@@ -559,6 +559,12 @@ if(OpenCV_FOUND)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_OPENCV)
 endif()
 
+# Python scripting support (controlled by CYXWIZ_HAS_PYTHON from root CMakeLists.txt)
+if(CYXWIZ_HAS_PYTHON)
+    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_PYTHON)
+    message(STATUS "Engine: Python scripting support enabled")
+endif()
+
 # Optional: ONNX Export support
 if(CYXWIZ_HAS_ONNX_EXPORT)
     find_package(ONNX CONFIG REQUIRED)
@@ -638,6 +644,17 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     $<TARGET_FILE_DIR:cyxwiz-engine>/pycyxwiz.pyd
     COMMENT "Copying pycyxwiz Python module..."
 )
+
+# Copy bundled Python distribution to build directory (if exists)
+# This provides Python 3.12 with pre-installed packages (mujoco, gymnasium, stable-baselines3)
+if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/python-embed")
+    add_custom_command(TARGET cyxwiz-engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/python-embed"
+        "$<TARGET_FILE_DIR:cyxwiz-engine>/python"
+        COMMENT "Copying bundled Python 3.12 distribution..."
+    )
+endif()
 
 # ===== Python Bindings Module =====
 

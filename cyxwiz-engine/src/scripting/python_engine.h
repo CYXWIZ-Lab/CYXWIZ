@@ -29,6 +29,9 @@ private:
     bool initialized_by_us_ = false;  // True if we called py::initialize_interpreter()
     PyThreadState* main_thread_state_ = nullptr;  // Saved when releasing GIL
 
+    // Configure PYTHONHOME before initialization (bundled vs custom vs system)
+    void ConfigurePythonHome();
+
     // Configure custom Python packages path from EngineConfig
     void ConfigureCustomPythonPath();
 };

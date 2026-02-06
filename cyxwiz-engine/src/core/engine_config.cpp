@@ -11,6 +11,7 @@
 #else
 #include <pwd.h>
 #include <unistd.h>
+#include <limits.h>  // PATH_MAX
 #endif
 
 namespace cyxwiz::core {
@@ -36,7 +37,8 @@ void EngineConfig::SetDefaults() {
     auto_connect_on_startup_ = false;
     connection_timeout_ = 10;
     request_timeout_ = 30;
-    python_interpreter_path_ = "";  // Empty = use system/global Python
+    use_bundled_python_ = true;     // Default to bundled Python
+    python_interpreter_path_ = "";  // Empty = use system/global Python (when bundled is false)
 }
 
 std::filesystem::path EngineConfig::GetUserConfigDir() const {
@@ -149,6 +151,9 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         // Python settings
         if (config.contains("python")) {
             const auto& python = config["python"];
+            if (python.contains("use_bundled")) {
+                use_bundled_python_ = python["use_bundled"].get<bool>();
+            }
             if (python.contains("interpreter_path")) {
                 python_interpreter_path_ = python["interpreter_path"].get<std::string>();
             }
@@ -162,7 +167,8 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         spdlog::debug("  Auth API: {}", auth_api_url_);
         spdlog::debug("  Default Deployment: {}", default_deployment_address_);
         spdlog::debug("  Default P2P Port: {}", default_p2p_port_);
-        spdlog::debug("  Python Interpreter: {}", python_interpreter_path_.empty() ? "(system default)" : python_interpreter_path_);
+        spdlog::debug("  Python: {}", use_bundled_python_ ? "bundled" :
+                      (python_interpreter_path_.empty() ? "system" : python_interpreter_path_));
 
         return true;
 
@@ -216,6 +222,7 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
 
         // Python settings
         config["python"] = {
+            {"use_bundled", use_bundled_python_},
             {"interpreter_path", python_interpreter_path_}
         };
 
@@ -380,13 +387,13 @@ std::string EngineConfig::GetPythonPackagesDir() const {
     if (python_interpreter_path_.empty()) {
         return "";  // Use system default
     }
-    
+
     // Derive site-packages from interpreter path
     // e.g., C:/Python311/python.exe -> C:/Python311/Lib/site-packages
     // or /usr/bin/python3 -> (system site-packages)
     std::filesystem::path interp(python_interpreter_path_);
     auto parent = interp.parent_path();
-    
+
 #ifdef _WIN32
     // Windows: python.exe is in the root, Lib/site-packages is a sibling
     auto site_packages = parent / "Lib" / "site-packages";
@@ -394,12 +401,80 @@ std::string EngineConfig::GetPythonPackagesDir() const {
     // Unix: python is in bin/, lib/pythonX.Y/site-packages is a sibling
     auto site_packages = parent.parent_path() / "lib" / "python3" / "site-packages";
 #endif
-    
+
     if (std::filesystem::exists(site_packages)) {
         return site_packages.string();
     }
-    
+
     return "";  // Fall back to system default
+}
+
+bool EngineConfig::UseBundledPython() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return use_bundled_python_;
+}
+
+void EngineConfig::SetUseBundledPython(bool use_bundled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (use_bundled_python_ != use_bundled) {
+        use_bundled_python_ = use_bundled;
+        modified_ = true;
+    }
+}
+
+std::string EngineConfig::GetBundledPythonHome() const {
+    // Get the directory where the executable is located
+    // Bundled Python is in <exe_dir>/python/
+#ifdef _WIN32
+    wchar_t path[MAX_PATH];
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    std::filesystem::path exe_path(path);
+#else
+    char path[PATH_MAX];
+    ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
+    std::filesystem::path exe_path(count > 0 ? std::string(path, count) : ".");
+#endif
+    auto python_home = exe_path.parent_path() / "python";
+    return python_home.string();
+}
+
+bool EngineConfig::HasBundledPython() const {
+    std::string bundled_home = GetBundledPythonHome();
+#ifdef _WIN32
+    // Check for python312.dll or similar
+    std::filesystem::path home(bundled_home);
+    return std::filesystem::exists(home / "python312.dll") ||
+           std::filesystem::exists(home / "python311.dll") ||
+           std::filesystem::exists(home / "python.exe");
+#else
+    // Check for libpython or python executable
+    std::filesystem::path home(bundled_home);
+    return std::filesystem::exists(home / "bin" / "python3") ||
+           std::filesystem::exists(home / "lib" / "libpython3.so");
+#endif
+}
+
+std::string EngineConfig::GetEffectivePythonHome() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (use_bundled_python_) {
+        std::string bundled = GetBundledPythonHome();
+        // Only use bundled if it exists
+        if (std::filesystem::exists(bundled)) {
+            return bundled;
+        }
+        spdlog::warn("Bundled Python not found at {}, falling back to system Python", bundled);
+        return "";  // Fall back to system
+    }
+
+    if (!python_interpreter_path_.empty()) {
+        // Custom Python - derive home from interpreter path
+        // e.g., C:/Python312/python.exe -> C:/Python312
+        std::filesystem::path interp(python_interpreter_path_);
+        return interp.parent_path().string();
+    }
+
+    return "";  // Use system Python (no PYTHONHOME needed)
 }
 
 } // namespace cyxwiz::core
