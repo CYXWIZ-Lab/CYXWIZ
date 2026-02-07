@@ -616,6 +616,11 @@ private:
     std::string GenerateKerasCode(const std::vector<int>& sorted_ids);
     std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);
 
+    // RL-specific code generation
+    bool IsRLGraph(const std::vector<int>& sorted_ids) const;
+    std::string GenerateRLPyTorchCode(const std::vector<int>& sorted_ids) const;
+    std::string GenerateRLPyCyxWizCode(const std::vector<int>& sorted_ids) const;
+
     // Framework-specific layer conversion
     std::string NodeTypeToPythonLayer(const MLNode& node);
     std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);

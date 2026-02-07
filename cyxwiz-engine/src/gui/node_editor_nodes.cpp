@@ -1597,45 +1597,117 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             reward_out.name = "Reward";
             reward_out.is_input = false;
             node.outputs.push_back(reward_out);
+            NodePin done_out;
+            done_out.id = next_pin_id_++;
+            done_out.type = PinType::Tensor;
+            done_out.name = "Done";
+            done_out.is_input = false;
+            node.outputs.push_back(done_out);
+            NodePin info_out;
+            info_out.id = next_pin_id_++;
+            info_out.type = PinType::Tensor;
+            info_out.name = "Info";
+            info_out.is_input = false;
+            node.outputs.push_back(info_out);
+            // Environment parameters
             node.parameters["env_name"] = "CartPole-v1";
+            node.parameters["env_type"] = "classic_control";  // classic_control, box2d, mujoco, atari
             node.parameters["render"] = "false";
+            node.parameters["render_mode"] = "rgb_array";  // human, rgb_array, ansi
+            node.parameters["max_episode_steps"] = "500";
+            node.parameters["n_envs"] = "4";
+            node.parameters["seed"] = "42";
+            node.parameters["normalize_obs"] = "false";
+            node.parameters["normalize_reward"] = "false";
+            node.parameters["frame_stack"] = "1";  // For Atari/image-based envs
             break;
         }
 
         case NodeType::ReplayBufferNode: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Transition";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Batch";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["capacity"] = "10000";
-            node.parameters["batch_size"] = "64";
+            NodePin transition_in;
+            transition_in.id = next_pin_id_++;
+            transition_in.type = PinType::Tensor;
+            transition_in.name = "Transition";
+            transition_in.is_input = true;
+            node.inputs.push_back(transition_in);
+            NodePin batch_out;
+            batch_out.id = next_pin_id_++;
+            batch_out.type = PinType::Tensor;
+            batch_out.name = "Batch";
+            batch_out.is_input = false;
+            node.outputs.push_back(batch_out);
+            NodePin priority_out;
+            priority_out.id = next_pin_id_++;
+            priority_out.type = PinType::Tensor;
+            priority_out.name = "Priorities";
+            priority_out.is_input = false;
+            node.outputs.push_back(priority_out);
+            // Buffer configuration
+            node.parameters["capacity"] = "100000";
+            node.parameters["batch_size"] = "256";
+            // Prioritized experience replay
+            node.parameters["prioritized"] = "false";
+            node.parameters["alpha"] = "0.6";  // PER priority exponent
+            node.parameters["beta_start"] = "0.4";  // PER importance sampling initial
+            node.parameters["beta_frames"] = "100000";  // Frames to anneal beta to 1.0
+            // N-step returns
+            node.parameters["n_step"] = "1";
+            node.parameters["gamma"] = "0.99";  // Discount for n-step
+            // HER (Hindsight Experience Replay)
+            node.parameters["her_strategy"] = "none";  // none, future, episode, random
+            node.parameters["her_k"] = "4";  // Number of HER goals per transition
             break;
         }
 
-        case NodeType::PolicyNetwork:
+        case NodeType::PolicyNetwork: {
+            NodePin state_in;
+            state_in.id = next_pin_id_++;
+            state_in.type = PinType::Tensor;
+            state_in.name = "State";
+            state_in.is_input = true;
+            node.inputs.push_back(state_in);
+            NodePin action_out;
+            action_out.id = next_pin_id_++;
+            action_out.type = PinType::Tensor;
+            action_out.name = "Action";
+            action_out.is_input = false;
+            node.outputs.push_back(action_out);
+            NodePin log_prob_out;
+            log_prob_out.id = next_pin_id_++;
+            log_prob_out.type = PinType::Tensor;
+            log_prob_out.name = "LogProb";
+            log_prob_out.is_input = false;
+            node.outputs.push_back(log_prob_out);
+            // Network architecture
+            node.parameters["hidden_sizes"] = "128,128";  // Comma-separated layer sizes
+            node.parameters["activation"] = "ReLU";  // ReLU, Tanh, GELU, Swish
+            node.parameters["output_activation"] = "None";  // None, Tanh (for continuous)
+            // Distribution type
+            node.parameters["action_space"] = "discrete";  // discrete, continuous, multi_discrete
+            node.parameters["log_std_init"] = "0.0";  // For continuous actions
+            // Orthogonal initialization
+            node.parameters["ortho_init"] = "true";
+            break;
+        }
+
         case NodeType::ValueNetwork: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "State";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = type == NodeType::PolicyNetwork ? "Action" : "Value";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["hidden_size"] = "128";
-            node.parameters["num_layers"] = "2";
+            NodePin state_in;
+            state_in.id = next_pin_id_++;
+            state_in.type = PinType::Tensor;
+            state_in.name = "State";
+            state_in.is_input = true;
+            node.inputs.push_back(state_in);
+            NodePin value_out;
+            value_out.id = next_pin_id_++;
+            value_out.type = PinType::Tensor;
+            value_out.name = "Value";
+            value_out.is_input = false;
+            node.outputs.push_back(value_out);
+            // Network architecture
+            node.parameters["hidden_sizes"] = "128,128";  // Comma-separated layer sizes
+            node.parameters["activation"] = "ReLU";  // ReLU, Tanh, GELU, Swish
+            // Orthogonal initialization
+            node.parameters["ortho_init"] = "true";
             break;
         }
 
@@ -1652,16 +1724,54 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             env_in.name = "Environment";
             env_in.is_input = true;
             node.inputs.push_back(env_in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Metrics";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["algorithm"] = "PPO";
-            node.parameters["episodes"] = "1000";
+            NodePin value_in;
+            value_in.id = next_pin_id_++;
+            value_in.type = PinType::Tensor;
+            value_in.name = "Value";
+            value_in.is_input = true;
+            node.inputs.push_back(value_in);
+            NodePin buffer_in;
+            buffer_in.id = next_pin_id_++;
+            buffer_in.type = PinType::Tensor;
+            buffer_in.name = "ReplayBuffer";
+            buffer_in.is_input = true;
+            node.inputs.push_back(buffer_in);
+            NodePin metrics_out;
+            metrics_out.id = next_pin_id_++;
+            metrics_out.type = PinType::Tensor;
+            metrics_out.name = "Metrics";
+            metrics_out.is_input = false;
+            node.outputs.push_back(metrics_out);
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Tensor;
+            model_out.name = "TrainedModel";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+            // Algorithm selection
+            node.parameters["algorithm"] = "PPO";  // PPO, A2C, SAC, TD3, DQN, DDPG, TRPO
+            // Training hyperparameters
+            node.parameters["total_timesteps"] = "100000";
+            node.parameters["learning_rate"] = "3e-4";
+            node.parameters["batch_size"] = "64";
+            node.parameters["n_epochs"] = "10";  // PPO epochs per update
+            // Discount and advantage
             node.parameters["gamma"] = "0.99";
-            node.parameters["epsilon"] = "0.2";
+            node.parameters["gae_lambda"] = "0.95";  // GAE lambda for advantage estimation
+            // PPO-specific
+            node.parameters["clip_range"] = "0.2";
+            node.parameters["ent_coef"] = "0.0";  // Entropy coefficient
+            node.parameters["vf_coef"] = "0.5";  // Value function coefficient
+            node.parameters["max_grad_norm"] = "0.5";
+            // SAC/TD3-specific
+            node.parameters["tau"] = "0.005";  // Soft update coefficient
+            node.parameters["train_freq"] = "1";
+            node.parameters["gradient_steps"] = "1";
+            // Logging and checkpointing
+            node.parameters["log_interval"] = "1";
+            node.parameters["eval_freq"] = "5000";
+            node.parameters["save_freq"] = "10000";
+            node.parameters["tensorboard"] = "true";
             break;
         }
 
