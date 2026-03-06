@@ -5,6 +5,7 @@
 #include "cyxwiz/cyxwiz.h"
 #include <pybind11/functional.h>
 #include <atomic>
+#include <cstring>
 #include <functional>
 #include "cyxwiz/sequential.h"
 #include "cyxwiz/tokenizer.h"
@@ -61,6 +62,142 @@ size_t get_dtype_size(cyxwiz::DataType dt) {
         case cyxwiz::DataType::UInt8: return sizeof(uint8_t);
         default: throw std::runtime_error("Unknown DataType");
     }
+}
+
+using NumpyArrayDouble = py::array_t<double, py::array::c_style | py::array::forcecast>;
+
+// Convert a 2D NumPy array to std::vector<std::vector<double>>
+std::vector<std::vector<double>> numpy_2d_to_matrix(const NumpyArrayDouble& arr, const char* name) {
+    if (arr.ndim() != 2) {
+        throw std::runtime_error(std::string(name) + " must be a 2D NumPy array");
+    }
+
+    const py::ssize_t rows = arr.shape(0);
+    const py::ssize_t cols = arr.shape(1);
+    const double* src = arr.data();
+
+    std::vector<std::vector<double>> out(static_cast<size_t>(rows),
+                                         std::vector<double>(static_cast<size_t>(cols)));
+
+    for (py::ssize_t r = 0; r < rows; ++r) {
+        std::memcpy(out[static_cast<size_t>(r)].data(),
+                    src + r * cols,
+                    static_cast<size_t>(cols) * sizeof(double));
+    }
+
+    return out;
+}
+
+// Convert a 1D or 2D NumPy array to matrix form (1D becomes column vector)
+std::vector<std::vector<double>> numpy_vector_or_2d_to_matrix(const NumpyArrayDouble& arr, const char* name) {
+    if (arr.ndim() == 2) {
+        return numpy_2d_to_matrix(arr, name);
+    }
+
+    if (arr.ndim() == 1) {
+        const py::ssize_t n = arr.shape(0);
+        const double* src = arr.data();
+        std::vector<std::vector<double>> out(static_cast<size_t>(n), std::vector<double>(1));
+        for (py::ssize_t i = 0; i < n; ++i) {
+            out[static_cast<size_t>(i)][0] = src[i];
+        }
+        return out;
+    }
+
+    throw std::runtime_error(std::string(name) + " must be a 1D or 2D NumPy array");
+}
+
+std::vector<double> matrix_single_column_to_vector(
+    const std::vector<std::vector<double>>& mat,
+    const char* name) {
+    if (mat.empty()) {
+        return {};
+    }
+
+    const size_t cols = mat[0].size();
+    if (cols != 1) {
+        throw std::runtime_error(std::string(name) + " expected single-column matrix result");
+    }
+
+    std::vector<double> out(mat.size());
+    for (size_t r = 0; r < mat.size(); ++r) {
+        if (mat[r].size() != cols) {
+            throw std::runtime_error(std::string(name) + " has inconsistent row sizes");
+        }
+        out[r] = mat[r][0];
+    }
+
+    return out;
+}
+
+py::array_t<double> matrix_to_numpy(const std::vector<std::vector<double>>& mat) {
+    if (mat.empty()) {
+        return py::array_t<double>({0, 0});
+    }
+
+    const py::ssize_t rows = static_cast<py::ssize_t>(mat.size());
+    const py::ssize_t cols = static_cast<py::ssize_t>(mat[0].size());
+
+    py::array_t<double> out({rows, cols});
+    double* dst = out.mutable_data();
+
+    for (py::ssize_t r = 0; r < rows; ++r) {
+        const auto& row = mat[static_cast<size_t>(r)];
+        if (static_cast<py::ssize_t>(row.size()) != cols) {
+            throw std::runtime_error("Matrix rows have inconsistent sizes");
+        }
+        std::memcpy(dst + r * cols, row.data(), static_cast<size_t>(cols) * sizeof(double));
+    }
+
+    return out;
+}
+
+py::array_t<double> vector_to_numpy(const std::vector<double>& vec) {
+    py::array_t<double> out({static_cast<py::ssize_t>(vec.size())});
+    if (!vec.empty()) {
+        std::memcpy(out.mutable_data(), vec.data(), vec.size() * sizeof(double));
+    }
+    return out;
+}
+
+py::array_t<int> int_vector_to_numpy(const std::vector<int>& vec) {
+    py::array_t<int> out({static_cast<py::ssize_t>(vec.size())});
+    if (!vec.empty()) {
+        std::memcpy(out.mutable_data(), vec.data(), vec.size() * sizeof(int));
+    }
+    return out;
+}
+
+py::array_t<std::complex<double>> complex_vector_to_numpy(const std::vector<std::complex<double>>& vec) {
+    py::array_t<std::complex<double>> out({static_cast<py::ssize_t>(vec.size())});
+    if (!vec.empty()) {
+        std::memcpy(out.mutable_data(), vec.data(), vec.size() * sizeof(std::complex<double>));
+    }
+    return out;
+}
+
+py::array_t<std::complex<double>> complex_matrix_to_numpy(
+    const std::vector<std::vector<std::complex<double>>>& mat) {
+    if (mat.empty()) {
+        return py::array_t<std::complex<double>>({0, 0});
+    }
+
+    const py::ssize_t rows = static_cast<py::ssize_t>(mat.size());
+    const py::ssize_t cols = static_cast<py::ssize_t>(mat[0].size());
+
+    py::array_t<std::complex<double>> out({rows, cols});
+    std::complex<double>* dst = out.mutable_data();
+
+    for (py::ssize_t r = 0; r < rows; ++r) {
+        const auto& row = mat[static_cast<size_t>(r)];
+        if (static_cast<py::ssize_t>(row.size()) != cols) {
+            throw std::runtime_error("Complex matrix rows have inconsistent sizes");
+        }
+        std::memcpy(dst + r * cols, row.data(),
+                    static_cast<size_t>(cols) * sizeof(std::complex<double>));
+    }
+
+    return out;
 }
 
 PYBIND11_MODULE(pycyxwiz, m) {
@@ -1165,6 +1302,19 @@ PYBIND11_MODULE(pycyxwiz, m) {
         return result.matrix;
     }, "Create ones matrix", py::arg("rows"), py::arg("cols"));
 
+    linalg.def("diag", [](const NumpyArrayDouble& d) {
+        if (d.ndim() != 1) {
+            throw std::runtime_error("d must be a 1D NumPy array");
+        }
+        std::vector<double> vec(static_cast<size_t>(d.shape(0)));
+        if (!vec.empty()) {
+            std::memcpy(vec.data(), d.data(), vec.size() * sizeof(double));
+        }
+        auto result = cyxwiz::LinearAlgebra::Diagonal(vec);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return matrix_to_numpy(result.matrix);
+    }, "Create diagonal matrix from NumPy vector", py::arg("d"));
+
     linalg.def("diag", [](const std::vector<double>& d) {
         auto result = cyxwiz::LinearAlgebra::Diagonal(d);
         if (!result.success) throw std::runtime_error(result.error_message);
@@ -1172,11 +1322,29 @@ PYBIND11_MODULE(pycyxwiz, m) {
     }, "Create diagonal matrix from vector", py::arg("d"));
 
     // Decompositions
+    linalg.def("svd", [](const NumpyArrayDouble& A, bool full_matrices) {
+        auto result = cyxwiz::LinearAlgebra::SVD(numpy_2d_to_matrix(A, "A"), full_matrices);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::make_tuple(
+            matrix_to_numpy(result.U),
+            vector_to_numpy(result.S),
+            matrix_to_numpy(result.Vt));
+    }, "Singular Value Decomposition: U, S, Vt = svd(A)",
+       py::arg("A"), py::arg("full_matrices") = false);
+
     linalg.def("svd", [](const std::vector<std::vector<double>>& A, bool full_matrices) {
         auto result = cyxwiz::LinearAlgebra::SVD(A, full_matrices);
         if (!result.success) throw std::runtime_error(result.error_message);
         return py::make_tuple(result.U, result.S, result.Vt);
     }, "Singular Value Decomposition: U, S, Vt = svd(A)", py::arg("A"), py::arg("full_matrices") = false);
+
+    linalg.def("eig", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::Eigen(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::make_tuple(
+            complex_vector_to_numpy(result.eigenvalues),
+            complex_matrix_to_numpy(result.eigenvectors));
+    }, "Eigenvalue decomposition: eigenvalues, eigenvectors = eig(A)", py::arg("A"));
 
     linalg.def("eig", [](const std::vector<std::vector<double>>& A) {
         auto result = cyxwiz::LinearAlgebra::Eigen(A);
@@ -1184,17 +1352,38 @@ PYBIND11_MODULE(pycyxwiz, m) {
         return py::make_tuple(result.eigenvalues, result.eigenvectors);
     }, "Eigenvalue decomposition: eigenvalues, eigenvectors = eig(A)");
 
+    linalg.def("qr", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::QR(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::make_tuple(matrix_to_numpy(result.Q), matrix_to_numpy(result.R));
+    }, "QR decomposition: Q, R = qr(A)", py::arg("A"));
+
     linalg.def("qr", [](const std::vector<std::vector<double>>& A) {
         auto result = cyxwiz::LinearAlgebra::QR(A);
         if (!result.success) throw std::runtime_error(result.error_message);
         return py::make_tuple(result.Q, result.R);
     }, "QR decomposition: Q, R = qr(A)");
 
+    linalg.def("chol", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::Cholesky(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return matrix_to_numpy(result.L);
+    }, "Cholesky decomposition: L = chol(A) where A = L @ L.T", py::arg("A"));
+
     linalg.def("chol", [](const std::vector<std::vector<double>>& A) {
         auto result = cyxwiz::LinearAlgebra::Cholesky(A);
         if (!result.success) throw std::runtime_error(result.error_message);
         return result.L;
     }, "Cholesky decomposition: L = chol(A) where A = L @ L.T");
+
+    linalg.def("lu", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::LU(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::make_tuple(
+            matrix_to_numpy(result.L),
+            matrix_to_numpy(result.U),
+            int_vector_to_numpy(result.P));
+    }, "LU decomposition: L, U, P = lu(A)", py::arg("A"));
 
     linalg.def("lu", [](const std::vector<std::vector<double>>& A) {
         auto result = cyxwiz::LinearAlgebra::LU(A);
@@ -1203,43 +1392,125 @@ PYBIND11_MODULE(pycyxwiz, m) {
     }, "LU decomposition: L, U, P = lu(A)");
 
     // Matrix properties
+    linalg.def("det", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::Determinant(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.value;
+    }, "Compute determinant", py::arg("A"));
+
     linalg.def("det", [](const std::vector<std::vector<double>>& A) {
         auto result = cyxwiz::LinearAlgebra::Determinant(A);
         if (!result.success) throw std::runtime_error(result.error_message);
         return result.value;
     }, "Compute determinant");
 
-    linalg.def("rank", [](const std::vector<std::vector<double>>& A, double tol) {
-        auto result = cyxwiz::LinearAlgebra::Rank(A, tol);
+    linalg.def("rank", [](const NumpyArrayDouble& A, double tol) {
+        auto result = cyxwiz::LinearAlgebra::Rank(numpy_2d_to_matrix(A, "A"), tol);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return static_cast<int>(result.value);
     }, "Compute matrix rank", py::arg("A"), py::arg("tol") = 1e-10);
 
+    linalg.def("rank", [](const std::vector<std::vector<double>>& A, double tol) {
+        auto result = cyxwiz::LinearAlgebra::Rank(A, tol);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return static_cast<int>(result.value);
+    }, "Compute matrix rank", py::arg("A"), py::arg("tol") = 1e-10);
+
+    linalg.def("trace", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::Trace(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.value;
+    }, "Compute trace (sum of diagonal)", py::arg("A"));
+
     linalg.def("trace", [](const std::vector<std::vector<double>>& A) {
         auto result = cyxwiz::LinearAlgebra::Trace(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return result.value;
     }, "Compute trace (sum of diagonal)");
 
-    linalg.def("norm", [](const std::vector<std::vector<double>>& A) {
+    linalg.def("norm", [](const cyxwiz::Tensor& A) {
         auto result = cyxwiz::LinearAlgebra::FrobeniusNorm(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return result.value;
     }, "Frobenius norm");
 
+    linalg.def("norm", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::FrobeniusNorm(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.value;
+    }, "Frobenius norm", py::arg("A"));
+
+    linalg.def("norm", [](const std::vector<std::vector<double>>& A) {
+        auto result = cyxwiz::LinearAlgebra::FrobeniusNorm(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.value;
+    }, "Frobenius norm");
+
+    linalg.def("cond", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::ConditionNumber(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.value;
+    }, "Condition number", py::arg("A"));
+
     linalg.def("cond", [](const std::vector<std::vector<double>>& A) {
         auto result = cyxwiz::LinearAlgebra::ConditionNumber(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return result.value;
     }, "Condition number");
 
     // Matrix operations
+    linalg.def("inv", [](const cyxwiz::Tensor& A) {
+        auto result = cyxwiz::LinearAlgebra::Inverse(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.tensor;
+    }, "Matrix inverse");
+
+    linalg.def("inv", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::Inverse(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return matrix_to_numpy(result.matrix);
+    }, "Matrix inverse", py::arg("A"));
+
     linalg.def("inv", [](const std::vector<std::vector<double>>& A) {
         auto result = cyxwiz::LinearAlgebra::Inverse(A);
         if (!result.success) throw std::runtime_error(result.error_message);
         return result.matrix;
     }, "Matrix inverse");
 
+    linalg.def("transpose", [](const cyxwiz::Tensor& A) {
+        auto result = cyxwiz::LinearAlgebra::Transpose(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.tensor;
+    }, "Matrix transpose");
+
+    linalg.def("transpose", [](const NumpyArrayDouble& A) {
+        auto result = cyxwiz::LinearAlgebra::Transpose(numpy_2d_to_matrix(A, "A"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return matrix_to_numpy(result.matrix);
+    }, "Matrix transpose", py::arg("A"));
+
     linalg.def("transpose", [](const std::vector<std::vector<double>>& A) {
         auto result = cyxwiz::LinearAlgebra::Transpose(A);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return result.matrix;
     }, "Matrix transpose");
+
+    linalg.def("solve", [](const cyxwiz::Tensor& A, const cyxwiz::Tensor& b) {
+        auto result = cyxwiz::LinearAlgebra::Solve(A, b);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.tensor;
+    }, "Solve Ax = b");
+
+    linalg.def("solve", [](const NumpyArrayDouble& A, const NumpyArrayDouble& b) -> py::object {
+        auto result = cyxwiz::LinearAlgebra::Solve(
+            numpy_2d_to_matrix(A, "A"),
+            numpy_vector_or_2d_to_matrix(b, "b"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        if (b.ndim() == 1) {
+            return vector_to_numpy(matrix_single_column_to_vector(result.matrix, "solve"));
+        }
+        return matrix_to_numpy(result.matrix);
+    }, "Solve Ax = b", py::arg("A"), py::arg("b"));
 
     linalg.def("solve", [](const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& b) {
         auto result = cyxwiz::LinearAlgebra::Solve(A, b);
@@ -1247,11 +1518,42 @@ PYBIND11_MODULE(pycyxwiz, m) {
         return result.matrix;
     }, "Solve Ax = b");
 
+    linalg.def("lstsq", [](const cyxwiz::Tensor& A, const cyxwiz::Tensor& b) {
+        auto result = cyxwiz::LinearAlgebra::LeastSquares(A, b);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.tensor;
+    }, "Least squares solution");
+
+    linalg.def("lstsq", [](const NumpyArrayDouble& A, const NumpyArrayDouble& b) -> py::object {
+        auto result = cyxwiz::LinearAlgebra::LeastSquares(
+            numpy_2d_to_matrix(A, "A"),
+            numpy_vector_or_2d_to_matrix(b, "b"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        if (b.ndim() == 1) {
+            return vector_to_numpy(matrix_single_column_to_vector(result.matrix, "lstsq"));
+        }
+        return matrix_to_numpy(result.matrix);
+    }, "Least squares solution", py::arg("A"), py::arg("b"));
+
     linalg.def("lstsq", [](const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& b) {
         auto result = cyxwiz::LinearAlgebra::LeastSquares(A, b);
         if (!result.success) throw std::runtime_error(result.error_message);
         return result.matrix;
     }, "Least squares solution");
+
+    linalg.def("matmul", [](const cyxwiz::Tensor& A, const cyxwiz::Tensor& B) {
+        auto result = cyxwiz::LinearAlgebra::Multiply(A, B);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return result.tensor;
+    }, "Matrix multiplication");
+
+    linalg.def("matmul", [](const NumpyArrayDouble& A, const NumpyArrayDouble& B) {
+        auto result = cyxwiz::LinearAlgebra::Multiply(
+            numpy_2d_to_matrix(A, "A"),
+            numpy_2d_to_matrix(B, "B"));
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return matrix_to_numpy(result.matrix);
+    }, "Matrix multiplication", py::arg("A"), py::arg("B"));
 
     linalg.def("matmul", [](const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& B) {
         auto result = cyxwiz::LinearAlgebra::Multiply(A, B);
