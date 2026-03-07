@@ -301,9 +301,13 @@ if(CYXWIZ_ENABLE_CUDA)
     target_include_directories(test_cuda_backend PRIVATE cyxwiz-backend/include)
 
     # Simple direct CUDA test
-    find_package(CUDAToolkit REQUIRED)
-    add_executable(test_cuda_simple test_cuda_simple.cpp)
-    target_link_libraries(test_cuda_simple PRIVATE CUDA::cudart)
+    find_package(CUDAToolkit QUIET)
+    if(CUDAToolkit_FOUND)
+        add_executable(test_cuda_simple test_cuda_simple.cpp)
+        target_link_libraries(test_cuda_simple PRIVATE CUDA::cudart)
+    else()
+        message(STATUS "CUDA Toolkit not found - skipping test_cuda_simple")
+    endif()
 endif()
 
 # MNIST ONNX test program

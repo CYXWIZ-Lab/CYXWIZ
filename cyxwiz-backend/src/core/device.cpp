@@ -4,9 +4,6 @@
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 // Include platform-specific headers for memory queries
-#ifdef CYXWIZ_ENABLE_CUDA
-#include <cuda_runtime.h>
-#endif
 #ifdef CYXWIZ_ENABLE_OPENCL
 #define CL_TARGET_OPENCL_VERSION 120
 #ifdef __APPLE__
@@ -27,6 +24,9 @@ Device::Device(DeviceType type, int device_id)
 }
 
 Device::~Device() {
+    if (g_current_device == this) {
+        g_current_device = nullptr;
+    }
 }
 
 DeviceInfo Device::GetInfo() const {
@@ -48,42 +48,11 @@ DeviceInfo Device::GetInfo() const {
         af::Backend backend = af::getActiveBackend();
 
         if (backend == AF_BACKEND_CUDA) {
-#ifdef CYXWIZ_ENABLE_CUDA
-            // Use CUDA API to get actual device memory
-            spdlog::info("CUDA backend detected, querying memory for device {}", device_id_);
-
-            // First, ensure we're querying the correct CUDA device
-            cudaError_t set_err = cudaSetDevice(device_id_);
-            if (set_err != cudaSuccess) {
-                spdlog::error("Failed to set CUDA device {}: {}", device_id_, cudaGetErrorString(set_err));
-                info.memory_total = 0;
-                info.memory_available = 0;
-            } else {
-                spdlog::info("Successfully set CUDA device {}", device_id_);
-                size_t free_bytes = 0, total_bytes = 0;
-                cudaError_t err = cudaMemGetInfo(&free_bytes, &total_bytes);
-                if (err == cudaSuccess) {
-                    info.memory_total = total_bytes;
-                    info.memory_available = free_bytes;
-                    spdlog::info("CUDA device {}: {} GB total, {} GB free (raw: {} / {})",
-                        device_id_,
-                        total_bytes / (1024.0 * 1024.0 * 1024.0),
-                        free_bytes / (1024.0 * 1024.0 * 1024.0),
-                        total_bytes,
-                        free_bytes);
-                } else {
-                    spdlog::error("Failed to query CUDA memory: {}", cudaGetErrorString(err));
-                    info.memory_total = 0;
-                    info.memory_available = 0;
-                }
-            }
-#else
-            // CUDA not available, fall back to zero
-            // This is expected in GUI mode - GPU metrics come from daemon
-            spdlog::debug("CYXWIZ_ENABLE_CUDA not defined, GPU memory info unavailable locally");
+            // Avoid direct CUDA runtime linkage so backend can load on non-NVIDIA systems.
+            // Memory telemetry for CUDA is unavailable without cudart and is reported as unknown.
             info.memory_total = 0;
             info.memory_available = 0;
-#endif
+            spdlog::debug("CUDA memory query unavailable without direct CUDA runtime linkage");
         } else if (backend == AF_BACKEND_OPENCL) {
 #ifdef CYXWIZ_ENABLE_OPENCL
             // Use OpenCL API to get device memory
@@ -174,26 +143,54 @@ DeviceInfo Device::GetInfo() const {
 
 void Device::SetActive() {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    // Switch backend based on device type
-    switch (type_) {
-        case DeviceType::CUDA:
-            af::setBackend(AF_BACKEND_CUDA);
-            af::setDevice(device_id_);
-            spdlog::info("Switched to CUDA backend, device {}", device_id_);
-            break;
-        case DeviceType::OPENCL:
-            af::setBackend(AF_BACKEND_OPENCL);
-            af::setDevice(device_id_);
-            spdlog::info("Switched to OpenCL backend, device {}", device_id_);
-            break;
-        case DeviceType::CPU:
+    try {
+        // Switch backend based on device type
+        switch (type_) {
+            case DeviceType::CUDA:
+#ifdef CYXWIZ_ENABLE_CUDA
+                af::setBackend(AF_BACKEND_CUDA);
+                af::setDevice(device_id_);
+                spdlog::info("Switched to CUDA backend, device {}", device_id_);
+#else
+                spdlog::warn("CUDA backend requested but CYXWIZ_ENABLE_CUDA is not enabled; using CPU");
+                af::setBackend(AF_BACKEND_CPU);
+                type_ = DeviceType::CPU;
+                device_id_ = 0;
+#endif
+                break;
+            case DeviceType::OPENCL:
+#ifdef CYXWIZ_ENABLE_OPENCL
+                af::setBackend(AF_BACKEND_OPENCL);
+                af::setDevice(device_id_);
+                spdlog::info("Switched to OpenCL backend, device {}", device_id_);
+#else
+                spdlog::warn("OpenCL backend requested but CYXWIZ_ENABLE_OPENCL is not enabled; using CPU");
+                af::setBackend(AF_BACKEND_CPU);
+                type_ = DeviceType::CPU;
+                device_id_ = 0;
+#endif
+                break;
+            case DeviceType::CPU:
+                af::setBackend(AF_BACKEND_CPU);
+                spdlog::info("Switched to CPU backend");
+                break;
+            default:
+                spdlog::warn("Unknown device type, defaulting to CPU");
+                af::setBackend(AF_BACKEND_CPU);
+                type_ = DeviceType::CPU;
+                device_id_ = 0;
+                break;
+        }
+    } catch (const af::exception& e) {
+        spdlog::warn("Failed to switch to requested backend (type {}, device {}): {}. Falling back to CPU.",
+                     static_cast<int>(type_), device_id_, e.what());
+        try {
             af::setBackend(AF_BACKEND_CPU);
-            spdlog::info("Switched to CPU backend");
-            break;
-        default:
-            spdlog::warn("Unknown device type, defaulting to CPU");
-            af::setBackend(AF_BACKEND_CPU);
-            break;
+            type_ = DeviceType::CPU;
+            device_id_ = 0;
+        } catch (const af::exception& cpu_error) {
+            spdlog::error("CPU fallback backend activation failed: {}", cpu_error.what());
+        }
     }
 #endif
     g_current_device = this;
