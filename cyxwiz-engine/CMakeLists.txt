@@ -81,6 +81,10 @@ set(ENGINE_SOURCES
     src/core/python_detector.cpp
     src/core/window_manager.cpp
     src/core/data_registry.cpp
+    src/core/datasets/kaggle_dataset.cpp
+    src/core/datasets/hdf5_dataset.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/datasets/streaming_dataset.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
