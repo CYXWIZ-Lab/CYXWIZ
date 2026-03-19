@@ -107,6 +107,8 @@ public:
     using ProjectCallback = std::function<void(const std::string& project_root)>;
     void SetOnProjectOpened(ProjectCallback callback) { on_opened_ = std::move(callback); }
     void SetOnProjectClosed(ProjectCallback callback) { on_closed_ = std::move(callback); }
+    void SetOnProjectVenvReady(ProjectCallback callback) { on_venv_ready_ = std::move(callback); }
+    void NotifyProjectVenvReady(const std::string& project_root);
 
     // Default filter extensions
     static const std::map<std::string, std::vector<std::string>>& GetDefaultFilters();
@@ -149,6 +151,7 @@ private:
     // Callbacks
     ProjectCallback on_opened_;
     ProjectCallback on_closed_;
+    ProjectCallback on_venv_ready_;
 };
 
 } // namespace cyxwiz

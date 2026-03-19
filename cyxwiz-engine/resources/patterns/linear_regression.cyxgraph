@@ -1,0 +1,37 @@
+{
+  "id": "linear_regression",
+  "name": "Linear Regression",
+  "description": "Single-layer linear regression with MSE loss and SGD optimizer.",
+  "category": "Basic",
+  "tags": ["linear", "regression", "mse", "sgd"],
+  "parameters": [
+    {
+      "name": "output_size",
+      "type": "int",
+      "default_value": "1",
+      "description": "Number of output values",
+      "min_value": "1",
+      "max_value": "1000"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "input", "type": "DatasetInput", "name": "Dataset Input", "pos": [0, 200],
+       "params": {"dataset_name": "", "split": "train"}},
+      {"id": "linear", "type": "Dense", "name": "Linear Output", "pos": [220, 200],
+       "params": {"units": "$output_size"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [440, 200],
+       "params": {"classes": "$output_size"}},
+      {"id": "loss", "type": "MSELoss", "name": "MSE Loss", "pos": [660, 200]},
+      {"id": "opt", "type": "SGD", "name": "SGD Optimizer", "pos": [880, 200],
+       "params": {"learning_rate": "0.01", "momentum": "0.0", "weight_decay": "0.0"}}
+    ],
+    "links": [
+      {"from": "input", "to": "linear"},
+      {"from": "linear", "to": "output"},
+      {"from": "output", "to": "loss", "to_pin": 0},
+      {"from": "input", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "opt"}
+    ]
+  }
+}

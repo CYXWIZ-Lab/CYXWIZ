@@ -120,23 +120,6 @@ void ToolbarPanel::RenderViewMenu() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // ========== Project Settings Section ==========
-        bool has_project = ProjectManager::Instance().HasActiveProject();
-
-        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save Project Settings", "Ctrl+Shift+S", false, has_project)) {
-            if (save_project_settings_callback_) {
-                save_project_settings_callback_();
-                spdlog::info("Project settings saved to .cyxwiz");
-            }
-        }
-        if (!has_project && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("Open a project first to save settings");
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
         // ========== Minimaps Section ==========
         if (ImGui::BeginMenu(ICON_FA_EYE " Minimaps")) {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));

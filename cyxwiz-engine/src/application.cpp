@@ -13,6 +13,7 @@
 #include "core/project_manager.h"
 #include "core/training_manager.h"
 #include "core/engine_config.h"
+#include "core/python_detector.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -255,6 +256,64 @@ void CyxWizApp::UpdateWindowTitle() {
     spdlog::debug("Window title updated to: {}", title);
 }
 
+void CyxWizApp::ScanForPython() {
+    spdlog::info("Scanning for Python installation...");
+
+    auto& config = cyxwiz::core::EngineConfig::Instance();
+
+    // First check if system Python is already configured
+    if (config.HasSystemPython()) {
+        auto python_info = cyxwiz::core::PythonDetector::ValidatePythonInstallation(config.GetSystemPythonPath());
+        if (python_info) {
+            python_scan_.scanned = true;
+            python_scan_.found = true;
+            python_scan_.version = python_info->version;
+            python_scan_.major = python_info->major;
+            python_scan_.minor = python_info->minor;
+            python_scan_.path = python_info->executable_path;
+
+            // Check version warnings
+            if (python_scan_.major == 3 && python_scan_.minor >= 14) {
+                python_scan_.warning = "Python 3.14+ detected. We recommend Python 3.12 for stable packages (built with 3.12 bindings).";
+                spdlog::warn("{}", python_scan_.warning);
+            } else if (python_scan_.major < 3 || (python_scan_.major == 3 && python_scan_.minor < 12)) {
+                python_scan_.warning = "Python version < 3.12 detected. Please install Python 3.12 or higher.";
+                spdlog::warn("{}", python_scan_.warning);
+            }
+
+            spdlog::info("Python {} detected at: {}", python_scan_.version, python_scan_.path);
+            return;
+        }
+    }
+
+    // No configured Python or validation failed - scan for available Python
+    auto best_python = cyxwiz::core::PythonDetector::FindBestPython();
+    if (best_python) {
+        python_scan_.scanned = true;
+        python_scan_.found = true;
+        python_scan_.version = best_python->version;
+        python_scan_.major = best_python->major;
+        python_scan_.minor = best_python->minor;
+        python_scan_.path = best_python->executable_path;
+
+        // Check version warnings
+        if (python_scan_.major == 3 && python_scan_.minor >= 14) {
+            python_scan_.warning = "Python 3.14+ detected. We recommend Python 3.12 for stable packages (built with 3.12 bindings).";
+            spdlog::warn("{}", python_scan_.warning);
+        } else if (python_scan_.major < 3 || (python_scan_.major == 3 && python_scan_.minor < 12)) {
+            python_scan_.warning = "Python version < 3.12 detected. Please install Python 3.12 or higher.";
+            spdlog::warn("{}", python_scan_.warning);
+        }
+
+        spdlog::info("Python {} detected at: {}", python_scan_.version, python_scan_.path);
+    } else {
+        python_scan_.scanned = true;
+        python_scan_.found = false;
+        python_scan_.warning = "No Python installation found. Please install Python 3.12 or higher.";
+        spdlog::warn("{}", python_scan_.warning);
+    }
+}
+
 bool CyxWizApp::Initialize() {
     // Setup GLFW
     glfwSetErrorCallback(glfw_error_callback);
@@ -373,6 +432,9 @@ bool CyxWizApp::Initialize() {
     // Load professional fonts
     LoadFonts(io);
 
+    // Scan for Python on startup (no initialization yet)
+    ScanForPython();
+
     // Check if Python is configured - show wizard if not
     auto& config = cyxwiz::core::EngineConfig::Instance();
     python_configured_ = config.HasSystemPython();
@@ -421,6 +483,27 @@ bool CyxWizApp::Initialize() {
         // Add welcome message directly to console
         console->AddSuccess("=== CyxWiz Engine Console ===");
         console->AddInfo("Console panel initialized - logs will appear here");
+
+        // Show Python scan results
+        if (python_scan_.scanned) {
+            if (python_scan_.found) {
+                console->AddSuccess("Python " + python_scan_.version + " detected at: " + python_scan_.path);
+                if (!python_scan_.warning.empty()) {
+                    console->AddWarning(python_scan_.warning);
+                }
+            } else {
+                console->AddError("No Python installation found");
+                console->AddWarning(python_scan_.warning);
+            }
+        }
+
+        // Show initialization message based on project status
+        if (!startup_project_path_.empty()) {
+            console->AddInfo("Project loaded - Python will be initialized from project's virtual environment");
+        } else {
+            console->AddInfo("No project loaded - Python not initialized");
+            console->AddInfo("Create or open a project to use Python");
+        }
 
         // Register spdlog sink for future logs
         auto console_sink = std::make_shared<gui::ConsoleSinkMt>(console);
@@ -870,6 +953,27 @@ void CyxWizApp::Render() {
 
             spdlog::info("✓ Console logging enabled");
             console->AddSuccess("✓ spdlog integration working");
+
+            // Show Python scan results
+            if (python_scan_.scanned) {
+                if (python_scan_.found) {
+                    console->AddSuccess("Python " + python_scan_.version + " detected at: " + python_scan_.path);
+                    if (!python_scan_.warning.empty()) {
+                        console->AddWarning(python_scan_.warning);
+                    }
+                } else {
+                    console->AddError("No Python installation found");
+                    console->AddWarning(python_scan_.warning);
+                }
+            }
+
+            // Show initialization message based on project status
+            if (!startup_project_path_.empty()) {
+                console->AddInfo("Project loaded - Python will be initialized from project's virtual environment");
+            } else {
+                console->AddInfo("No project loaded - Python not initialized");
+                console->AddInfo("Create or open a project to use Python");
+            }
         }
 
         // Restore saved auth session

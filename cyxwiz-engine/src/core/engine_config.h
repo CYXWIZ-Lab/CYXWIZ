@@ -14,10 +14,12 @@ namespace cyxwiz::core {
  * Loads from engine_config.json and supports runtime modifications.
  *
  * Config file search order:
- * 1. ./engine_config.json (next to executable)
- * 2. ./config/engine_config.json
+ * 1. <exe_dir>/engine_config.json
+ * 2. <exe_dir>/config/engine_config.json
  * 3. User config directory (~/.cyxwiz/engine_config.json on Linux/macOS,
  *    %APPDATA%/CyxWiz/engine_config.json on Windows)
+ * If no config is found, a fallback template is used (if present):
+ * - <exe_dir>/resources/engine_config.json
  *
  * Usage:
  *   auto& config = EngineConfig::Instance();
@@ -83,29 +85,31 @@ public:
 
     // ===== Python Settings =====
 
-    // Use bundled Python (true) or custom/system Python (false)
-    bool UseBundledPython() const;
-    void SetUseBundledPython(bool use_bundled);
+    // Get system Python interpreter path
+    std::string GetSystemPythonPath() const;
+    void SetSystemPythonPath(const std::string& path);
 
-    // Get bundled Python home directory (e.g., "<exe_dir>/python")
-    std::string GetBundledPythonHome() const;
-
-    // Check if bundled Python exists on disk
-    bool HasBundledPython() const;
-
-    // Get Python interpreter path (empty = use system/global Python)
-    std::string GetPythonInterpreterPath() const;
-    void SetPythonInterpreterPath(const std::string& path);
-
-    // Check if a custom Python path is configured
-    bool HasCustomPythonPath() const;
+    // Check if system Python is configured
+    bool HasSystemPython() const;
 
     // Get Python packages directory (derived from interpreter path)
     std::string GetPythonPackagesDir() const;
 
-    // Get the effective PYTHONHOME based on current settings
-    // Returns: bundled path, custom path parent, or empty for system Python
-    std::string GetEffectivePythonHome() const;
+    // Auto-create virtual environment for new projects
+    bool GetAutoCreateVenv() const;
+    void SetAutoCreateVenv(bool auto_create);
+
+    // Default packages to install in new venvs
+    std::vector<std::string> GetDefaultVenvPackages() const;
+    void SetDefaultVenvPackages(const std::vector<std::string>& packages);
+
+    // ===== Recent Projects =====
+
+    // Get list of recent projects (up to 10)
+    std::vector<std::string> GetRecentProjects() const;
+
+    // Add a project to recent projects list
+    void AddRecentProject(const std::string& project_path);
 
     // Check if configuration has been modified
     bool IsModified() const { return modified_; }
@@ -142,8 +146,12 @@ private:
     int request_timeout_ = 30;     // seconds
 
     // Python settings
-    bool use_bundled_python_ = true;       // True = use bundled Python, false = custom/system
-    std::string python_interpreter_path_;  // Custom interpreter path (when use_bundled_python_ = false)
+    std::string system_python_path_;  // System Python interpreter path (auto-detected or user-configured)
+    bool auto_create_venv_ = true;    // Auto-create venv for new projects
+    std::vector<std::string> default_venv_packages_;  // Default packages to install in new venvs
+
+    // Recent projects
+    std::vector<std::string> recent_projects_;  // Recent project paths (max 10)
 };
 
 } // namespace cyxwiz::core

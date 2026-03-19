@@ -566,6 +566,36 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
             on_opened_(project_root_);
         }
 
+        // Check if project has python_env.json (legacy project check)
+        fs::path python_env_file = fs::path(project_root_) / "python_env.json";
+        if (!fs::exists(python_env_file)) {
+            spdlog::warn("Legacy project detected (no python_env.json) - creating virtual environment");
+
+            // Create venv for legacy project
+            auto& config = cyxwiz::core::EngineConfig::Instance();
+            if (config.HasSystemPython()) {
+                // Use the async task manager to create venv in the background
+                spdlog::info("Creating venv for legacy project: {}", project_name_);
+                auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
+                task_mgr.RunAsync(
+                    "Create venv for legacy project",
+                    [project_root = project_root_](cyxwiz::LambdaTask& task) {
+                        task.ReportProgress(0.05f, "Creating virtual environment for legacy project...");
+                        std::string error;
+                        if (!CreateProjectVenv(fs::path(project_root), &error)) {
+                            spdlog::error("Failed to create venv for legacy project: {}", error);
+                            task.MarkFailed(error);
+                        } else {
+                            spdlog::info("Virtual environment created for legacy project");
+                            task.ReportProgress(1.0f, "Virtual environment ready");
+                        }
+                    }
+                );
+            } else {
+                spdlog::error("Cannot create venv for legacy project: no system Python configured");
+            }
+        }
+
         return true;
 
     } catch (const std::exception& e) {

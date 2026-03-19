@@ -198,6 +198,7 @@ public:
     // Called when project is opened/closed
     void OnProjectOpened(const std::string& project_root);
     void OnProjectClosed(const std::string& project_root);
+    void OnProjectVenvReady(const std::string& project_root);
 
 private:
     void RenderDockSpace();

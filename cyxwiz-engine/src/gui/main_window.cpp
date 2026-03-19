@@ -41,6 +41,7 @@
 #include "panels/memory_monitor.h"
 #include "panels/variable_explorer.h"
 #include "panels/plot_output_panel.h"
+#include "panels/python_plot_window_registry.h"
 #include "panels/test_results_panel.h"
 #include "panels/export_dialog.h"
 #include "panels/import_dialog.h"
@@ -812,6 +813,9 @@ MainWindow::MainWindow()
     // Set up Verbose Python Logging pointer (View menu - Developer Tools)
     if (scripting_engine_) {
         toolbar_->SetVerbosePythonLogPtr(scripting_engine_->GetVerboseLoggingPtr());
+        toolbar_->SetPythonDiagnosticsCallback([this]() -> std::string {
+            return scripting_engine_->GetPythonRuntimeDiagnostics();
+        });
     }
 
     // Set up Model Analysis callbacks (Tools menu - Phase 2)
@@ -1277,6 +1281,10 @@ MainWindow::MainWindow()
 
     cyxwiz::ProjectManager::Instance().SetOnProjectClosed([this](const std::string& project_root) {
         this->OnProjectClosed(project_root);
+    });
+
+    cyxwiz::ProjectManager::Instance().SetOnProjectVenvReady([this](const std::string& project_root) {
+        this->OnProjectVenvReady(project_root);
     });
 
     // Set up New Script callback - creates new untitled script and opens editor
@@ -2154,6 +2162,13 @@ void MainWindow::Render() {
     if (export_dialog_) export_dialog_->Render();
     if (import_dialog_) import_dialog_->Render();
     if (deployment_dialog_) deployment_dialog_->Render();
+
+    // Render Python-created plot windows (cyxwiz_plotting)
+    for (const auto& plot_window : cyxwiz::GetPythonPlotWindows()) {
+        if (plot_window) {
+            plot_window->Render();
+        }
+    }
 
     // Render Model Analysis panels (Phase 2)
     if (model_summary_panel_) model_summary_panel_->Render();
@@ -3129,6 +3144,17 @@ void MainWindow::SaveProjectSettings() {
         settings.font_scale = script_editor_->GetFontScale();
         settings.tab_size = script_editor_->GetTabSize();
         settings.show_whitespace = script_editor_->GetShowWhitespace();
+        settings.word_wrap = script_editor_->GetWordWrap();
+        settings.auto_indent = script_editor_->GetAutoIndent();
+        settings.syntax_highlighting = script_editor_->GetSyntaxHighlighting();
+
+        // Persist open scripts for project restore
+        pm.GetConfig().open_scripts.clear();
+        auto open_paths = script_editor_->GetOpenFilePaths();
+        for (const auto& path : open_paths) {
+            pm.GetConfig().open_scripts.push_back(path);
+        }
+        pm.GetConfig().active_script_index = script_editor_->GetActiveTabIndex();
     }
 
     // Save application-wide settings
@@ -3157,6 +3183,9 @@ void MainWindow::LoadProjectSettings() {
         script_editor_->SetFontScale(settings.font_scale);
         script_editor_->SetTabSize(settings.tab_size);
         script_editor_->SetShowWhitespace(settings.show_whitespace);
+        script_editor_->SetWordWrap(settings.word_wrap);
+        script_editor_->SetAutoIndent(settings.auto_indent);
+        script_editor_->SetSyntaxHighlighting(settings.syntax_highlighting);
     }
 
     // Sync settings to toolbar/preferences
@@ -3165,6 +3194,8 @@ void MainWindow::LoadProjectSettings() {
         toolbar_->SetEditorTabSize(settings.tab_size);
         toolbar_->SetEditorFontScale(settings.font_scale);
         toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
+        toolbar_->SetEditorWordWrap(settings.word_wrap);
+        toolbar_->SetEditorAutoIndent(settings.auto_indent);
     }
 
     // Apply application theme
@@ -3182,9 +3213,17 @@ void MainWindow::LoadProjectSettings() {
     // Restore open scripts
     const auto& open_scripts = pm.GetConfig().open_scripts;
     for (const auto& script_path : open_scripts) {
-        if (script_editor_ && std::filesystem::exists(script_path)) {
-            script_editor_->OpenFile(script_path);
+        std::string resolved_path = script_path;
+        std::filesystem::path fs_path(script_path);
+        if (fs_path.is_relative()) {
+            resolved_path = pm.ResolveAssetPath(script_path);
         }
+        if (script_editor_ && std::filesystem::exists(resolved_path)) {
+            script_editor_->OpenFile(resolved_path);
+        }
+    }
+    if (script_editor_ && !open_scripts.empty()) {
+        script_editor_->SetActiveTabIndex(pm.GetConfig().active_script_index);
     }
 
     spdlog::info("Loaded project settings (theme={}, font_scale={:.1f}, tab_size={})",
@@ -3196,6 +3235,13 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 
     // Load project settings and layout
     LoadProjectSettings();
+
+    // If Python is already initialized, check for interpreter mismatch
+    if (scripting_engine_ && scripting_engine_->IsInitialized()) {
+        if (!scripting_engine_->ReloadPythonForProject()) {
+            spdlog::warn("Python interpreter mismatch after project open (project: {})", project_root);
+        }
+    }
 
     // Set project root and refresh asset browser to show project files
     if (asset_browser_) {
@@ -3210,6 +3256,13 @@ void MainWindow::OnProjectClosed(const std::string& project_root) {
     // Note: Settings should be saved before CloseProject() is called
     // (the toolbar handles this in its Close Project menu action)
 
+    // If Python is already initialized, check for interpreter mismatch after closing
+    if (scripting_engine_ && scripting_engine_->IsInitialized()) {
+        if (!scripting_engine_->ReloadPythonForProject()) {
+            spdlog::warn("Python interpreter mismatch after project close");
+        }
+    }
+
     // Clear the asset browser
     if (asset_browser_) {
         asset_browser_->Clear();
@@ -3218,6 +3271,26 @@ void MainWindow::OnProjectClosed(const std::string& project_root) {
     // Reset the dock layout to default when project is closed
     // This gives a clean slate for the next project
     first_time_layout_ = true;  // This will trigger BuildInitialDockLayout on next render
+}
+
+void MainWindow::OnProjectVenvReady(const std::string& project_root) {
+    spdlog::info("Project venv ready: {}", project_root);
+
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    if (!pm.HasActiveProject()) {
+        spdlog::info("Skipping Python reload: no active project");
+        return;
+    }
+    if (pm.GetProjectRoot() != project_root) {
+        spdlog::info("Skipping Python reload: active project root differs");
+        return;
+    }
+
+    if (scripting_engine_ && scripting_engine_->IsInitialized()) {
+        if (!scripting_engine_->ReloadPythonForProject()) {
+            spdlog::warn("Python interpreter mismatch after venv creation");
+        }
+    }
 }
 
 void MainWindow::RenderStatusBar() {

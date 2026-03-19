@@ -8,6 +8,7 @@
 #include <optional>
 #include <filesystem>
 #include <algorithm>
+#include <sstream>
 
 namespace py = pybind11;
 
@@ -89,7 +90,148 @@ ExecutionResult ScriptingEngine::ConvertSandboxResult(const PythonSandbox::Execu
 }
 
 bool ScriptingEngine::IsInitialized() const {
-    return python_engine_ != nullptr;
+    return python_engine_ && python_engine_->IsInitialized();
+}
+
+bool ScriptingEngine::EnsurePythonInitialized(std::string* error_out) {
+    if (!python_engine_) {
+        if (error_out) {
+            *error_out = "Python engine not available";
+        }
+        return false;
+    }
+
+    // Check if a project is active - Python should only initialize with a project
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    if (!pm.HasActiveProject()) {
+        if (error_out) {
+            *error_out = "No project loaded. Python not initialized.\nCreate or open a project to use Python.";
+        }
+        spdlog::warn("Python initialization blocked: no active project");
+        return false;
+    }
+
+    if (python_engine_->IsInitialized()) {
+        std::string mismatch;
+        if (python_engine_->HasInterpreterMismatch(&mismatch)) {
+            std::string msg = "Python interpreter already initialized with a different runtime; restart required (" + mismatch + ")";
+            spdlog::warn("{}", msg);
+            if (error_out) {
+                *error_out = msg;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    std::string init_error;
+    if (!python_engine_->Initialize(&init_error)) {
+        if (error_out) {
+            *error_out = init_error.empty() ? "Failed to initialize Python" : init_error;
+        }
+        return false;
+    }
+
+    return true;
+}
+
+std::string ScriptingEngine::GetPythonRuntimeDiagnostics() {
+    if (!IsInitialized()) {
+        return "Python engine not initialized. Open the Python console or run a script to initialize.";
+    }
+
+    if (!IsSafeForNewCommand()) {
+        return "Python interpreter is busy.";
+    }
+
+    try {
+        py::gil_scoped_acquire acquire;
+
+        py::module_ sys = py::module_::import("sys");
+        py::module_ os = py::module_::import("os");
+
+        py::object site;
+        bool has_site = true;
+        try {
+            site = py::module_::import("site");
+        } catch (const py::error_already_set&) {
+            has_site = false;
+        }
+
+        auto getenv_str = [&os](const char* key) -> std::string {
+            py::object val = os.attr("getenv")(key);
+            if (val.is_none()) {
+                return "<unset>";
+            }
+            return py::str(val).cast<std::string>();
+        };
+
+        std::ostringstream out;
+        out << "exe: " << py::str(sys.attr("executable")).cast<std::string>() << "\n";
+        out << "version: " << py::str(sys.attr("version")).cast<std::string>() << "\n";
+        out << "prefix: " << py::str(sys.attr("prefix")).cast<std::string>() << "\n";
+        out << "base_prefix: " << py::str(sys.attr("base_prefix")).cast<std::string>() << "\n";
+        out << "PYTHONHOME: " << getenv_str("PYTHONHOME") << "\n";
+        out << "PYTHONPATH: " << getenv_str("PYTHONPATH") << "\n";
+
+        if (has_site) {
+            try {
+                py::object getsite = site.attr("getsitepackages");
+                py::object sites = getsite();
+                out << "site-packages:\n";
+                for (auto item : sites) {
+                    out << "  " << py::str(item).cast<std::string>() << "\n";
+                }
+            } catch (const py::error_already_set&) {
+                out << "site-packages: n/a\n";
+            }
+
+            try {
+                py::object usersite = site.attr("getusersitepackages")();
+                out << "user-site: " << py::str(usersite).cast<std::string>() << "\n";
+            } catch (const py::error_already_set&) {
+                out << "user-site: n/a\n";
+            }
+        } else {
+            out << "site-packages: n/a\n";
+            out << "user-site: n/a\n";
+        }
+
+        out << "sys.path:\n";
+        py::list sys_path = sys.attr("path").cast<py::list>();
+        for (auto item : sys_path) {
+            out << "  " << py::str(item).cast<std::string>() << "\n";
+        }
+
+        return out.str();
+
+    } catch (const py::error_already_set& e) {
+        return std::string("Failed to collect Python runtime diagnostics: ") + e.what();
+    } catch (const std::exception& e) {
+        return std::string("Failed to collect Python runtime diagnostics: ") + e.what();
+    }
+}
+
+bool ScriptingEngine::ReloadPythonForProject() {
+    if (!python_engine_) {
+        spdlog::warn("ReloadPythonForProject: scripting engine not initialized");
+        return false;
+    }
+
+    if (!IsSafeForNewCommand()) {
+        spdlog::warn("ReloadPythonForProject: Python interpreter is busy");
+        return false;
+    }
+
+    std::string error;
+    if (!python_engine_->ReloadForProject(&error)) {
+        if (!error.empty()) {
+            spdlog::warn("ReloadPythonForProject: {}", error);
+        }
+        return false;
+    }
+
+    return true;
 }
 
 void ScriptingEngine::SetOutputCallback(OutputCallback callback) {
@@ -100,8 +242,9 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
     ExecutionResult result;
     result.success = false;
 
-    if (!IsInitialized()) {
-        result.error_message = "Scripting engine not initialized";
+    std::string init_error;
+    if (!EnsurePythonInitialized(&init_error)) {
+        result.error_message = init_error.empty() ? "Python initialization failed" : init_error;
         return result;
     }
 
@@ -490,6 +633,18 @@ void ScriptingEngine::ExecuteCommandAsync(const std::string& command) {
         return;
     }
 
+    std::string init_error;
+    if (!EnsurePythonInitialized(&init_error)) {
+        ExecutionResult result;
+        result.success = false;
+        result.error_message = init_error.empty() ? "Python initialization failed" : init_error;
+        {
+            std::lock_guard<std::mutex> lock(command_result_mutex_);
+            async_command_result_ = result;
+        }
+        return;
+    }
+
     // Wait for previous thread to finish
     if (command_thread_ && command_thread_->joinable()) {
         command_thread_->join();
@@ -704,6 +859,14 @@ bool ScriptingEngine::IsSafeForNewCommand() const {
 }
 
 ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {
+    std::string init_error;
+    if (!EnsurePythonInitialized(&init_error)) {
+        ExecutionResult result;
+        result.success = false;
+        result.error_message = init_error.empty() ? "Python initialization failed" : init_error;
+        return result;
+    }
+
     // Lazily register training dashboard on first script execution
     EnsureTrainingDashboardRegistered();
 
@@ -721,8 +884,9 @@ ExecutionResult ScriptingEngine::ExecuteFile(const std::string& filepath) {
     ExecutionResult result;
     result.success = false;
 
-    if (!IsInitialized()) {
-        result.error_message = "Scripting engine not initialized";
+    std::string init_error;
+    if (!EnsurePythonInitialized(&init_error)) {
+        result.error_message = init_error.empty() ? "Python initialization failed" : init_error;
         return result;
     }
 
@@ -751,11 +915,6 @@ ExecutionResult ScriptingEngine::ExecuteFile(const std::string& filepath) {
 }
 
 void ScriptingEngine::RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel) {
-    if (!IsInitialized()) {
-        spdlog::warn("Cannot register Training Dashboard: scripting engine not initialized");
-        return;
-    }
-
     // Defer Python module import - importing cyxwiz_plotting at startup can segfault
     // when stdin is not a terminal. The panel pointer is stored and registration
     // happens lazily on first script execution that needs it.
@@ -792,6 +951,21 @@ void ScriptingEngine::ExecuteScriptAsync(const std::string& script) {
     // Don't start if already running
     if (script_running_) {
         spdlog::warn("Script already running, ignoring new execution request");
+        return;
+    }
+
+    std::string init_error;
+    if (!EnsurePythonInitialized(&init_error)) {
+        ExecutionResult result;
+        result.success = false;
+        result.error_message = init_error.empty() ? "Python initialization failed" : init_error;
+        {
+            std::lock_guard<std::mutex> lock(result_mutex_);
+            async_result_ = result;
+        }
+        if (completion_callback_) {
+            completion_callback_(result);
+        }
         return;
     }
 
@@ -1153,6 +1327,8 @@ def _cyxwiz_setup_matplotlib_capture(capture_callback):
 # MATLAB-Style Command Window Functions (Flat Namespace)
 # ============================================================================
 # Import pycyxwiz and create convenient aliases
+import importlib.util as _cyxwiz_importlib
+_pycyxwiz_spec = _cyxwiz_importlib.find_spec("pycyxwiz")
 try:
     import pycyxwiz
     cyx = pycyxwiz  # Short alias for grouped namespace
@@ -1214,7 +1390,13 @@ try:
 
 except ImportError as e:
     # pycyxwiz not available, skip MATLAB-style functions
-    print(f"[CyxWiz] pycyxwiz not found: {e}")
+    if _pycyxwiz_spec is None:
+        print("[CyxWiz] pycyxwiz not found on sys.path")
+    else:
+        origin = getattr(_pycyxwiz_spec, "origin", None)
+        print(f"[CyxWiz] pycyxwiz found at {origin} but failed to load: {e}")
+        print("[CyxWiz] Likely ABI mismatch or missing DLL dependencies.")
+        print(f"[CyxWiz] Python: {sys.version}")
 except AttributeError as e:
     # submodule not found (linalg, signal, etc.)
     print(f"[CyxWiz] MATLAB functions error: {e}")

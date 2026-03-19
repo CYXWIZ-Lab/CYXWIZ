@@ -1,0 +1,226 @@
+[2026-02-07 17:22:47.616] [cyxwiz] [info] Starting CyxWiz Engine v0.1.0
+[2026-02-07 17:22:47.617] [cyxwiz] [info] Initializing CyxWiz Backend v0.1.0
+[2026-02-07 17:22:50.933] [cyxwiz] [info] ArrayFire initialized successfully
+[2026-02-07 17:22:50.934] [cyxwiz] [info] CUDA backend active - Device: NVIDIA_GeForce_GTX_1050_Ti
+[2026-02-07 17:22:50.934] [cyxwiz] [info] CUDA backend detected, querying memory for device 0
+[2026-02-07 17:22:50.935] [cyxwiz] [info] Successfully set CUDA device 0
+[2026-02-07 17:22:50.936] [cyxwiz] [info] CUDA device 0: 3.9998779296875 GB total, 3.183262635022402 GB free (raw: 4294836224 / 3418002228)
+[2026-02-07 17:22:50.937] [cyxwiz] [info] Total devices found: 3
+[2026-02-07 17:22:50.937] [cyxwiz] [info] Available compute devices:
+[2026-02-07 17:22:50.938] [cyxwiz] [info]   - CPU (0)
+[2026-02-07 17:22:50.938] [cyxwiz] [info]   - NVIDIA_GeForce_GTX_1050_Ti (1)
+[2026-02-07 17:22:50.939] [cyxwiz] [info]   - Intel(R)_UHD_Graphics_630 (2)
+[2026-02-07 17:22:51.808] [cyxwiz] [info] Window icon loaded successfully (1024x1024)
+[2026-02-07 17:22:51.809] [cyxwiz] [info] Dark title bar enabled
+[2026-02-07 17:22:51.946] [cyxwiz] [info] OpenGL 3.3 initialized
+[2026-02-07 17:22:51.950] [cyxwiz] [info] Found fonts at: cyxwiz-engine/resources/fonts/
+[2026-02-07 17:22:51.951] [cyxwiz] [info] Loading fonts from: cyxwiz-engine/resources/fonts/
+[2026-02-07 17:22:51.952] [cyxwiz] [info] Loaded Inter-Regular (15px)
+[2026-02-07 17:22:51.953] [cyxwiz] [info] Merged FontAwesome icons into regular font
+[2026-02-07 17:22:51.954] [cyxwiz] [info] Loaded Inter-Medium (15px)
+[2026-02-07 17:22:51.955] [cyxwiz] [info] Loaded Inter-Bold (15px)
+[2026-02-07 17:22:51.957] [cyxwiz] [info] Loaded JetBrainsMono-Regular (14px)
+[2026-02-07 17:22:51.958] [cyxwiz] [info] Loaded JetBrainsMono-Bold (14px)
+[2026-02-07 17:22:51.960] [cyxwiz] [info] Building font atlas...
+[2026-02-07 17:22:52.108] [cyxwiz] [info] Font atlas built successfully
+[2026-02-07 17:22:52.109] [cyxwiz] [info] Created Linear Attention Transformer showcase with 18 nodes and 22 connections
+[2026-02-07 17:22:52.110] [cyxwiz] [info] Architecture: Embedding -> PositionalEncoding -> LinearAttention(O(n)) -> LayerNorm -> FFN -> Output
+[2026-02-07 17:22:52.113] [cyxwiz] [info] Config file not found at D:\Dev\CyxWiz_Claude\engine_config.json, using defaults
+[2026-02-07 17:22:52.115] [cyxwiz] [info] Using bundled Python: D:\Dev\CyxWiz_Claude\build\bin\Release\python
+[2026-02-07 17:22:52.243] [cyxwiz] [info] Python interpreter initialized
+[2026-02-07 17:22:52.244] [cyxwiz] [info] Added bundled site-packages: D:\Dev\CyxWiz_Claude\build\bin\Release\python\Lib\site-packages
+[2026-02-07 17:22:52.244] [cyxwiz] [info] GIL released for multi-threaded use
+[2026-02-07 17:22:52.245] [cyxwiz] [info] PythonSandbox created with default configuration
+[2026-02-07 17:22:52.246] [cyxwiz] [info] ScriptingEngine initialized (sandbox disabled by default)
+[2026-02-07 17:22:52.264] [cyxwiz] [info] Loaded 2 recent projects
+[2026-02-07 17:22:52.264] [cyxwiz] [info] ScriptManager initialized
+[2026-02-07 17:22:52.267] [cyxwiz] [info] Created new script file: Untitled1.cyx
+[2026-02-07 17:22:52.294] [cyxwiz] [info] DataExplorerPanel: DuckDB v1.4.3 initialized
+[2026-02-07 17:22:52.295] [cyxwiz] [info] VisualizationPanel initialized
+[2026-02-07 17:22:52.296] [cyxwiz] [info] Initializing Pattern Library...
+[2026-02-07 17:22:52.297] [cyxwiz] [info] Loading builtin patterns from: cyxwiz-engine/resources/patterns
+[2026-02-07 17:22:52.318] [cyxwiz] [info] Pattern Library initialized with 25 patterns
+[2026-02-07 17:22:53.331] [cyxwiz] [info] CUDA backend detected, querying memory for device 0
+[2026-02-07 17:22:53.331] [cyxwiz] [info] Successfully set CUDA device 0
+[2026-02-07 17:22:53.332] [cyxwiz] [info] CUDA device 0: 3.9998779296875 GB total, 3.088200379163027 GB free (raw: 4294836224 / 3315929908)
+[2026-02-07 17:22:53.332] [cyxwiz] [info] Total devices found: 3
+[2026-02-07 17:22:53.810] [cyxwiz] [info] PlotOutputPanel initialized
+[2026-02-07 17:22:53.810] [cyxwiz] [info] DataExplorerPanel: Panel references set
+[2026-02-07 17:22:53.811] [cyxwiz] [info] OptimizerSettingsPanel initialized
+[2026-02-07 17:22:53.812] [cyxwiz] [info] Generated 1024 samples at 1000 Hz
+[2026-02-07 17:22:53.812] [cyxwiz] [info] Generated 4096 samples at 4000 Hz
+[2026-02-07 17:22:53.813] [cyxwiz] [info] Generated 200 samples of type 0
+[2026-02-07 17:22:53.814] [cyxwiz] [info] DecompositionPanel initialized
+[2026-02-07 17:22:53.814] [cyxwiz] [info] ACFPACFPanel initialized
+[2026-02-07 17:22:53.814] [cyxwiz] [info] StationarityPanel initialized
+[2026-02-07 17:22:53.815] [cyxwiz] [info] SeasonalityPanel initialized
+[2026-02-07 17:22:53.815] [cyxwiz] [info] ForecastingPanel initialized
+[2026-02-07 17:22:53.816] [cyxwiz] [info] TokenizationPanel initialized
+[2026-02-07 17:22:53.816] [cyxwiz] [info] WordFrequencyPanel initialized
+[2026-02-07 17:22:53.817] [cyxwiz] [info] TFIDFPanel initialized
+[2026-02-07 17:22:53.818] [cyxwiz] [info] EmbeddingsPanel initialized
+[2026-02-07 17:22:53.819] [cyxwiz] [info] SentimentPanel initialized
+[2026-02-07 17:22:53.820] [cyxwiz] [info] CalculatorPanel initialized
+[2026-02-07 17:22:53.820] [cyxwiz] [info] UnitConverterPanel initialized with 8 categories
+[2026-02-07 17:22:53.821] [cyxwiz] [info] RandomGeneratorPanel initialized
+[2026-02-07 17:22:53.821] [cyxwiz] [info] HashGeneratorPanel initialized
+[2026-02-07 17:22:53.822] [cyxwiz] [info] JSONViewerPanel initialized
+[2026-02-07 17:22:53.822] [cyxwiz] [info] RegexTesterPanel initialized
+[2026-02-07 17:22:53.823] [cyxwiz] [info] Training Dashboard panel stored for deferred registration
+[2026-02-07 17:22:53.823] [cyxwiz] [info] StartupScriptManager created
+[2026-02-07 17:22:53.824] [cyxwiz] [info] Loading startup scripts config: startup_scripts.txt
+[2026-02-07 17:22:53.825] [cyxwiz] [info] Loaded 0 startup scripts from config
+[2026-02-07 17:22:53.825] [cyxwiz] [info] Executing startup scripts...
+[2026-02-07 17:22:53.826] [cyxwiz] [info] No startup scripts configured
+[2026-02-07 17:22:53.826] [cyxwiz] [info] Installed custom dock node window menu handler
+[2026-02-07 17:22:53.827] [cyxwiz] [info] Registered 3 built-in tutorials
+[2026-02-07 17:22:53.840] [cyxwiz] [info] Setting default panel visibility (first launch)
+[2026-02-07 17:22:53.840] [cyxwiz] [info] Default panel visibility set - showing only core panels
+[2026-02-07 17:22:53.841] [cyxwiz] [info] Registered 24 panels with sidebar
+[2026-02-07 17:22:53.841] [cyxwiz] [info] MainWindow initialized with docking layout system
+[2026-02-07 17:22:53.842] [cyxwiz] [info] Python interpreter already initialized (reusing existing)
+[2026-02-07 17:22:53.842] [cyxwiz] [info] AuthClient initialized with API URL: http://127.0.0.1:3002/api
+[2026-02-07 17:22:53.848] [cyxwiz] [info] ReservationClient wired to ConnectionDialog (connecting in background)
+[2026-02-07 17:22:53.849] [cyxwiz] [info] DatasetProvider: Initialized
+[2026-02-07 17:22:53.849] [cyxwiz] [info] P2PClient created and wired to ConnectionDialog
+[2026-02-07 17:22:53.850] [cyxwiz] [info] P2PTrainingPanel wired to ConnectionDialog
+[2026-02-07 17:22:53.850] [cyxwiz] [info] WalletPanel wired to ConnectionDialog (ptr=0x20a5752e850)
+[2026-02-07 17:22:53.851] [cyxwiz] [info] Network components set in MainWindow
+[2026-02-07 17:22:53.851] [cyxwiz] [info] ✓ Console logging enabled
+[2026-02-07 17:22:53.866] [cyxwiz] [info] Restored saved session for: test@example.com
+[2026-02-07 17:22:53.867] [cyxwiz] [info] Auth session restored for: test@example.com
+[2026-02-07 17:22:53.868] [cyxwiz] [info] Application initialized successfully
+[2026-02-07 17:22:53.868] [cyxwiz] [info] CUDA backend detected, querying memory for device 0
+[2026-02-07 17:22:53.869] [cyxwiz] [info] Successfully set CUDA device 0
+[2026-02-07 17:22:53.869] [cyxwiz] [info] CUDA device 0: 3.9998779296875 GB total, 3.088200379163027 GB free (raw: 4294836224 / 3315929908)
+[2026-02-07 17:22:53.870] [cyxwiz] [info] Total devices found: 3
+[2026-02-07 17:22:53.870] [cyxwiz] [info] PluginManager: 2 search paths configured
+[2026-02-07 17:22:53.871] [cyxwiz] [info] Plugin system: 2 search paths configured
+[2026-02-07 17:22:54.059] [cyxwiz] [info] Restored saved session for: test@example.com
+[2026-02-07 17:22:54.060] [cyxwiz] [info] Restored saved session for: test@example.com
+[2026-02-07 17:22:54.060] [cyxwiz] [info] Auth token set on gRPC client after login
+[2026-02-07 17:22:54.062] [cyxwiz] [info] CUDA backend detected, querying memory for device 0
+[2026-02-07 17:22:54.063] [cyxwiz] [info] Successfully set CUDA device 0
+[2026-02-07 17:22:54.063] [cyxwiz] [info] CUDA device 0: 3.9998779296875 GB total, 3.080387879163027 GB free (raw: 4294836224 / 3307541300)
+[2026-02-07 17:22:54.064] [cyxwiz] [info] Total devices found: 3
+[2026-02-07 17:22:58.862] [cyxwiz] [warning] ReservationClient: Connection to localhost:50051 timed out - reservation feature disabled
+[2026-02-10 18:49:59.378] [cyxwiz] [error] GLFW Error 65544: Win32: Failed to query monitor DPI
+[2026-02-10 18:49:59.380] [cyxwiz] [error] GLFW Error 65544: Win32: Failed to query display settings
+[2026-02-10 18:50:00.702] [cyxwiz] [error] GLFW Error 65544: Win32: Failed to query monitor DPI
+[2026-02-10 18:50:00.826] [cyxwiz] [error] GLFW Error 65544: Win32: Failed to query monitor DPI
+[2026-02-11 09:59:46.517] [cyxwiz] [info] Selected nodes: 1
+[2026-02-11 09:59:46.518] [cyxwiz] [info] Node selection changed to ID: 1
+[2026-02-11 09:59:46.519] [cyxwiz] [info] Found selected node: id=1, type=82, name=Sequence Data
+[2026-02-11 09:59:46.520] [cyxwiz] [info] About to call SetSelectedNode with node id=1
+[2026-02-11 09:59:46.521] [cyxwiz] [info] SetSelectedNode completed successfully
+[2026-02-11 09:59:50.558] [cyxwiz] [info] Node selection changed to ID: 2
+[2026-02-11 09:59:50.559] [cyxwiz] [info] Found selected node: id=2, type=21, name=Token Embedding
+[2026-02-11 09:59:50.560] [cyxwiz] [info] About to call SetSelectedNode with node id=2
+[2026-02-11 09:59:50.560] [cyxwiz] [info] SetSelectedNode completed successfully
+[2026-02-11 10:35:32.656] [cyxwiz] [info] Shutting down CyxWiz Backend
+[2026-02-11 10:35:32.665] [cyxwiz] [info] Shutting down application...
+[2026-02-11 10:35:32.667] [cyxwiz] [info] MainWindow destructor: starting cleanup
+[2026-02-11 10:35:32.667] [cyxwiz] [info] ~MainWindow: plot_test_control_ (before scripting_engine)
+[2026-02-11 10:35:32.668] [cyxwiz] [info] ~MainWindow: training_plot_panel_ (before scripting_engine)
+[2026-02-11 10:35:32.669] [cyxwiz] [info] ~MainWindow: command_window_ (holds scripting_engine)
+[2026-02-11 10:35:32.669] [cyxwiz] [info] ~MainWindow: script_editor_ (holds scripting_engine)
+[2026-02-11 10:35:32.671] [cyxwiz] [info] ~MainWindow: variable_explorer_ (holds scripting_engine)
+[2026-02-11 10:35:32.672] [cyxwiz] [info] ~MainWindow: plot_output_panel_ (holds scripting_engine)
+[2026-02-11 10:35:32.672] [cyxwiz] [info] ~MainWindow: startup_script_manager_ (holds scripting_engine)
+[2026-02-11 10:35:32.673] [cyxwiz] [info] ~MainWindow: scripting_engine_
+[2026-02-11 10:35:32.673] [cyxwiz] [info] ~ScriptingEngine: starting destruction
+[2026-02-11 10:35:32.674] [cyxwiz] [info] ~ScriptingEngine: destroying sandbox_
+[2026-02-11 10:35:32.675] [cyxwiz] [info] ~PythonSandbox: skipping CleanupHooks (OS will cleanup)
+[2026-02-11 10:35:32.676] [cyxwiz] [info] ~ScriptingEngine: destroying python_engine_
+[2026-02-11 10:35:32.676] [cyxwiz] [info] Python interpreter shutdown (not finalized - OS will cleanup)
+[2026-02-11 10:35:32.677] [cyxwiz] [info] ~ScriptingEngine: destruction complete
+[2026-02-11 10:35:32.678] [cyxwiz] [info] ~MainWindow: regex_tester_panel_
+[2026-02-11 10:35:32.679] [cyxwiz] [info] ~MainWindow: json_viewer_panel_
+[2026-02-11 10:35:32.680] [cyxwiz] [info] ~MainWindow: hash_generator_panel_
+[2026-02-11 10:35:32.680] [cyxwiz] [info] ~MainWindow: random_generator_panel_
+[2026-02-11 10:35:32.681] [cyxwiz] [info] ~MainWindow: unit_converter_panel_
+[2026-02-11 10:35:32.681] [cyxwiz] [info] ~MainWindow: calculator_panel_
+[2026-02-11 10:35:32.682] [cyxwiz] [info] ~MainWindow: sentiment_panel_
+[2026-02-11 10:35:32.682] [cyxwiz] [info] ~MainWindow: embeddings_panel_
+[2026-02-11 10:35:32.683] [cyxwiz] [info] ~MainWindow: tfidf_panel_
+[2026-02-11 10:35:32.684] [cyxwiz] [info] ~MainWindow: word_frequency_panel_
+[2026-02-11 10:35:32.684] [cyxwiz] [info] ~MainWindow: tokenization_panel_
+[2026-02-11 10:35:32.684] [cyxwiz] [info] ~MainWindow: forecasting_panel_
+[2026-02-11 10:35:32.685] [cyxwiz] [info] ~MainWindow: seasonality_panel_
+[2026-02-11 10:35:32.685] [cyxwiz] [info] ~MainWindow: stationarity_panel_
+[2026-02-11 10:35:32.686] [cyxwiz] [info] ~MainWindow: acf_pacf_panel_
+[2026-02-11 10:35:32.686] [cyxwiz] [info] ~MainWindow: decomposition_panel_
+[2026-02-11 10:35:32.687] [cyxwiz] [info] ~MainWindow: integration_panel_
+[2026-02-11 10:35:32.687] [cyxwiz] [info] ~MainWindow: differentiation_panel_
+[2026-02-11 10:35:32.687] [cyxwiz] [info] ~MainWindow: qp_panel_
+[2026-02-11 10:35:32.688] [cyxwiz] [info] ~MainWindow: lp_panel_
+[2026-02-11 10:35:32.688] [cyxwiz] [info] ~MainWindow: convexity_panel_
+[2026-02-11 10:35:32.688] [cyxwiz] [info] ~MainWindow: gradient_descent_panel_
+[2026-02-11 10:35:32.689] [cyxwiz] [info] ~MainWindow: wavelet_panel_
+[2026-02-11 10:35:32.689] [cyxwiz] [info] ~MainWindow: convolution_panel_
+[2026-02-11 10:35:32.689] [cyxwiz] [info] ~MainWindow: filter_designer_panel_
+[2026-02-11 10:35:32.690] [cyxwiz] [info] ~MainWindow: spectrogram_panel_
+[2026-02-11 10:35:32.690] [cyxwiz] [info] ~MainWindow: fft_panel_
+[2026-02-11 10:35:32.692] [cyxwiz] [info] ~MainWindow: cholesky_panel_
+[2026-02-11 10:35:32.692] [cyxwiz] [info] ~MainWindow: qr_panel_
+[2026-02-11 10:35:32.693] [cyxwiz] [info] ~MainWindow: svd_panel_
+[2026-02-11 10:35:32.693] [cyxwiz] [info] ~MainWindow: eigen_decomp_panel_
+[2026-02-11 10:35:32.694] [cyxwiz] [info] ~MainWindow: matrix_calculator_panel_
+[2026-02-11 10:35:32.694] [cyxwiz] [info] ~MainWindow: feature_scaling_panel_
+[2026-02-11 10:35:32.695] [cyxwiz] [info] ~MainWindow: boxcox_panel_
+[2026-02-11 10:35:32.695] [cyxwiz] [info] ~MainWindow: log_transform_panel_
+[2026-02-11 10:35:32.696] [cyxwiz] [info] ~MainWindow: standardization_panel_
+[2026-02-11 10:35:32.696] [cyxwiz] [info] ~MainWindow: normalization_panel_
+[2026-02-11 10:35:32.696] [cyxwiz] [info] ~MainWindow: learning_curves_panel_
+[2026-02-11 10:35:32.697] [cyxwiz] [info] ~MainWindow: cross_validation_panel_
+[2026-02-11 10:35:32.697] [cyxwiz] [info] ~MainWindow: pr_curve_panel_
+[2026-02-11 10:35:32.697] [cyxwiz] [info] ~MainWindow: roc_auc_panel_
+[2026-02-11 10:35:32.698] [cyxwiz] [info] ~MainWindow: confusion_matrix_panel_
+[2026-02-11 10:35:32.698] [cyxwiz] [info] ~MainWindow: cluster_eval_panel_
+[2026-02-11 10:35:32.698] [cyxwiz] [info] ~MainWindow: gmm_panel_
+[2026-02-11 10:35:32.699] [cyxwiz] [info] ~MainWindow: hierarchical_panel_
+[2026-02-11 10:35:32.699] [cyxwiz] [info] ~MainWindow: dbscan_panel_
+[2026-02-11 10:35:32.700] [cyxwiz] [info] ~MainWindow: kmeans_panel_
+[2026-02-11 10:35:32.700] [cyxwiz] [info] ~MainWindow: serving_panel_
+[2026-02-11 10:35:32.702] [cyxwiz] [info] ~MainWindow: hyperparam_search_panel_
+[2026-02-11 10:35:32.702] [cyxwiz] [info] ~MainWindow: nas_panel_
+[2026-02-11 10:35:32.703] [cyxwiz] [info] ~MainWindow: feature_importance_panel_
+[2026-02-11 10:35:32.704] [cyxwiz] [info] ~MainWindow: gradcam_panel_
+[2026-02-11 10:35:32.705] [cyxwiz] [info] ~MainWindow: dim_reduction_panel_
+[2026-02-11 10:35:32.705] [cyxwiz] [info] ~MainWindow: regression_panel_
+[2026-02-11 10:35:32.706] [cyxwiz] [info] ~MainWindow: distribution_fitter_panel_
+[2026-02-11 10:35:32.707] [cyxwiz] [info] ~MainWindow: hypothesis_test_panel_
+[2026-02-11 10:35:32.707] [cyxwiz] [info] ~MainWindow: descriptive_stats_panel_
+[2026-02-11 10:35:32.708] [cyxwiz] [info] ~MainWindow: outlier_detection_panel_
+[2026-02-11 10:35:32.709] [cyxwiz] [info] ~MainWindow: missing_value_panel_
+[2026-02-11 10:35:32.710] [cyxwiz] [info] ~MainWindow: correlation_matrix_panel_
+[2026-02-11 10:35:32.710] [cyxwiz] [info] ~MainWindow: data_profiler_panel_
+[2026-02-11 10:35:32.711] [cyxwiz] [info] ~MainWindow: lr_finder_panel_
+[2026-02-11 10:35:32.711] [cyxwiz] [info] ~MainWindow: architecture_diagram_
+[2026-02-11 10:35:32.713] [cyxwiz] [info] ~MainWindow: model_summary_panel_
+[2026-02-11 10:35:32.714] [cyxwiz] [info] ~MainWindow: deployment_dialog_
+[2026-02-11 10:35:32.714] [cyxwiz] [info] ~MainWindow: import_dialog_
+[2026-02-11 10:35:32.714] [cyxwiz] [info] ~MainWindow: export_dialog_
+[2026-02-11 10:35:32.715] [cyxwiz] [info] ~MainWindow: test_results_panel_
+[2026-02-11 10:35:32.715] [cyxwiz] [info] ~MainWindow: memory_monitor_
+[2026-02-11 10:35:32.716] [cyxwiz] [info] ~MainWindow: memory_panel_
+[2026-02-11 10:35:32.717] [cyxwiz] [info] ~MainWindow: profiling_panel_
+[2026-02-11 10:35:32.718] [cyxwiz] [info] ~MainWindow: theme_editor_
+[2026-02-11 10:35:32.718] [cyxwiz] [info] ~MainWindow: custom_node_editor_
+[2026-02-11 10:35:32.719] [cyxwiz] [info] ~MainWindow: query_console_
+[2026-02-11 10:35:32.719] [cyxwiz] [info] ~MainWindow: pattern_browser_
+[2026-02-11 10:35:32.720] [cyxwiz] [info] ~MainWindow: task_progress_panel_
+[2026-02-11 10:35:32.720] [cyxwiz] [info] ~MainWindow: wallet_panel_
+[2026-02-11 10:35:32.721] [cyxwiz] [info] ~MainWindow: p2p_training_panel_
+[2026-02-11 10:35:32.722] [cyxwiz] [info] ~MainWindow: job_status_panel_
+[2026-02-11 10:35:32.723] [cyxwiz] [info] ~MainWindow: connection_dialog_
+[2026-02-11 10:35:32.725] [cyxwiz] [info] ~MainWindow: table_viewer_
+[2026-02-11 10:35:32.726] [cyxwiz] [info] ~MainWindow: data_explorer_panel_
+[2026-02-11 10:35:32.756] [cyxwiz] [info] ~MainWindow: asset_browser_
+[2026-02-11 10:35:32.757] [cyxwiz] [info] ~MainWindow: toolbar_
+[2026-02-11 10:35:32.758] [cyxwiz] [info] ~MainWindow: dataset_panel_
+[2026-02-11 10:35:32.761] [cyxwiz] [info] ~MainWindow: properties_
+[2026-02-11 10:35:32.761] [cyxwiz] [info] ~MainWindow: viewport_
+[2026-02-11 10:35:32.762] [cyxwiz] [info] ~MainWindow: console_
+[2026-02-11 10:35:32.763] [cyxwiz] [info] ~MainWindow: node_editor_
+[2026-02-11 10:35:32.763] [cyxwiz] [info] ~MainWindow: all panels destroyed

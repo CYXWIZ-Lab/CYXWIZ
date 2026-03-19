@@ -1,0 +1,12 @@
+Mon Feb  2 23:44:50 2026
+ERROR: mj_makeConstraint: nefc under-allocation: found nefc=2 but allocated only 1
+
+Mon Feb  2 23:44:50 2026
+ERROR: mj_makeConstraint: nefc under-allocation: found nefc=2 but allocated only 1
+
+Mon Feb  2 23:59:25 2026
+ERROR: mj_makeConstraint: nefc under-allocation: found nefc=1 but allocated only 0
+
+Tue Feb  3 00:23:05 2026
+ERROR: mj_makeConstraint: nefc under-allocation: found nefc=1 but allocated only 0
+

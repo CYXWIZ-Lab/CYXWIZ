@@ -1,0 +1,17 @@
+{
+    "id": "com.cyxwiz.examples.image-nodes",
+    "name": "Image Processing Nodes",
+    "version": "1.0.0",
+    "api_version": "1.0.0",
+    "description": "Custom image processing nodes for the visual editor (Gaussian Blur, Edge Detect, Normalize)",
+    "author": "CyxWiz Lab",
+    "license": "MIT",
+    "homepage": "https://github.com/CYXWIZ-Lab/CYXWIZ",
+    "capabilities": ["ProvidesNodes", "ProvidesPanels"],
+    "permissions": ["UIModify", "DataRegistry"],
+    "platforms": {
+        "windows": { "library": "bin/image_nodes.dll" },
+        "linux": { "library": "bin/libimage_nodes.so" },
+        "macos": { "library": "bin/libimage_nodes.dylib" }
+    }
+}

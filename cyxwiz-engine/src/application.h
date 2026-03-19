@@ -34,6 +34,7 @@ private:
     void ProcessCommandLine(int argc, char** argv);
     void OpenStartupProjectIfRequested();
     void UpdateWindowTitle();
+    void ScanForPython();  // Scan for Python on startup (no initialization)
     void MainLoop();
     void HandleInput();
     void Update(float delta_time);
@@ -52,6 +53,17 @@ private:
     // Python setup wizard (shown on first launch if no Python configured)
     std::unique_ptr<cyxwiz::PythonSetupWizard> python_wizard_;
     bool python_configured_ = false;
+
+    // Python detection (scanned on startup, not initialized)
+    struct {
+        bool scanned = false;
+        bool found = false;
+        std::string version;
+        int major = 0;
+        int minor = 0;
+        std::string path;
+        std::string warning;  // Version warning message
+    } python_scan_;
 
     // Start page (shown after Python wizard if no project specified)
     std::unique_ptr<cyxwiz::StartPage> start_page_;

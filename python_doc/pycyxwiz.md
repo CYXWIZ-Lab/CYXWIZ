@@ -32,6 +32,7 @@ Related:
 10. Reinforcement Learning
 11. Distributed Training
 12. Utilities and Conventions
+13. Troubleshooting and Known Issues
 
 ---
 
@@ -776,6 +777,41 @@ print(x1.to_numpy())              # Convert only at boundary when needed
 cx.shutdown()
 ```
 
+### 1.5 Python Runtime Selection (Engine Integration)
+When running inside the CyxWiz Engine, the Python interpreter is embedded by the engine at runtime.
+The engine decides which interpreter to use based on `engine_config.json`.
+
+**Config file location (first match wins):**
+- `<project_root>/engine_config.json`
+- `<project_root>/config/engine_config.json`
+- `%APPDATA%/CyxWiz/engine_config.json`
+
+**Config keys:**
+```json
+{
+  "python": {
+    "use_bundled": true,
+    "interpreter_path": "C:\\Program Files\\Python312\\python.exe"
+  }
+}
+```
+
+Notes:
+- If `use_bundled` is `true`, the engine expects a bundled Python next to the engine exe under `python/`.
+- If the bundled Python is missing, the engine falls back to system Python.
+- If Python is already initialized by another component, the engine will reuse that interpreter and ignore config.
+
+Quick check from the Engine Command Window:
+```python
+import sys
+print(sys.executable)
+print(sys.prefix)
+print(sys.base_prefix)
+```
+
+If `sys.base_prefix` shows a different version than the config (for example 3.14 instead of 3.12),
+then Python was already initialized before the engine applied its config.
+
 Practical notes:
 
 - For Tensor overloads, supported ops are: `solve`, `lstsq`, `matmul`, `norm`, `inv`, `transpose`.
@@ -1258,7 +1294,23 @@ Environment variables commonly used:
 - For NumPy arrays, `pycyxwiz.linalg.matmul(A, B)` now accepts ndarray directly.
 - For pure Python lists, `pycyxwiz.linalg.matmul(A, B)` remains supported.
 
----
+--- 
+
+## 13. Troubleshooting and Known Issues
+
+### 13.1 Interpreter Mismatch (Config Says 3.12, Runtime Is 3.14)
+**Symptom:** Engine log says bundled Python 3.12, but in the Command Window `sys.base_prefix`
+and `sys.prefix` show Python 3.14.
+
+**Root cause:** Another module initialized Python before `PythonEngine::Initialize()`.  
+When Python is already initialized, CyxWiz reuses the existing interpreter and config is ignored.
+
+**Impact:** Imports resolve against the already-initialized Python (often system Python), which
+can cause `ModuleNotFoundError` for packages installed only in the bundled environment.
+
+**Bug to fix:** Ensure the embedded Python runtime is initialized **only once** and **before**
+any other component can initialize Python. Ideally, enforce a single initialization path that
+always respects `engine_config.json` and the bundled Python directory.
 
 ## Appendix: Example Snippets
 
