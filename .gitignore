@@ -78,10 +78,10 @@ Thumbs.db
 wallet.json
 .secret
 
-# Data
-datasets/
-models/
-checkpoints/
+# Data (only at repository root, not source code)
+/datasets/
+/models/
+/checkpoints/
 *.h5
 *.pt
 *.onnx

@@ -85,6 +85,12 @@ set(ENGINE_SOURCES
     src/core/datasets/hdf5_dataset.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/datasets/streaming_dataset.cpp
+    src/core/datasets/mnist_dataset.cpp
+    src/core/datasets/cifar10_dataset.cpp
+    src/core/datasets/csv_dataset.cpp
+    src/core/datasets/tsv_dataset.cpp
+    src/core/datasets/json_dataset.cpp
+    src/core/datasets/txt_dataset.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
