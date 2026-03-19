@@ -99,27 +99,19 @@ bool StartPage::Render() {
         return false;  // Page completed
     }
 
-    // Centered window (80% of viewport size)
+    // Full-screen window
     ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImVec2 center = ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f);
-    ImVec2 window_size = ImVec2(viewport->Size.x * 0.8f, viewport->Size.y * 0.85f);
-
-    // Ensure minimum size
-    if (window_size.x < 1000) window_size.x = 1000;
-    if (window_size.y < 600) window_size.y = 600;
-
-    ImVec2 window_pos = ImVec2(center.x - window_size.x * 0.5f, center.y - window_size.y * 0.5f);
-
-    ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(window_size, ImGuiCond_Always);
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+    ImGui::SetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-    bool open = ImGui::Begin("CyxWiz Start", nullptr, flags);
-    ImGui::PopStyleVar(2);
+    bool open = ImGui::Begin("##StartPage", nullptr, flags);
+    ImGui::PopStyleVar();
 
     if (!open) {
         result_ = Result::Exit;
@@ -382,7 +374,7 @@ void StartPage::RenderActionCards() {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
-    if (ImGui::Button(ICON_FA_CODE_COMPARE " Clone a repository", ImVec2(button_width, 0))) {
+    if (ImGui::Button(ICON_FA_CLOUD_ARROW_DOWN " Clone a repository", ImVec2(button_width, 0))) {
         spdlog::info("Clone repository clicked");
         // TODO: Implement git clone dialog
     }
@@ -392,17 +384,21 @@ void StartPage::RenderActionCards() {
 }
 
 void StartPage::RenderBottomBar() {
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImVec2 window_pos = viewport->Pos;
-    ImVec2 window_size = viewport->Size;
+    // Position button at bottom-right of window content area
+    ImVec2 window_size = ImGui::GetWindowSize();
+    float button_width = 220.0f;
+    float button_height = 30.0f;
+    float margin = 20.0f;
 
-    ImGui::SetCursorPos(ImVec2(window_size.x - 250, window_size.y - 50));
+    ImGui::SetCursorPos(ImVec2(window_size.x - button_width - margin, window_size.y - button_height - margin));
 
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-    if (ImGui::Button("Continue without project", ImVec2(200, 0))) {
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
+    if (ImGui::Button("Continue without project", ImVec2(button_width, button_height))) {
         ContinueWithoutProject();
     }
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor(3);
 }
 
 void StartPage::OpenProject(const std::string& path) {

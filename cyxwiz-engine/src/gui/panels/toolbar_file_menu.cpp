@@ -8,6 +8,7 @@
 #include <cstring>
 #include "../dock_style.h"
 #include "../../core/project_manager.h"
+#include "../../core/window_manager.h"
 #include "../../core/file_dialogs.h"
 #include "../icons.h"
 
@@ -36,7 +37,47 @@ void ToolbarPanel::RenderFileMenu() {
         }
 
         if (ImGui::MenuItem(ICON_FA_XMARK " Close Project", nullptr, false, ProjectManager::Instance().HasActiveProject())) {
+            if (save_project_settings_callback_) {
+                save_project_settings_callback_();
+            }
             ProjectManager::Instance().CloseProject();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ========== Window Section ==========
+        if (ImGui::MenuItem(ICON_FA_WINDOW_RESTORE " New Window")) {
+            // Launch a new engine window with project selection dialog
+            bool success = cyxwiz::core::WindowManager::LaunchWindowWithDialog();
+            if (success) {
+                spdlog::info("Launched new window");
+            } else {
+                spdlog::error("Failed to launch new window");
+            }
+        }
+
+        if (ImGui::BeginMenu(ICON_FA_FOLDER_OPEN " Open Project in New Window", ProjectManager::Instance().GetRecentProjects().size() > 0)) {
+            const auto& recent_projects = ProjectManager::Instance().GetRecentProjects();
+            for (const auto& project : recent_projects) {
+                std::filesystem::path p(project.path);
+                std::string project_name = p.filename().string();
+
+                if (ImGui::MenuItem(project_name.c_str())) {
+                    if (cyxwiz::core::WindowManager::LaunchWindow(project.path)) {
+                        spdlog::info("Launched new window with project: {}", project.path);
+                    } else {
+                        spdlog::error("Failed to launch new window with project: {}", project.path);
+                    }
+                }
+
+                // Show full path on hover
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", project.path.c_str());
+                }
+            }
+            ImGui::EndMenu();
         }
 
         ImGui::Spacing();
@@ -66,13 +107,20 @@ void ToolbarPanel::RenderFileMenu() {
 
         // ========== Save Section ==========
         if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save", "Ctrl+S", false, ProjectManager::Instance().HasActiveProject())) {
-            auto& pm = ProjectManager::Instance();
-            if (pm.SaveProject()) {
-                spdlog::info("Project saved");
+            if (save_project_settings_callback_) {
+                save_project_settings_callback_();
+            } else {
+                auto& pm = ProjectManager::Instance();
+                if (pm.SaveProject()) {
+                    spdlog::info("Project saved");
+                }
             }
         }
 
         if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save As...", "Ctrl+Shift+S", false, ProjectManager::Instance().HasActiveProject())) {
+            if (save_project_settings_callback_) {
+                save_project_settings_callback_();
+            }
             show_save_as_dialog_ = true;
             // Pre-fill with current project name and a suggestion for new location
             auto& pm = ProjectManager::Instance();
@@ -167,6 +215,36 @@ void ToolbarPanel::RenderFileMenu() {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
+
+        // ========== Restart ==========
+        bool has_active_project = ProjectManager::Instance().HasActiveProject();
+        if (ImGui::MenuItem(ICON_FA_ROTATE " Restart", nullptr, false, has_active_project)) {
+            // Get current project path
+            std::string project_path = ProjectManager::Instance().GetProjectFilePath();
+
+            // Save project before restarting
+            if (save_project_settings_callback_) {
+                save_project_settings_callback_();
+            }
+            ProjectManager::Instance().SaveProject();
+
+            // Restart with current project
+            if (!project_path.empty()) {
+                spdlog::info("Restarting engine with project: {}", project_path);
+                bool success = cyxwiz::core::WindowManager::RestartEngine(project_path);
+                if (success) {
+                    // Exit current instance
+                    if (exit_callback_) {
+                        exit_callback_();
+                    }
+                } else {
+                    spdlog::error("Failed to restart engine");
+                }
+            }
+        }
+        if (ImGui::IsItemHovered() && !has_active_project) {
+            ImGui::SetTooltip("Restart requires an active project");
+        }
 
         // ========== Exit ==========
         if (ImGui::MenuItem(ICON_FA_XMARK " Exit", "Alt+F4")) {
