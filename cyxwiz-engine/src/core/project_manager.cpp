@@ -27,7 +27,8 @@ std::string GetVenvInterpreterPath(const fs::path& venv_dir) {
 }
 
 std::string BuildVenvCommand(const std::string& python_exe, const fs::path& venv_dir, bool with_pip) {
-    std::string cmd = "\"" + python_exe + "\" -I -m venv \"" + venv_dir.string() + "\"";
+    // Don't use -I flag - it causes venv to miss standard library modules
+    std::string cmd = "\"" + python_exe + "\" -m venv \"" + venv_dir.string() + "\"";
     if (!with_pip) {
         cmd += " --without-pip";
     }
@@ -568,7 +569,11 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
 
         // Check if project has python_env.json (legacy project check)
         fs::path python_env_file = fs::path(project_root_) / "python_env.json";
-        if (!fs::exists(python_env_file)) {
+        fs::path python_dir = fs::path(project_root_) / "python";
+
+        // Only create venv if both python_env.json AND python folder are missing
+        // (if python folder exists, venv creation is likely already in progress)
+        if (!fs::exists(python_env_file) && !fs::exists(python_dir)) {
             spdlog::warn("Legacy project detected (no python_env.json) - creating virtual environment");
 
             // Create venv for legacy project
@@ -594,6 +599,8 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
             } else {
                 spdlog::error("Cannot create venv for legacy project: no system Python configured");
             }
+        } else if (!fs::exists(python_env_file) && fs::exists(python_dir)) {
+            spdlog::info("Virtual environment creation already in progress for project: {}", project_name_);
         }
 
         return true;
