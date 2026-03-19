@@ -20,7 +20,6 @@
 #include <windows.h>
 #include <Shlwapi.h>
 #pragma comment(lib, "Shlwapi.lib")
-#include <algorithm>
 #else
 #include <stdlib.h>  // setenv
 #ifdef __APPLE__

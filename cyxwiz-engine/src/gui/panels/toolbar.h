@@ -482,7 +482,6 @@ private:
     int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts
 
     // Python/Scripting preferences
-    bool use_bundled_python_ = true;   // True = bundled, false = custom/system
     bool python_settings_changed_ = false;  // Track if restart needed
     char python_interpreter_path_[512] = "";
     char python_startup_script_[512] = "";
