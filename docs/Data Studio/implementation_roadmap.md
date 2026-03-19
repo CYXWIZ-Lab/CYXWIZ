@@ -1,8 +1,365 @@
 # CyxWiz Engine 2.0 — Data Studio Implementation Roadmap
 
-**Document Version:** 1.0
+**Document Version:** 1.1 (Updated after Engine Analysis)
 **Date:** 2026-03-19
+**Last Updated:** 2026-03-19 (Post-Exploration)
 **Companion to:** `docs/engine_2.0_architecture.md`
+
+---
+
+## ⚠️ CRITICAL: Phase 0 Must Complete Before Phase 1
+
+**Key Finding from Engine Analysis:**
+CyxWiz Engine already has sophisticated DataRegistry (568 lines) with LRU memory management, 12+ format loaders, and production-grade DataAnalyzer (639 lines) with parallelized analytics. Data Studio must **wrap existing APIs**, not replace them.
+
+**Phase 0 is NON-NEGOTIABLE** — All Data Studio nodes depend on Arrow support in DataRegistry.
+
+---
+
+## Phase 0: DataRegistry Arrow Extension (Days 1-5) 🔴 CRITICAL FOUNDATION
+
+**Goal**: Extend DataRegistry to support Apache Arrow tables alongside existing tensor storage, enabling zero-copy data operations for Data Studio.
+
+### Day 1: Add Arrow Storage to Dataset Class
+
+**File**: `cyxwiz-engine/src/core/data_registry.h` (modify existing)
+
+**Before (Current):**
+```cpp
+class Dataset {
+    af::array tensor_;                    // Primary storage
+    std::vector<std::string> column_names_;
+    DatasetSplit split_;
+    size_t memory_usage_;
+
+public:
+    af::array GetTensor() const { return tensor_; }
+    size_t GetMemoryUsage() const { return memory_usage_; }
+};
+```
+
+**After (Enhanced):**
+```cpp
+#include <arrow/api.h>  // ADD: Arrow headers
+
+class Dataset {
+    // Dual storage: Arrow (primary for data prep) + Tensor (lazy for ML)
+    std::shared_ptr<arrow::Table> arrow_table_;  // NEW
+    af::array tensor_;                            // EXISTING
+
+    std::vector<std::string> column_names_;
+    DatasetSplit split_;
+    size_t memory_usage_;
+
+    // NEW: Arrow-first constructor (for Data Studio)
+    Dataset(std::shared_ptr<arrow::Table> table);
+
+    // EXISTING: Tensor-first constructor (for ML training)
+    Dataset(const af::array& tensor,
+            const std::vector<std::string>& columns,
+            DatasetSplit split);
+
+public:
+    // NEW: Arrow accessor
+    std::shared_ptr<arrow::Table> GetArrowTable() const {
+        return arrow_table_;
+    }
+
+    // MODIFIED: Lazy tensor conversion
+    af::array GetTensor() const {
+        if (!tensor_.isempty()) return tensor_;
+
+        // Convert Arrow → Tensor on demand
+        const_cast<Dataset*>(this)->tensor_ = ArrowToTensor(arrow_table_);
+        return tensor_;
+    }
+
+    // EXISTING: Memory tracking (update to include both formats)
+    size_t GetMemoryUsage() const;
+};
+```
+
+**Implementation Checklist:**
+- [ ] Add `#include <arrow/api.h>` to data_registry.h
+- [ ] Add `arrow_table_` member to Dataset class
+- [ ] Implement Arrow-first constructor
+- [ ] Modify `GetTensor()` for lazy conversion
+- [ ] Update `GetMemoryUsage()` to include Arrow buffer size
+- [ ] Write unit test: Create Arrow table → Store in Dataset → Retrieve as tensor
+
+### Day 2: Add ArrowToTensor and TensorToArrow Converters
+
+**File**: `cyxwiz-engine/src/core/arrow_conversion.h/cpp` (NEW)
+
+```cpp
+#pragma once
+#include <arrow/api.h>
+#include <arrayfire.h>
+
+namespace cyxwiz {
+
+// Convert Arrow Table → ArrayFire Tensor
+af::array ArrowToTensor(std::shared_ptr<arrow::Table> table);
+
+// Convert ArrayFire Tensor → Arrow Table
+std::shared_ptr<arrow::Table> TensorToArrow(
+    const af::array& tensor,
+    const std::vector<std::string>& column_names);
+
+// Helper: Infer Arrow schema from tensor
+std::shared_ptr<arrow::Schema> InferArrowSchema(
+    const std::vector<std::string>& column_names,
+    const af::array& tensor);
+
+} // namespace cyxwiz
+```
+
+**Implementation:**
+```cpp
+// arrow_conversion.cpp
+af::array ArrowToTensor(std::shared_ptr<arrow::Table> table) {
+    int64_t num_rows = table->num_rows();
+    int64_t num_cols = table->num_columns();
+
+    // Allocate ArrayFire array
+    af::array result = af::constant(0.0f, num_rows, num_cols);
+
+    // Copy column-by-column (Arrow is columnar)
+    for (int c = 0; c < num_cols; ++c) {
+        auto column = table->column(c);
+        auto chunk = column->chunk(0);  // Assume single chunk for MVP
+
+        // Handle different Arrow types
+        if (chunk->type()->id() == arrow::Type::DOUBLE) {
+            auto data = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+            std::vector<float> col_data(num_rows);
+            for (int r = 0; r < num_rows; ++r) {
+                col_data[r] = static_cast<float>(data->Value(r));
+            }
+            result(af::span, c) = af::array(num_rows, col_data.data());
+        }
+        // ... handle other types (INT32, FLOAT, STRING→numeric, etc.)
+    }
+
+    return result;
+}
+```
+
+**Test:**
+```cpp
+TEST_CASE("ArrowToTensor conversion", "[arrow_conversion]") {
+    // Create Arrow table
+    auto schema = arrow::schema({
+        arrow::field("col1", arrow::float64()),
+        arrow::field("col2", arrow::float64())
+    });
+
+    std::vector<double> col1_data = {1.0, 2.0, 3.0};
+    std::vector<double> col2_data = {4.0, 5.0, 6.0};
+
+    auto col1 = CreateArrowArray(col1_data);
+    auto col2 = CreateArrowArray(col2_data);
+    auto table = arrow::Table::Make(schema, {col1, col2});
+
+    // Convert to tensor
+    af::array tensor = ArrowToTensor(table);
+
+    // Verify shape
+    REQUIRE(tensor.dims(0) == 3);  // rows
+    REQUIRE(tensor.dims(1) == 2);  // cols
+
+    // Verify values
+    std::vector<float> host_data(6);
+    tensor.host(host_data.data());
+    REQUIRE(host_data[0] == 1.0f);  // [0, 0]
+    REQUIRE(host_data[3] == 4.0f);  // [0, 1]
+}
+```
+
+### Day 3: Add DataRegistry Methods for Arrow
+
+**File**: `cyxwiz-engine/src/core/data_registry.h` (modify existing)
+
+**Add to DataRegistry class:**
+```cpp
+class DataRegistry {
+    // ... existing members ...
+
+public:
+    // EXISTING APIs (unchanged)
+    bool LoadDataset(const std::string& path, const std::string& name);
+    Dataset GetDataset(const std::string& name);
+    void TrimMemory(size_t max_bytes = 4'000'000'000);
+
+    // NEW: Arrow-first APIs for Data Studio
+    bool RegisterArrowTable(const std::string& name,
+                           std::shared_ptr<arrow::Table> table,
+                           DatasetSplit split = DatasetSplit::Train);
+
+    std::shared_ptr<arrow::Table> GetArrowTable(const std::string& name);
+
+    // NEW: UI filter for internal datasets
+    std::vector<std::string> GetUserVisibleDatasets() const;
+};
+```
+
+**Implementation** (`data_registry.cpp`):
+```cpp
+bool DataRegistry::RegisterArrowTable(
+    const std::string& name,
+    std::shared_ptr<arrow::Table> table,
+    DatasetSplit split) {
+
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+
+    // Create Dataset from Arrow table
+    Dataset dataset(table);
+    dataset.split_ = split;
+    dataset.memory_usage_ = CalculateArrowMemory(table);
+
+    // Store in registry
+    datasets_[name] = std::move(dataset);
+
+    // Update total memory
+    total_memory_usage_ += dataset.memory_usage_;
+
+    // Trigger LRU eviction if needed
+    if (total_memory_usage_ > memory_limit_) {
+        TrimMemory(memory_limit_);
+    }
+
+    return true;
+}
+
+std::vector<std::string> DataRegistry::GetUserVisibleDatasets() const {
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+
+    std::vector<std::string> visible;
+    for (const auto& [name, dataset] : datasets_) {
+        // Hide Data Studio internal intermediates
+        if (name.find("ds_pipeline_") != 0) {
+            visible.push_back(name);
+        }
+    }
+    return visible;
+}
+```
+
+**Test:**
+```cpp
+TEST_CASE("DataRegistry Arrow integration", "[data_registry]") {
+    auto& registry = DataRegistry::Instance();
+
+    // Create Arrow table
+    auto table = CreateTestArrowTable(100, 5);  // 100 rows, 5 cols
+
+    // Register in DataRegistry
+    registry.RegisterArrowTable("test_arrow", table);
+
+    // Retrieve as Arrow (no conversion)
+    auto retrieved_arrow = registry.GetArrowTable("test_arrow");
+    REQUIRE(retrieved_arrow->num_rows() == 100);
+
+    // Retrieve as Tensor (lazy conversion)
+    auto dataset = registry.GetDataset("test_arrow");
+    auto tensor = dataset.GetTensor();
+    REQUIRE(tensor.dims(0) == 100);
+    REQUIRE(tensor.dims(1) == 5);
+
+    // Verify memory tracking
+    REQUIRE(dataset.GetMemoryUsage() > 0);
+}
+```
+
+### Day 4: Add DuckDB Zero-Copy Integration
+
+**File**: `cyxwiz-engine/src/core/data_studio/duckdb_manager.h/cpp` (NEW)
+
+```cpp
+#pragma once
+#include <duckdb.hpp>
+#include <arrow/api.h>
+
+namespace cyxwiz {
+
+class DuckDBManager {
+public:
+    static DuckDBManager& Instance();
+
+    // Register Arrow table as DuckDB view (zero-copy)
+    void RegisterTable(const std::string& name,
+                      std::shared_ptr<arrow::Table> table);
+
+    // Execute SQL query, return Arrow table (zero-copy)
+    std::shared_ptr<arrow::Table> Query(const std::string& sql);
+
+    // Unregister table
+    void UnregisterTable(const std::string& name);
+
+private:
+    DuckDBManager();
+    std::unique_ptr<duckdb::DuckDB> db_;
+    std::unique_ptr<duckdb::Connection> conn_;
+};
+
+} // namespace cyxwiz
+```
+
+**Implementation:**
+```cpp
+void DuckDBManager::RegisterTable(
+    const std::string& name,
+    std::shared_ptr<arrow::Table> table) {
+
+    // Register Arrow table as DuckDB view (zero-copy!)
+    conn_->Query("CREATE VIEW " + name + " AS SELECT * FROM arrow_table");
+}
+
+std::shared_ptr<arrow::Table> DuckDBManager::Query(const std::string& sql) {
+    auto result = conn_->Query(sql);
+    return result->FetchArrowTable();  // Zero-copy Arrow result
+}
+```
+
+### Day 5: Integration Testing
+
+**Test Suite** (`tests/data_studio/test_arrow_foundation.cpp`):
+
+```cpp
+TEST_CASE("End-to-end Arrow workflow", "[integration]") {
+    // 1. Load CSV → Arrow via DataRegistry
+    DataRegistry::Instance().LoadDataset("test.csv", "raw");
+    auto arrow_table = DataRegistry::Instance().GetArrowTable("raw");
+    REQUIRE(arrow_table != nullptr);
+
+    // 2. Register with DuckDB
+    DuckDBManager::Instance().RegisterTable("raw", arrow_table);
+
+    // 3. Query with DuckDB (zero-copy)
+    auto result = DuckDBManager::Instance().Query(
+        "SELECT * FROM raw WHERE price > 100"
+    );
+    REQUIRE(result->num_rows() < arrow_table->num_rows());
+
+    // 4. Store result back in DataRegistry
+    DataRegistry::Instance().RegisterArrowTable("filtered", result);
+
+    // 5. Convert to tensor for ML training
+    auto dataset = DataRegistry::Instance().GetDataset("filtered");
+    auto tensor = dataset.GetTensor();
+    REQUIRE(tensor.dims(0) == result->num_rows());
+}
+```
+
+**Acceptance Criteria (Phase 0 Complete When):**
+- ✅ Dataset class supports both Arrow and Tensor storage
+- ✅ ArrowToTensor and TensorToArrow converters work correctly
+- ✅ DataRegistry can register and retrieve Arrow tables
+- ✅ DuckDB can query Arrow tables with zero-copy
+- ✅ All existing tests pass (backward compatibility)
+- ✅ New integration test passes
+
+**Only proceed to Phase 1 after ALL Phase 0 tests pass.**
 
 ---
 
