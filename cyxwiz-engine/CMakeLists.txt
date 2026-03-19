@@ -91,6 +91,9 @@ set(ENGINE_SOURCES
     src/core/datasets/tsv_dataset.cpp
     src/core/datasets/json_dataset.cpp
     src/core/datasets/txt_dataset.cpp
+    src/core/datasets/image_folder_dataset.cpp
+    src/core/datasets/huggingface_dataset.cpp
+    src/core/datasets/custom_dataset.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
