@@ -1,6 +1,13 @@
 #include "project_manager.h"
+#include "async_task_manager.h"
+#include "core/engine_config.h"
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
+#include <algorithm>
+#include <cctype>
+#include <system_error>
 #include <spdlog/spdlog.h>
 
 namespace fs = std::filesystem;
@@ -8,6 +15,339 @@ namespace fs = std::filesystem;
 #ifdef _WIN32
 #include <shlobj.h>
 #endif
+
+namespace {
+
+std::string GetVenvInterpreterPath(const fs::path& venv_dir) {
+#ifdef _WIN32
+    return (venv_dir / "Scripts" / "python.exe").string();
+#else
+    return (venv_dir / "bin" / "python").string();
+#endif
+}
+
+std::string BuildVenvCommand(const std::string& python_exe, const fs::path& venv_dir, bool with_pip) {
+    std::string cmd = "\"" + python_exe + "\" -I -m venv \"" + venv_dir.string() + "\"";
+    if (!with_pip) {
+        cmd += " --without-pip";
+    }
+    return cmd;
+}
+
+int RunVenvCommand(const std::string& command) {
+    if (command.empty()) {
+        return -1;
+    }
+#ifdef _WIN32
+    // On Windows, wrap the entire command in quotes for cmd.exe
+    std::string wrapped_cmd = "cmd.exe /c \"" + command + "\"";
+    return std::system(wrapped_cmd.c_str());
+#else
+    return std::system(command.c_str());
+#endif
+}
+
+bool IsVenvBinDir(const fs::path& path) {
+    auto name = path.filename().string();
+#ifdef _WIN32
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return name == "scripts";
+#else
+    return name == "bin";
+#endif
+}
+
+fs::path ResolveVenvRoot(const fs::path& interpreter_path) {
+    auto parent = interpreter_path.parent_path();
+    if (!IsVenvBinDir(parent)) {
+        return {};
+    }
+    auto root = parent.parent_path();
+    if (root.empty()) {
+        return {};
+    }
+    if (fs::exists(root / "pyvenv.cfg")) {
+        return root;
+    }
+    return {};
+}
+
+fs::path ResolvePythonHomeFromInterpreter(const fs::path& interpreter_path) {
+    auto venv_root = ResolveVenvRoot(interpreter_path);
+    if (!venv_root.empty()) {
+        return venv_root;
+    }
+    return interpreter_path.parent_path();
+}
+
+bool HasVenvModule(const fs::path& python_home) {
+#ifdef _WIN32
+    fs::path venv_dir = python_home / "Lib" / "venv";
+    return fs::exists(venv_dir);
+#else
+    fs::path lib_dir = python_home / "lib";
+    if (!fs::exists(lib_dir)) {
+        return false;
+    }
+    for (const auto& entry : fs::directory_iterator(lib_dir)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+        auto name = entry.path().filename().string();
+        if (name.rfind("python", 0) != 0) {
+            continue;
+        }
+        if (fs::exists(entry.path() / "venv")) {
+            return true;
+        }
+    }
+    return false;
+#endif
+}
+
+fs::path NormalizePath(const fs::path& path) {
+    try {
+        return fs::absolute(path).lexically_normal();
+    } catch (...) {
+        return path.lexically_normal();
+    }
+}
+
+bool IsPathUnderRoot(const fs::path& path, const fs::path& root) {
+    if (root.empty()) {
+        return false;
+    }
+    auto norm_path = NormalizePath(path);
+    auto norm_root = NormalizePath(root);
+
+#ifdef _WIN32
+    std::string path_str = norm_path.string();
+    std::string root_str = norm_root.string();
+    std::transform(path_str.begin(), path_str.end(), path_str.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::transform(root_str.begin(), root_str.end(), root_str.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (!root_str.empty() && root_str.back() != '\\' && root_str.back() != '/') {
+        root_str += "\\";
+    }
+    return path_str.rfind(root_str, 0) == 0;
+#else
+    auto pit = norm_path.begin();
+    auto rit = norm_root.begin();
+    for (; rit != norm_root.end(); ++rit, ++pit) {
+        if (pit == norm_path.end() || *pit != *rit) {
+            return false;
+        }
+    }
+    return true;
+#endif
+}
+
+std::optional<fs::path> ReadPythonEnvInterpreterPath(const fs::path& project_dir) {
+    fs::path env_file = project_dir / "python_env.json";
+    if (!fs::exists(env_file)) {
+        return std::nullopt;
+    }
+
+    try {
+        std::ifstream file(env_file.string());
+        if (!file.is_open()) {
+            return std::nullopt;
+        }
+        nlohmann::json j;
+        file >> j;
+
+        if (!j.contains("python") || !j["python"].is_object()) {
+            return std::nullopt;
+        }
+        const auto& python = j["python"];
+        if (!python.contains("interpreter_path") || !python["interpreter_path"].is_string()) {
+            return std::nullopt;
+        }
+        std::string interp = python["interpreter_path"].get<std::string>();
+        if (interp.empty()) {
+            return std::nullopt;
+        }
+        fs::path interp_path(interp);
+        if (interp_path.is_relative()) {
+            interp_path = project_dir / interp_path;
+        }
+        return fs::absolute(interp_path);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+bool WritePythonEnvFile(const fs::path& project_dir, const std::string& interpreter_path) {
+    if (interpreter_path.empty()) {
+        return false;
+    }
+
+    std::string stored_path = interpreter_path;
+    try {
+        fs::path interp_path(interpreter_path);
+        fs::path abs_interp = fs::absolute(interp_path);
+        if (IsPathUnderRoot(abs_interp, project_dir)) {
+            std::error_code ec;
+            fs::path rel = fs::relative(abs_interp, project_dir, ec);
+            if (!ec && !rel.empty()) {
+                stored_path = rel.string();
+            }
+        }
+    } catch (...) {
+        // Keep the original path if normalization fails
+    }
+
+    nlohmann::json j;
+    j["python"] = {
+        {"interpreter_path", stored_path}
+    };
+
+    fs::path env_file = project_dir / "python_env.json";
+    std::ofstream file(env_file.string());
+    if (!file.is_open()) {
+        spdlog::error("Failed to write python_env.json: {}", env_file.string());
+        return false;
+    }
+    file << j.dump(2);
+    return true;
+}
+
+void MaybeUpdateProjectPythonEnv(const fs::path& project_dir) {
+    fs::path venv_dir = project_dir / "python";
+    fs::path venv_interpreter = GetVenvInterpreterPath(venv_dir);
+    if (!fs::exists(venv_interpreter)) {
+        return;
+    }
+
+    auto existing = ReadPythonEnvInterpreterPath(project_dir);
+    if (existing.has_value() && !IsPathUnderRoot(*existing, project_dir)) {
+        // Preserve custom interpreter outside the project root
+        return;
+    }
+
+    WritePythonEnvFile(project_dir, venv_interpreter.string());
+}
+
+void UpdatePythonEnvAfterSaveAs(const fs::path& old_root, const fs::path& new_root) {
+    fs::path venv_dir = new_root / "python";
+    fs::path venv_interpreter = GetVenvInterpreterPath(venv_dir);
+    if (!fs::exists(venv_interpreter)) {
+        return;
+    }
+
+    auto existing = ReadPythonEnvInterpreterPath(new_root);
+    if (!existing.has_value()) {
+        WritePythonEnvFile(new_root, venv_interpreter.string());
+        return;
+    }
+
+    if (IsPathUnderRoot(*existing, old_root) || IsPathUnderRoot(*existing, new_root)) {
+        WritePythonEnvFile(new_root, venv_interpreter.string());
+    }
+}
+
+bool CreateProjectVenv(const fs::path& project_dir, std::string* error_out) {
+    fs::path venv_dir = project_dir / "python";
+    auto& config = cyxwiz::core::EngineConfig::Instance();
+
+    // Use system Python from EngineConfig
+    std::string system_python = config.GetSystemPythonPath();
+    if (system_python.empty()) {
+        if (error_out) {
+            *error_out = "No system Python configured. Please configure Python in settings.";
+        }
+        return false;
+    }
+
+    // Verify system Python exists
+    if (!fs::exists(system_python)) {
+        if (error_out) {
+            *error_out = "System Python not found: " + system_python;
+        }
+        return false;
+    }
+
+    // Verify system Python has venv module
+    fs::path python_home = ResolvePythonHomeFromInterpreter(fs::path(system_python));
+    if (!python_home.empty() && !HasVenvModule(python_home)) {
+        if (error_out) {
+            *error_out = "System Python is missing the venv module at " + python_home.string();
+        }
+        return false;
+    }
+
+    // Create venv using system Python
+    spdlog::info("Creating project venv using system Python: {}", system_python);
+    std::string command_with_pip = BuildVenvCommand(system_python, venv_dir, true);
+    std::string command_without_pip = BuildVenvCommand(system_python, venv_dir, false);
+
+    spdlog::info("Venv command: {}", command_with_pip);
+    int result = RunVenvCommand(command_with_pip);
+    if (result != 0) {
+        spdlog::warn("Venv creation command failed, exit_code={}", result);
+        spdlog::info("Retrying venv creation without pip");
+        spdlog::info("Venv command (no pip): {}", command_without_pip);
+        result = RunVenvCommand(command_without_pip);
+    }
+
+    if (result == 0) {
+        std::string venv_interpreter = GetVenvInterpreterPath(venv_dir);
+        if (!fs::exists(venv_interpreter)) {
+            spdlog::warn("Venv created but interpreter not found: {}", venv_interpreter);
+            std::error_code ec;
+            fs::remove_all(venv_dir, ec);
+            if (error_out) {
+                *error_out = "Venv created but interpreter not found";
+            }
+            return false;
+        }
+        return WritePythonEnvFile(project_dir, venv_interpreter);
+    }
+
+    // Venv creation failed
+    spdlog::error("Venv creation failed, exit_code={}", result);
+    if (fs::exists(venv_dir)) {
+        std::error_code ec;
+        fs::remove_all(venv_dir, ec);
+    }
+    if (error_out) {
+        *error_out = "Failed to create venv using system Python: " + system_python +
+            ". Ensure Python has venv module installed.";
+    }
+    return false;
+}
+
+void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& project_name) {
+    std::string project_root = project_dir.string();
+    std::string task_name = "Create Python venv";
+    if (!project_name.empty()) {
+        task_name += " (" + project_name + ")";
+    }
+
+    cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [project_root](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.05f, "Preparing virtual environment...");
+            std::string error;
+            if (!CreateProjectVenv(fs::path(project_root), &error)) {
+                throw std::runtime_error(error.empty() ? "Failed to create project venv" : error);
+            }
+            task.ReportProgress(1.0f, "Virtual environment ready");
+        },
+        nullptr,
+        [project_root](bool success, const std::string& error) {
+            if (success) {
+                spdlog::info("Project venv created: {}", project_root);
+                cyxwiz::ProjectManager::Instance().NotifyProjectVenvReady(project_root);
+            } else {
+                spdlog::error("Project venv creation failed for {}: {}", project_root, error);
+            }
+        });
+}
+
+} // namespace
 
 namespace cyxwiz {
 
@@ -118,6 +458,12 @@ ProjectManager& ProjectManager::Instance() {
     return instance;
 }
 
+void ProjectManager::NotifyProjectVenvReady(const std::string& project_root) {
+    if (on_venv_ready_) {
+        on_venv_ready_(project_root);
+    }
+}
+
 const std::map<std::string, std::vector<std::string>>& ProjectManager::GetDefaultFilters() {
     return s_default_filters;
 }
@@ -162,6 +508,8 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
         }
 
         spdlog::info("Project created: {} at {}", name, project_root_);
+
+        QueueProjectVenvCreation(project_dir, name);
 
         // Add to recent projects
         AddToRecentProjects(name, project_file_path_);
@@ -253,6 +601,8 @@ bool ProjectManager::SaveProject() {
         return false;
     }
 
+    MaybeUpdateProjectPythonEnv(fs::path(project_root_));
+
     return WriteProjectFile(project_file_path_);
 }
 
@@ -263,6 +613,7 @@ bool ProjectManager::SaveProjectAs(const std::string& new_name, const std::strin
     }
 
     try {
+        std::string old_root = project_root_;
         // Create new project directory
         fs::path new_project_dir = fs::path(new_location) / new_name;
         if (fs::exists(new_project_dir)) {
@@ -286,6 +637,8 @@ bool ProjectManager::SaveProjectAs(const std::string& new_name, const std::strin
 
         // Update config with new name
         config_.name = new_name;
+
+        UpdatePythonEnvAfterSaveAs(fs::path(old_root), fs::path(project_root_));
 
         // Write new project file
         if (!WriteProjectFile(project_file_path_)) {

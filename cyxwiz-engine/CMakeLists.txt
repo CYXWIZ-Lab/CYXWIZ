@@ -69,6 +69,8 @@ set(ENGINE_SOURCES
     src/auth/auth_client.cpp
     src/core/project_manager.cpp
     src/core/engine_config.cpp
+    src/core/python_detector.cpp
+    src/core/window_manager.cpp
     src/core/data_registry.cpp
     src/core/annotation_manager.cpp
     src/core/texture_manager.cpp
@@ -145,6 +147,7 @@ set(ENGINE_SOURCES
     src/gui/panels/training_plot_panel.cpp
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
+    src/gui/panels/python_plot_window_registry.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/plot_output_panel.cpp
     src/gui/panels/command_window.cpp
@@ -153,6 +156,9 @@ set(ENGINE_SOURCES
     src/gui/panels/data_explorer_panel.cpp
     src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
+    src/gui/dialogs/python_setup_wizard.cpp
+    src/gui/dialogs/project_selection_dialog.cpp
+    src/gui/dialogs/start_page.cpp
     src/gui/panels/dataset_panel.cpp
     src/gui/panels/dataset_panel_preprocessing.cpp
     src/gui/panels/dataset_panel_datapipeline.cpp
@@ -176,6 +182,7 @@ set(ENGINE_SOURCES
     src/gui/panels/export_dialog.cpp
     src/gui/panels/import_dialog.cpp
     src/gui/panels/deployment_dialog.cpp
+    src/gui/panels/python_settings_panel.cpp
     src/network/deployment_client.cpp
     src/inference/local_inference_server.cpp
     # DNN inference (Phase 3)
@@ -312,6 +319,7 @@ set(ENGINE_HEADERS
     src/auth/auth_client.h
     src/core/project_manager.h
     src/core/engine_config.h
+    src/core/window_manager.h
     src/core/data_registry.h
     src/core/texture_manager.h
     src/core/async_task_manager.h
@@ -342,6 +350,7 @@ set(ENGINE_HEADERS
     src/gui/panels/training_dashboard.h
     src/gui/panels/training_plot_panel.h
     src/gui/panels/plot_window.h
+    src/gui/panels/python_plot_window_registry.h
     src/gui/panels/plot_test_control.h
     src/gui/panels/plot_output_panel.h
     src/gui/panels/command_window.h
@@ -349,6 +358,9 @@ set(ENGINE_HEADERS
     src/gui/panels/table_viewer.h
     src/gui/panels/data_explorer_panel.h
     src/gui/panels/connection_dialog.h
+    src/gui/dialogs/python_setup_wizard.h
+    src/gui/dialogs/project_selection_dialog.h
+    src/gui/dialogs/start_page.h
     src/gui/panels/dataset_panel.h
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.h
@@ -365,6 +377,7 @@ set(ENGINE_HEADERS
     src/gui/panels/export_dialog.h
     src/gui/panels/import_dialog.h
     src/gui/panels/deployment_dialog.h
+    src/gui/panels/python_settings_panel.h
     src/network/deployment_client.h
     src/inference/local_inference_server.h
     # DNN inference (Phase 3)
@@ -645,16 +658,8 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     COMMENT "Copying pycyxwiz Python module..."
 )
 
-# Copy bundled Python distribution to build directory (if exists)
-# This provides Python 3.12 with pre-installed packages (mujoco, gymnasium, stable-baselines3)
-if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/python-embed")
-    add_custom_command(TARGET cyxwiz-engine POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/python-embed"
-        "$<TARGET_FILE_DIR:cyxwiz-engine>/python"
-        COMMENT "Copying bundled Python 3.12 distribution..."
-    )
-endif()
+# Note: Bundled Python has been removed. CyxWiz Engine now uses system Python 3.12+.
+# Each project creates its own virtual environment in <project>/python/
 
 # ===== Python Bindings Module =====
 
@@ -673,6 +678,7 @@ pybind11_add_module(cyxwiz_plotting
     src/gui/panels/plot_test_panel.cpp
     src/gui/panels/training_plot_panel.cpp
     src/gui/panels/training_plot_panel_global.cpp
+    src/gui/panels/python_plot_window_registry.cpp
 )
 
 # Link the plotting module against necessary libraries

@@ -3,13 +3,16 @@
 #include "gui/console.h"
 #include "gui/console_sink.h"
 #include "gui/theme.h"
+#include "gui/dialogs/python_setup_wizard.h"
+#include "gui/dialogs/start_page.h"
 #include "auth/auth_client.h"
-#include "scripting/python_engine.h"
 #include "network/grpc_client.h"
 #include "network/job_manager.h"
 #include "core/async_task_manager.h"
 #include "core/data_registry.h"
+#include "core/project_manager.h"
 #include "core/training_manager.h"
+#include "core/engine_config.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -38,6 +41,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 #include <filesystem>
+#include <optional>
+#include <algorithm>
+#include <cctype>
 #include <vector>
 
 static void glfw_error_callback(int error, const char* description) {
@@ -103,6 +109,92 @@ static bool load_window_icon(GLFWwindow* window) {
     return true;
 }
 
+namespace {
+
+std::string ToLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool HasCyxwizExtension(const std::filesystem::path& path) {
+    return ToLower(path.extension().string()) == ".cyxwiz";
+}
+
+std::optional<std::filesystem::path> FindProjectFileInDir(const std::filesystem::path& dir) {
+    if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
+        return std::nullopt;
+    }
+
+    std::filesystem::path named = dir / (dir.filename().string() + ".cyxwiz");
+    if (std::filesystem::exists(named)) {
+        return std::filesystem::absolute(named);
+    }
+
+    std::filesystem::path first_match;
+    try {
+        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            if (HasCyxwizExtension(entry.path())) {
+                if (!first_match.empty()) {
+                    spdlog::warn("Multiple .cyxwiz files found in {}, using first: {}",
+                                 dir.string(), first_match.string());
+                    return std::filesystem::absolute(first_match);
+                }
+                first_match = entry.path();
+            }
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("Failed to scan project directory {}: {}", dir.string(), e.what());
+        return std::nullopt;
+    }
+
+    if (!first_match.empty()) {
+        return std::filesystem::absolute(first_match);
+    }
+
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> ResolveProjectArg(const std::string& arg) {
+    if (arg.empty()) {
+        return std::nullopt;
+    }
+
+    std::filesystem::path raw(arg);
+    std::vector<std::filesystem::path> attempts;
+
+    if (raw.is_absolute()) {
+        attempts.push_back(raw);
+    } else {
+        if (const char* launch_cwd = std::getenv("CYXWIZ_LAUNCH_CWD")) {
+            attempts.push_back(std::filesystem::path(launch_cwd) / raw);
+        }
+        attempts.push_back(std::filesystem::current_path() / raw);
+    }
+
+    for (const auto& attempt : attempts) {
+        if (!std::filesystem::exists(attempt)) {
+            continue;
+        }
+        if (std::filesystem::is_directory(attempt)) {
+            if (auto found = FindProjectFileInDir(attempt)) {
+                return found;
+            }
+            continue;
+        }
+        if (HasCyxwizExtension(attempt)) {
+            return std::filesystem::absolute(attempt);
+        }
+    }
+
+    return std::nullopt;
+}
+
+} // namespace
+
 CyxWizApp::CyxWizApp(int argc, char** argv)
     : window_(nullptr), running_(true), last_frame_time_(0.0) {
 
@@ -121,8 +213,46 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         spdlog::debug("Command line arg: {}", arg);
-        // TODO: Process command line arguments
+        if (startup_project_path_.empty()) {
+            if (auto resolved = ResolveProjectArg(arg)) {
+                startup_project_path_ = resolved->string();
+                spdlog::info("Startup project detected: {}", startup_project_path_);
+            }
+        }
     }
+}
+
+void CyxWizApp::OpenStartupProjectIfRequested() {
+    if (startup_project_path_.empty()) {
+        return;
+    }
+
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    if (pm.OpenProject(startup_project_path_)) {
+        spdlog::info("Opened project from command line: {}", startup_project_path_);
+        UpdateWindowTitle();  // Update window title with project name
+    } else {
+        spdlog::error("Failed to open project from command line: {}", startup_project_path_);
+    }
+}
+
+void CyxWizApp::UpdateWindowTitle() {
+    if (!window_) {
+        return;  // Window not created yet
+    }
+
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    std::string title = "CyxWiz Engine";
+
+    if (pm.HasActiveProject()) {
+        // Get project name from the project file path
+        std::filesystem::path project_path(pm.GetProjectFilePath());
+        std::string project_name = project_path.stem().string();  // Get filename without extension
+        title = "CyxWiz Engine - " + project_name;
+    }
+
+    glfwSetWindowTitle(window_, title.c_str());
+    spdlog::debug("Window title updated to: {}", title);
 }
 
 bool CyxWizApp::Initialize() {
@@ -243,9 +373,32 @@ bool CyxWizApp::Initialize() {
     // Load professional fonts
     LoadFonts(io);
 
+    // Check if Python is configured - show wizard if not
+    auto& config = cyxwiz::core::EngineConfig::Instance();
+    python_configured_ = config.HasSystemPython();
+
+    if (!python_configured_) {
+        spdlog::info("No system Python configured - showing setup wizard");
+        python_wizard_ = std::make_unique<cyxwiz::PythonSetupWizard>();
+        // Main window will be created after wizard completes
+        return true;
+    }
+
+    // Python is configured - show start page
+    spdlog::info("Python configured - showing start page");
+    start_page_ = std::make_unique<cyxwiz::StartPage>();
+
+    // If project was specified on command line, we'll still show the start page
+    // but it can be skipped by the user
+    return true;
+
+    // Both Python and project are ready - create main window
+    project_selected_ = true;
+    spdlog::info("Python configured and project specified - creating main window");
+
     // Initialize components
     main_window_ = std::make_unique<gui::MainWindow>();
-    python_engine_ = std::make_unique<scripting::PythonEngine>();
+    OpenStartupProjectIfRequested();
     grpc_client_ = std::make_unique<network::GRPCClient>();
     job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
 
@@ -629,6 +782,125 @@ void CyxWizApp::Render() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
+    // Render Python setup wizard if active (shown on first launch)
+    if (python_wizard_) {
+        bool wizard_still_active = python_wizard_->Render();
+
+        if (!wizard_still_active) {
+            // Wizard completed or cancelled
+            auto result = python_wizard_->GetResult();
+
+            if (result == cyxwiz::PythonSetupWizard::Result::Completed) {
+                spdlog::info("Python setup wizard completed successfully");
+                python_configured_ = true;
+                python_wizard_.reset();
+
+                // Check if project needs to be selected
+                // Show start page after Python wizard completes
+                spdlog::info("Python setup complete - showing start page");
+                start_page_ = std::make_unique<cyxwiz::StartPage>();
+
+            } else if (result == cyxwiz::PythonSetupWizard::Result::Cancelled) {
+                spdlog::info("Python setup wizard cancelled - exiting application");
+                glfwSetWindowShouldClose(window_, GLFW_TRUE);
+            }
+        }
+    }
+
+    // Render start page if active (shown after Python wizard)
+    if (start_page_) {
+        bool page_still_active = start_page_->Render();
+
+        if (!page_still_active) {
+            // Start page completed or user wants to exit
+            auto result = start_page_->GetResult();
+
+            if (result == cyxwiz::StartPage::Result::ProjectSelected) {
+                spdlog::info("Project selected from start page");
+                startup_project_path_ = start_page_->GetSelectedProjectPath();
+                project_selected_ = true;
+                start_page_.reset();
+
+            } else if (result == cyxwiz::StartPage::Result::ContinueWithout) {
+                spdlog::info("User chose to continue without project");
+                startup_project_path_ = "";  // No project
+                project_selected_ = true;    // But allow main window to open
+                start_page_.reset();
+
+            } else if (result == cyxwiz::StartPage::Result::Exit) {
+                spdlog::info("User exited start page - closing application");
+                glfwSetWindowShouldClose(window_, GLFW_TRUE);
+                start_page_.reset();
+            }
+        }
+    }
+
+    // Create main window once Python is configured and project is selected
+    if (python_configured_ && project_selected_ && !main_window_) {
+        spdlog::info("Creating main window with project: {}", startup_project_path_);
+
+        main_window_ = std::make_unique<gui::MainWindow>();
+        OpenStartupProjectIfRequested();  // This will call UpdateWindowTitle() if project opens
+        UpdateWindowTitle();  // Update window title regardless (shows project name or just "CyxWiz Engine")
+        grpc_client_ = std::make_unique<network::GRPCClient>();
+        job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
+
+        // Connect network components to main window
+        main_window_->SetNetworkComponents(grpc_client_.get(), job_manager_.get());
+
+        // Connect debug logging flags to main window (for View menu toggles)
+        main_window_->SetIdleLogPtr(&log_idle_transitions_);
+
+        // Set exit request callback (triggered by File > Exit menu)
+        main_window_->SetExitRequestCallback([this]() {
+            spdlog::info("Exit requested via menu");
+            glfwSetWindowShouldClose(window_, GLFW_TRUE);
+        });
+
+        // Register console sink with spdlog
+        if (main_window_ && main_window_->GetConsole()) {
+            auto* console = main_window_->GetConsole();
+
+            console->AddSuccess("=== CyxWiz Engine Console ===");
+            console->AddInfo("Console panel initialized - logs will appear here");
+
+            auto console_sink = std::make_shared<gui::ConsoleSinkMt>(console);
+            auto logger = spdlog::default_logger();
+            logger->sinks().push_back(console_sink);
+
+            spdlog::info("✓ Console logging enabled");
+            console->AddSuccess("✓ spdlog integration working");
+        }
+
+        // Restore saved auth session
+        auto& auth = cyxwiz::auth::AuthClient::Instance();
+        if (auth.LoadSavedSession()) {
+            spdlog::info("Auth session restored for: {}", auth.GetUserInfo().email);
+        }
+
+        // Log device information
+        if (main_window_ && main_window_->GetConsole()) {
+            auto* console = main_window_->GetConsole();
+            console->AddSuccess("CyxWiz Backend initialized");
+
+            auto devices = cyxwiz::Device::GetAvailableDevices();
+            console->AddInfo("Available compute devices:");
+
+            for (const auto& device : devices) {
+                std::string device_type_str;
+                switch(device.type) {
+                    case cyxwiz::DeviceType::CPU: device_type_str = "CPU"; break;
+                    case cyxwiz::DeviceType::CUDA: device_type_str = "CUDA GPU"; break;
+                    case cyxwiz::DeviceType::OPENCL: device_type_str = "OpenCL GPU"; break;
+                    default: device_type_str = "Unknown"; break;
+                }
+
+                std::string log_msg = "  - " + device.name + " (" + device_type_str + ")";
+                console->AddInfo(log_msg);
+            }
+        }
+    }
+
     // Render main window (with docking)
     if (main_window_) {
         try {
@@ -679,7 +951,6 @@ void CyxWizApp::Shutdown() {
     // Cleanup components
     job_manager_.reset();
     grpc_client_.reset();
-    python_engine_.reset();
     main_window_.reset();
 
     // Cleanup ImGui
