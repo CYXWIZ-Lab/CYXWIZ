@@ -9,10 +9,16 @@
 #include <optional>
 #include <chrono>
 
+// Forward declarations for Arrow
+namespace arrow {
+    class Table;
+}
+
 // Forward declarations for preprocessing and augmentation
 namespace cyxwiz {
     struct PreprocessingConfig;
     class AnnotationManager;
+    class ArrowDataset;
 
     namespace transforms {
         class Compose;
@@ -431,6 +437,12 @@ public:
     // Streaming dataset loading
     DatasetHandle LoadStreamingDataset(const std::string& path, const StreamingConfig& config, const std::string& name = "");
 
+    // Apache Arrow columnar data support (Data Studio foundation)
+    std::shared_ptr<class ArrowDataset> LoadArrowTable(const std::string& path, const std::string& name = "");
+    std::shared_ptr<class ArrowDataset> RegisterArrowTable(std::shared_ptr<arrow::Table> table, const std::string& name);
+    std::shared_ptr<class ArrowDataset> GetArrowDataset(const std::string& name);
+    bool IsArrowDataset(const std::string& name) const;
+
     // Dataset unloading
     void UnloadDataset(const std::string& name);
     void UnloadAll();
@@ -526,6 +538,10 @@ private:
 
     // Dataset storage
     std::map<std::string, std::shared_ptr<Dataset>> datasets_;
+
+    // Arrow dataset storage (separate for Data Studio columnar data)
+    std::map<std::string, std::shared_ptr<class ArrowDataset>> arrow_datasets_;
+
     mutable std::mutex mutex_;
 
     // Memory management

@@ -18,6 +18,15 @@ find_package(OpenSSL REQUIRED)
 # Cross-platform native file dialogs
 find_package(nfd CONFIG REQUIRED)
 
+# Apache Arrow for Data Studio columnar data support
+find_package(Arrow CONFIG REQUIRED)
+find_package(Parquet CONFIG REQUIRED)
+message(STATUS "Apache Arrow ${Arrow_VERSION} found - Columnar data support enabled")
+
+# DuckDB for zero-copy SQL queries on Arrow tables
+find_package(duckdb CONFIG REQUIRED)
+message(STATUS "DuckDB found - SQL query engine enabled")
+
 # Optional: HDF5 support for data files
 find_package(HighFive CONFIG)
 if(HighFive_FOUND)
@@ -72,6 +81,9 @@ set(ENGINE_SOURCES
     src/core/python_detector.cpp
     src/core/window_manager.cpp
     src/core/data_registry.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_converters.cpp
+    src/core/duckdb_connector.cpp
     src/core/annotation_manager.cpp
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
@@ -321,6 +333,9 @@ set(ENGINE_HEADERS
     src/core/engine_config.h
     src/core/window_manager.h
     src/core/data_registry.h
+    src/core/arrow_dataset.h
+    src/core/arrow_converters.h
+    src/core/duckdb_connector.h
     src/core/texture_manager.h
     src/core/async_task_manager.h
     src/core/graph_compiler.h
@@ -557,6 +572,9 @@ target_link_libraries(cyxwiz-engine PRIVATE
     cyxwiz-protocol
     cyxwiz-plugin-sdk
     nfd::nfd
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    duckdb
 )
 
 # Optional: Link HDF5 if found
@@ -812,3 +830,37 @@ set_target_properties(test_opencv_integration PROPERTIES
 
 # HDF5 Loading test - run via engine's Python console or dedicated test runner
 # The HDF5Dataset class is tested as part of cyxwiz-engine
+
+# ===== Test: Arrow Integration (Phase 0 Day 5) =====
+add_executable(test_arrow_integration
+    tests/test_arrow_integration.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_converters.cpp
+    src/core/duckdb_connector.cpp
+    src/core/data_registry.cpp
+    src/core/annotation_manager.cpp
+)
+
+target_include_directories(test_arrow_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_arrow_integration PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    duckdb
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_arrow_integration PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_arrow_integration PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)

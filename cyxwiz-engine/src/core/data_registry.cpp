@@ -1,4 +1,5 @@
 #include "data_registry.h"
+#include "arrow_dataset.h"
 #include "annotation_manager.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -5383,6 +5384,114 @@ const AnnotationManager& DataRegistry::GetAnnotationManager() const {
         annotation_manager_ = std::make_unique<AnnotationManager>();
     }
     return *annotation_manager_;
+}
+
+// =============================================================================
+// Apache Arrow Integration (Data Studio Foundation - Phase 0)
+// =============================================================================
+
+std::shared_ptr<ArrowDataset> DataRegistry::LoadArrowTable(
+    const std::string& path, const std::string& name) {
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Generate unique name if not provided
+    std::string dataset_name = name.empty() ? GenerateUniqueName("arrow_data") : name;
+
+    // Check if already loaded
+    if (arrow_datasets_.find(dataset_name) != arrow_datasets_.end()) {
+        spdlog::warn("Arrow dataset '{}' already loaded, returning existing instance", dataset_name);
+        return arrow_datasets_[dataset_name];
+    }
+
+    // Load from file using ArrowDataset factory
+    auto dataset = ArrowDataset::FromFile(path, dataset_name);
+    if (!dataset) {
+        spdlog::error("Failed to load Arrow dataset from: {}", path);
+        return nullptr;
+    }
+
+    // Store in registry
+    arrow_datasets_[dataset_name] = dataset;
+    last_access_times_[dataset_name] = std::chrono::steady_clock::now();
+
+    spdlog::info("Loaded Arrow dataset '{}': {} rows, {} columns, {} bytes",
+                 dataset_name,
+                 dataset->GetNumRows(),
+                 dataset->GetNumColumns(),
+                 dataset->GetMemoryUsage());
+
+    // Trigger callback
+    if (on_loaded_) {
+        DatasetInfo info;
+        info.name = dataset_name;
+        info.path = path;
+        info.num_samples = dataset->GetNumRows();
+        info.memory_usage = dataset->GetMemoryUsage();
+        info.is_loaded = true;
+        on_loaded_(dataset_name, info);
+    }
+
+    return dataset;
+}
+
+std::shared_ptr<ArrowDataset> DataRegistry::RegisterArrowTable(
+    std::shared_ptr<arrow::Table> table, const std::string& name) {
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Generate unique name if not provided
+    std::string dataset_name = name.empty() ? GenerateUniqueName("arrow_data") : name;
+
+    // Check if already exists
+    if (arrow_datasets_.find(dataset_name) != arrow_datasets_.end()) {
+        spdlog::warn("Arrow dataset '{}' already exists, overwriting", dataset_name);
+    }
+
+    // Create ArrowDataset wrapper
+    auto dataset = std::make_shared<ArrowDataset>(table, dataset_name);
+
+    // Store in registry
+    arrow_datasets_[dataset_name] = dataset;
+    last_access_times_[dataset_name] = std::chrono::steady_clock::now();
+
+    spdlog::info("Registered Arrow dataset '{}': {} rows, {} columns, {} bytes",
+                 dataset_name,
+                 dataset->GetNumRows(),
+                 dataset->GetNumColumns(),
+                 dataset->GetMemoryUsage());
+
+    // Trigger callback
+    if (on_loaded_) {
+        DatasetInfo info;
+        info.name = dataset_name;
+        info.num_samples = dataset->GetNumRows();
+        info.memory_usage = dataset->GetMemoryUsage();
+        info.is_loaded = true;
+        on_loaded_(dataset_name, info);
+    }
+
+    return dataset;
+}
+
+std::shared_ptr<ArrowDataset> DataRegistry::GetArrowDataset(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = arrow_datasets_.find(name);
+    if (it == arrow_datasets_.end()) {
+        spdlog::warn("Arrow dataset '{}' not found in registry", name);
+        return nullptr;
+    }
+
+    // Update last access time for LRU
+    last_access_times_[name] = std::chrono::steady_clock::now();
+
+    return it->second;
+}
+
+bool DataRegistry::IsArrowDataset(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return arrow_datasets_.find(name) != arrow_datasets_.end();
 }
 
 } // namespace cyxwiz
