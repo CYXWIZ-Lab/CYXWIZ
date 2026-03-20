@@ -1543,13 +1543,55 @@ void NodeEditor::RenderMinimap() {
     ImGui::PopStyleVar(2);
 }
 
+// Unified Canvas Phase 6: Helper function to get pin type name as string
+static std::string GetPinTypeName(PinType type) {
+    if (type == PinType::Tensor) return "Tensor";
+    if (type == PinType::Labels) return "Labels";
+    if (type == PinType::Parameters) return "Parameters";
+    if (type == PinType::Loss) return "Loss";
+    if (type == PinType::Optimizer) return "Optimizer";
+    if (type == PinType::Dataset) return "Dataset";
+    return "Unknown";
+}
+
 void NodeEditor::RenderNodes() {
+    // Update execution pulse animation
+    execution_pulse_time_ += ImGui::GetIO().DeltaTime;
+
     // Render all nodes
     for (const auto& node : nodes_) {
-        // Set node color based on type
-        ImNodes::PushColorStyle(ImNodesCol_TitleBar, GetNodeColor(node.type));
-        ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, GetNodeColor(node.type));
-        ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, GetNodeColor(node.type));
+        // Unified Canvas Phase 6: Check execution state for highlighting
+        auto exec_state_it = node_execution_states_.find(node.id);
+        bool has_exec_state = (exec_state_it != node_execution_states_.end());
+        NodeExecutionState exec_state = has_exec_state ? exec_state_it->second : NodeExecutionState::Idle;
+
+        // Set node color based on execution state OR type
+        ImU32 title_color;
+        if (exec_state == NodeExecutionState::Executing) {
+            // Pulsing blue for executing node
+            float pulse = 0.5f + 0.5f * std::sin(execution_pulse_time_ * 4.0f);
+            ImU32 base = IM_COL32(30, 100, 200, 255);
+            ImU32 highlight = IM_COL32(60, 150, 255, 255);
+            title_color = ImGui::ColorConvertFloat4ToU32(ImVec4(
+                (base & 0xFF) / 255.0f * (1 - pulse) + (highlight & 0xFF) / 255.0f * pulse,
+                ((base >> 8) & 0xFF) / 255.0f * (1 - pulse) + ((highlight >> 8) & 0xFF) / 255.0f * pulse,
+                ((base >> 16) & 0xFF) / 255.0f * (1 - pulse) + ((highlight >> 16) & 0xFF) / 255.0f * pulse,
+                1.0f
+            ));
+        } else if (exec_state == NodeExecutionState::Completed) {
+            // Green for completed
+            title_color = IM_COL32(50, 150, 70, 255);
+        } else if (exec_state == NodeExecutionState::Error) {
+            // Red for error
+            title_color = IM_COL32(200, 50, 50, 255);
+        } else {
+            // Normal color based on type
+            title_color = GetNodeColor(node.type);
+        }
+
+        ImNodes::PushColorStyle(ImNodesCol_TitleBar, title_color);
+        ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, title_color);
+        ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, title_color);
 
         ImNodes::BeginNode(node.id);
 
@@ -1562,6 +1604,27 @@ void NodeEditor::RenderNodes() {
         for (const auto& pin : node.inputs) {
             ImNodes::BeginInputAttribute(pin.id);
             ImGui::TextUnformatted(pin.name.c_str());
+
+            // Unified Canvas Phase 6: Pin tooltips
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s (Input)", pin.name.c_str());
+                ImGui::Separator();
+
+                // Show pin type
+                ImGui::Text("Type: %s", GetPinTypeName(pin.type).c_str());
+
+                // Show connection info
+                bool is_connected = IsPinConnected(pin.id);
+                if (is_connected) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_LINK " Connected");
+                } else {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_LINK " Not connected");
+                }
+
+                ImGui::EndTooltip();
+            }
+
             ImNodes::EndInputAttribute();
         }
 
@@ -1847,6 +1910,28 @@ void NodeEditor::RenderNodes() {
             const float text_width = ImGui::CalcTextSize(pin.name.c_str()).x;
             ImGui::Indent(120.0f + ImGui::CalcTextSize(pin.name.c_str()).x - text_width);
             ImGui::TextUnformatted(pin.name.c_str());
+
+            // Unified Canvas Phase 6: Pin tooltips
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s (Output)", pin.name.c_str());
+                ImGui::Separator();
+
+                // Show pin type
+                ImGui::Text("Type: %s", GetPinTypeName(pin.type).c_str());
+
+                // Show connection info
+                bool is_connected = IsPinConnected(pin.id);
+                int num_connections = GetConnectionCount(pin.id);
+                if (is_connected) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_LINK " %d connection(s)", num_connections);
+                } else {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_LINK " Not connected");
+                }
+
+                ImGui::EndTooltip();
+            }
+
             ImNodes::EndOutputAttribute();
         }
 
@@ -1855,6 +1940,33 @@ void NodeEditor::RenderNodes() {
         // Check if this node is hovered for documentation tooltip
         int hovered_node_id = -1;
         if (ImNodes::IsNodeHovered(&hovered_node_id) && hovered_node_id == node.id) {
+            // Unified Canvas Phase 6: Show execution state in tooltip
+            if (has_exec_state && exec_state != NodeExecutionState::Idle) {
+                ImGui::BeginTooltip();
+
+                // Show execution status
+                if (exec_state == NodeExecutionState::Executing) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), ICON_FA_SPINNER " Executing...");
+                } else if (exec_state == NodeExecutionState::Completed) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Completed");
+                } else if (exec_state == NodeExecutionState::Error) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), ICON_FA_TIMES " Error");
+
+                    // Show error message if available
+                    auto error_it = node_execution_errors_.find(node.id);
+                    if (error_it != node_execution_errors_.end()) {
+                        ImGui::Separator();
+                        ImGui::TextWrapped("%s", error_it->second.c_str());
+                    }
+                } else if (exec_state == NodeExecutionState::Pending) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_CLOCK " Pending...");
+                }
+
+                ImGui::Separator();
+                ImGui::EndTooltip();
+            }
+
+            // Show node documentation
             NodeDocumentationManager::Instance().RenderTooltip(node.type);
         }
 
@@ -3413,6 +3525,28 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
         case NodeType::DescribeStats: return "DescribeStats";
         default: return "Unknown";
     }
+}
+
+// ===== Unified Canvas Phase 6: Execution Visualization =====
+
+void NodeEditor::SetNodeExecutionState(int node_id, NodeExecutionState state) {
+    node_execution_states_[node_id] = state;
+    if (state == NodeExecutionState::Executing) {
+        currently_executing_node_id_ = node_id;
+    } else if (currently_executing_node_id_ == node_id) {
+        currently_executing_node_id_ = -1;
+    }
+}
+
+void NodeEditor::SetNodeExecutionError(int node_id, const std::string& error) {
+    node_execution_errors_[node_id] = error;
+    SetNodeExecutionState(node_id, NodeExecutionState::Error);
+}
+
+void NodeEditor::ClearExecutionStates() {
+    node_execution_states_.clear();
+    node_execution_errors_.clear();
+    currently_executing_node_id_ = -1;
 }
 
 } // namespace gui

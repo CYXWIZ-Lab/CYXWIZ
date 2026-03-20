@@ -330,7 +330,7 @@ MainWindow::MainWindow()
 
     // Data Studio panel (Phase 1 Week 1)
     data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();
-    data_studio_panel_->SetMainWindow(this);  // Phase 5 Week 7: Enable Node Editor handoff
+    // Unified Canvas Phase 5: SetMainWindow removed (Pipeline Canvas moved to Node Editor)
 
     // Set NAS panel callbacks for node editor integration
     nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {

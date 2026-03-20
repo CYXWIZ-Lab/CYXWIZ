@@ -464,6 +464,15 @@ struct ExecutionContext {
     std::string output_dataset;               // Final result dataset name
 };
 
+// Unified Canvas Phase 6: Execution state for visualization
+enum class NodeExecutionState {
+    Idle,        // Not executing
+    Pending,     // Waiting to execute
+    Executing,   // Currently executing
+    Completed,   // Successfully completed
+    Error        // Failed with error
+};
+
 class NodeEditor {
 public:
     NodeEditor();
@@ -509,6 +518,11 @@ public:
 
     // Execute data pipeline using DuckDB (Phase 2)
     bool ExecuteDataPipeline();
+
+    // Unified Canvas Phase 6: Execution visualization
+    void SetNodeExecutionState(int node_id, NodeExecutionState state);
+    void SetNodeExecutionError(int node_id, const std::string& error);
+    void ClearExecutionStates();
 
     // Update DatasetInput node name based on loaded dataset
     void UpdateDatasetNodeName(const std::string& dataset_name);
@@ -896,6 +910,12 @@ private:
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
     std::unique_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
     ExecutionContext execution_context_;
+
+    // ===== Unified Canvas Phase 6: Execution Visualization =====
+    std::map<int, NodeExecutionState> node_execution_states_;  // Node ID -> execution state
+    std::map<int, std::string> node_execution_errors_;         // Node ID -> error message
+    int currently_executing_node_id_ = -1;                     // Node currently being executed
+    float execution_pulse_time_ = 0.0f;                        // Animation time for pulsing effect
 
     // Scripting engine for Python-based RL training
     scripting::ScriptingEngine* scripting_engine_ = nullptr;
