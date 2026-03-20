@@ -2048,6 +2048,148 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        // ========== Data Transformation Nodes (Unified Canvas Phase 4) ==========
+
+        case NodeType::CSVFile: {
+            // CSV File data source node - loads CSV into dataset
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Data";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["file_path"] = "";
+            node.parameters["delimiter"] = ",";
+            node.parameters["header"] = "true";
+            break;
+        }
+
+        case NodeType::FilterRows: {
+            // Filter Rows transformation node - SQL WHERE clause
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["condition"] = "column > 0";
+            break;
+        }
+
+        case NodeType::SelectColumns: {
+            // Select Columns transformation node - choose columns to keep
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["columns"] = "col1, col2, col3";
+            break;
+        }
+
+        case NodeType::DescribeStats: {
+            // Describe Statistics analytics node - computes summary stats
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            // No output pin - analytics node displays results in properties panel
+            node.parameters["show_percentiles"] = "true";
+            break;
+        }
+
+        case NodeType::JoinTables: {
+            // Join Tables transformation node - SQL JOIN
+            NodePin left_input_pin;
+            left_input_pin.id = next_pin_id_++;
+            left_input_pin.type = PinType::Dataset;
+            left_input_pin.name = "Left";
+            left_input_pin.is_input = true;
+            node.inputs.push_back(left_input_pin);
+
+            NodePin right_input_pin;
+            right_input_pin.id = next_pin_id_++;
+            right_input_pin.type = PinType::Dataset;
+            right_input_pin.name = "Right";
+            right_input_pin.is_input = true;
+            node.inputs.push_back(right_input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["join_type"] = "inner";
+            node.parameters["left_on"] = "id";
+            node.parameters["right_on"] = "id";
+            break;
+        }
+
+        case NodeType::SortRows: {
+            // Sort Rows transformation node - ORDER BY
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["columns"] = "column1";
+            node.parameters["ascending"] = "true";
+            break;
+        }
+
+        case NodeType::GroupByAggregate: {
+            // Group By Aggregate transformation node - SQL GROUP BY
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["group_by"] = "column1";
+            node.parameters["aggregations"] = "COUNT(*) as count";
+            break;
+        }
+
         default:
             // Default: input and output pins
             NodePin input_pin;
