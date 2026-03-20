@@ -2445,6 +2445,7 @@ void MainWindow::BuildInitialDockLayout() {
     ImGui::DockBuilderDockWindow("Asset Browser", dock_id_left);
     ImGui::DockBuilderDockWindow("Node Editor", dock_id_center);
     ImGui::DockBuilderDockWindow("Script Editor", dock_id_center); // Tabbed with Node Editor
+    ImGui::DockBuilderDockWindow("Data Studio", dock_id_center); // Tabbed with Node Editor
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("Command Window", dock_id_bottom_left); // Tabbed with Console
@@ -2531,6 +2532,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (data_explorer_panel_) {
         dock_style.RegisterPanel("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_->GetVisiblePtr());
+    }
+    if (data_studio_panel_) {
+        dock_style.RegisterPanel("Data Studio", ICON_FA_DIAGRAM_PROJECT, data_studio_panel_->GetVisiblePtr());
     }
     if (visualization_panel_) {
         dock_style.RegisterPanel("Visualizer", ICON_FA_CHART_SIMPLE, visualization_panel_->GetVisiblePtr());

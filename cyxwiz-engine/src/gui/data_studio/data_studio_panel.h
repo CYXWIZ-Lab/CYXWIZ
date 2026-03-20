@@ -71,6 +71,11 @@ public:
      */
     void SetVisible(bool visible) { visible_ = visible; }
 
+    /**
+     * Get pointer to visibility flag (for sidebar integration)
+     */
+    bool* GetVisiblePtr() { return &visible_; }
+
 private:
     // Component instances
     std::unique_ptr<PipelineCanvas> pipeline_canvas_;
