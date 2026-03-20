@@ -9,6 +9,242 @@
 
 namespace gui {
 
+// Unified Canvas Phase 1: Map NodeType to NodeCategory for UI organization
+NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
+    switch (type) {
+        // Data Sources
+        case NodeType::CSVFile:
+        case NodeType::SQLQuery:
+        case NodeType::HDF5Dataset:
+        case NodeType::ParquetFile:
+        case NodeType::JSONFile:
+        case NodeType::ExcelFile:
+        case NodeType::RESTAPISource:
+            return NodeCategory::DataSources;
+
+        // Data Transforms
+        case NodeType::FilterRows:
+        case NodeType::SelectColumns:
+        case NodeType::JoinTables:
+        case NodeType::GroupByAggregate:
+        case NodeType::SortRows:
+        case NodeType::FillMissingValues:
+        case NodeType::RemoveDuplicateRows:
+        case NodeType::PivotTable:
+        case NodeType::UnionTables:
+        case NodeType::RenameColumns:
+            return NodeCategory::DataTransform;
+
+        // Analytics
+        case NodeType::DescribeStats:
+        case NodeType::VisualizeData:
+        case NodeType::SampleRows:
+        case NodeType::CorrelationMatrix:
+        case NodeType::ValueCounts:
+        case NodeType::CrossTabulation:
+            return NodeCategory::Analytics;
+
+        // Data Export
+        case NodeType::ExportCSV:
+        case NodeType::ExportParquet:
+        case NodeType::ExportSQL:
+        case NodeType::ExportJSON:
+            return NodeCategory::DataExport;
+
+        // Preprocessing
+        case NodeType::Normalize:
+        case NodeType::OneHotEncode:
+            return NodeCategory::Preprocessing;
+
+        // Dense/Linear layers
+        case NodeType::Dense:
+            return NodeCategory::Layers;
+
+        // Convolutional layers
+        case NodeType::Conv1D:
+        case NodeType::Conv2D:
+        case NodeType::Conv3D:
+        case NodeType::DepthwiseConv2D:
+            return NodeCategory::Layers;
+
+        // Pooling layers
+        case NodeType::MaxPool2D:
+        case NodeType::AvgPool2D:
+        case NodeType::GlobalMaxPool:
+        case NodeType::GlobalAvgPool:
+        case NodeType::AdaptiveAvgPool:
+            return NodeCategory::Pooling;
+
+        // Normalization layers
+        case NodeType::BatchNorm:
+        case NodeType::LayerNorm:
+        case NodeType::GroupNorm:
+        case NodeType::InstanceNorm:
+            return NodeCategory::Normalization;
+
+        // Regularization
+        case NodeType::Dropout:
+        case NodeType::L1Regularization:
+        case NodeType::L2Regularization:
+        case NodeType::ElasticNet:
+            return NodeCategory::Regularization;
+
+        // Activation functions
+        case NodeType::ReLU:
+        case NodeType::LeakyReLU:
+        case NodeType::PReLU:
+        case NodeType::ELU:
+        case NodeType::SELU:
+        case NodeType::GELU:
+        case NodeType::Swish:
+        case NodeType::Mish:
+        case NodeType::Sigmoid:
+        case NodeType::Tanh:
+        case NodeType::Softmax:
+            return NodeCategory::Activation;
+
+        // Recurrent layers
+        case NodeType::RNN:
+        case NodeType::LSTM:
+        case NodeType::GRU:
+        case NodeType::Bidirectional:
+        case NodeType::TimeDistributed:
+        case NodeType::Embedding:
+            return NodeCategory::Recurrent;
+
+        // Attention & Transformer
+        case NodeType::MultiHeadAttention:
+        case NodeType::SelfAttention:
+        case NodeType::CrossAttention:
+        case NodeType::LinearAttention:
+        case NodeType::TransformerEncoder:
+        case NodeType::TransformerDecoder:
+        case NodeType::PositionalEncoding:
+            return NodeCategory::Attention;
+
+        // Shape operations
+        case NodeType::Reshape:
+        case NodeType::Permute:
+        case NodeType::Squeeze:
+        case NodeType::Unsqueeze:
+        case NodeType::View:
+        case NodeType::Split:
+        case NodeType::Flatten:
+            return NodeCategory::ShapeOps;
+
+        // Merge operations
+        case NodeType::Concatenate:
+        case NodeType::Add:
+        case NodeType::Multiply:
+        case NodeType::Average:
+            return NodeCategory::MergeOps;
+
+        // Training
+        case NodeType::SGD:
+        case NodeType::Adam:
+        case NodeType::AdamW:
+        case NodeType::RMSprop:
+        case NodeType::Adagrad:
+        case NodeType::NAdam:
+        case NodeType::StepLR:
+        case NodeType::CosineAnnealing:
+        case NodeType::ReduceOnPlateau:
+        case NodeType::ExponentialLR:
+        case NodeType::WarmupScheduler:
+        case NodeType::MSELoss:
+        case NodeType::CrossEntropyLoss:
+        case NodeType::BCELoss:
+        case NodeType::BCEWithLogits:
+        case NodeType::L1Loss:
+        case NodeType::SmoothL1Loss:
+        case NodeType::HuberLoss:
+        case NodeType::NLLLoss:
+        case NodeType::Output:
+            return NodeCategory::Training;
+
+        // Utility
+        case NodeType::Lambda:
+        case NodeType::Identity:
+        case NodeType::Constant:
+        case NodeType::Parameter:
+            return NodeCategory::Utility;
+
+        // Signal/Control
+        case NodeType::SignalSlider:
+        case NodeType::SineWave:
+        case NodeType::StepSignal:
+        case NodeType::RampSignal:
+        case NodeType::SignalScope:
+            return NodeCategory::Signal;
+
+        // Data Pipeline
+        case NodeType::DatasetInput:
+        case NodeType::DataLoader:
+        case NodeType::Augmentation:
+        case NodeType::DataSplit:
+        case NodeType::TensorReshape:
+            return NodeCategory::DataPipeline;
+
+        // DNN Inference
+        case NodeType::DNNModelLoad:
+        case NodeType::DNNDetect:
+        case NodeType::DNNClassify:
+        case NodeType::DNNPoseEstimate:
+        case NodeType::DNNFaceDetect:
+        case NodeType::DNNPreprocess:
+        case NodeType::PretrainedYOLO:
+        case NodeType::PretrainedMobileNet:
+        case NodeType::PretrainedOpenPose:
+        case NodeType::PretrainedFaceNet:
+        case NodeType::NonMaxSuppression:
+        case NodeType::ArgMax:
+        case NodeType::TopK:
+        case NodeType::ThresholdFilter:
+            return NodeCategory::DNN;
+
+        // Text Processing
+        case NodeType::TextTokenizer:
+        case NodeType::TextVocabulary:
+        case NodeType::TextPadding:
+            return NodeCategory::TextProcessing;
+
+        // Upsampling
+        case NodeType::ConvTranspose2D:
+        case NodeType::Upsample:
+        case NodeType::PixelShuffle:
+            return NodeCategory::Upsampling;
+
+        // Time Series
+        case NodeType::TimeSeriesWindow:
+        case NodeType::TimeSeriesFeatures:
+        case NodeType::TimeSeriesSplit:
+            return NodeCategory::TimeSeries;
+
+        // Audio
+        case NodeType::AudioInput:
+        case NodeType::Spectrogram:
+        case NodeType::MelSpectrogram:
+        case NodeType::MFCC:
+        case NodeType::AudioAugmentation:
+            return NodeCategory::Audio;
+
+        // RL
+        case NodeType::GymEnvironment:
+        case NodeType::ReplayBufferNode:
+        case NodeType::PolicyNetwork:
+        case NodeType::ValueNetwork:
+        case NodeType::RLTraining:
+            return NodeCategory::RL;
+
+        // Plugin
+        case NodeType::PluginCustom:
+            return NodeCategory::Plugin;
+
+        default:
+            return NodeCategory::Unknown;
+    }
+}
+
 void NodeEditor::AddNode(NodeType type, const std::string& name) {
     // Queue the node for deferred addition (after ImNodes::EndNodeEditor())
     pending_nodes_.push_back({type, name, context_menu_pos_});
@@ -20,6 +256,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
     MLNode node;
     node.id = next_node_id_++;
     node.type = type;
+    node.category = GetCategoryForNodeType(type);  // Unified Canvas Phase 1
     node.name = name;
 
     // Create pins based on node type

@@ -28,6 +28,35 @@ namespace gui {
 class Properties;
 class ShapeInferenceEngine;
 
+// Node category for organization and UI display (Unified Canvas Phase 1)
+enum class NodeCategory {
+    DataSources,      // CSV, SQL, HDF5, API, etc.
+    DataTransform,    // Filter, Join, GroupBy, Sort, etc.
+    Analytics,        // Stats, Visualize, Sample, Correlation
+    Preprocessing,    // Normalize, Scale, Encode (existing nodes)
+    Layers,           // Dense, Conv2D, LSTM, etc. (ML layers)
+    Activation,       // ReLU, Sigmoid, Softmax, etc.
+    Pooling,          // MaxPool, AvgPool, etc.
+    Normalization,    // BatchNorm, LayerNorm, etc.
+    Attention,        // MultiHeadAttention, Transformer, etc.
+    Recurrent,        // RNN, LSTM, GRU, etc.
+    ShapeOps,         // Reshape, Permute, Squeeze, etc.
+    MergeOps,         // Concatenate, Add, Multiply, etc.
+    Training,         // Optimizer, Loss, LR Scheduler
+    Regularization,   // L1, L2, Dropout
+    Utility,          // Lambda, Identity, Constant
+    Signal,           // Sliders, Sine, Scope (for simulation)
+    DataPipeline,     // DatasetInput, DataLoader, Augmentation
+    DNN,              // Pre-trained models, detection, pose
+    TextProcessing,   // Tokenizer, Vocabulary, Padding
+    Upsampling,       // ConvTranspose, Upsample, PixelShuffle
+    TimeSeries,       // Window, Features, Split
+    Audio,            // AudioInput, Spectrogram, MFCC
+    RL,               // Gym, ReplayBuffer, Policy, Value
+    DataExport,       // Export CSV, Parquet, SQL, JSON
+    Plugin,           // Plugin-defined custom nodes
+    Unknown           // Fallback
+};
 
 // Node types for ML model building
 enum class NodeType {
@@ -208,6 +237,41 @@ enum class NodeType {
     ValueNetwork,       // Critic network for RL
     RLTraining,         // RL training loop controller
 
+    // ===== Data Source Nodes (Unified Canvas Phase 1) =====
+    CSVFile,            // Load CSV file into Arrow table
+    SQLQuery,           // Execute SQL query, return Arrow table
+    HDF5Dataset,        // Load HDF5 dataset into Arrow
+    ParquetFile,        // Load Parquet file into Arrow
+    JSONFile,           // Load JSON file into Arrow
+    ExcelFile,          // Load Excel file into Arrow
+    RESTAPISource,      // Fetch data from REST API
+
+    // ===== Data Transform Nodes (Unified Canvas Phase 1) =====
+    FilterRows,         // Filter rows by SQL WHERE condition
+    SelectColumns,      // Select specific columns
+    JoinTables,         // Join two datasets (inner/left/right/outer)
+    GroupByAggregate,   // Group by columns with aggregations
+    SortRows,           // Sort rows by columns (ascending/descending)
+    FillMissingValues,  // Handle missing values (mean/median/mode/constant)
+    RemoveDuplicateRows,// Remove duplicate rows
+    PivotTable,         // Pivot wide to long or long to wide
+    UnionTables,        // Stack multiple datasets (UNION ALL)
+    RenameColumns,      // Rename columns
+
+    // ===== Analytics Nodes (Unified Canvas Phase 1) =====
+    DescribeStats,      // Compute statistical summary (count, mean, std, etc.)
+    VisualizeData,      // Create plots (scatter, bar, line, histogram)
+    SampleRows,         // Sample random rows from dataset
+    CorrelationMatrix,  // Compute correlation matrix
+    ValueCounts,        // Count unique values per column
+    CrossTabulation,    // Cross-tabulation (contingency table)
+
+    // ===== Data Export Nodes (Unified Canvas Phase 1) =====
+    ExportCSV,          // Export dataset to CSV
+    ExportParquet,      // Export dataset to Parquet
+    ExportSQL,          // Write dataset to SQL database
+    ExportJSON,         // Export dataset to JSON
+
     // Plugin-defined nodes (sentinel — actual type resolved via string lookup)
     PluginCustom
 };
@@ -251,6 +315,7 @@ struct NodePin {
 struct MLNode {
     int id;
     NodeType type;
+    NodeCategory category;  // Unified Canvas Phase 1: Category for UI organization
     std::string name;
     std::vector<NodePin> inputs;
     std::vector<NodePin> outputs;
@@ -487,6 +552,9 @@ public:
     // Node factory - creates a node with proper pins for the given type
     // Made public so PatternBrowser can use it via callback
     MLNode CreateNode(NodeType type, const std::string& name);
+
+    // Unified Canvas Phase 1: Get category for a node type
+    static NodeCategory GetCategoryForNodeType(NodeType type);
 
     // ===== Menu Operations (Public API for Toolbar) =====
 
