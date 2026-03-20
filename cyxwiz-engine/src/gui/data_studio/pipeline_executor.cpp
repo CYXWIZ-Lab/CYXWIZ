@@ -250,6 +250,32 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteGroupBy(node, ctx);
     } else if (node.type == "DeployToNodeEditor") {
         return ExecuteDeployToNodeEditor(node, ctx);
+    }
+    // Phase 6 Week 8-9 - Text Processing
+    else if (node.type == "TextClean") {
+        return ExecuteTextClean(node, ctx);
+    } else if (node.type == "TextTokenize") {
+        return ExecuteTextTokenize(node, ctx);
+    } else if (node.type == "TextVectorize") {
+        return ExecuteTextVectorize(node, ctx);
+    }
+    // Phase 6 Week 8-9 - Time-Series
+    else if (node.type == "TSWindow") {
+        return ExecuteTSWindow(node, ctx);
+    } else if (node.type == "TSFeatures") {
+        return ExecuteTSFeatures(node, ctx);
+    } else if (node.type == "TSLag") {
+        return ExecuteTSLag(node, ctx);
+    } else if (node.type == "TSDiff") {
+        return ExecuteTSDiff(node, ctx);
+    }
+    // Phase 6 Week 8-9 - Feature Engineering
+    else if (node.type == "PCA") {
+        return ExecutePCA(node, ctx);
+    } else if (node.type == "PolynomialFeatures") {
+        return ExecutePolynomialFeatures(node, ctx);
+    } else if (node.type == "Binning") {
+        return ExecuteBinning(node, ctx);
     } else {
         ReportError("Unknown node type: " + node.type);
         return false;
@@ -967,6 +993,704 @@ bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionCont
 
     } catch (const std::exception& e) {
         ReportError("DeployToNodeEditor error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// ============================================================================
+// Phase 6 Week 8-9: Advanced Nodes Implementation
+// ============================================================================
+
+std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionContext& ctx) {
+    if (node.inputs.empty()) {
+        return "";
+    }
+    int input_node_id = node.inputs[0];
+    auto result_it = ctx.node_results.find(input_node_id);
+    if (result_it == ctx.node_results.end()) {
+        return "";
+    }
+    return result_it->second;
+}
+
+// ============================================================================
+// Text Processing Nodes
+// ============================================================================
+
+bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("TextClean: No input connection or dataset not found");
+        return false;
+    }
+
+    // Get parameters
+    bool lowercase = node.parameters.count("lowercase") && node.parameters.at("lowercase") == "true";
+    bool remove_html = node.parameters.count("remove_html") && node.parameters.at("remove_html") == "true";
+    bool remove_special_chars = node.parameters.count("remove_special_chars") && node.parameters.at("remove_special_chars") == "true";
+    // Note: remove_stopwords would require dictionary integration - not implemented in MVP
+    // bool remove_stopwords = node.parameters.count("remove_stopwords") && node.parameters.at("remove_stopwords") == "true";
+
+    auto column_it = node.parameters.find("text_column");
+    std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
+
+    std::string output_dataset_name = "ds_textclean_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] TextClean on column '{}' from '{}'", text_column, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("TextClean: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("TextClean: Failed to register table");
+            return false;
+        }
+
+        // Build SQL transformation chain
+        std::string sql = "SELECT *, ";
+        std::string transform = text_column;
+
+        if (remove_html) {
+            transform = "regexp_replace(" + transform + ", '<[^>]*>', '', 'g')";
+        }
+        if (remove_special_chars) {
+            transform = "regexp_replace(" + transform + ", '[^a-zA-Z0-9\\s]', '', 'g')";
+        }
+        if (lowercase) {
+            transform = "lower(" + transform + ")";
+        }
+        // Remove extra whitespace
+        transform = "regexp_replace(" + transform + ", '\\s+', ' ', 'g')";
+        transform = "trim(" + transform + ")";
+
+        sql += transform + " AS " + text_column + "_cleaned FROM " + temp_table;
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("TextClean: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] TextClean completed: {} rows", result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("TextClean error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("TextTokenize: No input connection or dataset not found");
+        return false;
+    }
+
+    auto column_it = node.parameters.find("text_column");
+    std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
+
+    auto method_it = node.parameters.find("method");
+    std::string method = (method_it != node.parameters.end()) ? method_it->second : "word";
+
+    std::string output_dataset_name = "ds_texttokenize_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] TextTokenize ({}) on column '{}' from '{}'",
+                method, text_column, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("TextTokenize: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("TextTokenize: Failed to register table");
+            return false;
+        }
+
+        std::string sql;
+        if (method == "word") {
+            // Split on whitespace and punctuation
+            sql = "SELECT *, string_split_regex(" + text_column + ", '\\s+') AS " +
+                  text_column + "_tokens FROM " + temp_table;
+        } else if (method == "sentence") {
+            // Split on sentence boundaries
+            sql = "SELECT *, string_split_regex(" + text_column + ", '[.!?]+') AS " +
+                  text_column + "_tokens FROM " + temp_table;
+        } else if (method == "character") {
+            // Split into characters (list of individual chars)
+            sql = "SELECT *, string_split(" + text_column + ", '') AS " +
+                  text_column + "_tokens FROM " + temp_table;
+        } else {
+            sql = "SELECT *, string_split(" + text_column + ", ' ') AS " +
+                  text_column + "_tokens FROM " + temp_table;
+        }
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("TextTokenize: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] TextTokenize completed: {} rows", result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("TextTokenize error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("TextVectorize: No input connection or dataset not found");
+        return false;
+    }
+
+    auto column_it = node.parameters.find("text_column");
+    std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
+
+    auto method_it = node.parameters.find("method");
+    std::string method = (method_it != node.parameters.end()) ? method_it->second : "count";
+
+    std::string output_dataset_name = "ds_textvectorize_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] TextVectorize ({}) on column '{}' from '{}'",
+                method, text_column, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("TextVectorize: Input dataset not found");
+            return false;
+        }
+
+        // For MVP: Create simple word count features
+        // Full implementation would use TF-IDF or embeddings from backend
+        auto input_table = input_dataset->GetArrowTable();
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("TextVectorize: Failed to register table");
+            return false;
+        }
+
+        // Create simple features: text length, word count
+        std::string sql = "SELECT *, "
+                         "length(" + text_column + ") AS text_length, "
+                         "length(" + text_column + ") - length(replace(" + text_column + ", ' ', '')) + 1 AS word_count "
+                         "FROM " + temp_table;
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("TextVectorize: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] TextVectorize completed: {} rows, basic features added",
+                    result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("TextVectorize error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// ============================================================================
+// Time-Series Nodes
+// ============================================================================
+
+bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("TSWindow: No input connection or dataset not found");
+        return false;
+    }
+
+    auto window_it = node.parameters.find("window_size");
+    int window_size = (window_it != node.parameters.end()) ? std::stoi(window_it->second) : 10;
+
+    auto stride_it = node.parameters.find("stride");
+    int stride = (stride_it != node.parameters.end()) ? std::stoi(stride_it->second) : 1;
+
+    auto target_it = node.parameters.find("target_column");
+    std::string target_column = (target_it != node.parameters.end()) ? target_it->second : "value";
+
+    std::string output_dataset_name = "ds_tswindow_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] TSWindow (size={}, stride={}) on '{}' from '{}'",
+                window_size, stride, target_column, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("TSWindow: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("TSWindow: Failed to register table");
+            return false;
+        }
+
+        // Create windows using LAG function
+        std::string sql = "SELECT *, ";
+        for (int i = 0; i < window_size; i++) {
+            if (i > 0) sql += ", ";
+            sql += "LAG(" + target_column + ", " + std::to_string(i) + ") OVER (ORDER BY rowid) AS window_t" + std::to_string(i);
+        }
+        sql += " FROM " + temp_table;
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("TSWindow: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] TSWindow completed: {} rows with {} timestep windows",
+                    result_table->num_rows(), window_size);
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("TSWindow error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("TSFeatures: No input connection or dataset not found");
+        return false;
+    }
+
+    auto column_it = node.parameters.find("columns");
+    std::string columns = (column_it != node.parameters.end()) ? column_it->second : "value";
+
+    auto window_it = node.parameters.find("rolling_window");
+    int rolling_window = (window_it != node.parameters.end()) ? std::stoi(window_it->second) : 7;
+
+    std::string output_dataset_name = "ds_tsfeatures_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] TSFeatures (window={}) on '{}' from '{}'",
+                rolling_window, columns, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("TSFeatures: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("TSFeatures: Failed to register table");
+            return false;
+        }
+
+        // Create rolling statistics
+        std::string sql = "SELECT *, "
+                         "AVG(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
+                         columns + "_rolling_mean, "
+                         "STDDEV(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
+                         columns + "_rolling_std, "
+                         "MIN(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
+                         columns + "_rolling_min, "
+                         "MAX(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
+                         columns + "_rolling_max "
+                         "FROM " + temp_table;
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("TSFeatures: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] TSFeatures completed: {} rows with rolling statistics",
+                    result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("TSFeatures error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("TSLag: No input connection or dataset not found");
+        return false;
+    }
+
+    auto column_it = node.parameters.find("columns");
+    std::string columns = (column_it != node.parameters.end()) ? column_it->second : "value";
+
+    auto lags_it = node.parameters.find("lag_periods");
+    std::string lag_periods = (lags_it != node.parameters.end()) ? lags_it->second : "1,7,30";
+
+    std::string output_dataset_name = "ds_tslag_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] TSLag (periods={}) on '{}' from '{}'",
+                lag_periods, columns, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("TSLag: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("TSLag: Failed to register table");
+            return false;
+        }
+
+        // Parse lag periods (comma-separated)
+        std::string sql = "SELECT *, ";
+        std::stringstream ss(lag_periods);
+        std::string lag_str;
+        bool first = true;
+
+        while (std::getline(ss, lag_str, ',')) {
+            int lag = std::stoi(lag_str);
+            if (!first) sql += ", ";
+            sql += "LAG(" + columns + ", " + std::to_string(lag) + ") OVER (ORDER BY rowid) AS " +
+                   columns + "_lag" + std::to_string(lag);
+            first = false;
+        }
+
+        sql += " FROM " + temp_table;
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("TSLag: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] TSLag completed: {} rows with lag features",
+                    result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("TSLag error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("TSDiff: No input connection or dataset not found");
+        return false;
+    }
+
+    auto column_it = node.parameters.find("columns");
+    std::string columns = (column_it != node.parameters.end()) ? column_it->second : "value";
+
+    auto order_it = node.parameters.find("order");
+    int order = (order_it != node.parameters.end()) ? std::stoi(order_it->second) : 1;
+
+    std::string output_dataset_name = "ds_tsdiff_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] TSDiff (order={}) on '{}' from '{}'",
+                order, columns, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("TSDiff: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("TSDiff: Failed to register table");
+            return false;
+        }
+
+        // Create difference features
+        std::string sql = "SELECT *, ";
+        for (int i = 1; i <= order; i++) {
+            if (i > 1) sql += ", ";
+            sql += columns + " - LAG(" + columns + ", " + std::to_string(i) + ") OVER (ORDER BY rowid) AS " +
+                   columns + "_diff" + std::to_string(i);
+        }
+        sql += " FROM " + temp_table;
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("TSDiff: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] TSDiff completed: {} rows with difference features",
+                    result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("TSDiff error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// ============================================================================
+// Feature Engineering Nodes
+// ============================================================================
+
+bool PipelineExecutor::ExecutePCA(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("PCA: No input connection or dataset not found");
+        return false;
+    }
+
+    auto n_components_it = node.parameters.find("n_components");
+    int n_components = (n_components_it != node.parameters.end()) ? std::stoi(n_components_it->second) : 2;
+
+    std::string output_dataset_name = "ds_pca_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] PCA (n_components={}) from '{}'",
+                n_components, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("PCA: Input dataset not found");
+            return false;
+        }
+
+        // For MVP: PCA requires numerical linear algebra operations
+        // This is a placeholder that passes through the data
+        // Full implementation would use cyxwiz-backend's linear algebra
+        auto input_table = input_dataset->GetArrowTable();
+
+        spdlog::warn("[Data Studio] PCA: Full implementation requires backend integration. "
+                    "Passing through data unchanged for now.");
+
+        registry.RegisterArrowTable(input_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] PCA completed (passthrough): {} rows",
+                    input_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("PCA error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("PolynomialFeatures: No input connection or dataset not found");
+        return false;
+    }
+
+    auto degree_it = node.parameters.find("degree");
+    int degree = (degree_it != node.parameters.end()) ? std::stoi(degree_it->second) : 2;
+
+    auto columns_it = node.parameters.find("columns");
+    std::string columns = (columns_it != node.parameters.end()) ? columns_it->second : "";
+
+    std::string output_dataset_name = "ds_poly_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] PolynomialFeatures (degree={}) on '{}' from '{}'",
+                degree, columns.empty() ? "all numeric" : columns, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("PolynomialFeatures: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("PolynomialFeatures: Failed to register table");
+            return false;
+        }
+
+        // For MVP: Create simple polynomial features for specified columns
+        // If no columns specified, this is a placeholder
+        std::string sql;
+        if (!columns.empty()) {
+            sql = "SELECT *, ";
+            if (degree >= 2) {
+                sql += columns + " * " + columns + " AS " + columns + "_squared";
+            }
+            if (degree >= 3) {
+                sql += ", " + columns + " * " + columns + " * " + columns + " AS " + columns + "_cubed";
+            }
+            sql += " FROM " + temp_table;
+        } else {
+            // Passthrough if no columns specified
+            sql = "SELECT * FROM " + temp_table;
+        }
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("PolynomialFeatures: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] PolynomialFeatures completed: {} rows",
+                    result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("PolynomialFeatures error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Binning: No input connection or dataset not found");
+        return false;
+    }
+
+    auto column_it = node.parameters.find("columns");
+    std::string columns = (column_it != node.parameters.end()) ? column_it->second : "value";
+
+    auto n_bins_it = node.parameters.find("n_bins");
+    int n_bins = (n_bins_it != node.parameters.end()) ? std::stoi(n_bins_it->second) : 10;
+
+    auto method_it = node.parameters.find("method");
+    std::string method = (method_it != node.parameters.end()) ? method_it->second : "equal_width";
+
+    std::string output_dataset_name = "ds_binning_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Binning (method={}, bins={}) on '{}' from '{}'",
+                method, n_bins, columns, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("Binning: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string temp_table = "temp_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("Binning: Failed to register table");
+            return false;
+        }
+
+        // Use DuckDB's NTILE for equal frequency binning
+        std::string sql;
+        if (method == "equal_freq") {
+            sql = "SELECT *, NTILE(" + std::to_string(n_bins) + ") OVER (ORDER BY " +
+                  columns + ") AS " + columns + "_bin FROM " + temp_table;
+        } else {
+            // Equal width binning using WIDTH_BUCKET
+            sql = "SELECT *, WIDTH_BUCKET(" + columns + ", "
+                  "(SELECT MIN(" + columns + ") FROM " + temp_table + "), "
+                  "(SELECT MAX(" + columns + ") FROM " + temp_table + "), "
+                  + std::to_string(n_bins) + ") AS " + columns + "_bin FROM " + temp_table;
+        }
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("Binning: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] Binning completed: {} rows with {} bins",
+                    result_table->num_rows(), n_bins);
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("Binning error: " + std::string(e.what()));
         return false;
     }
 }

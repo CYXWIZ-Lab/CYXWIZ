@@ -169,6 +169,61 @@ void PipelineCanvas::RenderNodePalette() {
             show_node_palette_ = false;
         }
 
+        // Phase 6 Week 8-9: Text Processing
+        ImGui::Spacing();
+        ImGui::Text("Text Processing");
+        ImGui::Separator();
+        if (ImGui::Selectable("Text Clean")) {
+            AddNode("TextClean", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+        if (ImGui::Selectable("Text Tokenize")) {
+            AddNode("TextTokenize", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+        if (ImGui::Selectable("Text Vectorize")) {
+            AddNode("TextVectorize", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+
+        // Phase 6 Week 8-9: Time-Series
+        ImGui::Spacing();
+        ImGui::Text("Time-Series");
+        ImGui::Separator();
+        if (ImGui::Selectable("TS Window")) {
+            AddNode("TSWindow", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+        if (ImGui::Selectable("TS Features")) {
+            AddNode("TSFeatures", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+        if (ImGui::Selectable("TS Lag")) {
+            AddNode("TSLag", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+        if (ImGui::Selectable("TS Diff")) {
+            AddNode("TSDiff", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+
+        // Phase 6 Week 8-9: Feature Engineering
+        ImGui::Spacing();
+        ImGui::Text("Feature Engineering");
+        ImGui::Separator();
+        if (ImGui::Selectable("PCA")) {
+            AddNode("PCA", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+        if (ImGui::Selectable("Polynomial Features")) {
+            AddNode("PolynomialFeatures", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+        if (ImGui::Selectable("Binning")) {
+            AddNode("Binning", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
+
         ImGui::Spacing();
         ImGui::Text("Output");
         ImGui::Separator();
@@ -244,6 +299,51 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
         node.parameters["condition"] = "";
     } else if (type == "SelectColumns") {
         node.parameters["columns"] = "";
+    }
+    // Phase 6 Week 8-9: Text Processing
+    else if (type == "TextClean") {
+        node.parameters["text_column"] = "text";
+        node.parameters["lowercase"] = "true";
+        node.parameters["remove_html"] = "true";
+        node.parameters["remove_special_chars"] = "true";
+        node.parameters["remove_stopwords"] = "false";
+    } else if (type == "TextTokenize") {
+        node.parameters["text_column"] = "text";
+        node.parameters["method"] = "word";
+    } else if (type == "TextVectorize") {
+        node.parameters["text_column"] = "text";
+        node.parameters["method"] = "count";
+        node.parameters["max_features"] = "1000";
+    }
+    // Phase 6 Week 8-9: Time-Series
+    else if (type == "TSWindow") {
+        node.parameters["window_size"] = "10";
+        node.parameters["stride"] = "1";
+        node.parameters["target_column"] = "value";
+    } else if (type == "TSFeatures") {
+        node.parameters["columns"] = "value";
+        node.parameters["rolling_window"] = "7";
+        node.parameters["lag_features"] = "1,7,30";
+        node.parameters["rolling_features"] = "mean,std,min,max";
+    } else if (type == "TSLag") {
+        node.parameters["columns"] = "value";
+        node.parameters["lag_periods"] = "1,7,30";
+    } else if (type == "TSDiff") {
+        node.parameters["columns"] = "value";
+        node.parameters["order"] = "1";
+    }
+    // Phase 6 Week 8-9: Feature Engineering
+    else if (type == "PCA") {
+        node.parameters["n_components"] = "2";
+        node.parameters["variance_threshold"] = "0.95";
+    } else if (type == "PolynomialFeatures") {
+        node.parameters["degree"] = "2";
+        node.parameters["columns"] = "";
+        node.parameters["interaction_only"] = "false";
+    } else if (type == "Binning") {
+        node.parameters["columns"] = "value";
+        node.parameters["n_bins"] = "10";
+        node.parameters["method"] = "equal_width";
     }
 
     nodes_.push_back(node);

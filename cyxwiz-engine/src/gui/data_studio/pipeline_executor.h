@@ -150,10 +150,27 @@ private:
     // Phase 5 Week 7 - Node Editor Handoff
     bool ExecuteDeployToNodeEditor(const Node& node, ExecutionContext& ctx);
 
+    // Phase 6 Week 8-9 - Text Processing Nodes
+    bool ExecuteTextClean(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTextTokenize(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTextVectorize(const Node& node, ExecutionContext& ctx);
+
+    // Phase 6 Week 8-9 - Time-Series Nodes
+    bool ExecuteTSWindow(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTSFeatures(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTSLag(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTSDiff(const Node& node, ExecutionContext& ctx);
+
+    // Phase 6 Week 8-9 - Feature Engineering Nodes
+    bool ExecutePCA(const Node& node, ExecutionContext& ctx);
+    bool ExecutePolynomialFeatures(const Node& node, ExecutionContext& ctx);
+    bool ExecuteBinning(const Node& node, ExecutionContext& ctx);
+
     // Helper methods
     void UpdateProgress(float progress);
     void ReportError(const std::string& error);
     void NotifyCompletion(bool success);
+    std::string GetInputDatasetName(const Node& node, ExecutionContext& ctx);
 };
 
 } // namespace cyxwiz
