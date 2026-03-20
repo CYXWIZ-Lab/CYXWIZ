@@ -16,7 +16,7 @@
 
 namespace gui {
 
-void DatasetPanel::RenderEvaluateContent() {
+void TrainingEvaluationPanel::RenderEvaluateContent() {
     if (!IsDatasetLoaded()) {
         ImGui::TextDisabled("No dataset loaded. Load a dataset first.");
         return;
@@ -67,7 +67,7 @@ void DatasetPanel::RenderEvaluateContent() {
     }
 }
 
-void DatasetPanel::RenderClassificationEvaluation() {
+void TrainingEvaluationPanel::RenderClassificationEvaluation() {
     // Overview metrics bar
     if (ImGui::CollapsingHeader(ICON_FA_GAUGE_HIGH " Overview Metrics", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(8);
@@ -146,7 +146,7 @@ void DatasetPanel::RenderClassificationEvaluation() {
     }
 }
 
-void DatasetPanel::RenderRegressionEvaluation() {
+void TrainingEvaluationPanel::RenderRegressionEvaluation() {
     if (ImGui::CollapsingHeader(ICON_FA_GAUGE_HIGH " Regression Metrics", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(8);
 
@@ -230,7 +230,7 @@ void DatasetPanel::RenderRegressionEvaluation() {
     }
 }
 
-void DatasetPanel::RenderInlineConfusionMatrix() {
+void TrainingEvaluationPanel::RenderInlineConfusionMatrix() {
     const auto& cm = eval_classification_;
     if (cm.n_classes <= 0) return;
 
@@ -290,7 +290,7 @@ void DatasetPanel::RenderInlineConfusionMatrix() {
     }
 }
 
-void DatasetPanel::RenderPerClassMetrics() {
+void TrainingEvaluationPanel::RenderPerClassMetrics() {
     const auto& cm = eval_classification_;
     if (cm.n_classes <= 0) return;
 
@@ -329,7 +329,7 @@ void DatasetPanel::RenderPerClassMetrics() {
     }
 }
 
-void DatasetPanel::RenderInlineROCCurve() {
+void TrainingEvaluationPanel::RenderInlineROCCurve() {
     if (!eval_has_roc_data_) return;
 
     if (ImPlot::BeginPlot("##ROCCurve", ImVec2(-1, 300))) {
@@ -367,7 +367,7 @@ void DatasetPanel::RenderInlineROCCurve() {
     ImGui::Text("AUC: %.4f", eval_roc_.auc);
 }
 
-void DatasetPanel::RenderInlinePRCurve() {
+void TrainingEvaluationPanel::RenderInlinePRCurve() {
     if (!eval_has_pr_data_) return;
 
     if (ImPlot::BeginPlot("##PRCurve", ImVec2(-1, 300))) {
@@ -388,7 +388,7 @@ void DatasetPanel::RenderInlinePRCurve() {
     ImGui::Text("Average Precision: %.4f", eval_pr_.average_precision);
 }
 
-void DatasetPanel::RenderInlineLearningCurves() {
+void TrainingEvaluationPanel::RenderInlineLearningCurves() {
     if (!eval_has_learning_curves_) return;
 
     if (ImPlot::BeginPlot("##LearningCurves", ImVec2(-1, 300))) {

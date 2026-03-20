@@ -136,7 +136,7 @@ static bool ScreenToImageCoords(float screen_x, float screen_y,
     return out_x >= 0 && out_x < img_w && out_y >= 0 && out_y < img_h;
 }
 
-void DatasetPanel::RenderInteractiveToolsTab() {
+void TrainingEvaluationPanel::RenderInteractiveToolsTab() {
     auto& state = g_interactive_state;
 
     state.Initialize();

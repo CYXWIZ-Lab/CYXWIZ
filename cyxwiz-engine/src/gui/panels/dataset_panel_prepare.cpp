@@ -61,7 +61,7 @@ static std::shared_ptr<cyxwiz::DataTable> GetDataTableForDataset(const cyxwiz::D
     return table;
 }
 
-void DatasetPanel::RenderPrepareContent() {
+void TrainingEvaluationPanel::RenderPrepareContent() {
     if (!IsDatasetLoaded()) {
         ImGui::TextDisabled("No dataset loaded. Load a dataset first.");
         return;
@@ -97,7 +97,7 @@ void DatasetPanel::RenderPrepareContent() {
     }
 }
 
-void DatasetPanel::RenderTabularPrepareContent() {
+void TrainingEvaluationPanel::RenderTabularPrepareContent() {
     auto table = GetDataTableForDataset(cached_info_);
 
     // 1. Missing Values
@@ -486,7 +486,7 @@ void DatasetPanel::RenderTabularPrepareContent() {
     RenderSplitConfigSection();
 }
 
-void DatasetPanel::RenderImagePrepareContent() {
+void TrainingEvaluationPanel::RenderImagePrepareContent() {
     // 1. Image Preprocessing
     if (ImGui::CollapsingHeader(ICON_FA_IMAGE " Image Preprocessing", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(8);
@@ -529,7 +529,7 @@ void DatasetPanel::RenderImagePrepareContent() {
     RenderSplitConfigSection();
 }
 
-void DatasetPanel::RenderSplitConfigSection() {
+void TrainingEvaluationPanel::RenderSplitConfigSection() {
     if (ImGui::CollapsingHeader(ICON_FA_SCISSORS " Train / Validation / Test Split", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(8);
         RenderSplitConfiguration();

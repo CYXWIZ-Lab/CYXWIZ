@@ -15,7 +15,7 @@ class NodeEditor;
 class Console;
 class Viewport;
 class Properties;
-class DatasetPanel;
+class TrainingEvaluationPanel;
 class WalletPanel;
 class CustomNodeEditorPanel;
 class ThemeEditorPanel;
@@ -225,7 +225,7 @@ private:
     std::unique_ptr<Console> console_;
     std::unique_ptr<Viewport> viewport_;
     std::unique_ptr<Properties> properties_;
-    std::unique_ptr<DatasetPanel> dataset_panel_;
+    std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;

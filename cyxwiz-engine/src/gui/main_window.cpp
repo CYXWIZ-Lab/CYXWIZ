@@ -158,7 +158,7 @@ MainWindow::MainWindow()
     console_ = std::make_unique<Console>();
     viewport_ = std::make_unique<Viewport>();
     properties_ = std::make_unique<Properties>();
-    dataset_panel_ = std::make_unique<DatasetPanel>();
+    training_eval_panel_ = std::make_unique<TrainingEvaluationPanel>();
 
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
@@ -168,10 +168,10 @@ MainWindow::MainWindow()
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
 
-    // Wire up TrainingPlotPanel to DatasetPanel for local training visualization
-    if (dataset_panel_ && training_plot_panel_) {
-        dataset_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
-        dataset_panel_->SetNodeEditor(node_editor_.get());
+    // Wire up TrainingPlotPanel to TrainingEvaluationPanel for local training visualization
+    if (training_eval_panel_ && training_plot_panel_) {
+        training_eval_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
+        training_eval_panel_->SetNodeEditor(node_editor_.get());
     }
 
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
@@ -388,7 +388,7 @@ MainWindow::MainWindow()
     query_console_->SetNodeEditor(node_editor_.get());
 
     // Connect Dataset Panel to Node Editor for graph validation
-    dataset_panel_->SetNodeEditor(node_editor_.get());
+    training_eval_panel_->SetNodeEditor(node_editor_.get());
 
     // Set up training callback for Node Editor
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
@@ -430,17 +430,17 @@ MainWindow::MainWindow()
 
     // Set up Import Dataset callback - shows Dataset Manager panel
     toolbar_->SetImportDatasetCallback([this]() {
-        if (dataset_panel_) {
-            dataset_panel_->Show();
+        if (training_eval_panel_) {
+            training_eval_panel_->Show();
             spdlog::info("Opened Dataset Manager panel");
         }
     });
 
-    // Create Custom Dataset - opens DatasetPanel to Load Dataset tab
+    // Create Custom Dataset - opens TrainingEvaluationPanel to Load Dataset tab
     toolbar_->SetCreateCustomDatasetCallback([this]() {
-        if (dataset_panel_) {
-            dataset_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
-            dataset_panel_->SetVisible(true);
+        if (training_eval_panel_) {
+            training_eval_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
+            training_eval_panel_->SetVisible(true);
             spdlog::info("Opened Dataset panel for custom dataset creation");
         }
     });
@@ -461,20 +461,20 @@ MainWindow::MainWindow()
         }
     });
 
-    // Augment - opens DatasetPanel to Data Pipeline tab
+    // Augment - opens TrainingEvaluationPanel to Data Pipeline tab
     toolbar_->SetAugmentDatasetCallback([this]() {
-        if (dataset_panel_) {
-            dataset_panel_->SetActiveTab(gui::DatasetTab::DataPipeline);
-            dataset_panel_->SetVisible(true);
+        if (training_eval_panel_) {
+            training_eval_panel_->SetActiveTab(gui::DatasetTab::DataPipeline);
+            training_eval_panel_->SetVisible(true);
             spdlog::info("Opened Dataset panel Data Pipeline tab");
         }
     });
 
-    // Dataset Statistics - opens DatasetPanel (stats shown in Load Dataset tab)
+    // Dataset Statistics - opens TrainingEvaluationPanel (stats shown in Load Dataset tab)
     toolbar_->SetDatasetStatisticsCallback([this]() {
-        if (dataset_panel_) {
-            dataset_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
-            dataset_panel_->SetVisible(true);
+        if (training_eval_panel_) {
+            training_eval_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
+            training_eval_panel_->SetVisible(true);
             spdlog::info("Opened Dataset panel for statistics");
         }
     });
@@ -1579,11 +1579,11 @@ MainWindow::MainWindow()
 
     // Set up asset browser callback for dataset loading
     asset_browser_->SetOnDatasetLoaded([this](const std::string& path, cyxwiz::DatasetHandle handle) {
-        if (dataset_panel_ && handle.IsValid()) {
-            // Dataset is already loaded via DataRegistry, just update the DatasetPanel to use it
+        if (training_eval_panel_ && handle.IsValid()) {
+            // Dataset is already loaded via DataRegistry, just update the TrainingEvaluationPanel to use it
             spdlog::info("Dataset loaded from Asset Browser: {}", path);
             // Show the dataset panel so user can see the loaded data
-            dataset_panel_->SetVisible(true);
+            training_eval_panel_->SetVisible(true);
 
             // Update node editor with dataset name
             if (node_editor_) {
@@ -1885,8 +1885,8 @@ MainWindow::~MainWindow() {
     asset_browser_.reset();
     spdlog::info("~MainWindow: toolbar_");
     toolbar_.reset();
-    spdlog::info("~MainWindow: dataset_panel_");
-    dataset_panel_.reset();
+    spdlog::info("~MainWindow: training_eval_panel_");
+    training_eval_panel_.reset();
     spdlog::info("~MainWindow: properties_");
     properties_.reset();
     spdlog::info("~MainWindow: viewport_");
@@ -1959,21 +1959,21 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         job_manager->SetJobStatusPanel(job_status_panel_.get());
     }
 
-    // Set JobManager for DatasetPanel (enables training job submission)
-    if (dataset_panel_) {
-        dataset_panel_->SetJobManager(job_manager);
+    // Set JobManager for TrainingEvaluationPanel (enables training job submission)
+    if (training_eval_panel_) {
+        training_eval_panel_->SetJobManager(job_manager);
 
         // Set TrainingPlotPanel for local training visualization
-        dataset_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
+        training_eval_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
 
-        // Connect NodeEditor so DatasetPanel can compile the graph for training
-        dataset_panel_->SetNodeEditor(node_editor_.get());
+        // Connect NodeEditor so TrainingEvaluationPanel can compile the graph for training
+        training_eval_panel_->SetNodeEditor(node_editor_.get());
 
-        // Connect WalletPanel so DatasetPanel can get wallet address for job submission
-        dataset_panel_->SetWalletPanel(wallet_panel_.get());
+        // Connect WalletPanel so TrainingEvaluationPanel can get wallet address for job submission
+        training_eval_panel_->SetWalletPanel(wallet_panel_.get());
 
         // Set callback to start P2P monitoring when training starts
-        dataset_panel_->SetTrainingStartCallback([this](const std::string& job_id) {
+        training_eval_panel_->SetTrainingStartCallback([this](const std::string& job_id) {
             StartJobMonitoring(job_id);
         });
     }
@@ -2288,7 +2288,7 @@ void MainWindow::Render() {
     if (console_) console_->Render();
     if (viewport_) viewport_->Render();
     if (properties_) properties_->Render();
-    if (dataset_panel_) dataset_panel_->Render();
+    if (training_eval_panel_) training_eval_panel_->Render();
 
     if (show_about_dialog_) {
         ShowAboutDialog();
@@ -2523,9 +2523,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
 
     // Additional panels (less commonly used)
-    if (dataset_panel_) {
-        dock_style.RegisterPanel("Dataset", ICON_FA_DATABASE, dataset_panel_->GetVisiblePtr(), [this]() {
-            spdlog::info("Dataset panel toggled, visible={}", dataset_panel_->IsVisible());
+    if (training_eval_panel_) {
+        dock_style.RegisterPanel("Training & Evaluation", ICON_FA_GRADUATION_CAP, training_eval_panel_->GetVisiblePtr(), [this]() {
+            spdlog::info("Training & Evaluation panel toggled, visible={}", training_eval_panel_->IsVisible());
         });
     }
     if (table_viewer_) {
@@ -2604,7 +2604,7 @@ void MainWindow::SetDefaultPanelVisibility() {
     // Users can enable these via View menu when needed
 
     // Main panels - hide by default
-    if (dataset_panel_) dataset_panel_->SetVisible(false);
+    if (training_eval_panel_) training_eval_panel_->SetVisible(false);
     if (training_plot_panel_) training_plot_panel_->SetVisible(false);
     if (plot_test_control_) plot_test_control_->SetVisible(false);
     if (command_window_) command_window_->SetVisible(false);
@@ -2739,20 +2739,20 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                  config.layers.size(), config.input_size, config.output_size);
 
     // Check if we have a dataset loaded
-    if (!dataset_panel_ || !dataset_panel_->IsDatasetLoaded()) {
+    if (!training_eval_panel_ || !training_eval_panel_->IsDatasetLoaded()) {
         spdlog::error("No dataset loaded. Please load a dataset first.");
         return;
     }
 
-    // Get the dataset handle from DatasetPanel
-    cyxwiz::DatasetHandle dataset = dataset_panel_->GetCurrentDataset();
+    // Get the dataset handle from TrainingEvaluationPanel
+    cyxwiz::DatasetHandle dataset = training_eval_panel_->GetCurrentDataset();
     if (!dataset.IsValid()) {
         spdlog::error("Invalid dataset handle");
         return;
     }
 
     // Update config with dataset info from the loaded dataset
-    const auto& dataset_info = dataset_panel_->GetDatasetInfo();
+    const auto& dataset_info = training_eval_panel_->GetDatasetInfo();
     config.dataset_name = dataset_info.name;
 
     // Calculate input size from shape (product of dimensions)
@@ -2771,8 +2771,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     spdlog::info("  Loss: {}", config.GetLossName());
 
     // Get training parameters from Dataset Panel's Hyperparameters section
-    int epochs = dataset_panel_->GetTrainEpochs();
-    int batch_size = dataset_panel_->GetTrainBatchSize();
+    int epochs = training_eval_panel_->GetTrainEpochs();
+    int batch_size = training_eval_panel_->GetTrainBatchSize();
     spdlog::info("  Epochs: {}, Batch Size: {}", epochs, batch_size);
 
     // Create callback to update node editor training animation
@@ -2815,20 +2815,20 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
                  config.layers.size(), config.input_size, config.output_size);
 
     // Check if we have a dataset loaded
-    if (!dataset_panel_ || !dataset_panel_->IsDatasetLoaded()) {
+    if (!training_eval_panel_ || !training_eval_panel_->IsDatasetLoaded()) {
         spdlog::error("No dataset loaded. Please load a dataset first.");
         return;
     }
 
-    // Get the dataset handle from DatasetPanel
-    cyxwiz::DatasetHandle dataset = dataset_panel_->GetCurrentDataset();
+    // Get the dataset handle from TrainingEvaluationPanel
+    cyxwiz::DatasetHandle dataset = training_eval_panel_->GetCurrentDataset();
     if (!dataset.IsValid()) {
         spdlog::error("Invalid dataset handle");
         return;
     }
 
     // Update config with dataset info
-    const auto& dataset_info = dataset_panel_->GetDatasetInfo();
+    const auto& dataset_info = training_eval_panel_->GetDatasetInfo();
     config.dataset_name = dataset_info.name;
 
     size_t input_size = 1;

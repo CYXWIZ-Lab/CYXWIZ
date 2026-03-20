@@ -185,10 +185,12 @@ set(ENGINE_SOURCES
     src/gui/dialogs/project_selection_dialog.cpp
     src/gui/dialogs/start_page.cpp
     src/gui/panels/dataset_panel.cpp
-    src/gui/panels/dataset_panel_preprocessing.cpp
-    src/gui/panels/dataset_panel_datapipeline.cpp
+    # Removed tabs (redundant with Data Studio):
+    # src/gui/panels/dataset_panel_preprocessing.cpp  # Preprocessing moved to Data Studio
+    # src/gui/panels/dataset_panel_datapipeline.cpp   # Pipeline moved to Data Studio
+    # src/gui/panels/dataset_panel_prepare.cpp        # Prepare moved to Data Studio
+    # Kept tabs (unique to Training & Evaluation):
     src/gui/panels/dataset_panel_interactive.cpp
-    src/gui/panels/dataset_panel_prepare.cpp
     src/gui/panels/dataset_panel_evaluate.cpp
     src/gui/panels/dataset_panel_export.cpp
     # Interactive annotation tools (Phase 4)

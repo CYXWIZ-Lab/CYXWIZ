@@ -38,35 +38,35 @@
 
 namespace gui {
 
-DatasetPanel::DatasetPanel() : cyxwiz::Panel("Dataset Manager", false) {
-    // Hidden by default - shown when user clicks Dataset > Import Dataset
+TrainingEvaluationPanel::TrainingEvaluationPanel() : cyxwiz::Panel("Training & Evaluation", false) {
+    // Hidden by default - shown when user clicks appropriate menu option
 }
 
-DatasetPanel::~DatasetPanel() {
+TrainingEvaluationPanel::~TrainingEvaluationPanel() {
     // Training is now managed by TrainingManager singleton - no cleanup needed here
 }
 
-const cyxwiz::DatasetInfo& DatasetPanel::GetDatasetInfo() const {
+const cyxwiz::DatasetInfo& TrainingEvaluationPanel::GetDatasetInfo() const {
     return cached_info_;
 }
 
-const std::vector<size_t>& DatasetPanel::GetTrainIndices() const {
+const std::vector<size_t>& TrainingEvaluationPanel::GetTrainIndices() const {
     static std::vector<size_t> empty;
     if (!current_dataset_.IsValid()) return empty;
     return current_dataset_.GetTrainIndices();
 }
 
-bool DatasetPanel::IsLocalTrainingRunning() const {
+bool TrainingEvaluationPanel::IsLocalTrainingRunning() const {
     return cyxwiz::TrainingManager::Instance().IsTrainingActive();
 }
 
-void DatasetPanel::StopLocalTraining() {
+void TrainingEvaluationPanel::StopLocalTraining() {
     cyxwiz::TrainingManager::Instance().StopTraining();
 }
 
 // ========== DBGate-Style Layout Methods ==========
 
-const char* DatasetPanel::GetDatasetTypeIcon(cyxwiz::DatasetType type) const {
+const char* TrainingEvaluationPanel::GetDatasetTypeIcon(cyxwiz::DatasetType type) const {
     switch (type) {
         case cyxwiz::DatasetType::MNIST:
         case cyxwiz::DatasetType::CIFAR10:
@@ -85,7 +85,7 @@ const char* DatasetPanel::GetDatasetTypeIcon(cyxwiz::DatasetType type) const {
     }
 }
 
-void DatasetPanel::RenderToolbar() {
+void TrainingEvaluationPanel::RenderToolbar() {
     // Refresh button
     if (ImGui::Button(ICON_FA_ARROWS_ROTATE "##Refresh")) {
         if (current_dataset_.IsValid()) {
@@ -203,7 +203,7 @@ void DatasetPanel::RenderToolbar() {
     }
 }
 
-void DatasetPanel::RenderSidebar() {
+void TrainingEvaluationPanel::RenderSidebar() {
     // Header
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), ICON_FA_DATABASE " DATASETS");
     ImGui::Separator();
@@ -314,7 +314,7 @@ void DatasetPanel::RenderSidebar() {
     RenderQuickLoadSection();
 }
 
-void DatasetPanel::RenderQuickLoadSection() {
+void TrainingEvaluationPanel::RenderQuickLoadSection() {
     ImGui::TextDisabled("Quick Load:");
     ImGui::SameLine();
 
@@ -327,7 +327,7 @@ void DatasetPanel::RenderQuickLoadSection() {
     }
 }
 
-void DatasetPanel::RenderSplitter(float height) {
+void TrainingEvaluationPanel::RenderSplitter(float height) {
     ImGui::SameLine();
 
     ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
@@ -352,7 +352,7 @@ void DatasetPanel::RenderSplitter(float height) {
     }
 }
 
-void DatasetPanel::RenderMainContent() {
+void TrainingEvaluationPanel::RenderMainContent() {
     // Helper lambda for programmatic tab switching
     auto TabFlags = [this](ContentTab tab) -> ImGuiTabItemFlags {
         if (switch_content_tab_ && pending_content_tab_ == tab) {
@@ -361,7 +361,19 @@ void DatasetPanel::RenderMainContent() {
         return ImGuiTabItemFlags_None;
     };
 
-    // Always show tab bar - Load tab is first so user can always load datasets
+    // Tooltip explaining panel purpose vs Data Studio
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::Text("Training & Evaluation Panel");
+        ImGui::Separator();
+        ImGui::BulletText("Use Data Studio for data preparation and transformations");
+        ImGui::BulletText("Use this panel for model training and evaluation");
+        ImGui::EndTooltip();
+    }
+    ImGui::SameLine();
+
+    // Tab bar for main workflow
     if (ImGui::BeginTabBar("ContentTabs", ImGuiTabBarFlags_None)) {
         // Load Dataset tab
         if (ImGui::BeginTabItem(ICON_FA_FOLDER_OPEN " Load")) {
@@ -371,8 +383,8 @@ void DatasetPanel::RenderMainContent() {
             ImGui::EndTabItem();
         }
 
-        // Preview tab
-        if (ImGui::BeginTabItem(ICON_FA_EYE " Preview")) {
+        // Preview tab - Dataset preview
+        if (ImGui::BeginTabItem(ICON_FA_EYE " Preview", nullptr, TabFlags(ContentTab::Preview))) {
             active_content_tab_ = ContentTab::Preview;
             ImGui::BeginChild("##PreviewContent", ImVec2(0, 0), false);
             RenderPreviewContent();
@@ -380,34 +392,8 @@ void DatasetPanel::RenderMainContent() {
             ImGui::EndTabItem();
         }
 
-        // Prepare tab (data cleaning, feature engineering, splits)
-        if (ImGui::BeginTabItem(ICON_FA_WAND_MAGIC_SPARKLES " Prepare")) {
-            active_content_tab_ = ContentTab::Prepare;
-            ImGui::BeginChild("##PrepareContent", ImVec2(0, 0), false);
-            RenderPrepareContent();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-
-        // Pipeline tab
-        if (ImGui::BeginTabItem(ICON_FA_SLIDERS " Pipeline")) {
-            active_content_tab_ = ContentTab::Pipeline;
-            ImGui::BeginChild("##PipelineContent", ImVec2(0, 0), false);
-            RenderPipelineContent();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-
-        // Annotate tab (before Training)
-        if (ImGui::BeginTabItem(ICON_FA_PEN " Annotate")) {
-            ImGui::BeginChild("##AnnotateContent", ImVec2(0, 0), false);
-            RenderInteractiveToolsTab();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-
-        // Training tab
-        if (ImGui::BeginTabItem(ICON_FA_PLAY " Training")) {
+        // Training tab - Model training
+        if (ImGui::BeginTabItem(ICON_FA_PLAY " Training", nullptr, TabFlags(ContentTab::Training))) {
             active_content_tab_ = ContentTab::Training;
             ImGui::BeginChild("##TrainingContent", ImVec2(0, 0), false);
             RenderTrainingContent();
@@ -415,7 +401,7 @@ void DatasetPanel::RenderMainContent() {
             ImGui::EndTabItem();
         }
 
-        // Evaluate tab (post-training metrics dashboard)
+        // Evaluate tab - Model evaluation with metrics
         if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Evaluate", nullptr, TabFlags(ContentTab::Evaluate))) {
             active_content_tab_ = ContentTab::Evaluate;
             ImGui::BeginChild("##EvaluateContent", ImVec2(0, 0), false);
@@ -424,7 +410,7 @@ void DatasetPanel::RenderMainContent() {
             ImGui::EndTabItem();
         }
 
-        // Export tab (model I/O)
+        // Export tab - Export annotations (COCO/YOLO/VOC)
         if (ImGui::BeginTabItem(ICON_FA_FILE_EXPORT " Export", nullptr, TabFlags(ContentTab::Export))) {
             active_content_tab_ = ContentTab::Export;
             ImGui::BeginChild("##ExportContent", ImVec2(0, 0), false);
@@ -433,11 +419,11 @@ void DatasetPanel::RenderMainContent() {
             ImGui::EndTabItem();
         }
 
-        // Details tab
-        if (ImGui::BeginTabItem(ICON_FA_CIRCLE_INFO " Details")) {
-            active_content_tab_ = ContentTab::Details;
-            ImGui::BeginChild("##DetailsContent", ImVec2(0, 0), false);
-            RenderDetailsContent();
+        // Interactive tab - Annotation tools
+        if (ImGui::BeginTabItem(ICON_FA_PEN " Annotate", nullptr, TabFlags(ContentTab::Interactive))) {
+            active_content_tab_ = ContentTab::Interactive;
+            ImGui::BeginChild("##AnnotateContent", ImVec2(0, 0), false);
+            RenderInteractiveToolsTab();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -448,7 +434,7 @@ void DatasetPanel::RenderMainContent() {
     }
 }
 
-void DatasetPanel::RenderPreviewContent() {
+void TrainingEvaluationPanel::RenderPreviewContent() {
     // Determine dataset type for mode availability
     bool is_image = (cached_info_.type == cyxwiz::DatasetType::ImageFolder ||
                      cached_info_.type == cyxwiz::DatasetType::ImageCSV ||
@@ -539,7 +525,7 @@ void DatasetPanel::RenderPreviewContent() {
     }
 }
 
-void DatasetPanel::RenderTypeAwarePreview() {
+void TrainingEvaluationPanel::RenderTypeAwarePreview() {
     // Type-aware preview using PreviewRenderer
     if (!IsDatasetLoaded()) {
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No dataset loaded.");
@@ -611,11 +597,12 @@ void DatasetPanel::RenderTypeAwarePreview() {
     ImGui::EndChild();
 }
 
-void DatasetPanel::RenderPipelineContent() {
-    RenderDataPipelineTab();
-}
+// REMOVED: Use Data Studio for data pipeline and transformations
+// void TrainingEvaluationPanel::RenderPipelineContent() {
+//     RenderDataPipelineTab();
+// }
 
-void DatasetPanel::RenderTrainingContent() {
+void TrainingEvaluationPanel::RenderTrainingContent() {
     // Poll TrainingManager for trained model availability
     auto& tmgr = cyxwiz::TrainingManager::Instance();
     if (tmgr.HasTrainedModel() && !has_trained_model_) {
@@ -663,60 +650,61 @@ void DatasetPanel::RenderTrainingContent() {
     }
 }
 
-void DatasetPanel::RenderDetailsContent() {
-    if (ImGui::CollapsingHeader(ICON_FA_CIRCLE_INFO " Dataset Info", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Indent(10);
-        RenderDatasetInfo();
-        ImGui::Unindent(10);
-    }
+// REMOVED: Use Data Studio Analyzer for dataset analytics, quality analysis, and duplicate detection
+// void TrainingEvaluationPanel::RenderDetailsContent() {
+//     if (ImGui::CollapsingHeader(ICON_FA_CIRCLE_INFO " Dataset Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+//         ImGui::Indent(10);
+//         RenderDatasetInfo();
+//         ImGui::Unindent(10);
+//     }
+//
+//     if (ImGui::CollapsingHeader(ICON_FA_CHART_PIE " Train/Val/Test Split", ImGuiTreeNodeFlags_DefaultOpen)) {
+//         ImGui::Indent(10);
+//         RenderSplitConfiguration();
+//         ImGui::Unindent(10);
+//     }
+//
+//     if (ImGui::CollapsingHeader(ICON_FA_CHART_BAR " Statistics")) {
+//         ImGui::Indent(10);
+//         RenderStatistics();
+//         ImGui::Unindent(10);
+//     }
+//
+//     // Show indicator if computing
+//     std::string analytics_label = ICON_FA_CHART_LINE " Analytics";
+//     if (analytics_computing_.load()) {
+//         analytics_label += " (computing...)";
+//     } else if (analytics_results_.success) {
+//         analytics_label += " " ICON_FA_CHECK;
+//     }
+//
+//     if (ImGui::CollapsingHeader(analytics_label.c_str())) {
+//         ImGui::Indent(10);
+//         RenderDatasetAnalyticsSection();
+//         ImGui::Unindent(10);
+//     }
+//
+//     bool is_image = (cached_info_.type == cyxwiz::DatasetType::ImageFolder ||
+//                      cached_info_.type == cyxwiz::DatasetType::ImageCSV ||
+//                      cached_info_.type == cyxwiz::DatasetType::MNIST ||
+//                      cached_info_.type == cyxwiz::DatasetType::CIFAR10);
+//
+//     if (is_image) {
+//         if (ImGui::CollapsingHeader(ICON_FA_MAGNIFYING_GLASS_CHART " Quality Analysis")) {
+//             ImGui::Indent(10);
+//             RenderQualityAnalysisSection();
+//             ImGui::Unindent(10);
+//         }
+//
+//         if (ImGui::CollapsingHeader(ICON_FA_COPY " Duplicate Detection")) {
+//             ImGui::Indent(10);
+//             RenderDuplicateDetectionSection();
+//             ImGui::Unindent(10);
+//         }
+//     }
+// }
 
-    if (ImGui::CollapsingHeader(ICON_FA_CHART_PIE " Train/Val/Test Split", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Indent(10);
-        RenderSplitConfiguration();
-        ImGui::Unindent(10);
-    }
-
-    if (ImGui::CollapsingHeader(ICON_FA_CHART_BAR " Statistics")) {
-        ImGui::Indent(10);
-        RenderStatistics();
-        ImGui::Unindent(10);
-    }
-
-    // Show indicator if computing
-    std::string analytics_label = ICON_FA_CHART_LINE " Analytics";
-    if (analytics_computing_.load()) {
-        analytics_label += " (computing...)";
-    } else if (analytics_results_.success) {
-        analytics_label += " " ICON_FA_CHECK;
-    }
-
-    if (ImGui::CollapsingHeader(analytics_label.c_str())) {
-        ImGui::Indent(10);
-        RenderDatasetAnalyticsSection();
-        ImGui::Unindent(10);
-    }
-
-    bool is_image = (cached_info_.type == cyxwiz::DatasetType::ImageFolder ||
-                     cached_info_.type == cyxwiz::DatasetType::ImageCSV ||
-                     cached_info_.type == cyxwiz::DatasetType::MNIST ||
-                     cached_info_.type == cyxwiz::DatasetType::CIFAR10);
-
-    if (is_image) {
-        if (ImGui::CollapsingHeader(ICON_FA_MAGNIFYING_GLASS_CHART " Quality Analysis")) {
-            ImGui::Indent(10);
-            RenderQualityAnalysisSection();
-            ImGui::Unindent(10);
-        }
-
-        if (ImGui::CollapsingHeader(ICON_FA_COPY " Duplicate Detection")) {
-            ImGui::Indent(10);
-            RenderDuplicateDetectionSection();
-            ImGui::Unindent(10);
-        }
-    }
-}
-
-void DatasetPanel::RenderStatusBar() {
+void TrainingEvaluationPanel::RenderStatusBar() {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
     ImGui::BeginChild("##StatusBar", ImVec2(0, footer_height_), true);
 
@@ -763,7 +751,7 @@ void DatasetPanel::RenderStatusBar() {
     ImGui::PopStyleVar();
 }
 
-void DatasetPanel::Render() {
+void TrainingEvaluationPanel::Render() {
     if (!visible_) return;
 
     // Check analytics completion (must run every frame, not just when Details tab is visible)
@@ -808,7 +796,7 @@ void DatasetPanel::Render() {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin("Dataset Manager###DatasetPanel", &visible_)) {
+    if (ImGui::Begin("Training & Evaluation###TrainingEvalPanel", &visible_)) {
         // Toolbar
         RenderToolbar();
         ImGui::Separator();
@@ -861,7 +849,7 @@ void DatasetPanel::Render() {
     }
 }
 
-void DatasetPanel::RenderDatasetSelection() {
+void TrainingEvaluationPanel::RenderDatasetSelection() {
     // Dataset type selection card
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
     ImGui::BeginChild("SelectionCard", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysAutoResize);
@@ -1643,7 +1631,7 @@ void DatasetPanel::RenderDatasetSelection() {
     ImGui::PopStyleColor();
 }
 
-void DatasetPanel::RenderLoadedDatasets() {
+void TrainingEvaluationPanel::RenderLoadedDatasets() {
     auto& registry = cyxwiz::DataRegistry::Instance();
     auto datasets = registry.ListDatasets();
 
@@ -1719,20 +1707,21 @@ void DatasetPanel::RenderLoadedDatasets() {
             }
         }
 
+        // NOTE: Analytics sections moved to Data Studio Analyzer
         // Dataset Analytics Section
-        if (ImGui::CollapsingHeader("Dataset Analytics")) {
-            RenderDatasetAnalyticsSection();
-        }
+        // if (ImGui::CollapsingHeader("Dataset Analytics")) {
+        //     RenderDatasetAnalyticsSection();
+        // }
 
         // Image Quality Analysis Section
-        if (ImGui::CollapsingHeader("Image Quality Analysis")) {
-            RenderQualityAnalysisSection();
-        }
+        // if (ImGui::CollapsingHeader("Image Quality Analysis")) {
+        //     RenderQualityAnalysisSection();
+        // }
 
         // Duplicate Detection Section
-        if (ImGui::CollapsingHeader("Duplicate Detection")) {
-            RenderDuplicateDetectionSection();
-        }
+        // if (ImGui::CollapsingHeader("Duplicate Detection")) {
+        //     RenderDuplicateDetectionSection();
+        // }
 
         ImGui::Separator();
         if (ImGui::Button(ICON_FA_TRASH " Unload", ImVec2(90, 0))) {
@@ -1747,7 +1736,7 @@ void DatasetPanel::RenderLoadedDatasets() {
     ImGui::EndChild();
 }
 
-void DatasetPanel::RenderDatasetInfo() {
+void TrainingEvaluationPanel::RenderDatasetInfo() {
     ImGui::Text("Name: %s", cached_info_.name.c_str());
     ImGui::Text("Type: %s", cyxwiz::DataRegistry::TypeToString(cached_info_.type).c_str());
     ImGui::Text("Total Samples: %zu", cached_info_.num_samples);
@@ -1807,7 +1796,7 @@ void DatasetPanel::RenderDatasetInfo() {
     }
 }
 
-void DatasetPanel::RenderSplitConfiguration() {
+void TrainingEvaluationPanel::RenderSplitConfiguration() {
     ImGui::Text("Train/Val/Test Split");
     ImGui::Separator();
 
@@ -1835,7 +1824,7 @@ void DatasetPanel::RenderSplitConfiguration() {
     }
 }
 
-void DatasetPanel::RenderStatistics() {
+void TrainingEvaluationPanel::RenderStatistics() {
     ImGui::Text("Dataset Statistics");
     ImGui::Separator();
 
@@ -1892,7 +1881,7 @@ void DatasetPanel::RenderStatistics() {
     }
 }
 
-void DatasetPanel::RenderDataPreview() {
+void TrainingEvaluationPanel::RenderDataPreview() {
     if (!current_dataset_.IsValid()) {
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No dataset loaded");
         ImGui::TextWrapped("Load a dataset to preview samples");
@@ -1936,7 +1925,7 @@ void DatasetPanel::RenderDataPreview() {
     }
 }
 
-void DatasetPanel::RenderImagePreview(const float* image_data, int width, int height, int channels) {
+void TrainingEvaluationPanel::RenderImagePreview(const float* image_data, int width, int height, int channels) {
     ImGui::Text("Image: %dx%d, %d channels", width, height, channels);
 
     int total_pixels = width * height * channels;
@@ -1950,7 +1939,7 @@ void DatasetPanel::RenderImagePreview(const float* image_data, int width, int he
     cyxwiz::RenderImageWithTexture(image_data, width, height, channels);
 }
 
-void DatasetPanel::RenderSingleSamplePreview(size_t dataset_size, bool is_image_data) {
+void TrainingEvaluationPanel::RenderSingleSamplePreview(size_t dataset_size, bool is_image_data) {
     // Two-column layout: controls on left, preview on right
     ImGui::Columns(2, "SinglePreviewColumns", true);
     ImGui::SetColumnWidth(0, 200);
@@ -2079,7 +2068,7 @@ void DatasetPanel::RenderSingleSamplePreview(size_t dataset_size, bool is_image_
     ImGui::Columns(1);
 }
 
-void DatasetPanel::RenderGridPreview(size_t dataset_size, bool is_image_data) {
+void TrainingEvaluationPanel::RenderGridPreview(size_t dataset_size, bool is_image_data) {
     // Grid settings
     ImGui::Text("Grid Size:");
     ImGui::SameLine();
@@ -2169,7 +2158,7 @@ void DatasetPanel::RenderGridPreview(size_t dataset_size, bool is_image_data) {
     ImGui::EndChild();
 }
 
-void DatasetPanel::RenderTablePreview(size_t dataset_size) {
+void TrainingEvaluationPanel::RenderTablePreview(size_t dataset_size) {
     // Get feature count and column names
     auto [first_sample, _] = current_dataset_.GetSample(0);
     int num_features = static_cast<int>(first_sample.size());
@@ -2342,7 +2331,7 @@ void DatasetPanel::RenderTablePreview(size_t dataset_size) {
     ImGui::EndChild();
 }
 
-void DatasetPanel::ShowFileBrowser() {
+void TrainingEvaluationPanel::ShowFileBrowser() {
     // For ImageCSV and ImageFolder, show folder browser
     if (selected_type_ == cyxwiz::DatasetType::ImageCSV ||
         selected_type_ == cyxwiz::DatasetType::ImageFolder) {
@@ -2367,7 +2356,7 @@ void DatasetPanel::ShowFileBrowser() {
     }
 }
 
-void DatasetPanel::ShowFolderBrowser(char* buffer, size_t buffer_size) {
+void TrainingEvaluationPanel::ShowFolderBrowser(char* buffer, size_t buffer_size) {
     auto result = cyxwiz::FileDialogs::SelectDatasetFolder();
     if (result) {
         strncpy(buffer, result->c_str(), buffer_size - 1);
@@ -2376,7 +2365,7 @@ void DatasetPanel::ShowFolderBrowser(char* buffer, size_t buffer_size) {
     }
 }
 
-void DatasetPanel::ShowCSVFileBrowser() {
+void TrainingEvaluationPanel::ShowCSVFileBrowser() {
     auto result = cyxwiz::FileDialogs::OpenDataset();
     if (result) {
         strncpy(csv_path_buffer_, result->c_str(), sizeof(csv_path_buffer_) - 1);
@@ -2385,7 +2374,7 @@ void DatasetPanel::ShowCSVFileBrowser() {
     }
 }
 
-void DatasetPanel::ScanHDF5File(const std::string& path) {
+void TrainingEvaluationPanel::ScanHDF5File(const std::string& path) {
     hdf5_dataset_paths_.clear();
     hdf5_dataset_info_.clear();
 
@@ -2418,7 +2407,7 @@ void DatasetPanel::ScanHDF5File(const std::string& path) {
     hdf5_file_scanned_ = true;
 }
 
-void DatasetPanel::UpdateHDF5Preview() {
+void TrainingEvaluationPanel::UpdateHDF5Preview() {
     if (hdf5_selected_data_idx_ < 0 ||
         hdf5_selected_data_idx_ >= static_cast<int>(hdf5_dataset_paths_.size())) {
         return;
@@ -2488,7 +2477,7 @@ void DatasetPanel::UpdateHDF5Preview() {
     }
 }
 
-void DatasetPanel::RenderHDF5ConfigDialog() {
+void TrainingEvaluationPanel::RenderHDF5ConfigDialog() {
     if (!show_hdf5_dialog_) return;
 
     ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
@@ -2701,7 +2690,7 @@ void DatasetPanel::RenderHDF5ConfigDialog() {
     ImGui::End();
 }
 
-bool DatasetPanel::LoadDataset(const std::string& path) {
+bool TrainingEvaluationPanel::LoadDataset(const std::string& path) {
     auto& registry = cyxwiz::DataRegistry::Instance();
 
     // Auto-detect type if not specified
@@ -2738,7 +2727,7 @@ bool DatasetPanel::LoadDataset(const std::string& path) {
     return success;
 }
 
-bool DatasetPanel::LoadCSVDataset(const std::string& path) {
+bool TrainingEvaluationPanel::LoadCSVDataset(const std::string& path) {
     spdlog::info("Loading CSV dataset from: {}", path);
 
     auto& registry = cyxwiz::DataRegistry::Instance();
@@ -2758,14 +2747,14 @@ bool DatasetPanel::LoadCSVDataset(const std::string& path) {
     return true;
 }
 
-bool DatasetPanel::LoadImageDataset(const std::string& path) {
+bool TrainingEvaluationPanel::LoadImageDataset(const std::string& path) {
     spdlog::warn("Image dataset loading not yet implemented");
     auto& registry = cyxwiz::DataRegistry::Instance();
     current_dataset_ = registry.LoadImageFolder(path);
     return current_dataset_.IsValid();
 }
 
-bool DatasetPanel::LoadMNISTDataset(const std::string& path) {
+bool TrainingEvaluationPanel::LoadMNISTDataset(const std::string& path) {
     spdlog::info("Loading MNIST dataset from: {}", path);
 
     auto& registry = cyxwiz::DataRegistry::Instance();
@@ -2784,7 +2773,7 @@ bool DatasetPanel::LoadMNISTDataset(const std::string& path) {
     return true;
 }
 
-bool DatasetPanel::LoadCIFAR10Dataset(const std::string& path) {
+bool TrainingEvaluationPanel::LoadCIFAR10Dataset(const std::string& path) {
     spdlog::info("Loading CIFAR-10 dataset from: {}", path);
 
     auto& registry = cyxwiz::DataRegistry::Instance();
@@ -2806,7 +2795,7 @@ bool DatasetPanel::LoadCIFAR10Dataset(const std::string& path) {
     return true;
 }
 
-bool DatasetPanel::LoadHuggingFaceDataset(const std::string& dataset_name) {
+bool TrainingEvaluationPanel::LoadHuggingFaceDataset(const std::string& dataset_name) {
     spdlog::info("Loading HuggingFace dataset: {}", dataset_name);
 
     auto& registry = cyxwiz::DataRegistry::Instance();
@@ -2834,7 +2823,7 @@ bool DatasetPanel::LoadHuggingFaceDataset(const std::string& dataset_name) {
     return true;
 }
 
-bool DatasetPanel::LoadKaggleDataset(const std::string& dataset_slug) {
+bool TrainingEvaluationPanel::LoadKaggleDataset(const std::string& dataset_slug) {
     spdlog::info("Loading Kaggle dataset: {}", dataset_slug);
 
     auto& registry = cyxwiz::DataRegistry::Instance();
@@ -2865,7 +2854,7 @@ bool DatasetPanel::LoadKaggleDataset(const std::string& dataset_slug) {
 // Async Dataset Loading Methods
 // ============================================================================
 
-void DatasetPanel::LoadCSVDatasetAsync(const std::string& path) {
+void TrainingEvaluationPanel::LoadCSVDatasetAsync(const std::string& path) {
     if (is_loading_.load()) {
         spdlog::warn("Already loading a dataset, please wait...");
         return;
@@ -2915,7 +2904,7 @@ void DatasetPanel::LoadCSVDatasetAsync(const std::string& path) {
     );
 }
 
-void DatasetPanel::LoadHDF5DatasetAsync(const std::string& path) {
+void TrainingEvaluationPanel::LoadHDF5DatasetAsync(const std::string& path) {
     if (is_loading_.load()) {
         spdlog::warn("Already loading a dataset, please wait...");
         return;
@@ -2972,7 +2961,7 @@ void DatasetPanel::LoadHDF5DatasetAsync(const std::string& path) {
     );
 }
 
-void DatasetPanel::LoadImageDatasetAsync(const std::string& path) {
+void TrainingEvaluationPanel::LoadImageDatasetAsync(const std::string& path) {
     if (is_loading_.load()) {
         spdlog::warn("Already loading a dataset, please wait...");
         return;
@@ -3021,7 +3010,7 @@ void DatasetPanel::LoadImageDatasetAsync(const std::string& path) {
     );
 }
 
-void DatasetPanel::LoadMNISTDatasetAsync(const std::string& path) {
+void TrainingEvaluationPanel::LoadMNISTDatasetAsync(const std::string& path) {
     if (is_loading_.load()) {
         spdlog::warn("Already loading a dataset, please wait...");
         return;
@@ -3074,7 +3063,7 @@ void DatasetPanel::LoadMNISTDatasetAsync(const std::string& path) {
     );
 }
 
-void DatasetPanel::LoadCIFAR10DatasetAsync(const std::string& path) {
+void TrainingEvaluationPanel::LoadCIFAR10DatasetAsync(const std::string& path) {
     if (is_loading_.load()) {
         spdlog::warn("Already loading a dataset, please wait...");
         return;
@@ -3130,7 +3119,7 @@ void DatasetPanel::LoadCIFAR10DatasetAsync(const std::string& path) {
     );
 }
 
-void DatasetPanel::LoadHuggingFaceDatasetAsync(const std::string& dataset_name) {
+void TrainingEvaluationPanel::LoadHuggingFaceDatasetAsync(const std::string& dataset_name) {
     if (is_loading_.load()) {
         spdlog::warn("Already loading a dataset, please wait...");
         return;
@@ -3185,7 +3174,7 @@ void DatasetPanel::LoadHuggingFaceDatasetAsync(const std::string& dataset_name) 
     );
 }
 
-void DatasetPanel::LoadKaggleDatasetAsync(const std::string& dataset_slug) {
+void TrainingEvaluationPanel::LoadKaggleDatasetAsync(const std::string& dataset_slug) {
     if (is_loading_.load()) {
         spdlog::warn("Already loading a dataset, please wait...");
         return;
@@ -3239,7 +3228,7 @@ void DatasetPanel::LoadKaggleDatasetAsync(const std::string& dataset_slug) {
     );
 }
 
-void DatasetPanel::LoadCustomDatasetAsync(const cyxwiz::CustomConfig& config) {
+void TrainingEvaluationPanel::LoadCustomDatasetAsync(const cyxwiz::CustomConfig& config) {
     if (is_loading_.load()) {
         spdlog::warn("Already loading a dataset, please wait...");
         return;
@@ -3290,7 +3279,7 @@ void DatasetPanel::LoadCustomDatasetAsync(const cyxwiz::CustomConfig& config) {
     );
 }
 
-void DatasetPanel::LoadDatasetAsync(const std::string& path) {
+void TrainingEvaluationPanel::LoadDatasetAsync(const std::string& path) {
     // Auto-detect dataset type and use appropriate async loader
     std::filesystem::path fs_path(path);
     std::string ext = fs_path.extension().string();
@@ -3328,14 +3317,14 @@ void DatasetPanel::LoadDatasetAsync(const std::string& path) {
     }
 }
 
-void DatasetPanel::CancelLoading() {
+void TrainingEvaluationPanel::CancelLoading() {
     if (is_loading_.load() && loading_task_id_ != 0) {
         cyxwiz::AsyncTaskManager::Instance().Cancel(loading_task_id_);
         spdlog::info("Cancelled dataset loading task");
     }
 }
 
-void DatasetPanel::UpdateClassCounts() {
+void TrainingEvaluationPanel::UpdateClassCounts() {
     if (!current_dataset_.IsValid()) {
         class_counts_.clear();
         return;
@@ -3354,7 +3343,7 @@ void DatasetPanel::UpdateClassCounts() {
     }
 }
 
-void DatasetPanel::ApplySplit() {
+void TrainingEvaluationPanel::ApplySplit() {
     if (!current_dataset_.IsValid()) return;
 
     spdlog::info("Applying train/val/test split: {:.2f}/{:.2f}/{:.2f}",
@@ -3367,7 +3356,7 @@ void DatasetPanel::ApplySplit() {
         cached_info_.train_count, cached_info_.val_count, cached_info_.test_count);
 }
 
-void DatasetPanel::ApplyAugmentationConfig() {
+void TrainingEvaluationPanel::ApplyAugmentationConfig() {
     if (!current_dataset_.IsValid()) {
         spdlog::warn("DatasetPanel: No dataset loaded, cannot apply augmentation");
         return;
@@ -3391,7 +3380,7 @@ void DatasetPanel::ApplyAugmentationConfig() {
                  current_dataset_.GetName());
 }
 
-void DatasetPanel::ClearDataset() {
+void TrainingEvaluationPanel::ClearDataset() {
     if (current_dataset_.IsValid()) {
         auto& registry = cyxwiz::DataRegistry::Instance();
         registry.UnloadDataset(current_dataset_.GetName());
@@ -3427,7 +3416,7 @@ void DatasetPanel::ClearDataset() {
     spdlog::info("Dataset cleared");
 }
 
-bool DatasetPanel::GetPreviewSamples(int count, std::vector<float>& out_images, std::vector<int>& out_labels) {
+bool TrainingEvaluationPanel::GetPreviewSamples(int count, std::vector<float>& out_images, std::vector<int>& out_labels) {
     if (!current_dataset_.IsValid() || count <= 0) return false;
 
     count = std::min(count, static_cast<int>(current_dataset_.Size()));
@@ -3444,7 +3433,7 @@ bool DatasetPanel::GetPreviewSamples(int count, std::vector<float>& out_images, 
     return true;
 }
 
-void DatasetPanel::RenderTrainingSection() {
+void TrainingEvaluationPanel::RenderTrainingSection() {
     // Check training state from centralized TrainingManager
     auto& training_mgr = cyxwiz::TrainingManager::Instance();
     bool training_running = training_mgr.IsTrainingActive();
@@ -3660,7 +3649,7 @@ void DatasetPanel::RenderTrainingSection() {
     }
 }
 
-bool DatasetPanel::SubmitTrainingJob() {
+bool TrainingEvaluationPanel::SubmitTrainingJob() {
     if (!job_manager_ || !job_manager_->IsConnected()) {
         spdlog::error("Cannot submit job: not connected to server");
         return false;
@@ -3773,7 +3762,7 @@ bool DatasetPanel::SubmitTrainingJob() {
     return true;
 }
 
-void DatasetPanel::StartLocalTraining() {
+void TrainingEvaluationPanel::StartLocalTraining() {
     if (!IsDatasetLoaded()) {
         spdlog::error("Cannot start local training: no dataset loaded");
         return;
@@ -3863,7 +3852,7 @@ void DatasetPanel::StartLocalTraining() {
 // Augmentation Tab Implementation
 // ============================================================================
 
-void DatasetPanel::RenderAugmentationTab() {
+void TrainingEvaluationPanel::RenderAugmentationTab() {
     using namespace cyxwiz::transforms;
 
     ImGui::BeginChild("AugmentationPanel", ImVec2(0, 0), false);
@@ -3879,7 +3868,7 @@ void DatasetPanel::RenderAugmentationTab() {
     ImGui::EndChild();
 }
 
-void DatasetPanel::RenderAugmentationPipeline() {
+void TrainingEvaluationPanel::RenderAugmentationPipeline() {
     using namespace cyxwiz::transforms;
 
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Augmentation Pipeline");
@@ -4209,7 +4198,7 @@ void DatasetPanel::RenderAugmentationPipeline() {
     }
 }
 
-void DatasetPanel::RenderAugmentationPreview() {
+void TrainingEvaluationPanel::RenderAugmentationPreview() {
     using namespace cyxwiz::transforms;
 
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Augmentation Preview");
@@ -4406,11 +4395,13 @@ void DatasetPanel::RenderAugmentationPreview() {
     }
 }
 
+// NOTE: Dataset Analytics moved to Data Studio Analyzer - commented out to remove dependencies
+#if 0
 // ============================================================================
 // Dataset Analytics
 // ============================================================================
 
-void DatasetPanel::StartAnalyticsComputation() {
+void TrainingEvaluationPanel::StartAnalyticsComputation() {
     if (analytics_computing_.load()) {
         spdlog::warn("Analytics computation already running");
         return;
@@ -4448,7 +4439,7 @@ void DatasetPanel::StartAnalyticsComputation() {
     spdlog::info("Analytics task started with ID: {}", analytics_task_id_);
 }
 
-void DatasetPanel::RenderDatasetAnalyticsSection() {
+void TrainingEvaluationPanel::RenderDatasetAnalyticsSection() {
     // Compute Analytics button
     if (!analytics_computing_.load()) {
         if (ImGui::Button(ICON_FA_CHART_BAR " Compute", ImVec2(100, 0))) {
@@ -4673,12 +4664,15 @@ void DatasetPanel::RenderDatasetAnalyticsSection() {
         ImGui::EndPopup();
     }
 }
+#endif // Dataset Analytics
 
+// NOTE: Image Quality Analysis moved to Data Studio Analyzer - commented out to remove dependencies
+#if 0
 // ============================================================================
 // Image Quality Analysis
 // ============================================================================
 
-void DatasetPanel::StartQualityAnalysis() {
+void TrainingEvaluationPanel::StartQualityAnalysis() {
     if (quality_analysis_running_) {
         spdlog::warn("Quality analysis already running");
         return;
@@ -4752,7 +4746,7 @@ void DatasetPanel::StartQualityAnalysis() {
     quality_analysis_running_ = true;
 }
 
-void DatasetPanel::RenderQualityAnalysisSection() {
+void TrainingEvaluationPanel::RenderQualityAnalysisSection() {
     // Check if async task is done
     if (quality_analysis_running_) {
         auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
@@ -5008,12 +5002,15 @@ void DatasetPanel::RenderQualityAnalysisSection() {
         ImGui::EndPopup();
     }
 }
+#endif // Image Quality Analysis
 
+// NOTE: Duplicate Detection moved to Data Studio Analyzer - commented out to remove dependencies
+#if 0
 // ============================================================================
 // Duplicate Detection
 // ============================================================================
 
-void DatasetPanel::StartDuplicateDetection() {
+void TrainingEvaluationPanel::StartDuplicateDetection() {
     if (duplicate_detection_running_) {
         spdlog::warn("Duplicate detection already running");
         return;
@@ -5104,7 +5101,7 @@ void DatasetPanel::StartDuplicateDetection() {
     duplicate_detection_running_ = true;
 }
 
-void DatasetPanel::RenderDuplicateDetectionSection() {
+void TrainingEvaluationPanel::RenderDuplicateDetectionSection() {
     // Check if async task is done
     if (duplicate_detection_running_) {
         auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
@@ -5278,5 +5275,6 @@ void DatasetPanel::RenderDuplicateDetectionSection() {
         ImGui::EndPopup();
     }
 }
+#endif // Duplicate Detection
 
 } // namespace gui

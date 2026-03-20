@@ -6,7 +6,7 @@
 
 namespace gui {
 
-void DatasetPanel::RenderDataPipelineTab() {
+void TrainingEvaluationPanel::RenderDataPipelineTab() {
     // Main layout: 60% config (left), 40% preview (right)
     float total_width = ImGui::GetContentRegionAvail().x;
     float config_width = total_width * 0.6f;
@@ -112,7 +112,7 @@ void DatasetPanel::RenderDataPipelineTab() {
     ImGui::EndChild();
 }
 
-void DatasetPanel::RenderUnifiedPreview() {
+void TrainingEvaluationPanel::RenderUnifiedPreview() {
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Preview");
     ImGui::Spacing();
 
@@ -215,7 +215,7 @@ void DatasetPanel::RenderUnifiedPreview() {
 // Preview Display Methods (extracted for unified preview)
 // ============================================================================
 
-void DatasetPanel::RenderPreprocessingPreviewDisplay() {
+void TrainingEvaluationPanel::RenderPreprocessingPreviewDisplay() {
     if (preview_texture_before_ == 0 || preview_texture_after_ == 0) {
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No preview available");
         return;
@@ -252,7 +252,7 @@ void DatasetPanel::RenderPreprocessingPreviewDisplay() {
                preview_tex_after_w_, preview_tex_after_h_, preview_tex_after_c_);
 }
 
-void DatasetPanel::RenderAugmentationPreviewDisplay() {
+void TrainingEvaluationPanel::RenderAugmentationPreviewDisplay() {
     using namespace cyxwiz::transforms;
 
     if (preview_texture_original_ == 0 || preview_texture_augmented_ == 0) {
@@ -316,7 +316,7 @@ void DatasetPanel::RenderAugmentationPreviewDisplay() {
     }
 }
 
-void DatasetPanel::UpdateAugmentationPreview() {
+void TrainingEvaluationPanel::UpdateAugmentationPreview() {
     using namespace cyxwiz::transforms;
 
     if (!IsDatasetLoaded()) return;
