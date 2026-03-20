@@ -62,7 +62,7 @@ void DataStudioPanel::RenderToolbar() {
 void DataStudioPanel::RenderDatasetSelector() {
     // Get available datasets from registry
     auto& registry = DataRegistry::Instance();
-    auto datasets = registry.GetAvailableDatasets();
+    auto datasets = registry.GetDatasetNames();
 
     ImGui::Text("Dataset:");
     ImGui::SameLine();
@@ -120,15 +120,7 @@ void DataStudioPanel::RenderTabBar() {
 
 void DataStudioPanel::RenderStatusBar() {
     if (!active_dataset_.empty()) {
-        auto& registry = DataRegistry::Instance();
-        if (registry.HasDataset(active_dataset_)) {
-            auto dataset = registry.GetDataset(active_dataset_);
-            if (dataset) {
-                ImGui::Text("Dataset: %s | Samples: %zu",
-                           active_dataset_.c_str(),
-                           dataset->GetNumSamples());
-            }
-        }
+        ImGui::Text("Dataset: %s", active_dataset_.c_str());
     } else {
         ImGui::TextDisabled("No dataset selected");
     }

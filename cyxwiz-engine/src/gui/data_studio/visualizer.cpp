@@ -19,11 +19,9 @@ Visualizer::Visualizer()
 }
 
 Visualizer::~Visualizer() {
-    if (context_) {
-        ImPlot::SetCurrentContext(context_);
-        ImPlot::DestroyContext(context_);
-        context_ = nullptr;
-    }
+    // Skip context cleanup - ImPlot contexts are cleaned up automatically
+    // when ImGui shuts down. Explicit cleanup can cause crashes during
+    // application shutdown if ImGui is already destroyed.
 }
 
 void Visualizer::Render() {
@@ -151,7 +149,11 @@ void Visualizer::RenderCreatePlotDialog() {
             ImGui::TextDisabled("No dataset loaded");
         } else {
             for (size_t i = 0; i < available_columns_.size(); i++) {
-                ImGui::Checkbox(available_columns_[i].c_str(), &selected_columns_[i]);
+                // vector<bool> doesn't support &selected_columns_[i], use temp bool
+                bool selected = selected_columns_[i];
+                if (ImGui::Checkbox(available_columns_[i].c_str(), &selected)) {
+                    selected_columns_[i] = selected;
+                }
             }
         }
 
@@ -184,9 +186,6 @@ void Visualizer::RenderCreatePlotDialog() {
 void Visualizer::RenderLinePlot(const PlotConfig& plot) {
     if (ImPlot::BeginPlot(plot.name.c_str(), ImVec2(-1, -1))) {
         // TODO: Phase 1 Week 2 - Plot actual data
-        // Placeholder: plot dummy data
-        ImPlot::PlotLine("Series 1", nullptr, nullptr, 0);
-
         ImPlot::EndPlot();
     }
 }
@@ -194,7 +193,6 @@ void Visualizer::RenderLinePlot(const PlotConfig& plot) {
 void Visualizer::RenderScatterPlot(const PlotConfig& plot) {
     if (ImPlot::BeginPlot(plot.name.c_str(), ImVec2(-1, -1))) {
         // TODO: Phase 1 Week 2 - Plot actual data
-        ImPlot::PlotScatter("Series 1", nullptr, nullptr, 0);
         ImPlot::EndPlot();
     }
 }

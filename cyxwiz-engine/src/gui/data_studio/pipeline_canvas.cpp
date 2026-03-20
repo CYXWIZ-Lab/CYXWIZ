@@ -32,11 +32,9 @@ PipelineCanvas::PipelineCanvas()
 }
 
 PipelineCanvas::~PipelineCanvas() {
-    if (context_) {
-        ImNodes::SetCurrentContext(context_);
-        ImNodes::DestroyContext(context_);
-        context_ = nullptr;
-    }
+    // Skip context cleanup - ImNodes contexts are cleaned up automatically
+    // when ImGui shuts down. Explicit cleanup can cause crashes during
+    // application shutdown if ImGui is already destroyed.
 }
 
 void PipelineCanvas::Render() {
@@ -200,9 +198,14 @@ void PipelineCanvas::HandleLinkCreation() {
 }
 
 void PipelineCanvas::HandleNodeDeletion() {
-    int selected_node;
-    if (ImNodes::IsNodeSelected(&selected_node) && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
-        DeleteNode(selected_node);
+    // Check if any node is selected
+    const int num_selected = ImNodes::NumSelectedNodes();
+    if (num_selected > 0 && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        std::vector<int> selected_nodes(num_selected);
+        ImNodes::GetSelectedNodes(selected_nodes.data());
+        for (int node_id : selected_nodes) {
+            DeleteNode(node_id);
+        }
     }
 }
 
