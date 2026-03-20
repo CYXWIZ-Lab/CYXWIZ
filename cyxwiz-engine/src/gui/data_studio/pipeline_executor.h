@@ -121,6 +121,12 @@ private:
     bool ExecuteRemoveDuplicates(const Node& node, ExecutionContext& ctx);
     bool ExecuteSaveDataset(const Node& node, ExecutionContext& ctx);
 
+    // Phase 2 Week 4 - Additional tabular transformations
+    bool ExecuteFillMissing(const Node& node, ExecutionContext& ctx);
+    bool ExecuteSortRows(const Node& node, ExecutionContext& ctx);
+    bool ExecuteJoin(const Node& node, ExecutionContext& ctx);
+    bool ExecuteGroupBy(const Node& node, ExecutionContext& ctx);
+
     // Helper methods
     void UpdateProgress(float progress);
     void ReportError(const std::string& error);

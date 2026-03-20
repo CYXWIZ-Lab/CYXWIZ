@@ -229,6 +229,14 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteRemoveDuplicates(node, ctx);
     } else if (node.type == "SaveDataset") {
         return ExecuteSaveDataset(node, ctx);
+    } else if (node.type == "FillMissing") {
+        return ExecuteFillMissing(node, ctx);
+    } else if (node.type == "SortRows") {
+        return ExecuteSortRows(node, ctx);
+    } else if (node.type == "Join") {
+        return ExecuteJoin(node, ctx);
+    } else if (node.type == "GroupBy") {
+        return ExecuteGroupBy(node, ctx);
     } else {
         ReportError("Unknown node type: " + node.type);
         return false;
@@ -531,6 +539,342 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
 
     } catch (const std::exception& e) {
         ReportError("SaveDataset error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// ============================================================================
+// Phase 2 Week 4 - Additional Tabular Transformation Nodes
+// ============================================================================
+
+bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ctx) {
+    // Get input dataset from upstream node
+    if (node.inputs.empty()) {
+        ReportError("FillMissing node has no input connection");
+        return false;
+    }
+
+    int input_node_id = node.inputs[0];
+    auto result_it = ctx.node_results.find(input_node_id);
+    if (result_it == ctx.node_results.end()) {
+        ReportError("FillMissing: Input dataset not found");
+        return false;
+    }
+
+    // Get parameters
+    auto strategy_it = node.parameters.find("strategy");
+    std::string strategy = (strategy_it != node.parameters.end()) ? strategy_it->second : "mean";
+
+    auto value_it = node.parameters.find("value");
+    std::string fill_value = (value_it != node.parameters.end()) ? value_it->second : "0";
+
+    const std::string& input_dataset_name = result_it->second;
+    std::string output_dataset_name = "ds_fillmissing_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Filling missing values in '{}' with strategy: {}",
+                input_dataset_name, strategy);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("FillMissing: Input dataset not found in registry");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Register input table with DuckDB
+        std::string temp_table = "temp_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("FillMissing: Failed to register table with DuckDB");
+            return false;
+        }
+
+        // Build COALESCE query based on strategy
+        std::string sql;
+        if (strategy == "constant") {
+            // Replace NULL with constant value
+            sql = "SELECT * REPLACE (COALESCE(*, " + fill_value + ") AS *) FROM " + temp_table;
+        } else if (strategy == "mean" || strategy == "median" || strategy == "mode") {
+            // For MVP, use 0 as fallback (full implementation would compute statistics)
+            // TODO: Implement proper mean/median/mode calculation
+            sql = "SELECT * REPLACE (COALESCE(*, 0) AS *) FROM " + temp_table;
+        } else {
+            // Default to 0
+            sql = "SELECT * REPLACE (COALESCE(*, 0) AS *) FROM " + temp_table;
+        }
+
+        auto result_table = duckdb_->Query(sql);
+
+        // Unregister temp table
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("FillMissing: Query execution failed");
+            return false;
+        }
+
+        // Register result in DataRegistry
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+
+        // Store result for downstream nodes
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] FillMissing completed: {} rows", result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("FillMissing error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) {
+    // Get input dataset from upstream node
+    if (node.inputs.empty()) {
+        ReportError("SortRows node has no input connection");
+        return false;
+    }
+
+    int input_node_id = node.inputs[0];
+    auto result_it = ctx.node_results.find(input_node_id);
+    if (result_it == ctx.node_results.end()) {
+        ReportError("SortRows: Input dataset not found");
+        return false;
+    }
+
+    // Get parameters
+    auto columns_it = node.parameters.find("columns");
+    if (columns_it == node.parameters.end() || columns_it->second.empty()) {
+        ReportError("SortRows: Missing 'columns' parameter");
+        return false;
+    }
+
+    auto order_it = node.parameters.find("order");
+    std::string order = (order_it != node.parameters.end()) ? order_it->second : "ASC";
+
+    const std::string& input_dataset_name = result_it->second;
+    const std::string& sort_columns = columns_it->second;
+    std::string output_dataset_name = "ds_sort_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Sorting '{}' by columns: {} {}",
+                input_dataset_name, sort_columns, order);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("SortRows: Input dataset not found in registry");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Register input table with DuckDB
+        std::string temp_table = "temp_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("SortRows: Failed to register table with DuckDB");
+            return false;
+        }
+
+        // Execute ORDER BY query
+        std::string sql = "SELECT * FROM " + temp_table + " ORDER BY " + sort_columns + " " + order;
+        auto result_table = duckdb_->Query(sql);
+
+        // Unregister temp table
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("SortRows: Query execution failed");
+            return false;
+        }
+
+        // Register result in DataRegistry
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+
+        // Store result for downstream nodes
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] SortRows completed: {} rows", result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("SortRows error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
+    // Join node requires two inputs
+    if (node.inputs.size() < 2) {
+        ReportError("Join node requires two input connections");
+        return false;
+    }
+
+    // Get left and right datasets
+    int left_node_id = node.inputs[0];
+    int right_node_id = node.inputs[1];
+
+    auto left_it = ctx.node_results.find(left_node_id);
+    auto right_it = ctx.node_results.find(right_node_id);
+
+    if (left_it == ctx.node_results.end() || right_it == ctx.node_results.end()) {
+        ReportError("Join: One or both input datasets not found");
+        return false;
+    }
+
+    // Get parameters
+    auto join_type_it = node.parameters.find("join_type");
+    std::string join_type = (join_type_it != node.parameters.end()) ? join_type_it->second : "INNER";
+
+    auto on_column_it = node.parameters.find("on_column");
+    if (on_column_it == node.parameters.end() || on_column_it->second.empty()) {
+        ReportError("Join: Missing 'on_column' parameter");
+        return false;
+    }
+
+    const std::string& left_dataset_name = left_it->second;
+    const std::string& right_dataset_name = right_it->second;
+    const std::string& on_column = on_column_it->second;
+    std::string output_dataset_name = "ds_join_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Joining '{}' and '{}' on column: {} ({})",
+                left_dataset_name, right_dataset_name, on_column, join_type);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto left_dataset = registry.GetArrowDataset(left_dataset_name);
+        auto right_dataset = registry.GetArrowDataset(right_dataset_name);
+
+        if (!left_dataset || !right_dataset) {
+            ReportError("Join: Input datasets not found in registry");
+            return false;
+        }
+
+        auto left_table = left_dataset->GetArrowTable();
+        auto right_table = right_dataset->GetArrowTable();
+
+        // Register both tables with DuckDB
+        std::string left_temp = "temp_left_" + std::to_string(node.id);
+        std::string right_temp = "temp_right_" + std::to_string(node.id);
+
+        if (!duckdb_->RegisterTable(left_temp, left_table) ||
+            !duckdb_->RegisterTable(right_temp, right_table)) {
+            ReportError("Join: Failed to register tables with DuckDB");
+            return false;
+        }
+
+        // Execute JOIN query
+        std::string sql = "SELECT * FROM " + left_temp + " " + join_type + " JOIN " +
+                         right_temp + " ON " + left_temp + "." + on_column +
+                         " = " + right_temp + "." + on_column;
+
+        auto result_table = duckdb_->Query(sql);
+
+        // Unregister temp tables
+        duckdb_->UnregisterTable(left_temp);
+        duckdb_->UnregisterTable(right_temp);
+
+        if (!result_table) {
+            ReportError("Join: Query execution failed");
+            return false;
+        }
+
+        // Register result in DataRegistry
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+
+        // Store result for downstream nodes
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] Join completed: {} rows, {} columns",
+                    result_table->num_rows(), result_table->num_columns());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("Join error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
+    // Get input dataset from upstream node
+    if (node.inputs.empty()) {
+        ReportError("GroupBy node has no input connection");
+        return false;
+    }
+
+    int input_node_id = node.inputs[0];
+    auto result_it = ctx.node_results.find(input_node_id);
+    if (result_it == ctx.node_results.end()) {
+        ReportError("GroupBy: Input dataset not found");
+        return false;
+    }
+
+    // Get parameters
+    auto group_columns_it = node.parameters.find("group_columns");
+    if (group_columns_it == node.parameters.end() || group_columns_it->second.empty()) {
+        ReportError("GroupBy: Missing 'group_columns' parameter");
+        return false;
+    }
+
+    auto agg_it = node.parameters.find("aggregations");
+    if (agg_it == node.parameters.end() || agg_it->second.empty()) {
+        ReportError("GroupBy: Missing 'aggregations' parameter");
+        return false;
+    }
+
+    const std::string& input_dataset_name = result_it->second;
+    const std::string& group_columns = group_columns_it->second;
+    const std::string& aggregations = agg_it->second;
+    std::string output_dataset_name = "ds_groupby_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] GroupBy on '{}': columns={}, agg={}",
+                input_dataset_name, group_columns, aggregations);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("GroupBy: Input dataset not found in registry");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Register input table with DuckDB
+        std::string temp_table = "temp_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("GroupBy: Failed to register table with DuckDB");
+            return false;
+        }
+
+        // Execute GROUP BY query
+        // Aggregations format: "COUNT(*) as count, SUM(amount) as total"
+        std::string sql = "SELECT " + group_columns + ", " + aggregations +
+                         " FROM " + temp_table + " GROUP BY " + group_columns;
+
+        auto result_table = duckdb_->Query(sql);
+
+        // Unregister temp table
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("GroupBy: Query execution failed");
+            return false;
+        }
+
+        // Register result in DataRegistry
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+
+        // Store result for downstream nodes
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] GroupBy completed: {} groups", result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("GroupBy error: " + std::string(e.what()));
         return false;
     }
 }
