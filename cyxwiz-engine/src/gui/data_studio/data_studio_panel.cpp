@@ -1,7 +1,5 @@
 #include "data_studio_panel.h"
 #include "../../core/data_registry.h"
-#include "../main_window.h"
-#include "../node_editor.h"
 #include <spdlog/spdlog.h>
 #include <imgui.h>
 
@@ -11,23 +9,16 @@ DataStudioPanel::DataStudioPanel()
     : selected_tab_(0)
     , visible_(true)
 {
-    // Initialize all components
-    pipeline_canvas_ = std::make_unique<PipelineCanvas>();
+    // Initialize all components (Unified Canvas Phase 5: Removed pipeline_canvas_)
     query_editor_ = std::make_unique<QueryEditor>();
     analyzer_ = std::make_unique<Analyzer>();
     visualizer_ = std::make_unique<Visualizer>();
 
-    spdlog::info("[Data Studio] Panel initialized");
+    spdlog::info("[Data Studio] Panel initialized (simplified - pipeline moved to Node Editor)");
 }
 
 void DataStudioPanel::Render() {
     if (!visible_) return;
-
-    // Phase 5 Week 7: Check for deployment request
-    if (pipeline_canvas_ && pipeline_canvas_->IsDeploymentRequested()) {
-        OnDeployToNodeEditor();
-        pipeline_canvas_->ClearDeploymentRequest();
-    }
 
     ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Data Studio", &visible_)) {
@@ -59,12 +50,14 @@ void DataStudioPanel::RenderToolbar() {
         }
     }
 
+    // Unified Canvas Phase 5: Add note about Node Editor for pipelines
     ImGui::SameLine();
     ImGui::TextDisabled("|");
-
     ImGui::SameLine();
-    if (ImGui::Button("Help")) {
-        // TODO: Phase 1 Week 2 - Show help dialog
+    ImGui::TextDisabled("For visual pipelines, use Node Editor (Data Pipeline mode)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Visual data transformation pipelines have moved to the Node Editor.\n"
+                         "Switch to 'Data Pipeline' execution mode in the Node Editor toolbar.");
     }
 }
 
@@ -94,14 +87,8 @@ void DataStudioPanel::RenderDatasetSelector() {
 }
 
 void DataStudioPanel::RenderTabBar() {
+    // Unified Canvas Phase 5: Removed Pipeline tab (moved to Node Editor)
     if (ImGui::BeginTabBar("DataStudioTabs")) {
-        if (ImGui::BeginTabItem("Pipeline")) {
-            if (pipeline_canvas_) {
-                pipeline_canvas_->Render();
-            }
-            ImGui::EndTabItem();
-        }
-
         if (ImGui::BeginTabItem("Query")) {
             if (query_editor_) {
                 query_editor_->Render();
@@ -140,19 +127,7 @@ void DataStudioPanel::RenderStatusBar() {
     ImGui::TextDisabled("|");
     ImGui::SameLine();
 
-    // Pipeline execution status
-    if (pipeline_canvas_) {
-        // TODO: Show pipeline execution status
-        ImGui::Text("Pipeline: Ready");
-    }
-
-    ImGui::SameLine();
-    ImGui::Spacing();
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-
-    // Analysis status
+    // Analysis status (Unified Canvas Phase 5: Removed pipeline status)
     if (analyzer_ && analyzer_->IsAnalysisRunning()) {
         ImGui::Text("Analyzing... %.0f%%", analyzer_->GetAnalysisProgress() * 100.0f);
     } else {
@@ -164,7 +139,7 @@ void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     active_dataset_ = dataset_name;
     spdlog::info("[Data Studio] Set active dataset: {}", dataset_name);
 
-    // Propagate to all components
+    // Propagate to all components (Unified Canvas Phase 5: Removed pipeline_canvas_)
     if (query_editor_) {
         query_editor_->SetActiveDataset(dataset_name);
     }
@@ -174,48 +149,6 @@ void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     if (visualizer_) {
         visualizer_->SetActiveDataset(dataset_name);
     }
-}
-
-// ============================================================================
-// Phase 5 Week 7 - Node Editor Handoff
-// ============================================================================
-
-void DataStudioPanel::OnDeployToNodeEditor() {
-    if (!pipeline_canvas_ || !pipeline_canvas_->IsDeploymentReady()) {
-        spdlog::error("[Data Studio] Cannot deploy: no dataset ready for deployment");
-        return;
-    }
-
-    std::string dataset_name = pipeline_canvas_->GetDeploymentDataset();
-    if (dataset_name.empty()) {
-        spdlog::error("[Data Studio] Cannot deploy: deployment dataset name is empty");
-        return;
-    }
-
-    if (!main_window_) {
-        spdlog::error("[Data Studio] Cannot deploy: MainWindow reference not set");
-        return;
-    }
-
-    auto* node_editor = main_window_->GetNodeEditor();
-    if (!node_editor) {
-        spdlog::error("[Data Studio] Cannot deploy: NodeEditor not available");
-        return;
-    }
-
-    spdlog::info("[Data Studio] Deploying dataset '{}' to Node Editor", dataset_name);
-
-    // Handoff dataset to Node Editor
-    node_editor->SetDatasetFromDataStudio(dataset_name);
-
-    // Show Node Editor panel
-    node_editor->Show();
-
-    // Clear deployment status
-    pipeline_canvas_->ClearDeploymentStatus();
-
-    // Show success notification (using ImGui notification system if available)
-    spdlog::info("[Data Studio] Successfully deployed dataset '{}' to Node Editor", dataset_name);
 }
 
 } // namespace cyxwiz

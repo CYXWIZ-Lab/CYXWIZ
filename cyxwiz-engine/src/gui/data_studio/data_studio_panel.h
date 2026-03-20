@@ -1,6 +1,5 @@
 #pragma once
 
-#include "pipeline_canvas.h"
 #include "query_editor.h"
 #include "analyzer.h"
 #include "visualizer.h"
@@ -8,32 +7,24 @@
 #include <memory>
 #include <string>
 
-// Forward declaration
-namespace gui {
-class MainWindow;
-}
-
 namespace cyxwiz {
 
 /**
- * DataStudioPanel - Main container for Data Studio feature
+ * DataStudioPanel - Data analysis and query interface
  *
- * Phase 1, Week 1: Core Infrastructure
+ * Unified Canvas Phase 5: Simplified Data Studio
  *
- * This is the main panel that integrates all Data Studio components
- * into a unified tabbed interface. It provides a visual, no-code
- * data exploration and transformation experience similar to KNIME,
- * RapidMiner, and Orange.
+ * This panel provides SQL querying, statistical analysis, and visualization
+ * tools for datasets. The visual pipeline building capability has been moved
+ * to the Node Editor (Unified Canvas) for a single, unified experience.
  *
  * Architecture:
  *   DataStudioPanel (Container)
- *     ├─ PipelineCanvas (Visual pipeline builder)
  *     ├─ QueryEditor (SQL query interface)
  *     ├─ Analyzer (Statistical analysis)
  *     └─ Visualizer (Interactive plots)
  *
  * Tab Structure:
- *   - Pipeline: Visual node-based pipeline editor
  *   - Query: SQL query editor with DuckDB backend
  *   - Analyze: Statistical analysis and profiling
  *   - Visualize: Interactive data visualization
@@ -42,18 +33,13 @@ namespace cyxwiz {
  *   - DataRegistry: Load datasets for analysis
  *   - DuckDBConnector: Execute SQL queries
  *   - ArrowDataset: Zero-copy data access
- *   - MainWindow: Dockable panel in main UI
+ *
+ * Note: Visual pipeline building is now in Node Editor's "Data Pipeline" mode
  */
 class DataStudioPanel {
 public:
     DataStudioPanel();
     ~DataStudioPanel() = default;
-
-    /**
-     * Set MainWindow reference for Node Editor access (Phase 5 Week 7)
-     * Must be called after construction
-     */
-    void SetMainWindow(gui::MainWindow* main_window) { main_window_ = main_window; }
 
     /**
      * Render the Data Studio panel
@@ -88,8 +74,7 @@ public:
     bool* GetVisiblePtr() { return &visible_; }
 
 private:
-    // Component instances
-    std::unique_ptr<PipelineCanvas> pipeline_canvas_;
+    // Component instances (Unified Canvas Phase 5: Removed pipeline_canvas_)
     std::unique_ptr<QueryEditor> query_editor_;
     std::unique_ptr<Analyzer> analyzer_;
     std::unique_ptr<Visualizer> visualizer_;
@@ -99,15 +84,11 @@ private:
     int selected_tab_;
     bool visible_;
 
-    // MainWindow reference for Node Editor handoff (Phase 5 Week 7)
-    gui::MainWindow* main_window_ = nullptr;
-
-    // Tab indices
+    // Tab indices (Unified Canvas Phase 5: Removed Pipeline tab)
     enum class Tab {
-        Pipeline = 0,
-        Query = 1,
-        Analyze = 2,
-        Visualize = 3
+        Query = 0,
+        Analyze = 1,
+        Visualize = 2
     };
 
     // Rendering helpers
@@ -115,9 +96,6 @@ private:
     void RenderDatasetSelector();
     void RenderTabBar();
     void RenderStatusBar();
-
-    // Phase 5 Week 7 - Node Editor Handoff
-    void OnDeployToNodeEditor();
 };
 
 } // namespace cyxwiz
