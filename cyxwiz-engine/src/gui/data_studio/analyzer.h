@@ -4,8 +4,12 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 
 namespace cyxwiz {
+
+// Forward declaration
+class DuckDBConnector;
 
 /**
  * Analyzer - Statistical analysis and data profiling for Data Studio
@@ -30,7 +34,7 @@ namespace cyxwiz {
 class Analyzer {
 public:
     Analyzer();
-    ~Analyzer() = default;
+    ~Analyzer();
 
     /**
      * Render the analyzer UI
@@ -95,6 +99,9 @@ private:
     };
 
     AnalysisReport current_report_;
+
+    // DuckDB connector for SQL analytics
+    std::unique_ptr<DuckDBConnector> duckdb_;
 
     // UI rendering helpers
     void RenderOverview();

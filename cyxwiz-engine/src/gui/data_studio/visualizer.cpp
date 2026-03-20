@@ -1,5 +1,7 @@
 #include "visualizer.h"
 #include "../../core/duckdb_connector.h"
+#include "../../core/data_registry.h"
+#include "../../core/arrow_dataset.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 
@@ -10,6 +12,7 @@ Visualizer::Visualizer()
     , selected_plot_id_(-1)
     , show_create_plot_dialog_(false)
     , selected_plot_type_(0)
+    , duckdb_(std::make_unique<DuckDBConnector>())
 {
     // Create separate ImPlot context for Data Studio
     context_ = ImPlot::CreateContext();
@@ -185,28 +188,80 @@ void Visualizer::RenderCreatePlotDialog() {
 
 void Visualizer::RenderLinePlot(const PlotConfig& plot) {
     if (ImPlot::BeginPlot(plot.name.c_str(), ImVec2(-1, -1))) {
-        // TODO: Phase 1 Week 2 - Plot actual data
+        // Plot each column as a separate line series
+        for (const auto& [col_name, values] : plot.data) {
+            if (!values.empty()) {
+                // Generate X values (0, 1, 2, ...)
+                std::vector<double> x_values(values.size());
+                for (size_t i = 0; i < values.size(); i++) {
+                    x_values[i] = static_cast<double>(i);
+                }
+
+                ImPlot::PlotLine(col_name.c_str(), x_values.data(), values.data(),
+                                static_cast<int>(values.size()));
+            }
+        }
         ImPlot::EndPlot();
     }
 }
 
 void Visualizer::RenderScatterPlot(const PlotConfig& plot) {
     if (ImPlot::BeginPlot(plot.name.c_str(), ImVec2(-1, -1))) {
-        // TODO: Phase 1 Week 2 - Plot actual data
+        // For scatter plot, if 2 columns: use first as X, second as Y
+        // If more columns: plot each against index
+        if (plot.data.size() == 2) {
+            auto it = plot.data.begin();
+            const auto& x_data = it->second;
+            const std::string& x_name = it->first;
+            ++it;
+            const auto& y_data = it->second;
+            const std::string& y_name = it->first;
+
+            size_t count = std::min(x_data.size(), y_data.size());
+            if (count > 0) {
+                ImPlot::PlotScatter((x_name + " vs " + y_name).c_str(),
+                                   x_data.data(), y_data.data(), static_cast<int>(count));
+            }
+        } else {
+            // Plot each column against index
+            for (const auto& [col_name, values] : plot.data) {
+                if (!values.empty()) {
+                    std::vector<double> x_values(values.size());
+                    for (size_t i = 0; i < values.size(); i++) {
+                        x_values[i] = static_cast<double>(i);
+                    }
+                    ImPlot::PlotScatter(col_name.c_str(), x_values.data(), values.data(),
+                                       static_cast<int>(values.size()));
+                }
+            }
+        }
         ImPlot::EndPlot();
     }
 }
 
 void Visualizer::RenderBarChart(const PlotConfig& plot) {
     if (ImPlot::BeginPlot(plot.name.c_str(), ImVec2(-1, -1))) {
-        // TODO: Phase 1 Week 2 - Plot actual data
+        // Plot each column as a separate bar series
+        for (const auto& [col_name, values] : plot.data) {
+            if (!values.empty()) {
+                ImPlot::PlotBars(col_name.c_str(), values.data(), static_cast<int>(values.size()));
+            }
+        }
         ImPlot::EndPlot();
     }
 }
 
 void Visualizer::RenderHistogram(const PlotConfig& plot) {
     if (ImPlot::BeginPlot(plot.name.c_str(), ImVec2(-1, -1))) {
-        // TODO: Phase 1 Week 2 - Plot actual data
+        // Plot histogram for each column
+        for (const auto& [col_name, values] : plot.data) {
+            if (!values.empty()) {
+                // Use 20 bins by default
+                int bins = 20;
+                ImPlot::PlotHistogram(col_name.c_str(), values.data(),
+                                     static_cast<int>(values.size()), bins);
+            }
+        }
         ImPlot::EndPlot();
     }
 }
@@ -229,9 +284,55 @@ void Visualizer::SetActiveDataset(const std::string& dataset_name) {
     current_dataset_ = dataset_name;
     spdlog::info("[Data Studio] Visualizer set active dataset: {}", dataset_name);
 
-    // TODO: Phase 1 Week 2 - Load column names from dataset
-    available_columns_ = {"Column1", "Column2", "Column3"};
-    selected_columns_.resize(available_columns_.size(), false);
+    // Clear previous data
+    available_columns_.clear();
+    selected_columns_.clear();
+
+    if (dataset_name.empty()) {
+        return;
+    }
+
+    try {
+        // Get Arrow dataset from DataRegistry
+        auto& registry = DataRegistry::Instance();
+        auto arrow_dataset = registry.GetArrowDataset(dataset_name);
+
+        if (!arrow_dataset) {
+            spdlog::warn("[Data Studio] Visualizer: dataset not found in registry");
+            return;
+        }
+
+        auto arrow_table = arrow_dataset->GetArrowTable();
+        if (!arrow_table) {
+            spdlog::warn("[Data Studio] Visualizer: dataset has no Arrow table");
+            return;
+        }
+
+        // Register table with DuckDB
+        std::string table_name = "viz_table";
+        if (!duckdb_->RegisterTable(table_name, arrow_table)) {
+            spdlog::error("[Data Studio] Visualizer: failed to register table: {}",
+                         duckdb_->GetLastError());
+            return;
+        }
+
+        // Get column names from schema
+        auto schema = duckdb_->GetTableSchema(table_name);
+        for (const auto& col : schema) {
+            available_columns_.push_back(col.name);
+        }
+
+        selected_columns_.resize(available_columns_.size(), false);
+
+        // Unregister table (will re-register when loading plot data)
+        duckdb_->UnregisterTable(table_name);
+
+        spdlog::info("[Data Studio] Visualizer: loaded {} columns from {}",
+                     available_columns_.size(), dataset_name);
+
+    } catch (const std::exception& e) {
+        spdlog::error("[Data Studio] Visualizer: failed to load dataset: {}", e.what());
+    }
 }
 
 void Visualizer::CreatePlot(const std::string& plot_type,
@@ -263,16 +364,129 @@ void Visualizer::CreatePlot(const std::string& plot_type,
 }
 
 bool Visualizer::LoadPlotData(PlotConfig& plot) {
-    // TODO: Phase 1 Week 2 - Load actual data from DuckDB
-    // For now, generate placeholder data
-    for (const auto& col : plot.columns) {
-        std::vector<double> values;
-        for (int i = 0; i < 100; i++) {
-            values.push_back(static_cast<double>(i));
-        }
-        plot.data[col] = values;
+    if (current_dataset_.empty()) {
+        spdlog::warn("[Data Studio] Visualizer: no dataset selected");
+        return false;
     }
-    return true;
+
+    if (plot.columns.empty()) {
+        spdlog::warn("[Data Studio] Visualizer: no columns selected for plot");
+        return false;
+    }
+
+    try {
+        // Get Arrow dataset from DataRegistry
+        auto& registry = DataRegistry::Instance();
+        auto arrow_dataset = registry.GetArrowDataset(current_dataset_);
+
+        if (!arrow_dataset) {
+            spdlog::error("[Data Studio] Visualizer: dataset not found");
+            return false;
+        }
+
+        auto arrow_table = arrow_dataset->GetArrowTable();
+        if (!arrow_table) {
+            spdlog::error("[Data Studio] Visualizer: dataset has no Arrow table");
+            return false;
+        }
+
+        // Register table with DuckDB
+        std::string table_name = "viz_data";
+        if (!duckdb_->RegisterTable(table_name, arrow_table)) {
+            spdlog::error("[Data Studio] Visualizer: failed to register table: {}",
+                         duckdb_->GetLastError());
+            return false;
+        }
+
+        // Query selected columns
+        std::string cols = plot.columns[0];
+        for (size_t i = 1; i < plot.columns.size(); i++) {
+            cols += ", " + plot.columns[i];
+        }
+
+        std::string sql = "SELECT " + cols + " FROM " + table_name + " LIMIT 10000";
+        auto result_table = duckdb_->Query(sql);
+
+        if (!result_table) {
+            spdlog::error("[Data Studio] Visualizer: query failed: {}", duckdb_->GetLastError());
+            duckdb_->UnregisterTable(table_name);
+            return false;
+        }
+
+        // Convert Arrow columns to double vectors
+        plot.data.clear();
+        for (size_t col_idx = 0; col_idx < plot.columns.size(); col_idx++) {
+            const std::string& col_name = plot.columns[col_idx];
+            auto column = result_table->column(static_cast<int>(col_idx));
+
+            std::vector<double> values;
+            values.reserve(result_table->num_rows());
+
+            // Process each chunk
+            for (int chunk_idx = 0; chunk_idx < column->num_chunks(); chunk_idx++) {
+                auto chunk = column->chunk(chunk_idx);
+
+                // Convert based on Arrow type
+                auto type_id = chunk->type_id();
+
+                if (type_id == arrow::Type::DOUBLE) {
+                    auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+                    for (int64_t i = 0; i < typed_array->length(); i++) {
+                        if (!typed_array->IsNull(i)) {
+                            values.push_back(typed_array->Value(i));
+                        } else {
+                            values.push_back(0.0);  // Replace null with 0
+                        }
+                    }
+                } else if (type_id == arrow::Type::FLOAT) {
+                    auto typed_array = std::static_pointer_cast<arrow::FloatArray>(chunk);
+                    for (int64_t i = 0; i < typed_array->length(); i++) {
+                        if (!typed_array->IsNull(i)) {
+                            values.push_back(static_cast<double>(typed_array->Value(i)));
+                        } else {
+                            values.push_back(0.0);
+                        }
+                    }
+                } else if (type_id == arrow::Type::INT64) {
+                    auto typed_array = std::static_pointer_cast<arrow::Int64Array>(chunk);
+                    for (int64_t i = 0; i < typed_array->length(); i++) {
+                        if (!typed_array->IsNull(i)) {
+                            values.push_back(static_cast<double>(typed_array->Value(i)));
+                        } else {
+                            values.push_back(0.0);
+                        }
+                    }
+                } else if (type_id == arrow::Type::INT32) {
+                    auto typed_array = std::static_pointer_cast<arrow::Int32Array>(chunk);
+                    for (int64_t i = 0; i < typed_array->length(); i++) {
+                        if (!typed_array->IsNull(i)) {
+                            values.push_back(static_cast<double>(typed_array->Value(i)));
+                        } else {
+                            values.push_back(0.0);
+                        }
+                    }
+                } else {
+                    // Unsupported type - skip
+                    spdlog::warn("[Data Studio] Visualizer: unsupported column type for plotting: {}",
+                                chunk->type()->ToString());
+                }
+            }
+
+            plot.data[col_name] = values;
+        }
+
+        // Unregister table
+        duckdb_->UnregisterTable(table_name);
+
+        spdlog::info("[Data Studio] Visualizer: loaded plot data with {} columns, {} rows",
+                     plot.columns.size(), plot.data.empty() ? 0 : plot.data.begin()->second.size());
+
+        return true;
+
+    } catch (const std::exception& e) {
+        spdlog::error("[Data Studio] Visualizer: failed to load plot data: {}", e.what());
+        return false;
+    }
 }
 
 void Visualizer::DeletePlot(int plot_id) {

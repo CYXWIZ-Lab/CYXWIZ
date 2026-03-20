@@ -5,8 +5,12 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 
 namespace cyxwiz {
+
+// Forward declaration
+class DuckDBConnector;
 
 /**
  * Visualizer - Interactive data visualization for Data Studio
@@ -77,6 +81,9 @@ private:
 
     // ImPlot context (separate from other plots in Engine)
     ImPlotContext* context_;
+
+    // DuckDB connector for data queries
+    std::unique_ptr<DuckDBConnector> duckdb_;
 
     // UI state
     bool show_create_plot_dialog_;
