@@ -2190,6 +2190,135 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        case NodeType::FillMissingValues: {
+            // Fill Missing Values transformation node - handle NULLs
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["strategy"] = "mean";  // mean, median, mode, constant
+            node.parameters["fill_value"] = "0";
+            break;
+        }
+
+        case NodeType::RemoveDuplicateRows: {
+            // Remove Duplicate Rows transformation node - SQL DISTINCT
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["subset"] = "";  // Empty = all columns
+            node.parameters["keep"] = "first";  // first, last, none
+            break;
+        }
+
+        case NodeType::RenameColumns: {
+            // Rename Columns transformation node
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["mapping"] = "old_name:new_name";
+            break;
+        }
+
+        case NodeType::SampleRows: {
+            // Sample Rows analytics/transform node - random sampling
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["n"] = "100";
+            node.parameters["random_state"] = "42";
+            break;
+        }
+
+        case NodeType::SQLQuery: {
+            // SQL Query data source node - execute custom SQL
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Data";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["connection_string"] = "sqlite:///data.db";
+            node.parameters["query"] = "SELECT * FROM table";
+            break;
+        }
+
+        case NodeType::ParquetFile: {
+            // Parquet File data source node
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Data";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["file_path"] = "";
+            break;
+        }
+
+        case NodeType::ExportCSV:
+        case NodeType::ExportParquet:
+        case NodeType::ExportJSON: {
+            // Export nodes - save dataset to file
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            node.parameters["file_path"] = "";
+            if (node.type == NodeType::ExportCSV) {
+                node.parameters["delimiter"] = ",";
+                node.parameters["header"] = "true";
+            }
+            break;
+        }
+
         default:
             // Default: input and output pins
             NodePin input_pin;

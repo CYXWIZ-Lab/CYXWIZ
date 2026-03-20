@@ -867,17 +867,48 @@ void NodeEditor::ShowToolbar() {
     ImGui::SameLine();
 
     // Framework selection
-    const char* frameworks[] = { "PyTorch", "TensorFlow", "Keras", "PyCyxWiz" };
-    int current_framework = static_cast<int>(selected_framework_);
-    ImGui::SetNextItemWidth(120.0f);
-    if (ImGui::Combo("##Framework", &current_framework, frameworks, 4)) {
-        selected_framework_ = static_cast<CodeFramework>(current_framework);
-        spdlog::info("Code generation framework changed to: {}", frameworks[current_framework]);
+    // Unified Canvas Phase 4.2: Execution mode selector
+    const char* exec_modes[] = { "Code Gen", "Data Pipeline", "Local Training" };
+    int current_exec_mode = static_cast<int>(execution_mode_);
+    ImGui::SetNextItemWidth(130.0f);
+    if (ImGui::Combo("##ExecMode", &current_exec_mode, exec_modes, 3)) {
+        execution_mode_ = static_cast<ExecutionMode>(current_exec_mode);
+        spdlog::info("Execution mode changed to: {}", exec_modes[current_exec_mode]);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Execution Mode:\n"
+            "Code Gen - Generate Python code\n"
+            "Data Pipeline - Execute with DuckDB/Arrow\n"
+            "Local Training - Train ML model locally");
     }
     ImGui::SameLine();
 
-    if (ImGui::Button(ICON_FA_GEARS " Generate")) {
-        GeneratePythonCode();
+    // Show appropriate controls based on execution mode
+    if (execution_mode_ == ExecutionMode::CodeGeneration) {
+        // Framework selector for code generation
+        const char* frameworks[] = { "PyTorch", "TensorFlow", "Keras", "PyCyxWiz" };
+        int current_framework = static_cast<int>(selected_framework_);
+        ImGui::SetNextItemWidth(120.0f);
+        if (ImGui::Combo("##Framework", &current_framework, frameworks, 4)) {
+            selected_framework_ = static_cast<CodeFramework>(current_framework);
+            spdlog::info("Code generation framework changed to: {}", frameworks[current_framework]);
+        }
+        ImGui::SameLine();
+
+        if (ImGui::Button(ICON_FA_GEARS " Generate")) {
+            GeneratePythonCode();
+        }
+    } else if (execution_mode_ == ExecutionMode::DuckDBPipeline) {
+        // Execute data pipeline button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
+        if (ImGui::Button(ICON_FA_PLAY " Execute Pipeline")) {
+            ExecuteDataPipeline();
+        }
+        ImGui::PopStyleColor(2);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Execute data transformation pipeline using DuckDB");
+        }
     }
     ImGui::SameLine();
 
@@ -3262,6 +3293,126 @@ void NodeEditor::SetDatasetFromDataStudio(const std::string& dataset_name) {
 
     spdlog::info("[Node Editor] Dataset '{}' successfully set in DatasetInput node (ID: {})",
                  dataset_name, dataset_input->id);
+}
+
+// Unified Canvas Phase 4.2: Execute data pipeline using DuckDB/Arrow
+bool NodeEditor::ExecuteDataPipeline() {
+    spdlog::info("Executing data transformation pipeline...");
+
+    if (nodes_.empty()) {
+        spdlog::warn("No nodes in graph - cannot execute pipeline");
+        return false;
+    }
+
+    // Check if we have a pipeline executor
+    if (!pipeline_executor_) {
+        pipeline_executor_ = std::make_unique<cyxwiz::PipelineExecutor>();
+        spdlog::info("Created PipelineExecutor instance");
+    }
+
+    // Convert node graph to JSON for PipelineExecutor
+    nlohmann::json pipeline_json;
+    pipeline_json["nodes"] = nlohmann::json::array();
+
+    for (const auto& node : nodes_) {
+        nlohmann::json node_json;
+        node_json["id"] = node.id;
+        node_json["type"] = GetNodeTypeName(node.type);
+        node_json["name"] = node.name;
+
+        // Add parameters
+        node_json["parameters"] = nlohmann::json::object();
+        for (const auto& [key, value] : node.parameters) {
+            node_json["parameters"][key] = value;
+        }
+
+        // Add inputs (connected node IDs)
+        node_json["inputs"] = nlohmann::json::array();
+        for (const auto& link : links_) {
+            // Find if this link connects TO this node
+            for (const auto& input_pin : node.inputs) {
+                if (link.to_pin == input_pin.id) {
+                    // Find the source node
+                    for (const auto& src_node : nodes_) {
+                        for (const auto& out_pin : src_node.outputs) {
+                            if (link.from_pin == out_pin.id) {
+                                node_json["inputs"].push_back(src_node.id);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add outputs (connected node IDs)
+        node_json["outputs"] = nlohmann::json::array();
+        for (const auto& link : links_) {
+            // Find if this link connects FROM this node
+            for (const auto& output_pin : node.outputs) {
+                if (link.from_pin == output_pin.id) {
+                    // Find the destination node
+                    for (const auto& dst_node : nodes_) {
+                        for (const auto& in_pin : dst_node.inputs) {
+                            if (link.to_pin == in_pin.id) {
+                                node_json["outputs"].push_back(dst_node.id);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        pipeline_json["nodes"].push_back(node_json);
+    }
+
+    // Set up progress callback
+    pipeline_executor_->SetProgressCallback([](float progress, const std::string& status) {
+        spdlog::info("Pipeline progress: {:.1f}% - {}", progress * 100, status);
+    });
+
+    // Set up completion callback
+    pipeline_executor_->SetCompletionCallback([](bool success) {
+        if (success) {
+            spdlog::info("Pipeline execution completed successfully!");
+        } else {
+            spdlog::error("Pipeline execution failed!");
+        }
+    });
+
+    // Execute the pipeline
+    std::string pipeline_str = pipeline_json.dump(2);
+    spdlog::debug("Pipeline JSON:\n{}", pipeline_str);
+
+    bool success = pipeline_executor_->ExecutePipeline(pipeline_str);
+    if (!success) {
+        spdlog::error("Pipeline execution failed: {}", pipeline_executor_->GetLastError());
+    }
+    return success;
+}
+
+// Helper to get node type name as string for PipelineExecutor
+std::string NodeEditor::GetNodeTypeName(NodeType type) const {
+    switch (type) {
+        case NodeType::CSVFile: return "FileInput";
+        case NodeType::FilterRows: return "FilterRows";
+        case NodeType::SelectColumns: return "SelectColumns";
+        case NodeType::JoinTables: return "Join";
+        case NodeType::GroupByAggregate: return "GroupBy";
+        case NodeType::SortRows: return "SortRows";
+        case NodeType::FillMissingValues: return "FillMissing";
+        case NodeType::RemoveDuplicateRows: return "RemoveDuplicates";
+        case NodeType::RenameColumns: return "RenameColumns";
+        case NodeType::SampleRows: return "SampleRows";
+        case NodeType::SQLQuery: return "SQLQuery";
+        case NodeType::ParquetFile: return "ParquetInput";
+        case NodeType::ExportCSV: return "ExportCSV";
+        case NodeType::ExportParquet: return "ExportParquet";
+        case NodeType::ExportJSON: return "ExportJSON";
+        case NodeType::DescribeStats: return "DescribeStats";
+        default: return "Unknown";
+    }
 }
 
 } // namespace gui

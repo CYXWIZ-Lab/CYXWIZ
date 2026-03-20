@@ -652,6 +652,9 @@ private:
     void GenerateCodeForFramework(CodeFramework framework);
     bool ValidateGraph(std::string& error_message);
 
+    // Unified Canvas Phase 4.2: Helper for node type names
+    std::string GetNodeTypeName(NodeType type) const;
+
     // Shape validation (non-blocking warnings)
     std::vector<ValidationWarning> ValidateShapes();
     bool Is4DOutputNode(NodeType type) const;
