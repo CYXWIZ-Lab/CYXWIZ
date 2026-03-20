@@ -68,6 +68,20 @@ public:
     const std::string& GetLastError() const { return last_error_; }
 
     /**
+     * Get deployment status (Phase 5 Week 7)
+     */
+    bool IsDeploymentReady() const { return deployment_ready_; }
+    const std::string& GetDeploymentDataset() const { return deployment_dataset_; }
+
+    /**
+     * Clear deployment status (called after deployment is complete)
+     */
+    void ClearDeploymentStatus() {
+        deployment_ready_ = false;
+        deployment_dataset_.clear();
+    }
+
+    /**
      * Register a progress callback
      * Called periodically during execution with progress updates
      */
@@ -93,6 +107,8 @@ private:
         std::map<int, std::string> node_results;  // Node ID -> Arrow table name
         std::string input_dataset;                // Initial dataset name
         std::string output_dataset;               // Final result dataset name
+        std::string deployment_dataset;           // Dataset ready for Node Editor deployment
+        bool deployment_ready = false;            // Deployment flag
     };
 
     // Execution state
@@ -100,6 +116,10 @@ private:
     float progress_;
     std::string last_error_;
     bool stop_requested_;
+
+    // Deployment state (Phase 5 Week 7)
+    bool deployment_ready_;
+    std::string deployment_dataset_;
 
     // Callbacks
     std::function<void(float)> progress_callback_;
@@ -126,6 +146,9 @@ private:
     bool ExecuteSortRows(const Node& node, ExecutionContext& ctx);
     bool ExecuteJoin(const Node& node, ExecutionContext& ctx);
     bool ExecuteGroupBy(const Node& node, ExecutionContext& ctx);
+
+    // Phase 5 Week 7 - Node Editor Handoff
+    bool ExecuteDeployToNodeEditor(const Node& node, ExecutionContext& ctx);
 
     // Helper methods
     void UpdateProgress(float progress);

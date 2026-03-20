@@ -63,6 +63,31 @@ public:
      */
     bool ExecutePipeline();
 
+    /**
+     * Check if deployment is ready (Phase 5 Week 7)
+     */
+    bool IsDeploymentReady() const;
+
+    /**
+     * Get the deployment dataset name (Phase 5 Week 7)
+     */
+    std::string GetDeploymentDataset() const;
+
+    /**
+     * Clear deployment status after successful deployment (Phase 5 Week 7)
+     */
+    void ClearDeploymentStatus();
+
+    /**
+     * Check if deployment was requested by user click (Phase 5 Week 7)
+     */
+    bool IsDeploymentRequested() const { return deployment_requested_; }
+
+    /**
+     * Clear deployment request flag (Phase 5 Week 7)
+     */
+    void ClearDeploymentRequest() { deployment_requested_ = false; }
+
 private:
     struct Node {
         int id;
@@ -92,6 +117,9 @@ private:
     // UI state
     bool show_node_palette_;
     int selected_node_id_;
+
+    // Deployment state (Phase 5 Week 7)
+    bool deployment_requested_;
 
     // Pipeline execution
     std::unique_ptr<PipelineExecutor> executor_;

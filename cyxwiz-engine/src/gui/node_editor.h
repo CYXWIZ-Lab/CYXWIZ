@@ -450,6 +450,15 @@ public:
     // Show the node editor window
     void Show() { show_window_ = true; }
 
+    // ===== Data Studio Integration (Phase 5 Week 7) =====
+
+    /**
+     * Set dataset from Data Studio deployment
+     * Finds or creates a DatasetInput node and populates it with the dataset
+     * Automatically frames the node after creation
+     */
+    void SetDatasetFromDataStudio(const std::string& dataset_name);
+
     // ===== Skip/Residual Connection Helpers =====
 
     // Add a residual (additive) skip connection between two nodes

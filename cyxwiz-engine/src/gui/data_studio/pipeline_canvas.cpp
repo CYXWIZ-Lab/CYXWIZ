@@ -11,6 +11,7 @@ PipelineCanvas::PipelineCanvas()
     , next_link_id_(1)
     , show_node_palette_(false)
     , selected_node_id_(-1)
+    , deployment_requested_(false)
 {
     // Create separate ImNodes context for Data Studio
     // (separate from ML Node Editor context)
@@ -59,6 +60,22 @@ void PipelineCanvas::Render() {
     ImGui::SameLine();
     if (ImGui::Button("Clear")) {
         Clear();
+    }
+
+    // Phase 5 Week 7: Deploy button (only show if deployment is ready)
+    if (executor_ && executor_->IsDeploymentReady()) {
+        ImGui::SameLine();
+        ImGui::Spacing();
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.2f, 1.0f));
+        if (ImGui::Button("Deploy to Node Editor")) {
+            // Signal to DataStudioPanel that deployment should happen
+            deployment_requested_ = true;
+            spdlog::info("[Data Studio] Deploy to Node Editor requested");
+        }
+        ImGui::PopStyleColor(3);
     }
 
     // Render all nodes
@@ -378,6 +395,27 @@ bool PipelineCanvas::LoadPipeline(const std::string& json) {
     } catch (const std::exception& e) {
         spdlog::error("[Data Studio] Failed to load pipeline: {}", e.what());
         return false;
+    }
+}
+
+// ============================================================================
+// Phase 5 Week 7 - Node Editor Handoff Methods
+// ============================================================================
+
+bool PipelineCanvas::IsDeploymentReady() const {
+    return executor_ && executor_->IsDeploymentReady();
+}
+
+std::string PipelineCanvas::GetDeploymentDataset() const {
+    if (executor_ && executor_->IsDeploymentReady()) {
+        return executor_->GetDeploymentDataset();
+    }
+    return "";
+}
+
+void PipelineCanvas::ClearDeploymentStatus() {
+    if (executor_) {
+        executor_->ClearDeploymentStatus();
     }
 }
 

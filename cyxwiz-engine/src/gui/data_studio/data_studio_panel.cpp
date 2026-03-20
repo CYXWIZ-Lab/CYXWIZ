@@ -1,6 +1,9 @@
 #include "data_studio_panel.h"
 #include "../../core/data_registry.h"
+#include "../main_window.h"
+#include "../node_editor.h"
 #include <spdlog/spdlog.h>
+#include <imgui.h>
 
 namespace cyxwiz {
 
@@ -19,6 +22,12 @@ DataStudioPanel::DataStudioPanel()
 
 void DataStudioPanel::Render() {
     if (!visible_) return;
+
+    // Phase 5 Week 7: Check for deployment request
+    if (pipeline_canvas_ && pipeline_canvas_->IsDeploymentRequested()) {
+        OnDeployToNodeEditor();
+        pipeline_canvas_->ClearDeploymentRequest();
+    }
 
     ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Data Studio", &visible_)) {
@@ -165,6 +174,48 @@ void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     if (visualizer_) {
         visualizer_->SetActiveDataset(dataset_name);
     }
+}
+
+// ============================================================================
+// Phase 5 Week 7 - Node Editor Handoff
+// ============================================================================
+
+void DataStudioPanel::OnDeployToNodeEditor() {
+    if (!pipeline_canvas_ || !pipeline_canvas_->IsDeploymentReady()) {
+        spdlog::error("[Data Studio] Cannot deploy: no dataset ready for deployment");
+        return;
+    }
+
+    std::string dataset_name = pipeline_canvas_->GetDeploymentDataset();
+    if (dataset_name.empty()) {
+        spdlog::error("[Data Studio] Cannot deploy: deployment dataset name is empty");
+        return;
+    }
+
+    if (!main_window_) {
+        spdlog::error("[Data Studio] Cannot deploy: MainWindow reference not set");
+        return;
+    }
+
+    auto* node_editor = main_window_->GetNodeEditor();
+    if (!node_editor) {
+        spdlog::error("[Data Studio] Cannot deploy: NodeEditor not available");
+        return;
+    }
+
+    spdlog::info("[Data Studio] Deploying dataset '{}' to Node Editor", dataset_name);
+
+    // Handoff dataset to Node Editor
+    node_editor->SetDatasetFromDataStudio(dataset_name);
+
+    // Show Node Editor panel
+    node_editor->Show();
+
+    // Clear deployment status
+    pipeline_canvas_->ClearDeploymentStatus();
+
+    // Show success notification (using ImGui notification system if available)
+    spdlog::info("[Data Studio] Successfully deployed dataset '{}' to Node Editor", dataset_name);
 }
 
 } // namespace cyxwiz

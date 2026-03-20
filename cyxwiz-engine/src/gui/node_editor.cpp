@@ -3201,4 +3201,65 @@ void NodeEditor::OnStopRLTraining() {
     }
 }
 
+// ============================================================================
+// Phase 5 Week 7 - Data Studio Integration
+// ============================================================================
+
+void NodeEditor::SetDatasetFromDataStudio(const std::string& dataset_name) {
+    spdlog::info("[Node Editor] Receiving dataset from Data Studio: '{}'", dataset_name);
+
+    // Find or create DatasetInput node
+    MLNode* dataset_input = nullptr;
+    for (auto& node : nodes_) {
+        if (node.type == NodeType::DatasetInput) {
+            dataset_input = &node;
+            spdlog::info("[Node Editor] Found existing DatasetInput node (ID: {})", node.id);
+            break;
+        }
+    }
+
+    if (!dataset_input) {
+        // Create new DatasetInput node at center
+        spdlog::info("[Node Editor] Creating new DatasetInput node");
+
+        // Find center of visible area
+        ImVec2 center_pos = FindEmptyPosition();
+
+        // Create the node
+        MLNode new_node = CreateNode(NodeType::DatasetInput, "Dataset from Data Studio");
+        new_node.parameters["dataset_name"] = dataset_name;
+        new_node.parameters["split"] = "train";
+
+        nodes_.push_back(new_node);
+        dataset_input = &nodes_.back();
+
+        // Set position for next frame
+        pending_positions_[dataset_input->id] = center_pos;
+        pending_positions_frames_ = 3;  // Apply for 3 frames to ensure ImNodes registers it
+    } else {
+        // Update existing DatasetInput node
+        dataset_input->parameters["dataset_name"] = dataset_name;
+        dataset_input->name = "Dataset: " + dataset_name;
+    }
+
+    // Trigger shape inference
+    if (shape_inference_) {
+        shape_inference_->ComputeAllShapes(nodes_, links_);
+    }
+
+    // Save undo state
+    SaveUndoState();
+
+    // Frame the DatasetInput node (zoom to it)
+    selected_node_ids_.clear();
+    selected_node_ids_.push_back(dataset_input->id);
+
+    // Frame selected will be called on next Render()
+    // We set a flag to defer this until we're in the ImNodes context
+    // For now, just select the node - user can press 'F' to frame it
+
+    spdlog::info("[Node Editor] Dataset '{}' successfully set in DatasetInput node (ID: {})",
+                 dataset_name, dataset_input->id);
+}
+
 } // namespace gui

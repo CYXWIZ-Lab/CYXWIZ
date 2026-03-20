@@ -8,6 +8,11 @@
 #include <memory>
 #include <string>
 
+// Forward declaration
+namespace gui {
+class MainWindow;
+}
+
 namespace cyxwiz {
 
 /**
@@ -43,6 +48,12 @@ class DataStudioPanel {
 public:
     DataStudioPanel();
     ~DataStudioPanel() = default;
+
+    /**
+     * Set MainWindow reference for Node Editor access (Phase 5 Week 7)
+     * Must be called after construction
+     */
+    void SetMainWindow(gui::MainWindow* main_window) { main_window_ = main_window; }
 
     /**
      * Render the Data Studio panel
@@ -88,6 +99,9 @@ private:
     int selected_tab_;
     bool visible_;
 
+    // MainWindow reference for Node Editor handoff (Phase 5 Week 7)
+    gui::MainWindow* main_window_ = nullptr;
+
     // Tab indices
     enum class Tab {
         Pipeline = 0,
@@ -101,6 +115,9 @@ private:
     void RenderDatasetSelector();
     void RenderTabBar();
     void RenderStatusBar();
+
+    // Phase 5 Week 7 - Node Editor Handoff
+    void OnDeployToNodeEditor();
 };
 
 } // namespace cyxwiz

@@ -153,6 +153,7 @@ public:
     Console* GetConsole() { return console_.get(); }
     cyxwiz::PlotTestControlPanel* GetPlotTestControl() { return plot_test_control_.get(); }
     cyxwiz::ScriptEditorPanel* GetScriptEditor() { return script_editor_.get(); }
+    NodeEditor* GetNodeEditor() { return node_editor_.get(); }
 
     // Set network components (called by Application after construction)
     void SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager);

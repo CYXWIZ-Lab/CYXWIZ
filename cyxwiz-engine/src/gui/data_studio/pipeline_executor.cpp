@@ -13,6 +13,7 @@ PipelineExecutor::PipelineExecutor()
     : executing_(false)
     , progress_(0.0f)
     , stop_requested_(false)
+    , deployment_ready_(false)
 {
     // Create DuckDB connector for SQL transformations
     duckdb_ = std::make_unique<DuckDBConnector>();
@@ -31,6 +32,8 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     progress_ = 0.0f;
     stop_requested_ = false;
     last_error_ = "";
+    deployment_ready_ = false;
+    deployment_dataset_.clear();
 
     spdlog::info("[Data Studio] Starting pipeline execution");
 
@@ -100,6 +103,14 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
 
     executing_ = false;
     UpdateProgress(1.0f);
+
+    // Transfer deployment status from context to executor state
+    if (ctx.deployment_ready) {
+        deployment_ready_ = true;
+        deployment_dataset_ = ctx.deployment_dataset;
+        spdlog::info("[Data Studio] Deployment ready: '{}'", deployment_dataset_);
+    }
+
     NotifyCompletion(true);
 
     spdlog::info("[Data Studio] Pipeline execution completed successfully");
@@ -237,6 +248,8 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteJoin(node, ctx);
     } else if (node.type == "GroupBy") {
         return ExecuteGroupBy(node, ctx);
+    } else if (node.type == "DeployToNodeEditor") {
+        return ExecuteDeployToNodeEditor(node, ctx);
     } else {
         ReportError("Unknown node type: " + node.type);
         return false;
@@ -894,6 +907,67 @@ void PipelineExecutor::ReportError(const std::string& error) {
 void PipelineExecutor::NotifyCompletion(bool success) {
     if (completion_callback_) {
         completion_callback_(success);
+    }
+}
+
+// ============================================================================
+// Phase 5 Week 7 - Node Editor Handoff
+// ============================================================================
+
+bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionContext& ctx) {
+    // Get the input dataset from the upstream node
+    if (node.inputs.empty()) {
+        ReportError("DeployToNodeEditor node has no input connection");
+        return false;
+    }
+
+    int input_node_id = node.inputs[0];
+    auto result_it = ctx.node_results.find(input_node_id);
+    if (result_it == ctx.node_results.end()) {
+        ReportError("DeployToNodeEditor: Input dataset not found");
+        return false;
+    }
+
+    const std::string& input_dataset_name = result_it->second;
+
+    // Get the desired output name from parameters (optional)
+    auto name_it = node.parameters.find("name");
+    std::string deployment_name = (name_it != node.parameters.end() && !name_it->second.empty())
+                                  ? name_it->second
+                                  : "deployed_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Preparing dataset '{}' for Node Editor deployment as '{}'",
+                input_dataset_name, deployment_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+
+        // Get the Arrow dataset from the input
+        auto arrow_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!arrow_dataset) {
+            ReportError("DeployToNodeEditor: Input dataset not found in registry: " + input_dataset_name);
+            return false;
+        }
+
+        // If the user specified a different name, register it again with the new name
+        if (deployment_name != input_dataset_name) {
+            auto arrow_table = arrow_dataset->GetArrowTable();
+            registry.RegisterArrowTable(arrow_table, deployment_name);
+        }
+
+        // Tag dataset for deployment
+        ctx.deployment_dataset = deployment_name;
+        ctx.deployment_ready = true;
+
+        // Also store in output_dataset for consistency
+        ctx.output_dataset = deployment_name;
+
+        spdlog::info("[Data Studio] Dataset ready for deployment: '{}'", deployment_name);
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("DeployToNodeEditor error: " + std::string(e.what()));
+        return false;
     }
 }
 
