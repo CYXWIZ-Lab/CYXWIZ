@@ -828,4 +828,208 @@ void NodeEditor::ShowContextMenu() {
     ImGui::Separator();
 }
 
+// ============================================================================
+// Unified Canvas Phase 3: Categorized Node Palette
+// ============================================================================
+
+const char* NodeEditor::GetCategoryIcon(NodeCategory category) {
+    switch (category) {
+        case NodeCategory::DataSources:      return ICON_FA_DATABASE;
+        case NodeCategory::DataTransform:    return ICON_FA_FILTER;
+        case NodeCategory::Analytics:        return ICON_FA_CHART_LINE;
+        case NodeCategory::Preprocessing:    return ICON_FA_WAND_MAGIC_SPARKLES;
+        case NodeCategory::Layers:           return ICON_FA_LAYER_GROUP;
+        case NodeCategory::Activation:       return ICON_FA_BOLT;
+        case NodeCategory::Pooling:          return ICON_FA_COMPRESS;
+        case NodeCategory::Normalization:    return ICON_FA_SCALE_BALANCED;
+        case NodeCategory::Attention:        return ICON_FA_EYE;
+        case NodeCategory::Recurrent:        return ICON_FA_ROTATE;
+        case NodeCategory::ShapeOps:         return ICON_FA_OBJECT_GROUP;  // was ICON_FA_SHAPES
+        case NodeCategory::MergeOps:         return ICON_FA_RIGHT_LEFT;    // was ICON_FA_CODE_MERGE
+        case NodeCategory::Training:         return ICON_FA_GRADUATION_CAP;
+        case NodeCategory::Regularization:   return ICON_FA_SCALE_BALANCED;  // was ICON_FA_SHIELD_HALVED
+        case NodeCategory::Utility:          return ICON_FA_COG;            // was ICON_FA_SCREWDRIVER_WRENCH
+        case NodeCategory::Signal:           return ICON_FA_ARROWS_ROTATE; // was ICON_FA_WAVE_SQUARE
+        case NodeCategory::DataPipeline:     return ICON_FA_DIAGRAM_PROJECT;
+        case NodeCategory::DNN:              return ICON_FA_LIGHTBULB;      // was ICON_FA_BRAIN
+        case NodeCategory::TextProcessing:   return ICON_FA_FILE_LINES;
+        case NodeCategory::Upsampling:       return ICON_FA_EXPAND;         // was ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER
+        case NodeCategory::TimeSeries:       return ICON_FA_ARROW_TREND_UP; // was ICON_FA_CHART_AREA
+        case NodeCategory::Audio:            return ICON_FA_STETHOSCOPE;    // was ICON_FA_VOLUME_HIGH
+        case NodeCategory::RL:               return ICON_FA_GRADUATION_CAP; // was ICON_FA_ROBOT
+        case NodeCategory::DataExport:       return ICON_FA_FILE_EXPORT;
+        case NodeCategory::Plugin:           return ICON_FA_DIAGRAM_PROJECT; // was ICON_FA_PUZZLE_PIECE
+        default:                             return ICON_FA_CUBE;
+    }
+}
+
+const char* NodeEditor::GetCategoryName(NodeCategory category) {
+    switch (category) {
+        case NodeCategory::DataSources:      return "Data Sources";
+        case NodeCategory::DataTransform:    return "Data Transform";
+        case NodeCategory::Analytics:        return "Analytics";
+        case NodeCategory::Preprocessing:    return "Preprocessing";
+        case NodeCategory::Layers:           return "Layers";
+        case NodeCategory::Activation:       return "Activation";
+        case NodeCategory::Pooling:          return "Pooling";
+        case NodeCategory::Normalization:    return "Normalization";
+        case NodeCategory::Attention:        return "Attention";
+        case NodeCategory::Recurrent:        return "Recurrent";
+        case NodeCategory::ShapeOps:         return "Shape Operations";
+        case NodeCategory::MergeOps:         return "Merge Operations";
+        case NodeCategory::Training:         return "Training";
+        case NodeCategory::Regularization:   return "Regularization";
+        case NodeCategory::Utility:          return "Utility";
+        case NodeCategory::Signal:           return "Signal / Control";
+        case NodeCategory::DataPipeline:     return "Data Pipeline";
+        case NodeCategory::DNN:              return "DNN / Pre-trained";
+        case NodeCategory::TextProcessing:   return "Text Processing";
+        case NodeCategory::Upsampling:       return "Upsampling";
+        case NodeCategory::TimeSeries:       return "Time Series";
+        case NodeCategory::Audio:            return "Audio";
+        case NodeCategory::RL:               return "Reinforcement Learning";
+        case NodeCategory::DataExport:       return "Data Export";
+        case NodeCategory::Plugin:           return "Plugin Nodes";
+        default:                             return "Unknown";
+    }
+}
+
+void NodeEditor::ShowCategorizedNodeMenu() {
+    // Initialize nodes_by_category_ on first call
+    if (!nodes_by_category_initialized_) {
+        // Group all node types by category
+        // Data Sources
+        nodes_by_category_[NodeCategory::DataSources] = {
+            {NodeType::CSVFile, "CSV File"},
+            {NodeType::SQLQuery, "SQL Query"},
+            {NodeType::HDF5Dataset, "HDF5 Dataset"},
+            {NodeType::ParquetFile, "Parquet File"},
+            {NodeType::JSONFile, "JSON File"},
+            {NodeType::ExcelFile, "Excel File"},
+            {NodeType::RESTAPISource, "REST API"}
+        };
+
+        // Data Transforms
+        nodes_by_category_[NodeCategory::DataTransform] = {
+            {NodeType::FilterRows, "Filter Rows"},
+            {NodeType::SelectColumns, "Select Columns"},
+            {NodeType::JoinTables, "Join Tables"},
+            {NodeType::GroupByAggregate, "Group By"},
+            {NodeType::SortRows, "Sort Rows"},
+            {NodeType::FillMissingValues, "Fill Missing"},
+            {NodeType::RemoveDuplicateRows, "Remove Duplicates"},
+            {NodeType::PivotTable, "Pivot Table"},
+            {NodeType::UnionTables, "Union Tables"},
+            {NodeType::RenameColumns, "Rename Columns"}
+        };
+
+        // Analytics
+        nodes_by_category_[NodeCategory::Analytics] = {
+            {NodeType::DescribeStats, "Describe Stats"},
+            {NodeType::VisualizeData, "Visualize Data"},
+            {NodeType::SampleRows, "Sample Rows"},
+            {NodeType::CorrelationMatrix, "Correlation Matrix"},
+            {NodeType::ValueCounts, "Value Counts"},
+            {NodeType::CrossTabulation, "Cross Tabulation"}
+        };
+
+        // Data Export
+        nodes_by_category_[NodeCategory::DataExport] = {
+            {NodeType::ExportCSV, "Export CSV"},
+            {NodeType::ExportParquet, "Export Parquet"},
+            {NodeType::ExportSQL, "Export SQL"},
+            {NodeType::ExportJSON, "Export JSON"}
+        };
+
+        // Layers (Dense, Conv, etc.)
+        nodes_by_category_[NodeCategory::Layers] = {
+            {NodeType::Dense, "Dense (128)"},
+            {NodeType::Conv1D, "Conv1D"},
+            {NodeType::Conv2D, "Conv2D"},
+            {NodeType::Conv3D, "Conv3D"},
+            {NodeType::DepthwiseConv2D, "DepthwiseConv2D"}
+        };
+
+        // Activation
+        nodes_by_category_[NodeCategory::Activation] = {
+            {NodeType::ReLU, "ReLU"},
+            {NodeType::LeakyReLU, "LeakyReLU"},
+            {NodeType::GELU, "GELU"},
+            {NodeType::Swish, "Swish"},
+            {NodeType::Sigmoid, "Sigmoid"},
+            {NodeType::Tanh, "Tanh"},
+            {NodeType::Softmax, "Softmax"}
+        };
+
+        // ... (Add more categories as needed)
+
+        nodes_by_category_initialized_ = true;
+    }
+
+    // Search filter
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##search", ICON_FA_MAGNIFYING_GLASS " Search nodes...", context_menu_search_, sizeof(context_menu_search_));
+    ImGui::Separator();
+
+    // Filter nodes based on search
+    std::string search_lower = context_menu_search_;
+    std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(), ::tolower);
+    bool is_searching = strlen(context_menu_search_) > 0;
+
+    // Render categories
+    for (auto& [category, nodes] : nodes_by_category_) {
+        // Skip empty categories
+        if (nodes.empty()) continue;
+
+        // If searching, filter nodes
+        std::vector<std::pair<NodeType, std::string>> filtered_nodes;
+        if (is_searching) {
+            for (auto& [type, name] : nodes) {
+                std::string name_lower = name;
+                std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+                if (name_lower.find(search_lower) != std::string::npos) {
+                    filtered_nodes.push_back({type, name});
+                }
+            }
+            // Skip category if no matches
+            if (filtered_nodes.empty()) continue;
+        } else {
+            filtered_nodes = nodes;
+        }
+
+        RenderNodeCategory(category, GetCategoryName(category), GetCategoryIcon(category));
+    }
+}
+
+void NodeEditor::RenderNodeCategory(NodeCategory category, const char* category_name, const char* icon) {
+    auto it = nodes_by_category_.find(category);
+    if (it == nodes_by_category_.end()) return;
+
+    // Category header with icon
+    if (ImGui::CollapsingHeader((std::string(icon) + " " + category_name).c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent();
+
+        for (auto& [type, name] : it->second) {
+            // Filter by search
+            if (strlen(context_menu_search_) > 0) {
+                std::string name_lower = name;
+                std::string search_lower = context_menu_search_;
+                std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+                std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(), ::tolower);
+                if (name_lower.find(search_lower) == std::string::npos) {
+                    continue;
+                }
+            }
+
+            if (ImGui::Selectable(name.c_str())) {
+                AddNode(type, name);
+                context_menu_search_[0] = '\0';  // Clear search on selection
+                ImGui::CloseCurrentPopup();
+            }
+        }
+
+        ImGui::Unindent();
+    }
+}
+
 } // namespace gui

@@ -708,7 +708,8 @@ void TrainingEvaluationPanel::RenderStatusBar() {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
     ImGui::BeginChild("##StatusBar", ImVec2(0, footer_height_), true);
 
-    // Show analytics progress if computing
+    // Show analytics progress if computing (disabled - analytics moved to Data Studio)
+    #if 0
     if (analytics_computing_.load()) {
         auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
         auto task = task_mgr.GetTask(analytics_task_id_);
@@ -723,7 +724,9 @@ void TrainingEvaluationPanel::RenderStatusBar() {
             ImGui::SameLine();
             ImGui::Text("%.0f%%", progress * 100);
         }
-    } else if (is_loading_.load()) {
+    } else
+    #endif
+    if (is_loading_.load()) {
         float time = static_cast<float>(ImGui::GetTime());
         const char* spinner_chars[] = {"|", "/", "-", "\\"};
         int idx = static_cast<int>(time * 8) % 4;
@@ -754,7 +757,8 @@ void TrainingEvaluationPanel::RenderStatusBar() {
 void TrainingEvaluationPanel::Render() {
     if (!visible_) return;
 
-    // Check analytics completion (must run every frame, not just when Details tab is visible)
+    // Check analytics completion (disabled - analytics moved to Data Studio)
+    #if 0
     if (analytics_computing_.load()) {
         auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
         auto task = task_mgr.GetTask(analytics_task_id_);
@@ -785,6 +789,7 @@ void TrainingEvaluationPanel::Render() {
             analytics_computing_.store(false);
         }
     }
+    #endif
 
     // Apply compact styling for professional look
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
@@ -1828,7 +1833,8 @@ void TrainingEvaluationPanel::RenderStatistics() {
     ImGui::Text("Dataset Statistics");
     ImGui::Separator();
 
-    // Use analytics class distribution if available
+    // Use analytics class distribution if available (disabled - analytics moved to Data Studio)
+    #if 0
     if (analytics_results_.success && !analytics_results_.class_distribution.counts.empty()) {
         auto& dist = analytics_results_.class_distribution;
         ImGui::Text("Class Distribution:");
@@ -1857,7 +1863,9 @@ void TrainingEvaluationPanel::RenderStatistics() {
         if (dist.counts.size() > 10) {
             ImGui::Text("... and %zu more classes", dist.counts.size() - 10);
         }
-    } else if (!class_counts_.empty()) {
+    } else
+    #endif
+    if (!class_counts_.empty()) {
         // Fall back to class_counts_ if available
         ImGui::Text("Class Distribution:");
         ImGui::Spacing();
@@ -2374,6 +2382,7 @@ void TrainingEvaluationPanel::ShowCSVFileBrowser() {
     }
 }
 
+#if 0  // TODO: Re-enable when HDF5Browser is implemented
 void TrainingEvaluationPanel::ScanHDF5File(const std::string& path) {
     hdf5_dataset_paths_.clear();
     hdf5_dataset_info_.clear();
@@ -2406,7 +2415,9 @@ void TrainingEvaluationPanel::ScanHDF5File(const std::string& path) {
 
     hdf5_file_scanned_ = true;
 }
+#endif
 
+#if 0  // TODO: Re-enable when HDF5Browser is implemented
 void TrainingEvaluationPanel::UpdateHDF5Preview() {
     if (hdf5_selected_data_idx_ < 0 ||
         hdf5_selected_data_idx_ >= static_cast<int>(hdf5_dataset_paths_.size())) {
@@ -2476,6 +2487,7 @@ void TrainingEvaluationPanel::UpdateHDF5Preview() {
         }
     }
 }
+#endif
 
 void TrainingEvaluationPanel::RenderHDF5ConfigDialog() {
     if (!show_hdf5_dialog_) return;
@@ -2491,10 +2503,12 @@ void TrainingEvaluationPanel::RenderHDF5ConfigDialog() {
 
         ImGui::Separator();
 
-        // Scan file if not already done
+        // Scan file if not already done (disabled - HDF5Browser not implemented)
+        #if 0
         if (!hdf5_file_scanned_) {
             ScanHDF5File(hdf5_dialog_path_);
         }
+        #endif
 
         // Main content: two-column layout
         float panel_width = ImGui::GetContentRegionAvail().x;
@@ -2535,7 +2549,9 @@ void TrainingEvaluationPanel::RenderHDF5ConfigDialog() {
                         if (hdf5_selected_label_idx_ == static_cast<int>(i)) {
                             hdf5_selected_label_idx_ = -1;
                         }
+                        #if 0  // Disabled - HDF5Browser not implemented
                         UpdateHDF5Preview();
+                        #endif
                     }
                 }
                 ImGui::PopStyleColor();
@@ -3392,7 +3408,8 @@ void TrainingEvaluationPanel::ClearDataset() {
     class_names_.clear();
     preview_sample_idx_ = 0;
 
-    // Clear Prepare tab state
+    // Clear Prepare tab state (removed during Data Studio refactoring)
+    #if 0
     prepare_missing_analyzed_ = false;
     prepare_missing_summary_.clear();
     prepare_missing_columns_.clear();
@@ -3401,6 +3418,7 @@ void TrainingEvaluationPanel::ClearDataset() {
     prepare_outlier_summary_.clear();
     prepare_correlation_computed_ = false;
     prepare_high_corr_pairs_.clear();
+    #endif
 
     // Clear Evaluate tab state
     has_eval_results_ = false;

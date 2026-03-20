@@ -22,6 +22,7 @@ class ScriptEditorPanel;
 class GraphExecutor;
 class RLTrainingExecutor;
 class TrainingDashboardPanel;
+class PipelineExecutor;
 }
 
 namespace gui {
@@ -455,11 +456,6 @@ struct SubgraphData {
     bool expanded = false;                   // Whether subgraph is expanded (visible)
 };
 
-// Forward declaration for PipelineExecutor
-namespace cyxwiz {
-    class PipelineExecutor;
-}
-
 // Execution context for unified canvas (Unified Canvas Phase 2)
 struct ExecutionContext {
     ExecutionMode mode;
@@ -609,6 +605,12 @@ private:
     void RenderMinimap();
     void HandleInteractions();
     void ShowContextMenu();
+
+    // Unified Canvas Phase 3: Categorized node palette helpers
+    void ShowCategorizedNodeMenu();
+    void RenderNodeCategory(NodeCategory category, const char* category_name, const char* icon);
+    static const char* GetCategoryIcon(NodeCategory category);
+    static const char* GetCategoryName(NodeCategory category);
 
     // Helper functions
     unsigned int GetNodeColor(NodeType type);
@@ -854,6 +856,11 @@ private:
     std::vector<SearchableNode> all_searchable_nodes_;       // All available nodes for search
     std::vector<std::pair<int, SearchableNode*>> filtered_nodes_;  // Filtered results with scores
     bool searchable_nodes_initialized_ = false;
+
+    // Unified Canvas Phase 3: Context menu search filter
+    char context_menu_search_[256] = "";
+    std::map<NodeCategory, std::vector<std::pair<NodeType, std::string>>> nodes_by_category_;
+    bool nodes_by_category_initialized_ = false;
 
     // Node groups
     std::vector<NodeGroup> groups_;

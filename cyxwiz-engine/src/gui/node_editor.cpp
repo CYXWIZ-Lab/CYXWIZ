@@ -11,6 +11,7 @@
 #include "../core/project_manager.h"
 #include "../core/graph_executor.h"
 #include "../core/rl_training_executor.h"
+#include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
 #include "panels/training_dashboard.h"
 #include "../core/rl_script_generator.h"
 #include "../scripting/scripting_engine.h"
