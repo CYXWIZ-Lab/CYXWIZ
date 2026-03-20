@@ -285,7 +285,7 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
 bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx) {
     auto path_it = node.parameters.find("path");
     if (path_it == node.parameters.end() || path_it->second.empty()) {
-        ReportError("FileInput node missing 'path' parameter");
+        ReportError(GetImprovedErrorMessage("FileInput", "missing_parameter", "path"));
         return false;
     }
 
@@ -300,7 +300,7 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
         auto arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
 
         if (!arrow_dataset) {
-            ReportError("Failed to load file: " + file_path);
+            ReportError(GetImprovedErrorMessage("FileInput", "invalid_path", file_path));
             return false;
         }
 
@@ -323,7 +323,7 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
 bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx) {
     // Get input dataset from upstream node
     if (node.inputs.empty()) {
-        ReportError("FilterRows node has no input connection");
+        ReportError(GetImprovedErrorMessage("FilterRows", "no_input"));
         return false;
     }
 
@@ -928,6 +928,47 @@ void PipelineExecutor::UpdateProgress(float progress) {
 void PipelineExecutor::ReportError(const std::string& error) {
     last_error_ = error;
     spdlog::error("[Data Studio] Pipeline execution error: {}", error);
+}
+
+// Phase 7: Improved error message helper with actionable suggestions
+std::string PipelineExecutor::GetImprovedErrorMessage(const std::string& node_type, const std::string& error_category, const std::string& details) {
+    std::string message;
+
+    if (error_category == "no_input") {
+        message = node_type + ": No input dataset connected\n"
+                  "Suggestion: Connect a FileInput or upstream transformation node";
+    } else if (error_category == "dataset_not_found") {
+        message = node_type + ": Input dataset not found\n"
+                  "Suggestion: Ensure the upstream node executed successfully";
+    } else if (error_category == "missing_parameter") {
+        message = node_type + ": Missing required parameter '" + details + "'\n"
+                  "Suggestion: Configure the node by right-clicking and selecting 'Configure'";
+    } else if (error_category == "column_not_found") {
+        message = node_type + ": Column '" + details + "' not found in dataset\n"
+                  "Suggestion: Check dataset schema or use SelectColumns node first";
+    } else if (error_category == "query_failed") {
+        message = node_type + ": SQL query execution failed\n"
+                  "Details: " + details + "\n"
+                  "Suggestion: Check your filter conditions, column names, or SQL syntax";
+    } else if (error_category == "empty_result") {
+        message = node_type + ": Query returned 0 rows\n"
+                  "Suggestion: Check filter conditions or use less restrictive thresholds";
+    } else if (error_category == "type_mismatch") {
+        message = node_type + ": Cannot apply numeric operation to text column\n"
+                  "Suggestion: Use TextVectorize node to convert text to numbers first";
+    } else if (error_category == "invalid_path") {
+        message = node_type + ": File not found at path: " + details + "\n"
+                  "Suggestion: Check file path, ensure file exists, and has correct permissions";
+    } else if (error_category == "register_failed") {
+        message = node_type + ": Failed to register table with DuckDB\n"
+                  "Details: " + details + "\n"
+                  "Suggestion: Check dataset format and memory availability";
+    } else {
+        // Fallback to generic message
+        message = node_type + ": " + details;
+    }
+
+    return message;
 }
 
 void PipelineExecutor::NotifyCompletion(bool success) {

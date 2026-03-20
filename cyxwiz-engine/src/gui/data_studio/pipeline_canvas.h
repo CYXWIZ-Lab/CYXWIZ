@@ -53,6 +53,30 @@ public:
     bool LoadPipeline(const std::string& json);
 
     /**
+     * Save pipeline to a file (Phase 7)
+     * @param filepath Path to save the pipeline JSON file
+     * @return true if save succeeded
+     */
+    bool SavePipelineToFile(const std::string& filepath);
+
+    /**
+     * Load pipeline from a file (Phase 7)
+     * @param filepath Path to the pipeline JSON file
+     * @return true if load succeeded
+     */
+    bool LoadPipelineFromFile(const std::string& filepath);
+
+    /**
+     * Set pipeline name (for UI and serialization)
+     */
+    void SetPipelineName(const std::string& name) { pipeline_name_ = name; }
+
+    /**
+     * Get pipeline name
+     */
+    const std::string& GetPipelineName() const { return pipeline_name_; }
+
+    /**
      * Clear all nodes and links
      */
     void Clear();
@@ -113,6 +137,7 @@ private:
     std::vector<Link> links_;
     int next_node_id_;
     int next_link_id_;
+    std::string pipeline_name_;  // Phase 7: Pipeline name
 
     // UI state
     bool show_node_palette_;
@@ -127,10 +152,14 @@ private:
     // Rendering helpers
     void RenderNodePalette();
     void RenderNode(const Node& node);
+    void RenderToolbar();  // Phase 7: Toolbar with Save/Load buttons
     void RenderContextMenu();
     void HandleNodeCreation();
     void HandleLinkCreation();
     void HandleNodeDeletion();
+
+    // Phase 7: Tooltip helper
+    std::string GetNodeTooltip(const std::string& node_type) const;
 
     // Node management
     void AddNode(const std::string& type, ImVec2 position);

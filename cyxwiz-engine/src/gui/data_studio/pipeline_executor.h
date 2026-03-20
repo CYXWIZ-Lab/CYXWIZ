@@ -171,6 +171,9 @@ private:
     void ReportError(const std::string& error);
     void NotifyCompletion(bool success);
     std::string GetInputDatasetName(const Node& node, ExecutionContext& ctx);
+
+    // Phase 7: Improved error messages with suggestions
+    std::string GetImprovedErrorMessage(const std::string& node_type, const std::string& error_category, const std::string& details = "");
 };
 
 } // namespace cyxwiz

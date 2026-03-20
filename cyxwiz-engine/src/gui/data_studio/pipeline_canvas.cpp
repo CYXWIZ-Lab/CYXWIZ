@@ -1,7 +1,12 @@
 #include "pipeline_canvas.h"
 #include "pipeline_executor.h"
+#include "gui/icons.h"
+#include "core/file_dialogs.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
+#include <fstream>
+#include <chrono>
+#include <iomanip>
 
 namespace cyxwiz {
 
@@ -46,37 +51,11 @@ void PipelineCanvas::Render() {
     // Set Data Studio ImNodes context
     ImNodes::SetCurrentContext(context_);
 
+    // Phase 7: Render toolbar with Save/Load buttons
+    RenderToolbar();
+
     // Begin ImNodes editor
     ImNodes::BeginNodeEditor();
-
-    // Render node palette button
-    if (ImGui::Button("Add Node")) {
-        show_node_palette_ = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Execute Pipeline")) {
-        ExecutePipeline();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Clear")) {
-        Clear();
-    }
-
-    // Phase 5 Week 7: Deploy button (only show if deployment is ready)
-    if (executor_ && executor_->IsDeploymentReady()) {
-        ImGui::SameLine();
-        ImGui::Spacing();
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.2f, 1.0f));
-        if (ImGui::Button("Deploy to Node Editor")) {
-            // Signal to DataStudioPanel that deployment should happen
-            deployment_requested_ = true;
-            spdlog::info("[Data Studio] Deploy to Node Editor requested");
-        }
-        ImGui::PopStyleColor(3);
-    }
 
     // Render all nodes
     for (const auto& node : nodes_) {
@@ -136,13 +115,22 @@ void PipelineCanvas::RenderNode(const Node& node) {
     ImNodes::EndOutputAttribute();
 
     ImNodes::EndNode();
+
+    // Phase 7: Show tooltip when hovering over node
+    int hovered_id = node.id;
+    if (ImNodes::IsNodeHovered(&hovered_id) && hovered_id == node.id) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(GetNodeTooltip(node.type).c_str());
+        ImGui::EndTooltip();
+    }
 }
 
 void PipelineCanvas::RenderNodePalette() {
     ImGui::OpenPopup("Add Node");
 
     if (ImGui::BeginPopup("Add Node")) {
-        ImGui::Text("Data Sources");
+        // Phase 7: Data Input/Output category with icon
+        ImGui::Text(ICON_FA_DATABASE " Data Input/Output");
         ImGui::Separator();
         if (ImGui::Selectable("File Input")) {
             AddNode("FileInput", ImGui::GetMousePos());
@@ -152,9 +140,14 @@ void PipelineCanvas::RenderNodePalette() {
             AddNode("ArrowDataset", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
+        if (ImGui::Selectable("Save Dataset")) {
+            AddNode("SaveDataset", ImGui::GetMousePos());
+            show_node_palette_ = false;
+        }
 
         ImGui::Spacing();
-        ImGui::Text("Transformations");
+        // Phase 7: Tabular Operations category with icon
+        ImGui::Text(ICON_FA_TABLE " Tabular Operations");
         ImGui::Separator();
         if (ImGui::Selectable("Filter Rows")) {
             AddNode("FilterRows", ImGui::GetMousePos());
@@ -169,9 +162,9 @@ void PipelineCanvas::RenderNodePalette() {
             show_node_palette_ = false;
         }
 
-        // Phase 6 Week 8-9: Text Processing
+        // Phase 6 Week 8-9: Text Processing with icon
         ImGui::Spacing();
-        ImGui::Text("Text Processing");
+        ImGui::Text(ICON_FA_FILE_LINES " Text Processing");
         ImGui::Separator();
         if (ImGui::Selectable("Text Clean")) {
             AddNode("TextClean", ImGui::GetMousePos());
@@ -186,9 +179,9 @@ void PipelineCanvas::RenderNodePalette() {
             show_node_palette_ = false;
         }
 
-        // Phase 6 Week 8-9: Time-Series
+        // Phase 6 Week 8-9: Time-Series with icon
         ImGui::Spacing();
-        ImGui::Text("Time-Series");
+        ImGui::Text(ICON_FA_CHART_LINE " Time-Series");
         ImGui::Separator();
         if (ImGui::Selectable("TS Window")) {
             AddNode("TSWindow", ImGui::GetMousePos());
@@ -207,9 +200,9 @@ void PipelineCanvas::RenderNodePalette() {
             show_node_palette_ = false;
         }
 
-        // Phase 6 Week 8-9: Feature Engineering
+        // Phase 6 Week 8-9: Feature Engineering with icon
         ImGui::Spacing();
-        ImGui::Text("Feature Engineering");
+        ImGui::Text(ICON_FA_GEARS " Feature Engineering");
         ImGui::Separator();
         if (ImGui::Selectable("PCA")) {
             AddNode("PCA", ImGui::GetMousePos());
@@ -221,14 +214,6 @@ void PipelineCanvas::RenderNodePalette() {
         }
         if (ImGui::Selectable("Binning")) {
             AddNode("Binning", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-
-        ImGui::Spacing();
-        ImGui::Text("Output");
-        ImGui::Separator();
-        if (ImGui::Selectable("Save Dataset")) {
-            AddNode("SaveDataset", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
 
@@ -430,6 +415,18 @@ bool PipelineCanvas::HasCycles() const {
 
 std::string PipelineCanvas::SerializePipeline() const {
     nlohmann::json j;
+
+    // Phase 7: Add metadata
+    j["version"] = "1.0";
+    j["name"] = pipeline_name_.empty() ? "Untitled Pipeline" : pipeline_name_;
+
+    // Add timestamp
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&time_t_now), "%Y-%m-%dT%H:%M:%S");
+    j["created"] = ss.str();
+
     j["nodes"] = nlohmann::json::array();
     j["links"] = nlohmann::json::array();
 
@@ -438,6 +435,12 @@ std::string PipelineCanvas::SerializePipeline() const {
         node_json["id"] = node.id;
         node_json["type"] = node.type;
         node_json["name"] = node.name;
+
+        // Phase 7: Save node position
+        ImVec2 pos = ImNodes::GetNodeEditorSpacePos(node.id);
+        node_json["position"]["x"] = pos.x;
+        node_json["position"]["y"] = pos.y;
+
         node_json["parameters"] = node.parameters;
         j["nodes"].push_back(node_json);
     }
@@ -447,6 +450,8 @@ std::string PipelineCanvas::SerializePipeline() const {
         link_json["id"] = link.id;
         link_json["start_node"] = link.start_node_id;
         link_json["end_node"] = link.end_node_id;
+        link_json["start_pin"] = link.start_attr;
+        link_json["end_pin"] = link.end_attr;
         j["links"].push_back(link_json);
     }
 
@@ -459,6 +464,18 @@ bool PipelineCanvas::LoadPipeline(const std::string& json) {
 
         Clear();
 
+        // Phase 7: Load metadata
+        if (j.contains("version")) {
+            std::string version = j["version"];
+            if (version != "1.0") {
+                spdlog::warn("[Data Studio] Pipeline version {} may not be fully compatible", version);
+            }
+        }
+
+        if (j.contains("name")) {
+            pipeline_name_ = j["name"];
+        }
+
         // Load nodes
         for (const auto& node_json : j["nodes"]) {
             Node node;
@@ -466,7 +483,20 @@ bool PipelineCanvas::LoadPipeline(const std::string& json) {
             node.type = node_json["type"];
             node.name = node_json["name"];
             node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+
+            // Phase 7: Load node position if available
+            if (node_json.contains("position")) {
+                float x = node_json["position"]["x"];
+                float y = node_json["position"]["y"];
+                node.position = ImVec2(x, y);
+            } else {
+                node.position = ImVec2(0, 0);
+            }
+
             nodes_.push_back(node);
+
+            // Restore node position in ImNodes
+            ImNodes::SetNodeScreenSpacePos(node.id, node.position);
 
             if (node.id >= next_node_id_) {
                 next_node_id_ = node.id + 1;
@@ -479,8 +509,17 @@ bool PipelineCanvas::LoadPipeline(const std::string& json) {
             link.id = link_json["id"];
             link.start_node_id = link_json["start_node"];
             link.end_node_id = link_json["end_node"];
-            link.start_attr = link.start_node_id * 1000 + 1;
-            link.end_attr = link.end_node_id * 1000;
+
+            // Phase 7: Use saved pin IDs if available
+            if (link_json.contains("start_pin") && link_json.contains("end_pin")) {
+                link.start_attr = link_json["start_pin"];
+                link.end_attr = link_json["end_pin"];
+            } else {
+                // Fallback to old calculation
+                link.start_attr = link.start_node_id * 1000 + 1;
+                link.end_attr = link.end_node_id * 1000;
+            }
+
             links_.push_back(link);
 
             if (link.id >= next_link_id_) {
@@ -488,8 +527,8 @@ bool PipelineCanvas::LoadPipeline(const std::string& json) {
             }
         }
 
-        spdlog::info("[Data Studio] Loaded pipeline with {} nodes, {} links",
-                     nodes_.size(), links_.size());
+        spdlog::info("[Data Studio] Loaded pipeline '{}' with {} nodes, {} links",
+                     pipeline_name_, nodes_.size(), links_.size());
         return true;
 
     } catch (const std::exception& e) {
@@ -516,6 +555,207 @@ std::string PipelineCanvas::GetDeploymentDataset() const {
 void PipelineCanvas::ClearDeploymentStatus() {
     if (executor_) {
         executor_->ClearDeploymentStatus();
+    }
+}
+
+// ============================================================================
+// Phase 7 Week 10 - Save/Load & Polish
+// ============================================================================
+
+bool PipelineCanvas::SavePipelineToFile(const std::string& filepath) {
+    try {
+        std::string json = SerializePipeline();
+        std::ofstream file(filepath);
+        if (!file.is_open()) {
+            spdlog::error("[Data Studio] Failed to open file for writing: {}", filepath);
+            return false;
+        }
+        file << json;
+        file.close();
+
+        spdlog::info("[Data Studio] Saved pipeline to: {}", filepath);
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::error("[Data Studio] Failed to save pipeline: {}", e.what());
+        return false;
+    }
+}
+
+bool PipelineCanvas::LoadPipelineFromFile(const std::string& filepath) {
+    try {
+        std::ifstream file(filepath);
+        if (!file.is_open()) {
+            spdlog::error("[Data Studio] Failed to open file for reading: {}", filepath);
+            return false;
+        }
+
+        std::string json((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+        file.close();
+
+        bool success = LoadPipeline(json);
+        if (success) {
+            spdlog::info("[Data Studio] Loaded pipeline from: {}", filepath);
+        }
+        return success;
+    } catch (const std::exception& e) {
+        spdlog::error("[Data Studio] Failed to load pipeline: {}", e.what());
+        return false;
+    }
+}
+
+void PipelineCanvas::RenderToolbar() {
+    // Save button
+    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save Pipeline")) {
+        auto result = FileDialogs::SaveFile(
+            "Save Pipeline",
+            {{"Data Pipeline", "json"}},
+            nullptr,
+            "pipeline.json"
+        );
+        if (result) {
+            SavePipelineToFile(*result);
+        }
+    }
+
+    ImGui::SameLine();
+
+    // Load button
+    if (ImGui::Button(ICON_FA_FOLDER_OPEN " Load Pipeline")) {
+        auto result = FileDialogs::OpenFile(
+            "Load Pipeline",
+            {{"Data Pipeline", "json"}}
+        );
+        if (result) {
+            LoadPipelineFromFile(*result);
+        }
+    }
+
+    ImGui::SameLine();
+    ImGui::Separator();
+    ImGui::SameLine();
+
+    // Add Node button
+    if (ImGui::Button(ICON_FA_PLUS " Add Node")) {
+        show_node_palette_ = true;
+    }
+
+    ImGui::SameLine();
+
+    // Execute Pipeline button
+    if (ImGui::Button(ICON_FA_PLAY " Execute Pipeline")) {
+        ExecutePipeline();
+    }
+
+    ImGui::SameLine();
+
+    // Clear button
+    if (ImGui::Button(ICON_FA_TRASH " Clear")) {
+        Clear();
+    }
+
+    // Phase 5 Week 7: Deploy button (only show if deployment is ready)
+    if (executor_ && executor_->IsDeploymentReady()) {
+        ImGui::SameLine();
+        ImGui::Spacing();
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.2f, 1.0f));
+        if (ImGui::Button(ICON_FA_ROCKET " Deploy to Node Editor")) {
+            // Signal to DataStudioPanel that deployment should happen
+            deployment_requested_ = true;
+            spdlog::info("[Data Studio] Deploy to Node Editor requested");
+        }
+        ImGui::PopStyleColor(3);
+    }
+
+    // Display pipeline name if set
+    if (!pipeline_name_.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("| Pipeline: %s", pipeline_name_.c_str());
+    }
+}
+
+std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
+    // Phase 7: Comprehensive tooltips for all node types
+    if (node_type == "FileInput") {
+        return "Load data from CSV, Excel, Parquet, or HDF5 files\n"
+               "Output: Dataset";
+    } else if (node_type == "ArrowDataset") {
+        return "Load an existing Arrow dataset from DataRegistry\n"
+               "Output: Dataset";
+    } else if (node_type == "SaveDataset") {
+        return "Save processed dataset to file or register for ML training\n"
+               "Input: Dataset\n"
+               "Formats: CSV, Parquet, HDF5, Arrow";
+    } else if (node_type == "FilterRows") {
+        return "Filter rows based on SQL WHERE condition\n"
+               "Example: age > 18 AND status = 'active'\n"
+               "Input: Dataset\n"
+               "Output: Filtered dataset";
+    } else if (node_type == "SelectColumns") {
+        return "Select specific columns from dataset\n"
+               "Example: id, name, price\n"
+               "Input: Dataset\n"
+               "Output: Dataset with selected columns";
+    } else if (node_type == "RemoveDuplicates") {
+        return "Remove duplicate rows from dataset\n"
+               "Uses all columns or specified columns for comparison\n"
+               "Input: Dataset\n"
+               "Output: Deduplicated dataset";
+    } else if (node_type == "TextClean") {
+        return "Remove HTML tags, special characters, and normalize text\n"
+               "Options: lowercase, remove HTML, remove special chars\n"
+               "Input: Dataset with text column\n"
+               "Output: Cleaned dataset";
+    } else if (node_type == "TextTokenize") {
+        return "Split text into tokens (words, sentences, or characters)\n"
+               "Methods: word, sentence, character\n"
+               "Input: Dataset with text column\n"
+               "Output: Tokenized dataset";
+    } else if (node_type == "TextVectorize") {
+        return "Convert text to numerical features\n"
+               "Features: text length, word count\n"
+               "Input: Dataset with text column\n"
+               "Output: Dataset with text features";
+    } else if (node_type == "TSWindow") {
+        return "Create sliding windows for time-series sequences\n"
+               "Useful for LSTM/GRU input preparation\n"
+               "Input: Time-series dataset\n"
+               "Output: Windowed dataset";
+    } else if (node_type == "TSFeatures") {
+        return "Compute rolling statistics over time windows\n"
+               "Features: mean, std, min, max\n"
+               "Input: Time-series dataset\n"
+               "Output: Dataset with rolling features";
+    } else if (node_type == "TSLag") {
+        return "Create lagged features (shifted values)\n"
+               "Example: lag_1, lag_7, lag_30 for daily data\n"
+               "Input: Time-series dataset\n"
+               "Output: Dataset with lag features";
+    } else if (node_type == "TSDiff") {
+        return "Compute differences between consecutive values\n"
+               "Useful for making time-series stationary\n"
+               "Input: Time-series dataset\n"
+               "Output: Differenced dataset";
+    } else if (node_type == "PCA") {
+        return "Dimensionality reduction using Principal Component Analysis\n"
+               "Reduces feature space while preserving variance\n"
+               "Input: Numeric dataset\n"
+               "Output: Transformed dataset";
+    } else if (node_type == "PolynomialFeatures") {
+        return "Generate polynomial features (x^2, x^3, etc.)\n"
+               "Useful for capturing non-linear relationships\n"
+               "Input: Numeric dataset\n"
+               "Output: Dataset with polynomial features";
+    } else if (node_type == "Binning") {
+        return "Discretize continuous values into bins\n"
+               "Methods: equal_width, equal_frequency\n"
+               "Input: Numeric dataset\n"
+               "Output: Binned dataset";
+    } else {
+        return "Unknown node type";
     }
 }
 
