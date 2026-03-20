@@ -116,6 +116,7 @@
 #include "panels/cloud_browser.h"
 #include "panels/cloud_dataset_manager.h"
 #include "panels/plugin_manager_panel.h"
+#include "data_studio/data_studio_panel.h"
 #include "../plugin/plugin_manager.h"
 #include "../plugin/registries/plugin_panel_registry.h"
 #include "tutorial/tutorial_system.h"
@@ -326,6 +327,9 @@ MainWindow::MainWindow()
 
     // Plugin Manager panel
     plugin_manager_panel_ = std::make_unique<cyxwiz::PluginManagerPanel>();
+
+    // Data Studio panel (Phase 1 Week 1)
+    data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();
 
     // Set NAS panel callbacks for node editor integration
     nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
@@ -2268,6 +2272,9 @@ void MainWindow::Render() {
 
     // Plugin Manager panel
     if (plugin_manager_panel_) plugin_manager_panel_->Render();
+
+    // Data Studio panel (Phase 1 Week 1)
+    if (data_studio_panel_) data_studio_panel_->Render();
 
     // Render plugin-provided panels
     cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();

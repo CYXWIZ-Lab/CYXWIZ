@@ -126,6 +126,8 @@ class JSONViewerPanel;
 class RegexTesterPanel;
 // Plugin Manager panel
 class PluginManagerPanel;
+// Data Studio panel (Phase 1 Week 1)
+class DataStudioPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -351,6 +353,9 @@ private:
 
     // Plugin Manager
     std::unique_ptr<cyxwiz::PluginManagerPanel> plugin_manager_panel_;
+
+    // Data Studio (Phase 1 Week 1)
+    std::unique_ptr<cyxwiz::DataStudioPanel> data_studio_panel_;
 
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;

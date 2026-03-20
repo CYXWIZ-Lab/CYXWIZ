@@ -330,6 +330,14 @@ set(ENGINE_SOURCES
     src/gui/panels/plugin_manager_panel.cpp
     src/gui/theme.cpp
     src/gui/dock_style.cpp
+    # Data Studio (Phase 1 Week 1)
+    src/gui/data_studio/pipeline_canvas.cpp
+    src/gui/data_studio/query_editor.cpp
+    src/gui/data_studio/analyzer.cpp
+    src/gui/data_studio/visualizer.cpp
+    src/gui/data_studio/data_studio_panel.cpp
+    src/gui/data_studio/pipeline_executor.cpp
+    src/gui/data_studio/node_registry.cpp
     # Plotting system
     src/plotting/plot_dataset.cpp
     src/plotting/plot_manager.cpp
@@ -514,6 +522,14 @@ set(ENGINE_HEADERS
     src/gui/panels/wallet_panel.h
     src/gui/theme.h
     src/gui/dock_style.h
+    # Data Studio (Phase 1 Week 1)
+    src/gui/data_studio/pipeline_canvas.h
+    src/gui/data_studio/query_editor.h
+    src/gui/data_studio/analyzer.h
+    src/gui/data_studio/visualizer.h
+    src/gui/data_studio/data_studio_panel.h
+    src/gui/data_studio/pipeline_executor.h
+    src/gui/data_studio/node_registry.h
     # Plotting system
     src/plotting/plot_dataset.h
     src/plotting/plot_manager.h
