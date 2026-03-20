@@ -6,6 +6,10 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <queue>
+#include <future>
+#include <thread>
+#include <chrono>
+#include <set>
 
 namespace cyxwiz {
 
@@ -13,6 +17,7 @@ PipelineExecutor::PipelineExecutor()
     : executing_(false)
     , progress_(0.0f)
     , stop_requested_(false)
+    , cancel_requested_(false)
     , deployment_ready_(false)
 {
     // Create DuckDB connector for SQL transformations
@@ -31,7 +36,9 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     executing_ = true;
     progress_ = 0.0f;
     stop_requested_ = false;
+    cancel_requested_ = false;
     last_error_ = "";
+    current_status_ = "Starting pipeline execution...";
     deployment_ready_ = false;
     deployment_dataset_.clear();
 
@@ -46,7 +53,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
         return false;
     }
 
-    UpdateProgress(0.1f);
+    UpdateProgress(0.1f, "Pipeline parsed successfully");
 
     // Validate pipeline
     if (!ValidatePipeline(nodes)) {
@@ -56,61 +63,33 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
         return false;
     }
 
-    UpdateProgress(0.2f);
+    UpdateProgress(0.2f, "Pipeline validated");
 
-    // Topological sort
-    auto execution_order = TopologicalSort(nodes);
-    if (execution_order.empty()) {
-        ReportError("Failed to determine execution order (pipeline may have cycles)");
+    // Phase 8: Mark nodes that need execution (lazy evaluation)
+    MarkDirtyNodes(nodes);
+
+    int nodes_to_execute = 0;
+    for (const auto& node : nodes) {
+        if (node.needs_execution) {
+            nodes_to_execute++;
+        }
+    }
+
+    spdlog::info("[Data Studio] Lazy evaluation: {} of {} nodes need execution",
+                 nodes_to_execute, nodes.size());
+    UpdateProgress(0.25f, "Marked " + std::to_string(nodes_to_execute) + " nodes for execution");
+
+    // Phase 8: Use parallel execution instead of sequential
+    if (!ExecuteParallel(nodes)) {
         executing_ = false;
         NotifyCompletion(false);
         return false;
     }
 
-    UpdateProgress(0.3f);
-
-    // Execute nodes in order
-    ExecutionContext ctx;
-    float progress_per_node = 0.7f / execution_order.size();
-
-    for (size_t i = 0; i < execution_order.size(); i++) {
-        if (stop_requested_) {
-            ReportError("Execution stopped by user");
-            executing_ = false;
-            NotifyCompletion(false);
-            return false;
-        }
-
-        int node_id = execution_order[i];
-        auto it = std::find_if(nodes.begin(), nodes.end(),
-                              [node_id](const Node& n) { return n.id == node_id; });
-
-        if (it == nodes.end()) {
-            ReportError("Node not found in pipeline");
-            executing_ = false;
-            NotifyCompletion(false);
-            return false;
-        }
-
-        if (!ExecuteNode(*it, ctx)) {
-            executing_ = false;
-            NotifyCompletion(false);
-            return false;
-        }
-
-        UpdateProgress(0.3f + (i + 1) * progress_per_node);
-    }
-
     executing_ = false;
-    UpdateProgress(1.0f);
+    UpdateProgress(1.0f, "Pipeline execution completed");
 
-    // Transfer deployment status from context to executor state
-    if (ctx.deployment_ready) {
-        deployment_ready_ = true;
-        deployment_dataset_ = ctx.deployment_dataset;
-        spdlog::info("[Data Studio] Deployment ready: '{}'", deployment_dataset_);
-    }
-
+    // Deployment status is set inside ExecuteParallel
     NotifyCompletion(true);
 
     spdlog::info("[Data Studio] Pipeline execution completed successfully");
@@ -124,12 +103,17 @@ void PipelineExecutor::StopExecution() {
     }
 }
 
-void PipelineExecutor::SetProgressCallback(std::function<void(float)> callback) {
+void PipelineExecutor::SetProgressCallback(std::function<void(float, const std::string&)> callback) {
     progress_callback_ = callback;
 }
 
 void PipelineExecutor::SetCompletionCallback(std::function<void(bool)> callback) {
     completion_callback_ = callback;
+}
+
+void PipelineExecutor::RequestCancel() {
+    cancel_requested_ = true;
+    spdlog::info("[Data Studio] Cancellation requested");
 }
 
 bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
@@ -918,10 +902,13 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
     }
 }
 
-void PipelineExecutor::UpdateProgress(float progress) {
+void PipelineExecutor::UpdateProgress(float progress, const std::string& status) {
     progress_ = progress;
+    if (!status.empty()) {
+        current_status_ = status;
+    }
     if (progress_callback_) {
-        progress_callback_(progress);
+        progress_callback_(progress, current_status_);
     }
 }
 
@@ -1734,6 +1721,275 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
         ReportError("Binning error: " + std::string(e.what()));
         return false;
     }
+}
+
+// ============================================================================
+// Phase 8: Performance Optimization Implementation
+// ============================================================================
+
+/* Memory Optimization Strategy (Streaming Mode)
+ *
+ * For large datasets (>1GB), we can implement chunk-based processing:
+ *
+ * 1. Check dataset size before loading:
+ *    if (file_size > memory_limit_) { streaming_mode_ = true; }
+ *
+ * 2. Use Arrow RecordBatch API instead of full Table:
+ *    auto reader = arrow::ipc::RecordBatchFileReader::Open(file);
+ *    for (int i = 0; i < reader->num_record_batches(); i++) {
+ *        auto batch = reader->ReadRecordBatch(i);
+ *        ProcessChunk(batch);  // Process in chunks
+ *    }
+ *
+ * 3. Example: Streaming RemoveDuplicates
+ *    std::unordered_set<std::string> seen_hashes;
+ *    for (int64_t offset = 0; offset < total_rows; offset += chunk_size_) {
+ *        auto batch = table->Slice(offset, chunk_size_);
+ *        for (int64_t i = 0; i < batch->num_rows(); i++) {
+ *            std::string row_hash = ComputeRowHash(batch, i);
+ *            if (seen_hashes.insert(row_hash).second) {
+ *                output_batches.push_back(batch->Slice(i, 1));
+ *            }
+ *        }
+ *        ReportProgress((float)offset / total_rows, "Deduplicating chunk...");
+ *    }
+ *
+ * 4. Combine output batches:
+ *    auto result = arrow::Table::FromRecordBatches(output_batches);
+ *
+ * This approach keeps memory usage bounded even for TB-scale datasets.
+ */
+
+uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
+    // Simple hash combining node type and parameters
+    // Using FNV-1a hash algorithm for fast hashing
+    uint64_t hash = 14695981039346656037ULL;  // FNV offset basis
+    const uint64_t prime = 1099511628211ULL;  // FNV prime
+
+    // Hash node type
+    for (char c : node.type) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= prime;
+    }
+
+    // Hash all parameters (sorted for consistency)
+    std::vector<std::pair<std::string, std::string>> sorted_params(
+        node.parameters.begin(), node.parameters.end());
+    std::sort(sorted_params.begin(), sorted_params.end());
+
+    for (const auto& [key, value] : sorted_params) {
+        for (char c : key) {
+            hash ^= static_cast<uint64_t>(c);
+            hash *= prime;
+        }
+        for (char c : value) {
+            hash ^= static_cast<uint64_t>(c);
+            hash *= prime;
+        }
+    }
+
+    return hash;
+}
+
+void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
+    // Step 1: Mark nodes whose parameters changed
+    for (auto& node : nodes) {
+        uint64_t current_hash = ComputeNodeHash(node);
+        if (current_hash != node.last_execution_hash) {
+            node.needs_execution = true;
+            node.last_execution_hash = current_hash;
+            spdlog::debug("[Data Studio] Node {} marked dirty (parameters changed)", node.name);
+        } else {
+            node.needs_execution = false;
+            spdlog::debug("[Data Studio] Node {} cache valid", node.name);
+        }
+    }
+
+    // Step 2: Propagate dirty flag to downstream nodes
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto& node : nodes) {
+            if (!node.needs_execution) {
+                // Check if any input node is dirty
+                for (int input_id : node.inputs) {
+                    const auto* input_node = FindNodeById(nodes, input_id);
+                    if (input_node && input_node->needs_execution) {
+                        node.needs_execution = true;
+                        changed = true;
+                        spdlog::debug("[Data Studio] Node {} marked dirty (upstream dependency changed)",
+                                     node.name);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+std::vector<int> PipelineExecutor::FindReadyNodes(
+    const std::vector<Node>& nodes,
+    const std::set<int>& completed) const {
+
+    std::vector<int> ready;
+
+    for (const auto& node : nodes) {
+        // Skip if already completed
+        if (completed.find(node.id) != completed.end()) {
+            continue;
+        }
+
+        // Skip if doesn't need execution (cached)
+        if (!node.needs_execution) {
+            continue;
+        }
+
+        // Check if all input nodes are completed
+        bool all_inputs_ready = true;
+        for (int input_id : node.inputs) {
+            if (completed.find(input_id) == completed.end()) {
+                all_inputs_ready = false;
+                break;
+            }
+        }
+
+        if (all_inputs_ready) {
+            ready.push_back(node.id);
+        }
+    }
+
+    return ready;
+}
+
+bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
+    std::set<int> completed;
+    std::set<int> executing;
+    ExecutionContext ctx;
+
+    int total_nodes_to_execute = 0;
+    for (const auto& node : nodes) {
+        if (node.needs_execution) {
+            total_nodes_to_execute++;
+        } else {
+            // Node doesn't need execution, use cached result
+            if (!node.cached_output_dataset.empty()) {
+                ctx.node_results[node.id] = node.cached_output_dataset;
+                spdlog::info("[Data Studio] Using cached result for node: {}", node.name);
+            }
+            completed.insert(node.id);
+        }
+    }
+
+    if (total_nodes_to_execute == 0) {
+        spdlog::info("[Data Studio] All nodes up-to-date, using cached results");
+        UpdateProgress(1.0f, "All nodes up-to-date");
+        return true;
+    }
+
+    int nodes_executed = 0;
+    float base_progress = 0.3f;
+    float progress_range = 0.7f;
+
+    while (completed.size() < nodes.size()) {
+        // Check for cancellation
+        if (cancel_requested_) {
+            ReportError("Pipeline execution cancelled by user");
+            return false;
+        }
+
+        // Find nodes ready to execute
+        auto ready = FindReadyNodes(nodes, completed);
+
+        if (ready.empty() && executing.empty()) {
+            // Deadlock or cycle detected
+            ReportError("Pipeline execution stuck (possible cycle or missing dependencies)");
+            return false;
+        }
+
+        if (ready.empty()) {
+            // Wait a bit for executing nodes to complete
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        // Execute ready nodes in parallel (up to 4 concurrent for now)
+        const size_t max_parallel = std::min<size_t>(4, ready.size());
+        std::vector<std::future<bool>> futures;
+        std::vector<int> batch_node_ids;
+
+        for (size_t i = 0; i < max_parallel && i < ready.size(); i++) {
+            int node_id = ready[i];
+            auto* node = FindNodeById(nodes, node_id);
+            if (!node) continue;
+
+            batch_node_ids.push_back(node_id);
+            executing.insert(node_id);
+
+            // Execute node asynchronously
+            futures.push_back(std::async(std::launch::async,
+                [this, node, &ctx]() mutable {
+                    return ExecuteNode(*node, ctx);
+                }
+            ));
+
+            spdlog::info("[Data Studio] Started executing node: {} (parallel batch)", node->name);
+        }
+
+        // Wait for batch to complete
+        for (size_t i = 0; i < futures.size(); i++) {
+            bool success = futures[i].get();
+            int node_id = batch_node_ids[i];
+            auto* node = FindNodeById(nodes, node_id);
+
+            executing.erase(node_id);
+
+            if (success && node) {
+                completed.insert(node_id);
+                nodes_executed++;
+
+                // Cache the output dataset name
+                auto result_it = ctx.node_results.find(node_id);
+                if (result_it != ctx.node_results.end()) {
+                    node->cached_output_dataset = result_it->second;
+                }
+
+                float progress = base_progress +
+                    (progress_range * nodes_executed / total_nodes_to_execute);
+                UpdateProgress(progress,
+                    "Completed " + node->name + " (" +
+                    std::to_string(nodes_executed) + "/" +
+                    std::to_string(total_nodes_to_execute) + ")");
+
+                spdlog::info("[Data Studio] Completed node: {} ({}/{})",
+                           node->name, nodes_executed, total_nodes_to_execute);
+            } else {
+                // Execution failed
+                return false;
+            }
+        }
+    }
+
+    // Transfer deployment status from context to executor state
+    if (ctx.deployment_ready) {
+        deployment_ready_ = true;
+        deployment_dataset_ = ctx.deployment_dataset;
+        spdlog::info("[Data Studio] Deployment ready: '{}'", deployment_dataset_);
+    }
+
+    return true;
+}
+
+PipelineExecutor::Node* PipelineExecutor::FindNodeById(std::vector<Node>& nodes, int node_id) {
+    auto it = std::find_if(nodes.begin(), nodes.end(),
+                          [node_id](const Node& n) { return n.id == node_id; });
+    return (it != nodes.end()) ? &(*it) : nullptr;
+}
+
+const PipelineExecutor::Node* PipelineExecutor::FindNodeById(
+    const std::vector<Node>& nodes, int node_id) const {
+    auto it = std::find_if(nodes.begin(), nodes.end(),
+                          [node_id](const Node& n) { return n.id == node_id; });
+    return (it != nodes.end()) ? &(*it) : nullptr;
 }
 
 } // namespace cyxwiz

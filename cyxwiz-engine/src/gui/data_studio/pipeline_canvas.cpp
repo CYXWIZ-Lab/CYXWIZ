@@ -17,6 +17,8 @@ PipelineCanvas::PipelineCanvas()
     , show_node_palette_(false)
     , selected_node_id_(-1)
     , deployment_requested_(false)
+    , execution_progress_(0.0f)
+    , execution_status_("Ready")
 {
     // Create separate ImNodes context for Data Studio
     // (separate from ML Node Editor context)
@@ -37,6 +39,12 @@ PipelineCanvas::PipelineCanvas()
 
     // Create pipeline executor
     executor_ = std::make_unique<PipelineExecutor>();
+
+    // Phase 8: Set up progress callback
+    executor_->SetProgressCallback([this](float progress, const std::string& status) {
+        execution_progress_ = progress;
+        execution_status_ = status;
+    });
 
     spdlog::info("[Data Studio] PipelineCanvas initialized");
 }
@@ -642,9 +650,21 @@ void PipelineCanvas::RenderToolbar() {
 
     ImGui::SameLine();
 
-    // Execute Pipeline button
-    if (ImGui::Button(ICON_FA_PLAY " Execute Pipeline")) {
-        ExecutePipeline();
+    // Phase 8: Execute or Cancel button depending on execution state
+    if (executor_ && executor_->IsExecuting()) {
+        // Cancel button (red style)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
+        if (ImGui::Button(ICON_FA_STOP " Cancel")) {
+            executor_->RequestCancel();
+        }
+        ImGui::PopStyleColor(3);
+    } else {
+        // Execute button
+        if (ImGui::Button(ICON_FA_PLAY " Execute Pipeline")) {
+            ExecutePipeline();
+        }
     }
 
     ImGui::SameLine();
@@ -674,6 +694,17 @@ void PipelineCanvas::RenderToolbar() {
     if (!pipeline_name_.empty()) {
         ImGui::SameLine();
         ImGui::TextDisabled("| Pipeline: %s", pipeline_name_.c_str());
+    }
+
+    // Phase 8: Show progress bar when executing
+    if (executor_ && executor_->IsExecuting()) {
+        ImGui::Separator();
+
+        // Progress bar
+        ImGui::ProgressBar(execution_progress_, ImVec2(-1, 0));
+
+        // Status message
+        ImGui::TextWrapped("%s", execution_status_.c_str());
     }
 }
 

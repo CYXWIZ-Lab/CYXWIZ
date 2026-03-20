@@ -149,6 +149,10 @@ private:
     // Pipeline execution
     std::unique_ptr<PipelineExecutor> executor_;
 
+    // Phase 8: Execution progress tracking
+    float execution_progress_;
+    std::string execution_status_;
+
     // Rendering helpers
     void RenderNodePalette();
     void RenderNode(const Node& node);

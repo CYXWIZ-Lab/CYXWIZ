@@ -5,6 +5,8 @@
 #include <map>
 #include <memory>
 #include <functional>
+#include <atomic>
+#include <set>
 
 namespace cyxwiz {
 
@@ -82,16 +84,26 @@ public:
     }
 
     /**
-     * Register a progress callback
+     * Register a progress callback (Phase 8: Enhanced with status messages)
      * Called periodically during execution with progress updates
      */
-    void SetProgressCallback(std::function<void(float)> callback);
+    void SetProgressCallback(std::function<void(float, const std::string&)> callback);
 
     /**
      * Register a completion callback
      * Called when pipeline execution finishes (success or failure)
      */
     void SetCompletionCallback(std::function<void(bool)> callback);
+
+    /**
+     * Request cancellation of the current pipeline execution (Phase 8)
+     */
+    void RequestCancel();
+
+    /**
+     * Check if execution was cancelled (Phase 8)
+     */
+    bool IsCancelled() const { return cancel_requested_; }
 
 private:
     struct Node {
@@ -101,6 +113,11 @@ private:
         std::map<std::string, std::string> parameters;
         std::vector<int> inputs;   // Input node IDs
         std::vector<int> outputs;  // Output node IDs
+
+        // Phase 8: Lazy evaluation support
+        bool needs_execution = true;        // Dirty flag for change tracking
+        uint64_t last_execution_hash = 0;   // Hash of parameters for change detection
+        std::string cached_output_dataset;  // Result from last successful execution
     };
 
     struct ExecutionContext {
@@ -116,13 +133,15 @@ private:
     float progress_;
     std::string last_error_;
     bool stop_requested_;
+    std::atomic<bool> cancel_requested_;  // Phase 8: Atomic cancellation flag
+    std::string current_status_;          // Phase 8: Current execution status message
 
     // Deployment state (Phase 5 Week 7)
     bool deployment_ready_;
     std::string deployment_dataset_;
 
     // Callbacks
-    std::function<void(float)> progress_callback_;
+    std::function<void(float, const std::string&)> progress_callback_;  // Phase 8: Enhanced with status message
     std::function<void(bool)> completion_callback_;
 
     // DuckDB connector for SQL transformations
@@ -167,13 +186,27 @@ private:
     bool ExecuteBinning(const Node& node, ExecutionContext& ctx);
 
     // Helper methods
-    void UpdateProgress(float progress);
+    void UpdateProgress(float progress, const std::string& status = "");  // Phase 8: Added status parameter
     void ReportError(const std::string& error);
     void NotifyCompletion(bool success);
     std::string GetInputDatasetName(const Node& node, ExecutionContext& ctx);
 
     // Phase 7: Improved error messages with suggestions
     std::string GetImprovedErrorMessage(const std::string& node_type, const std::string& error_category, const std::string& details = "");
+
+    // Phase 8: Performance optimization helpers
+    uint64_t ComputeNodeHash(const Node& node) const;
+    void MarkDirtyNodes(std::vector<Node>& nodes);
+    std::vector<int> FindReadyNodes(const std::vector<Node>& nodes, const std::set<int>& completed) const;
+    bool ExecuteParallel(std::vector<Node>& nodes);
+    Node* FindNodeById(std::vector<Node>& nodes, int node_id);
+    const Node* FindNodeById(const std::vector<Node>& nodes, int node_id) const;
+
+    // Phase 8: Memory optimization (future enhancement)
+    // These settings control streaming behavior for large datasets
+    bool streaming_mode_ = false;        // Enable chunk-based processing
+    int64_t chunk_size_ = 100000;        // Rows per chunk for streaming
+    int64_t memory_limit_ = 2147483648;  // 2GB max memory per operation
 };
 
 } // namespace cyxwiz
