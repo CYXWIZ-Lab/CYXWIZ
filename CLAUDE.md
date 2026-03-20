@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current Work Status (Updated: 2026-02-04)
+## Current Work Status (Updated: 2026-03-21)
 
 ### CyxWiz Engine - Plugin System ✅ (UPDATED)
 
@@ -120,6 +120,96 @@ plugins/simulation/mujoco/
 - Simulation executor (real-time physics stepping from node graph)
 - RL training executor (episode loop with live 3D visualization)
 - MuJoCo Menagerie library (70+ robot models, bundled + downloadable)
+
+---
+
+### CyxWiz Engine - Unified Canvas Architecture ✅ (COMPLETE)
+
+**KNIME-inspired unified canvas merging Node Editor and Data Studio Pipeline:**
+
+- ✅ **Phase 5**: Data Studio Simplification — Removed duplicate Pipeline Canvas, moved to Node Editor
+- ✅ **Phase 6**: UI/UX Improvements — Execution state visualization, node/pin tooltips
+- ✅ **Phase 7**: Save/Load Integration — Extended .cyxgraph v2.0 format with execution_mode
+
+**Architecture:**
+```
+Unified Node Editor (node_editor.cpp/h)
+  ├── ExecutionMode: CodeGeneration | DuckDBPipeline | LocalTraining
+  ├── NodeCategory: Input | Transform | ML | RL | Visualization | Output
+  ├── PipelineExecutor: DuckDB/Arrow backend for data pipelines
+  ├── Execution Visualization: Pulsing animation, state colors
+  └── Enhanced Tooltips: Pin types, connection status, node state
+```
+
+**Execution States:**
+| State | Visual | Tooltip |
+|-------|--------|---------|
+| Idle | Default color | "Ready" |
+| Pending | Queue indicator | "Waiting to execute" |
+| Executing | Pulsing blue border | "Executing..." |
+| Completed | Green checkmark | "Completed successfully" |
+| Error | Red X | Error message displayed |
+
+**File Format v2.0:**
+```json
+{
+  "version": "2.0",
+  "framework": 0,
+  "execution_mode": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "DataInput",
+      "category": 0,
+      "pos_x": 100.0,
+      "pos_y": 100.0,
+      "properties": {}
+    }
+  ],
+  "links": []
+}
+```
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/gui/node_editor.h` | NodeExecutionState enum, execution visualization state |
+| `src/gui/node_editor.cpp` | Execution state rendering, enhanced tooltips |
+| `src/gui/node_editor_io.cpp` | Save/load v2.0 format with backward compatibility |
+| `src/gui/data_studio/data_studio_panel.cpp` | Simplified (removed pipeline_canvas_) |
+| `src/gui/data_studio/data_studio_panel.h` | Simplified (removed pipeline_canvas_) |
+| `docs/Data Studio/knime_comparison.md` | Comprehensive KNIME feature comparison |
+
+**KNIME Comparison:**
+- ✅ **Similarities**: Visual node editor, drag-drop, execution engine, professional UI
+- ✅ **Differentiators**: GPU training, multi-framework code gen, RL support, P2P compute
+- 🔲 **Gaps**: Interactive data preview, database connectors, loop nodes, annotations
+- 📋 **Roadmap**: Phase 8 planned for KNIME parity features
+
+**Phase 5 Changes:**
+- Removed `PipelineCanvas` class from Data Studio
+- Moved visual pipeline editing to Node Editor with ExecutionMode switch
+- Updated Data Studio to focus on Query/Analyze/Visualize tabs only
+- Added tooltip in Data Studio toolbar directing users to Node Editor for pipelines
+
+**Phase 6 Changes:**
+- Added `NodeExecutionState` enum (Idle, Pending, Executing, Completed, Error)
+- Implemented pulsing animation for executing nodes (blue glow effect)
+- Added state-based node coloring (green for completed, red for error)
+- Added pin tooltips showing type (Tensor, Labels, Parameters, Loss, Optimizer, Dataset)
+- Added pin tooltips showing connection status (connected/not connected)
+- Enhanced node tooltips with execution state and error messages
+
+**Phase 7 Changes:**
+- Extended .cyxgraph format to v2.0 with `execution_mode` field
+- Added `category` field to each node for better organization
+- Implemented backward compatibility for v1.0 files (auto-detects version)
+- v1.0 files load with default `CodeGeneration` mode
+
+**Branch Status:**
+- Branch: `unified-canvas`
+- Status: Complete, tested, pushed to origin
+- Ready to merge to `master`
 
 ---
 
@@ -772,17 +862,20 @@ src/
 - **Table Viewer**: Multi-tab data viewer for CSV/Excel/HDF5 files with async loading, pagination, filtering, and export
 - **Dataset Manager**: Dataset configuration with memory management (LRU eviction via TrimMemory), schema configuration for custom data formats
 - **Async Task System**: Background task execution with progress reporting via AsyncTaskManager
-- **Node Editor**: Visual ML pipeline builder with ImNodes, code generation (PyTorch, TensorFlow, Keras, PyCyxWiz), DataInput node shows loaded dataset name
+- **Unified Canvas**: KNIME-inspired node editor with 3 execution modes (CodeGeneration, DuckDBPipeline, LocalTraining), execution state visualization, enhanced tooltips, .cyxgraph v2.0 format
+- **Node Editor**: Visual ML pipeline builder with ImNodes, code generation (PyTorch, TensorFlow, Keras, PyCyxWiz), DataInput node shows loaded dataset name, execution state tracking
 - **Data Augmentation**: 13 transform presets (ImageNet, CIFAR-10, Medical, Self-Supervised, etc.) with live preview
 - **Local Training**: TrainingExecutor with Sequential model support, real-time loss/accuracy plotting
 - **Properties Panel**: Dynamic shape inference for node connections, editable layer parameters
 - **Annotation System**: Production annotation workflow with batch navigation, class management, COCO/YOLO/VOC export, and training integration via `GetAnnotatedBatch()`
+- **Data Studio**: Simplified panel focused on Query/Analyze/Visualize tabs (pipeline editing moved to Unified Canvas)
 
 **TODO Features** (marked in code):
 - Import/Export model formats (ONNX, PyTorch, TensorFlow)
-- Training controls (Pause, Stop - Start implemented)
-- Server connection and job submission
+- ~~Training controls (Pause, Stop - Start implemented)~~ ✅ DONE - Full P2P training controls
+- ~~Server connection and job submission~~ ✅ DONE - P2P training with Server Node
 - Preferences/Settings dialog
+- Phase 8: KNIME Parity (data preview, database connectors, loop nodes, annotations, subgraphs)
 
 ### cyxwiz-server-node/ (Compute Worker)
 
@@ -1110,19 +1203,21 @@ cd vcpkg
 
 High-priority tasks marked with `// TODO:` throughout codebase:
 
-1. ~~**ImNodes Integration**~~ - Visual node editor (DONE - full pipeline builder with code generation)
-2. ~~**ImPlot Integration**~~ - Real-time training plots (DONE - PlotWindow implemented)
-3. ~~**Training Controls**~~ - Start/Pause/Resume/Stop training (DONE - full P2P implementation)
-4. ~~**P2P Training**~~ - Direct Engine↔Node communication (DONE - bidirectional streaming)
-5. ~~**Multi-Job Training**~~ - Multiple jobs per reservation (DONE - unlimited jobs within reserved time)
-6. ~~**Job Execution**~~ - Complete job executor in Server Node (DONE - real training with RemoteDataLoader)
-7. ~~**Authentication**~~ - JWT tokens for gRPC (DONE - P2P auth tokens implemented)
-8. **btop Integration** - Server Node monitoring TUI
-9. **Blockchain Integration** - Solana payment processor (escrow/payment release)
-10. **Docker Support** - Containerized job execution
-11. **Model Marketplace** - NFT-based model sharing
-12. **Federated Learning** - Privacy-preserving training
-13. **Import/Export** - ONNX, PyTorch, TensorFlow model formats
+1. ~~**ImNodes Integration**~~ ✅ - Visual node editor (DONE - full pipeline builder with code generation)
+2. ~~**ImPlot Integration**~~ ✅ - Real-time training plots (DONE - PlotWindow implemented)
+3. ~~**Training Controls**~~ ✅ - Start/Pause/Resume/Stop training (DONE - full P2P implementation)
+4. ~~**P2P Training**~~ ✅ - Direct Engine↔Node communication (DONE - bidirectional streaming)
+5. ~~**Multi-Job Training**~~ ✅ - Multiple jobs per reservation (DONE - unlimited jobs within reserved time)
+6. ~~**Job Execution**~~ ✅ - Complete job executor in Server Node (DONE - real training with RemoteDataLoader)
+7. ~~**Authentication**~~ ✅ - JWT tokens for gRPC (DONE - P2P auth tokens implemented)
+8. ~~**Unified Canvas**~~ ✅ - KNIME-inspired architecture (DONE - Phases 5-7 complete)
+9. **Phase 8: KNIME Parity** - Interactive data preview, database connectors, loop nodes, workflow annotations, subgraphs
+10. **btop Integration** - Server Node monitoring TUI
+11. **Blockchain Integration** - Solana payment processor (escrow/payment release)
+12. **Docker Support** - Containerized job execution
+13. **Model Marketplace** - NFT-based model sharing
+14. **Federated Learning** - Privacy-preserving training
+15. **Import/Export** - ONNX, PyTorch, TensorFlow model formats
 
 ## Quick Reference
 
@@ -1137,6 +1232,7 @@ High-priority tasks marked with `// TODO:` throughout codebase:
 - **Plugin system**: `cyxwiz-engine/src/plugin/` (loader, manager, context, registries, security)
 - **Plugin examples**: `plugins/examples/` (mlflow_logger, image_nodes)
 - **Plugin docs**: `docs/plugin_developer_guide.md`
+- **Data Studio docs**: `docs/Data Studio/` (knime_comparison.md, architecture)
 - **Build output**: `build/<preset>/bin/` and `build/<preset>/lib/`
 - **Tests**: `tests/unit/*.cpp`
 - **Resources**: `cyxwiz-engine/resources/` (fonts, icons, etc.)
