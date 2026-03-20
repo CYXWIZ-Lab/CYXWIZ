@@ -1,5 +1,7 @@
 #include "pipeline_executor.h"
 #include "../../core/duckdb_connector.h"
+#include "../../core/data_registry.h"
+#include "../../core/arrow_dataset.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -230,10 +232,41 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
 }
 
 bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx) {
-    // TODO: Phase 1 Week 2 - Load file and create Arrow table
-    spdlog::info("[Data Studio] FileInput node executed (placeholder)");
-    ctx.node_results[node.id] = "temp_table_" + std::to_string(node.id);
-    return true;
+    auto path_it = node.parameters.find("path");
+    if (path_it == node.parameters.end() || path_it->second.empty()) {
+        ReportError("FileInput node missing 'path' parameter");
+        return false;
+    }
+
+    const std::string& file_path = path_it->second;
+    std::string dataset_name = "ds_input_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Loading file: {} as dataset '{}'", file_path, dataset_name);
+
+    try {
+        // Use DataRegistry's Arrow support to load the file
+        auto& registry = DataRegistry::Instance();
+        auto arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
+
+        if (!arrow_dataset) {
+            ReportError("Failed to load file: " + file_path);
+            return false;
+        }
+
+        // Store the dataset name for downstream nodes
+        ctx.node_results[node.id] = dataset_name;
+        if (ctx.input_dataset.empty()) {
+            ctx.input_dataset = dataset_name;
+        }
+
+        spdlog::info("[Data Studio] FileInput loaded {} rows, {} columns",
+                    arrow_dataset->GetNumRows(), arrow_dataset->GetNumColumns());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("FileInput error: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx) {
@@ -258,9 +291,55 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
 }
 
 bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ctx) {
-    // TODO: Phase 1 Week 2 - Save Arrow table to file
-    spdlog::info("[Data Studio] SaveDataset node executed (placeholder)");
-    return true;
+    // Get the input dataset from the upstream node
+    if (node.inputs.empty()) {
+        ReportError("SaveDataset node has no input connection");
+        return false;
+    }
+
+    int input_node_id = node.inputs[0];
+    auto result_it = ctx.node_results.find(input_node_id);
+    if (result_it == ctx.node_results.end()) {
+        ReportError("SaveDataset: Input dataset not found");
+        return false;
+    }
+
+    const std::string& input_dataset_name = result_it->second;
+
+    // Get the desired output name from parameters
+    auto name_it = node.parameters.find("name");
+    std::string output_name = (name_it != node.parameters.end() && !name_it->second.empty())
+                              ? name_it->second
+                              : "ds_output_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Saving dataset '{}' as '{}'", input_dataset_name, output_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+
+        // Get the Arrow dataset from the input
+        auto arrow_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!arrow_dataset) {
+            ReportError("SaveDataset: Input dataset not found in registry: " + input_dataset_name);
+            return false;
+        }
+
+        // If the user specified a different name, register it again with the new name
+        if (output_name != input_dataset_name) {
+            auto arrow_table = arrow_dataset->GetArrowTable();
+            registry.RegisterArrowTable(arrow_table, output_name);
+        }
+
+        // Store the output dataset name in context
+        ctx.output_dataset = output_name;
+
+        spdlog::info("[Data Studio] Dataset saved successfully as '{}'", output_name);
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("SaveDataset error: " + std::string(e.what()));
+        return false;
+    }
 }
 
 void PipelineExecutor::UpdateProgress(float progress) {

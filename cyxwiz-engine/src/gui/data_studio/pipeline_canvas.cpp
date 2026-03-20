@@ -1,4 +1,5 @@
 #include "pipeline_canvas.h"
+#include "pipeline_executor.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 
@@ -27,6 +28,9 @@ PipelineCanvas::PipelineCanvas()
     style.PinCircleRadius = 4.0f;
     style.PinQuadSideLength = 7.0f;
     style.PinTriangleSideLength = 9.5f;
+
+    // Create pipeline executor
+    executor_ = std::make_unique<PipelineExecutor>();
 
     spdlog::info("[Data Studio] PipelineCanvas initialized");
 }
@@ -273,9 +277,20 @@ bool PipelineCanvas::ExecutePipeline() {
         return false;
     }
 
-    // TODO: Phase 1 Week 2 - Implement pipeline execution
-    spdlog::info("[Data Studio] Executing pipeline (not implemented yet)");
-    return false;
+    // Serialize pipeline to JSON
+    std::string pipeline_json = SerializePipeline();
+
+    // Execute pipeline using the executor
+    spdlog::info("[Data Studio] Starting pipeline execution with {} nodes", nodes_.size());
+    bool success = executor_->ExecutePipeline(pipeline_json);
+
+    if (success) {
+        spdlog::info("[Data Studio] Pipeline execution completed successfully");
+    } else {
+        spdlog::error("[Data Studio] Pipeline execution failed: {}", executor_->GetLastError());
+    }
+
+    return success;
 }
 
 bool PipelineCanvas::ValidatePipeline() const {

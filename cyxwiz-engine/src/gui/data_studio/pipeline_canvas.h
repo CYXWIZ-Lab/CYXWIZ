@@ -9,6 +9,9 @@
 
 namespace cyxwiz {
 
+// Forward declaration
+class PipelineExecutor;
+
 /**
  * PipelineCanvas - Visual node-based data transformation pipeline editor
  *
@@ -89,6 +92,9 @@ private:
     // UI state
     bool show_node_palette_;
     int selected_node_id_;
+
+    // Pipeline execution
+    std::unique_ptr<PipelineExecutor> executor_;
 
     // Rendering helpers
     void RenderNodePalette();
