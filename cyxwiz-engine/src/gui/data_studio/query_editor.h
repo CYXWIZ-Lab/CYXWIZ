@@ -3,8 +3,12 @@
 #include <imgui.h>
 #include <string>
 #include <vector>
+#include <memory>
 
 namespace cyxwiz {
+
+// Forward declaration
+class DuckDBConnector;
 
 /**
  * QueryEditor - SQL query interface for Data Studio
@@ -27,7 +31,7 @@ namespace cyxwiz {
 class QueryEditor {
 public:
     QueryEditor();
-    ~QueryEditor() = default;
+    ~QueryEditor();
 
     /**
      * Render the query editor UI
@@ -46,12 +50,21 @@ public:
      */
     bool ExecuteQuery();
 
+    /**
+     * Save the current query result as a new dataset
+     */
+    bool SaveResultAsDataset(const std::string& dataset_name);
+
 private:
     // Query state
     char query_buffer_[4096];
     std::string current_query_;
     std::string last_error_;
     bool query_running_;
+    std::string current_dataset_;
+
+    // DuckDB connector for SQL execution
+    std::unique_ptr<DuckDBConnector> duckdb_;
 
     // Results
     struct QueryResult {
