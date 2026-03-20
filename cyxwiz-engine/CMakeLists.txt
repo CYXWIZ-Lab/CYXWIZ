@@ -97,6 +97,7 @@ set(ENGINE_SOURCES
     src/core/arrow_dataset.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
+    src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/annotation_manager.cpp
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
@@ -338,7 +339,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/analyzer.cpp
     src/gui/data_studio/visualizer.cpp
     src/gui/data_studio/data_studio_panel.cpp
-    src/gui/data_studio/pipeline_executor.cpp
+    # pipeline_executor.cpp moved to src/core/ (Unified Canvas Phase 2)
     src/gui/data_studio/node_registry.cpp
     # Plotting system
     src/plotting/plot_dataset.cpp
@@ -359,6 +360,7 @@ set(ENGINE_HEADERS
     src/core/arrow_dataset.h
     src/core/arrow_converters.h
     src/core/duckdb_connector.h
+    src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
     src/core/texture_manager.h
     src/core/async_task_manager.h
     src/core/graph_compiler.h
@@ -530,7 +532,7 @@ set(ENGINE_HEADERS
     src/gui/data_studio/analyzer.h
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h
-    src/gui/data_studio/pipeline_executor.h
+    # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)
     src/gui/data_studio/node_registry.h
     # Plotting system
     src/plotting/plot_dataset.h

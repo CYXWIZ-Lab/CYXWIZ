@@ -45,6 +45,7 @@ NodeEditor::NodeEditor()
       context_menu_node_id_(-1),
       selected_node_id_(-1),
       selected_framework_(CodeFramework::PyTorch),
+      execution_mode_(ExecutionMode::CodeGeneration),  // Unified Canvas Phase 2: Default to code generation
       editor_context_(nullptr),
       script_editor_(nullptr),
       properties_panel_(nullptr) {

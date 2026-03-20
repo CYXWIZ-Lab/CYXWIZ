@@ -1,5 +1,5 @@
 #include "pipeline_canvas.h"
-#include "pipeline_executor.h"
+#include "../../core/pipeline_executor.h"  // Unified Canvas Phase 2: Moved to core/
 #include "gui/icons.h"
 #include "core/file_dialogs.h"
 #include <spdlog/spdlog.h>

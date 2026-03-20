@@ -380,6 +380,13 @@ enum class CodeFramework {
     PyCyxWiz
 };
 
+// Execution modes for the unified canvas (Unified Canvas Phase 2)
+enum class ExecutionMode {
+    CodeGeneration,   // Generate PyTorch/TF/Keras code (existing behavior)
+    DuckDBPipeline,   // Execute data transforms with DuckDB/Arrow (new)
+    LocalTraining     // Train models locally with cyxwiz-backend (existing)
+};
+
 // Search state for node search/filter feature (Ctrl+F to find existing nodes)
 struct SearchState {
     char search_buffer[256] = "";
@@ -448,6 +455,19 @@ struct SubgraphData {
     bool expanded = false;                   // Whether subgraph is expanded (visible)
 };
 
+// Forward declaration for PipelineExecutor
+namespace cyxwiz {
+    class PipelineExecutor;
+}
+
+// Execution context for unified canvas (Unified Canvas Phase 2)
+struct ExecutionContext {
+    ExecutionMode mode;
+    std::map<int, std::string> node_results;  // Node ID -> dataset/tensor name in DuckDB or memory
+    std::string input_dataset;                // Initial dataset name
+    std::string output_dataset;               // Final result dataset name
+};
+
 class NodeEditor {
 public:
     NodeEditor();
@@ -483,6 +503,16 @@ public:
     // Training state control
     void SetTrainingActive(bool active) { is_training_ = active; }
     bool IsTrainingActive() const { return is_training_; }
+
+    // Unified Canvas Phase 2: Execution mode control
+    void SetExecutionMode(ExecutionMode mode) { execution_mode_ = mode; }
+    ExecutionMode GetExecutionMode() const { return execution_mode_; }
+
+    // Execute the current graph based on execution mode
+    void ExecuteGraph();
+
+    // Execute data pipeline using DuckDB (Phase 2)
+    bool ExecuteDataPipeline();
 
     // Update DatasetInput node name based on loaded dataset
     void UpdateDatasetNodeName(const std::string& dataset_name);
@@ -726,6 +756,7 @@ private:
     int context_menu_node_id_;  // -1 if clicking on canvas
     int selected_node_id_;  // Currently selected node for properties panel (-1 = none)
     CodeFramework selected_framework_;  // Current code generation framework
+    ExecutionMode execution_mode_;      // Unified Canvas Phase 2: Current execution mode
 
     // ImNodes editor context
     ImNodesEditorContext* editor_context_;
@@ -851,6 +882,10 @@ private:
     std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
     std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
     bool rl_script_running_ = false;
+
+    // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
+    std::unique_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
+    ExecutionContext execution_context_;
 
     // Scripting engine for Python-based RL training
     scripting::ScriptingEngine* scripting_engine_ = nullptr;
