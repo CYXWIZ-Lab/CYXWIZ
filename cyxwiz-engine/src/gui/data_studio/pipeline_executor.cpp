@@ -14,8 +14,12 @@ PipelineExecutor::PipelineExecutor()
     , progress_(0.0f)
     , stop_requested_(false)
 {
-    spdlog::info("[Data Studio] PipelineExecutor initialized");
+    // Create DuckDB connector for SQL transformations
+    duckdb_ = std::make_unique<DuckDBConnector>();
+    spdlog::info("[Data Studio] PipelineExecutor initialized with DuckDB");
 }
+
+PipelineExecutor::~PipelineExecutor() = default;
 
 bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     if (executing_) {
@@ -270,24 +274,213 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
 }
 
 bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx) {
-    // TODO: Phase 1 Week 2 - Execute SQL WHERE clause
-    spdlog::info("[Data Studio] FilterRows node executed (placeholder)");
-    ctx.node_results[node.id] = "temp_table_" + std::to_string(node.id);
-    return true;
+    // Get input dataset from upstream node
+    if (node.inputs.empty()) {
+        ReportError("FilterRows node has no input connection");
+        return false;
+    }
+
+    int input_node_id = node.inputs[0];
+    auto result_it = ctx.node_results.find(input_node_id);
+    if (result_it == ctx.node_results.end()) {
+        ReportError("FilterRows: Input dataset not found");
+        return false;
+    }
+
+    // Get filter condition from parameters
+    auto condition_it = node.parameters.find("condition");
+    if (condition_it == node.parameters.end() || condition_it->second.empty()) {
+        ReportError("FilterRows: Missing 'condition' parameter");
+        return false;
+    }
+
+    const std::string& input_dataset_name = result_it->second;
+    const std::string& condition = condition_it->second;
+    std::string output_dataset_name = "ds_filter_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Filtering rows from '{}' with condition: {}",
+                input_dataset_name, condition);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("FilterRows: Input dataset not found in registry");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Register input table with DuckDB
+        std::string temp_table = "temp_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("FilterRows: Failed to register table with DuckDB");
+            return false;
+        }
+
+        // Execute WHERE query
+        std::string sql = "SELECT * FROM " + temp_table + " WHERE " + condition;
+        auto result_table = duckdb_->Query(sql);
+
+        // Unregister temp table
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("FilterRows: Query execution failed");
+            return false;
+        }
+
+        // Register result in DataRegistry
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+
+        // Store result for downstream nodes
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] FilterRows: {} -> {} rows",
+                    input_table->num_rows(), result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("FilterRows error: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& ctx) {
-    // TODO: Phase 1 Week 2 - Execute SQL SELECT columns
-    spdlog::info("[Data Studio] SelectColumns node executed (placeholder)");
-    ctx.node_results[node.id] = "temp_table_" + std::to_string(node.id);
-    return true;
+    // Get input dataset from upstream node
+    if (node.inputs.empty()) {
+        ReportError("SelectColumns node has no input connection");
+        return false;
+    }
+
+    int input_node_id = node.inputs[0];
+    auto result_it = ctx.node_results.find(input_node_id);
+    if (result_it == ctx.node_results.end()) {
+        ReportError("SelectColumns: Input dataset not found");
+        return false;
+    }
+
+    // Get columns from parameters
+    auto columns_it = node.parameters.find("columns");
+    if (columns_it == node.parameters.end() || columns_it->second.empty()) {
+        ReportError("SelectColumns: Missing 'columns' parameter");
+        return false;
+    }
+
+    const std::string& input_dataset_name = result_it->second;
+    const std::string& columns = columns_it->second;
+    std::string output_dataset_name = "ds_select_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Selecting columns from '{}': {}",
+                input_dataset_name, columns);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("SelectColumns: Input dataset not found in registry");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Register input table with DuckDB
+        std::string temp_table = "temp_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("SelectColumns: Failed to register table with DuckDB");
+            return false;
+        }
+
+        // Execute SELECT columns query
+        std::string sql = "SELECT " + columns + " FROM " + temp_table;
+        auto result_table = duckdb_->Query(sql);
+
+        // Unregister temp table
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("SelectColumns: Query execution failed");
+            return false;
+        }
+
+        // Register result in DataRegistry
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+
+        // Store result for downstream nodes
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] SelectColumns: {} -> {} columns",
+                    input_table->num_columns(), result_table->num_columns());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("SelectColumns error: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContext& ctx) {
-    // TODO: Phase 1 Week 2 - Execute SQL DISTINCT
-    spdlog::info("[Data Studio] RemoveDuplicates node executed (placeholder)");
-    ctx.node_results[node.id] = "temp_table_" + std::to_string(node.id);
-    return true;
+    // Get input dataset from upstream node
+    if (node.inputs.empty()) {
+        ReportError("RemoveDuplicates node has no input connection");
+        return false;
+    }
+
+    int input_node_id = node.inputs[0];
+    auto result_it = ctx.node_results.find(input_node_id);
+    if (result_it == ctx.node_results.end()) {
+        ReportError("RemoveDuplicates: Input dataset not found");
+        return false;
+    }
+
+    const std::string& input_dataset_name = result_it->second;
+    std::string output_dataset_name = "ds_dedup_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Removing duplicates from '{}'", input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("RemoveDuplicates: Input dataset not found in registry");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Register input table with DuckDB
+        std::string temp_table = "temp_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("RemoveDuplicates: Failed to register table with DuckDB");
+            return false;
+        }
+
+        // Execute DISTINCT query
+        std::string sql = "SELECT DISTINCT * FROM " + temp_table;
+        auto result_table = duckdb_->Query(sql);
+
+        // Unregister temp table
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("RemoveDuplicates: Query execution failed");
+            return false;
+        }
+
+        // Register result in DataRegistry
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+
+        // Store result for downstream nodes
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info("[Data Studio] RemoveDuplicates: {} -> {} rows",
+                    input_table->num_rows(), result_table->num_rows());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("RemoveDuplicates error: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ctx) {

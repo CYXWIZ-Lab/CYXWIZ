@@ -8,6 +8,9 @@
 
 namespace cyxwiz {
 
+// Forward declaration
+class DuckDBConnector;
+
 /**
  * PipelineExecutor - Executes data transformation pipelines
  *
@@ -35,7 +38,7 @@ namespace cyxwiz {
 class PipelineExecutor {
 public:
     PipelineExecutor();
-    ~PipelineExecutor() = default;
+    ~PipelineExecutor();
 
     /**
      * Execute a pipeline from JSON representation
@@ -101,6 +104,9 @@ private:
     // Callbacks
     std::function<void(float)> progress_callback_;
     std::function<void(bool)> completion_callback_;
+
+    // DuckDB connector for SQL transformations
+    std::unique_ptr<DuckDBConnector> duckdb_;
 
     // Pipeline execution steps
     bool ParsePipeline(const std::string& pipeline_json, std::vector<Node>& nodes);
