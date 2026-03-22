@@ -1,7 +1,7 @@
 #include "pipeline_executor.h"
-#include "../../core/duckdb_connector.h"
-#include "../../core/data_registry.h"
-#include "../../core/arrow_dataset.h"
+#include "duckdb_connector.h"
+#include "data_registry.h"
+#include "arrow_dataset.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
