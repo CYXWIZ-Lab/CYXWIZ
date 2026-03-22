@@ -131,10 +131,20 @@ public:
     // Check if engine is initialized
     bool IsInitialized() const;
 
-    // Register Training Dashboard with Python module
+    // Runtime diagnostics for current Python interpreter
+    std::string GetPythonRuntimeDiagnostics();
+
+    // Reload interpreter config for active project (picks up python_env.json)
+    bool ReloadPythonForProject();
+
+    // Register Training Dashboard with Python module (deferred - stores panel pointer)
     void RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel);
+    // Actually register with Python (called lazily when scripts run)
+    void EnsureTrainingDashboardRegistered();
 
 private:
+    cyxwiz::TrainingPlotPanel* training_plot_panel_{nullptr};
+    bool training_dashboard_registered_{false};
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<PythonSandbox> sandbox_;
     OutputCallback output_callback_;
@@ -187,6 +197,9 @@ private:
     // MATLAB-style aliases initialization
     bool matlab_aliases_initialized_{false};
     void InitializeMatlabAliases();
+
+    // Ensure Python is initialized before use
+    bool EnsurePythonInitialized(std::string* error_out = nullptr);
 
     // Console command execution with timeout
     std::mutex command_mutex_;

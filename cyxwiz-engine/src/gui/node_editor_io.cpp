@@ -285,8 +285,10 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
 
     try {
         json j;
-        j["version"] = "1.0";
+        // Unified Canvas Phase 7: Update to v2.0 format with execution_mode
+        j["version"] = "2.0";
         j["framework"] = static_cast<int>(selected_framework_);
+        j["execution_mode"] = static_cast<int>(execution_mode_);  // Save execution mode
 
         // Serialize nodes
         json nodes_array = json::array();
@@ -296,6 +298,10 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
             node_json["type"] = static_cast<int>(node.type);
             node_json["name"] = node.name;
             node_json["parameters"] = node.parameters;
+
+            // Unified Canvas Phase 7: Save node category for better organization
+            NodeCategory category = GetCategoryForNodeType(node.type);
+            node_json["category"] = static_cast<int>(category);
 
             // Save node position
             auto it = cached_node_positions_.find(node.id);
@@ -392,6 +398,12 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
         // Clear existing graph
         ClearGraph();
 
+        // Unified Canvas Phase 7: Check version and load execution_mode
+        std::string version = "1.0";
+        if (j.contains("version")) {
+            version = j["version"].get<std::string>();
+        }
+
         // Update next IDs to avoid conflicts
         int max_node_id = 0;
         int max_link_id = 0;
@@ -399,6 +411,16 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
         // Load framework
         if (j.contains("framework")) {
             selected_framework_ = static_cast<CodeFramework>(j["framework"].get<int>());
+        }
+
+        // Unified Canvas Phase 7: Load execution_mode (v2.0+)
+        if (j.contains("execution_mode")) {
+            execution_mode_ = static_cast<ExecutionMode>(j["execution_mode"].get<int>());
+            spdlog::info("Loaded execution mode: {}", static_cast<int>(execution_mode_));
+        } else {
+            // Backward compatibility: v1.0 files default to CodeGeneration
+            execution_mode_ = ExecutionMode::CodeGeneration;
+            spdlog::info("Legacy v1.0 format - defaulting to CodeGeneration mode");
         }
 
         // Load nodes

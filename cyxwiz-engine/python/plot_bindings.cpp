@@ -14,6 +14,7 @@
 #include "../src/plotting/plot_3d.h"
 #include "../src/gui/panels/plot_window.h"
 #include "../src/gui/panels/training_plot_panel.h"
+#include "../src/gui/panels/python_plot_window_registry.h"
 
 #include <memory>
 #include <vector>
@@ -21,10 +22,6 @@
 
 namespace py = pybind11;
 using namespace cyxwiz::plotting;
-
-// Global registry for PlotWindows created from Python
-// This ensures they persist and can be accessed by the GUI thread
-static std::vector<std::shared_ptr<cyxwiz::PlotWindow>> g_python_plot_windows;
 
 // Global TrainingPlotPanel instance (shared with MainWindow)
 // These functions are defined in training_plot_panel_global.cpp
@@ -249,7 +246,7 @@ void show_plot(const std::string& plot_id) {
         false  // Don't auto-generate data
     );
 
-    g_python_plot_windows.push_back(window);
+    cyxwiz::AddPythonPlotWindow(window);
 
     // The window will be rendered by MainWindow in the next frame
 }
@@ -258,14 +255,7 @@ void show_plot(const std::string& plot_id) {
  * Clear all Python-created plot windows
  */
 void clear_plot_windows() {
-    g_python_plot_windows.clear();
-}
-
-/**
- * Get all Python-created plot windows (for GUI integration)
- */
-const std::vector<std::shared_ptr<cyxwiz::PlotWindow>>& get_python_plot_windows() {
-    return g_python_plot_windows;
+    cyxwiz::ClearPythonPlotWindows();
 }
 
 /**

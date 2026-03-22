@@ -1,0 +1,109 @@
+{
+  "id": "linear_regression_ex1",
+  "name": "Linear Regression ex1",
+  "description": "Replicates the Coursera ex1 linear regression example: loads the population/profit dataset, trains θ via gradient descent, and outputs predictions + cost metrics.",
+  "category": "Examples/Regression",
+  "tags": ["regression", "linear", "gradient_descent", "dataset"],
+  "parameters": [
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.01",
+      "description": "Step size for gradient descent",
+      "min_value": "0.0001",
+      "max_value": "1.0"
+    },
+    {
+      "name": "iterations",
+      "type": "int",
+      "default_value": "1500",
+      "description": "Number of gradient descent iterations",
+      "min_value": "100",
+      "max_value": "20000"
+    },
+    {
+      "name": "dataset_path",
+      "type": "string",
+      "default_value": "examples/python/ex1data1.txt",
+      "description": "CSV file containing population,profit pairs"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {
+        "id": "data_load",
+        "type": "CSVLoader",
+        "name": "Load ex1 dataset",
+        "pos": [0, 200],
+        "params": {
+          "path": "$dataset_path",
+          "delimiter": ",",
+          "has_header": "false",
+          "column_names": "population,profit"
+        }
+      },
+      {
+        "id": "normalize",
+        "type": "Normalize",
+        "name": "Normalize Population",
+        "pos": [220, 200],
+        "params": {
+          "scale": "0.0001",
+          "offset": "0",
+          "mode": "minmax"
+        }
+      },
+      {
+        "id": "linear",
+        "type": "Linear",
+        "name": "Linear Model",
+        "pos": [420, 200],
+        "params": {
+          "units": "1",
+          "use_bias": "true"
+        }
+      },
+      {
+        "id": "loss",
+        "type": "MSELoss",
+        "name": "Mean Squared Error",
+        "pos": [620, 200]
+      },
+      {
+        "id": "optimizer",
+        "type": "GradientDescent",
+        "name": "Gradient Descent",
+        "pos": [820, 200],
+        "params": {
+          "learning_rate": "$learning_rate"
+        }
+      },
+      {
+        "id": "trainer",
+        "type": "Trainer",
+        "name": "Train Loop",
+        "pos": [1020, 200],
+        "params": {
+          "iterations": "$iterations",
+          "log_frequency": "50",
+          "save_checkpoints": "false"
+        }
+      },
+      {
+        "id": "output",
+        "type": "Output",
+        "name": "θ and Predictions",
+        "pos": [1220, 200]
+      }
+    ],
+    "links": [
+      { "from": "data_load", "to": "normalize" },
+      { "from": "normalize", "to": "linear" },
+      { "from": "linear", "to": "loss", "from_pin": 0, "to_pin": 0 },
+      { "from": "data_load", "to": "loss", "from_pin": 0, "to_pin": 1 },
+      { "from": "loss", "to": "optimizer" },
+      { "from": "optimizer", "to": "trainer" },
+      { "from": "trainer", "to": "output" }
+    ]
+  }
+}

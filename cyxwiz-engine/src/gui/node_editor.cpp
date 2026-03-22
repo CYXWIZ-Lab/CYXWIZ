@@ -9,10 +9,19 @@
 #include "../core/training_manager.h"
 #include "../core/async_task_manager.h"
 #include "../core/project_manager.h"
+#include "../core/graph_executor.h"
+#include "../core/rl_training_executor.h"
+#include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
+#include "panels/training_dashboard.h"
+#include "../core/rl_script_generator.h"
+#include "../scripting/scripting_engine.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <memory>
+#include <chrono>
 #include <map>
 #include <set>
 #include <queue>
@@ -37,6 +46,7 @@ NodeEditor::NodeEditor()
       context_menu_node_id_(-1),
       selected_node_id_(-1),
       selected_framework_(CodeFramework::PyTorch),
+      execution_mode_(ExecutionMode::CodeGeneration),  // Unified Canvas Phase 2: Default to code generation
       editor_context_(nullptr),
       script_editor_(nullptr),
       properties_panel_(nullptr) {
@@ -266,6 +276,7 @@ NodeEditor::NodeEditor()
 }
 
 NodeEditor::~NodeEditor() {
+    OnStopSimulation();
     if (editor_context_) {
         ImNodes::EditorContextFree(editor_context_);
     }
@@ -293,7 +304,7 @@ void NodeEditor::Render() {
         pending_context_reset_ = false;
     }
 
-    if (ImGui::Begin("Node Editor", &show_window_)) {
+    if (ImGui::Begin("CyxWiz Studio", &show_window_)) {
         ShowToolbar();
 
         ImGui::Separator();
@@ -534,6 +545,11 @@ void NodeEditor::Render() {
         }
     }
     ImGui::End();
+
+    // Render RL Training Dashboard (separate window)
+    if (rl_dashboard_) {
+        rl_dashboard_->Render();
+    }
 
     // ===== Save as Pattern Dialog =====
     if (show_save_pattern_dialog_) {
@@ -851,17 +867,48 @@ void NodeEditor::ShowToolbar() {
     ImGui::SameLine();
 
     // Framework selection
-    const char* frameworks[] = { "PyTorch", "TensorFlow", "Keras", "PyCyxWiz" };
-    int current_framework = static_cast<int>(selected_framework_);
-    ImGui::SetNextItemWidth(120.0f);
-    if (ImGui::Combo("##Framework", &current_framework, frameworks, 4)) {
-        selected_framework_ = static_cast<CodeFramework>(current_framework);
-        spdlog::info("Code generation framework changed to: {}", frameworks[current_framework]);
+    // Unified Canvas Phase 4.2: Execution mode selector
+    const char* exec_modes[] = { "Code Gen", "Data Pipeline", "Local Training" };
+    int current_exec_mode = static_cast<int>(execution_mode_);
+    ImGui::SetNextItemWidth(130.0f);
+    if (ImGui::Combo("##ExecMode", &current_exec_mode, exec_modes, 3)) {
+        execution_mode_ = static_cast<ExecutionMode>(current_exec_mode);
+        spdlog::info("Execution mode changed to: {}", exec_modes[current_exec_mode]);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Execution Mode:\n"
+            "Code Gen - Generate Python code\n"
+            "Data Pipeline - Execute with DuckDB/Arrow\n"
+            "Local Training - Train ML model locally");
     }
     ImGui::SameLine();
 
-    if (ImGui::Button(ICON_FA_GEARS " Generate")) {
-        GeneratePythonCode();
+    // Show appropriate controls based on execution mode
+    if (execution_mode_ == ExecutionMode::CodeGeneration) {
+        // Framework selector for code generation
+        const char* frameworks[] = { "PyTorch", "TensorFlow", "Keras", "PyCyxWiz" };
+        int current_framework = static_cast<int>(selected_framework_);
+        ImGui::SetNextItemWidth(120.0f);
+        if (ImGui::Combo("##Framework", &current_framework, frameworks, 4)) {
+            selected_framework_ = static_cast<CodeFramework>(current_framework);
+            spdlog::info("Code generation framework changed to: {}", frameworks[current_framework]);
+        }
+        ImGui::SameLine();
+
+        if (ImGui::Button(ICON_FA_GEARS " Generate")) {
+            GeneratePythonCode();
+        }
+    } else if (execution_mode_ == ExecutionMode::DuckDBPipeline) {
+        // Execute data pipeline button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
+        if (ImGui::Button(ICON_FA_PLAY " Execute Pipeline")) {
+            ExecuteDataPipeline();
+        }
+        ImGui::PopStyleColor(2);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Execute data transformation pipeline using DuckDB");
+        }
     }
     ImGui::SameLine();
 
@@ -920,8 +967,138 @@ void NodeEditor::ShowToolbar() {
         }
     }
 
+    // Simulation controls (for signal/MuJoCo Plant graphs)
+    if (HasSimulationNodes()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+        ImGui::SameLine();
+
+        if (is_simulating_) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+            if (ImGui::Button(ICON_FA_STOP " Stop Sim")) {
+                OnStopSimulation();
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::SameLine();
+            if (graph_executor_) {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "t=%.2fs",
+                    graph_executor_->GetSimTime());
+            }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.45f, 0.6f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.55f, 0.7f, 1.0f));
+            bool rl_running = rl_executor_ && rl_executor_->IsTraining();
+            if (rl_running) {
+                ImGui::BeginDisabled();
+                ImGui::Button(ICON_FA_PLAY " Run Sim");
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Stop RL training first");
+                }
+            } else if (ImGui::Button(ICON_FA_PLAY " Run Sim")) {
+                OnRunSimulation();
+            }
+            ImGui::PopStyleColor(2);
+        }
+    }
+
+    // RL Training controls (for graphs with RL nodes)
+    if (HasRLNodes()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+        ImGui::SameLine();
+
+        if (rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+            if (ImGui::Button(ICON_FA_STOP " Stop RL")) {
+                OnStopRLTraining();
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::SameLine();
+            if (rl_script_running_) {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Training via Python...");
+            } else if (rl_executor_) {
+                auto metrics = rl_executor_->GetMetrics();
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Ep %d | R:%.1f",
+                    metrics.episode_count, metrics.mean_episode_reward);
+            }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.5f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.6f, 0.4f, 1.0f));
+            if (is_simulating_) {
+                ImGui::BeginDisabled();
+                ImGui::Button(ICON_FA_PLAY " Train RL");
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Stop graph simulation first");
+                }
+            } else if (ImGui::Button(ICON_FA_PLAY " Train RL")) {
+                OnStartRLTraining();
+            }
+            ImGui::PopStyleColor(2);
+        }
+    }
+
+    // Export Policy (ONNX) button
+    if (HasRLNodes()) {
+        ImGui::SameLine();
+        bool has_trained = rl_executor_ && !rl_executor_->IsTraining() && rl_executor_->GetMetrics().episode_count > 0;
+        if (!has_trained) {
+            ImGui::BeginDisabled();
+            ImGui::Button(ICON_FA_FILE_EXPORT " Export ONNX");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Train an RL agent first");
+            }
+            ImGui::EndDisabled();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.3f, 0.1f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.4f, 0.2f, 1.0f));
+            if (ImGui::Button(ICON_FA_FILE_EXPORT " Export ONNX")) {
+                export_onnx_dialog_open_ = true;
+            }
+            ImGui::PopStyleColor(2);
+        }
+    }
+
+    // Sim performance metrics (Phase 4.7)
+    if (is_simulating_ && last_eval_time_ms_ > 0.0f) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+        ImGui::SameLine();
+        float fps = (last_eval_time_ms_ > 0.001f) ? 1000.0f / last_eval_time_ms_ : 0.0f;
+        ImVec4 color = (last_eval_time_ms_ < 16.0f) ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.6f, 0.2f, 1.0f);
+        ImGui::TextColored(color, "%.1fms (%.0f FPS)", last_eval_time_ms_, fps);
+    }
+
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
+
+    // ONNX Export dialog
+    if (export_onnx_dialog_open_) {
+        ImGui::OpenPopup("Export Policy (ONNX)");
+        export_onnx_dialog_open_ = false;
+    }
+    if (ImGui::BeginPopupModal("Export Policy (ONNX)", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Export trained RL policy to ONNX format.");
+        ImGui::Separator();
+
+        static char onnx_path[512] = "policy.onnx";
+        ImGui::Text("Output path:");
+        ImGui::InputText("##onnx_path", onnx_path, sizeof(onnx_path));
+        ImGui::Spacing();
+
+        if (ImGui::Button("Export", ImVec2(120, 0))) {
+            ExportPolicyONNX(std::string(onnx_path));
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void NodeEditor::RenderMinimap() {
@@ -1366,13 +1543,55 @@ void NodeEditor::RenderMinimap() {
     ImGui::PopStyleVar(2);
 }
 
+// Unified Canvas Phase 6: Helper function to get pin type name as string
+static std::string GetPinTypeName(PinType type) {
+    if (type == PinType::Tensor) return "Tensor";
+    if (type == PinType::Labels) return "Labels";
+    if (type == PinType::Parameters) return "Parameters";
+    if (type == PinType::Loss) return "Loss";
+    if (type == PinType::Optimizer) return "Optimizer";
+    if (type == PinType::Dataset) return "Dataset";
+    return "Unknown";
+}
+
 void NodeEditor::RenderNodes() {
+    // Update execution pulse animation
+    execution_pulse_time_ += ImGui::GetIO().DeltaTime;
+
     // Render all nodes
     for (const auto& node : nodes_) {
-        // Set node color based on type
-        ImNodes::PushColorStyle(ImNodesCol_TitleBar, GetNodeColor(node.type));
-        ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, GetNodeColor(node.type));
-        ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, GetNodeColor(node.type));
+        // Unified Canvas Phase 6: Check execution state for highlighting
+        auto exec_state_it = node_execution_states_.find(node.id);
+        bool has_exec_state = (exec_state_it != node_execution_states_.end());
+        NodeExecutionState exec_state = has_exec_state ? exec_state_it->second : NodeExecutionState::Idle;
+
+        // Set node color based on execution state OR type
+        ImU32 title_color;
+        if (exec_state == NodeExecutionState::Executing) {
+            // Pulsing blue for executing node
+            float pulse = 0.5f + 0.5f * std::sin(execution_pulse_time_ * 4.0f);
+            ImU32 base = IM_COL32(30, 100, 200, 255);
+            ImU32 highlight = IM_COL32(60, 150, 255, 255);
+            title_color = ImGui::ColorConvertFloat4ToU32(ImVec4(
+                (base & 0xFF) / 255.0f * (1 - pulse) + (highlight & 0xFF) / 255.0f * pulse,
+                ((base >> 8) & 0xFF) / 255.0f * (1 - pulse) + ((highlight >> 8) & 0xFF) / 255.0f * pulse,
+                ((base >> 16) & 0xFF) / 255.0f * (1 - pulse) + ((highlight >> 16) & 0xFF) / 255.0f * pulse,
+                1.0f
+            ));
+        } else if (exec_state == NodeExecutionState::Completed) {
+            // Green for completed
+            title_color = IM_COL32(50, 150, 70, 255);
+        } else if (exec_state == NodeExecutionState::Error) {
+            // Red for error
+            title_color = IM_COL32(200, 50, 50, 255);
+        } else {
+            // Normal color based on type
+            title_color = GetNodeColor(node.type);
+        }
+
+        ImNodes::PushColorStyle(ImNodesCol_TitleBar, title_color);
+        ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, title_color);
+        ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, title_color);
 
         ImNodes::BeginNode(node.id);
 
@@ -1385,6 +1604,27 @@ void NodeEditor::RenderNodes() {
         for (const auto& pin : node.inputs) {
             ImNodes::BeginInputAttribute(pin.id);
             ImGui::TextUnformatted(pin.name.c_str());
+
+            // Unified Canvas Phase 6: Pin tooltips
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s (Input)", pin.name.c_str());
+                ImGui::Separator();
+
+                // Show pin type
+                ImGui::Text("Type: %s", GetPinTypeName(pin.type).c_str());
+
+                // Show connection info
+                bool is_connected = IsPinConnected(pin.id);
+                if (is_connected) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_LINK " Connected");
+                } else {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_LINK " Not connected");
+                }
+
+                ImGui::EndTooltip();
+            }
+
             ImNodes::EndInputAttribute();
         }
 
@@ -1670,6 +1910,28 @@ void NodeEditor::RenderNodes() {
             const float text_width = ImGui::CalcTextSize(pin.name.c_str()).x;
             ImGui::Indent(120.0f + ImGui::CalcTextSize(pin.name.c_str()).x - text_width);
             ImGui::TextUnformatted(pin.name.c_str());
+
+            // Unified Canvas Phase 6: Pin tooltips
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s (Output)", pin.name.c_str());
+                ImGui::Separator();
+
+                // Show pin type
+                ImGui::Text("Type: %s", GetPinTypeName(pin.type).c_str());
+
+                // Show connection info
+                bool is_connected = IsPinConnected(pin.id);
+                int num_connections = GetConnectionCount(pin.id);
+                if (is_connected) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_LINK " %d connection(s)", num_connections);
+                } else {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_LINK " Not connected");
+                }
+
+                ImGui::EndTooltip();
+            }
+
             ImNodes::EndOutputAttribute();
         }
 
@@ -1678,6 +1940,33 @@ void NodeEditor::RenderNodes() {
         // Check if this node is hovered for documentation tooltip
         int hovered_node_id = -1;
         if (ImNodes::IsNodeHovered(&hovered_node_id) && hovered_node_id == node.id) {
+            // Unified Canvas Phase 6: Show execution state in tooltip
+            if (has_exec_state && exec_state != NodeExecutionState::Idle) {
+                ImGui::BeginTooltip();
+
+                // Show execution status
+                if (exec_state == NodeExecutionState::Executing) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), ICON_FA_SPINNER " Executing...");
+                } else if (exec_state == NodeExecutionState::Completed) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Completed");
+                } else if (exec_state == NodeExecutionState::Error) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), ICON_FA_TIMES " Error");
+
+                    // Show error message if available
+                    auto error_it = node_execution_errors_.find(node.id);
+                    if (error_it != node_execution_errors_.end()) {
+                        ImGui::Separator();
+                        ImGui::TextWrapped("%s", error_it->second.c_str());
+                    }
+                } else if (exec_state == NodeExecutionState::Pending) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_CLOCK " Pending...");
+                }
+
+                ImGui::Separator();
+                ImGui::EndTooltip();
+            }
+
+            // Show node documentation
             NodeDocumentationManager::Instance().RenderTooltip(node.type);
         }
 
@@ -2737,6 +3026,527 @@ void NodeEditor::GroupSelectedNodes() {
 void NodeEditor::UngroupSelectedNodes() {
     // TODO: Implement node ungrouping
     spdlog::info("Ungroup selected nodes - not yet implemented");
+}
+
+// ===== Graph Simulation =====
+
+bool NodeEditor::HasSimulationNodes() const {
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::SignalSlider ||
+            node.type == NodeType::SineWave ||
+            node.type == NodeType::StepSignal ||
+            node.type == NodeType::RampSignal ||
+            node.type == NodeType::SignalScope ||
+            node.type == NodeType::Constant) {
+            return true;
+        }
+        // Check for MuJoCo Plant or other simulation plugin nodes
+        if (node.type == NodeType::PluginCustom) {
+            auto qname = node.plugin_qualified_name;
+            if (qname.find("MuJoCoPlant") != std::string::npos ||
+                qname.find("MuJoCoEnv") != std::string::npos) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void NodeEditor::OnRunSimulation() {
+    if (is_simulating_) return;
+
+    spdlog::info("NodeEditor: Starting graph simulation");
+
+    // Create and build executor
+    graph_executor_ = std::make_unique<cyxwiz::GraphExecutor>();
+
+    // Set plugin eval callback: routes to PluginNodeRegistry → plugin DLL
+    graph_executor_->SetPluginEvalCallback(
+        [](const std::string& plugin_qualified_name,
+           const cyxwiz::NodeEvalContext& ctx) -> cyxwiz::NodeEvalResult {
+
+            // Convert to plugin types
+            cyxwiz::plugin::PluginNodeEvalContext pctx;
+            pctx.node_type_name = ctx.node_type_name;
+            pctx.parameters = ctx.parameters;
+            pctx.sim_time = ctx.sim_time;
+            pctx.dt = ctx.dt;
+            for (const auto& [name, val] : ctx.input_values) {
+                if (std::holds_alternative<float>(val)) {
+                    pctx.input_values[name] = std::get<float>(val);
+                } else if (std::holds_alternative<std::vector<float>>(val)) {
+                    pctx.input_values[name] = std::get<std::vector<float>>(val);
+                } else if (std::holds_alternative<std::string>(val)) {
+                    pctx.input_values[name] = std::get<std::string>(val);
+                }
+            }
+
+            // Route to plugin via registry
+            auto provider = cyxwiz::plugin::PluginNodeRegistry::Instance()
+                                .GetNodeProvider(plugin_qualified_name);
+            if (!provider) {
+                cyxwiz::NodeEvalResult r;
+                r.success = false;
+                r.error_message = "No plugin provider for: " + plugin_qualified_name;
+                return r;
+            }
+
+            auto presult = provider->EvaluateNode(pctx);
+
+            // Convert back
+            cyxwiz::NodeEvalResult result;
+            result.success = presult.success;
+            result.error_message = presult.error_message;
+            for (const auto& [name, val] : presult.output_values) {
+                if (std::holds_alternative<float>(val)) {
+                    result.output_values[name] = std::get<float>(val);
+                } else if (std::holds_alternative<std::vector<float>>(val)) {
+                    result.output_values[name] = std::get<std::vector<float>>(val);
+                } else if (std::holds_alternative<std::string>(val)) {
+                    result.output_values[name] = std::get<std::string>(val);
+                }
+            }
+            return result;
+        }
+    );
+
+    if (!graph_executor_->Build(nodes_, links_)) {
+        spdlog::error("NodeEditor: Graph build failed: {}", graph_executor_->GetError());
+        graph_executor_.reset();
+        return;
+    }
+
+    // Launch simulation thread
+    sim_stop_requested_ = false;
+    is_simulating_ = true;
+
+    sim_thread_ = std::thread([this]() {
+        float dt = 1.0f / sim_rate_hz_;
+        auto tick_duration = std::chrono::microseconds(static_cast<int>(1000000.0f / sim_rate_hz_));
+
+        while (!sim_stop_requested_) {
+            auto start = std::chrono::steady_clock::now();
+
+            if (!graph_executor_->Tick(dt)) {
+                spdlog::warn("NodeEditor: Simulation tick failed: {}", graph_executor_->GetError());
+                break;
+            }
+
+            // Sleep to maintain target rate
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            auto remaining = tick_duration - elapsed;
+            if (remaining > std::chrono::microseconds(0)) {
+                std::this_thread::sleep_for(remaining);
+            }
+        }
+
+        is_simulating_ = false;
+        spdlog::info("NodeEditor: Simulation stopped at t={:.2f}s", graph_executor_->GetSimTime());
+    });
+}
+
+void NodeEditor::OnStopSimulation() {
+    if (!is_simulating_) return;
+
+    spdlog::info("NodeEditor: Stopping graph simulation");
+    sim_stop_requested_ = true;
+
+    if (sim_thread_.joinable()) {
+        sim_thread_.join();
+    }
+
+    is_simulating_ = false;
+}
+
+// ===== RL Training =====
+
+bool NodeEditor::HasRLNodes() const {
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::RLTraining ||
+            node.type == NodeType::PolicyNetwork ||
+            node.type == NodeType::ValueNetwork) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void NodeEditor::OnStartRLTraining() {
+    if (rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())) return;
+    if (!scripting_engine_) {
+        spdlog::error("NodeEditor: ScriptingEngine not set, cannot run Python RL training");
+        return;
+    }
+    if (scripting_engine_->IsScriptRunning()) {
+        spdlog::warn("NodeEditor: A script is already running");
+        return;
+    }
+
+    spdlog::info("NodeEditor: Starting Python-based RL training");
+
+    // Build config from RLTraining node parameters
+    cyxwiz::RLTrainingConfig config;
+
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::RLTraining) {
+            auto it = node.parameters.find("total_timesteps");
+            if (it != node.parameters.end()) config.total_timesteps = std::stoi(it->second);
+            it = node.parameters.find("max_episode_steps");
+            if (it != node.parameters.end()) config.max_episode_steps = std::stoi(it->second);
+            it = node.parameters.find("learning_rate");
+            if (it != node.parameters.end()) config.learning_rate = std::stof(it->second);
+            it = node.parameters.find("gamma");
+            if (it != node.parameters.end()) config.gamma = std::stof(it->second);
+            it = node.parameters.find("clip_range");
+            if (it != node.parameters.end()) config.clip_range = std::stof(it->second);
+            it = node.parameters.find("n_steps");
+            if (it != node.parameters.end()) config.n_steps = std::stoi(it->second);
+            it = node.parameters.find("batch_size");
+            if (it != node.parameters.end()) config.batch_size = std::stoi(it->second);
+            it = node.parameters.find("n_epochs");
+            if (it != node.parameters.end()) config.n_epochs = std::stoi(it->second);
+            break;
+        }
+    }
+
+    // Find MuJoCo Plant node for MJCF path
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::PluginCustom) {
+            if (node.plugin_qualified_name.find("MuJoCoPlant") != std::string::npos) {
+                config.plugin_qualified_name = node.plugin_qualified_name;
+                auto mp = node.parameters.find("mjcf_path");
+                if (mp != node.parameters.end() && !mp->second.empty()) {
+                    config.env_mjcf_path = mp->second;
+                } else {
+                    auto meta = node.parameters.find("_meta_loaded_path");
+                    if (meta != node.parameters.end()) config.env_mjcf_path = meta->second;
+                }
+                break;
+            }
+        }
+    }
+
+    // Extract RewardFunction and ObservationFilter node params
+    std::map<std::string, std::string> reward_params, obs_filter_params;
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::PluginCustom) {
+            if (node.plugin_qualified_name.find("RewardFunction") != std::string::npos) {
+                reward_params = node.parameters;
+            }
+            if (node.plugin_qualified_name.find("ObservationFilter") != std::string::npos) {
+                obs_filter_params = node.parameters;
+            }
+        }
+    }
+
+    // Determine save path
+    std::string save_path = "models/rl_policy";
+
+    // Generate Python script
+    std::string script = cyxwiz::RLScriptGenerator::Generate(
+        config, reward_params, obs_filter_params, save_path);
+
+    // Create/show dashboard
+    if (!rl_dashboard_) {
+        rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+    }
+    rl_dashboard_->SetRLTrainingState(true);
+    rl_dashboard_->SetVisible(true);
+    rl_dashboard_->ResetRLMetrics();
+
+    // Set up pycyxwiz flags
+    std::string setup_script = "import pycyxwiz\npycyxwiz.rl_set_stop(False)\npycyxwiz.rl_set_paused(False)\n";
+    scripting_engine_->ExecuteCommand(setup_script);
+
+    // Set completion callback
+    auto dashboard = rl_dashboard_;
+    rl_script_running_ = true;
+    scripting_engine_->SetCompletionCallback([this, dashboard](const scripting::ExecutionResult& result) {
+        rl_script_running_ = false;
+        dashboard->SetRLTrainingState(false);
+        if (!result.success) {
+            spdlog::error("RL training script failed: {}", result.error_message);
+        } else {
+            spdlog::info("RL training script completed successfully");
+        }
+    });
+
+    // Run training script async
+    scripting_engine_->ExecuteScriptAsync(script);
+}
+
+
+// ===== ONNX Export =====
+
+void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
+    if (!rl_executor_) {
+        spdlog::error("NodeEditor: No RL executor for ONNX export");
+        return;
+    }
+
+    auto metrics = rl_executor_->GetMetrics();
+    if (metrics.episode_count == 0) {
+        spdlog::error("NodeEditor: No trained policy to export");
+        return;
+    }
+
+    // Request export via plugin's EvaluateNode with "export_onnx" command
+    std::string plugin_qname;
+    for (const auto& node : nodes_) {
+        if (node.type == NodeType::PluginCustom &&
+            node.plugin_qualified_name.find("MuJoCo") != std::string::npos) {
+            plugin_qname = node.plugin_qualified_name;
+            break;
+        }
+    }
+
+    if (plugin_qname.empty()) {
+        spdlog::error("NodeEditor: No MuJoCo plugin node found for ONNX export");
+        return;
+    }
+
+    auto* provider = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeProvider(plugin_qname);
+    if (!provider) {
+        spdlog::error("NodeEditor: Plugin provider not found");
+        return;
+    }
+
+    cyxwiz::plugin::PluginNodeEvalContext ctx;
+    ctx.node_type_name = "RLAgent";
+    ctx.parameters["command"] = "export_onnx";
+    ctx.parameters["output_path"] = output_path;
+
+    auto result = provider->EvaluateNode(ctx);
+    if (result.success) {
+        spdlog::info("NodeEditor: Policy exported to {}", output_path);
+    } else {
+        spdlog::warn("NodeEditor: ONNX export: {}", result.error_message.empty() ? "not yet fully wired" : result.error_message);
+    }
+}
+
+void NodeEditor::OnStopRLTraining() {
+    spdlog::info("NodeEditor: Stopping RL training");
+
+    // Stop Python-based training
+    if (rl_script_running_ && scripting_engine_) {
+        // Signal Python to stop via pycyxwiz atomic flag
+        scripting_engine_->ExecuteCommand("import pycyxwiz; pycyxwiz.rl_set_stop(True)");
+        scripting_engine_->StopScript();
+        rl_script_running_ = false;
+    }
+
+    // Stop old C++ executor (for backward compat)
+    if (rl_executor_) {
+        rl_executor_->Stop();
+        rl_executor_.reset();
+    }
+
+    if (rl_dashboard_) {
+        rl_dashboard_->SetRLTrainingState(false);
+    }
+}
+
+// ============================================================================
+// Phase 5 Week 7 - Data Studio Integration
+// ============================================================================
+
+void NodeEditor::SetDatasetFromDataStudio(const std::string& dataset_name) {
+    spdlog::info("[Node Editor] Receiving dataset from Data Studio: '{}'", dataset_name);
+
+    // Find or create DatasetInput node
+    MLNode* dataset_input = nullptr;
+    for (auto& node : nodes_) {
+        if (node.type == NodeType::DatasetInput) {
+            dataset_input = &node;
+            spdlog::info("[Node Editor] Found existing DatasetInput node (ID: {})", node.id);
+            break;
+        }
+    }
+
+    if (!dataset_input) {
+        // Create new DatasetInput node at center
+        spdlog::info("[Node Editor] Creating new DatasetInput node");
+
+        // Find center of visible area
+        ImVec2 center_pos = FindEmptyPosition();
+
+        // Create the node
+        MLNode new_node = CreateNode(NodeType::DatasetInput, "Dataset from Data Studio");
+        new_node.parameters["dataset_name"] = dataset_name;
+        new_node.parameters["split"] = "train";
+
+        nodes_.push_back(new_node);
+        dataset_input = &nodes_.back();
+
+        // Set position for next frame
+        pending_positions_[dataset_input->id] = center_pos;
+        pending_positions_frames_ = 3;  // Apply for 3 frames to ensure ImNodes registers it
+    } else {
+        // Update existing DatasetInput node
+        dataset_input->parameters["dataset_name"] = dataset_name;
+        dataset_input->name = "Dataset: " + dataset_name;
+    }
+
+    // Trigger shape inference
+    if (shape_inference_) {
+        shape_inference_->ComputeAllShapes(nodes_, links_);
+    }
+
+    // Save undo state
+    SaveUndoState();
+
+    // Frame the DatasetInput node (zoom to it)
+    selected_node_ids_.clear();
+    selected_node_ids_.push_back(dataset_input->id);
+
+    // Frame selected will be called on next Render()
+    // We set a flag to defer this until we're in the ImNodes context
+    // For now, just select the node - user can press 'F' to frame it
+
+    spdlog::info("[Node Editor] Dataset '{}' successfully set in DatasetInput node (ID: {})",
+                 dataset_name, dataset_input->id);
+}
+
+// Unified Canvas Phase 4.2: Execute data pipeline using DuckDB/Arrow
+bool NodeEditor::ExecuteDataPipeline() {
+    spdlog::info("Executing data transformation pipeline...");
+
+    if (nodes_.empty()) {
+        spdlog::warn("No nodes in graph - cannot execute pipeline");
+        return false;
+    }
+
+    // Check if we have a pipeline executor
+    if (!pipeline_executor_) {
+        pipeline_executor_ = std::make_unique<cyxwiz::PipelineExecutor>();
+        spdlog::info("Created PipelineExecutor instance");
+    }
+
+    // Convert node graph to JSON for PipelineExecutor
+    nlohmann::json pipeline_json;
+    pipeline_json["nodes"] = nlohmann::json::array();
+
+    for (const auto& node : nodes_) {
+        nlohmann::json node_json;
+        node_json["id"] = node.id;
+        node_json["type"] = GetNodeTypeName(node.type);
+        node_json["name"] = node.name;
+
+        // Add parameters
+        node_json["parameters"] = nlohmann::json::object();
+        for (const auto& [key, value] : node.parameters) {
+            node_json["parameters"][key] = value;
+        }
+
+        // Add inputs (connected node IDs)
+        node_json["inputs"] = nlohmann::json::array();
+        for (const auto& link : links_) {
+            // Find if this link connects TO this node
+            for (const auto& input_pin : node.inputs) {
+                if (link.to_pin == input_pin.id) {
+                    // Find the source node
+                    for (const auto& src_node : nodes_) {
+                        for (const auto& out_pin : src_node.outputs) {
+                            if (link.from_pin == out_pin.id) {
+                                node_json["inputs"].push_back(src_node.id);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add outputs (connected node IDs)
+        node_json["outputs"] = nlohmann::json::array();
+        for (const auto& link : links_) {
+            // Find if this link connects FROM this node
+            for (const auto& output_pin : node.outputs) {
+                if (link.from_pin == output_pin.id) {
+                    // Find the destination node
+                    for (const auto& dst_node : nodes_) {
+                        for (const auto& in_pin : dst_node.inputs) {
+                            if (link.to_pin == in_pin.id) {
+                                node_json["outputs"].push_back(dst_node.id);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        pipeline_json["nodes"].push_back(node_json);
+    }
+
+    // Set up progress callback
+    pipeline_executor_->SetProgressCallback([](float progress, const std::string& status) {
+        spdlog::info("Pipeline progress: {:.1f}% - {}", progress * 100, status);
+    });
+
+    // Set up completion callback
+    pipeline_executor_->SetCompletionCallback([](bool success) {
+        if (success) {
+            spdlog::info("Pipeline execution completed successfully!");
+        } else {
+            spdlog::error("Pipeline execution failed!");
+        }
+    });
+
+    // Execute the pipeline
+    std::string pipeline_str = pipeline_json.dump(2);
+    spdlog::debug("Pipeline JSON:\n{}", pipeline_str);
+
+    bool success = pipeline_executor_->ExecutePipeline(pipeline_str);
+    if (!success) {
+        spdlog::error("Pipeline execution failed: {}", pipeline_executor_->GetLastError());
+    }
+    return success;
+}
+
+// Helper to get node type name as string for PipelineExecutor
+std::string NodeEditor::GetNodeTypeName(NodeType type) const {
+    switch (type) {
+        case NodeType::CSVFile: return "FileInput";
+        case NodeType::FilterRows: return "FilterRows";
+        case NodeType::SelectColumns: return "SelectColumns";
+        case NodeType::JoinTables: return "Join";
+        case NodeType::GroupByAggregate: return "GroupBy";
+        case NodeType::SortRows: return "SortRows";
+        case NodeType::FillMissingValues: return "FillMissing";
+        case NodeType::RemoveDuplicateRows: return "RemoveDuplicates";
+        case NodeType::RenameColumns: return "RenameColumns";
+        case NodeType::SampleRows: return "SampleRows";
+        case NodeType::SQLQuery: return "SQLQuery";
+        case NodeType::ParquetFile: return "ParquetInput";
+        case NodeType::ExportCSV: return "ExportCSV";
+        case NodeType::ExportParquet: return "ExportParquet";
+        case NodeType::ExportJSON: return "ExportJSON";
+        case NodeType::DescribeStats: return "DescribeStats";
+        default: return "Unknown";
+    }
+}
+
+// ===== Unified Canvas Phase 6: Execution Visualization =====
+
+void NodeEditor::SetNodeExecutionState(int node_id, NodeExecutionState state) {
+    node_execution_states_[node_id] = state;
+    if (state == NodeExecutionState::Executing) {
+        currently_executing_node_id_ = node_id;
+    } else if (currently_executing_node_id_ == node_id) {
+        currently_executing_node_id_ = -1;
+    }
+}
+
+void NodeEditor::SetNodeExecutionError(int node_id, const std::string& error) {
+    node_execution_errors_[node_id] = error;
+    SetNodeExecutionState(node_id, NodeExecutionState::Error);
+}
+
+void NodeEditor::ClearExecutionStates() {
+    node_execution_states_.clear();
+    node_execution_errors_.clear();
+    currently_executing_node_id_ = -1;
 }
 
 } // namespace gui

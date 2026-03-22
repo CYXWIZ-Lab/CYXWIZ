@@ -1,0 +1,284 @@
+#include "mj_viewport_panel.h"
+#include "mj_simulation_executor.h"
+
+#include <imgui.h>
+#include <spdlog/spdlog.h>
+
+namespace cyxwiz::plugin::mujoco {
+
+void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visible) {
+    if (!visible || !*visible) return;
+
+    ImGui::SetNextWindowSize(ImVec2(680, 540), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("MuJoCo Viewport", visible,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        ImGui::End();
+        return;
+    }
+
+    if (!env.IsLoaded()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+                           "No environment loaded. Load an MJCF model to begin.");
+        ImGui::End();
+        return;
+    }
+
+    if (!renderer.IsInitialized()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+                           "Renderer not initialized.");
+        ImGui::End();
+        return;
+    }
+
+    RenderToolbar(env, renderer);
+    if (sim_executor_) {
+        RenderSimControls();
+    }
+    ImGui::Separator();
+    RenderViewport(env, renderer);
+
+    if (show_settings_) {
+        ImGui::Separator();
+        RenderSettings(renderer);
+    }
+
+    ImGui::End();
+}
+
+// =============================================================================
+// Toolbar
+// =============================================================================
+
+void MjViewportPanel::RenderToolbar(MjEnvManager& env, MjRenderer& renderer) {
+    // Play/Pause
+    if (playing_) {
+        if (ImGui::Button("Pause")) {
+            playing_ = false;
+        }
+    } else {
+        if (ImGui::Button("Play")) {
+            playing_ = true;
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Reset")) {
+        std::lock_guard phys_lock(env.GetPhysicsMutex());
+        env.Reset();
+        renderer.ResetCamera(env.GetModel());
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Step")) {
+        std::lock_guard phys_lock(env.GetPhysicsMutex());
+        std::vector<float> zero_action(env.GetActionDim(), 0.0f);
+        env.Step(zero_action);
+    }
+
+    ImGui::SameLine();
+    ImGui::Text("|");
+    ImGui::SameLine();
+
+    // Toggle render options
+    bool enabled = renderer.IsEnabled();
+    if (ImGui::Checkbox("Render", &enabled)) {
+        renderer.SetEnabled(enabled);
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Settings")) {
+        show_settings_ = !show_settings_;
+    }
+
+    // Status line
+    ImGui::SameLine(ImGui::GetWindowWidth() - 280);
+    ImGui::Text("Step: %d | Reward: %.2f | Ep: %d",
+                env.GetCurrentStep(),
+                env.GetEpisodeReward(),
+                env.GetEpisodeCount());
+}
+
+// =============================================================================
+// Viewport (3D rendered image)
+// =============================================================================
+
+void MjViewportPanel::RenderViewport(MjEnvManager& env, MjRenderer& renderer) {
+    // Auto-step if playing (only when sim_executor is NOT driving physics)
+    bool sim_driving = sim_executor_ && sim_executor_->GetMode() != SimMode::Stopped;
+    if (playing_ && env.IsLoaded() && !sim_driving && !graph_sim_active_) {
+        std::lock_guard phys_lock(env.GetPhysicsMutex());
+        std::vector<float> zero_action(env.GetActionDim(), 0.0f);
+        for (int i = 0; i < steps_per_frame_; ++i) {
+            auto result = env.Step(zero_action);
+            if (result.terminated || result.truncated) {
+                env.Reset();
+            }
+        }
+    }
+
+    // Get available viewport size
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    if (show_settings_) {
+        avail.y -= 100.0f;  // Reserve space for settings
+    }
+    if (avail.x < 10.0f || avail.y < 10.0f) return;
+
+    // Debounced resize — avoid expensive MuJoCo context recreation every frame
+    // during drag. Only apply after size is stable for N frames.
+    int new_w = static_cast<int>(avail.x);
+    int new_h = static_cast<int>(avail.y);
+    if (new_w != pending_w_ || new_h != pending_h_) {
+        pending_w_ = new_w;
+        pending_h_ = new_h;
+        stable_frames_ = 0;
+    } else {
+        stable_frames_++;
+    }
+    if (stable_frames_ == kResizeDebounceFrames) {
+        if (pending_w_ != renderer.GetWidth() || pending_h_ != renderer.GetHeight()) {
+            renderer.SetResolution(pending_w_, pending_h_);
+        }
+    }
+
+    // Render frame at current renderer resolution
+    unsigned int tex_id = renderer.RenderFrame(env.GetModel(), env.GetData());
+    if (tex_id == 0) {
+        ImGui::TextDisabled("Rendering disabled or failed.");
+        return;
+    }
+
+    // Display texture (flip V because MuJoCo outputs bottom-up)
+    // Stretch to fill available area; aspect ratio may differ during resize
+    ImVec2 uv0(0.0f, 1.0f);  // Bottom-left of texture
+    ImVec2 uv1(1.0f, 0.0f);  // Top-right of texture
+    ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(tex_id)),
+                 avail, uv0, uv1);
+
+    // Mouse camera controls when hovering viewport
+    if (ImGui::IsItemHovered()) {
+        ImGuiIO& io = ImGui::GetIO();
+
+        // Left mouse button: rotate
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            ImVec2 delta = io.MouseDelta;
+            renderer.RotateCamera(delta.x, delta.y);
+        }
+
+        // Right mouse button: pan
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+            ImVec2 delta = io.MouseDelta;
+            renderer.PanCamera(delta.x, delta.y);
+        }
+
+        // Scroll wheel: zoom
+        if (io.MouseWheel != 0.0f) {
+            renderer.ZoomCamera(io.MouseWheel);
+        }
+    }
+}
+
+// =============================================================================
+// Simulation Controls (when executor is attached)
+// =============================================================================
+
+void MjViewportPanel::RenderSimControls() {
+    if (!sim_executor_) return;
+
+    auto state = sim_executor_->GetState();
+    auto mode = sim_executor_->GetMode();
+
+    // Auto-clear graph_sim_active if EvaluateNode hasn't been called recently
+    if (graph_sim_active_) {
+        graph_sim_frames_++;
+        if (graph_sim_frames_ > 30) {  // ~0.5s at 60fps without EvaluateNode call
+            graph_sim_active_ = false;
+        }
+    }
+
+    // Mode selector + controls on same line
+    ImGui::Spacing();
+
+    if (mode == SimMode::Stopped) {
+        if (graph_sim_active_) {
+            ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f),
+                "Physics driven by Node Editor graph simulation");
+        } else {
+            if (ImGui::Button("Manual Control")) {
+                sim_executor_->StartManualControl();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("RL Training")) {
+                sim_executor_->StartRLTraining();
+            }
+        }
+    } else {
+        // Play/Pause/Step/Stop
+        if (state == SimState::Running) {
+            if (ImGui::Button("Pause##sim")) {
+                sim_executor_->Pause();
+            }
+        } else if (state == SimState::Paused) {
+            if (ImGui::Button("Resume##sim")) {
+                sim_executor_->Resume();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Step##sim")) {
+            sim_executor_->SingleStep();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Stop##sim")) {
+            sim_executor_->Stop();
+        }
+
+        // Real-time factor slider
+        ImGui::SameLine();
+        ImGui::Text("|");
+        ImGui::SameLine();
+        float rtf = sim_executor_->GetRealtimeFactor();
+        ImGui::SetNextItemWidth(100.0f);
+        if (ImGui::SliderFloat("##rtf", &rtf, 0.0f, 5.0f, "%.1fx")) {
+            sim_executor_->SetRealtimeFactor(rtf);
+        }
+        ImGui::SameLine();
+        ImGui::Text("RT");
+
+        // Metrics
+        auto metrics = sim_executor_->GetMetrics();
+        ImGui::SameLine(ImGui::GetWindowWidth() - 350);
+        if (mode == SimMode::ManualControl) {
+            ImGui::Text("t=%.3fs | Steps: %d | RTF: %.1f",
+                        metrics.sim_time, metrics.step_count, metrics.real_time_factor);
+        } else {
+            ImGui::Text("Steps: %d | Ep: %d | R: %.1f | Mean: %.1f",
+                        metrics.step_count, metrics.episode_count,
+                        metrics.episode_reward, metrics.mean_reward);
+        }
+    }
+}
+
+// =============================================================================
+// Settings
+// =============================================================================
+
+void MjViewportPanel::RenderSettings(MjRenderer& renderer) {
+    ImGui::Text("Render Options:");
+
+    if (ImGui::Button("Contacts")) renderer.ToggleContactPoints();
+    ImGui::SameLine();
+    if (ImGui::Button("Forces")) renderer.ToggleContactForces();
+    ImGui::SameLine();
+    if (ImGui::Button("Wireframe")) renderer.ToggleWireframe();
+    ImGui::SameLine();
+    if (ImGui::Button("Joints")) renderer.ToggleJoints();
+    ImGui::SameLine();
+    if (ImGui::Button("Actuators")) renderer.ToggleActuators();
+
+    ImGui::SliderFloat("Speed", &playback_speed_, 0.1f, 10.0f, "%.1fx");
+    steps_per_frame_ = static_cast<int>(playback_speed_);
+    if (steps_per_frame_ < 1) steps_per_frame_ = 1;
+
+    ImGui::Text("Resolution: %d x %d", renderer.GetWidth(), renderer.GetHeight());
+}
+
+} // namespace cyxwiz::plugin::mujoco

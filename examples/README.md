@@ -54,6 +54,25 @@ Coming soon:
 - Using the Python API
 - Distributed training across network
 
+## Python API Example
+
+**File**: `python/ex1_pycyxwiz.py`
+
+Demonstrates how to adapt the Coursera Machine Learning ex1 linear regression walkthrough
+using the PyCyxWiz bindings:
+- warm-up identity matrix via `pycyxwiz.linalg.eye`
+- scatter plot of the original `ex1data1.txt` dataset (stored next to the script)
+- computeCost and gradientDescent implemented with `pycyxwiz.linalg.matmul`
+- predictions for new population values
+- surface and contour plots of the cost function
+
+### Usage
+
+1. Build the CyxWiz backend with `CYXWIZ_BUILD_PYTHON=ON` (the example adds `build/windows-release/lib/Release` to `PATH` on Windows).
+2. From the repo root run `python examples/python/ex1_pycyxwiz.py`.
+
+The script automatically reads `examples/python/ex1data1.txt` and will show the plots before exiting.
+
 ## Integration Examples
 
 Coming soon:

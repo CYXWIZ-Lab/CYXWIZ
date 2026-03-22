@@ -2,6 +2,7 @@
 #include "data_registry.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../preprocessing/statistics_calculator.h"
+#include "../plugin/registries/plugin_training_hook_manager.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
 #include <cmath>
@@ -357,12 +358,31 @@ void TrainingExecutor::Train(
     spdlog::info("TrainingExecutor: Starting training for {} epochs, batch_size={}",
                  epochs, batch_size);
 
+    // Notify plugin hooks: training start
+    {
+        cyxwiz::plugin::TrainingContext ctx;
+        ctx.total_epochs = epochs;
+        ctx.learning_rate = config_.learning_rate;
+        cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyTrainingStart(ctx);
+    }
+
     // Set model to training mode
     model_->SetTraining(true);
 
     // Training loop
     for (int epoch = 1; epoch <= epochs; ++epoch) {
         if (ShouldStop()) break;
+        // Check plugin early stopping
+        {
+            cyxwiz::plugin::TrainingContext stop_ctx;
+            stop_ctx.current_epoch = epoch;
+            stop_ctx.total_epochs = epochs;
+            stop_ctx.learning_rate = config_.learning_rate;
+            if (cyxwiz::plugin::PluginTrainingHookManager::Instance().ShouldStopEarly(stop_ctx)) {
+                spdlog::info("TrainingExecutor: Plugin requested early stop");
+                break;
+            }
+        }
         WaitWhilePaused();
 
         auto epoch_start = std::chrono::steady_clock::now();
@@ -371,6 +391,15 @@ void TrainingExecutor::Train(
             m.current_epoch = epoch;
             m.status_message = "Training epoch " + std::to_string(epoch) + "...";
         });
+
+        // Notify plugin hooks: epoch start
+        {
+            cyxwiz::plugin::TrainingContext ctx;
+            ctx.current_epoch = epoch;
+            ctx.total_epochs = epochs;
+            ctx.learning_rate = config_.learning_rate;
+            cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyEpochStart(ctx);
+        }
 
         // Run training epoch
         RunTrainingEpoch(train_batcher, epoch, batch_cb);
@@ -411,9 +440,36 @@ void TrainingExecutor::Train(
                      epoch, epochs, current.train_loss, current.train_accuracy * 100,
                      current.val_loss, current.val_accuracy * 100, epoch_time, samples_per_sec);
 
+        // Notify plugin hooks: epoch end
+        {
+            cyxwiz::plugin::TrainingContext ctx;
+            ctx.current_epoch = epoch;
+            ctx.total_epochs = epochs;
+            ctx.train_loss = current.train_loss;
+            ctx.train_accuracy = current.train_accuracy;
+            ctx.val_loss = current.val_loss;
+            ctx.val_accuracy = current.val_accuracy;
+            ctx.learning_rate = config_.learning_rate;
+            cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyEpochEnd(ctx);
+        }
+
         // Reset batchers for next epoch
         train_batcher.Reset();
         val_batcher.Reset();
+    }
+
+    // Notify plugin hooks: training end
+    {
+        TrainingMetrics final_metrics = GetMetrics();
+        cyxwiz::plugin::TrainingContext ctx;
+        ctx.current_epoch = final_metrics.current_epoch;
+        ctx.total_epochs = final_metrics.total_epochs;
+        ctx.train_loss = final_metrics.train_loss;
+        ctx.train_accuracy = final_metrics.train_accuracy;
+        ctx.val_loss = final_metrics.val_loss;
+        ctx.val_accuracy = final_metrics.val_accuracy;
+        ctx.learning_rate = config_.learning_rate;
+        cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyTrainingEnd(ctx);
     }
 
     // Mark complete

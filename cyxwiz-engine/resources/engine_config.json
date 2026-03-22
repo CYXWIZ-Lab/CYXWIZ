@@ -12,5 +12,9 @@
         "auto_connect": false,
         "timeout": 10,
         "request_timeout": 30
+    },
+    "python": {
+        "use_bundled": true,
+        "interpreter_path": ""
     }
 }

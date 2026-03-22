@@ -41,6 +41,7 @@
 #include "panels/memory_monitor.h"
 #include "panels/variable_explorer.h"
 #include "panels/plot_output_panel.h"
+#include "panels/python_plot_window_registry.h"
 #include "panels/test_results_panel.h"
 #include "panels/export_dialog.h"
 #include "panels/import_dialog.h"
@@ -114,6 +115,10 @@
 #include "panels/regex_tester_panel.h"
 #include "panels/cloud_browser.h"
 #include "panels/cloud_dataset_manager.h"
+#include "panels/plugin_manager_panel.h"
+#include "data_studio/data_studio_panel.h"
+#include "../plugin/plugin_manager.h"
+#include "../plugin/registries/plugin_panel_registry.h"
 #include "tutorial/tutorial_system.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
@@ -153,7 +158,7 @@ MainWindow::MainWindow()
     console_ = std::make_unique<Console>();
     viewport_ = std::make_unique<Viewport>();
     properties_ = std::make_unique<Properties>();
-    dataset_panel_ = std::make_unique<DatasetPanel>();
+    training_eval_panel_ = std::make_unique<TrainingEvaluationPanel>();
 
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
@@ -161,13 +166,12 @@ MainWindow::MainWindow()
     // New panel system
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
-    // training_dashboard_ = std::make_unique<cyxwiz::TrainingDashboardPanel>();  // Removed - merged into TrainingPlotPanel
     training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
 
-    // Wire up TrainingPlotPanel to DatasetPanel for local training visualization
-    if (dataset_panel_ && training_plot_panel_) {
-        dataset_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
-        dataset_panel_->SetNodeEditor(node_editor_.get());
+    // Wire up TrainingPlotPanel to TrainingEvaluationPanel for local training visualization
+    if (training_eval_panel_ && training_plot_panel_) {
+        training_eval_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
+        training_eval_panel_->SetNodeEditor(node_editor_.get());
     }
 
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
@@ -321,6 +325,13 @@ MainWindow::MainWindow()
     cloud_browser_panel_ = std::make_unique<gui::CloudBrowserPanel>();
     cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();
 
+    // Plugin Manager panel
+    plugin_manager_panel_ = std::make_unique<cyxwiz::PluginManagerPanel>();
+
+    // Data Studio panel (Phase 1 Week 1)
+    data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();
+    // Unified Canvas Phase 5: SetMainWindow removed (Pipeline Canvas moved to Node Editor)
+
     // Set NAS panel callbacks for node editor integration
     nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
         if (node_editor_) {
@@ -347,7 +358,7 @@ MainWindow::MainWindow()
     script_editor_->SetScriptingEngine(scripting_engine_);
 
     // Expose TrainingPlotPanel to Python scripts through the scripting engine
-    // This avoids DLL boundary issues by using pybind11 directly
+    // Registration is deferred - actual Python import happens on first script execution
     if (scripting_engine_) {
         scripting_engine_->RegisterTrainingDashboard(training_plot_panel_.get());
     }
@@ -364,6 +375,9 @@ MainWindow::MainWindow()
     // Connect Node Editor to Properties panel for node selection display
     node_editor_->SetPropertiesPanel(properties_.get());
 
+    // Connect Node Editor to ScriptingEngine for Python-based RL training
+    node_editor_->SetScriptingEngine(scripting_engine_.get());
+
     // Connect Properties panel to Node Editor for shape inference
     properties_->SetNodeEditor(node_editor_.get());
 
@@ -374,7 +388,7 @@ MainWindow::MainWindow()
     query_console_->SetNodeEditor(node_editor_.get());
 
     // Connect Dataset Panel to Node Editor for graph validation
-    dataset_panel_->SetNodeEditor(node_editor_.get());
+    training_eval_panel_->SetNodeEditor(node_editor_.get());
 
     // Set up training callback for Node Editor
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
@@ -416,17 +430,17 @@ MainWindow::MainWindow()
 
     // Set up Import Dataset callback - shows Dataset Manager panel
     toolbar_->SetImportDatasetCallback([this]() {
-        if (dataset_panel_) {
-            dataset_panel_->Show();
+        if (training_eval_panel_) {
+            training_eval_panel_->Show();
             spdlog::info("Opened Dataset Manager panel");
         }
     });
 
-    // Create Custom Dataset - opens DatasetPanel to Load Dataset tab
+    // Create Custom Dataset - opens TrainingEvaluationPanel to Load Dataset tab
     toolbar_->SetCreateCustomDatasetCallback([this]() {
-        if (dataset_panel_) {
-            dataset_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
-            dataset_panel_->SetVisible(true);
+        if (training_eval_panel_) {
+            training_eval_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
+            training_eval_panel_->SetVisible(true);
             spdlog::info("Opened Dataset panel for custom dataset creation");
         }
     });
@@ -447,20 +461,20 @@ MainWindow::MainWindow()
         }
     });
 
-    // Augment - opens DatasetPanel to Data Pipeline tab
+    // Augment - opens TrainingEvaluationPanel to Data Pipeline tab
     toolbar_->SetAugmentDatasetCallback([this]() {
-        if (dataset_panel_) {
-            dataset_panel_->SetActiveTab(gui::DatasetTab::DataPipeline);
-            dataset_panel_->SetVisible(true);
+        if (training_eval_panel_) {
+            training_eval_panel_->SetActiveTab(gui::DatasetTab::DataPipeline);
+            training_eval_panel_->SetVisible(true);
             spdlog::info("Opened Dataset panel Data Pipeline tab");
         }
     });
 
-    // Dataset Statistics - opens DatasetPanel (stats shown in Load Dataset tab)
+    // Dataset Statistics - opens TrainingEvaluationPanel (stats shown in Load Dataset tab)
     toolbar_->SetDatasetStatisticsCallback([this]() {
-        if (dataset_panel_) {
-            dataset_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
-            dataset_panel_->SetVisible(true);
+        if (training_eval_panel_) {
+            training_eval_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
+            training_eval_panel_->SetVisible(true);
             spdlog::info("Opened Dataset panel for statistics");
         }
     });
@@ -804,6 +818,9 @@ MainWindow::MainWindow()
     // Set up Verbose Python Logging pointer (View menu - Developer Tools)
     if (scripting_engine_) {
         toolbar_->SetVerbosePythonLogPtr(scripting_engine_->GetVerboseLoggingPtr());
+        toolbar_->SetPythonDiagnosticsCallback([this]() -> std::string {
+            return scripting_engine_->GetPythonRuntimeDiagnostics();
+        });
     }
 
     // Set up Model Analysis callbacks (Tools menu - Phase 2)
@@ -1271,6 +1288,10 @@ MainWindow::MainWindow()
         this->OnProjectClosed(project_root);
     });
 
+    cyxwiz::ProjectManager::Instance().SetOnProjectVenvReady([this](const std::string& project_root) {
+        this->OnProjectVenvReady(project_root);
+    });
+
     // Set up New Script callback - creates new untitled script and opens editor
     toolbar_->SetNewScriptCallback([this]() {
         if (script_editor_) {
@@ -1558,11 +1579,11 @@ MainWindow::MainWindow()
 
     // Set up asset browser callback for dataset loading
     asset_browser_->SetOnDatasetLoaded([this](const std::string& path, cyxwiz::DatasetHandle handle) {
-        if (dataset_panel_ && handle.IsValid()) {
-            // Dataset is already loaded via DataRegistry, just update the DatasetPanel to use it
+        if (training_eval_panel_ && handle.IsValid()) {
+            // Dataset is already loaded via DataRegistry, just update the TrainingEvaluationPanel to use it
             spdlog::info("Dataset loaded from Asset Browser: {}", path);
             // Show the dataset panel so user can see the loaded data
-            dataset_panel_->SetVisible(true);
+            training_eval_panel_->SetVisible(true);
 
             // Update node editor with dataset name
             if (node_editor_) {
@@ -1675,8 +1696,6 @@ MainWindow::~MainWindow() {
     plot_test_control_.reset();
     spdlog::info("~MainWindow: training_plot_panel_ (before scripting_engine)");
     training_plot_panel_.reset();
-    spdlog::info("~MainWindow: training_dashboard_ (before scripting_engine)");
-    training_dashboard_.reset();
 
     // IMPORTANT: Destroy panels that hold shared_ptr<ScriptingEngine> BEFORE
     // the MainWindow's scripting_engine_, so all references are released
@@ -1861,13 +1880,13 @@ MainWindow::~MainWindow() {
     spdlog::info("~MainWindow: data_explorer_panel_");
     data_explorer_panel_.reset();
     // script_editor_, command_window_ already reset at the beginning (with scripting_engine panels)
-    // plot_test_control_, training_plot_panel_, training_dashboard_ already reset at the beginning
+    // plot_test_control_, training_plot_panel_ already reset at the beginning
     spdlog::info("~MainWindow: asset_browser_");
     asset_browser_.reset();
     spdlog::info("~MainWindow: toolbar_");
     toolbar_.reset();
-    spdlog::info("~MainWindow: dataset_panel_");
-    dataset_panel_.reset();
+    spdlog::info("~MainWindow: training_eval_panel_");
+    training_eval_panel_.reset();
     spdlog::info("~MainWindow: properties_");
     properties_.reset();
     spdlog::info("~MainWindow: viewport_");
@@ -1898,22 +1917,18 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         connection_dialog_->SetNodeEditor(node_editor_.get());
     }
 
-    // Create and wire up ReservationClient for node reservation
+    // Create and wire up ReservationClient for node reservation (async connect to avoid blocking startup)
     if (connection_dialog_ && client) {
         auto reservation_client = std::make_shared<network::ReservationClient>();
-        // Get server address from existing client (assuming same server hosts reservation service)
-        if (reservation_client->Connect(cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress())) {
-            // Set auth token from AuthClient if authenticated
-            auto& auth = cyxwiz::auth::AuthClient::Instance();
-            if (auth.IsAuthenticated()) {
-                reservation_client->SetAuthToken(auth.GetJwtToken());
-                spdlog::info("ReservationClient auth token set from AuthClient");
-            }
-            connection_dialog_->SetReservationClient(reservation_client);
-            spdlog::info("ReservationClient connected and wired to ConnectionDialog");
-        } else {
-            spdlog::warn("Failed to connect ReservationClient - reservation feature disabled");
+        // Set auth token from AuthClient if authenticated
+        auto& auth = cyxwiz::auth::AuthClient::Instance();
+        if (auth.IsAuthenticated()) {
+            reservation_client->SetAuthToken(auth.GetJwtToken());
         }
+        // Connect asynchronously - won't block the main thread
+        reservation_client->ConnectAsync(cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress());
+        connection_dialog_->SetReservationClient(reservation_client);
+        spdlog::info("ReservationClient wired to ConnectionDialog (connecting in background)");
     }
 
     // Create a shared P2PClient for reservation-based connections
@@ -1944,21 +1959,21 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         job_manager->SetJobStatusPanel(job_status_panel_.get());
     }
 
-    // Set JobManager for DatasetPanel (enables training job submission)
-    if (dataset_panel_) {
-        dataset_panel_->SetJobManager(job_manager);
+    // Set JobManager for TrainingEvaluationPanel (enables training job submission)
+    if (training_eval_panel_) {
+        training_eval_panel_->SetJobManager(job_manager);
 
         // Set TrainingPlotPanel for local training visualization
-        dataset_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
+        training_eval_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
 
-        // Connect NodeEditor so DatasetPanel can compile the graph for training
-        dataset_panel_->SetNodeEditor(node_editor_.get());
+        // Connect NodeEditor so TrainingEvaluationPanel can compile the graph for training
+        training_eval_panel_->SetNodeEditor(node_editor_.get());
 
-        // Connect WalletPanel so DatasetPanel can get wallet address for job submission
-        dataset_panel_->SetWalletPanel(wallet_panel_.get());
+        // Connect WalletPanel so TrainingEvaluationPanel can get wallet address for job submission
+        training_eval_panel_->SetWalletPanel(wallet_panel_.get());
 
         // Set callback to start P2P monitoring when training starts
-        dataset_panel_->SetTrainingStartCallback([this](const std::string& job_id) {
+        training_eval_panel_->SetTrainingStartCallback([this](const std::string& job_id) {
             StartJobMonitoring(job_id);
         });
     }
@@ -2127,7 +2142,6 @@ void MainWindow::Render() {
 
     // Render new panels
     if (asset_browser_) asset_browser_->Render();
-    // if (training_dashboard_) training_dashboard_->Render();  // Removed - merged into TrainingPlotPanel
     if (training_plot_panel_) training_plot_panel_->Render();  // Now "Training Dashboard"
     if (plot_test_control_) plot_test_control_->Render();
     if (command_window_) command_window_->Render();
@@ -2153,6 +2167,13 @@ void MainWindow::Render() {
     if (export_dialog_) export_dialog_->Render();
     if (import_dialog_) import_dialog_->Render();
     if (deployment_dialog_) deployment_dialog_->Render();
+
+    // Render Python-created plot windows (cyxwiz_plotting)
+    for (const auto& plot_window : cyxwiz::GetPythonPlotWindows()) {
+        if (plot_window) {
+            plot_window->Render();
+        }
+    }
 
     // Render Model Analysis panels (Phase 2)
     if (model_summary_panel_) model_summary_panel_->Render();
@@ -2250,12 +2271,24 @@ void MainWindow::Render() {
     if (cloud_browser_panel_) cloud_browser_panel_->Render();
     if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->Render();
 
+    // Plugin Manager panel
+    if (plugin_manager_panel_) plugin_manager_panel_->Render();
+
+    // Data Studio panel (Phase 1 Week 1)
+    if (data_studio_panel_) data_studio_panel_->Render();
+
+    // Render plugin-provided panels
+    cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
+
+    // Render permission approval dialogs
+    cyxwiz::plugin::PluginManager::Instance().RenderPermissionDialogs();
+
     // Render original panels
     if (node_editor_) node_editor_->Render();
     if (console_) console_->Render();
     if (viewport_) viewport_->Render();
     if (properties_) properties_->Render();
-    if (dataset_panel_) dataset_panel_->Render();
+    if (training_eval_panel_) training_eval_panel_->Render();
 
     if (show_about_dialog_) {
         ShowAboutDialog();
@@ -2411,8 +2444,9 @@ void MainWindow::BuildInitialDockLayout() {
     // Dock windows to their designated areas
     // Window names must EXACTLY match the names in ImGui::Begin() calls in each panel
     ImGui::DockBuilderDockWindow("Asset Browser", dock_id_left);
-    ImGui::DockBuilderDockWindow("Node Editor", dock_id_center);
-    ImGui::DockBuilderDockWindow("Script Editor", dock_id_center); // Tabbed with Node Editor
+    ImGui::DockBuilderDockWindow("CyxWiz Studio", dock_id_center);
+    ImGui::DockBuilderDockWindow("Script Editor", dock_id_center); // Tabbed with CyxWiz Studio
+    ImGui::DockBuilderDockWindow("Data Studio", dock_id_center); // Tabbed with CyxWiz Studio
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("Command Window", dock_id_bottom_left); // Tabbed with Console
@@ -2424,7 +2458,7 @@ void MainWindow::BuildInitialDockLayout() {
 
     spdlog::info("Initial dock layout built successfully");
     spdlog::info("  - Left: Asset Browser (15%)");
-    spdlog::info("  - Center: Node Editor (main workspace)");
+    spdlog::info("  - Center: CyxWiz Studio (main workspace)");
     spdlog::info("  - Right: Properties (20%)");
     spdlog::info("  - Bottom-Left: Console");
     spdlog::info("  - Bottom-Right: Training Dashboard (Inspector)");
@@ -2460,7 +2494,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
 
     // Main editing panels
     if (node_editor_) {
-        dock_style.RegisterPanel("Node Editor", ICON_FA_DIAGRAM_PROJECT, node_editor_->GetVisiblePtr());
+        dock_style.RegisterPanel("CyxWiz Studio", ICON_FA_DIAGRAM_PROJECT, node_editor_->GetVisiblePtr());
     }
     if (script_editor_) {
         dock_style.RegisterPanel("Script Editor", ICON_FA_CODE, script_editor_->GetVisiblePtr());
@@ -2489,9 +2523,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
 
     // Additional panels (less commonly used)
-    if (dataset_panel_) {
-        dock_style.RegisterPanel("Dataset", ICON_FA_DATABASE, dataset_panel_->GetVisiblePtr(), [this]() {
-            spdlog::info("Dataset panel toggled, visible={}", dataset_panel_->IsVisible());
+    if (training_eval_panel_) {
+        dock_style.RegisterPanel("Training & Evaluation", ICON_FA_GRADUATION_CAP, training_eval_panel_->GetVisiblePtr(), [this]() {
+            spdlog::info("Training & Evaluation panel toggled, visible={}", training_eval_panel_->IsVisible());
         });
     }
     if (table_viewer_) {
@@ -2499,6 +2533,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (data_explorer_panel_) {
         dock_style.RegisterPanel("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_->GetVisiblePtr());
+    }
+    if (data_studio_panel_) {
+        dock_style.RegisterPanel("Data Studio", ICON_FA_DIAGRAM_PROJECT, data_studio_panel_->GetVisiblePtr());
     }
     if (visualization_panel_) {
         dock_style.RegisterPanel("Visualizer", ICON_FA_CHART_SIMPLE, visualization_panel_->GetVisiblePtr());
@@ -2534,6 +2571,11 @@ void MainWindow::RegisterPanelsWithSidebar() {
         dock_style.RegisterPanel("Cloud Manager", ICON_FA_DATABASE, cloud_dataset_manager_panel_->GetVisiblePtr());
     }
 
+    // Plugin Manager panel
+    if (plugin_manager_panel_) {
+        dock_style.RegisterPanel("Plugin Manager", ICON_FA_PLUG, plugin_manager_panel_->GetVisiblePtr());
+    }
+
     // Command Palette - action button (not a panel toggle)
     if (toolbar_) {
         dock_style.RegisterPanel("Command Palette", ICON_FA_MAGNIFYING_GLASS, nullptr, [this]() {
@@ -2557,13 +2599,12 @@ void MainWindow::SetDefaultPanelVisibility() {
     // They use ImGui window visibility directly. We leave them alone.
     // New-style panels that should be visible:
     if (asset_browser_) asset_browser_->SetVisible(true);
-    if (training_dashboard_) training_dashboard_->SetVisible(true);
 
     // === HIDE ALL OTHER PANELS ===
     // Users can enable these via View menu when needed
 
     // Main panels - hide by default
-    if (dataset_panel_) dataset_panel_->SetVisible(false);
+    if (training_eval_panel_) training_eval_panel_->SetVisible(false);
     if (training_plot_panel_) training_plot_panel_->SetVisible(false);
     if (plot_test_control_) plot_test_control_->SetVisible(false);
     if (command_window_) command_window_->SetVisible(false);
@@ -2676,6 +2717,9 @@ void MainWindow::SetDefaultPanelVisibility() {
     if (cloud_browser_panel_) cloud_browser_panel_->SetVisible(false);
     if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->SetVisible(false);
 
+    // Plugin Manager (hidden by default)
+    if (plugin_manager_panel_) plugin_manager_panel_->SetVisible(false);
+
     spdlog::info("Default panel visibility set - showing only core panels");
 }
 
@@ -2695,20 +2739,20 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                  config.layers.size(), config.input_size, config.output_size);
 
     // Check if we have a dataset loaded
-    if (!dataset_panel_ || !dataset_panel_->IsDatasetLoaded()) {
+    if (!training_eval_panel_ || !training_eval_panel_->IsDatasetLoaded()) {
         spdlog::error("No dataset loaded. Please load a dataset first.");
         return;
     }
 
-    // Get the dataset handle from DatasetPanel
-    cyxwiz::DatasetHandle dataset = dataset_panel_->GetCurrentDataset();
+    // Get the dataset handle from TrainingEvaluationPanel
+    cyxwiz::DatasetHandle dataset = training_eval_panel_->GetCurrentDataset();
     if (!dataset.IsValid()) {
         spdlog::error("Invalid dataset handle");
         return;
     }
 
     // Update config with dataset info from the loaded dataset
-    const auto& dataset_info = dataset_panel_->GetDatasetInfo();
+    const auto& dataset_info = training_eval_panel_->GetDatasetInfo();
     config.dataset_name = dataset_info.name;
 
     // Calculate input size from shape (product of dimensions)
@@ -2727,8 +2771,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     spdlog::info("  Loss: {}", config.GetLossName());
 
     // Get training parameters from Dataset Panel's Hyperparameters section
-    int epochs = dataset_panel_->GetTrainEpochs();
-    int batch_size = dataset_panel_->GetTrainBatchSize();
+    int epochs = training_eval_panel_->GetTrainEpochs();
+    int batch_size = training_eval_panel_->GetTrainBatchSize();
     spdlog::info("  Epochs: {}, Batch Size: {}", epochs, batch_size);
 
     // Create callback to update node editor training animation
@@ -2771,20 +2815,20 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
                  config.layers.size(), config.input_size, config.output_size);
 
     // Check if we have a dataset loaded
-    if (!dataset_panel_ || !dataset_panel_->IsDatasetLoaded()) {
+    if (!training_eval_panel_ || !training_eval_panel_->IsDatasetLoaded()) {
         spdlog::error("No dataset loaded. Please load a dataset first.");
         return;
     }
 
-    // Get the dataset handle from DatasetPanel
-    cyxwiz::DatasetHandle dataset = dataset_panel_->GetCurrentDataset();
+    // Get the dataset handle from TrainingEvaluationPanel
+    cyxwiz::DatasetHandle dataset = training_eval_panel_->GetCurrentDataset();
     if (!dataset.IsValid()) {
         spdlog::error("Invalid dataset handle");
         return;
     }
 
     // Update config with dataset info
-    const auto& dataset_info = dataset_panel_->GetDatasetInfo();
+    const auto& dataset_info = training_eval_panel_->GetDatasetInfo();
     config.dataset_name = dataset_info.name;
 
     size_t input_size = 1;
@@ -2887,8 +2931,8 @@ void MainWindow::DetectKeyboardContext() {
         if (focused) {
             std::string window_name = focused->Name ? focused->Name : "";
 
-            // Node Editor detection
-            if (window_name.find("Node Editor") != std::string::npos ||
+            // CyxWiz Studio detection
+            if (window_name.find("CyxWiz Studio") != std::string::npos ||
                 window_name.find("##NodeEditor") != std::string::npos) {
                 kb.SetActiveContext(KeyboardContext::NodeEditor);
                 return;
@@ -3112,6 +3156,17 @@ void MainWindow::SaveProjectSettings() {
         settings.font_scale = script_editor_->GetFontScale();
         settings.tab_size = script_editor_->GetTabSize();
         settings.show_whitespace = script_editor_->GetShowWhitespace();
+        settings.word_wrap = script_editor_->GetWordWrap();
+        settings.auto_indent = script_editor_->GetAutoIndent();
+        settings.syntax_highlighting = script_editor_->GetSyntaxHighlighting();
+
+        // Persist open scripts for project restore
+        pm.GetConfig().open_scripts.clear();
+        auto open_paths = script_editor_->GetOpenFilePaths();
+        for (const auto& path : open_paths) {
+            pm.GetConfig().open_scripts.push_back(path);
+        }
+        pm.GetConfig().active_script_index = script_editor_->GetActiveTabIndex();
     }
 
     // Save application-wide settings
@@ -3140,6 +3195,9 @@ void MainWindow::LoadProjectSettings() {
         script_editor_->SetFontScale(settings.font_scale);
         script_editor_->SetTabSize(settings.tab_size);
         script_editor_->SetShowWhitespace(settings.show_whitespace);
+        script_editor_->SetWordWrap(settings.word_wrap);
+        script_editor_->SetAutoIndent(settings.auto_indent);
+        script_editor_->SetSyntaxHighlighting(settings.syntax_highlighting);
     }
 
     // Sync settings to toolbar/preferences
@@ -3148,6 +3206,8 @@ void MainWindow::LoadProjectSettings() {
         toolbar_->SetEditorTabSize(settings.tab_size);
         toolbar_->SetEditorFontScale(settings.font_scale);
         toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
+        toolbar_->SetEditorWordWrap(settings.word_wrap);
+        toolbar_->SetEditorAutoIndent(settings.auto_indent);
     }
 
     // Apply application theme
@@ -3165,9 +3225,17 @@ void MainWindow::LoadProjectSettings() {
     // Restore open scripts
     const auto& open_scripts = pm.GetConfig().open_scripts;
     for (const auto& script_path : open_scripts) {
-        if (script_editor_ && std::filesystem::exists(script_path)) {
-            script_editor_->OpenFile(script_path);
+        std::string resolved_path = script_path;
+        std::filesystem::path fs_path(script_path);
+        if (fs_path.is_relative()) {
+            resolved_path = pm.ResolveAssetPath(script_path);
         }
+        if (script_editor_ && std::filesystem::exists(resolved_path)) {
+            script_editor_->OpenFile(resolved_path);
+        }
+    }
+    if (script_editor_ && !open_scripts.empty()) {
+        script_editor_->SetActiveTabIndex(pm.GetConfig().active_script_index);
     }
 
     spdlog::info("Loaded project settings (theme={}, font_scale={:.1f}, tab_size={})",
@@ -3179,6 +3247,13 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 
     // Load project settings and layout
     LoadProjectSettings();
+
+    // If Python is already initialized, check for interpreter mismatch
+    if (scripting_engine_ && scripting_engine_->IsInitialized()) {
+        if (!scripting_engine_->ReloadPythonForProject()) {
+            spdlog::warn("Python interpreter mismatch after project open (project: {})", project_root);
+        }
+    }
 
     // Set project root and refresh asset browser to show project files
     if (asset_browser_) {
@@ -3193,6 +3268,13 @@ void MainWindow::OnProjectClosed(const std::string& project_root) {
     // Note: Settings should be saved before CloseProject() is called
     // (the toolbar handles this in its Close Project menu action)
 
+    // If Python is already initialized, check for interpreter mismatch after closing
+    if (scripting_engine_ && scripting_engine_->IsInitialized()) {
+        if (!scripting_engine_->ReloadPythonForProject()) {
+            spdlog::warn("Python interpreter mismatch after project close");
+        }
+    }
+
     // Clear the asset browser
     if (asset_browser_) {
         asset_browser_->Clear();
@@ -3201,6 +3283,26 @@ void MainWindow::OnProjectClosed(const std::string& project_root) {
     // Reset the dock layout to default when project is closed
     // This gives a clean slate for the next project
     first_time_layout_ = true;  // This will trigger BuildInitialDockLayout on next render
+}
+
+void MainWindow::OnProjectVenvReady(const std::string& project_root) {
+    spdlog::info("Project venv ready: {}", project_root);
+
+    auto& pm = cyxwiz::ProjectManager::Instance();
+    if (!pm.HasActiveProject()) {
+        spdlog::info("Skipping Python reload: no active project");
+        return;
+    }
+    if (pm.GetProjectRoot() != project_root) {
+        spdlog::info("Skipping Python reload: active project root differs");
+        return;
+    }
+
+    if (scripting_engine_ && scripting_engine_->IsInitialized()) {
+        if (!scripting_engine_->ReloadPythonForProject()) {
+            spdlog::warn("Python interpreter mismatch after venv creation");
+        }
+    }
 }
 
 void MainWindow::RenderStatusBar() {

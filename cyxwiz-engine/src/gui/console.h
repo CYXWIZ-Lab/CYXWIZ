@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <string>
+#include <mutex>
 
 struct ImVec4;
 
@@ -41,9 +42,11 @@ private:
     void RenderLogTab(const char* name, LogLevel filter);
     void RenderAllTab();
     void ExecCommand(const char* command);
+    void ExecutePipCommand(const std::string& pip_args);
     void CopyAllLogs();
     const char* GetLevelPrefix(LogLevel level) const;
     ImVec4 GetLevelColor(LogLevel level) const;
+    bool IsPipCommand(const std::string& command) const;
 
     std::vector<LogEntry> items_;
     char input_buf_[256];
@@ -51,6 +54,8 @@ private:
     bool show_window_;
     bool auto_scroll_;
     int selected_tab_;
+
+    mutable std::mutex log_mutex_;  // Thread-safe logging
 
     // Copy notification state
     bool show_copy_notification_;

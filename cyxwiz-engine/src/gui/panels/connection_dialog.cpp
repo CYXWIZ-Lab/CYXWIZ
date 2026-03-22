@@ -1171,7 +1171,7 @@ void ConnectionDialog::StartP2PTraining() {
     // Get the model definition from NodeEditor
     std::string graph_json = node_editor_->GetGraphJson();
     if (graph_json.empty() || graph_json == "{}") {
-        reservation_error_ = "No model defined. Please create a model in the Node Editor.";
+        reservation_error_ = "No model defined. Please create a model in CyxWiz Studio.";
         return;
     }
 
@@ -1309,7 +1309,7 @@ void ConnectionDialog::StartNewP2PTraining() {
     // Get the model definition from NodeEditor
     std::string graph_json = node_editor_->GetGraphJson();
     if (graph_json.empty() || graph_json == "{}") {
-        reservation_error_ = "No model defined. Please create a model in the Node Editor.";
+        reservation_error_ = "No model defined. Please create a model in CyxWiz Studio.";
         return;
     }
 

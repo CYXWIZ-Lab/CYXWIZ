@@ -1,6 +1,7 @@
 #pragma once
 
 #include "api_export.h"
+#include "tensor.h"
 #include <vector>
 #include <string>
 #include <complex>
@@ -21,6 +22,12 @@ struct CYXWIZ_API MatrixResult {
 
 struct CYXWIZ_API ScalarResult {
     double value = 0.0;
+    bool success = false;
+    std::string error_message;
+};
+
+struct CYXWIZ_API TensorResult {
+    Tensor tensor;
     bool success = false;
     std::string error_message;
 };
@@ -233,6 +240,41 @@ public:
     static MatrixResult LowRankApproximation(
         const std::vector<std::vector<double>>& A,
         int k
+    );
+
+    // ==================== Tensor-First Operations ====================
+
+    // Tensor matrix multiplication: C = A * B
+    static TensorResult Multiply(
+        const Tensor& A,
+        const Tensor& B
+    );
+
+    // Tensor transpose: B = A^T
+    static TensorResult Transpose(
+        const Tensor& A
+    );
+
+    // Tensor inverse: B = A^(-1)
+    static TensorResult Inverse(
+        const Tensor& A
+    );
+
+    // Tensor Frobenius norm
+    static ScalarResult FrobeniusNorm(
+        const Tensor& A
+    );
+
+    // Tensor linear solve: A * x = b
+    static TensorResult Solve(
+        const Tensor& A,
+        const Tensor& b
+    );
+
+    // Tensor least squares: minimize ||A * x - b||^2
+    static TensorResult LeastSquares(
+        const Tensor& A,
+        const Tensor& b
     );
 
 private:

@@ -13,12 +13,6 @@
 #include <atomic>
 #include <mutex>
 #include <future>
-#include "../../preprocessing/preprocessing_config.h"
-#include "../../preprocessing/statistics_calculator.h"
-#include "../../utils/dataset_analyzer.h"
-#include "../../utils/image_quality_analyzer.h"
-#include "../../utils/image_deduplicator.h"
-#include "../../utils/hdf5_browser.h"
 #include <cyxwiz/model_evaluation.h>
 #include "../preview/preview_renderer.h"
 
@@ -35,15 +29,15 @@ namespace gui {
 
 class NodeEditor;
 
-// Content tabs for main area (ML/DL workflow order)
+// Content tabs for main area (Training & Evaluation workflow)
+// NOTE: Use Data Studio for data preparation, transformations, and SQL queries
+//       Use this panel for model training and evaluation
 enum class ContentTab {
-    Preview = 0,
-    Prepare = 1,
-    Pipeline = 2,
-    Training = 3,
-    Evaluate = 4,
-    Export = 5,
-    Details = 6
+    Preview = 0,      // Dataset preview
+    Training = 1,     // Model training
+    Evaluate = 2,     // Model evaluation with metrics
+    Export = 3,       // Export annotations (COCO/YOLO/VOC)
+    Interactive = 4   // Annotation tools
 };
 
 // Legacy tab indices (kept for compatibility)
@@ -56,10 +50,10 @@ enum class DatasetTab {
     Training = 5
 };
 
-class DatasetPanel : public cyxwiz::Panel {
+class TrainingEvaluationPanel : public cyxwiz::Panel {
 public:
-    DatasetPanel();
-    ~DatasetPanel() override;
+    TrainingEvaluationPanel();
+    ~TrainingEvaluationPanel() override;
 
     void Render() override;
 
@@ -147,18 +141,13 @@ private:
     void RenderSplitter(float height);
     void RenderDatasetTree();
     void RenderPreviewContent();
-    void RenderPrepareContent();
-    void RenderPipelineContent();
     void RenderTrainingContent();
     void RenderEvaluateContent();
     void RenderExportContent();
-    void RenderDetailsContent();
     void RenderQuickLoadSection();
     const char* GetDatasetTypeIcon(cyxwiz::DatasetType type) const;
 
-    // Prepare tab sub-sections
-    void RenderTabularPrepareContent();
-    void RenderImagePrepareContent();
+    // Split configuration (used in training)
     void RenderSplitConfigSection();
 
     // Evaluate tab sub-sections
@@ -181,25 +170,12 @@ private:
     void RenderAugmentationPipeline();
     void RenderAugmentationPreview();
 
-    // Data Pipeline tab (unified Augmentation + Preprocessing)
-    void RenderDataPipelineTab();
-    void RenderUnifiedPreview();
-
-    // Interactive Tools tab (Phase 4)
+    // Interactive Tools tab (annotation workflow)
     void RenderInteractiveToolsTab();
 
-    // Preview display methods (extracted for unified preview)
-    void RenderPreprocessingPreviewDisplay();
+    // Augmentation preview (for training data augmentation)
     void RenderAugmentationPreviewDisplay();
     void UpdateAugmentationPreview();
-
-    // Preprocessing methods (used by Data Pipeline tab)
-    void RenderPreprocessingTab();  // Deprecated - kept for reference
-    void RenderDatasetStatistics();
-    void RenderNormalizationSection();
-    void RenderScalingSection();
-    void RenderImagePreprocessingSection();
-    void RenderPreprocessingPreview();
 
     // File browser dialogs
     void ShowFileBrowser();
@@ -341,100 +317,17 @@ private:
     int preview_tex_aug_w_ = 0, preview_tex_aug_h_ = 0, preview_tex_aug_c_ = 0;
     bool preview_needs_update_ = true;
 
-    // Transform UI state
+    // Transform UI state (for augmentation preview)
     struct TransformUIState {
         bool enabled = true;
         bool expanded = false;
     };
     std::vector<TransformUIState> transform_ui_states_;
 
-    // Preprocessing state
-    cyxwiz::PreprocessingConfig current_preprocessing_config_;
-    cyxwiz::DatasetStatistics current_stats_;
-    bool stats_computed_ = false;
-    bool computing_stats_ = false;
-    float stats_computation_progress_ = 0.0f;
-    std::future<cyxwiz::DatasetStatistics> stats_future_;
-
-    // Preprocessing preview
-    bool show_preprocessing_preview_ = false;
-    cyxwiz::Tensor preview_preprocessed_;
-    unsigned int preview_texture_preprocessed_ = 0;
-    int preview_tex_prep_w_ = 0, preview_tex_prep_h_ = 0, preview_tex_prep_c_ = 0;
-    bool preprocessing_preview_needs_update_ = true;
-
-    // Preprocessing preview textures (before/after)
-    unsigned int preview_texture_before_ = 0;  // Original sample texture
-    unsigned int preview_texture_after_ = 0;   // Preprocessed sample texture
-    int preview_tex_before_w_ = 0, preview_tex_before_h_ = 0, preview_tex_before_c_ = 0;
-    int preview_tex_after_w_ = 0, preview_tex_after_h_ = 0, preview_tex_after_c_ = 0;
-
-    // Preprocessing helper methods
-    void ComputeStatistics();
-    void ApplyPreprocessingConfig();
-    void UpdatePreprocessingPreview();  // Apply preprocessing to preview sample
-
-    // Dataset Analytics
-    void RenderDatasetAnalyticsSection();
-    void StartAnalyticsComputation();
-    std::atomic<bool> analytics_computing_{false};
-    uint64_t analytics_task_id_ = 0;
-    cyxwiz::DatasetAnalytics analytics_results_;
-    bool show_analytics_outliers_popup_ = false;
-    bool show_histogram_popup_ = false;
-
-    // Image Quality Analysis
-    void RenderQualityAnalysisSection();
-    void StartQualityAnalysis();
-    std::atomic<bool> quality_analysis_running_{false};
-    uint64_t quality_analysis_task_id_ = 0;
-    std::vector<cyxwiz::QualityMetrics> quality_results_;
-    cyxwiz::ImageQualityAnalyzer::Thresholds quality_thresholds_;
-    bool show_quality_issues_popup_ = false;
-
-    // Duplicate Detection
-    void RenderDuplicateDetectionSection();
-    void StartDuplicateDetection();
-    std::atomic<bool> duplicate_detection_running_{false};
-    uint64_t duplicate_detection_task_id_ = 0;
-    std::vector<cyxwiz::DuplicateGroup> duplicate_groups_;
-    int duplicate_hash_type_ = 0;  // 0=pHash, 1=aHash, 2=dHash
-    int duplicate_threshold_ = 5;   // Hamming distance threshold
-    bool show_duplicate_groups_popup_ = false;
-
     // Notification state (for "Set as Active" feedback)
     bool show_notification_ = false;
     float notification_time_ = 0.0f;
     std::string notification_message_;
-
-    // ========== Prepare Tab State ==========
-    // Missing values
-    int prepare_missing_strategy_ = 0;     // 0=Drop, 1=Mean, 2=Median, 3=Mode, 4=Constant
-    float prepare_missing_fill_value_ = 0.0f;
-    bool prepare_missing_analyzed_ = false;
-    std::string prepare_missing_summary_;
-    std::vector<std::pair<std::string, int>> prepare_missing_columns_;  // col name, missing count
-
-    // Outlier detection
-    int prepare_outlier_method_ = 0;       // 0=IQR, 1=Z-Score, 2=Modified Z-Score
-    int prepare_outlier_action_ = 0;       // 0=Flag, 1=Remove, 2=Clip
-    float prepare_outlier_param_ = 1.5f;   // IQR factor or Z-score threshold
-    int prepare_outlier_col_idx_ = 0;      // Selected column for analysis
-    bool prepare_outlier_analyzed_ = false;
-    int prepare_outlier_count_ = 0;
-    std::string prepare_outlier_summary_;
-
-    // Feature scaling
-    int prepare_scaling_method_ = 0;       // 0=ZScore, 1=MinMax, 2=Robust, 3=MaxAbs, 4=Log, 5=BoxCox, 6=YeoJohnson
-
-    // Categorical encoding
-    int prepare_encoding_method_ = 0;      // 0=OneHot, 1=Label, 2=Ordinal
-
-    // Feature selection
-    int prepare_selection_method_ = 0;     // 0=Correlation, 1=Variance, 2=Mutual Information
-    float prepare_selection_threshold_ = 0.9f;
-    bool prepare_correlation_computed_ = false;
-    std::vector<std::pair<std::string, float>> prepare_high_corr_pairs_;  // Pairs above threshold
 
     // ========== Evaluate Tab State ==========
     bool has_eval_results_ = false;

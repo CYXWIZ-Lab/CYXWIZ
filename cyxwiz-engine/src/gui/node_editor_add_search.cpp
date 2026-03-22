@@ -3,7 +3,9 @@
 
 #include "node_editor.h"
 #include "icons.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
+#include <spdlog/spdlog.h>
 #include <imnodes.h>
 #include <algorithm>
 #include <cctype>
@@ -231,8 +233,33 @@ void NodeEditor::InitializeSearchableNodes() {
     addNode(NodeType::Constant, "Constant", "Utilities", "constant fixed value");
     addNode(NodeType::Parameter, "Parameter", "Utilities", "parameter learnable tensor");
 
+    // Signal / Control
+    addNode(NodeType::SignalSlider, "Slider", "Signal / Control", "slider interactive value knob");
+    addNode(NodeType::SineWave, "Sine Wave", "Signal / Control", "sine wave oscillator periodic signal");
+    addNode(NodeType::StepSignal, "Step", "Signal / Control", "step function signal heaviside");
+    addNode(NodeType::RampSignal, "Ramp", "Signal / Control", "ramp linear gradient signal");
+    addNode(NodeType::SignalScope, "Scope", "Signal / Control", "scope plot visualize signal chart");
+
     // Composite
     addNode(NodeType::Subgraph, "Subgraph", "Composite", "subgraph module encapsulate block");
+
+    // Plugin-provided nodes
+    try {
+        auto plugin_nodes = cyxwiz::plugin::PluginNodeRegistry::Instance().GetAllNodeTypesWithNames();
+        for (const auto& [qname, info] : plugin_nodes) {
+            SearchableNode sn;
+            sn.type = NodeType::PluginCustom;
+            sn.name = info.display_name;
+            sn.category = "Plugin/" + info.category;
+            sn.keywords = info.type_name + " " + info.display_name + " " + info.description + " plugin";
+            sn.plugin_qualified_name = qname;
+            all_searchable_nodes_.push_back(std::move(sn));
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("Failed to load plugin nodes into search: {}", e.what());
+    } catch (...) {
+        spdlog::warn("Unknown error loading plugin nodes into search");
+    }
 
     searchable_nodes_initialized_ = true;
 }
@@ -398,7 +425,11 @@ void NodeEditor::ShowNodeAddSearch() {
                 canvas_size.y / 2 - editor_pan.y
             );
 
-            AddNode(selected->type, selected->name);
+            // For plugin nodes, pass qualified name so CreateNode can look up the registry
+            if (selected->type == NodeType::PluginCustom && !selected->plugin_qualified_name.empty())
+                AddNode(selected->type, selected->plugin_qualified_name);
+            else
+                AddNode(selected->type, selected->name);
 
             // Reset search state
             node_add_search_.show_results = false;

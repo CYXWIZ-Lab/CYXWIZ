@@ -1,1 +1,181 @@
-/usr/bin/bash: line 1: D:/Dev/CyxWiz_Claude/build/bin/Release/cyxwiz-engine.exe: No such file or directory
+[2026-03-19 12:24:04.100] [cyxwiz] [info] Working directory set to executable directory: D:\Dev\CyxWiz_Claude\build\bin\Release
+[2026-03-19 12:24:04.101] [cyxwiz] [info] Launch working directory: D:\Dev\CyxWiz_Claude
+[2026-03-19 12:24:04.101] [cyxwiz] [info] Starting CyxWiz Engine v0.1.0
+[2026-03-19 12:24:04.101] [cyxwiz] [info] Initializing CyxWiz Backend v0.1.0
+[2026-03-19 12:24:05.399] [cyxwiz] [info] CUDA backend active - Device: NVIDIA_GeForce_GTX_1050_Ti
+[2026-03-19 12:24:05.399] [cyxwiz] [info] ArrayFire initialized successfully with CUDA backend
+[2026-03-19 12:24:05.399] [cyxwiz] [info] Total devices found: 3
+[2026-03-19 12:24:05.399] [cyxwiz] [info] Available compute devices:
+[2026-03-19 12:24:05.399] [cyxwiz] [info]   - CPU (0)
+[2026-03-19 12:24:05.399] [cyxwiz] [info]   - NVIDIA_GeForce_GTX_1050_Ti (1)
+[2026-03-19 12:24:05.399] [cyxwiz] [info]   - Intel(R)_UHD_Graphics_630 (2)
+[2026-03-19 12:24:05.739] [cyxwiz] [info] Window icon loaded successfully (1024x1024)
+[2026-03-19 12:24:05.740] [cyxwiz] [info] Dark title bar enabled
+[2026-03-19 12:24:05.856] [cyxwiz] [info] OpenGL 3.3 initialized
+[2026-03-19 12:24:05.859] [cyxwiz] [info] Found fonts at: resources/fonts/
+[2026-03-19 12:24:05.860] [cyxwiz] [info] Loading fonts from: resources/fonts/
+[2026-03-19 12:24:05.872] [cyxwiz] [info] Loaded Inter-Regular (15px)
+[2026-03-19 12:24:05.883] [cyxwiz] [info] Merged FontAwesome icons into regular font
+[2026-03-19 12:24:05.893] [cyxwiz] [info] Loaded Inter-Medium (15px)
+[2026-03-19 12:24:05.906] [cyxwiz] [info] Loaded Inter-Bold (15px)
+[2026-03-19 12:24:05.918] [cyxwiz] [info] Loaded JetBrainsMono-Regular (14px)
+[2026-03-19 12:24:05.930] [cyxwiz] [info] Loaded JetBrainsMono-Bold (14px)
+[2026-03-19 12:24:05.930] [cyxwiz] [info] Building font atlas...
+[2026-03-19 12:24:06.011] [cyxwiz] [info] Font atlas built successfully
+[2026-03-19 12:24:06.012] [cyxwiz] [info] Scanning for Python installation...
+[2026-03-19 12:24:06.012] [cyxwiz] [info] Found config file: C:\Users\chick\AppData\Roaming\CyxWiz\engine_config.json
+[2026-03-19 12:24:06.012] [cyxwiz] [info] Migrated legacy Python config to system_python_path
+[2026-03-19 12:24:06.012] [cyxwiz] [info] Loaded config from: C:\Users\chick\AppData\Roaming\CyxWiz\engine_config.json
+'C:\Python312\python.exe" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+[2026-03-19 12:24:06.036] [cyxwiz] [info] Scanning for Python installations (17 candidates)...
+No suitable Python runtime found
+Pass --list (-0) to see all detected environments on your machine
+or set environment variable PYLAUNCHER_ALLOW_INSTALL to use winget
+or open the Microsoft Store to the requested version.
+[2026-03-19 12:24:06.812] [cyxwiz] [info] Found Python: C:\Python312\python.exe (3.12.8)
+[2026-03-19 12:24:07.496] [cyxwiz] [info] Found Python: C:\Program Files\Python314\python.exe (3.14.0)
+'python" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+'python3" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+'python3.13" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+'python3.12" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+'C:\Users\chick\AppData\Local\Microsoft\WindowsApps\python.exe" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+'C:\Users\chick\AppData\Local\Microsoft\WindowsApps\python3.exe" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+'C:\Users\chick\AppData\Local\Microsoft\WindowsApps\python3.13.exe" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+'C:\Users\chick\AppData\Local\Microsoft\WindowsApps\python3.12.exe" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+The system cannot find the path specified.
+'C:\Python312\python.exe" -c "import' is not recognized as an internal or external command,
+operable program or batch file.
+'C:\Program' is not recognized as an internal or external command,
+operable program or batch file.
+'C:\Program' is not recognized as an internal or external command,
+operable program or batch file.
+'C:\Program' is not recognized as an internal or external command,
+operable program or batch file.
+'C:\Program' is not recognized as an internal or external command,
+operable program or batch file.
+[2026-03-19 12:24:07.726] [cyxwiz] [info] Found 2 Python installation(s)
+[2026-03-19 12:24:07.726] [cyxwiz] [info] Best Python: C:\Python312\python.exe (3.12.8)
+[2026-03-19 12:24:07.726] [cyxwiz] [info] Python 3.12.8 detected at: C:\Python312\python.exe
+[2026-03-19 12:24:07.726] [cyxwiz] [info] Python configured - showing start page
+[2026-03-19 12:24:07.727] [cyxwiz] [info] Loaded 10 recent projects
+[2026-03-19 12:24:07.727] [cyxwiz] [info] PluginManager: 2 search paths configured
+[2026-03-19 12:24:07.727] [cyxwiz] [info] Plugin system: 2 search paths configured
+[2026-03-19 12:24:12.380] [cyxwiz] [info] Project opened: sasd from C:\Users\chick\Desktop\sasd
+[2026-03-19 12:24:12.381] [cyxwiz] [info] Opening project: C:\Users\chick\Desktop\sasd\sasd.cyxwiz
+[2026-03-19 12:24:12.388] [cyxwiz] [info] Project selected from start page
+[2026-03-19 12:24:12.388] [cyxwiz] [info] Creating main window with project: C:\Users\chick\Desktop\sasd\sasd.cyxwiz
+[2026-03-19 12:24:12.388] [cyxwiz] [info] Created Linear Attention Transformer showcase with 18 nodes and 22 connections
+[2026-03-19 12:24:12.388] [cyxwiz] [info] Architecture: Embedding -> PositionalEncoding -> LinearAttention(O(n)) -> LayerNorm -> FFN -> Output
+[2026-03-19 12:24:12.389] [cyxwiz] [info] PythonSandbox created with default configuration
+[2026-03-19 12:24:12.389] [cyxwiz] [info] ScriptingEngine initialized (sandbox disabled by default)
+[2026-03-19 12:24:12.390] [cyxwiz] [info] Refreshing asset browser async for project: C:\Users\chick\Desktop\sasd
+[2026-03-19 12:24:12.390] [cyxwiz] [info] Initializing AsyncTaskManager with 12 worker threads
+[2026-03-19 12:24:12.391] [cyxwiz] [info] ScriptManager initialized
+[2026-03-19 12:24:12.393] [cyxwiz] [info] Created new script file: Untitled1.cyx
+[2026-03-19 12:24:12.414] [cyxwiz] [info] DataExplorerPanel: DuckDB v1.4.3 initialized
+[2026-03-19 12:24:12.414] [cyxwiz] [info] VisualizationPanel initialized
+[2026-03-19 12:24:12.414] [cyxwiz] [info] Initializing Pattern Library...
+[2026-03-19 12:24:12.414] [cyxwiz] [info] Loading builtin patterns from: resources/patterns
+[2026-03-19 12:24:12.613] [cyxwiz] [info] Pattern Library initialized with 26 patterns
+[2026-03-19 12:24:12.642] [cyxwiz] [info] Task 'Scanning project files' (ID: 1) completed
+[2026-03-19 12:24:12.642] [cyxwiz] [info] Task 'Scanning project files' (ID: 1) completed
+[2026-03-19 12:24:13.053] [cyxwiz] [info] PlotOutputPanel initialized
+[2026-03-19 12:24:13.053] [cyxwiz] [info] DataExplorerPanel: Panel references set
+[2026-03-19 12:24:13.054] [cyxwiz] [info] OptimizerSettingsPanel initialized
+[2026-03-19 12:24:13.054] [cyxwiz] [info] Generated 1024 samples at 1000 Hz
+[2026-03-19 12:24:13.054] [cyxwiz] [info] Generated 4096 samples at 4000 Hz
+[2026-03-19 12:24:13.054] [cyxwiz] [info] Generated 200 samples of type 0
+[2026-03-19 12:24:13.054] [cyxwiz] [info] DecompositionPanel initialized
+[2026-03-19 12:24:13.054] [cyxwiz] [info] ACFPACFPanel initialized
+[2026-03-19 12:24:13.054] [cyxwiz] [info] StationarityPanel initialized
+[2026-03-19 12:24:13.054] [cyxwiz] [info] SeasonalityPanel initialized
+[2026-03-19 12:24:13.054] [cyxwiz] [info] ForecastingPanel initialized
+[2026-03-19 12:24:13.054] [cyxwiz] [info] TokenizationPanel initialized
+[2026-03-19 12:24:13.054] [cyxwiz] [info] WordFrequencyPanel initialized
+[2026-03-19 12:24:13.055] [cyxwiz] [info] TFIDFPanel initialized
+[2026-03-19 12:24:13.055] [cyxwiz] [info] EmbeddingsPanel initialized
+[2026-03-19 12:24:13.055] [cyxwiz] [info] SentimentPanel initialized
+[2026-03-19 12:24:13.055] [cyxwiz] [info] CalculatorPanel initialized
+[2026-03-19 12:24:13.055] [cyxwiz] [info] UnitConverterPanel initialized with 8 categories
+[2026-03-19 12:24:13.055] [cyxwiz] [info] RandomGeneratorPanel initialized
+[2026-03-19 12:24:13.055] [cyxwiz] [info] HashGeneratorPanel initialized
+[2026-03-19 12:24:13.055] [cyxwiz] [info] JSONViewerPanel initialized
+[2026-03-19 12:24:13.055] [cyxwiz] [info] RegexTesterPanel initialized
+[2026-03-19 12:24:13.055] [cyxwiz] [info] Training Dashboard panel stored for deferred registration
+[2026-03-19 12:24:13.055] [cyxwiz] [info] StartupScriptManager created
+[2026-03-19 12:24:13.055] [cyxwiz] [info] Loading startup scripts config: startup_scripts.txt
+[2026-03-19 12:24:13.055] [cyxwiz] [info] Loaded 0 startup scripts from config
+[2026-03-19 12:24:13.055] [cyxwiz] [info] Executing startup scripts...
+[2026-03-19 12:24:13.055] [cyxwiz] [info] No startup scripts configured
+[2026-03-19 12:24:13.055] [cyxwiz] [info] Installed custom dock node window menu handler
+[2026-03-19 12:24:13.055] [cyxwiz] [info] Registered 3 built-in tutorials
+[2026-03-19 12:24:13.056] [cyxwiz] [info] Setting default panel visibility (first launch)
+[2026-03-19 12:24:13.056] [cyxwiz] [info] Default panel visibility set - showing only core panels
+[2026-03-19 12:24:13.056] [cyxwiz] [info] Registered 24 panels with sidebar
+[2026-03-19 12:24:13.056] [cyxwiz] [info] MainWindow initialized with docking layout system
+[2026-03-19 12:24:13.056] [cyxwiz] [info] Project closed
+[2026-03-19 12:24:13.056] [cyxwiz] [info] Project closed: C:\Users\chick\Desktop\sasd
+[2026-03-19 12:24:13.056] [cyxwiz] [info] Project opened: sasd from C:\Users\chick\Desktop\sasd
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Project opened: C:\Users\chick\Desktop\sasd
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Applied editor theme: Monokai
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Applied tab size: 4 spaces
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Syntax highlighting: enabled
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Loaded app theme from project: 0
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Loaded project settings (theme=3, font_scale=1.6, tab_size=4)
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Refreshing asset browser async for project: C:\Users\chick\Desktop\sasd
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Cancel requested for task 'Scanning project files' (ID: 2)
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Refreshing asset browser async for project: C:\Users\chick\Desktop\sasd
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Task 'Scanning project files' (ID: 2) was cancelled
+[2026-03-19 12:24:13.058] [cyxwiz] [info] Opened project from command line: C:\Users\chick\Desktop\sasd\sasd.cyxwiz
+[2026-03-19 12:24:13.058] [cyxwiz] [info] AuthClient initialized with API URL: http://127.0.0.1:3002/api
+[2026-03-19 12:24:13.063] [cyxwiz] [info] ReservationClient wired to ConnectionDialog (connecting in background)
+[2026-03-19 12:24:13.063] [cyxwiz] [info] DatasetProvider: Initialized
+[2026-03-19 12:24:13.063] [cyxwiz] [info] P2PClient created and wired to ConnectionDialog
+[2026-03-19 12:24:13.063] [cyxwiz] [info] P2PTrainingPanel wired to ConnectionDialog
+[2026-03-19 12:24:13.063] [cyxwiz] [info] WalletPanel wired to ConnectionDialog (ptr=0x2012c7bec40)
+[2026-03-19 12:24:13.063] [cyxwiz] [info] Network components set in MainWindow
+[2026-03-19 12:24:13.063] [cyxwiz] [info] ✓ Console logging enabled
+[2026-03-19 12:24:13.064] [cyxwiz] [info] Restored saved session for: test@example.com
+[2026-03-19 12:24:13.064] [cyxwiz] [info] Auth session restored for: test@example.com
+[2026-03-19 12:24:13.064] [cyxwiz] [info] Total devices found: 3
+[2026-03-19 12:24:13.066] [cyxwiz] [info] Restored saved session for: test@example.com
+[2026-03-19 12:24:13.066] [cyxwiz] [info] Restored saved session for: test@example.com
+[2026-03-19 12:24:13.066] [cyxwiz] [info] Auth token set on gRPC client after login
+[2026-03-19 12:24:13.068] [cyxwiz] [info] Total devices found: 3
+[2026-03-19 12:24:13.451] [cyxwiz] [info] Task 'Scanning project files' (ID: 3) completed
+[2026-03-19 12:24:13.451] [cyxwiz] [info] Task 'Scanning project files' (ID: 3) completed
+[2026-03-19 12:24:18.082] [cyxwiz] [warning] ReservationClient: Connection to localhost:50051 timed out - reservation feature disabled
+[2026-03-19 12:25:18.722] [cyxwiz] [info] Console executing pip command: "C:\Users\chick\Desktop\sasd\python\Scripts\pip.exe" list
+[2026-03-19 12:25:31.683] [cyxwiz] [info] Console executing pip command: "C:\Users\chick\Desktop\sasd\python\Scripts\pip.exe" show numpy
+[2026-03-19 12:25:54.722] [cyxwiz] [info] Console executing pip command: "C:\Users\chick\Desktop\sasd\python\Scripts\pip.exe" install numpy
+[2026-03-19 12:27:06.809] [cyxwiz] [info] ✓ Using project virtual environment
+[2026-03-19 12:27:06.810] [cyxwiz] [info]   Project: sasd
+[2026-03-19 12:27:06.810] [cyxwiz] [info]   Python: C:\Users\chick\Desktop\sasd\python\Scripts\python.exe
+[2026-03-19 12:27:06.810] [cyxwiz] [info] → Initializing Python with project environment...
+[2026-03-19 12:27:06.810] [cyxwiz] [info]   Environment: Virtual environment (venv)
+[2026-03-19 12:27:06.810] [cyxwiz] [info]   Location: C:\Users\chick\Desktop\sasd\python
+Could not find platform independent libraries <prefix>
+[2026-03-19 12:27:06.827] [cyxwiz] [info]   Site-packages: C:\Users\chick\Desktop\sasd\python\Lib\site-packages
+[2026-03-19 12:27:06.827] [cyxwiz] [info]   Project scripts: C:\Users\chick\Desktop\sasd\scripts
+[2026-03-19 12:27:06.827] [cyxwiz] [info]   Engine modules: D:\Dev\CyxWiz_Claude\build\bin\Release
+[2026-03-19 12:27:06.828] [cyxwiz] [info] ✓ Python environment ready (project venv)
+[2026-03-19 12:27:06.828] [cyxwiz] [info] Starting async command execution
+[2026-03-19 12:27:06.828] [cyxwiz] [info] CommandAsyncWorker: starting for command length 10
+[2026-03-19 12:27:06.829] [cyxwiz] [info] Initializing MATLAB-style aliases...
+[2026-03-19 12:27:06.849] [cyxwiz] [info] MATLAB-style aliases initialized
+[2026-03-19 12:27:06.861] [cyxwiz] [info] CommandAsyncWorker: completed, success=true
+[2026-03-19 12:27:10.322] [cyxwiz] [info] ✓ Using project virtual environment
+[2026-03-19 12:27:10.322] [cyxwiz] [info]   Project: sasd
+[2026-03-19 12:27:10.322] [cyxwiz] [info]   Python: C:\Users\chick\Desktop\sasd\python\Scripts\python.exe
+[2026-03-19 12:27:10.322] [cyxwiz] [info] Starting async command execution
+[2026-03-19 12:27:10.323] [cyxwiz] [info] CommandAsyncWorker: starting for command length 12
+[2026-03-19 12:27:12.475] [cyxwiz] [info] CommandAsyncWorker: completed, success=true

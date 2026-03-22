@@ -1,0 +1,17 @@
+{
+    "id": "com.cyxwiz.simulation.mujoco",
+    "name": "MuJoCo Simulation",
+    "version": "1.0.0",
+    "api_version": "1.0.0",
+    "description": "Physics simulation for robotics and RL training (powered by Google DeepMind MuJoCo)",
+    "author": "CyxWiz Lab",
+    "license": "Apache-2.0",
+    "homepage": "https://github.com/CYXWIZ-Lab/CYXWIZ",
+    "capabilities": ["ProvidesTraining", "ProvidesPanels", "ProvidesNodes"],
+    "permissions": ["Training", "UIModify"],
+    "platforms": {
+        "windows": { "library": "bin/mujoco_plugin.dll" },
+        "linux": { "library": "bin/libmujoco_plugin.so" },
+        "macos": { "library": "bin/libmujoco_plugin.dylib" }
+    }
+}

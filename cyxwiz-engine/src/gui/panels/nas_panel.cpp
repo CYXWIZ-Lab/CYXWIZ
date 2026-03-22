@@ -162,7 +162,7 @@ void NASPanel::RenderInputConfig() {
 
 void NASPanel::RenderCurrentScore() {
     // Get current architecture button
-    if (ImGui::Button(ICON_FA_DOWNLOAD " Load from Node Editor")) {
+    if (ImGui::Button(ICON_FA_DOWNLOAD " Load from CyxWiz Studio")) {
         if (get_architecture_callback_) {
             auto [nodes, links] = get_architecture_callback_();
             current_nodes_ = nodes;
@@ -273,11 +273,11 @@ void NASPanel::RenderMutationControls() {
 
     ImGui::Spacing();
     ImGui::TextDisabled("Mutations are applied to the current architecture in memory.");
-    ImGui::TextDisabled("Use 'Apply to Node Editor' to see the changes.");
+    ImGui::TextDisabled("Use 'Apply to CyxWiz Studio' to see the changes.");
 
     if (!current_nodes_.empty() && apply_architecture_callback_) {
         ImGui::Spacing();
-        if (ImGui::Button(ICON_FA_UPLOAD " Apply to Node Editor", ImVec2(200, 0))) {
+        if (ImGui::Button(ICON_FA_UPLOAD " Apply to CyxWiz Studio", ImVec2(200, 0))) {
             apply_architecture_callback_(current_nodes_, current_links_);
         }
     }

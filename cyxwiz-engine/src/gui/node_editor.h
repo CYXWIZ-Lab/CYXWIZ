@@ -5,6 +5,8 @@
 #include <map>
 #include <memory>
 #include <functional>
+#include <atomic>
+#include <thread>
 #include <imgui.h>
 #include <nlohmann/json_fwd.hpp>
 
@@ -12,14 +14,50 @@
 struct ImNodesEditorContext;
 
 // Forward declarations
+// Forward declare ScriptingEngine in global scripting namespace
+namespace scripting { class ScriptingEngine; }
+
 namespace cyxwiz {
 class ScriptEditorPanel;
+class GraphExecutor;
+class RLTrainingExecutor;
+class TrainingDashboardPanel;
+class PipelineExecutor;
 }
 
 namespace gui {
 class Properties;
 class ShapeInferenceEngine;
 
+// Node category for organization and UI display (Unified Canvas Phase 1)
+enum class NodeCategory {
+    DataSources,      // CSV, SQL, HDF5, API, etc.
+    DataTransform,    // Filter, Join, GroupBy, Sort, etc.
+    Analytics,        // Stats, Visualize, Sample, Correlation
+    Preprocessing,    // Normalize, Scale, Encode (existing nodes)
+    Layers,           // Dense, Conv2D, LSTM, etc. (ML layers)
+    Activation,       // ReLU, Sigmoid, Softmax, etc.
+    Pooling,          // MaxPool, AvgPool, etc.
+    Normalization,    // BatchNorm, LayerNorm, etc.
+    Attention,        // MultiHeadAttention, Transformer, etc.
+    Recurrent,        // RNN, LSTM, GRU, etc.
+    ShapeOps,         // Reshape, Permute, Squeeze, etc.
+    MergeOps,         // Concatenate, Add, Multiply, etc.
+    Training,         // Optimizer, Loss, LR Scheduler
+    Regularization,   // L1, L2, Dropout
+    Utility,          // Lambda, Identity, Constant
+    Signal,           // Sliders, Sine, Scope (for simulation)
+    DataPipeline,     // DatasetInput, DataLoader, Augmentation
+    DNN,              // Pre-trained models, detection, pose
+    TextProcessing,   // Tokenizer, Vocabulary, Padding
+    Upsampling,       // ConvTranspose, Upsample, PixelShuffle
+    TimeSeries,       // Window, Features, Split
+    Audio,            // AudioInput, Spectrogram, MFCC
+    RL,               // Gym, ReplayBuffer, Policy, Value
+    DataExport,       // Export CSV, Parquet, SQL, JSON
+    Plugin,           // Plugin-defined custom nodes
+    Unknown           // Fallback
+};
 
 // Node types for ML model building
 enum class NodeType {
@@ -132,6 +170,13 @@ enum class NodeType {
     Constant,
     Parameter,
 
+    // ===== Signal / Control Nodes =====
+    SignalSlider,       // Interactive slider outputting scalar value
+    SineWave,           // Sine wave generator (amplitude, frequency, phase)
+    StepSignal,         // Step function (0 before t, value after t)
+    RampSignal,         // Linear ramp from start to end value
+    SignalScope,        // Real-time signal plotter (input visualization)
+
     // ===== Data Pipeline Nodes =====
     DatasetInput,       // Load dataset from DataRegistry
     DataLoader,         // Batch iterator with shuffle/drop_last
@@ -191,7 +236,45 @@ enum class NodeType {
     ReplayBufferNode,   // Experience replay buffer
     PolicyNetwork,      // Actor network for RL
     ValueNetwork,       // Critic network for RL
-    RLTraining          // RL training loop controller
+    RLTraining,         // RL training loop controller
+
+    // ===== Data Source Nodes (Unified Canvas Phase 1) =====
+    CSVFile,            // Load CSV file into Arrow table
+    SQLQuery,           // Execute SQL query, return Arrow table
+    HDF5Dataset,        // Load HDF5 dataset into Arrow
+    ParquetFile,        // Load Parquet file into Arrow
+    JSONFile,           // Load JSON file into Arrow
+    ExcelFile,          // Load Excel file into Arrow
+    RESTAPISource,      // Fetch data from REST API
+
+    // ===== Data Transform Nodes (Unified Canvas Phase 1) =====
+    FilterRows,         // Filter rows by SQL WHERE condition
+    SelectColumns,      // Select specific columns
+    JoinTables,         // Join two datasets (inner/left/right/outer)
+    GroupByAggregate,   // Group by columns with aggregations
+    SortRows,           // Sort rows by columns (ascending/descending)
+    FillMissingValues,  // Handle missing values (mean/median/mode/constant)
+    RemoveDuplicateRows,// Remove duplicate rows
+    PivotTable,         // Pivot wide to long or long to wide
+    UnionTables,        // Stack multiple datasets (UNION ALL)
+    RenameColumns,      // Rename columns
+
+    // ===== Analytics Nodes (Unified Canvas Phase 1) =====
+    DescribeStats,      // Compute statistical summary (count, mean, std, etc.)
+    VisualizeData,      // Create plots (scatter, bar, line, histogram)
+    SampleRows,         // Sample random rows from dataset
+    CorrelationMatrix,  // Compute correlation matrix
+    ValueCounts,        // Count unique values per column
+    CrossTabulation,    // Cross-tabulation (contingency table)
+
+    // ===== Data Export Nodes (Unified Canvas Phase 1) =====
+    ExportCSV,          // Export dataset to CSV
+    ExportParquet,      // Export dataset to Parquet
+    ExportSQL,          // Write dataset to SQL database
+    ExportJSON,         // Export dataset to JSON
+
+    // Plugin-defined nodes (sentinel — actual type resolved via string lookup)
+    PluginCustom
 };
 
 // Attribute for node pins (inputs/outputs)
@@ -233,6 +316,7 @@ struct NodePin {
 struct MLNode {
     int id;
     NodeType type;
+    NodeCategory category;  // Unified Canvas Phase 1: Category for UI organization
     std::string name;
     std::vector<NodePin> inputs;
     std::vector<NodePin> outputs;
@@ -244,6 +328,12 @@ struct MLNode {
     float initial_pos_x = 0.0f;
     float initial_pos_y = 0.0f;
     bool has_initial_position = false;  // True if position should be applied when inserting
+
+    // Dynamic pins (for plugin nodes like MuJoCo Plant that change pins based on parameters)
+    bool has_dynamic_pins = false;
+    std::string dynamic_pin_trigger;     // Parameter name that triggers pin rebuild
+    std::string resolved_config;         // Last resolved config value (to detect changes)
+    std::string plugin_qualified_name;   // "plugin_id:type_name" for calling ResolveDynamicPins
 };
 
 // Connection/Link types for visual differentiation
@@ -291,6 +381,13 @@ enum class CodeFramework {
     PyCyxWiz
 };
 
+// Execution modes for the unified canvas (Unified Canvas Phase 2)
+enum class ExecutionMode {
+    CodeGeneration,   // Generate PyTorch/TF/Keras code (existing behavior)
+    DuckDBPipeline,   // Execute data transforms with DuckDB/Arrow (new)
+    LocalTraining     // Train models locally with cyxwiz-backend (existing)
+};
+
 // Search state for node search/filter feature (Ctrl+F to find existing nodes)
 struct SearchState {
     char search_buffer[256] = "";
@@ -314,6 +411,7 @@ struct SearchableNode {
     std::string name;      // Display name (e.g., "Dense (512 units)")
     std::string category;  // Category (e.g., "Layers > Dense / Linear")
     std::string keywords;  // Additional keywords for search
+    std::string plugin_qualified_name;  // For PluginCustom: "plugin_id:type_name"
 };
 
 // Alignment types for arranging selected nodes
@@ -358,6 +456,23 @@ struct SubgraphData {
     bool expanded = false;                   // Whether subgraph is expanded (visible)
 };
 
+// Execution context for unified canvas (Unified Canvas Phase 2)
+struct ExecutionContext {
+    ExecutionMode mode;
+    std::map<int, std::string> node_results;  // Node ID -> dataset/tensor name in DuckDB or memory
+    std::string input_dataset;                // Initial dataset name
+    std::string output_dataset;               // Final result dataset name
+};
+
+// Unified Canvas Phase 6: Execution state for visualization
+enum class NodeExecutionState {
+    Idle,        // Not executing
+    Pending,     // Waiting to execute
+    Executing,   // Currently executing
+    Completed,   // Successfully completed
+    Error        // Failed with error
+};
+
 class NodeEditor {
 public:
     NodeEditor();
@@ -394,8 +509,27 @@ public:
     void SetTrainingActive(bool active) { is_training_ = active; }
     bool IsTrainingActive() const { return is_training_; }
 
+    // Unified Canvas Phase 2: Execution mode control
+    void SetExecutionMode(ExecutionMode mode) { execution_mode_ = mode; }
+    ExecutionMode GetExecutionMode() const { return execution_mode_; }
+
+    // Execute the current graph based on execution mode
+    void ExecuteGraph();
+
+    // Execute data pipeline using DuckDB (Phase 2)
+    bool ExecuteDataPipeline();
+
+    // Unified Canvas Phase 6: Execution visualization
+    void SetNodeExecutionState(int node_id, NodeExecutionState state);
+    void SetNodeExecutionError(int node_id, const std::string& error);
+    void ClearExecutionStates();
+
     // Update DatasetInput node name based on loaded dataset
     void UpdateDatasetNodeName(const std::string& dataset_name);
+
+    // Dynamic pins: rebuild a node's pins from plugin-provided data.
+    // Called when a trigger parameter changes on a supports_dynamic_pins node.
+    void ResolveDynamicPins(int node_id);
 
     // Pattern insertion - add multiple nodes and links from a pattern template
     void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
@@ -420,6 +554,15 @@ public:
 
     // Show the node editor window
     void Show() { show_window_ = true; }
+
+    // ===== Data Studio Integration (Phase 5 Week 7) =====
+
+    /**
+     * Set dataset from Data Studio deployment
+     * Finds or creates a DatasetInput node and populates it with the dataset
+     * Automatically frames the node after creation
+     */
+    void SetDatasetFromDataStudio(const std::string& dataset_name);
 
     // ===== Skip/Residual Connection Helpers =====
 
@@ -450,6 +593,9 @@ public:
     // Made public so PatternBrowser can use it via callback
     MLNode CreateNode(NodeType type, const std::string& name);
 
+    // Unified Canvas Phase 1: Get category for a node type
+    static NodeCategory GetCategoryForNodeType(NodeType type);
+
     // ===== Menu Operations (Public API for Toolbar) =====
 
     // Add a node at the center of the visible area
@@ -473,6 +619,12 @@ private:
     void RenderMinimap();
     void HandleInteractions();
     void ShowContextMenu();
+
+    // Unified Canvas Phase 3: Categorized node palette helpers
+    void ShowCategorizedNodeMenu();
+    void RenderNodeCategory(NodeCategory category, const char* category_name, const char* icon);
+    static const char* GetCategoryIcon(NodeCategory category);
+    static const char* GetCategoryName(NodeCategory category);
 
     // Helper functions
     unsigned int GetNodeColor(NodeType type);
@@ -513,6 +665,9 @@ private:
     void GeneratePythonCode();
     void GenerateCodeForFramework(CodeFramework framework);
     bool ValidateGraph(std::string& error_message);
+
+    // Unified Canvas Phase 4.2: Helper for node type names
+    std::string GetNodeTypeName(NodeType type) const;
 
     // Shape validation (non-blocking warnings)
     std::vector<ValidationWarning> ValidateShapes();
@@ -587,6 +742,11 @@ private:
     std::string GenerateKerasCode(const std::vector<int>& sorted_ids);
     std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);
 
+    // RL-specific code generation
+    bool IsRLGraph(const std::vector<int>& sorted_ids) const;
+    std::string GenerateRLPyTorchCode(const std::vector<int>& sorted_ids) const;
+    std::string GenerateRLPyCyxWizCode(const std::vector<int>& sorted_ids) const;
+
     // Framework-specific layer conversion
     std::string NodeTypeToPythonLayer(const MLNode& node);
     std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);
@@ -615,6 +775,7 @@ private:
     int context_menu_node_id_;  // -1 if clicking on canvas
     int selected_node_id_;  // Currently selected node for properties panel (-1 = none)
     CodeFramework selected_framework_;  // Current code generation framework
+    ExecutionMode execution_mode_;      // Unified Canvas Phase 2: Current execution mode
 
     // ImNodes editor context
     ImNodesEditorContext* editor_context_;
@@ -713,6 +874,11 @@ private:
     std::vector<std::pair<int, SearchableNode*>> filtered_nodes_;  // Filtered results with scores
     bool searchable_nodes_initialized_ = false;
 
+    // Unified Canvas Phase 3: Context menu search filter
+    char context_menu_search_[256] = "";
+    std::map<NodeCategory, std::vector<std::pair<NodeType, std::string>>> nodes_by_category_;
+    bool nodes_by_category_initialized_ = false;
+
     // Node groups
     std::vector<NodeGroup> groups_;
     int next_group_id_ = 1;
@@ -724,6 +890,46 @@ private:
 
     // Subgraph data storage
     std::vector<SubgraphData> subgraphs_;
+
+    // ===== Graph Simulation State =====
+    std::unique_ptr<cyxwiz::GraphExecutor> graph_executor_;
+    std::thread sim_thread_;
+    std::atomic<bool> is_simulating_{false};
+    std::atomic<bool> sim_stop_requested_{false};
+    float sim_rate_hz_ = 60.0f;  // Simulation tick rate
+
+    void OnRunSimulation();
+    void OnStopSimulation();
+    bool HasSimulationNodes() const;  // Check if graph contains signal/plant nodes
+
+    // ===== RL Training State =====
+    std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
+    std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
+    bool rl_script_running_ = false;
+
+    // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
+    std::unique_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
+    ExecutionContext execution_context_;
+
+    // ===== Unified Canvas Phase 6: Execution Visualization =====
+    std::map<int, NodeExecutionState> node_execution_states_;  // Node ID -> execution state
+    std::map<int, std::string> node_execution_errors_;         // Node ID -> error message
+    int currently_executing_node_id_ = -1;                     // Node currently being executed
+    float execution_pulse_time_ = 0.0f;                        // Animation time for pulsing effect
+
+    // Scripting engine for Python-based RL training
+    scripting::ScriptingEngine* scripting_engine_ = nullptr;
+public:
+    void SetScriptingEngine(scripting::ScriptingEngine* engine) { scripting_engine_ = engine; }
+private:
+    bool HasRLNodes() const;
+    void OnStartRLTraining();
+    void OnStopRLTraining();
+    void ExportPolicyONNX(const std::string& output_path);
+    bool export_onnx_dialog_open_ = false;
+
+    // Phase 4.7: Performance metrics
+    float last_eval_time_ms_ = 0.0f;
 };
 
 } // namespace gui

@@ -1,0 +1,17 @@
+{
+    "id": "com.cyxwiz.examples.mlflow-logger",
+    "name": "MLflow Logger",
+    "version": "1.0.0",
+    "api_version": "1.0.0",
+    "description": "Logs training metrics to MLflow tracking server with early stopping support",
+    "author": "CyxWiz Lab",
+    "license": "MIT",
+    "homepage": "https://github.com/CYXWIZ-Lab/CYXWIZ",
+    "capabilities": ["ProvidesTraining"],
+    "permissions": ["Network", "Training"],
+    "platforms": {
+        "windows": { "library": "bin/mlflow_logger.dll" },
+        "linux": { "library": "bin/libmlflow_logger.so" },
+        "macos": { "library": "bin/libmlflow_logger.dylib" }
+    }
+}

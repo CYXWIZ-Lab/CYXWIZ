@@ -1,12 +1,249 @@
 #include "node_editor.h"
 #include "properties.h"
 #include "icons.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 
 namespace gui {
+
+// Unified Canvas Phase 1: Map NodeType to NodeCategory for UI organization
+NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
+    switch (type) {
+        // Data Sources
+        case NodeType::CSVFile:
+        case NodeType::SQLQuery:
+        case NodeType::HDF5Dataset:
+        case NodeType::ParquetFile:
+        case NodeType::JSONFile:
+        case NodeType::ExcelFile:
+        case NodeType::RESTAPISource:
+            return NodeCategory::DataSources;
+
+        // Data Transforms
+        case NodeType::FilterRows:
+        case NodeType::SelectColumns:
+        case NodeType::JoinTables:
+        case NodeType::GroupByAggregate:
+        case NodeType::SortRows:
+        case NodeType::FillMissingValues:
+        case NodeType::RemoveDuplicateRows:
+        case NodeType::PivotTable:
+        case NodeType::UnionTables:
+        case NodeType::RenameColumns:
+            return NodeCategory::DataTransform;
+
+        // Analytics
+        case NodeType::DescribeStats:
+        case NodeType::VisualizeData:
+        case NodeType::SampleRows:
+        case NodeType::CorrelationMatrix:
+        case NodeType::ValueCounts:
+        case NodeType::CrossTabulation:
+            return NodeCategory::Analytics;
+
+        // Data Export
+        case NodeType::ExportCSV:
+        case NodeType::ExportParquet:
+        case NodeType::ExportSQL:
+        case NodeType::ExportJSON:
+            return NodeCategory::DataExport;
+
+        // Preprocessing
+        case NodeType::Normalize:
+        case NodeType::OneHotEncode:
+            return NodeCategory::Preprocessing;
+
+        // Dense/Linear layers
+        case NodeType::Dense:
+            return NodeCategory::Layers;
+
+        // Convolutional layers
+        case NodeType::Conv1D:
+        case NodeType::Conv2D:
+        case NodeType::Conv3D:
+        case NodeType::DepthwiseConv2D:
+            return NodeCategory::Layers;
+
+        // Pooling layers
+        case NodeType::MaxPool2D:
+        case NodeType::AvgPool2D:
+        case NodeType::GlobalMaxPool:
+        case NodeType::GlobalAvgPool:
+        case NodeType::AdaptiveAvgPool:
+            return NodeCategory::Pooling;
+
+        // Normalization layers
+        case NodeType::BatchNorm:
+        case NodeType::LayerNorm:
+        case NodeType::GroupNorm:
+        case NodeType::InstanceNorm:
+            return NodeCategory::Normalization;
+
+        // Regularization
+        case NodeType::Dropout:
+        case NodeType::L1Regularization:
+        case NodeType::L2Regularization:
+        case NodeType::ElasticNet:
+            return NodeCategory::Regularization;
+
+        // Activation functions
+        case NodeType::ReLU:
+        case NodeType::LeakyReLU:
+        case NodeType::PReLU:
+        case NodeType::ELU:
+        case NodeType::SELU:
+        case NodeType::GELU:
+        case NodeType::Swish:
+        case NodeType::Mish:
+        case NodeType::Sigmoid:
+        case NodeType::Tanh:
+        case NodeType::Softmax:
+            return NodeCategory::Activation;
+
+        // Recurrent layers
+        case NodeType::RNN:
+        case NodeType::LSTM:
+        case NodeType::GRU:
+        case NodeType::Bidirectional:
+        case NodeType::TimeDistributed:
+        case NodeType::Embedding:
+            return NodeCategory::Recurrent;
+
+        // Attention & Transformer
+        case NodeType::MultiHeadAttention:
+        case NodeType::SelfAttention:
+        case NodeType::CrossAttention:
+        case NodeType::LinearAttention:
+        case NodeType::TransformerEncoder:
+        case NodeType::TransformerDecoder:
+        case NodeType::PositionalEncoding:
+            return NodeCategory::Attention;
+
+        // Shape operations
+        case NodeType::Reshape:
+        case NodeType::Permute:
+        case NodeType::Squeeze:
+        case NodeType::Unsqueeze:
+        case NodeType::View:
+        case NodeType::Split:
+        case NodeType::Flatten:
+            return NodeCategory::ShapeOps;
+
+        // Merge operations
+        case NodeType::Concatenate:
+        case NodeType::Add:
+        case NodeType::Multiply:
+        case NodeType::Average:
+            return NodeCategory::MergeOps;
+
+        // Training
+        case NodeType::SGD:
+        case NodeType::Adam:
+        case NodeType::AdamW:
+        case NodeType::RMSprop:
+        case NodeType::Adagrad:
+        case NodeType::NAdam:
+        case NodeType::StepLR:
+        case NodeType::CosineAnnealing:
+        case NodeType::ReduceOnPlateau:
+        case NodeType::ExponentialLR:
+        case NodeType::WarmupScheduler:
+        case NodeType::MSELoss:
+        case NodeType::CrossEntropyLoss:
+        case NodeType::BCELoss:
+        case NodeType::BCEWithLogits:
+        case NodeType::L1Loss:
+        case NodeType::SmoothL1Loss:
+        case NodeType::HuberLoss:
+        case NodeType::NLLLoss:
+        case NodeType::Output:
+            return NodeCategory::Training;
+
+        // Utility
+        case NodeType::Lambda:
+        case NodeType::Identity:
+        case NodeType::Constant:
+        case NodeType::Parameter:
+            return NodeCategory::Utility;
+
+        // Signal/Control
+        case NodeType::SignalSlider:
+        case NodeType::SineWave:
+        case NodeType::StepSignal:
+        case NodeType::RampSignal:
+        case NodeType::SignalScope:
+            return NodeCategory::Signal;
+
+        // Data Pipeline
+        case NodeType::DatasetInput:
+        case NodeType::DataLoader:
+        case NodeType::Augmentation:
+        case NodeType::DataSplit:
+        case NodeType::TensorReshape:
+            return NodeCategory::DataPipeline;
+
+        // DNN Inference
+        case NodeType::DNNModelLoad:
+        case NodeType::DNNDetect:
+        case NodeType::DNNClassify:
+        case NodeType::DNNPoseEstimate:
+        case NodeType::DNNFaceDetect:
+        case NodeType::DNNPreprocess:
+        case NodeType::PretrainedYOLO:
+        case NodeType::PretrainedMobileNet:
+        case NodeType::PretrainedOpenPose:
+        case NodeType::PretrainedFaceNet:
+        case NodeType::NonMaxSuppression:
+        case NodeType::ArgMax:
+        case NodeType::TopK:
+        case NodeType::ThresholdFilter:
+            return NodeCategory::DNN;
+
+        // Text Processing
+        case NodeType::TextTokenizer:
+        case NodeType::TextVocabulary:
+        case NodeType::TextPadding:
+            return NodeCategory::TextProcessing;
+
+        // Upsampling
+        case NodeType::ConvTranspose2D:
+        case NodeType::Upsample:
+        case NodeType::PixelShuffle:
+            return NodeCategory::Upsampling;
+
+        // Time Series
+        case NodeType::TimeSeriesWindow:
+        case NodeType::TimeSeriesFeatures:
+        case NodeType::TimeSeriesSplit:
+            return NodeCategory::TimeSeries;
+
+        // Audio
+        case NodeType::AudioInput:
+        case NodeType::Spectrogram:
+        case NodeType::MelSpectrogram:
+        case NodeType::MFCC:
+        case NodeType::AudioAugmentation:
+            return NodeCategory::Audio;
+
+        // RL
+        case NodeType::GymEnvironment:
+        case NodeType::ReplayBufferNode:
+        case NodeType::PolicyNetwork:
+        case NodeType::ValueNetwork:
+        case NodeType::RLTraining:
+            return NodeCategory::RL;
+
+        // Plugin
+        case NodeType::PluginCustom:
+            return NodeCategory::Plugin;
+
+        default:
+            return NodeCategory::Unknown;
+    }
+}
 
 void NodeEditor::AddNode(NodeType type, const std::string& name) {
     // Queue the node for deferred addition (after ImNodes::EndNodeEditor())
@@ -19,6 +256,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
     MLNode node;
     node.id = next_node_id_++;
     node.type = type;
+    node.category = GetCategoryForNodeType(type);  // Unified Canvas Phase 1
     node.name = name;
 
     // Create pins based on node type
@@ -1116,6 +1354,79 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        case NodeType::SignalSlider: {
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Value";
+            out.is_input = false;
+            node.outputs.push_back(out);
+
+            node.parameters["min"] = "-1.0";
+            node.parameters["max"] = "1.0";
+            node.parameters["value"] = "0.0";
+            node.parameters["label"] = name;
+            break;
+        }
+
+        case NodeType::SineWave: {
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Signal";
+            out.is_input = false;
+            node.outputs.push_back(out);
+
+            node.parameters["amplitude"] = "1.0";
+            node.parameters["frequency"] = "1.0";
+            node.parameters["phase"] = "0.0";
+            node.parameters["offset"] = "0.0";
+            break;
+        }
+
+        case NodeType::StepSignal: {
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Signal";
+            out.is_input = false;
+            node.outputs.push_back(out);
+
+            node.parameters["step_time"] = "1.0";
+            node.parameters["initial_value"] = "0.0";
+            node.parameters["final_value"] = "1.0";
+            break;
+        }
+
+        case NodeType::RampSignal: {
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Signal";
+            out.is_input = false;
+            node.outputs.push_back(out);
+
+            node.parameters["start_value"] = "0.0";
+            node.parameters["end_value"] = "1.0";
+            node.parameters["duration"] = "5.0";
+            break;
+        }
+
+        case NodeType::SignalScope: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Signal";
+            in.is_input = true;
+            in.is_variadic = true;
+            in.max_connections = PIN_UNLIMITED;
+            node.inputs.push_back(in);
+
+            node.parameters["window_size"] = "500";
+            node.parameters["auto_scale"] = "true";
+            break;
+        }
+
         case NodeType::Parameter: {
             NodePin output_pin;
             output_pin.id = next_pin_id_++;
@@ -1523,45 +1834,117 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             reward_out.name = "Reward";
             reward_out.is_input = false;
             node.outputs.push_back(reward_out);
+            NodePin done_out;
+            done_out.id = next_pin_id_++;
+            done_out.type = PinType::Tensor;
+            done_out.name = "Done";
+            done_out.is_input = false;
+            node.outputs.push_back(done_out);
+            NodePin info_out;
+            info_out.id = next_pin_id_++;
+            info_out.type = PinType::Tensor;
+            info_out.name = "Info";
+            info_out.is_input = false;
+            node.outputs.push_back(info_out);
+            // Environment parameters
             node.parameters["env_name"] = "CartPole-v1";
+            node.parameters["env_type"] = "classic_control";  // classic_control, box2d, mujoco, atari
             node.parameters["render"] = "false";
+            node.parameters["render_mode"] = "rgb_array";  // human, rgb_array, ansi
+            node.parameters["max_episode_steps"] = "500";
+            node.parameters["n_envs"] = "4";
+            node.parameters["seed"] = "42";
+            node.parameters["normalize_obs"] = "false";
+            node.parameters["normalize_reward"] = "false";
+            node.parameters["frame_stack"] = "1";  // For Atari/image-based envs
             break;
         }
 
         case NodeType::ReplayBufferNode: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Transition";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Batch";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["capacity"] = "10000";
-            node.parameters["batch_size"] = "64";
+            NodePin transition_in;
+            transition_in.id = next_pin_id_++;
+            transition_in.type = PinType::Tensor;
+            transition_in.name = "Transition";
+            transition_in.is_input = true;
+            node.inputs.push_back(transition_in);
+            NodePin batch_out;
+            batch_out.id = next_pin_id_++;
+            batch_out.type = PinType::Tensor;
+            batch_out.name = "Batch";
+            batch_out.is_input = false;
+            node.outputs.push_back(batch_out);
+            NodePin priority_out;
+            priority_out.id = next_pin_id_++;
+            priority_out.type = PinType::Tensor;
+            priority_out.name = "Priorities";
+            priority_out.is_input = false;
+            node.outputs.push_back(priority_out);
+            // Buffer configuration
+            node.parameters["capacity"] = "100000";
+            node.parameters["batch_size"] = "256";
+            // Prioritized experience replay
+            node.parameters["prioritized"] = "false";
+            node.parameters["alpha"] = "0.6";  // PER priority exponent
+            node.parameters["beta_start"] = "0.4";  // PER importance sampling initial
+            node.parameters["beta_frames"] = "100000";  // Frames to anneal beta to 1.0
+            // N-step returns
+            node.parameters["n_step"] = "1";
+            node.parameters["gamma"] = "0.99";  // Discount for n-step
+            // HER (Hindsight Experience Replay)
+            node.parameters["her_strategy"] = "none";  // none, future, episode, random
+            node.parameters["her_k"] = "4";  // Number of HER goals per transition
             break;
         }
 
-        case NodeType::PolicyNetwork:
+        case NodeType::PolicyNetwork: {
+            NodePin state_in;
+            state_in.id = next_pin_id_++;
+            state_in.type = PinType::Tensor;
+            state_in.name = "State";
+            state_in.is_input = true;
+            node.inputs.push_back(state_in);
+            NodePin action_out;
+            action_out.id = next_pin_id_++;
+            action_out.type = PinType::Tensor;
+            action_out.name = "Action";
+            action_out.is_input = false;
+            node.outputs.push_back(action_out);
+            NodePin log_prob_out;
+            log_prob_out.id = next_pin_id_++;
+            log_prob_out.type = PinType::Tensor;
+            log_prob_out.name = "LogProb";
+            log_prob_out.is_input = false;
+            node.outputs.push_back(log_prob_out);
+            // Network architecture
+            node.parameters["hidden_sizes"] = "128,128";  // Comma-separated layer sizes
+            node.parameters["activation"] = "ReLU";  // ReLU, Tanh, GELU, Swish
+            node.parameters["output_activation"] = "None";  // None, Tanh (for continuous)
+            // Distribution type
+            node.parameters["action_space"] = "discrete";  // discrete, continuous, multi_discrete
+            node.parameters["log_std_init"] = "0.0";  // For continuous actions
+            // Orthogonal initialization
+            node.parameters["ortho_init"] = "true";
+            break;
+        }
+
         case NodeType::ValueNetwork: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "State";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = type == NodeType::PolicyNetwork ? "Action" : "Value";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["hidden_size"] = "128";
-            node.parameters["num_layers"] = "2";
+            NodePin state_in;
+            state_in.id = next_pin_id_++;
+            state_in.type = PinType::Tensor;
+            state_in.name = "State";
+            state_in.is_input = true;
+            node.inputs.push_back(state_in);
+            NodePin value_out;
+            value_out.id = next_pin_id_++;
+            value_out.type = PinType::Tensor;
+            value_out.name = "Value";
+            value_out.is_input = false;
+            node.outputs.push_back(value_out);
+            // Network architecture
+            node.parameters["hidden_sizes"] = "128,128";  // Comma-separated layer sizes
+            node.parameters["activation"] = "ReLU";  // ReLU, Tanh, GELU, Swish
+            // Orthogonal initialization
+            node.parameters["ortho_init"] = "true";
             break;
         }
 
@@ -1578,16 +1961,361 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             env_in.name = "Environment";
             env_in.is_input = true;
             node.inputs.push_back(env_in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Metrics";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["algorithm"] = "PPO";
-            node.parameters["episodes"] = "1000";
+            NodePin value_in;
+            value_in.id = next_pin_id_++;
+            value_in.type = PinType::Tensor;
+            value_in.name = "Value";
+            value_in.is_input = true;
+            node.inputs.push_back(value_in);
+            NodePin buffer_in;
+            buffer_in.id = next_pin_id_++;
+            buffer_in.type = PinType::Tensor;
+            buffer_in.name = "ReplayBuffer";
+            buffer_in.is_input = true;
+            node.inputs.push_back(buffer_in);
+            NodePin metrics_out;
+            metrics_out.id = next_pin_id_++;
+            metrics_out.type = PinType::Tensor;
+            metrics_out.name = "Metrics";
+            metrics_out.is_input = false;
+            node.outputs.push_back(metrics_out);
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Tensor;
+            model_out.name = "TrainedModel";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+            // Algorithm selection
+            node.parameters["algorithm"] = "PPO";  // PPO, A2C, SAC, TD3, DQN, DDPG, TRPO
+            // Training hyperparameters
+            node.parameters["total_timesteps"] = "100000";
+            node.parameters["learning_rate"] = "3e-4";
+            node.parameters["batch_size"] = "64";
+            node.parameters["n_epochs"] = "10";  // PPO epochs per update
+            // Discount and advantage
             node.parameters["gamma"] = "0.99";
-            node.parameters["epsilon"] = "0.2";
+            node.parameters["gae_lambda"] = "0.95";  // GAE lambda for advantage estimation
+            // PPO-specific
+            node.parameters["clip_range"] = "0.2";
+            node.parameters["ent_coef"] = "0.0";  // Entropy coefficient
+            node.parameters["vf_coef"] = "0.5";  // Value function coefficient
+            node.parameters["max_grad_norm"] = "0.5";
+            // SAC/TD3-specific
+            node.parameters["tau"] = "0.005";  // Soft update coefficient
+            node.parameters["train_freq"] = "1";
+            node.parameters["gradient_steps"] = "1";
+            // Logging and checkpointing
+            node.parameters["log_interval"] = "1";
+            node.parameters["eval_freq"] = "5000";
+            node.parameters["save_freq"] = "10000";
+            node.parameters["tensorboard"] = "true";
+            break;
+        }
+
+        case NodeType::PluginCustom: {
+            // Copy node info to avoid use-after-free if plugin unloads
+            auto info_opt = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeTypeInfoCopy(name);
+            node.parameters["plugin_qualified_name"] = name;
+            node.plugin_qualified_name = name;
+            if (info_opt.has_value()) {
+                const auto& info = info_opt.value();
+                node.name = info.display_name;
+                for (const auto& pin : info.pins) {
+                    NodePin p;
+                    p.id = next_pin_id_++;
+                    p.type = PinType::Tensor;  // Default; plugins use Tensor type
+                    p.name = pin.name;
+                    p.is_input = pin.is_input;
+                    if (pin.is_input) node.inputs.push_back(p);
+                    else node.outputs.push_back(p);
+                }
+                for (const auto& [key, val] : info.default_parameters) {
+                    node.parameters[key] = val;
+                }
+                // Dynamic pin support
+                if (info.supports_dynamic_pins) {
+                    node.has_dynamic_pins = true;
+                    node.dynamic_pin_trigger = info.dynamic_pin_trigger;
+                }
+            } else {
+                // Fallback: plugin not loaded, create generic node
+                node.name = "Plugin Node (Missing)";
+                NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+                in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+                NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+                out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            }
+            break;
+        }
+
+        // ========== Data Transformation Nodes (Unified Canvas Phase 4) ==========
+
+        case NodeType::CSVFile: {
+            // CSV File data source node - loads CSV into dataset
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Data";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["file_path"] = "";
+            node.parameters["delimiter"] = ",";
+            node.parameters["header"] = "true";
+            break;
+        }
+
+        case NodeType::FilterRows: {
+            // Filter Rows transformation node - SQL WHERE clause
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["condition"] = "column > 0";
+            break;
+        }
+
+        case NodeType::SelectColumns: {
+            // Select Columns transformation node - choose columns to keep
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["columns"] = "col1, col2, col3";
+            break;
+        }
+
+        case NodeType::DescribeStats: {
+            // Describe Statistics analytics node - computes summary stats
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            // No output pin - analytics node displays results in properties panel
+            node.parameters["show_percentiles"] = "true";
+            break;
+        }
+
+        case NodeType::JoinTables: {
+            // Join Tables transformation node - SQL JOIN
+            NodePin left_input_pin;
+            left_input_pin.id = next_pin_id_++;
+            left_input_pin.type = PinType::Dataset;
+            left_input_pin.name = "Left";
+            left_input_pin.is_input = true;
+            node.inputs.push_back(left_input_pin);
+
+            NodePin right_input_pin;
+            right_input_pin.id = next_pin_id_++;
+            right_input_pin.type = PinType::Dataset;
+            right_input_pin.name = "Right";
+            right_input_pin.is_input = true;
+            node.inputs.push_back(right_input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["join_type"] = "inner";
+            node.parameters["left_on"] = "id";
+            node.parameters["right_on"] = "id";
+            break;
+        }
+
+        case NodeType::SortRows: {
+            // Sort Rows transformation node - ORDER BY
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["columns"] = "column1";
+            node.parameters["ascending"] = "true";
+            break;
+        }
+
+        case NodeType::GroupByAggregate: {
+            // Group By Aggregate transformation node - SQL GROUP BY
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["group_by"] = "column1";
+            node.parameters["aggregations"] = "COUNT(*) as count";
+            break;
+        }
+
+        case NodeType::FillMissingValues: {
+            // Fill Missing Values transformation node - handle NULLs
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["strategy"] = "mean";  // mean, median, mode, constant
+            node.parameters["fill_value"] = "0";
+            break;
+        }
+
+        case NodeType::RemoveDuplicateRows: {
+            // Remove Duplicate Rows transformation node - SQL DISTINCT
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["subset"] = "";  // Empty = all columns
+            node.parameters["keep"] = "first";  // first, last, none
+            break;
+        }
+
+        case NodeType::RenameColumns: {
+            // Rename Columns transformation node
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["mapping"] = "old_name:new_name";
+            break;
+        }
+
+        case NodeType::SampleRows: {
+            // Sample Rows analytics/transform node - random sampling
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["n"] = "100";
+            node.parameters["random_state"] = "42";
+            break;
+        }
+
+        case NodeType::SQLQuery: {
+            // SQL Query data source node - execute custom SQL
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Data";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["connection_string"] = "sqlite:///data.db";
+            node.parameters["query"] = "SELECT * FROM table";
+            break;
+        }
+
+        case NodeType::ParquetFile: {
+            // Parquet File data source node
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Data";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["file_path"] = "";
+            break;
+        }
+
+        case NodeType::ExportCSV:
+        case NodeType::ExportParquet:
+        case NodeType::ExportJSON: {
+            // Export nodes - save dataset to file
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            node.parameters["file_path"] = "";
+            if (node.type == NodeType::ExportCSV) {
+                node.parameters["delimiter"] = ",";
+                node.parameters["header"] = "true";
+            }
             break;
         }
 
@@ -1863,6 +2591,18 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::Parameter:
             return IM_COL32(158, 158, 158, 255);
 
+        // ===== Signal / Control - Teal =====
+        case NodeType::SignalSlider:
+            return IM_COL32(0, 150, 136, 255);
+        case NodeType::SineWave:
+            return IM_COL32(38, 166, 154, 255);
+        case NodeType::StepSignal:
+            return IM_COL32(77, 182, 172, 255);
+        case NodeType::RampSignal:
+            return IM_COL32(77, 182, 172, 255);
+        case NodeType::SignalScope:
+            return IM_COL32(0, 121, 107, 255);
+
         // ===== Data Pipeline - Cyan =====
         case NodeType::DatasetInput:
             return IM_COL32(0, 188, 212, 255);
@@ -1924,6 +2664,9 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(244, 113, 108, 255);
         case NodeType::RLTraining:
             return IM_COL32(198, 40, 40, 255);
+
+        case NodeType::PluginCustom:
+            return IM_COL32(68, 136, 170, 255);
 
         default:
             return IM_COL32(127, 140, 141, 255);
@@ -2090,6 +2833,18 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::Parameter:
             return ICON_FA_GEAR;
 
+        // Signal / Control
+        case NodeType::SignalSlider:
+            return ICON_FA_SLIDERS;
+        case NodeType::SineWave:
+            return ICON_FA_WAVE_SQUARE;
+        case NodeType::StepSignal:
+            return ICON_FA_WAVE_SQUARE;
+        case NodeType::RampSignal:
+            return ICON_FA_ARROW_TREND_UP;
+        case NodeType::SignalScope:
+            return ICON_FA_CHART_LINE;
+
         // Subgraph
         case NodeType::Subgraph:
             return ICON_FA_OBJECT_GROUP;
@@ -2157,6 +2912,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_BRAIN;
         case NodeType::RLTraining:
             return ICON_FA_CROSSHAIRS;
+
+        case NodeType::PluginCustom:
+            return ICON_FA_PLUG;
 
         default:
             return ICON_FA_CIRCLE_NODES;

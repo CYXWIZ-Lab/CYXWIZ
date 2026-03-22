@@ -9,7 +9,7 @@
     {
       "name": "default",
       "hidden": true,
-      "generator": "Ninja",
+      "generator": "Visual Studio 18 2026",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake"

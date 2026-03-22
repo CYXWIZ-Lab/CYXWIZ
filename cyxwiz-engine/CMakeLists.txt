@@ -18,6 +18,15 @@ find_package(OpenSSL REQUIRED)
 # Cross-platform native file dialogs
 find_package(nfd CONFIG REQUIRED)
 
+# Apache Arrow for Data Studio columnar data support
+find_package(Arrow CONFIG REQUIRED)
+find_package(Parquet CONFIG REQUIRED)
+message(STATUS "Apache Arrow ${Arrow_VERSION} found - Columnar data support enabled")
+
+# DuckDB for zero-copy SQL queries on Arrow tables
+find_package(duckdb CONFIG REQUIRED)
+message(STATUS "DuckDB found - SQL query engine enabled")
+
 # Optional: HDF5 support for data files
 find_package(HighFive CONFIG)
 if(HighFive_FOUND)
@@ -37,6 +46,31 @@ set(CYXWIZ_HAS_OPENCV ON)
 # ImNodes for visual node editor - integrated manually
 # Source: https://github.com/Nelarius/imnodes
 
+# Plugin SDK static library (shared between engine and plugins)
+add_library(cyxwiz-plugin-sdk STATIC
+    src/plugin/plugin_context.cpp
+    src/plugin/registries/plugin_node_registry.cpp
+    src/plugin/registries/plugin_panel_registry.cpp
+    src/plugin/registries/plugin_data_loader_registry.cpp
+    src/plugin/registries/plugin_training_hook_manager.cpp
+    src/plugin/registries/plugin_analytics_registry.cpp
+    src/plugin/security/permission_store.cpp
+    src/plugin/security/permission_dialog.cpp
+    src/plugin/security/plugin_signature.cpp
+    src/plugin/security/safe_execute.cpp
+    src/plugin/security/tweetnacl.c
+)
+target_include_directories(cyxwiz-plugin-sdk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(cyxwiz-plugin-sdk PUBLIC
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    imgui::imgui
+)
+set_target_properties(cyxwiz-plugin-sdk PROPERTIES
+    CXX_STANDARD 20
+    POSITION_INDEPENDENT_CODE ON
+)
+
 # Source files
 set(ENGINE_SOURCES
     src/main.cpp
@@ -44,16 +78,41 @@ set(ENGINE_SOURCES
     src/auth/auth_client.cpp
     src/core/project_manager.cpp
     src/core/engine_config.cpp
+    src/core/python_detector.cpp
+    src/core/window_manager.cpp
     src/core/data_registry.cpp
+    src/core/datasets/kaggle_dataset.cpp
+    src/core/datasets/hdf5_dataset.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/datasets/streaming_dataset.cpp
+    src/core/datasets/mnist_dataset.cpp
+    src/core/datasets/cifar10_dataset.cpp
+    src/core/datasets/csv_dataset.cpp
+    src/core/datasets/tsv_dataset.cpp
+    src/core/datasets/json_dataset.cpp
+    src/core/datasets/txt_dataset.cpp
+    src/core/datasets/image_folder_dataset.cpp
+    src/core/datasets/huggingface_dataset.cpp
+    src/core/datasets/custom_dataset.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_converters.cpp
+    src/core/duckdb_connector.cpp
+    src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/annotation_manager.cpp
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_executor.cpp
+    src/core/rl_training_executor.cpp
+    src/core/rl_script_generator.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
+    # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
+    src/plugin/plugin_loader.cpp
+    src/plugin/plugin_manager.cpp
     # Preprocessing system
     src/preprocessing/preprocessing_config.cpp
     src/preprocessing/statistics_calculator.cpp
@@ -114,6 +173,7 @@ set(ENGINE_SOURCES
     src/gui/panels/training_plot_panel.cpp
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
+    src/gui/panels/python_plot_window_registry.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/plot_output_panel.cpp
     src/gui/panels/command_window.cpp
@@ -122,11 +182,16 @@ set(ENGINE_SOURCES
     src/gui/panels/data_explorer_panel.cpp
     src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
+    src/gui/dialogs/python_setup_wizard.cpp
+    src/gui/dialogs/project_selection_dialog.cpp
+    src/gui/dialogs/start_page.cpp
     src/gui/panels/dataset_panel.cpp
-    src/gui/panels/dataset_panel_preprocessing.cpp
-    src/gui/panels/dataset_panel_datapipeline.cpp
+    # Removed tabs (redundant with Data Studio):
+    # src/gui/panels/dataset_panel_preprocessing.cpp  # Preprocessing moved to Data Studio
+    # src/gui/panels/dataset_panel_datapipeline.cpp   # Pipeline moved to Data Studio
+    # src/gui/panels/dataset_panel_prepare.cpp        # Prepare moved to Data Studio
+    # Kept tabs (unique to Training & Evaluation):
     src/gui/panels/dataset_panel_interactive.cpp
-    src/gui/panels/dataset_panel_prepare.cpp
     src/gui/panels/dataset_panel_evaluate.cpp
     src/gui/panels/dataset_panel_export.cpp
     # Interactive annotation tools (Phase 4)
@@ -145,6 +210,7 @@ set(ENGINE_SOURCES
     src/gui/panels/export_dialog.cpp
     src/gui/panels/import_dialog.cpp
     src/gui/panels/deployment_dialog.cpp
+    src/gui/panels/python_settings_panel.cpp
     src/network/deployment_client.cpp
     src/inference/local_inference_server.cpp
     # DNN inference (Phase 3)
@@ -264,8 +330,17 @@ set(ENGINE_SOURCES
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/job_status_panel.cpp
     src/gui/panels/wallet_panel.cpp
+    src/gui/panels/plugin_manager_panel.cpp
     src/gui/theme.cpp
     src/gui/dock_style.cpp
+    # Data Studio (Phase 1 Week 1)
+    # src/gui/data_studio/pipeline_canvas.cpp  # Unified Canvas Phase 5: Replaced by Node Editor
+    src/gui/data_studio/query_editor.cpp
+    src/gui/data_studio/analyzer.cpp
+    src/gui/data_studio/visualizer.cpp
+    src/gui/data_studio/data_studio_panel.cpp
+    # pipeline_executor.cpp moved to src/core/ (Unified Canvas Phase 2)
+    src/gui/data_studio/node_registry.cpp
     # Plotting system
     src/plotting/plot_dataset.cpp
     src/plotting/plot_manager.cpp
@@ -280,7 +355,12 @@ set(ENGINE_HEADERS
     src/auth/auth_client.h
     src/core/project_manager.h
     src/core/engine_config.h
+    src/core/window_manager.h
     src/core/data_registry.h
+    src/core/arrow_dataset.h
+    src/core/arrow_converters.h
+    src/core/duckdb_connector.h
+    src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
     src/core/texture_manager.h
     src/core/async_task_manager.h
     src/core/graph_compiler.h
@@ -310,6 +390,7 @@ set(ENGINE_HEADERS
     src/gui/panels/training_dashboard.h
     src/gui/panels/training_plot_panel.h
     src/gui/panels/plot_window.h
+    src/gui/panels/python_plot_window_registry.h
     src/gui/panels/plot_test_control.h
     src/gui/panels/plot_output_panel.h
     src/gui/panels/command_window.h
@@ -317,6 +398,9 @@ set(ENGINE_HEADERS
     src/gui/panels/table_viewer.h
     src/gui/panels/data_explorer_panel.h
     src/gui/panels/connection_dialog.h
+    src/gui/dialogs/python_setup_wizard.h
+    src/gui/dialogs/project_selection_dialog.h
+    src/gui/dialogs/start_page.h
     src/gui/panels/dataset_panel.h
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.h
@@ -333,6 +417,7 @@ set(ENGINE_HEADERS
     src/gui/panels/export_dialog.h
     src/gui/panels/import_dialog.h
     src/gui/panels/deployment_dialog.h
+    src/gui/panels/python_settings_panel.h
     src/network/deployment_client.h
     src/inference/local_inference_server.h
     # DNN inference (Phase 3)
@@ -441,6 +526,14 @@ set(ENGINE_HEADERS
     src/gui/panels/wallet_panel.h
     src/gui/theme.h
     src/gui/dock_style.h
+    # Data Studio (Phase 1 Week 1)
+    # src/gui/data_studio/pipeline_canvas.h  # Unified Canvas Phase 5: Replaced by Node Editor
+    src/gui/data_studio/query_editor.h
+    src/gui/data_studio/analyzer.h
+    src/gui/data_studio/visualizer.h
+    src/gui/data_studio/data_studio_panel.h
+    # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)
+    src/gui/data_studio/node_registry.h
     # Plotting system
     src/plotting/plot_dataset.h
     src/plotting/plot_manager.h
@@ -510,7 +603,11 @@ target_link_libraries(cyxwiz-engine PRIVATE
     OpenSSL::Crypto
     cyxwiz-backend
     cyxwiz-protocol
+    cyxwiz-plugin-sdk
     nfd::nfd
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    duckdb
 )
 
 # Optional: Link HDF5 if found
@@ -524,6 +621,12 @@ if(OpenCV_FOUND)
     target_include_directories(cyxwiz-engine PRIVATE ${OpenCV_INCLUDE_DIRS})
     target_link_libraries(cyxwiz-engine PRIVATE ${OpenCV_LIBS})
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_OPENCV)
+endif()
+
+# Python scripting support (controlled by CYXWIZ_HAS_PYTHON from root CMakeLists.txt)
+if(CYXWIZ_HAS_PYTHON)
+    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_PYTHON)
+    message(STATUS "Engine: Python scripting support enabled")
 endif()
 
 # Optional: ONNX Export support
@@ -606,6 +709,9 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     COMMENT "Copying pycyxwiz Python module..."
 )
 
+# Note: Bundled Python has been removed. CyxWiz Engine now uses system Python 3.12+.
+# Each project creates its own virtual environment in <project>/python/
+
 # ===== Python Bindings Module =====
 
 # Create Python module for plotting bindings
@@ -623,6 +729,7 @@ pybind11_add_module(cyxwiz_plotting
     src/gui/panels/plot_test_panel.cpp
     src/gui/panels/training_plot_panel.cpp
     src/gui/panels/training_plot_panel_global.cpp
+    src/gui/panels/python_plot_window_registry.cpp
 )
 
 # Link the plotting module against necessary libraries
@@ -756,3 +863,37 @@ set_target_properties(test_opencv_integration PROPERTIES
 
 # HDF5 Loading test - run via engine's Python console or dedicated test runner
 # The HDF5Dataset class is tested as part of cyxwiz-engine
+
+# ===== Test: Arrow Integration (Phase 0 Day 5) =====
+add_executable(test_arrow_integration
+    tests/test_arrow_integration.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_converters.cpp
+    src/core/duckdb_connector.cpp
+    src/core/data_registry.cpp
+    src/core/annotation_manager.cpp
+)
+
+target_include_directories(test_arrow_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_arrow_integration PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    duckdb
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_arrow_integration PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_arrow_integration PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)

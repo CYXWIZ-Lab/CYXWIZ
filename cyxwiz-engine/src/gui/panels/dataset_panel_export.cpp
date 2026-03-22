@@ -15,7 +15,7 @@
 
 namespace gui {
 
-void DatasetPanel::RenderExportContent() {
+void TrainingEvaluationPanel::RenderExportContent() {
     ImGui::Spacing();
 
     // Export section

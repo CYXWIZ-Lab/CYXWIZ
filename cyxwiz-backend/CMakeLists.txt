@@ -177,19 +177,18 @@ if(CYXWIZ_HAS_ARRAYFIRE)
     target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
 
     if(CYXWIZ_ENABLE_CUDA)
-        # Find CUDA Toolkit for cuda_runtime.h and cudart library
-        find_package(CUDAToolkit QUIET)
-        if(CUDAToolkit_FOUND)
-            message(STATUS "CUDA Toolkit found: ${CUDAToolkit_VERSION}")
-            target_link_libraries(cyxwiz-backend PUBLIC
-                ArrayFire::afcuda
-                CUDA::cudart  # CUDA runtime for cudaMemGetInfo()
-            )
-            target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
+        # Keep CUDA backend support runtime-selected via ArrayFire.
+        # Do not link CUDA runtime directly to avoid requiring cudart on non-NVIDIA systems.
+        target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
+        message(STATUS "CUDA backend support enabled (runtime-selected via ArrayFire)")
 
-            # NCCL for distributed GPU training (optional)
-            option(CYXWIZ_ENABLE_NCCL "Enable NCCL for distributed GPU training" ON)
-            if(CYXWIZ_ENABLE_NCCL)
+        # NCCL for distributed GPU training (optional).
+        # This is the only path that requires direct CUDA Toolkit linkage.
+        option(CYXWIZ_ENABLE_NCCL "Enable NCCL for distributed GPU training" ON)
+        if(CYXWIZ_ENABLE_NCCL)
+            find_package(CUDAToolkit QUIET)
+            if(CUDAToolkit_FOUND)
+                message(STATUS "CUDA Toolkit found: ${CUDAToolkit_VERSION}")
                 find_package(NCCL QUIET)
                 if(NCCL_FOUND)
                     message(STATUS "NCCL found: ${NCCL_LIBRARIES}")
@@ -199,7 +198,7 @@ if(CYXWIZ_HAS_ARRAYFIRE)
                     target_sources(cyxwiz-backend PRIVATE
                         src/algorithms/distributed/nccl_backend.cpp
                     )
-                    target_link_libraries(cyxwiz-backend PUBLIC NCCL::nccl)
+                    target_link_libraries(cyxwiz-backend PUBLIC NCCL::nccl CUDA::cudart)
                     target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_NCCL)
                     set(CYXWIZ_HAS_NCCL TRUE)
                 else()
@@ -207,10 +206,10 @@ if(CYXWIZ_HAS_ARRAYFIRE)
                     message(STATUS "  NCCL can be installed from: https://developer.nvidia.com/nccl")
                     set(CYXWIZ_HAS_NCCL FALSE)
                 endif()
+            else()
+                message(WARNING "CUDA Toolkit not found - NCCL backend disabled")
+                set(CYXWIZ_HAS_NCCL FALSE)
             endif()
-        else()
-            message(WARNING "CUDA Toolkit not found. Install from: https://developer.nvidia.com/cuda-downloads")
-            message(WARNING "Building without CUDA memory query support")
         endif()
     endif()
 

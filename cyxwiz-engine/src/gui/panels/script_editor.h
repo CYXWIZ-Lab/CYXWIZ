@@ -109,6 +109,7 @@ public:
     void SetShowWhitespace(bool show);
     void SetWordWrap(bool wrap);
     void SetAutoIndent(bool indent);
+    void SetSyntaxHighlighting(bool enabled);
     void SetTheme(int theme_index);
     void SetShowMinimap(bool show) { show_minimap_ = show; }
     float GetFontScale() const { return font_scale_; }
@@ -116,9 +117,15 @@ public:
     bool GetShowWhitespace() const { return show_whitespace_; }
     bool GetWordWrap() const { return word_wrap_; }
     bool GetAutoIndent() const { return auto_indent_; }
+    bool GetSyntaxHighlighting() const { return syntax_highlighting_; }
     int GetThemeIndex() const { return static_cast<int>(current_theme_); }
     bool GetShowMinimap() const { return show_minimap_; }
     bool* GetShowMinimapPtr() { return &show_minimap_; }
+
+    // Open files state (for project persistence)
+    std::vector<std::string> GetOpenFilePaths() const;
+    int GetActiveTabIndex() const { return active_tab_index_; }
+    void SetActiveTabIndex(int index);
 
     // Callbacks for settings changes (Script Editor -> Preferences sync)
     void SetOnSettingsChangedCallback(std::function<void()> callback) { on_settings_changed_callback_ = callback; }

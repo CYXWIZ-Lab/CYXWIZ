@@ -1,0 +1,45 @@
+<mujoco model="hopper">
+  <compiler angle="degree" inertiafromgeom="true"/>
+  <option timestep="0.002" integrator="RK4"/>
+
+  <default>
+    <joint limited="true" damping="0.5" armature="0.01"/>
+    <geom contype="1" conaffinity="1" condim="3" friction="1.0 0.5 0.5" rgba="0.6 0.3 0.2 1"/>
+  </default>
+
+  <worldbody>
+    <light diffuse="0.8 0.8 0.8" pos="0 0 3" dir="0 0 -1"/>
+    <geom type="plane" size="40 40 0.1" rgba="0.8 0.9 0.8 1" conaffinity="1"/>
+
+    <body name="torso" pos="0 0 1.25">
+      <joint name="rootx" type="slide" axis="1 0 0" limited="false"/>
+      <joint name="rootz" type="slide" axis="0 0 1" limited="false"/>
+      <joint name="rooty" type="hinge" axis="0 1 0" limited="false"/>
+      <geom type="capsule" fromto="0 0 -0.2  0 0 0.2" size="0.05" mass="3.5"/>
+
+      <!-- Thigh -->
+      <body name="thigh" pos="0 0 -0.2">
+        <joint name="thigh_joint" type="hinge" axis="0 -1 0" range="-150 0"/>
+        <geom type="capsule" fromto="0 0 0  0 0 -0.45" size="0.05" mass="4.0"/>
+
+        <!-- Leg -->
+        <body name="leg" pos="0 0 -0.45">
+          <joint name="leg_joint" type="hinge" axis="0 -1 0" range="-150 0"/>
+          <geom type="capsule" fromto="0 0 0  0 0 -0.5" size="0.04" mass="2.7"/>
+
+          <!-- Foot -->
+          <body name="foot" pos="0 0 -0.5">
+            <joint name="foot_joint" type="hinge" axis="0 -1 0" range="-45 45"/>
+            <geom type="capsule" fromto="-0.13 0 0  0.26 0 0" size="0.06" mass="5.3"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor joint="thigh_joint" gear="200" ctrlrange="-1 1" ctrllimited="true"/>
+    <motor joint="leg_joint" gear="200" ctrlrange="-1 1" ctrllimited="true"/>
+    <motor joint="foot_joint" gear="200" ctrlrange="-1 1" ctrllimited="true"/>
+  </actuator>
+</mujoco>

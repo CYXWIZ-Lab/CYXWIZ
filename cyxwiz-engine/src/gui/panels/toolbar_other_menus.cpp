@@ -3,6 +3,9 @@
 #include "../theme.h"
 #include "../tutorial/tutorial_system.h"
 #include "../../auth/auth_client.h"
+#include "../../plugin/registries/plugin_panel_registry.h"
+#include "../../plugin/plugin_manager.h"
+#include <map>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -110,6 +113,56 @@ void ToolbarPanel::RenderTrainMenu() {
             if (optimizer_settings_callback_) {
                 optimizer_settings_callback_();
             }
+        }
+
+        ImGui::EndMenu();
+    }
+}
+
+void ToolbarPanel::RenderSimulationMenu() {
+    if (ImGui::BeginMenu("Simulation")) {
+        auto& panel_reg = cyxwiz::plugin::PluginPanelRegistry::Instance();
+
+        // Check if MuJoCo viewport is open (indicates plugin is loaded)
+        bool has_viewport = panel_reg.HasPanel("mujoco_viewport");
+        bool viewport_visible = has_viewport && panel_reg.IsPanelVisible("mujoco_viewport");
+
+        if (ImGui::MenuItem(ICON_FA_PLAY " Run Simulation", "Ctrl+F5", false, has_viewport)) {
+            // TODO: Forward to simulation executor
+        }
+
+        if (ImGui::MenuItem(ICON_FA_PAUSE " Pause", "Ctrl+F6", false, has_viewport)) {
+            // TODO: Forward to simulation executor
+        }
+
+        if (ImGui::MenuItem(ICON_FA_STOP " Stop", "Ctrl+F7", false, has_viewport)) {
+            // TODO: Forward to simulation executor
+        }
+
+        if (ImGui::MenuItem(ICON_FA_FORWARD_STEP " Step Once", "F10", false, has_viewport)) {
+            // TODO: Forward to simulation executor
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(ICON_FA_DESKTOP " Open Viewport", nullptr, viewport_visible, has_viewport)) {
+            panel_reg.TogglePanelVisible("mujoco_viewport");
+        }
+
+        bool browser_visible = has_viewport && panel_reg.IsPanelVisible("mujoco_env_browser");
+        if (ImGui::MenuItem(ICON_FA_MICROCHIP " Environment Library", nullptr, browser_visible, has_viewport)) {
+            panel_reg.TogglePanelVisible("mujoco_env_browser");
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(ICON_FA_FILE_IMPORT " Load MJCF Model...", "Ctrl+Shift+M", false, has_viewport)) {
+            // TODO: Open file dialog for MJCF
+        }
+
+        if (!has_viewport) {
+            ImGui::Separator();
+            ImGui::TextDisabled("MuJoCo plugin not loaded");
         }
 
         ImGui::EndMenu();
@@ -351,6 +404,44 @@ void ToolbarPanel::RenderDeployMenu() {
         if (ImGui::MenuItem("Publish to Marketplace...")) {
             // TODO: Publish model
         }
+
+        ImGui::EndMenu();
+    }
+}
+
+void ToolbarPanel::RenderAppsMenu() {
+    if (ImGui::BeginMenu(ICON_FA_CUBES " Apps")) {
+        auto& panel_reg = cyxwiz::plugin::PluginPanelRegistry::Instance();
+        auto panels = panel_reg.GetAllPanels();
+
+        if (panels.empty()) {
+            ImGui::TextDisabled("No plugin apps loaded");
+        } else {
+            // Group by category
+            std::map<std::string, std::vector<cyxwiz::plugin::PluginPanelInfo>> by_category;
+            for (const auto& p : panels) {
+                std::string cat = p.category.empty() ? "Other" : p.category;
+                by_category[cat].push_back(p);
+            }
+
+            for (const auto& [category, cat_panels] : by_category) {
+                if (by_category.size() > 1) {
+                    ImGui::SeparatorText(category.c_str());
+                }
+                for (const auto& p : cat_panels) {
+                    bool visible = panel_reg.IsPanelVisible(p.panel_id);
+                    if (ImGui::MenuItem(p.title.c_str(), nullptr, visible)) {
+                        panel_reg.TogglePanelVisible(p.panel_id);
+                    }
+                }
+            }
+        }
+
+        ImGui::Separator();
+
+        // Show loaded plugin count
+        auto& pm = cyxwiz::plugin::PluginManager::Instance();
+        ImGui::TextDisabled("%zu plugins loaded", pm.GetPluginCount());
 
         ImGui::EndMenu();
     }

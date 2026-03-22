@@ -666,9 +666,9 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
                 }
             }
 
-            // Open in Node Editor (for .cyxgraph files only)
+            // Open in CyxWiz Studio (for .cyxgraph files only)
             if (item.type == AssetType::Graph) {
-                if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Open in Node Editor")) {
+                if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Open in CyxWiz Studio")) {
                     if (on_open_in_node_editor_) {
                         on_open_in_node_editor_(item.absolute_path);
                     }

@@ -271,11 +271,13 @@ void ToolbarPanel::Render() {
         RenderViewMenu();
         RenderNodesMenu();
         RenderTrainMenu();
+        RenderSimulationMenu();
         RenderToolsMenu();
         RenderDatasetMenu();
         RenderScriptMenu();
         RenderPlotsMenu();
         RenderDeployMenu();
+        RenderAppsMenu();
         RenderHelpMenu();
 
         // Show current project name in menu bar if active
@@ -1776,6 +1778,9 @@ void ToolbarPanel::Render() {
     if (show_preferences_dialog_) {
         // Note: shortcuts_ is initialized in RenderEditMenu() when Preferences is clicked
 
+        // Python settings have been moved to PythonSettingsPanel
+        // This initialization code is no longer needed
+
         ImGui::OpenPopup("Preferences");
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -1986,18 +1991,24 @@ void ToolbarPanel::Render() {
                     preferences_tab_ = 4;
                     ImGui::Spacing();
 
-                    // Python Interpreter Path
-                    ImGui::Text("Python Interpreter Path:");
-                    ImGui::SetNextItemWidth(-100);
-                    ImGui::InputText("##python_path", python_interpreter_path_, sizeof(python_interpreter_path_));
-                    ImGui::SameLine();
-                    if (ImGui::Button("Browse##python")) {
-                        std::string path = OpenFileDialog("Python Executable (python.exe)\0python.exe\0All Files (*.*)\0*.*\0", "Select Python Interpreter");
-                        if (!path.empty()) {
-                            strncpy(python_interpreter_path_, path.c_str(), sizeof(python_interpreter_path_) - 1);
-                        }
+                    // Python settings moved to dedicated panel
+                    ImGui::TextWrapped("Python settings have been moved to Edit > Settings > Python");
+                    ImGui::Spacing();
+                    if (ImGui::Button("Open Python Settings")) {
+                        // TODO: Open Python settings panel
+                        spdlog::info("Python settings panel not yet implemented in preferences");
                     }
                     ImGui::TextDisabled("Leave empty to use system default");
+                    ImGui::Unindent(25.0f);
+                    ImGui::EndDisabled();
+
+                    // Restart warning
+                    if (python_settings_changed_) {
+                        ImGui::Spacing();
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+                        ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION " Python settings will take effect after restart.");
+                        ImGui::PopStyleColor();
+                    }
 
                     ImGui::Spacing();
                     ImGui::Separator();
@@ -2035,6 +2046,37 @@ void ToolbarPanel::Render() {
                     if (python_output_limit_ < 100) python_output_limit_ = 100;
                     if (python_output_limit_ > 10000) python_output_limit_ = 10000;
                     ImGui::TextDisabled("Range: 100 - 10000 lines");
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    if (ImGui::Button("Show Runtime Details")) {
+                        if (python_diagnostics_callback_) {
+                            python_diagnostics_text_ = python_diagnostics_callback_();
+                        } else {
+                            python_diagnostics_text_ = "Python diagnostics are not available.";
+                        }
+                        show_python_diagnostics_popup_ = true;
+                        ImGui::OpenPopup("Python Runtime Details");
+                    }
+
+                    if (ImGui::BeginPopupModal("Python Runtime Details", &show_python_diagnostics_popup_, ImGuiWindowFlags_AlwaysAutoResize)) {
+                        ImGui::BeginChild("##python_diag_text", ImVec2(560, 300), true, ImGuiWindowFlags_HorizontalScrollbar);
+                        ImGui::TextUnformatted(python_diagnostics_text_.c_str());
+                        ImGui::EndChild();
+
+                        if (ImGui::Button("Copy")) {
+                            ImGui::SetClipboardText(python_diagnostics_text_.c_str());
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Close")) {
+                            show_python_diagnostics_popup_ = false;
+                            ImGui::CloseCurrentPopup();
+                        }
+
+                        ImGui::EndPopup();
+                    }
 
                     ImGui::EndTabItem();
                 }
@@ -2330,6 +2372,7 @@ void ToolbarPanel::Render() {
             ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total_width) * 0.5f);
 
             if (ImGui::Button("OK", ImVec2(button_width, 0))) {
+                // Python settings are now in PythonSettingsPanel
                 // Save preferences to project if one is open
                 if (save_project_settings_callback_) {
                     save_project_settings_callback_();

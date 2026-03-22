@@ -1,6 +1,7 @@
 #include "node_editor.h"
 #include "panels/script_editor.h"
 #include "../core/async_task_manager.h"
+#include "../plugin/registries/plugin_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -119,7 +120,479 @@ void NodeEditor::GenerateCodeForFramework(CodeFramework framework) {
     );
 }
 
+// Helper to check if graph contains RL nodes
+bool NodeEditor::IsRLGraph(const std::vector<int>& sorted_ids) const {
+    for (int node_id : sorted_ids) {
+        const MLNode* node = FindNodeById(node_id);
+        if (!node) continue;
+        if (node->type == NodeType::GymEnvironment ||
+            node->type == NodeType::RLTraining ||
+            node->type == NodeType::ReplayBufferNode) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Generate RL-specific PyTorch code using gymnasium + stable-baselines3
+std::string NodeEditor::GenerateRLPyTorchCode(const std::vector<int>& sorted_ids) const {
+    std::string code;
+
+    // Header with RL imports
+    code += "# Auto-generated Reinforcement Learning code from CyxWiz Node Editor\n";
+    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
+    code += "import gymnasium as gym\n";
+    code += "import numpy as np\n";
+    code += "import torch\n";
+    code += "import torch.nn as nn\n";
+    code += "from stable_baselines3 import PPO, A2C, SAC, TD3, DQN\n";
+    code += "from stable_baselines3.common.env_util import make_vec_env\n";
+    code += "from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback\n";
+    code += "from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv\n\n";
+
+    // Extract parameters from nodes (with enhanced defaults)
+    std::string env_name = "CartPole-v1";
+    std::string env_type = "classic_control";
+    std::string render_mode = "rgb_array";
+    std::string max_episode_steps = "500";
+    std::string n_envs = "4";
+    std::string seed = "42";
+    bool normalize_obs = false;
+    bool normalize_reward = false;
+    std::string frame_stack = "1";
+    bool render = false;
+
+    std::string algorithm = "PPO";
+    std::string total_timesteps = "100000";
+    std::string learning_rate = "3e-4";
+    std::string batch_size = "64";
+    std::string n_epochs = "10";
+    std::string gamma = "0.99";
+    std::string gae_lambda = "0.95";
+    std::string clip_range = "0.2";
+    std::string ent_coef = "0.0";
+    std::string vf_coef = "0.5";
+    std::string max_grad_norm = "0.5";
+    std::string tau = "0.005";
+    std::string eval_freq = "5000";
+    std::string save_freq = "10000";
+    bool tensorboard = true;
+
+    std::string hidden_sizes = "128,128";
+    std::string activation = "ReLU";
+    std::string action_space = "discrete";
+    bool ortho_init = true;
+
+    std::string buffer_capacity = "100000";
+    bool prioritized = false;
+    std::string alpha = "0.6";
+    std::string beta_start = "0.4";
+    std::string n_step = "1";
+
+    for (int node_id : sorted_ids) {
+        const MLNode* node = FindNodeById(node_id);
+        if (!node) continue;
+
+        if (node->type == NodeType::GymEnvironment) {
+            auto it = node->parameters.find("env_name");
+            if (it != node->parameters.end()) env_name = it->second;
+            it = node->parameters.find("env_type");
+            if (it != node->parameters.end()) env_type = it->second;
+            it = node->parameters.find("render");
+            if (it != node->parameters.end()) render = (it->second == "true");
+            it = node->parameters.find("render_mode");
+            if (it != node->parameters.end()) render_mode = it->second;
+            it = node->parameters.find("max_episode_steps");
+            if (it != node->parameters.end()) max_episode_steps = it->second;
+            it = node->parameters.find("n_envs");
+            if (it != node->parameters.end()) n_envs = it->second;
+            it = node->parameters.find("seed");
+            if (it != node->parameters.end()) seed = it->second;
+            it = node->parameters.find("normalize_obs");
+            if (it != node->parameters.end()) normalize_obs = (it->second == "true");
+            it = node->parameters.find("normalize_reward");
+            if (it != node->parameters.end()) normalize_reward = (it->second == "true");
+            it = node->parameters.find("frame_stack");
+            if (it != node->parameters.end()) frame_stack = it->second;
+        }
+        else if (node->type == NodeType::RLTraining) {
+            auto it = node->parameters.find("algorithm");
+            if (it != node->parameters.end()) algorithm = it->second;
+            it = node->parameters.find("total_timesteps");
+            if (it != node->parameters.end()) total_timesteps = it->second;
+            it = node->parameters.find("learning_rate");
+            if (it != node->parameters.end()) learning_rate = it->second;
+            it = node->parameters.find("batch_size");
+            if (it != node->parameters.end()) batch_size = it->second;
+            it = node->parameters.find("n_epochs");
+            if (it != node->parameters.end()) n_epochs = it->second;
+            it = node->parameters.find("gamma");
+            if (it != node->parameters.end()) gamma = it->second;
+            it = node->parameters.find("gae_lambda");
+            if (it != node->parameters.end()) gae_lambda = it->second;
+            it = node->parameters.find("clip_range");
+            if (it != node->parameters.end()) clip_range = it->second;
+            it = node->parameters.find("ent_coef");
+            if (it != node->parameters.end()) ent_coef = it->second;
+            it = node->parameters.find("vf_coef");
+            if (it != node->parameters.end()) vf_coef = it->second;
+            it = node->parameters.find("max_grad_norm");
+            if (it != node->parameters.end()) max_grad_norm = it->second;
+            it = node->parameters.find("tau");
+            if (it != node->parameters.end()) tau = it->second;
+            it = node->parameters.find("eval_freq");
+            if (it != node->parameters.end()) eval_freq = it->second;
+            it = node->parameters.find("save_freq");
+            if (it != node->parameters.end()) save_freq = it->second;
+            it = node->parameters.find("tensorboard");
+            if (it != node->parameters.end()) tensorboard = (it->second == "true");
+        }
+        else if (node->type == NodeType::PolicyNetwork) {
+            auto it = node->parameters.find("hidden_sizes");
+            if (it != node->parameters.end()) hidden_sizes = it->second;
+            it = node->parameters.find("activation");
+            if (it != node->parameters.end()) activation = it->second;
+            it = node->parameters.find("action_space");
+            if (it != node->parameters.end()) action_space = it->second;
+            it = node->parameters.find("ortho_init");
+            if (it != node->parameters.end()) ortho_init = (it->second == "true");
+        }
+        else if (node->type == NodeType::ReplayBufferNode) {
+            auto it = node->parameters.find("capacity");
+            if (it != node->parameters.end()) buffer_capacity = it->second;
+            it = node->parameters.find("batch_size");
+            if (it != node->parameters.end()) batch_size = it->second;
+            it = node->parameters.find("prioritized");
+            if (it != node->parameters.end()) prioritized = (it->second == "true");
+            it = node->parameters.find("alpha");
+            if (it != node->parameters.end()) alpha = it->second;
+            it = node->parameters.find("beta_start");
+            if (it != node->parameters.end()) beta_start = it->second;
+            it = node->parameters.find("n_step");
+            if (it != node->parameters.end()) n_step = it->second;
+        }
+    }
+
+    // Configuration section with enhanced parameters
+    code += "# =============== Configuration ===============\n";
+    code += "# Environment\n";
+    code += "ENV_NAME = \"" + env_name + "\"\n";
+    code += "ENV_TYPE = \"" + env_type + "\"  # classic_control, box2d, mujoco, atari\n";
+    code += "RENDER = " + std::string(render ? "True" : "False") + "\n";
+    code += "RENDER_MODE = \"" + render_mode + "\"\n";
+    code += "MAX_EPISODE_STEPS = " + max_episode_steps + "\n";
+    code += "N_ENVS = " + n_envs + "\n";
+    code += "SEED = " + seed + "\n";
+    code += "NORMALIZE_OBS = " + std::string(normalize_obs ? "True" : "False") + "\n";
+    code += "NORMALIZE_REWARD = " + std::string(normalize_reward ? "True" : "False") + "\n";
+    code += "FRAME_STACK = " + frame_stack + "\n\n";
+
+    code += "# Algorithm\n";
+    code += "ALGORITHM = \"" + algorithm + "\"\n";
+    code += "TOTAL_TIMESTEPS = " + total_timesteps + "\n";
+    code += "LEARNING_RATE = " + learning_rate + "\n";
+    code += "BATCH_SIZE = " + batch_size + "\n";
+    code += "N_EPOCHS = " + n_epochs + "  # PPO epochs per update\n\n";
+
+    code += "# Discount and advantage\n";
+    code += "GAMMA = " + gamma + "\n";
+    code += "GAE_LAMBDA = " + gae_lambda + "\n\n";
+
+    code += "# PPO-specific\n";
+    code += "CLIP_RANGE = " + clip_range + "\n";
+    code += "ENT_COEF = " + ent_coef + "  # Entropy coefficient\n";
+    code += "VF_COEF = " + vf_coef + "  # Value function coefficient\n";
+    code += "MAX_GRAD_NORM = " + max_grad_norm + "\n\n";
+
+    code += "# SAC/TD3-specific\n";
+    code += "TAU = " + tau + "  # Soft update coefficient\n\n";
+
+    code += "# Network architecture\n";
+    code += "HIDDEN_SIZES = [" + hidden_sizes + "]\n";
+    code += "ACTIVATION = \"" + activation + "\"\n";
+    code += "ACTION_SPACE = \"" + action_space + "\"\n";
+    code += "ORTHO_INIT = " + std::string(ortho_init ? "True" : "False") + "\n\n";
+
+    code += "# Replay buffer (for off-policy algorithms)\n";
+    code += "BUFFER_SIZE = " + buffer_capacity + "\n";
+    code += "PRIORITIZED = " + std::string(prioritized ? "True" : "False") + "\n";
+    code += "PER_ALPHA = " + alpha + "\n";
+    code += "PER_BETA_START = " + beta_start + "\n";
+    code += "N_STEP = " + n_step + "\n\n";
+
+    code += "# Logging and checkpointing\n";
+    code += "EVAL_FREQ = " + eval_freq + "\n";
+    code += "SAVE_FREQ = " + save_freq + "\n";
+    code += "TENSORBOARD = " + std::string(tensorboard ? "True" : "False") + "\n\n";
+
+    // Custom network architecture
+    code += "# =============== Custom Policy Network ===============\n";
+    code += "from stable_baselines3.common.policies import ActorCriticPolicy\n";
+    code += "from stable_baselines3.common.torch_layers import BaseFeaturesExtractor\n\n";
+
+    code += "# Activation function mapping\n";
+    code += "ACTIVATION_FNS = {\n";
+    code += "    \"ReLU\": nn.ReLU,\n";
+    code += "    \"Tanh\": nn.Tanh,\n";
+    code += "    \"GELU\": nn.GELU,\n";
+    code += "    \"Swish\": nn.SiLU,\n";
+    code += "    \"LeakyReLU\": nn.LeakyReLU,\n";
+    code += "}\n\n";
+
+    code += "class CustomNetwork(BaseFeaturesExtractor):\n";
+    code += "    \"\"\"Custom feature extractor based on node editor configuration.\"\"\"\n";
+    code += "    def __init__(self, observation_space, features_dim=None):\n";
+    code += "        features_dim = features_dim or HIDDEN_SIZES[-1]\n";
+    code += "        super().__init__(observation_space, features_dim)\n";
+    code += "        n_input = observation_space.shape[0]\n";
+    code += "        \n";
+    code += "        layers = []\n";
+    code += "        in_features = n_input\n";
+    code += "        activation_cls = ACTIVATION_FNS.get(ACTIVATION, nn.ReLU)\n";
+    code += "        \n";
+    code += "        for hidden_size in HIDDEN_SIZES:\n";
+    code += "            layers.append(nn.Linear(in_features, hidden_size))\n";
+    code += "            layers.append(activation_cls())\n";
+    code += "            in_features = hidden_size\n";
+    code += "        \n";
+    code += "        self.net = nn.Sequential(*layers)\n";
+    code += "        \n";
+    code += "        # Apply orthogonal initialization if enabled\n";
+    code += "        if ORTHO_INIT:\n";
+    code += "            for layer in self.net:\n";
+    code += "                if isinstance(layer, nn.Linear):\n";
+    code += "                    nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))\n";
+    code += "                    nn.init.constant_(layer.bias, 0.0)\n";
+    code += "    \n";
+    code += "    def forward(self, observations):\n";
+    code += "        return self.net(observations)\n\n";
+
+    // Policy kwargs
+    code += "# Policy kwargs with custom network\n";
+    code += "policy_kwargs = dict(\n";
+    code += "    features_extractor_class=CustomNetwork,\n";
+    code += "    features_extractor_kwargs=dict(features_dim=HIDDEN_SIZES[-1]),\n";
+    code += "    net_arch=[dict(pi=HIDDEN_SIZES, vf=HIDDEN_SIZES)],\n";
+    code += "    ortho_init=ORTHO_INIT,\n";
+    code += ")\n\n";
+
+    // Main training code
+    code += "# =============== Training ===============\n";
+    code += "from stable_baselines3.common.vec_env import VecNormalize, VecFrameStack\n\n";
+
+    code += "def create_env(n_envs=N_ENVS, seed=SEED):\n";
+    code += "    \"\"\"Create and wrap environment with optional normalization.\"\"\"\n";
+    code += "    env = make_vec_env(ENV_NAME, n_envs=n_envs, seed=seed)\n";
+    code += "    \n";
+    code += "    # Apply frame stacking for image-based environments\n";
+    code += "    if FRAME_STACK > 1:\n";
+    code += "        env = VecFrameStack(env, n_stack=FRAME_STACK)\n";
+    code += "    \n";
+    code += "    # Apply observation and reward normalization\n";
+    code += "    if NORMALIZE_OBS or NORMALIZE_REWARD:\n";
+    code += "        env = VecNormalize(env, norm_obs=NORMALIZE_OBS, norm_reward=NORMALIZE_REWARD)\n";
+    code += "    \n";
+    code += "    return env\n\n";
+
+    code += "def train():\n";
+    code += "    # Create vectorized environment with wrappers\n";
+    code += "    env = create_env(n_envs=N_ENVS, seed=SEED)\n";
+    code += "    \n";
+    code += "    # Create evaluation environment\n";
+    code += "    eval_env = create_env(n_envs=1, seed=SEED + 1000)\n";
+    code += "    \n";
+    code += "    # Tensorboard logging path\n";
+    code += "    tb_log = \"./tb_logs/\" if TENSORBOARD else None\n";
+    code += "    \n";
+    code += "    # Select algorithm with full hyperparameters\n";
+    code += "    if ALGORITHM == \"PPO\":\n";
+    code += "        model = PPO(\n";
+    code += "            \"MlpPolicy\",\n";
+    code += "            env,\n";
+    code += "            policy_kwargs=policy_kwargs,\n";
+    code += "            learning_rate=LEARNING_RATE,\n";
+    code += "            n_steps=2048,\n";
+    code += "            batch_size=BATCH_SIZE,\n";
+    code += "            n_epochs=N_EPOCHS,\n";
+    code += "            gamma=GAMMA,\n";
+    code += "            gae_lambda=GAE_LAMBDA,\n";
+    code += "            clip_range=CLIP_RANGE,\n";
+    code += "            ent_coef=ENT_COEF,\n";
+    code += "            vf_coef=VF_COEF,\n";
+    code += "            max_grad_norm=MAX_GRAD_NORM,\n";
+    code += "            seed=SEED,\n";
+    code += "            verbose=1,\n";
+    code += "            tensorboard_log=tb_log\n";
+    code += "        )\n";
+    code += "    elif ALGORITHM == \"A2C\":\n";
+    code += "        model = A2C(\n";
+    code += "            \"MlpPolicy\",\n";
+    code += "            env,\n";
+    code += "            policy_kwargs=policy_kwargs,\n";
+    code += "            learning_rate=LEARNING_RATE,\n";
+    code += "            gamma=GAMMA,\n";
+    code += "            gae_lambda=GAE_LAMBDA,\n";
+    code += "            ent_coef=ENT_COEF,\n";
+    code += "            vf_coef=VF_COEF,\n";
+    code += "            max_grad_norm=MAX_GRAD_NORM,\n";
+    code += "            seed=SEED,\n";
+    code += "            verbose=1,\n";
+    code += "            tensorboard_log=tb_log\n";
+    code += "        )\n";
+    code += "    elif ALGORITHM == \"SAC\":\n";
+    code += "        model = SAC(\n";
+    code += "            \"MlpPolicy\",\n";
+    code += "            env,\n";
+    code += "            learning_rate=LEARNING_RATE,\n";
+    code += "            buffer_size=BUFFER_SIZE,\n";
+    code += "            batch_size=BATCH_SIZE,\n";
+    code += "            gamma=GAMMA,\n";
+    code += "            tau=TAU,\n";
+    code += "            ent_coef=\"auto\",\n";
+    code += "            seed=SEED,\n";
+    code += "            verbose=1,\n";
+    code += "            tensorboard_log=tb_log\n";
+    code += "        )\n";
+    code += "    elif ALGORITHM == \"TD3\":\n";
+    code += "        model = TD3(\n";
+    code += "            \"MlpPolicy\",\n";
+    code += "            env,\n";
+    code += "            learning_rate=LEARNING_RATE,\n";
+    code += "            buffer_size=BUFFER_SIZE,\n";
+    code += "            batch_size=BATCH_SIZE,\n";
+    code += "            gamma=GAMMA,\n";
+    code += "            tau=TAU,\n";
+    code += "            seed=SEED,\n";
+    code += "            verbose=1,\n";
+    code += "            tensorboard_log=tb_log\n";
+    code += "        )\n";
+    code += "    elif ALGORITHM == \"DQN\":\n";
+    code += "        model = DQN(\n";
+    code += "            \"MlpPolicy\",\n";
+    code += "            env,\n";
+    code += "            learning_rate=LEARNING_RATE,\n";
+    code += "            buffer_size=BUFFER_SIZE,\n";
+    code += "            batch_size=BATCH_SIZE,\n";
+    code += "            gamma=GAMMA,\n";
+    code += "            tau=TAU,\n";
+    code += "            seed=SEED,\n";
+    code += "            verbose=1,\n";
+    code += "            tensorboard_log=tb_log\n";
+    code += "        )\n";
+    code += "    else:\n";
+    code += "        raise ValueError(f\"Unknown algorithm: {ALGORITHM}\")\n";
+    code += "    \n";
+    code += "    # Setup callbacks\n";
+    code += "    eval_callback = EvalCallback(\n";
+    code += "        eval_env,\n";
+    code += "        best_model_save_path=\"./best_model/\",\n";
+    code += "        log_path=\"./eval_logs/\",\n";
+    code += "        eval_freq=EVAL_FREQ,\n";
+    code += "        deterministic=True,\n";
+    code += "        render=False\n";
+    code += "    )\n";
+    code += "    \n";
+    code += "    checkpoint_callback = CheckpointCallback(\n";
+    code += "        save_freq=SAVE_FREQ,\n";
+    code += "        save_path=\"./checkpoints/\",\n";
+    code += "        name_prefix=\"rl_model\"\n";
+    code += "    )\n";
+    code += "    \n";
+    code += "    # Train the model\n";
+    code += "    print(f\"Training {ALGORITHM} on {ENV_NAME}...\")\n";
+    code += "    print(f\"Total timesteps: {TOTAL_TIMESTEPS}\")\n";
+    code += "    print(f\"Network: {HIDDEN_SIZES}, Activation: {ACTIVATION}\")\n";
+    code += "    model.learn(\n";
+    code += "        total_timesteps=TOTAL_TIMESTEPS,\n";
+    code += "        callback=[eval_callback, checkpoint_callback],\n";
+    code += "        progress_bar=True\n";
+    code += "    )\n";
+    code += "    \n";
+    code += "    # Save the final model\n";
+    code += "    model.save(f\"{ALGORITHM}_{ENV_NAME}\")\n";
+    code += "    print(f\"Model saved to {ALGORITHM}_{ENV_NAME}.zip\")\n";
+    code += "    \n";
+    code += "    env.close()\n";
+    code += "    eval_env.close()\n";
+    code += "    return model\n\n";
+
+    // Evaluation code
+    code += "# =============== Evaluation ===============\n";
+    code += "def evaluate(model=None, model_path=None, num_episodes=10):\n";
+    code += "    \"\"\"Evaluate a trained model.\n";
+    code += "    \n";
+    code += "    Args:\n";
+    code += "        model: A trained model object (from train())\n";
+    code += "        model_path: Path to load a saved model from\n";
+    code += "        num_episodes: Number of evaluation episodes\n";
+    code += "    \"\"\"\n";
+    code += "    render_mode = \"human\" if RENDER else None\n";
+    code += "    env = gym.make(ENV_NAME, render_mode=render_mode)\n";
+    code += "    \n";
+    code += "    # Load model from path if provided\n";
+    code += "    if model_path:\n";
+    code += "        if ALGORITHM == \"PPO\":\n";
+    code += "            model = PPO.load(model_path)\n";
+    code += "        elif ALGORITHM == \"A2C\":\n";
+    code += "            model = A2C.load(model_path)\n";
+    code += "        elif ALGORITHM == \"SAC\":\n";
+    code += "            model = SAC.load(model_path)\n";
+    code += "        elif ALGORITHM == \"TD3\":\n";
+    code += "            model = TD3.load(model_path)\n";
+    code += "        elif ALGORITHM == \"DQN\":\n";
+    code += "            model = DQN.load(model_path)\n";
+    code += "    \n";
+    code += "    if model is None:\n";
+    code += "        raise ValueError(\"Either 'model' or 'model_path' must be provided\")\n";
+    code += "    \n";
+    code += "    episode_rewards = []\n";
+    code += "    for ep in range(num_episodes):\n";
+    code += "        obs, info = env.reset()\n";
+    code += "        total_reward = 0\n";
+    code += "        done = False\n";
+    code += "        \n";
+    code += "        while not done:\n";
+    code += "            action, _ = model.predict(obs, deterministic=True)\n";
+    code += "            obs, reward, terminated, truncated, info = env.step(action)\n";
+    code += "            total_reward += reward\n";
+    code += "            done = terminated or truncated\n";
+    code += "        \n";
+    code += "        episode_rewards.append(total_reward)\n";
+    code += "        print(f\"Episode {ep+1}: Reward = {total_reward:.2f}\")\n";
+    code += "    \n";
+    code += "    env.close()\n";
+    code += "    print(f\"\\nMean reward: {np.mean(episode_rewards):.2f} +/- {np.std(episode_rewards):.2f}\")\n";
+    code += "    return episode_rewards\n\n";
+
+    // Main entry point
+    code += "# =============== Main ===============\n";
+    code += "if __name__ == \"__main__\":\n";
+    code += "    import argparse\n";
+    code += "    parser = argparse.ArgumentParser()\n";
+    code += "    parser.add_argument(\"--train\", action=\"store_true\", help=\"Train the model\")\n";
+    code += "    parser.add_argument(\"--eval\", type=str, default=None, help=\"Evaluate model from path\")\n";
+    code += "    parser.add_argument(\"--episodes\", type=int, default=10, help=\"Number of evaluation episodes\")\n";
+    code += "    args = parser.parse_args()\n";
+    code += "    \n";
+    code += "    if args.train:\n";
+    code += "        model = train()\n";
+    code += "        evaluate(model=model, num_episodes=args.episodes)\n";
+    code += "    elif args.eval:\n";
+    code += "        evaluate(model_path=args.eval, num_episodes=args.episodes)\n";
+    code += "    else:\n";
+    code += "        # Default: train and evaluate\n";
+    code += "        model = train()\n";
+    code += "        evaluate(model=model, num_episodes=args.episodes)\n";
+
+    return code;
+}
+
 std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) {
+    // Check if this is an RL graph
+    if (IsRLGraph(sorted_ids)) {
+        return GenerateRLPyTorchCode(sorted_ids);
+    }
+
     std::string code;
 
     // Header
@@ -128,7 +601,8 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "import torch\n";
     code += "import torch.nn as nn\n";
     code += "import torch.nn.functional as F\n";
-    code += "import torch.optim as optim\n\n";
+    code += "import torch.optim as optim\n";
+    code += "import numpy as np\n\n";
 
     // Model class
     code += "class GeneratedModel(nn.Module):\n";
@@ -261,6 +735,74 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
+            // ===== Signal / Control Nodes =====
+            case NodeType::Constant: {
+                std::string val = "0.0";
+                auto it = node->parameters.find("value");
+                if (it != node->parameters.end() && !it->second.empty()) val = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = " + val + "\n";
+                break;
+            }
+            case NodeType::SignalSlider: {
+                std::string val = "0.0";
+                auto it = node->parameters.find("value");
+                if (it != node->parameters.end() && !it->second.empty()) val = it->second;
+                std::string mn = "-1.0", mx = "1.0";
+                it = node->parameters.find("min");
+                if (it != node->parameters.end() && !it->second.empty()) mn = it->second;
+                it = node->parameters.find("max");
+                if (it != node->parameters.end() && !it->second.empty()) mx = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = " + val + "  # slider [" + mn + ", " + mx + "]\n";
+                break;
+            }
+            case NodeType::SineWave: {
+                std::string amp = "1.0", freq = "1.0", phase = "0.0", offset = "0.0";
+                auto it = node->parameters.find("amplitude");
+                if (it != node->parameters.end() && !it->second.empty()) amp = it->second;
+                it = node->parameters.find("frequency");
+                if (it != node->parameters.end() && !it->second.empty()) freq = it->second;
+                it = node->parameters.find("phase");
+                if (it != node->parameters.end() && !it->second.empty()) phase = it->second;
+                it = node->parameters.find("offset");
+                if (it != node->parameters.end() && !it->second.empty()) offset = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = " + amp + " * np.sin(2 * np.pi * " + freq + " * t + " + phase + ") + " + offset + "\n";
+                break;
+            }
+            case NodeType::StepSignal: {
+                std::string step_t = "0.5", init = "0.0", final_v = "1.0";
+                auto it = node->parameters.find("step_time");
+                if (it != node->parameters.end() && !it->second.empty()) step_t = it->second;
+                it = node->parameters.find("initial_value");
+                if (it != node->parameters.end() && !it->second.empty()) init = it->second;
+                it = node->parameters.find("final_value");
+                if (it != node->parameters.end() && !it->second.empty()) final_v = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = " + final_v + " if t >= " + step_t + " else " + init + "\n";
+                break;
+            }
+            case NodeType::RampSignal: {
+                std::string start = "0.0", end = "1.0", dur = "5.0";
+                auto it = node->parameters.find("start_value");
+                if (it != node->parameters.end() && !it->second.empty()) start = it->second;
+                it = node->parameters.find("end_value");
+                if (it != node->parameters.end() && !it->second.empty()) end = it->second;
+                it = node->parameters.find("duration");
+                if (it != node->parameters.end() && !it->second.empty()) dur = it->second;
+                code += "        signal_" + std::to_string(node->id) + " = np.clip(" + start + " + (" + end + " - " + start + ") * t / " + dur + ", " + start + ", " + end + ")\n";
+                break;
+            }
+            case NodeType::SignalScope:
+                code += "        # Scope: visualize connected signal\n";
+                break;
+
+            // ===== Reinforcement Learning Nodes =====
+            case NodeType::GymEnvironment:
+            case NodeType::ReplayBufferNode:
+            case NodeType::PolicyNetwork:
+            case NodeType::ValueNetwork:
+            case NodeType::RLTraining:
+                // RL nodes handled separately - skip in supervised forward pass
+                break;
+
             default:
                 break;
         }
@@ -292,6 +834,18 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
 }
 
 std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_ids) {
+    // Check if this is an RL graph - redirect to PyTorch RL code (SB3 is the standard)
+    if (IsRLGraph(sorted_ids)) {
+        std::string code;
+        code += "# RL training is best supported with Stable-Baselines3 (PyTorch-based)\n";
+        code += "# Please select PyTorch framework for RL code generation.\n";
+        code += "# Alternatively, use TF-Agents for TensorFlow-based RL:\n\n";
+        code += "# pip install tf-agents\n";
+        code += "# See: https://www.tensorflow.org/agents\n\n";
+        code += GenerateRLPyTorchCode(sorted_ids);  // Fallback to SB3 code
+        return code;
+    }
+
     std::string code;
 
     // Header
@@ -398,6 +952,15 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
 }
 
 std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
+    // Check if this is an RL graph - redirect to PyTorch RL code (SB3 is the standard)
+    if (IsRLGraph(sorted_ids)) {
+        std::string code;
+        code += "# RL training is best supported with Stable-Baselines3 (PyTorch-based)\n";
+        code += "# Please select PyTorch framework for RL code generation.\n\n";
+        code += GenerateRLPyTorchCode(sorted_ids);  // Fallback to SB3 code
+        return code;
+    }
+
     std::string code;
 
     // Header
@@ -457,6 +1020,11 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
 }
 
 std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids) {
+    // Check if this is an RL graph
+    if (IsRLGraph(sorted_ids)) {
+        return GenerateRLPyCyxWizCode(sorted_ids);
+    }
+
     std::string code;
 
     // Header
@@ -792,6 +1360,13 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             break;
         }
 
+        case NodeType::PluginCustom: {
+            auto it = node.parameters.find("plugin_qualified_name");
+            if (it != node.parameters.end())
+                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "pytorch");
+            break;
+        }
+
         default:
             // Activation functions and others don't need layers in __init__
             code = "";
@@ -884,6 +1459,13 @@ std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*laye
         case NodeType::ReLU:
             code = "layers.ReLU()";
             break;
+
+        case NodeType::PluginCustom: {
+            auto it = node.parameters.find("plugin_qualified_name");
+            if (it != node.parameters.end())
+                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "tensorflow");
+            break;
+        }
 
         default:
             // Activation functions and others don't need layers in __init__
@@ -998,6 +1580,13 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
         case NodeType::GELU:
             code = "layers.Activation('gelu')";
             break;
+
+        case NodeType::PluginCustom: {
+            auto it = node.parameters.find("plugin_qualified_name");
+            if (it != node.parameters.end())
+                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "keras");
+            break;
+        }
 
         default:
             code = "";
@@ -1244,11 +1833,236 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             break;
         }
 
+        case NodeType::PluginCustom: {
+            auto it = node.parameters.find("plugin_qualified_name");
+            if (it != node.parameters.end())
+                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "pycyxwiz");
+            break;
+        }
+
         default:
             // Other node types handled in forward pass or not yet implemented
             code = "";
             break;
     }
+
+    return code;
+}
+
+// Generate RL code using PyCyxWiz backend with Gymnasium integration
+std::string NodeEditor::GenerateRLPyCyxWizCode(const std::vector<int>& sorted_ids) const {
+    std::string code;
+
+    // Header with RL imports
+    code += "# Auto-generated RL code using CyxWiz Backend with Gymnasium\n";
+    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
+    code += "import pycyxwiz as cx\n";
+    code += "import gymnasium as gym\n";
+    code += "import numpy as np\n\n";
+
+    // Extract parameters from nodes (matches enhanced node definitions)
+    std::string env_name = "CartPole-v1";
+    std::string algorithm = "PPO";
+    std::string total_timesteps = "100000";
+    std::string learning_rate = "3e-4";
+    std::string gamma = "0.99";
+    std::string clip_range = "0.2";
+    std::string hidden_sizes = "128,128";
+    std::string activation = "ReLU";
+    std::string buffer_capacity = "100000";
+    std::string batch_size = "256";
+    bool render = false;
+
+    for (int node_id : sorted_ids) {
+        const MLNode* node = FindNodeById(node_id);
+        if (!node) continue;
+
+        if (node->type == NodeType::GymEnvironment) {
+            auto it = node->parameters.find("env_name");
+            if (it != node->parameters.end()) env_name = it->second;
+            it = node->parameters.find("render");
+            if (it != node->parameters.end()) render = (it->second == "true");
+        }
+        else if (node->type == NodeType::RLTraining) {
+            auto it = node->parameters.find("algorithm");
+            if (it != node->parameters.end()) algorithm = it->second;
+            it = node->parameters.find("total_timesteps");
+            if (it != node->parameters.end()) total_timesteps = it->second;
+            it = node->parameters.find("learning_rate");
+            if (it != node->parameters.end()) learning_rate = it->second;
+            it = node->parameters.find("gamma");
+            if (it != node->parameters.end()) gamma = it->second;
+            it = node->parameters.find("clip_range");
+            if (it != node->parameters.end()) clip_range = it->second;
+        }
+        else if (node->type == NodeType::PolicyNetwork) {
+            auto it = node->parameters.find("hidden_sizes");
+            if (it != node->parameters.end()) hidden_sizes = it->second;
+            it = node->parameters.find("activation");
+            if (it != node->parameters.end()) activation = it->second;
+        }
+        else if (node->type == NodeType::ReplayBufferNode) {
+            auto it = node->parameters.find("capacity");
+            if (it != node->parameters.end()) buffer_capacity = it->second;
+            it = node->parameters.find("batch_size");
+            if (it != node->parameters.end()) batch_size = it->second;
+        }
+    }
+
+    // Configuration (aligned with PyTorch version)
+    code += "# =============== Configuration ===============\n";
+    code += "ENV_NAME = \"" + env_name + "\"\n";
+    code += "ALGORITHM = \"" + algorithm + "\"\n";
+    code += "TOTAL_TIMESTEPS = " + total_timesteps + "\n";
+    code += "LEARNING_RATE = " + learning_rate + "\n";
+    code += "GAMMA = " + gamma + "\n";
+    code += "CLIP_RANGE = " + clip_range + "  # PPO clip parameter\n";
+    code += "HIDDEN_SIZES = [" + hidden_sizes + "]\n";
+    code += "ACTIVATION = \"" + activation + "\"\n";
+    code += "BUFFER_CAPACITY = " + buffer_capacity + "\n";
+    code += "BATCH_SIZE = " + batch_size + "\n";
+    code += "RENDER = " + std::string(render ? "True" : "False") + "\n\n";
+
+    // Activation function mapping
+    code += "# Activation function mapping\n";
+    code += "ACTIVATION_FNS = {\n";
+    code += "    \"ReLU\": cx.relu,\n";
+    code += "    \"Tanh\": cx.tanh,\n";
+    code += "    \"Sigmoid\": cx.sigmoid,\n";
+    code += "    \"GELU\": cx.gelu,\n";
+    code += "    \"Swish\": cx.swish,\n";
+    code += "}\n";
+    code += "activation_fn = ACTIVATION_FNS.get(ACTIVATION, cx.relu)\n\n";
+
+    // Policy Network using CyxWiz
+    code += "# =============== Policy Network (CyxWiz Backend) ===============\n";
+    code += "class PolicyNetwork:\n";
+    code += "    def __init__(self, obs_dim, action_dim):\n";
+    code += "        self.layers = []\n";
+    code += "        in_features = obs_dim\n";
+    code += "        for hidden_size in HIDDEN_SIZES:\n";
+    code += "            self.layers.append(cx.Dense(in_features, hidden_size))\n";
+    code += "            in_features = hidden_size\n";
+    code += "        self.output_layer = cx.Dense(in_features, action_dim)\n";
+    code += "    \n";
+    code += "    def forward(self, x):\n";
+    code += "        for layer in self.layers:\n";
+    code += "            x = activation_fn(layer.forward(x))\n";
+    code += "        return cx.softmax(self.output_layer.forward(x))\n";
+    code += "    \n";
+    code += "    def get_action(self, obs):\n";
+    code += "        obs_tensor = cx.Tensor(obs.reshape(1, -1))\n";
+    code += "        probs = self.forward(obs_tensor).numpy().flatten()\n";
+    code += "        return np.random.choice(len(probs), p=probs)\n\n";
+
+    // Value Network using CyxWiz
+    code += "class ValueNetwork:\n";
+    code += "    def __init__(self, obs_dim):\n";
+    code += "        self.layers = []\n";
+    code += "        in_features = obs_dim\n";
+    code += "        for hidden_size in HIDDEN_SIZES:\n";
+    code += "            self.layers.append(cx.Dense(in_features, hidden_size))\n";
+    code += "            in_features = hidden_size\n";
+    code += "        self.output_layer = cx.Dense(in_features, 1)\n";
+    code += "    \n";
+    code += "    def forward(self, x):\n";
+    code += "        for layer in self.layers:\n";
+    code += "            x = activation_fn(layer.forward(x))\n";
+    code += "        return self.output_layer.forward(x)\n\n";
+
+    // Replay Buffer
+    code += "# =============== Replay Buffer ===============\n";
+    code += "class ReplayBuffer:\n";
+    code += "    def __init__(self, capacity=BUFFER_CAPACITY):\n";
+    code += "        self.capacity = capacity\n";
+    code += "        self.buffer = []\n";
+    code += "        self.position = 0\n";
+    code += "    \n";
+    code += "    def push(self, state, action, reward, next_state, done):\n";
+    code += "        if len(self.buffer) < self.capacity:\n";
+    code += "            self.buffer.append(None)\n";
+    code += "        self.buffer[self.position] = (state, action, reward, next_state, done)\n";
+    code += "        self.position = (self.position + 1) % self.capacity\n";
+    code += "    \n";
+    code += "    def sample(self, batch_size=BATCH_SIZE):\n";
+    code += "        if len(self.buffer) < batch_size:\n";
+    code += "            return None  # Not enough samples yet\n";
+    code += "        indices = np.random.choice(len(self.buffer), batch_size, replace=False)\n";
+    code += "        batch = [self.buffer[i] for i in indices]\n";
+    code += "        states, actions, rewards, next_states, dones = zip(*batch)\n";
+    code += "        return np.array(states), np.array(actions), np.array(rewards), np.array(next_states), np.array(dones)\n";
+    code += "    \n";
+    code += "    def can_sample(self, batch_size=BATCH_SIZE):\n";
+    code += "        return len(self.buffer) >= batch_size\n";
+    code += "    \n";
+    code += "    def __len__(self):\n";
+    code += "        return len(self.buffer)\n\n";
+
+    // Training loop
+    code += "# =============== Training ===============\n";
+    code += "def train():\n";
+    code += "    # Initialize CyxWiz backend\n";
+    code += "    cx.initialize()\n";
+    code += "    device = cx.get_device(cx.DeviceType.CUDA if cx.cuda_available() else cx.DeviceType.CPU)\n";
+    code += "    cx.set_device(device)\n";
+    code += "    print(f'Using device: {device.name()}')\n\n";
+    code += "    # Create environment\n";
+    code += "    render_mode = \"human\" if RENDER else None\n";
+    code += "    env = gym.make(ENV_NAME, render_mode=render_mode)\n";
+    code += "    obs_dim = env.observation_space.shape[0]\n";
+    code += "    action_dim = env.action_space.n\n\n";
+    code += "    # Create networks\n";
+    code += "    policy = PolicyNetwork(obs_dim, action_dim)\n";
+    code += "    value = ValueNetwork(obs_dim)\n";
+    code += "    buffer = ReplayBuffer()\n\n";
+    code += "    # Training loop (timestep-based like SB3)\n";
+    code += "    episode_rewards = []\n";
+    code += "    total_steps = 0\n";
+    code += "    episode = 0\n";
+    code += "    \n";
+    code += "    while total_steps < TOTAL_TIMESTEPS:\n";
+    code += "        obs, info = env.reset()\n";
+    code += "        episode_reward = 0\n";
+    code += "        done = False\n";
+    code += "        \n";
+    code += "        while not done and total_steps < TOTAL_TIMESTEPS:\n";
+    code += "            # Select action\n";
+    code += "            action = policy.get_action(obs)\n";
+    code += "            \n";
+    code += "            # Environment step\n";
+    code += "            next_obs, reward, terminated, truncated, info = env.step(action)\n";
+    code += "            done = terminated or truncated\n";
+    code += "            episode_reward += reward\n";
+    code += "            total_steps += 1\n";
+    code += "            \n";
+    code += "            # Store transition\n";
+    code += "            buffer.push(obs, action, reward, next_obs, done)\n";
+    code += "            obs = next_obs\n";
+    code += "            \n";
+    code += "            # Learn from buffer (simplified - real PPO is more complex)\n";
+    code += "            if buffer.can_sample(BATCH_SIZE):\n";
+    code += "                batch = buffer.sample(BATCH_SIZE)\n";
+    code += "                # Placeholder for actual policy update\n";
+    code += "                pass\n";
+    code += "        \n";
+    code += "        episode += 1\n";
+    code += "        episode_rewards.append(episode_reward)\n";
+    code += "        \n";
+    code += "        if episode % 10 == 0:\n";
+    code += "            avg_reward = np.mean(episode_rewards[-10:])\n";
+    code += "            print(f'Episode {episode}, Steps: {total_steps}/{TOTAL_TIMESTEPS}, Avg Reward: {avg_reward:.2f}')\n";
+    code += "    \n";
+    code += "    env.close()\n";
+    code += "    print(f'Training complete after {episode} episodes and {total_steps} steps.')\n";
+    code += "    print(f'Final avg reward: {np.mean(episode_rewards[-100:]) if len(episode_rewards) >= 100 else np.mean(episode_rewards):.2f}')\n";
+    code += "    return policy, value\n\n";
+
+    // Main
+    code += "# =============== Main ===============\n";
+    code += "if __name__ == \"__main__\":\n";
+    code += "    # Note: For production RL training, use Stable-Baselines3 (PyTorch framework)\n";
+    code += "    # This code demonstrates CyxWiz backend integration with Gymnasium\n";
+    code += "    policy, value = train()\n";
 
     return code;
 }

@@ -271,6 +271,9 @@ public:
     void SetIdleLogPtr(bool* ptr) { idle_log_ptr_ = ptr; }
     void SetVerbosePythonLogPtr(bool* ptr) { verbose_python_log_ptr_ = ptr; }
 
+    // Python diagnostics callback (Preferences -> Python)
+    void SetPythonDiagnosticsCallback(std::function<std::string()> callback) { python_diagnostics_callback_ = callback; }
+
     // Initialize editor settings from script editor's current values
     void SetEditorTheme(int theme) { editor_theme_ = theme; }
     void SetEditorTabSize(int size) { editor_tab_size_ = size; }
@@ -291,6 +294,7 @@ private:
     void RenderViewMenu();
     void RenderNodesMenu();
     void RenderTrainMenu();
+    void RenderSimulationMenu();
     void RenderDatasetMenu();
     void RenderScriptMenu();
     void RenderPlotsMenu();
@@ -301,6 +305,7 @@ private:
     void SearchInFiles(const std::string& search_text, const std::string& search_path,
                        const std::string& file_patterns, bool case_sensitive,
                        bool whole_word, bool use_regex);
+    void RenderAppsMenu();
     void RenderHelpMenu();
     void RenderUserAvatar();
     void RenderUserProfilePopup();
@@ -477,11 +482,14 @@ private:
     int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts
 
     // Python/Scripting preferences
+    bool python_settings_changed_ = false;  // Track if restart needed
     char python_interpreter_path_[512] = "";
     char python_startup_script_[512] = "";
     bool python_auto_import_numpy_ = true;
     bool python_auto_import_cyxwiz_ = true;
     int python_output_limit_ = 1000;  // Max lines in output
+    bool show_python_diagnostics_popup_ = false;
+    std::string python_diagnostics_text_;
 
     // Keyboard shortcuts (action name -> shortcut string)
     struct ShortcutEntry {
@@ -664,6 +672,7 @@ private:
     // Debug logging pointers
     bool* idle_log_ptr_ = nullptr;
     bool* verbose_python_log_ptr_ = nullptr;
+    std::function<std::string()> python_diagnostics_callback_;
 
     // Files preferences
     int files_default_encoding_ = 0;  // 0 = UTF-8, 1 = UTF-16, 2 = ASCII

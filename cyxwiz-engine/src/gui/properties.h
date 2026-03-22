@@ -3,6 +3,7 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <deque>
 #include <functional>
 
 namespace gui {
@@ -86,6 +87,24 @@ private:
     // Shape caching
     bool shapes_valid_ = false;
     std::map<int, NodeShapeInfo> cached_shapes_;
+
+    // Scope data buffers (node_id → time/value ring buffer)
+    struct ScopeBuffer {
+        std::deque<float> times;
+        std::deque<float> values;
+        int max_samples = 500;
+        void Push(float t, float v) {
+            times.push_back(t);
+            values.push_back(v);
+            while (static_cast<int>(times.size()) > max_samples) {
+                times.pop_front();
+                values.pop_front();
+            }
+        }
+        void Clear() { times.clear(); values.clear(); }
+    };
+    std::map<int, ScopeBuffer> scope_buffers_;
+    float scope_demo_time_ = 0.0f;  // Demo animation timer
 };
 
 } // namespace gui

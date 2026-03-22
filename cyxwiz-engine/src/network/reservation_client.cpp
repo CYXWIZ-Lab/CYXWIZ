@@ -15,6 +15,10 @@ ReservationClient::ReservationClient()
 
 ReservationClient::~ReservationClient() {
     StopHeartbeat();
+    connected_ = false;
+    if (connect_thread_.joinable()) {
+        connect_thread_.join();
+    }
     Disconnect();
 }
 
@@ -45,9 +49,40 @@ bool ReservationClient::Connect(const std::string& server_address) {
     }
 }
 
+void ReservationClient::ConnectAsync(const std::string& server_address) {
+    if (connected_) {
+        Disconnect();
+    }
+
+    // Create channel and stub immediately (non-blocking)
+    channel_ = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
+    stub_ = cyxwiz::protocol::JobReservationService::NewStub(channel_);
+    server_address_ = server_address;
+
+    // Wait for connection in background thread
+    // Capture channel as shared_ptr copy so it stays alive even if this object is modified
+    auto channel = channel_;
+    connect_thread_ = std::thread([this, channel, server_address]() {
+        try {
+            auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
+            if (channel->WaitForConnected(deadline)) {
+                connected_ = true;
+                spdlog::info("ReservationClient connected to {}", server_address);
+            } else {
+                spdlog::warn("ReservationClient: Connection to {} timed out - reservation feature disabled", server_address);
+            }
+        } catch (const std::exception& e) {
+            spdlog::warn("ReservationClient: Async connect failed: {}", e.what());
+        }
+    });
+}
+
 void ReservationClient::Disconnect() {
     StopHeartbeat();
     connected_ = false;
+    if (connect_thread_.joinable()) {
+        connect_thread_.join();
+    }
     stub_.reset();
     channel_.reset();
     current_reservation_ = ReservationInfo{};

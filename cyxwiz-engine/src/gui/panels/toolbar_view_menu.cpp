@@ -120,35 +120,18 @@ void ToolbarPanel::RenderViewMenu() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // ========== Project Settings Section ==========
-        bool has_project = ProjectManager::Instance().HasActiveProject();
-
-        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save Project Settings", "Ctrl+Shift+S", false, has_project)) {
-            if (save_project_settings_callback_) {
-                save_project_settings_callback_();
-                spdlog::info("Project settings saved to .cyxwiz");
-            }
-        }
-        if (!has_project && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("Open a project first to save settings");
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
         // ========== Minimaps Section ==========
         if (ImGui::BeginMenu(ICON_FA_EYE " Minimaps")) {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
 
-            // Node Editor Minimap
+            // Studio Minimap
             if (node_editor_minimap_ptr_) {
                 bool node_minimap = *node_editor_minimap_ptr_;
-                if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Node Editor Minimap", nullptr, node_minimap)) {
+                if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Studio Minimap", nullptr, node_minimap)) {
                     *node_editor_minimap_ptr_ = !node_minimap;
                 }
             } else {
-                ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Node Editor Minimap", nullptr, false, false);
+                ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Studio Minimap", nullptr, false, false);
             }
 
             // Script Editor Minimap

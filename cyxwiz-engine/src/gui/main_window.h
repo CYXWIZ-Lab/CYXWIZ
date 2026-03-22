@@ -15,7 +15,7 @@ class NodeEditor;
 class Console;
 class Viewport;
 class Properties;
-class DatasetPanel;
+class TrainingEvaluationPanel;
 class WalletPanel;
 class CustomNodeEditorPanel;
 class ThemeEditorPanel;
@@ -29,7 +29,6 @@ struct NodeLink;
 namespace cyxwiz {
 class ToolbarPanel;
 class AssetBrowserPanel;
-class TrainingDashboardPanel;
 class TrainingPlotPanel;
 class PlotTestControlPanel;
 class CommandWindowPanel;
@@ -125,6 +124,10 @@ class RandomGeneratorPanel;
 class HashGeneratorPanel;
 class JSONViewerPanel;
 class RegexTesterPanel;
+// Plugin Manager panel
+class PluginManagerPanel;
+// Data Studio panel (Phase 1 Week 1)
+class DataStudioPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -150,6 +153,7 @@ public:
     Console* GetConsole() { return console_.get(); }
     cyxwiz::PlotTestControlPanel* GetPlotTestControl() { return plot_test_control_.get(); }
     cyxwiz::ScriptEditorPanel* GetScriptEditor() { return script_editor_.get(); }
+    NodeEditor* GetNodeEditor() { return node_editor_.get(); }
 
     // Set network components (called by Application after construction)
     void SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager);
@@ -197,6 +201,7 @@ public:
     // Called when project is opened/closed
     void OnProjectOpened(const std::string& project_root);
     void OnProjectClosed(const std::string& project_root);
+    void OnProjectVenvReady(const std::string& project_root);
 
 private:
     void RenderDockSpace();
@@ -220,12 +225,11 @@ private:
     std::unique_ptr<Console> console_;
     std::unique_ptr<Viewport> viewport_;
     std::unique_ptr<Properties> properties_;
-    std::unique_ptr<DatasetPanel> dataset_panel_;
+    std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
-    std::unique_ptr<cyxwiz::TrainingDashboardPanel> training_dashboard_;
     std::unique_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
     std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
     std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
@@ -348,6 +352,12 @@ private:
     std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
     std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
 
+    // Plugin Manager
+    std::unique_ptr<cyxwiz::PluginManagerPanel> plugin_manager_panel_;
+
+    // Data Studio (Phase 1 Week 1)
+    std::unique_ptr<cyxwiz::DataStudioPanel> data_studio_panel_;
+
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
 
@@ -362,6 +372,7 @@ private:
     network::JobManager* job_manager_ = nullptr;
     network::DataStreamClient* datastream_client_ = nullptr;
     std::string monitoring_job_id_;
+
 
     // Exit request callback
     ExitRequestCallback exit_request_callback_;

@@ -19,7 +19,7 @@ namespace gui {
 // Main Preprocessing Tab
 // ============================================================================
 
-void DatasetPanel::RenderPreprocessingTab() {
+void TrainingEvaluationPanel::RenderPreprocessingTab() {
     ImGui::BeginChild("PreprocessingPanel", ImVec2(0, 0), false);
 
     // Header
@@ -87,7 +87,7 @@ void DatasetPanel::RenderPreprocessingTab() {
 // Dataset Statistics Section
 // ============================================================================
 
-void DatasetPanel::RenderDatasetStatistics() {
+void TrainingEvaluationPanel::RenderDatasetStatistics() {
     // Collapsing header for statistics
     if (ImGui::CollapsingHeader("Dataset Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(10.0f);
@@ -214,7 +214,7 @@ void DatasetPanel::RenderDatasetStatistics() {
 // Normalization Section
 // ============================================================================
 
-void DatasetPanel::RenderNormalizationSection() {
+void TrainingEvaluationPanel::RenderNormalizationSection() {
     if (ImGui::CollapsingHeader("Normalization", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(10.0f);
 
@@ -320,7 +320,7 @@ void DatasetPanel::RenderNormalizationSection() {
 // Scaling Section
 // ============================================================================
 
-void DatasetPanel::RenderScalingSection() {
+void TrainingEvaluationPanel::RenderScalingSection() {
     if (ImGui::CollapsingHeader("Scaling", ImGuiTreeNodeFlags_None)) {
         ImGui::Indent(10.0f);
 
@@ -427,7 +427,7 @@ void DatasetPanel::RenderScalingSection() {
 // Image Preprocessing Section
 // ============================================================================
 
-void DatasetPanel::RenderImagePreprocessingSection() {
+void TrainingEvaluationPanel::RenderImagePreprocessingSection() {
     if (ImGui::CollapsingHeader("Image Preprocessing", ImGuiTreeNodeFlags_None)) {
         ImGui::Indent(10.0f);
 
@@ -676,7 +676,7 @@ void DatasetPanel::RenderImagePreprocessingSection() {
 // Preview Section
 // ============================================================================
 
-void DatasetPanel::RenderPreprocessingPreview() {
+void TrainingEvaluationPanel::RenderPreprocessingPreview() {
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Preview");
     ImGui::Spacing();
 
@@ -758,7 +758,7 @@ void DatasetPanel::RenderPreprocessingPreview() {
 // Helper Methods
 // ============================================================================
 
-void DatasetPanel::ComputeStatistics() {
+void TrainingEvaluationPanel::ComputeStatistics() {
     if (!IsDatasetLoaded()) {
         spdlog::warn("No dataset loaded to compute statistics");
         return;
@@ -789,7 +789,7 @@ void DatasetPanel::ComputeStatistics() {
     });
 }
 
-void DatasetPanel::ApplyPreprocessingConfig() {
+void TrainingEvaluationPanel::ApplyPreprocessingConfig() {
     if (!IsDatasetLoaded()) {
         spdlog::warn("No dataset loaded to apply preprocessing");
         return;
@@ -836,7 +836,7 @@ void DatasetPanel::ApplyPreprocessingConfig() {
     show_notification_ = true;
 }
 
-void DatasetPanel::UpdatePreprocessingPreview() {
+void TrainingEvaluationPanel::UpdatePreprocessingPreview() {
     if (!IsDatasetLoaded()) {
         spdlog::warn("No dataset loaded for preprocessing preview");
         return;
