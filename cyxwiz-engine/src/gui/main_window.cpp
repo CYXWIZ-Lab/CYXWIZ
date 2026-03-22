@@ -2411,16 +2411,19 @@ void MainWindow::BuildInitialDockLayout() {
     // Create the docking layout structure
     // We'll build this structure:
     // - Left column (Asset Browser) ~15%
-    // - Center (Node Editor) - main workspace
+    // - Center-Left (CyxWiz Studio) ~50% of center
+    // - Center-Right (Data Studio) ~50% of center - side by side
     // - Right column (Properties) ~20%
     // - Bottom section split into:
     //   - Bottom-left (Console) ~70% of bottom
-    //   - Bottom-right (Inspector/Training Dashboard) ~30% of bottom
-    //   - Bottom-bottom (Profiler/Viewport)
+    //   - Bottom-right (Training Dashboard) ~30% of bottom
+    //   - Bottom-bottom (Viewport)
 
     ImGuiID dock_id_left = 0;
     ImGuiID dock_id_right = 0;
     ImGuiID dock_id_center = dockspace_id;
+    ImGuiID dock_id_center_left = 0;
+    ImGuiID dock_id_center_right = 0;
     ImGuiID dock_id_bottom = 0;
     ImGuiID dock_id_bottom_left = 0;
     ImGuiID dock_id_bottom_right = 0;
@@ -2435,6 +2438,9 @@ void MainWindow::BuildInitialDockLayout() {
     // Split bottom for Console area (25% height of remaining)
     dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Down, 0.30f, nullptr, &dock_id_center);
 
+    // Split center horizontally: CyxWiz Studio (left) and Data Studio (right) side by side
+    dock_id_center_right = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Right, 0.5f, nullptr, &dock_id_center_left);
+
     // Split bottom section horizontally: left (Console) and right (Inspector)
     dock_id_bottom_right = ImGui::DockBuilderSplitNode(dock_id_bottom, ImGuiDir_Right, 0.25f, nullptr, &dock_id_bottom_left);
 
@@ -2444,9 +2450,9 @@ void MainWindow::BuildInitialDockLayout() {
     // Dock windows to their designated areas
     // Window names must EXACTLY match the names in ImGui::Begin() calls in each panel
     ImGui::DockBuilderDockWindow("Asset Browser", dock_id_left);
-    ImGui::DockBuilderDockWindow("CyxWiz Studio", dock_id_center);
-    ImGui::DockBuilderDockWindow("Script Editor", dock_id_center); // Tabbed with CyxWiz Studio
-    ImGui::DockBuilderDockWindow("Data Studio", dock_id_center); // Tabbed with CyxWiz Studio
+    ImGui::DockBuilderDockWindow("CyxWiz Studio", dock_id_center_left);
+    ImGui::DockBuilderDockWindow("Script Editor", dock_id_center_left); // Tabbed with CyxWiz Studio
+    ImGui::DockBuilderDockWindow("Data Studio", dock_id_center_right); // Beside CyxWiz Studio
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("Command Window", dock_id_bottom_left); // Tabbed with Console
@@ -2458,11 +2464,12 @@ void MainWindow::BuildInitialDockLayout() {
 
     spdlog::info("Initial dock layout built successfully");
     spdlog::info("  - Left: Asset Browser (15%)");
-    spdlog::info("  - Center: CyxWiz Studio (main workspace)");
+    spdlog::info("  - Center-Left: CyxWiz Studio (50%)");
+    spdlog::info("  - Center-Right: Data Studio (50%)");
     spdlog::info("  - Right: Properties (20%)");
     spdlog::info("  - Bottom-Left: Console");
-    spdlog::info("  - Bottom-Right: Training Dashboard (Inspector)");
-    spdlog::info("  - Bottom-Bottom: Viewport (Profiler Timeline)");
+    spdlog::info("  - Bottom-Right: Training Dashboard");
+    spdlog::info("  - Bottom-Bottom: Viewport");
 }
 
 void MainWindow::ShowAboutDialog() {
