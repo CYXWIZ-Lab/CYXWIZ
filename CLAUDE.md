@@ -467,181 +467,20 @@ CyxWiz Central Server (Orchestrator - Rust)
 
 ## P2P Training Flow (Reservation-Based)
 
-### Overview
+**Key Principle**: User pays for TIME (reservation), can submit UNLIMITED jobs within that time slot.
 
-Training uses direct P2P communication between Engine and Server Node. The Central Server only handles:
-- Node discovery and listing
-- Reservation creation and escrow
-- Payment release when reservation ends
+**Flow**: Engine → Central Server (ListFreeNodes, ReserveNode) → P2P Connect to Server Node → Stream training with Pause/Resume/Stop/NewJob controls.
 
-**Key Principle**: User pays for TIME, can submit UNLIMITED jobs within their reserved time slot.
+**Key Files**:
+- Engine: `src/network/p2p_client.cpp`, `src/gui/panels/p2p_training_panel.cpp`
+- Server Node: `src/job_execution_service.cpp`, `src/remote_data_loader.cpp`
+- Proto: `proto/execution.proto`, `proto/reservation.proto`
 
-### Flow Diagram
+**HOTEL ROOM Model** (Disconnect vs Release):
+- **Disconnect**: Closes stream, keeps reservation (can reconnect)
+- **Release**: Ends reservation, triggers payment (cannot reconnect)
 
-```
-Engine                     Central Server                 Server Node
-  │                              │                              │
-  │  1. ListFreeNodes()          │                              │
-  ├─────────────────────────────>│                              │
-  │     [Available nodes]        │                              │
-  │<─────────────────────────────┤                              │
-  │                              │                              │
-  │  2. ReserveNode(duration)    │                              │
-  ├─────────────────────────────>│                              │
-  │     [Escrow created]         │                              │
-  │     [P2P auth token]         │                              │
-  │<─────────────────────────────┤                              │
-  │                              │                              │
-  │  3. P2P Connect(auth_token)  │                              │
-  ├──────────────────────────────────────────────────────────────>│
-  │                              │                              │
-  │  4. SendJob(config, dataset) │                              │
-  ├──────────────────────────────────────────────────────────────>│
-  │                              │                              │
-  │  5. StreamTrainingMetrics()  │    [Bidirectional stream]    │
-  │<═══════════════════════════════════════════════════════════>│
-  │     - Progress updates       │                              │
-  │     - Pause/Resume/Stop      │                              │
-  │     - Dataset batch requests │                              │
-  │                              │                              │
-  │  [Job #1 completes]          │                              │
-  │<─────────────────────────────────── "Ready for new job" ────│
-  │                              │                              │
-  │  6. SendNewJobConfig()       │    [Same stream continues]   │
-  ├──────────────────────────────────────────────────────────────>│
-  │                              │                              │
-  │  [Job #2 completes]          │                              │
-  │  ... repeat unlimited times within reservation ...          │
-  │                              │                              │
-  │  7. SendReservationEnd()     │                              │
-  ├──────────────────────────────────────────────────────────────>│
-  │                              │                              │
-  │                              │  8. ReportReservationEnd()   │
-  │                              │<─────────────────────────────┤
-  │                              │     [Payment released]       │
-```
-
-### Multi-Job Training Within Reservation
-
-Users can submit **unlimited jobs** within their reserved time:
-
-```
-1-Hour Reservation Example:
-───────────────────────────────────────────────────────────────
-00:00  Reserve Node, pay $X for 1 hour
-00:01  Start Job #1 (MNIST, 10 epochs) - 2 min
-00:03  Job #1 complete → UI shows "Ready for New Training"
-00:04  Start Job #2 (CIFAR, 5 epochs) - 3 min
-00:07  Job #2 complete → Ready for new training
-...
-00:58  Job #25 complete
-01:00  Timer expires → Payment released to Server Node
-───────────────────────────────────────────────────────────────
-Result: User ran 25 experiments for price of 1-hour reservation
-```
-
-### Key Files
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| Engine | `src/network/p2p_client.cpp` | P2P connection, job submission, training control |
-| Engine | `src/gui/panels/connection_dialog.cpp` | UI for node connection and job submission |
-| Engine | `src/gui/panels/p2p_training_panel.cpp` | Real-time training metrics display |
-| Server Node | `src/job_execution_service.cpp` | P2P service, training execution, multi-job loop |
-| Server Node | `src/remote_data_loader.cpp` | Lazy dataset loading from Engine |
-| Central Server | `src/api/grpc/reservation_service.rs` | Reservation and payment management |
-| Proto | `proto/execution.proto` | P2P training messages (JobConfig, TrainingUpdate) |
-| Proto | `proto/reservation.proto` | Reservation RPCs |
-
-### Training Controls (P2P Direct - No Central Server)
-
-| Command | Engine Method | Server Node Behavior |
-|---------|--------------|---------------------|
-| Pause | `P2PClient::PauseTraining()` | Sets `is_paused` flag, training loop waits |
-| Resume | `P2PClient::ResumeTraining()` | Clears `is_paused` flag, training continues |
-| Stop | `P2PClient::StopTraining()` | Sets `should_stop` flag, exits training loop |
-| New Job | `P2PClient::SendNewJobConfig()` | Updates config, restarts training loop |
-
-### Validation (Server Node)
-
-Only minimal validation - user paid for time, can use it freely:
-- `MIN_EPOCHS_PER_JOB = 1` - Reject obviously invalid configs (0 epochs)
-- No max job limit - unlimited jobs within reservation time
-
-### Payment Flow
-
-1. **Reservation**: User pays upfront, funds held in escrow
-2. **Training**: Multiple jobs can run, no per-job cost
-3. **Completion**: When timer expires, full payment released to node (90% node, 10% platform)
-4. **Early disconnect**: User still pays full amount (reserved the time slot)
-5. **Node failure**: Full refund to user, reputation penalty to node
-
-### Disconnect vs Release (HOTEL ROOM Model)
-
-**CRITICAL**: There are TWO ways to end a P2P connection:
-
-| Action | Behavior | Reservation | Can Reconnect? |
-|--------|----------|-------------|----------------|
-| **Disconnect** | Closes P2P stream, keeps reservation | Still active | YES - within reservation time |
-| **Release** | Ends reservation, triggers payment | Ended | NO - must create new reservation |
-
-**HOTEL ROOM Analogy**: Like a hotel room:
-- **Disconnect** = Leave room temporarily (still have the key, can come back)
-- **Release** = Check out (room released to other guests)
-
-**Engine Disconnect/Reconnect Flow**:
-```
-1. User clicks "Disconnect" button
-   └─> p2p_client_->StopTrainingStream()  // Graceful close with WritesDone()
-   └─> p2p_client_->Disconnect()          // Reset local state
-   └─> Reservation still active!
-
-2. Server Node enters HOTEL ROOM mode:
-   └─> session->engine_connected = false
-   └─> Keeps session alive, waits for reconnect OR timer expiry
-
-3. User clicks "Connect to Node" (within reservation time)
-   └─> ConnectToReservedNode() uses same auth_token
-   └─> Server Node accepts (token still valid)
-   └─> User can continue training
-```
-
-**Engine Release Flow**:
-```
-1. User clicks "Release" button
-   └─> CancelDownloadAndWait()            // Stop any model download
-   └─> StopMonitoring()                   // Stop training panel
-   └─> SendReservationEnd()               // Tell Server Node reservation is ending
-   └─> StopTrainingStream()
-   └─> NotifyDisconnect("user_release")   // Tell Server Node to cleanup
-   └─> ReleaseReservation()               // Tell Central Server to release payment
-   └─> Disconnect()
-   └─> Clear reservation state (has_active_reservation_ = false)
-```
-
-### Critical Implementation Notes
-
-**DO NOT use `TryCancel()` in `StopTrainingStream()`!**
-
-```cpp
-// WRONG - breaks disconnect/reconnect flow:
-if (stream_context_) {
-    stream_context_->TryCancel();  // Forces CANCELLED status
-}
-
-// CORRECT - graceful close:
-if (stream_) {
-    stream_->WritesDone();  // Server closes its side gracefully
-}
-```
-
-`TryCancel()` sends CANCELLED status which triggers HOTEL ROOM mode on Server Node, causing auth token validation to fail on reconnect.
-
-**Stream Cleanup Order**:
-1. Set `streaming_ = false`
-2. Call `stream_->WritesDone()` (NOT `TryCancel()`)
-3. Wait for streaming thread to finish (`join()`)
-4. Reset stream and context
+**Critical**: Use `stream_->WritesDone()` for graceful close, NOT `TryCancel()` (breaks reconnect).
 
 ## Build System
 
@@ -749,358 +588,39 @@ cargo test
 
 ## Code Organization
 
-### cyxwiz-protocol/ (gRPC Definitions)
+| Component | Purpose | Key Directories |
+|-----------|---------|-----------------|
+| `cyxwiz-protocol/` | gRPC definitions | `proto/*.proto` (common, job, node, compute) |
+| `cyxwiz-backend/` | ML compute library | `include/cyxwiz/` (API), `src/algorithms/`, `python/` (pybind11) |
+| `cyxwiz-engine/` | Desktop IDE | `src/core/`, `src/gui/`, `src/scripting/`, `src/network/` |
+| `cyxwiz-server-node/` | Compute worker | `src/` (job_executor, metrics_collector) |
+| `cyxwiz-central-server/` | Rust orchestrator | `src/api/`, `src/scheduler/`, `src/blockchain/` |
 
-**Purpose**: Shared protocol definitions for all components
-
-**Files**:
-- `proto/common.proto` - Common types (StatusCode, DeviceType, TensorInfo)
-- `proto/job.proto` - Job submission, status, results
-- `proto/node.proto` - Node registration, heartbeat, metrics
-- `proto/compute.proto` - Direct compute operations
-
-**Generated Code**: CMake automatically generates C++ code from `.proto` files into `build/<preset>/`
-
-**Adding New Messages**:
-1. Edit `.proto` file in `cyxwiz-protocol/proto/`
-2. CMake will regenerate code on next build
-3. Include generated header: `#include "job.pb.h"` or `#include "node.grpc.pb.h"`
-
-### cyxwiz-backend/ (Compute Library)
-
-**Purpose**: Core ML algorithms and ArrayFire integration
-
-**Structure**:
-```
-include/cyxwiz/    # Public API headers
-    cyxwiz.h       # Main header (include this)
-    tensor.h       # Tensor operations
-    device.h       # Device management
-    optimizer.h    # Optimizers (SGD, Adam, AdamW)
-    loss.h         # Loss functions
-    activation.h   # Activation functions
-    layer.h        # Neural network layers
-    model.h        # Model training/inference
-
-src/core/          # Core implementation
-src/algorithms/    # ML algorithms
-python/            # Python bindings (pybind11)
-```
-
-**Key Classes**:
-- `Tensor`: Multi-dimensional array (wraps ArrayFire array)
-- `Device`: GPU/CPU device abstraction
-- `Optimizer`: Base class for optimizers (SGD, Adam, AdamW, RMSprop)
-- `Layer`: Base class for NN layers
-- `Model`: High-level training interface
-
-**ArrayFire Integration**:
-- Backend selection: CPU, CUDA, OpenCL, Metal
-- Conditional compilation: `#ifdef CYXWIZ_HAS_ARRAYFIRE`
-- Device management: `af::setDevice()`, `af::info()`
-- Tensor wrapping: Internal `af::array*` pointer
-
-**Python Bindings**:
-- Module name: `pycyxwiz`
-- Built with pybind11
-- Install location: `build/<preset>/python/`
-- Usage: `import pycyxwiz; pycyxwiz.initialize()`
-
-### cyxwiz-engine/ (Desktop Client)
-
-**Purpose**: Visual IDE for building and training ML models
-
-**Structure**:
-```
-src/
-    main.cpp              # Entry point
-    application.cpp       # Main application loop, GLFW window management
-    core/
-        project_manager.cpp/h  # Singleton for project state management
-        async_task_manager.cpp/h  # Background task execution with progress callbacks
-        data_registry.cpp/h   # Dataset registry with LRU memory management
-    gui/
-        main_window.cpp   # Dockable main window with all panels
-        node_editor.h     # Visual node editor (TODO: integrate ImNodes)
-        console.h         # Command console with Python REPL
-        viewport.h        # Training visualization
-        properties.h      # Property panel
-        theme.cpp/h       # Theme system with multiple presets
-        dock_style.cpp/h  # Custom dock styling
-        icons.h           # FontAwesome 6 icon definitions
-        IconsFontAwesome6.h  # FontAwesome 6 codepoints
-        panels/
-            toolbar.cpp/h     # Main menu bar (File, Edit, View, etc.)
-            asset_browser.cpp/h  # Project file browser with filters
-            plot_window.cpp/h    # ImPlot-based visualization windows
-            plot_test_control.cpp/h  # Plot testing interface
-            table_viewer.cpp/h   # Multi-tab data table viewer with async loading
-            dataset_panel.cpp/h  # Dataset manager with memory management
-            script_editor.cpp/h  # Code editor with async file loading
-    scripting/
-        scripting_engine.cpp/h  # Embedded Python interpreter with pybind11
-    network/
-        grpc_client.cpp   # gRPC client for Central Server
-        job_manager.cpp   # Job submission and monitoring
-```
-
-**ImGui Integration**:
-- Docking enabled: `ImGuiConfigFlags_DockingEnable`
-- Viewports enabled: `ImGuiConfigFlags_ViewportsEnable`
-- Backend: `imgui_impl_glfw` + `imgui_impl_opengl3`
-- Themes: Dark, Light, Classic, Nord, Dracula (configurable via View menu)
-- Icons: FontAwesome 6 Free Solid
-
-**Implemented Features**:
-- **ProjectManager**: Singleton managing project lifecycle (create, open, save, close)
-- **File Menu**: New/Open/Close Project, New/Open Script, Save/Save As, Auto Save, Recent Projects, Exit with confirmation
-- **Asset Browser**: File tree with filters (Scripts, Models, Datasets, etc.), context menus, "View in Table" for data files
-- **Script Editor**: Python/CyxWiz script editing with syntax highlighting, save confirmation dialogs, async file loading with progress indicators
-- **Python Console**: Interactive REPL with async execution and cancellation support
-- **Theme System**: Multiple color presets, custom fonts (Inter, JetBrains Mono)
-- **Account Settings**: Login/logout UI (placeholder for auth API)
-- **Table Viewer**: Multi-tab data viewer for CSV/Excel/HDF5 files with async loading, pagination, filtering, and export
-- **Dataset Manager**: Dataset configuration with memory management (LRU eviction via TrimMemory), schema configuration for custom data formats
-- **Async Task System**: Background task execution with progress reporting via AsyncTaskManager
-- **Unified Canvas**: KNIME-inspired node editor with 3 execution modes (CodeGeneration, DuckDBPipeline, LocalTraining), execution state visualization, enhanced tooltips, .cyxgraph v2.0 format
-- **Node Editor**: Visual ML pipeline builder with ImNodes, code generation (PyTorch, TensorFlow, Keras, PyCyxWiz), DataInput node shows loaded dataset name, execution state tracking
-- **Data Augmentation**: 13 transform presets (ImageNet, CIFAR-10, Medical, Self-Supervised, etc.) with live preview
-- **Local Training**: TrainingExecutor with Sequential model support, real-time loss/accuracy plotting
-- **Properties Panel**: Dynamic shape inference for node connections, editable layer parameters
-- **Annotation System**: Production annotation workflow with batch navigation, class management, COCO/YOLO/VOC export, and training integration via `GetAnnotatedBatch()`
-- **Data Studio**: Simplified panel focused on Query/Analyze/Visualize tabs (pipeline editing moved to Unified Canvas)
-
-**TODO Features** (marked in code):
-- Import/Export model formats (ONNX, PyTorch, TensorFlow)
-- ~~Training controls (Pause, Stop - Start implemented)~~ ✅ DONE - Full P2P training controls
-- ~~Server connection and job submission~~ ✅ DONE - P2P training with Server Node
-- Preferences/Settings dialog
-- Phase 8: KNIME Parity (data preview, database connectors, loop nodes, annotations, subgraphs)
-
-### cyxwiz-server-node/ (Compute Worker)
-
-**Purpose**: Execute ML training jobs on local hardware
-
-**Structure**:
-```
-src/
-    main.cpp              # Entry point
-    node_server.cpp       # gRPC server (TODO)
-    job_executor.cpp      # Job execution engine (TODO)
-    metrics_collector.cpp # Resource monitoring (TODO)
-```
-
-**TODO Implementations**:
-- gRPC server for receiving jobs from Central Server
-- Job execution using `cyxwiz-backend`
-- Docker/container support for sandboxing
-- btop library integration for TUI monitoring
-- Metrics collection (CPU, GPU, memory, network)
-- Heartbeat mechanism to Central Server
-
-### cyxwiz-central-server/ (Orchestrator - Rust)
-
-**Purpose**: Coordinate the decentralized network
-
-**Structure**:
-```rust
-src/
-    main.rs           # Entry point
-    // TODO: Add modules
-    api/              # gRPC server implementation
-    scheduler/        # Job scheduling logic
-    database/         # PostgreSQL/SQLite access
-    cache/            # Redis integration
-    blockchain/       # Solana connector
-```
-
-**Dependencies** (Cargo.toml):
-- `tonic` - gRPC framework
-- `sqlx` - Database access
-- `redis` - Caching
-- `solana-sdk` - Blockchain integration
-- `tokio` - Async runtime
-
-**TODO Implementations**:
-- gRPC service implementations (JobService, NodeService)
-- Node registry and discovery
-- Job scheduler (match jobs to nodes)
-- Payment processor (Solana integration)
-- Metrics and monitoring
-- RESTful API for web dashboard
+**Backend Key Classes**: `Tensor`, `Device`, `Optimizer`, `Layer`, `Model`
+**Engine Key Systems**: ProjectManager, AsyncTaskManager, DataRegistry, NodeEditor, TrainingExecutor
+**Python Module**: `pycyxwiz` (built with pybind11, location: `build/<preset>/python/`)
 
 ## Common Development Tasks
 
-### Adding a New ML Algorithm
+| Task | Steps |
+|------|-------|
+| **Add ML Algorithm** | 1. Header in `include/cyxwiz/` 2. Impl in `src/algorithms/` 3. Tests 4. Python bindings |
+| **Add gRPC Service** | 1. Define in `proto/*.proto` 2. Rebuild 3. Impl server (Rust/C++) 4. Impl client (C++) |
+| **Add GUI Panel** | 1. Create `.h/.cpp` in `src/gui/` 2. Add to CMakeLists 3. Integrate in MainWindow |
 
-1. **Define Interface** in `cyxwiz-backend/include/cyxwiz/<name>.h`
-2. **Implement** in `cyxwiz-backend/src/algorithms/<name>.cpp`
-3. **Add to CMakeLists.txt** in `cyxwiz-backend/CMakeLists.txt`
-4. **Write Tests** in `tests/unit/test_<name>.cpp`
-5. **Expose to Python** in `cyxwiz-backend/python/bindings.cpp`
-
-**Example - Adding a new optimizer**:
-```cpp
-// In optimizer.h
-class MyOptimizer : public Optimizer {
-public:
-    MyOptimizer(double lr);
-    void Step(...) override;
-    void ZeroGrad() override;
-};
-
-// In optimizer.cpp
-MyOptimizer::MyOptimizer(double lr) {
-    learning_rate_ = lr;
-}
-
-// In CreateOptimizer factory
-case OptimizerType::MyOptimizer:
-    return std::make_unique<MyOptimizer>(learning_rate);
-```
-
-### Adding a New gRPC Service
-
-1. **Define Message** in `cyxwiz-protocol/proto/<name>.proto`
-2. **Define Service** in same file with `service` keyword
-3. **Rebuild** - CMake regenerates code automatically
-4. **Implement Server** (Rust in Central Server or C++ in Server Node)
-5. **Implement Client** (C++ in Engine)
-
-**Example**:
-```protobuf
-// In proto/example.proto
-service ExampleService {
-    rpc DoSomething(Request) returns (Response);
-}
-
-message Request {
-    string data = 1;
-}
-
-message Response {
-    string result = 1;
-}
-```
-
-### Adding a New GUI Panel
-
-1. **Create header** `cyxwiz-engine/src/gui/<name>.h`
-2. **Create implementation** `cyxwiz-engine/src/gui/<name>.cpp`
-3. **Add to CMakeLists.txt**
-4. **Integrate in MainWindow**:
-```cpp
-// In main_window.h
-std::unique_ptr<MyPanel> my_panel_;
-
-// In main_window.cpp constructor
-my_panel_ = std::make_unique<MyPanel>();
-
-// In Render()
-if (my_panel_) my_panel_->Render();
-```
-
-### Debugging
-
-**Debug Build Macros**:
-- `CYXWIZ_DEBUG` - Defined in debug builds
-- `CYXWIZ_ENABLE_LOGGING` - Enables verbose logging
-- `CYXWIZ_ENABLE_PROFILING` - Enables performance profiling
-
-**Logging** (spdlog):
-```cpp
-#include <spdlog/spdlog.h>
-
-spdlog::debug("Debug message: {}", value);
-spdlog::info("Info message");
-spdlog::warn("Warning");
-spdlog::error("Error: {}", error_msg);
-```
-
-**Memory Tracking** (Debug Mode):
-```cpp
-#ifdef CYXWIZ_DEBUG
-    size_t allocated = cyxwiz::MemoryManager::GetAllocatedBytes();
-    size_t peak = cyxwiz::MemoryManager::GetPeakBytes();
-#endif
-```
+**Debug Macros**: `CYXWIZ_DEBUG`, `CYXWIZ_ENABLE_LOGGING`, `CYXWIZ_ENABLE_PROFILING`
+**Logging**: `spdlog::debug/info/warn/error("message: {}", value);`
 
 ## External Dependencies
 
-### Required (Must Install Manually)
-
-**ArrayFire** - GPU acceleration library
-- Download: https://arrayfire.com/download
-- Backends: CUDA (NVIDIA), OpenCL (AMD/Intel), CPU
-- Installation: Set `ArrayFire_DIR` environment variable or install to standard path
-- CMake will warn if not found and build without GPU support
-
-### Managed by vcpkg
-
-All other C++ dependencies are installed via vcpkg:
-- imgui (with docking, GLFW, OpenGL3)
-- glfw3, glad
-- grpc, protobuf
-- spdlog, fmt, nlohmann-json
-- sqlite3, openssl
-- pybind11, catch2, boost
-
-**Setup vcpkg**:
-```bash
-git clone https://github.com/microsoft/vcpkg
-cd vcpkg
-./bootstrap-vcpkg.sh  # or bootstrap-vcpkg.bat on Windows
-```
-
-**Install dependencies**:
-```bash
-./vcpkg install  # Reads vcpkg.json
-```
-
-### Optional Libraries (TODO in code)
-
-**ImNodes** - Visual node editor
-- Source: https://github.com/Nelarius/imnodes
-- Integration: Manual (not in vcpkg)
-- Used in: `cyxwiz-engine/src/gui/node_editor.cpp`
-
-**ImPlot** - Real-time plotting
-- Source: https://github.com/epezent/implot
-- Integration: May be in vcpkg, check with `vcpkg search implot`
-- Used in: `cyxwiz-engine/src/gui/viewport.cpp`
-
-**btop** - Terminal UI for resource monitoring
-- Source: https://github.com/aristocratos/btop
-- Integration: Library extraction needed
-- Used in: `cyxwiz-server-node/src/metrics_collector.cpp`
+- **ArrayFire** (manual): GPU acceleration - set `ArrayFire_DIR` env var
+- **vcpkg** (managed): imgui, glfw3, glad, grpc, protobuf, spdlog, pybind11, catch2, boost
+- **Optional**: ImNodes, ImPlot, btop (see source repos)
 
 ## Blockchain Integration
 
-### Solana Setup (Central Server)
-
-**Dependencies** (in Cargo.toml):
-```toml
-solana-sdk = "1.17"
-solana-client = "1.17"
-```
-
-**Smart Contracts** (Rust/Anchor):
-- Location: `cyxwiz-blockchain/` (TODO: create this directory)
-- Programs: JobEscrow, PaymentStreaming, NodeStaking
-- Deploy: `solana program deploy <program.so>`
-
-**Token**: CYXWIZ (SPL Token)
-- Standard: SPL Token (Solana)
-- Bridge: Wormhole for Polygon interoperability
-
-### Payment Flow
-
-1. User submits job → Engine calls Central Server gRPC
-2. Central Server creates escrow on Solana
-3. Job assigned to Server Node
-4. Node executes job, reports progress
-5. On completion, payment released from escrow
-6. 90% to Node, 10% to platform
+**Solana**: CYXWIZ SPL token, escrow-based payments (90% node, 10% platform)
+**Programs**: JobEscrow, PaymentStreaming, NodeStaking (in `cyxwiz-blockchain/`)
 
 ## Important Notes
 
