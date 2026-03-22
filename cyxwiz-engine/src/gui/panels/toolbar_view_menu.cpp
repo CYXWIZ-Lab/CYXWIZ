@@ -124,14 +124,14 @@ void ToolbarPanel::RenderViewMenu() {
         if (ImGui::BeginMenu(ICON_FA_EYE " Minimaps")) {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 5));
 
-            // Node Editor Minimap
+            // Studio Minimap
             if (node_editor_minimap_ptr_) {
                 bool node_minimap = *node_editor_minimap_ptr_;
-                if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Node Editor Minimap", nullptr, node_minimap)) {
+                if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Studio Minimap", nullptr, node_minimap)) {
                     *node_editor_minimap_ptr_ = !node_minimap;
                 }
             } else {
-                ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Node Editor Minimap", nullptr, false, false);
+                ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Studio Minimap", nullptr, false, false);
             }
 
             // Script Editor Minimap

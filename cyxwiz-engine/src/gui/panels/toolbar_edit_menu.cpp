@@ -224,20 +224,20 @@ void ToolbarPanel::RenderEditMenu() {
                     {"Script Editor", "Previous Completion", "Up", "Select previous completion item", true},
                     {"Script Editor", "Close Completion", "Escape", "Close completion popup", true},
 
-                    // ===== Node Editor shortcuts =====
-                    {"Node Editor", "Undo", "Ctrl+Z", "Undo last node operation", false},
-                    {"Node Editor", "Redo", "Ctrl+Y", "Redo node operation", false},
-                    {"Node Editor", "Copy", "Ctrl+C", "Copy selected nodes", false},
-                    {"Node Editor", "Cut", "Ctrl+X", "Cut selected nodes", false},
-                    {"Node Editor", "Paste", "Ctrl+V", "Paste nodes from clipboard", false},
-                    {"Node Editor", "Duplicate", "Ctrl+D", "Duplicate selected nodes", false},
-                    {"Node Editor", "Select All", "Ctrl+A", "Select all nodes", false},
-                    {"Node Editor", "Delete", "Delete", "Delete selected nodes/links", false},
-                    {"Node Editor", "Clear Selection", "Escape", "Clear node selection", false},
-                    {"Node Editor", "Toggle Minimap", "M", "Show/hide the minimap", false},
-                    {"Node Editor", "Frame Selected", "F", "Frame selected nodes in view", false},
-                    {"Node Editor", "Frame All", "F", "Frame all nodes (when none selected)", false},
-                    {"Node Editor", "Pattern Browser", "Ctrl+Shift+P", "Open pattern library browser", false},
+                    // ===== CyxWiz Studio shortcuts =====
+                    {"CyxWiz Studio", "Undo", "Ctrl+Z", "Undo last node operation", false},
+                    {"CyxWiz Studio", "Redo", "Ctrl+Y", "Redo node operation", false},
+                    {"CyxWiz Studio", "Copy", "Ctrl+C", "Copy selected nodes", false},
+                    {"CyxWiz Studio", "Cut", "Ctrl+X", "Cut selected nodes", false},
+                    {"CyxWiz Studio", "Paste", "Ctrl+V", "Paste nodes from clipboard", false},
+                    {"CyxWiz Studio", "Duplicate", "Ctrl+D", "Duplicate selected nodes", false},
+                    {"CyxWiz Studio", "Select All", "Ctrl+A", "Select all nodes", false},
+                    {"CyxWiz Studio", "Delete", "Delete", "Delete selected nodes/links", false},
+                    {"CyxWiz Studio", "Clear Selection", "Escape", "Clear node selection", false},
+                    {"CyxWiz Studio", "Toggle Minimap", "M", "Show/hide the minimap", false},
+                    {"CyxWiz Studio", "Frame Selected", "F", "Frame selected nodes in view", false},
+                    {"CyxWiz Studio", "Frame All", "F", "Frame all nodes (when none selected)", false},
+                    {"CyxWiz Studio", "Pattern Browser", "Ctrl+Shift+P", "Open pattern library browser", false},
                 };
             }
         }

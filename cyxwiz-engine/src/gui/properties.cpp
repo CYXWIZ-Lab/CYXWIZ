@@ -674,7 +674,7 @@ void Properties::Render() {
 
         if (!selected_node_) {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No node selected");
-            ImGui::Text("Click on a node in the Node Editor to view its properties");
+            ImGui::Text("Click on a node in CyxWiz Studio to view its properties");
         } else {
             // Display selected node info
             ImGui::Text("Node: %s", selected_node_->name.c_str());

@@ -54,10 +54,10 @@ void DataStudioPanel::RenderToolbar() {
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-    ImGui::TextDisabled("For visual pipelines, use Node Editor (Data Pipeline mode)");
+    ImGui::TextDisabled("For visual pipelines, use CyxWiz Studio (Data Pipeline mode)");
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Visual data transformation pipelines have moved to the Node Editor.\n"
-                         "Switch to 'Data Pipeline' execution mode in the Node Editor toolbar.");
+        ImGui::SetTooltip("Visual data transformation pipelines have moved to CyxWiz Studio.\n"
+                         "Switch to 'Data Pipeline' execution mode in the Studio toolbar.");
     }
 }
 

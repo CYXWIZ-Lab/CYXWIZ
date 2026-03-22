@@ -3504,7 +3504,7 @@ void TrainingEvaluationPanel::RenderTrainingSection() {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.3f, 0.2f, 0.1f, 1.0f));
         ImGui::BeginChild("GraphWarning", ImVec2(-1, 50), true);
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Model Required");
-        ImGui::TextWrapped("Create a model in Node Editor: Input -> Layers -> Loss -> Optimizer");
+        ImGui::TextWrapped("Create a model in CyxWiz Studio: Input -> Layers -> Loss -> Optimizer");
         ImGui::EndChild();
         ImGui::PopStyleColor();
         ImGui::Spacing();

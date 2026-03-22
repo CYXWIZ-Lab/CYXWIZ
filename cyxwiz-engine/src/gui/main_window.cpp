@@ -2444,9 +2444,9 @@ void MainWindow::BuildInitialDockLayout() {
     // Dock windows to their designated areas
     // Window names must EXACTLY match the names in ImGui::Begin() calls in each panel
     ImGui::DockBuilderDockWindow("Asset Browser", dock_id_left);
-    ImGui::DockBuilderDockWindow("Node Editor", dock_id_center);
-    ImGui::DockBuilderDockWindow("Script Editor", dock_id_center); // Tabbed with Node Editor
-    ImGui::DockBuilderDockWindow("Data Studio", dock_id_center); // Tabbed with Node Editor
+    ImGui::DockBuilderDockWindow("CyxWiz Studio", dock_id_center);
+    ImGui::DockBuilderDockWindow("Script Editor", dock_id_center); // Tabbed with CyxWiz Studio
+    ImGui::DockBuilderDockWindow("Data Studio", dock_id_center); // Tabbed with CyxWiz Studio
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("Command Window", dock_id_bottom_left); // Tabbed with Console
@@ -2458,7 +2458,7 @@ void MainWindow::BuildInitialDockLayout() {
 
     spdlog::info("Initial dock layout built successfully");
     spdlog::info("  - Left: Asset Browser (15%)");
-    spdlog::info("  - Center: Node Editor (main workspace)");
+    spdlog::info("  - Center: CyxWiz Studio (main workspace)");
     spdlog::info("  - Right: Properties (20%)");
     spdlog::info("  - Bottom-Left: Console");
     spdlog::info("  - Bottom-Right: Training Dashboard (Inspector)");
@@ -2494,7 +2494,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
 
     // Main editing panels
     if (node_editor_) {
-        dock_style.RegisterPanel("Node Editor", ICON_FA_DIAGRAM_PROJECT, node_editor_->GetVisiblePtr());
+        dock_style.RegisterPanel("CyxWiz Studio", ICON_FA_DIAGRAM_PROJECT, node_editor_->GetVisiblePtr());
     }
     if (script_editor_) {
         dock_style.RegisterPanel("Script Editor", ICON_FA_CODE, script_editor_->GetVisiblePtr());
@@ -2931,8 +2931,8 @@ void MainWindow::DetectKeyboardContext() {
         if (focused) {
             std::string window_name = focused->Name ? focused->Name : "";
 
-            // Node Editor detection
-            if (window_name.find("Node Editor") != std::string::npos ||
+            // CyxWiz Studio detection
+            if (window_name.find("CyxWiz Studio") != std::string::npos ||
                 window_name.find("##NodeEditor") != std::string::npos) {
                 kb.SetActiveContext(KeyboardContext::NodeEditor);
                 return;

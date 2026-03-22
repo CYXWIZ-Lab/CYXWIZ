@@ -377,7 +377,7 @@ void TrainingDashboardPanel::RenderRLMetricsTab() {
     }
 
     if (!is_rl_training_) {
-        ImGui::TextDisabled("No RL training active. Start RL training from the Node Editor.");
+        ImGui::TextDisabled("No RL training active. Start RL training from CyxWiz Studio.");
         ImGui::Spacing();
     }
 

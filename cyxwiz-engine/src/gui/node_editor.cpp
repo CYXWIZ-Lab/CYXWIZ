@@ -304,7 +304,7 @@ void NodeEditor::Render() {
         pending_context_reset_ = false;
     }
 
-    if (ImGui::Begin("Node Editor", &show_window_)) {
+    if (ImGui::Begin("CyxWiz Studio", &show_window_)) {
         ShowToolbar();
 
         ImGui::Separator();

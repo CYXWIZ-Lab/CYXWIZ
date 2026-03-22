@@ -116,7 +116,7 @@ void Viewport::Render() {
         ImGui::BulletText("Training Dashboard: View real-time training metrics");
         ImGui::BulletText("Script Editor: Write and run Python training scripts");
         ImGui::BulletText("Command Window: Execute Python commands interactively");
-        ImGui::BulletText("Node Editor: Build ML models visually (coming soon)");
+        ImGui::BulletText("CyxWiz Studio: Build ML models visually");
 
         ImGui::Spacing();
         ImGui::Spacing();

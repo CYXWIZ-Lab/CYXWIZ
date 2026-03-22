@@ -98,7 +98,7 @@ plugins/simulation/mujoco/
 - Manipulation: Pusher
 - Menagerie (30+ downloadable): Franka Panda, UR5e, Unitree Go2, ANYmal, Spot, Shadow Hand, etc.
 
-**Node Editor Nodes (in Reinforcement Learning context menu):**
+**Studio Nodes (in Reinforcement Learning context menu):**
 | Node | Purpose |
 |------|---------|
 | MuJoCoEnv | Load MJCF model as Gymnasium env |
@@ -123,17 +123,18 @@ plugins/simulation/mujoco/
 
 ---
 
-### CyxWiz Engine - Unified Canvas Architecture ✅ (COMPLETE)
+### CyxWiz Engine - CyxWiz Studio (formerly Node Editor) ✅ (COMPLETE)
 
-**KNIME-inspired unified canvas merging Node Editor and Data Studio Pipeline:**
+**KNIME-inspired unified workspace for ML, data analytics, and RL:**
 
-- ✅ **Phase 5**: Data Studio Simplification — Removed duplicate Pipeline Canvas, moved to Node Editor
+- ✅ **Phase 5**: Data Studio Simplification — Removed duplicate Pipeline Canvas, moved to CyxWiz Studio
 - ✅ **Phase 6**: UI/UX Improvements — Execution state visualization, node/pin tooltips
 - ✅ **Phase 7**: Save/Load Integration — Extended .cyxgraph v2.0 format with execution_mode
+- ✅ **Phase 8**: Renamed to "CyxWiz Studio" — unified workspace for all workflows
 
 **Architecture:**
 ```
-Unified Node Editor (node_editor.cpp/h)
+CyxWiz Studio (node_editor.cpp/h)
   ├── ExecutionMode: CodeGeneration | DuckDBPipeline | LocalTraining
   ├── NodeCategory: Input | Transform | ML | RL | Visualization | Output
   ├── PipelineExecutor: DuckDB/Arrow backend for data pipelines
@@ -188,9 +189,9 @@ Unified Node Editor (node_editor.cpp/h)
 
 **Phase 5 Changes:**
 - Removed `PipelineCanvas` class from Data Studio
-- Moved visual pipeline editing to Node Editor with ExecutionMode switch
+- Moved visual pipeline editing to CyxWiz Studio with ExecutionMode switch
 - Updated Data Studio to focus on Query/Analyze/Visualize tabs only
-- Added tooltip in Data Studio toolbar directing users to Node Editor for pipelines
+- Added tooltip in Data Studio toolbar directing users to CyxWiz Studio for pipelines
 
 **Phase 6 Changes:**
 - Added `NodeExecutionState` enum (Idle, Pending, Executing, Completed, Error)
@@ -321,7 +322,7 @@ ann_mgr.ExportVOC("dataset", "voc/");         // For Pascal VOC tools
 | TimeSeriesDataset | `cyxwiz-engine/src/core/formats/timeseries_dataset.h` | `src/core/formats/timeseries_dataset.cpp` |
 | AudioDataset | `cyxwiz-engine/src/core/formats/audio_dataset.h` | `src/core/formats/audio_dataset.cpp` |
 
-**Node Editor nodes added:** TextTokenizer, TextVocabulary, TextPadding, ConvTranspose2D, Upsample, PixelShuffle, TimeSeriesWindow, TimeSeriesFeatures, TimeSeriesSplit, AudioInput, Spectrogram, MelSpectrogram, MFCC, AudioAugmentation, GymEnvironment, ReplayBuffer, PolicyNetwork, ValueNetwork, RLTraining
+**Studio nodes added:** TextTokenizer, TextVocabulary, TextPadding, ConvTranspose2D, Upsample, PixelShuffle, TimeSeriesWindow, TimeSeriesFeatures, TimeSeriesSplit, AudioInput, Spectrogram, MelSpectrogram, MFCC, AudioAugmentation, GymEnvironment, ReplayBuffer, PolicyNetwork, ValueNetwork, RLTraining
 
 **Python bindings:** All 5 phases exposed via pybind11 in `cyxwiz-backend/python/bindings.cpp`
 
