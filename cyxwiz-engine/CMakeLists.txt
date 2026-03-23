@@ -168,6 +168,7 @@ set(ENGINE_SOURCES
     src/gui/console.cpp
     src/gui/viewport.cpp
     src/gui/properties.cpp
+    src/gui/node_config_dialog.cpp
     src/gui/panels/toolbar.cpp
     src/gui/panels/toolbar_file_menu.cpp
     src/gui/panels/toolbar_edit_menu.cpp

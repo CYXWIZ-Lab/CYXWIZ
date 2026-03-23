@@ -5,8 +5,10 @@
 #include <vector>
 #include <deque>
 #include <functional>
+#include <memory>
 #include "../core/node_metadata.h"
 #include "../core/node_executors/node_executor_factory.h"
+#include "node_config_dialog.h"
 
 namespace gui {
 
@@ -135,6 +137,10 @@ private:
     bool section_advanced_open_ = false;
     bool section_presets_open_ = false;
     char preset_name_buffer_[64] = {};
+
+    // KNIME-style configuration dialogs
+    std::unique_ptr<NodeConfigDialog> active_dialog_;
+    void RenderOpenDialogButton(MLNode& node);
 };
 
 } // namespace gui

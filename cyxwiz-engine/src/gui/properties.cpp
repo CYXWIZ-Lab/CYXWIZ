@@ -1,18 +1,30 @@
+// Include Windows headers first, then undef conflicting macros
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+// Undefine Windows macros that conflict with our method names
+#ifdef CreateDialog
+#undef CreateDialog
+#endif
+#ifdef CreateDialogA
+#undef CreateDialogA
+#endif
+#ifdef CreateDialogW
+#undef CreateDialogW
+#endif
+#endif
+
 #include "properties.h"
 #include "../core/node_metadata_registry.h"
 #include "node_editor.h"
 #include "../core/data_registry.h"
 #include "../plugin/registries/plugin_node_registry.h"
+#include "node_config_dialog.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <queue>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
 #include <set>
 #include <algorithm>
 
@@ -728,6 +740,14 @@ void Properties::Render() {
         }
     }
     ImGui::End();
+
+    // Render active configuration dialog (if open)
+    if (active_dialog_ && active_dialog_->IsOpen()) {
+        if (!active_dialog_->Render()) {
+            // Dialog was closed
+            active_dialog_.reset();
+        }
+    }
 }
 
 void Properties::RenderNodeProperties(MLNode& node) {
@@ -1936,8 +1956,54 @@ void Properties::RenderGeneralSection(MLNode& node) {
                 ImGui::PopStyleColor();
             }
         }
+
+        // KNIME-style "Open Dialog" button for complex nodes
+        RenderOpenDialogButton(node);
     } else {
         section_general_open_ = false;
+    }
+}
+
+void Properties::RenderOpenDialogButton(MLNode& node) {
+    // Check if this node type should have an "Open Dialog" button
+    bool should_show = ShouldShowOpenDialogButton(node.type);
+    spdlog::debug("RenderOpenDialogButton: node='{}', type={}, should_show={}",
+                  node.name, static_cast<int>(node.type), should_show);
+    if (!should_show) {
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Center the button
+    float button_width = 150.0f;
+    float avail_width = ImGui::GetContentRegionAvail().x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail_width - button_width) * 0.5f);
+
+    // Styled "Open Dialog" button (similar to KNIME)
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.35f, 0.55f, 1.0f));
+
+    if (ImGui::Button("Open Dialog...", ImVec2(button_width, 0))) {
+        // Create and open the dialog for this node
+        active_dialog_ = NodeConfigDialogFactory::Instance().CreateDialog(&node);
+        if (active_dialog_) {
+            active_dialog_->Open();
+            spdlog::info("Opened configuration dialog for node '{}'", node.name);
+        }
+    }
+
+    ImGui::PopStyleColor(3);
+
+    // Tooltip
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::Text("Open detailed configuration dialog");
+        ImGui::TextDisabled("(Configure all settings with preview)");
+        ImGui::EndTooltip();
     }
 }
 
