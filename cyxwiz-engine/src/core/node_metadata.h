@@ -1,0 +1,124 @@
+#pragma once
+
+#include <string>
+#include <vector>
+#include "../gui/node_editor.h"  // For NodeType, NodeCategory, PinType
+
+namespace cyxwiz {
+
+// Forward use gui namespace enums
+using gui::NodeType;
+using gui::NodeCategory;
+using gui::PinType;
+
+/**
+ * Node implementation status for Node Browser display
+ */
+enum class NodeImplementationStatus {
+    Implemented,    // Fully working - can be used
+    Template,       // Defined but not implemented (future/coming soon)
+    Deprecated,     // Being phased out
+    External        // Requires external integration
+};
+
+/**
+ * Port definition for node inputs/outputs
+ */
+struct PortDefinition {
+    std::string name;
+    PinType type = PinType::Tensor;
+    bool required = true;
+    std::string description;
+};
+
+/**
+ * Parameter definition for node configuration
+ */
+struct ParameterDefinition {
+    std::string name;
+    std::string type;           // "string", "int", "float", "enum", "bool", "file"
+    std::string default_value;
+    std::string description;
+    std::vector<std::string> enum_values;  // For enum type
+    std::string validation;     // Regex or range "0-100"
+};
+
+/**
+ * NodeMetadata - Complete metadata for a node type
+ * Used by NodeBrowserPanel for display and by Info Panel for documentation
+ */
+struct NodeMetadata {
+    // Identity
+    NodeType type = NodeType::Unknown;
+    NodeCategory category = NodeCategory::Unknown;
+    std::string name;
+    std::string icon;           // FontAwesome icon string (UTF-8)
+
+    // Discovery
+    std::vector<std::string> keywords;
+    int usage_count = 0;        // For "most used" sorting
+    bool is_favorite = false;   // User-starred
+
+    // Documentation
+    std::string brief_description;  // One-liner for tooltip
+    std::string help_text;          // Detailed help
+    std::string example_usage;      // Code/workflow example
+
+    // Ports
+    std::vector<PortDefinition> inputs;
+    std::vector<PortDefinition> outputs;
+
+    // Parameters
+    std::vector<ParameterDefinition> parameters;
+
+    // Status
+    NodeImplementationStatus status = NodeImplementationStatus::Implemented;
+    int user_votes = 0;         // For template nodes (feature requests)
+    std::string badge;          // Optional badge text (e.g., "Coming Soon", "Beta") - must be last for aggregate init compatibility
+
+    // Helper methods
+    bool IsTemplate() const { return status == NodeImplementationStatus::Template; }
+    bool IsDeprecated() const { return status == NodeImplementationStatus::Deprecated; }
+    bool IsImplemented() const { return status == NodeImplementationStatus::Implemented; }
+};
+
+/**
+ * Get display name for a category
+ */
+inline std::string GetCategoryDisplayName(NodeCategory category) {
+    switch (category) {
+        case NodeCategory::DataSources:     return "I/O";
+        case NodeCategory::DataTransform:   return "Manipulation";
+        case NodeCategory::Analytics:       return "Analytics";
+        case NodeCategory::Preprocessing:   return "Preprocessing";
+        case NodeCategory::Layers:          return "ML Layers";
+        case NodeCategory::Activation:      return "Activation";
+        case NodeCategory::Pooling:         return "Pooling";
+        case NodeCategory::Normalization:   return "Normalization";
+        case NodeCategory::Attention:       return "Attention";
+        case NodeCategory::Recurrent:       return "Recurrent";
+        case NodeCategory::ShapeOps:        return "Shape Ops";
+        case NodeCategory::MergeOps:        return "Merge Ops";
+        case NodeCategory::Training:        return "Training";
+        case NodeCategory::Regularization:  return "Regularization";
+        case NodeCategory::Utility:         return "Utility";
+        case NodeCategory::Signal:          return "Signal";
+        case NodeCategory::DataPipeline:    return "Data Pipeline";
+        case NodeCategory::DNN:             return "DNN Models";
+        case NodeCategory::TextProcessing:  return "Text";
+        case NodeCategory::Upsampling:      return "Upsampling";
+        case NodeCategory::TimeSeries:      return "Time Series";
+        case NodeCategory::Audio:           return "Audio";
+        case NodeCategory::RL:              return "RL";
+        case NodeCategory::DataExport:      return "Export";
+        case NodeCategory::Plugin:          return "Plugins";
+        default:                            return "Other";
+    }
+}
+
+/**
+ * Get icon for a category (defined in node_metadata_registry.cpp)
+ */
+const char* GetCategoryIcon(NodeCategory category);
+
+} // namespace cyxwiz

@@ -17,6 +17,9 @@
 #define ICON_FA_FILE_CODE           "\xef\x87\x89"  // U+F1C9
 #define ICON_FA_FILE_EXPORT         "\xef\x95\xae"  // U+F56E - file export
 #define ICON_FA_FILE_IMPORT         "\xef\x95\xaf"  // U+F56F - file import
+#define ICON_FA_FILE_EXCEL          "\xef\x87\x83"  // U+F1C3 - excel file
+#define ICON_FA_CODE_BRANCH         "\xef\x84\xa6"  // U+F126 - code branch/merge
+#define ICON_FA_TH                  "\xef\x80\x8a"  // U+F00A - grid/table header
 #define ICON_FA_FOLDER              "\xef\x81\xbb"  // U+F07B
 #define ICON_FA_FOLDER_OPEN         "\xef\x81\xbc"  // U+F07C
 #define ICON_FA_FOLDER_PLUS         "\xef\x99\x9e"  // U+F65E
@@ -250,6 +253,8 @@
 #define ICON_FA_CIRCLE              "\xef\x84\x91"  // U+F111
 #define ICON_FA_SQUARE              "\xef\x83\x88"  // U+F0C8
 #define ICON_FA_STAR                "\xef\x80\x85"  // U+F005
+#define ICON_FA_THUMBS_UP           "\xef\x85\xa4"  // U+F164 - thumbs up
+#define ICON_FA_THUMBS_DOWN         "\xef\x85\xa5"  // U+F165 - thumbs down
 #define ICON_FA_HEART               "\xef\x80\x84"  // U+F004
 #define ICON_FA_BOOKMARK            "\xef\x80\xae"  // U+F02E
 #define ICON_FA_TAG                 "\xef\x80\xab"  // U+F02B
@@ -320,11 +325,11 @@
 
 // Aliases for common alternative names
 #define ICON_FA_SEARCH              ICON_FA_MAGNIFYING_GLASS
-#define ICON_FA_GEM                 "ï¥"  // U+F3A5 - gem/diamond for SOL
-#define ICON_FA_PAPER_PLANE         "ï"  // U+F1D8 - paper plane for sending
-#define ICON_FA_UNLOCK              "ï"  // U+F09C - unlock
-#define ICON_FA_ARROW_UP_RIGHT_FROM_SQUARE "ï"  // U+F08E - external link
-#define ICON_FA_CIRCLE_QUESTION     "ï"  // U+F059 - question mark in circle
+#define ICON_FA_GEM                 ""  // U+F3A5 - gem/diamond for SOL
+#define ICON_FA_PAPER_PLANE         ""  // U+F1D8 - paper plane for sending
+#define ICON_FA_UNLOCK              ""  // U+F09C - unlock
+#define ICON_FA_ARROW_UP_RIGHT_FROM_SQUARE ""  // U+F08E - external link
+#define ICON_FA_CIRCLE_QUESTION     ""  // U+F059 - question mark in circle
 
 // Common/Simple shapes
 #define ICON_FA_CIRCLE_DOT          "\xef\x86\x92"  // U+F192

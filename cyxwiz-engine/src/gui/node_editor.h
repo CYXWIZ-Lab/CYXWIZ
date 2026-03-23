@@ -273,8 +273,75 @@ enum class NodeType {
     ExportSQL,          // Write dataset to SQL database
     ExportJSON,         // Export dataset to JSON
 
+    // ===== Machine Learning Algorithms (Phase 4 - Tool-to-Node Migration) =====
+    // Clustering
+    KMeansCluster,      // K-Means clustering algorithm
+    DBSCANCluster,      // DBSCAN density-based clustering
+    HierarchicalCluster,// Hierarchical/Agglomerative clustering
+    GMMCluster,         // Gaussian Mixture Model clustering
+
+    // Dimensionality Reduction
+    PCANode,            // Principal Component Analysis
+    TSNENode,           // t-SNE visualization
+    UMAPNode,           // UMAP dimensionality reduction
+
+    // Classification
+    DecisionTreeClassifier,  // Decision Tree classifier
+    RandomForestClassifier,  // Random Forest ensemble
+    GradientBoostingClassifier, // Gradient Boosted Trees
+    SVMClassifier,      // Support Vector Machine classifier
+    KNNClassifier,      // K-Nearest Neighbors classifier
+    NaiveBayesClassifier, // Naive Bayes classifier
+    LogisticRegressionNode, // Logistic Regression
+
+    // Regression
+    LinearRegressionNode,   // Linear Regression
+    PolynomialRegressionNode, // Polynomial Regression
+    SVMRegressor,       // Support Vector Regression
+
+    // ===== Model Evaluation Nodes (Phase 4) =====
+    ConfusionMatrixNode,    // Confusion matrix visualization
+    ROCCurveNode,       // ROC curve and AUC computation
+    PRCurveNode,        // Precision-Recall curve
+    LearningCurvesNode, // Training/validation learning curves
+    FeatureImportanceNode, // Feature importance analysis
+    CrossValidationNode,   // K-Fold cross-validation
+
+    // ===== Data Preprocessing Nodes (Phase 4) =====
+    StandardScaler,     // Z-score standardization (mean=0, std=1)
+    MinMaxScaler,       // Min-Max scaling to [0,1]
+    RobustScaler,       // Robust scaling using median/IQR
+    LabelEncoder,       // Encode categorical labels as integers
+    OrdinalEncoder,     // Encode ordinal categories
+    TargetEncoder,      // Target-based encoding
+    TrainTestSplit,     // Stratified train/test split
+
+    // ===== Signal Processing Nodes (Phase 4) =====
+    FFTNode,            // Fast Fourier Transform
+    IFFTNode,           // Inverse FFT
+    FilterDesigner,     // Design FIR/IIR filters
+    Convolution1D,      // 1D signal convolution
+    WaveletTransform,   // Discrete Wavelet Transform
+
+    // ===== Text Analytics Nodes (Phase 4) =====
+    TFIDFVectorizer,    // TF-IDF text vectorization
+    CountVectorizer,    // Bag-of-words vectorization
+    WordEmbeddings,     // Word embeddings (Word2Vec, GloVe)
+    SentimentAnalyzer,  // Sentiment analysis
+    NamedEntityRecognizer, // NER extraction
+
+    // ===== Utility Nodes (Phase 4) =====
+    CalculatorNode,     // Math expression calculator
+    UnitConverter,      // Unit conversion utility
+    RegexTester,        // Regular expression tester
+    JSONPathExtractor,  // Extract data using JSONPath
+    DataProfiler,       // Comprehensive data profiling
+
     // Plugin-defined nodes (sentinel — actual type resolved via string lookup)
-    PluginCustom
+    PluginCustom,
+
+    // Special sentinel value
+    Unknown
 };
 
 // Attribute for node pins (inputs/outputs)

@@ -114,6 +114,9 @@
 #include "panels/json_viewer_panel.h"
 #include "panels/regex_tester_panel.h"
 #include "panels/cloud_browser.h"
+#include "panels/node_browser_panel.h"
+#include "panels/node_info_panel.h"
+#include "../core/node_metadata.h"
 #include "panels/cloud_dataset_manager.h"
 #include "panels/plugin_manager_panel.h"
 #include "data_studio/data_studio_panel.h"
@@ -323,6 +326,15 @@ MainWindow::MainWindow()
     
     // Cloud panels (DataStream)
     cloud_browser_panel_ = std::make_unique<gui::CloudBrowserPanel>();
+    node_browser_panel_ = std::make_unique<gui::NodeBrowserPanel>();
+    node_browser_panel_->SetNodeEditor(node_editor_.get());
+    node_info_panel_ = std::make_unique<cyxwiz::NodeInfoPanel>();
+    // Connect Node Browser hover to Info Panel
+    if (node_browser_panel_ && node_info_panel_) {
+        node_browser_panel_->SetNodeHoverCallback([this](cyxwiz::NodeType type) {
+            node_info_panel_->SetSelectedNode(type);
+        });
+    }
     cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();
 
     // Plugin Manager panel
@@ -2269,6 +2281,8 @@ void MainWindow::Render() {
     
     // Cloud panels
     if (cloud_browser_panel_) cloud_browser_panel_->Render();
+    if (node_browser_panel_) node_browser_panel_->Render();
+    if (node_info_panel_) node_info_panel_->Render();
     if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->Render();
 
     // Plugin Manager panel
@@ -2573,6 +2587,12 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (cloud_browser_panel_) {
         dock_style.RegisterPanel("Cloud Browser", ICON_FA_CLOUD, cloud_browser_panel_->GetVisiblePtr());
+    }
+    if (node_browser_panel_) {
+        dock_style.RegisterPanel("Node Browser", ICON_FA_CUBES, node_browser_panel_->GetVisiblePtr());
+    }
+    if (node_info_panel_) {
+        dock_style.RegisterPanel("Node Info", ICON_FA_CIRCLE_INFO, node_info_panel_->GetVisiblePtr());
     }
     if (cloud_dataset_manager_panel_) {
         dock_style.RegisterPanel("Cloud Manager", ICON_FA_DATABASE, cloud_dataset_manager_panel_->GetVisiblePtr());

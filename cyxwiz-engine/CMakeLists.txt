@@ -81,6 +81,9 @@ set(ENGINE_SOURCES
     src/core/python_detector.cpp
     src/core/window_manager.cpp
     src/core/data_registry.cpp
+    src/core/data_registry_config.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_base.cpp
     src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/hdf5_dataset.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -99,6 +102,7 @@ set(ENGINE_SOURCES
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/annotation_manager.cpp
+    src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
     src/core/graph_compiler.cpp
@@ -324,6 +328,8 @@ set(ENGINE_SOURCES
     src/network/datastream_client.cpp
     src/core/cloud_data_registry.cpp
     src/gui/panels/cloud_browser.cpp
+    src/gui/panels/node_browser_panel.cpp  # Node Browser: KNIME-style node palette
+    src/gui/panels/node_info_panel.cpp     # Node Info: Context-sensitive documentation
     src/gui/panels/cloud_dataset_manager.cpp
     src/gui/panels/cloud_upload_dialog.cpp
     src/gui/panels/trust_badge.cpp
@@ -361,6 +367,8 @@ set(ENGINE_HEADERS
     src/core/arrow_converters.h
     src/core/duckdb_connector.h
     src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/node_metadata.h       # Node Browser: node metadata structures
+    src/core/node_metadata_registry.h  # Node Browser: metadata registry
     src/core/texture_manager.h
     src/core/async_task_manager.h
     src/core/graph_compiler.h
@@ -518,6 +526,8 @@ set(ENGINE_HEADERS
     src/network/datastream_client.h
     src/core/cloud_data_registry.h
     src/gui/panels/cloud_browser.h
+    src/gui/panels/node_browser_panel.h  # Node Browser: KNIME-style node palette
+    src/gui/panels/node_info_panel.h     # Node Info: Context-sensitive documentation
     src/gui/panels/cloud_dataset_manager.h
     src/gui/panels/cloud_upload_dialog.h
     src/gui/panels/trust_badge.h
@@ -871,7 +881,9 @@ add_executable(test_arrow_integration
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/data_registry.cpp
-    src/core/annotation_manager.cpp
+    src/core/data_registry_config.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_base.cpp
 )
 
 target_include_directories(test_arrow_integration PRIVATE

@@ -1,0 +1,209 @@
+{
+  "category": "Workflow",
+  "category_icon": "sitemap",
+  "description": "Advanced workflow control and automation nodes",
+  "templates": [
+    {
+      "type": "LoopStart",
+      "name": "Loop Start",
+      "icon": "rotate",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["loop", "iterate", "repeat", "start"],
+      "brief_description": "Start a loop iteration",
+      "help_text": "Marks the beginning of a loop. Data flows through the loop body and returns to Loop End, which feeds back to Loop Start.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Initial data or loop variable"}
+      ],
+      "outputs": [
+        {"name": "Current", "type": "Dataset", "description": "Current iteration data"}
+      ],
+      "parameters": [
+        {"name": "max_iterations", "type": "int", "default": "100", "description": "Maximum iterations (safety limit)"}
+      ],
+      "implementation_notes": "Requires careful state management in execution engine",
+      "target_phase": "Phase 3",
+      "dependencies": [],
+      "effort_estimate": "High",
+      "user_votes": 0
+    },
+    {
+      "type": "LoopEnd",
+      "name": "Loop End",
+      "icon": "rotate",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["loop", "iterate", "end", "collect"],
+      "brief_description": "End a loop iteration",
+      "help_text": "Marks the end of a loop. Collects results and determines whether to continue iterating.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Loop body output"},
+        {"name": "Continue", "type": "Dataset", "required": false, "description": "Boolean to continue (optional)"}
+      ],
+      "outputs": [
+        {"name": "Collected", "type": "Dataset", "description": "All iteration results collected"}
+      ],
+      "parameters": [
+        {"name": "collect_mode", "type": "enum", "default": "append", "description": "How to collect results", "enum_values": ["append", "last_only", "custom"]}
+      ],
+      "implementation_notes": "Must pair with LoopStart",
+      "target_phase": "Phase 3",
+      "dependencies": [],
+      "effort_estimate": "High",
+      "user_votes": 0
+    },
+    {
+      "type": "CountingLoop",
+      "name": "Counting Loop",
+      "icon": "rotate",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["loop", "count", "for", "iterate"],
+      "brief_description": "Loop a fixed number of times",
+      "help_text": "Executes the loop body a specified number of times, providing the current iteration index.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": false, "description": "Data to process in each iteration"}
+      ],
+      "outputs": [
+        {"name": "Current", "type": "Dataset", "description": "Data with iteration index"},
+        {"name": "Index", "type": "Dataset", "description": "Current iteration (0-based)"}
+      ],
+      "parameters": [
+        {"name": "iterations", "type": "int", "default": "10", "description": "Number of iterations"}
+      ],
+      "implementation_notes": "Simpler than generic Loop Start/End pair",
+      "target_phase": "Phase 2",
+      "dependencies": [],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "IFSwitch",
+      "name": "IF Switch",
+      "icon": "code-branch",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["if", "condition", "branch", "switch"],
+      "brief_description": "Conditional branching",
+      "help_text": "Routes data to different outputs based on a condition. True branch receives data if condition is met.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Input data"},
+        {"name": "Condition", "type": "Dataset", "required": true, "description": "Boolean condition"}
+      ],
+      "outputs": [
+        {"name": "True", "type": "Dataset", "description": "Output if condition is true"},
+        {"name": "False", "type": "Dataset", "description": "Output if condition is false"}
+      ],
+      "parameters": [],
+      "implementation_notes": "Requires execution engine support for branching",
+      "target_phase": "Phase 2",
+      "dependencies": [],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "CASESwitch",
+      "name": "CASE Switch",
+      "icon": "code-branch",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["case", "switch", "multi", "branch"],
+      "brief_description": "Multi-way branching",
+      "help_text": "Routes data to one of multiple outputs based on a value. Similar to switch/case statement.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Input data"},
+        {"name": "Selector", "type": "Dataset", "required": true, "description": "Value to match"}
+      ],
+      "outputs": [
+        {"name": "Case1", "type": "Dataset", "description": "Output for case 1"},
+        {"name": "Case2", "type": "Dataset", "description": "Output for case 2"},
+        {"name": "Case3", "type": "Dataset", "description": "Output for case 3"},
+        {"name": "Default", "type": "Dataset", "description": "Output if no case matches"}
+      ],
+      "parameters": [
+        {"name": "case1_value", "type": "string", "default": "", "description": "Value for case 1"},
+        {"name": "case2_value", "type": "string", "default": "", "description": "Value for case 2"},
+        {"name": "case3_value", "type": "string", "default": "", "description": "Value for case 3"}
+      ],
+      "implementation_notes": "Extends IF Switch with multiple branches",
+      "target_phase": "Phase 3",
+      "dependencies": [],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "TryCatch",
+      "name": "Try/Catch",
+      "icon": "shield",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["try", "catch", "error", "exception"],
+      "brief_description": "Error handling wrapper",
+      "help_text": "Wraps a subgraph and catches any errors. On error, routes to the catch branch instead of failing.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Input data"}
+      ],
+      "outputs": [
+        {"name": "Success", "type": "Dataset", "description": "Output if no error"},
+        {"name": "Error", "type": "Dataset", "description": "Error information if failed"}
+      ],
+      "parameters": [
+        {"name": "error_handling", "type": "enum", "default": "catch", "description": "Error handling mode", "enum_values": ["catch", "ignore", "retry"]}
+      ],
+      "implementation_notes": "Requires exception handling in execution engine",
+      "target_phase": "Phase 3",
+      "dependencies": [],
+      "effort_estimate": "High",
+      "user_votes": 0
+    },
+    {
+      "type": "WaitNode",
+      "name": "Wait",
+      "icon": "clock",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["wait", "delay", "pause", "sleep"],
+      "brief_description": "Pause execution",
+      "help_text": "Pauses workflow execution for a specified duration. Useful for rate limiting or timing.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Pass-through data"}
+      ],
+      "outputs": [
+        {"name": "Data", "type": "Dataset", "description": "Unchanged data after wait"}
+      ],
+      "parameters": [
+        {"name": "duration_ms", "type": "int", "default": "1000", "description": "Wait duration in milliseconds"}
+      ],
+      "implementation_notes": "Simple sleep in execution thread",
+      "target_phase": "Phase 2",
+      "dependencies": [],
+      "effort_estimate": "Low",
+      "user_votes": 0
+    },
+    {
+      "type": "BreakpointNode",
+      "name": "Breakpoint",
+      "icon": "circle-pause",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["breakpoint", "debug", "pause", "inspect"],
+      "brief_description": "Debug breakpoint",
+      "help_text": "Pauses execution when reached, allowing inspection of data. Only active in debug mode.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Data to inspect"}
+      ],
+      "outputs": [
+        {"name": "Data", "type": "Dataset", "description": "Unchanged data"}
+      ],
+      "parameters": [
+        {"name": "enabled", "type": "bool", "default": "true", "description": "Enable breakpoint"},
+        {"name": "condition", "type": "string", "default": "", "description": "Conditional expression (optional)"}
+      ],
+      "implementation_notes": "Integrate with debugger UI",
+      "target_phase": "Phase 3",
+      "dependencies": [],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    }
+  ]
+}

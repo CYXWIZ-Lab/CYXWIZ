@@ -21,6 +21,7 @@ class CustomNodeEditorPanel;
 class ThemeEditorPanel;
 class CloudBrowserPanel;
 class CloudDatasetManagerPanel;
+class NodeBrowserPanel;
 struct MLNode;
 struct NodeLink;
 
@@ -128,6 +129,8 @@ class RegexTesterPanel;
 class PluginManagerPanel;
 // Data Studio panel (Phase 1 Week 1)
 class DataStudioPanel;
+// Node Info panel (Phase 2)
+class NodeInfoPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -350,6 +353,8 @@ private:
     
     // Cloud panels (DataStream)
     std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
+    std::unique_ptr<gui::NodeBrowserPanel> node_browser_panel_;
+    std::unique_ptr<cyxwiz::NodeInfoPanel> node_info_panel_;
     std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
 
     // Plugin Manager
