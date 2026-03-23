@@ -2302,7 +2302,8 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
         case NodeType::ExportCSV:
         case NodeType::ExportParquet:
-        case NodeType::ExportJSON: {
+        case NodeType::ExportJSON:
+        case NodeType::ExportExcel: {
             // Export nodes - save dataset to file
             NodePin input_pin;
             input_pin.id = next_pin_id_++;
@@ -2316,6 +2317,1329 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
                 node.parameters["delimiter"] = ",";
                 node.parameters["header"] = "true";
             }
+            break;
+        }
+
+        // ========== KNIME-Style Table Manipulation Nodes ==========
+
+        case NodeType::TableSplitter: {
+            // Table Splitter - 1 input, 2 outputs (Top, Bottom)
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Table";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin top_output;
+            top_output.id = next_pin_id_++;
+            top_output.type = PinType::Dataset;
+            top_output.name = "Top";
+            top_output.is_input = false;
+            node.outputs.push_back(top_output);
+
+            NodePin bottom_output;
+            bottom_output.id = next_pin_id_++;
+            bottom_output.type = PinType::Dataset;
+            bottom_output.name = "Bottom";
+            bottom_output.is_input = false;
+            node.outputs.push_back(bottom_output);
+
+            node.parameters["split_row"] = "0";
+            break;
+        }
+
+        case NodeType::CellExtractor: {
+            // Cell Extractor - 1 input, 2 outputs (Value, Table passthrough)
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Table";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin value_output;
+            value_output.id = next_pin_id_++;
+            value_output.type = PinType::Tensor;
+            value_output.name = "Value";
+            value_output.is_input = false;
+            node.outputs.push_back(value_output);
+
+            NodePin table_output;
+            table_output.id = next_pin_id_++;
+            table_output.type = PinType::Dataset;
+            table_output.name = "Table";
+            table_output.is_input = false;
+            node.outputs.push_back(table_output);
+
+            node.parameters["row"] = "0";
+            node.parameters["column"] = "";
+            break;
+        }
+
+        case NodeType::CellUpdater: {
+            // Cell Updater - 2 inputs (Table, Value), 1 output
+            NodePin table_input;
+            table_input.id = next_pin_id_++;
+            table_input.type = PinType::Dataset;
+            table_input.name = "Table";
+            table_input.is_input = true;
+            node.inputs.push_back(table_input);
+
+            NodePin value_input;
+            value_input.id = next_pin_id_++;
+            value_input.type = PinType::Tensor;
+            value_input.name = "Value";
+            value_input.is_input = true;
+            node.inputs.push_back(value_input);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Table";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["row"] = "0";
+            node.parameters["column"] = "";
+            break;
+        }
+
+        case NodeType::RowAppender: {
+            // Row Appender (Concatenate) - 2 inputs (Top, Bottom), 1 output
+            NodePin top_input;
+            top_input.id = next_pin_id_++;
+            top_input.type = PinType::Dataset;
+            top_input.name = "Top";
+            top_input.is_input = true;
+            node.inputs.push_back(top_input);
+
+            NodePin bottom_input;
+            bottom_input.id = next_pin_id_++;
+            bottom_input.type = PinType::Dataset;
+            bottom_input.name = "Bottom";
+            bottom_input.is_input = true;
+            node.inputs.push_back(bottom_input);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Table";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["match_columns"] = "true";
+            break;
+        }
+
+        case NodeType::ColumnAppender: {
+            // Column Appender - 2 inputs (Left, Right), 1 output
+            NodePin left_input;
+            left_input.id = next_pin_id_++;
+            left_input.type = PinType::Dataset;
+            left_input.name = "Left";
+            left_input.is_input = true;
+            node.inputs.push_back(left_input);
+
+            NodePin right_input;
+            right_input.id = next_pin_id_++;
+            right_input.type = PinType::Dataset;
+            right_input.name = "Right";
+            right_input.is_input = true;
+            node.inputs.push_back(right_input);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Table";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["suffix"] = "_right";
+            break;
+        }
+
+        case NodeType::RowToColumnNames:
+        case NodeType::TableCropper:
+        case NodeType::Unpivot:
+        case NodeType::StringManipulation:
+        case NodeType::MathFormula:
+        case NodeType::RuleEngine: {
+            // Single input Dataset, single output Dataset
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Table";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Table";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+            break;
+        }
+
+        
+        // ===== Phase 4: Machine Learning Algorithm Nodes =====
+
+        // Clustering nodes
+        case NodeType::KMeansCluster: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Clustered";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["n_clusters"] = "8";
+            node.parameters["max_iter"] = "300";
+            node.parameters["random_state"] = "42";
+            break;
+        }
+
+        case NodeType::DBSCANCluster: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Clustered";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["eps"] = "0.5";
+            node.parameters["min_samples"] = "5";
+            break;
+        }
+
+        case NodeType::HierarchicalCluster: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Clustered";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["n_clusters"] = "3";
+            node.parameters["linkage"] = "ward";
+            break;
+        }
+
+        case NodeType::GMMCluster: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Clustered";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["n_components"] = "3";
+            node.parameters["covariance_type"] = "full";
+            break;
+        }
+
+        // Dimensionality Reduction nodes
+        case NodeType::PCANode: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Transformed";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["n_components"] = "2";
+            node.parameters["whiten"] = "false";
+            break;
+        }
+
+        case NodeType::TSNENode: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Embedded";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["n_components"] = "2";
+            node.parameters["perplexity"] = "30";
+            node.parameters["learning_rate"] = "200";
+            break;
+        }
+
+        case NodeType::UMAPNode: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Embedded";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["n_components"] = "2";
+            node.parameters["n_neighbors"] = "15";
+            node.parameters["min_dist"] = "0.1";
+            break;
+        }
+
+        // Classification nodes
+        case NodeType::DecisionTreeClassifier: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Labels;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["max_depth"] = "10";
+            node.parameters["min_samples_split"] = "2";
+            node.parameters["criterion"] = "gini";
+            break;
+        }
+
+        case NodeType::RandomForestClassifier: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Labels;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["n_estimators"] = "100";
+            node.parameters["max_depth"] = "10";
+            node.parameters["min_samples_split"] = "2";
+            break;
+        }
+
+        case NodeType::GradientBoostingClassifier: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Labels;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["n_estimators"] = "100";
+            node.parameters["learning_rate"] = "0.1";
+            node.parameters["max_depth"] = "3";
+            break;
+        }
+
+        case NodeType::SVMClassifier: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Labels;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["kernel"] = "rbf";
+            node.parameters["C"] = "1.0";
+            node.parameters["gamma"] = "scale";
+            break;
+        }
+
+        case NodeType::KNNClassifier: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Labels;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["n_neighbors"] = "5";
+            node.parameters["weights"] = "uniform";
+            node.parameters["metric"] = "euclidean";
+            break;
+        }
+
+        case NodeType::NaiveBayesClassifier: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Labels;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["var_smoothing"] = "1e-9";
+            break;
+        }
+
+        case NodeType::LogisticRegressionNode: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Labels;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["C"] = "1.0";
+            node.parameters["solver"] = "lbfgs";
+            node.parameters["max_iter"] = "100";
+            break;
+        }
+
+        // Regression nodes
+        case NodeType::LinearRegressionNode: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin target_in;
+            target_in.id = next_pin_id_++;
+            target_in.type = PinType::Tensor;
+            target_in.name = "Target";
+            target_in.is_input = true;
+            node.inputs.push_back(target_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Tensor;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["fit_intercept"] = "true";
+            break;
+        }
+
+        case NodeType::PolynomialRegressionNode: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin target_in;
+            target_in.id = next_pin_id_++;
+            target_in.type = PinType::Tensor;
+            target_in.name = "Target";
+            target_in.is_input = true;
+            node.inputs.push_back(target_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Tensor;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["degree"] = "2";
+            node.parameters["fit_intercept"] = "true";
+            break;
+        }
+
+        case NodeType::SVMRegressor: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Train Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin target_in;
+            target_in.id = next_pin_id_++;
+            target_in.type = PinType::Tensor;
+            target_in.name = "Target";
+            target_in.is_input = true;
+            node.inputs.push_back(target_in);
+
+            NodePin model_out;
+            model_out.id = next_pin_id_++;
+            model_out.type = PinType::Parameters;
+            model_out.name = "Model";
+            model_out.is_input = false;
+            node.outputs.push_back(model_out);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Tensor;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["kernel"] = "rbf";
+            node.parameters["C"] = "1.0";
+            node.parameters["epsilon"] = "0.1";
+            break;
+        }
+
+        // ===== Phase 4: Model Evaluation Nodes =====
+        case NodeType::ConfusionMatrixNode: {
+            NodePin pred_in;
+            pred_in.id = next_pin_id_++;
+            pred_in.type = PinType::Labels;
+            pred_in.name = "Predictions";
+            pred_in.is_input = true;
+            node.inputs.push_back(pred_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "True Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin matrix_out;
+            matrix_out.id = next_pin_id_++;
+            matrix_out.type = PinType::Dataset;
+            matrix_out.name = "Matrix";
+            matrix_out.is_input = false;
+            node.outputs.push_back(matrix_out);
+
+            node.parameters["normalize"] = "false";
+            break;
+        }
+
+        case NodeType::ROCCurveNode: {
+            NodePin proba_in;
+            proba_in.id = next_pin_id_++;
+            proba_in.type = PinType::Tensor;
+            proba_in.name = "Probabilities";
+            proba_in.is_input = true;
+            node.inputs.push_back(proba_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "True Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin curve_out;
+            curve_out.id = next_pin_id_++;
+            curve_out.type = PinType::Dataset;
+            curve_out.name = "ROC Data";
+            curve_out.is_input = false;
+            node.outputs.push_back(curve_out);
+
+            NodePin auc_out;
+            auc_out.id = next_pin_id_++;
+            auc_out.type = PinType::Tensor;
+            auc_out.name = "AUC";
+            auc_out.is_input = false;
+            node.outputs.push_back(auc_out);
+            break;
+        }
+
+        case NodeType::PRCurveNode: {
+            NodePin proba_in;
+            proba_in.id = next_pin_id_++;
+            proba_in.type = PinType::Tensor;
+            proba_in.name = "Probabilities";
+            proba_in.is_input = true;
+            node.inputs.push_back(proba_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "True Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin curve_out;
+            curve_out.id = next_pin_id_++;
+            curve_out.type = PinType::Dataset;
+            curve_out.name = "PR Data";
+            curve_out.is_input = false;
+            node.outputs.push_back(curve_out);
+            break;
+        }
+
+        case NodeType::LearningCurvesNode: {
+            NodePin model_in;
+            model_in.id = next_pin_id_++;
+            model_in.type = PinType::Parameters;
+            model_in.name = "Model";
+            model_in.is_input = true;
+            node.inputs.push_back(model_in);
+
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin curves_out;
+            curves_out.id = next_pin_id_++;
+            curves_out.type = PinType::Dataset;
+            curves_out.name = "Curves";
+            curves_out.is_input = false;
+            node.outputs.push_back(curves_out);
+
+            node.parameters["cv"] = "5";
+            node.parameters["train_sizes"] = "0.1,0.3,0.5,0.7,0.9";
+            break;
+        }
+
+        case NodeType::FeatureImportanceNode: {
+            NodePin model_in;
+            model_in.id = next_pin_id_++;
+            model_in.type = PinType::Parameters;
+            model_in.name = "Model";
+            model_in.is_input = true;
+            node.inputs.push_back(model_in);
+
+            NodePin importance_out;
+            importance_out.id = next_pin_id_++;
+            importance_out.type = PinType::Dataset;
+            importance_out.name = "Importance";
+            importance_out.is_input = false;
+            node.outputs.push_back(importance_out);
+
+            node.parameters["method"] = "builtin";
+            break;
+        }
+
+        case NodeType::CrossValidationNode: {
+            NodePin model_in;
+            model_in.id = next_pin_id_++;
+            model_in.type = PinType::Parameters;
+            model_in.name = "Model";
+            model_in.is_input = true;
+            node.inputs.push_back(model_in);
+
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin scores_out;
+            scores_out.id = next_pin_id_++;
+            scores_out.type = PinType::Dataset;
+            scores_out.name = "Scores";
+            scores_out.is_input = false;
+            node.outputs.push_back(scores_out);
+
+            node.parameters["cv"] = "5";
+            node.parameters["scoring"] = "accuracy";
+            break;
+        }
+
+        // ===== Phase 4: Data Preprocessing Nodes =====
+        case NodeType::StandardScaler: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Scaled";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["with_mean"] = "true";
+            node.parameters["with_std"] = "true";
+            break;
+        }
+
+        case NodeType::MinMaxScaler: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Scaled";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["min"] = "0";
+            node.parameters["max"] = "1";
+            break;
+        }
+
+        case NodeType::RobustScaler: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Scaled";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["with_centering"] = "true";
+            node.parameters["with_scaling"] = "true";
+            node.parameters["quantile_min"] = "25";
+            node.parameters["quantile_max"] = "75";
+            break;
+        }
+
+        case NodeType::LabelEncoder: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Encoded";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["column"] = "";
+            break;
+        }
+
+        case NodeType::OrdinalEncoder: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Encoded";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["columns"] = "";
+            node.parameters["categories"] = "auto";
+            break;
+        }
+
+        case NodeType::TargetEncoder: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin target_in;
+            target_in.id = next_pin_id_++;
+            target_in.type = PinType::Tensor;
+            target_in.name = "Target";
+            target_in.is_input = true;
+            node.inputs.push_back(target_in);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Encoded";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["columns"] = "";
+            node.parameters["smoothing"] = "1.0";
+            break;
+        }
+
+        case NodeType::TrainTestSplit: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
+
+            NodePin train_data;
+            train_data.id = next_pin_id_++;
+            train_data.type = PinType::Dataset;
+            train_data.name = "Train Data";
+            train_data.is_input = false;
+            node.outputs.push_back(train_data);
+
+            NodePin test_data;
+            test_data.id = next_pin_id_++;
+            test_data.type = PinType::Dataset;
+            test_data.name = "Test Data";
+            test_data.is_input = false;
+            node.outputs.push_back(test_data);
+
+            NodePin train_labels;
+            train_labels.id = next_pin_id_++;
+            train_labels.type = PinType::Labels;
+            train_labels.name = "Train Labels";
+            train_labels.is_input = false;
+            node.outputs.push_back(train_labels);
+
+            NodePin test_labels;
+            test_labels.id = next_pin_id_++;
+            test_labels.type = PinType::Labels;
+            test_labels.name = "Test Labels";
+            test_labels.is_input = false;
+            node.outputs.push_back(test_labels);
+
+            node.parameters["test_size"] = "0.2";
+            node.parameters["stratify"] = "true";
+            node.parameters["random_state"] = "42";
+            break;
+        }
+
+        // ===== Phase 4: Signal Processing Nodes =====
+        case NodeType::FFTNode: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Signal";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Spectrum";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["n_fft"] = "auto";
+            break;
+        }
+
+        case NodeType::IFFTNode: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Spectrum";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Signal";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+            break;
+        }
+
+        case NodeType::FilterDesigner: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Signal";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Filtered";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["filter_type"] = "lowpass";
+            node.parameters["cutoff"] = "0.5";
+            node.parameters["order"] = "5";
+            break;
+        }
+
+        case NodeType::Convolution1D: {
+            NodePin signal_in;
+            signal_in.id = next_pin_id_++;
+            signal_in.type = PinType::Tensor;
+            signal_in.name = "Signal";
+            signal_in.is_input = true;
+            node.inputs.push_back(signal_in);
+
+            NodePin kernel_in;
+            kernel_in.id = next_pin_id_++;
+            kernel_in.type = PinType::Tensor;
+            kernel_in.name = "Kernel";
+            kernel_in.is_input = true;
+            node.inputs.push_back(kernel_in);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Convolved";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["mode"] = "same";
+            break;
+        }
+
+        case NodeType::WaveletTransform: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Signal";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin approx_out;
+            approx_out.id = next_pin_id_++;
+            approx_out.type = PinType::Tensor;
+            approx_out.name = "Approximation";
+            approx_out.is_input = false;
+            node.outputs.push_back(approx_out);
+
+            NodePin detail_out;
+            detail_out.id = next_pin_id_++;
+            detail_out.type = PinType::Tensor;
+            detail_out.name = "Detail";
+            detail_out.is_input = false;
+            node.outputs.push_back(detail_out);
+
+            node.parameters["wavelet"] = "db4";
+            node.parameters["level"] = "1";
+            break;
+        }
+
+        // ===== Phase 4: Text Analytics Nodes =====
+        case NodeType::TFIDFVectorizer: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Text";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Vectors";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["max_features"] = "1000";
+            node.parameters["ngram_range"] = "1,1";
+            node.parameters["min_df"] = "1";
+            break;
+        }
+
+        case NodeType::CountVectorizer: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Text";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Vectors";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["max_features"] = "1000";
+            node.parameters["ngram_range"] = "1,1";
+            break;
+        }
+
+        case NodeType::WordEmbeddings: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Text";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Embeddings";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["model"] = "word2vec";
+            node.parameters["dim"] = "100";
+            node.parameters["window"] = "5";
+            break;
+        }
+
+        case NodeType::SentimentAnalyzer: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Text";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Sentiment";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["model"] = "vader";
+            break;
+        }
+
+        case NodeType::NamedEntityRecognizer: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Text";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Entities";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["model"] = "spacy";
+            break;
+        }
+
+        // ===== Phase 4: Utility Nodes =====
+        case NodeType::CalculatorNode: {
+            NodePin input_a;
+            input_a.id = next_pin_id_++;
+            input_a.type = PinType::Tensor;
+            input_a.name = "A";
+            input_a.is_input = true;
+            node.inputs.push_back(input_a);
+
+            NodePin input_b;
+            input_b.id = next_pin_id_++;
+            input_b.type = PinType::Tensor;
+            input_b.name = "B";
+            input_b.is_input = true;
+            input_b.is_required = false;
+            node.inputs.push_back(input_b);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Result";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["expression"] = "A + B";
+            break;
+        }
+
+        case NodeType::UnitConverter: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Value";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Converted";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["from_unit"] = "meters";
+            node.parameters["to_unit"] = "feet";
+            break;
+        }
+
+        case NodeType::RegexTester: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Text";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin matches_out;
+            matches_out.id = next_pin_id_++;
+            matches_out.type = PinType::Dataset;
+            matches_out.name = "Matches";
+            matches_out.is_input = false;
+            node.outputs.push_back(matches_out);
+
+            node.parameters["pattern"] = "";
+            node.parameters["flags"] = "";
+            break;
+        }
+
+        case NodeType::JSONPathExtractor: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "JSON";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Extracted";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["path"] = "$.data";
+            break;
+        }
+
+        case NodeType::DataProfiler: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin report_out;
+            report_out.id = next_pin_id_++;
+            report_out.type = PinType::Dataset;
+            report_out.name = "Profile";
+            report_out.is_input = false;
+            node.outputs.push_back(report_out);
+
+            node.parameters["include_correlations"] = "true";
+            node.parameters["include_histograms"] = "true";
             break;
         }
 

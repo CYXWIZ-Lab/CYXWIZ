@@ -272,6 +272,20 @@ enum class NodeType {
     ExportParquet,      // Export dataset to Parquet
     ExportSQL,          // Write dataset to SQL database
     ExportJSON,         // Export dataset to JSON
+    ExportExcel,        // Export dataset to Excel (.xlsx)
+
+    // ===== KNIME-Style Table Manipulation Nodes =====
+    RowToColumnNames,   // Promote a row to column headers
+    TableSplitter,      // Split table at specified row
+    CellExtractor,      // Extract value from specific cell
+    CellUpdater,        // Update value in specific cell
+    TableCropper,       // Crop table to specified dimensions
+    ColumnAppender,     // Append columns from multiple tables
+    RowAppender,        // Append rows from multiple tables (alias for UnionTables)
+    Unpivot,            // Unpivot wide to long format
+    StringManipulation, // String operations (replace, trim, upper, lower)
+    MathFormula,        // Apply math formula to columns
+    RuleEngine,         // Apply if-then-else rules to create/modify columns
 
     // ===== Machine Learning Algorithms (Phase 4 - Tool-to-Node Migration) =====
     // Clustering

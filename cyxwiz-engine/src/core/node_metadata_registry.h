@@ -170,6 +170,9 @@ private:
     // Initialize export nodes
     void InitializeExportNodes();
 
+    // Initialize KNIME-style table manipulation nodes
+    void InitializeKNIMENodes();
+
     // Initialize utility nodes
     void InitializeUtilityNodes();
 

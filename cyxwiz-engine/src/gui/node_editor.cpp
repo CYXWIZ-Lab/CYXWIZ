@@ -16,7 +16,9 @@
 #include "../core/rl_script_generator.h"
 #include "../scripting/scripting_engine.h"
 #include "../plugin/registries/plugin_node_registry.h"
+#include "../core/node_metadata_registry.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -70,209 +72,158 @@ NodeEditor::NodeEditor()
     // Initialize shape inference engine
     shape_inference_ = std::make_unique<ShapeInferenceEngine>();
 
-    // Create a Linear Attention Transformer showcase model
-    // This demonstrates the O(n) Linear Attention node for efficient sequence processing
-    // Architecture: Embedding -> PositionalEncoding -> LinearAttention -> LayerNorm -> FFN -> Output
+    // Create a KNIME-style Data Processing Pipeline showcase (based on example3.png)
+    // Task: Clean non-standard Excel spreadsheet with misplaced data
+    // This demonstrates: Table Splitter with 2 outputs, split/merge pattern, data cleaning
+    //
+    // Flow: Excel Reader -> Row to Column Names -> Table Splitter (2 outputs)
+    //       Top branch: Cell Extractor -> Cell Updater -> Row Filter -+
+    //       Bottom branch: ------------------------------------------>+ Row Appender
+    //       Then: Table Cropper -> Column Filter -> Row Aggregator -> Column Renamer -> Column Appender -> Excel Writer
 
-    // ========== INPUT PIPELINE (Left side) ==========
+    // ========== SECTION 1: READ & PREPARE HEADERS ==========
 
-    // 1. Dataset Input - Sequence data (e.g., text tokens)
-    MLNode dataset_input = CreateNode(NodeType::DatasetInput, "Sequence Data");
-    dataset_input.parameters["dataset_name"] = "";
-    dataset_input.parameters["split"] = "train";
-    nodes_.push_back(dataset_input);
-    ImNodes::SetNodeGridSpacePos(dataset_input.id, ImVec2(50.0f, 200.0f));
+    // 1. Excel Reader - Load non-standard format spreadsheet
+    MLNode excel_reader = CreateNode(NodeType::ExcelFile, "Excel Reader");
+    excel_reader.parameters["file_path"] = "athlete_bio.xlsx";
+    excel_reader.parameters["sheet"] = "Sheet1";
+    nodes_.push_back(excel_reader);
+    ImNodes::SetNodeGridSpacePos(excel_reader.id, ImVec2(50.0f, 250.0f));
 
-    // 2. Embedding - Convert token IDs to vectors
-    MLNode embedding = CreateNode(NodeType::Embedding, "Token Embedding");
-    embedding.parameters["num_embeddings"] = "30000";  // Vocabulary size
-    embedding.parameters["embedding_dim"] = "512";
-    nodes_.push_back(embedding);
-    ImNodes::SetNodeGridSpacePos(embedding.id, ImVec2(250.0f, 200.0f));
+    // 2. Row to Column Names - Promote row to column headers
+    MLNode row_to_cols = CreateNode(NodeType::RowToColumnNames, "Row to Column Names");
+    row_to_cols.parameters["row_index"] = "1";
+    nodes_.push_back(row_to_cols);
+    ImNodes::SetNodeGridSpacePos(row_to_cols.id, ImVec2(250.0f, 250.0f));
 
-    // 3. Positional Encoding - Add position information
-    MLNode pos_enc = CreateNode(NodeType::PositionalEncoding, "Positional Encoding");
-    pos_enc.parameters["max_seq_len"] = "512";
-    pos_enc.parameters["embed_dim"] = "512";
-    nodes_.push_back(pos_enc);
-    ImNodes::SetNodeGridSpacePos(pos_enc.id, ImVec2(450.0f, 200.0f));
+    // ========== SECTION 2: SPLIT TABLE (2 OUTPUTS) ==========
 
-    // ========== LINEAR ATTENTION BLOCK (Center - Purple) ==========
+    // 3. Table Splitter - Split at separator row (HAS 2 OUTPUTS: Top & Bottom)
+    MLNode table_splitter = CreateNode(NodeType::TableSplitter, "Table Splitter");
+    table_splitter.parameters["split_row"] = "5";
+    nodes_.push_back(table_splitter);
+    ImNodes::SetNodeGridSpacePos(table_splitter.id, ImVec2(450.0f, 250.0f));
 
-    // 4. Linear Attention - O(n) efficient attention (MAIN SHOWCASE)
-    MLNode linear_attn = CreateNode(NodeType::LinearAttention, "Linear Attention");
-    linear_attn.parameters["embed_dim"] = "512";
-    linear_attn.parameters["num_heads"] = "8";
-    linear_attn.parameters["feature_map"] = "elu";  // ELU feature map (Performer-style)
-    linear_attn.parameters["eps"] = "1e-6";
-    nodes_.push_back(linear_attn);
-    ImNodes::SetNodeGridSpacePos(linear_attn.id, ImVec2(700.0f, 200.0f));
+    // ========== TOP BRANCH: Fix misplaced cell ==========
 
-    // 5. Add (Residual Connection) - Skip connection around attention
-    MLNode residual1 = CreateNode(NodeType::Add, "Residual Add");
-    nodes_.push_back(residual1);
-    ImNodes::SetNodeGridSpacePos(residual1.id, ImVec2(950.0f, 200.0f));
+    // 4. Cell Extractor - Extract date from misplaced cell (from TOP output)
+    MLNode cell_extractor = CreateNode(NodeType::CellExtractor, "Cell Extractor");
+    cell_extractor.parameters["row"] = "0";
+    cell_extractor.parameters["column"] = "date";
+    nodes_.push_back(cell_extractor);
+    ImNodes::SetNodeGridSpacePos(cell_extractor.id, ImVec2(650.0f, 100.0f));
 
-    // 6. Layer Normalization after attention
-    MLNode layer_norm1 = CreateNode(NodeType::LayerNorm, "LayerNorm");
-    layer_norm1.parameters["normalized_shape"] = "512";
-    layer_norm1.parameters["eps"] = "1e-5";
-    nodes_.push_back(layer_norm1);
-    ImNodes::SetNodeGridSpacePos(layer_norm1.id, ImVec2(1150.0f, 200.0f));
+    // 5. Cell Updater - Place extracted value in correct location
+    MLNode cell_updater = CreateNode(NodeType::CellUpdater, "Cell Updater");
+    cell_updater.parameters["row"] = "1";
+    cell_updater.parameters["column"] = "birth_date";
+    nodes_.push_back(cell_updater);
+    ImNodes::SetNodeGridSpacePos(cell_updater.id, ImVec2(850.0f, 100.0f));
 
-    // ========== FEED-FORWARD NETWORK ==========
+    // 6. Row Filter - Remove the now-empty row
+    MLNode row_filter = CreateNode(NodeType::FilterRows, "Row Filter");
+    row_filter.parameters["condition"] = "RowID != 'Row0'";
+    nodes_.push_back(row_filter);
+    ImNodes::SetNodeGridSpacePos(row_filter.id, ImVec2(1050.0f, 100.0f));
 
-    // 7. Dense (FFN expand) - 4x expansion
-    MLNode ffn1 = CreateNode(NodeType::Dense, "FFN Expand (2048)");
-    ffn1.parameters["units"] = "2048";
-    nodes_.push_back(ffn1);
-    ImNodes::SetNodeGridSpacePos(ffn1.id, ImVec2(1350.0f, 100.0f));
+    // ========== MERGE BRANCHES ==========
 
-    // 8. GELU Activation
-    MLNode gelu = CreateNode(NodeType::GELU, "GELU");
-    nodes_.push_back(gelu);
-    ImNodes::SetNodeGridSpacePos(gelu.id, ImVec2(1550.0f, 100.0f));
+    // 7. Row Appender (Concatenate) - Merge top and bottom branches
+    MLNode row_appender = CreateNode(NodeType::RowAppender, "Concatenate");
+    row_appender.parameters["match_columns"] = "true";
+    nodes_.push_back(row_appender);
+    ImNodes::SetNodeGridSpacePos(row_appender.id, ImVec2(1250.0f, 250.0f));
 
-    // 9. Dense (FFN contract) - Back to 512
-    MLNode ffn2 = CreateNode(NodeType::Dense, "FFN Contract (512)");
-    ffn2.parameters["units"] = "512";
-    nodes_.push_back(ffn2);
-    ImNodes::SetNodeGridSpacePos(ffn2.id, ImVec2(1750.0f, 100.0f));
+    // ========== SECTION 3: CLEAN & SHAPE DATA ==========
 
-    // 10. Dropout
-    MLNode dropout = CreateNode(NodeType::Dropout, "Dropout");
-    dropout.parameters["rate"] = "0.1";
-    nodes_.push_back(dropout);
-    ImNodes::SetNodeGridSpacePos(dropout.id, ImVec2(1350.0f, 300.0f));
+    // 8. Table Cropper - Crop to desired dimensions
+    MLNode table_cropper = CreateNode(NodeType::TableCropper, "Table Cropper");
+    table_cropper.parameters["start_row"] = "0";
+    table_cropper.parameters["end_row"] = "-1";
+    nodes_.push_back(table_cropper);
+    ImNodes::SetNodeGridSpacePos(table_cropper.id, ImVec2(1450.0f, 250.0f));
 
-    // 11. Add (Residual Connection) - Skip connection around FFN
-    MLNode residual2 = CreateNode(NodeType::Add, "Residual Add");
-    nodes_.push_back(residual2);
-    ImNodes::SetNodeGridSpacePos(residual2.id, ImVec2(1550.0f, 300.0f));
+    // 9. Column Filter - Remove unnecessary columns
+    MLNode col_filter = CreateNode(NodeType::SelectColumns, "Column Filter");
+    col_filter.parameters["columns"] = "name, gender, birth_date, country";
+    nodes_.push_back(col_filter);
+    ImNodes::SetNodeGridSpacePos(col_filter.id, ImVec2(1650.0f, 250.0f));
 
-    // 12. Layer Normalization after FFN
-    MLNode layer_norm2 = CreateNode(NodeType::LayerNorm, "LayerNorm");
-    layer_norm2.parameters["normalized_shape"] = "512";
-    nodes_.push_back(layer_norm2);
-    ImNodes::SetNodeGridSpacePos(layer_norm2.id, ImVec2(1750.0f, 300.0f));
+    // ========== SECTION 4: AGGREGATE & EXPORT ==========
 
-    // ========== OUTPUT HEAD ==========
+    // 10. Row Aggregator - Count by gender
+    MLNode row_aggregator = CreateNode(NodeType::GroupByAggregate, "Row Aggregator");
+    row_aggregator.parameters["group_by"] = "gender";
+    row_aggregator.parameters["aggregations"] = "count(*) as count";
+    nodes_.push_back(row_aggregator);
+    ImNodes::SetNodeGridSpacePos(row_aggregator.id, ImVec2(1850.0f, 250.0f));
 
-    // 13. Output Dense - Classification head
-    MLNode output_dense = CreateNode(NodeType::Dense, "Output Dense");
-    output_dense.parameters["units"] = "10";  // 10 classes
-    nodes_.push_back(output_dense);
-    ImNodes::SetNodeGridSpacePos(output_dense.id, ImVec2(1950.0f, 200.0f));
+    // 11. Column Renamer - Clean up names
+    MLNode col_renamer = CreateNode(NodeType::RenameColumns, "Column Renamer");
+    col_renamer.parameters["mappings"] = "count:Total";
+    nodes_.push_back(col_renamer);
+    ImNodes::SetNodeGridSpacePos(col_renamer.id, ImVec2(2050.0f, 250.0f));
 
-    // 14. Softmax
-    MLNode softmax = CreateNode(NodeType::Softmax, "Softmax");
-    nodes_.push_back(softmax);
-    ImNodes::SetNodeGridSpacePos(softmax.id, ImVec2(2150.0f, 200.0f));
+    // 12. Column Appender - Append statistics
+    MLNode col_appender = CreateNode(NodeType::ColumnAppender, "Column Appender");
+    col_appender.parameters["suffix"] = "_stats";
+    nodes_.push_back(col_appender);
+    ImNodes::SetNodeGridSpacePos(col_appender.id, ImVec2(2250.0f, 250.0f));
 
-    // 15. Output
-    MLNode output = CreateNode(NodeType::Output, "Output");
-    output.parameters["classes"] = "10";
-    nodes_.push_back(output);
-    ImNodes::SetNodeGridSpacePos(output.id, ImVec2(2350.0f, 200.0f));
-
-    // ========== LOSS & OPTIMIZER ==========
-
-    // 16. One-Hot Encode labels
-    MLNode onehot = CreateNode(NodeType::OneHotEncode, "One-Hot Labels");
-    onehot.parameters["num_classes"] = "10";
-    nodes_.push_back(onehot);
-    ImNodes::SetNodeGridSpacePos(onehot.id, ImVec2(2150.0f, 450.0f));
-
-    // 17. Cross Entropy Loss
-    MLNode loss = CreateNode(NodeType::CrossEntropyLoss, "CrossEntropy Loss");
-    nodes_.push_back(loss);
-    ImNodes::SetNodeGridSpacePos(loss.id, ImVec2(2350.0f, 350.0f));
-
-    // 18. AdamW Optimizer (commonly used for transformers)
-    MLNode optimizer = CreateNode(NodeType::AdamW, "AdamW Optimizer");
-    optimizer.parameters["learning_rate"] = "1e-4";
-    optimizer.parameters["weight_decay"] = "0.01";
-    nodes_.push_back(optimizer);
-    ImNodes::SetNodeGridSpacePos(optimizer.id, ImVec2(2550.0f, 350.0f));
+    // 13. Excel Writer - Export to new sheet
+    MLNode excel_writer = CreateNode(NodeType::ExportExcel, "Excel Writer");
+    excel_writer.parameters["file_path"] = "athlete_bio_cleaned.xlsx";
+    excel_writer.parameters["sheet_name"] = "Summary";
+    nodes_.push_back(excel_writer);
+    ImNodes::SetNodeGridSpacePos(excel_writer.id, ImVec2(2450.0f, 250.0f));
 
     // ========== CREATE CONNECTIONS ==========
 
-    // Input flow: DatasetInput -> Embedding -> PositionalEncoding
-    CreateLink(dataset_input.outputs[0].id, embedding.inputs[0].id,
-               dataset_input.id, embedding.id);
+    // Initial flow: Excel Reader -> Row to Column Names -> Table Splitter
+    CreateLink(excel_reader.outputs[0].id, row_to_cols.inputs[0].id,
+               excel_reader.id, row_to_cols.id);
+    CreateLink(row_to_cols.outputs[0].id, table_splitter.inputs[0].id,
+               row_to_cols.id, table_splitter.id);
 
-    CreateLink(embedding.outputs[0].id, pos_enc.inputs[0].id,
-               embedding.id, pos_enc.id);
+    // TOP BRANCH: Table Splitter (Top) -> Cell Extractor -> Cell Updater -> Row Filter
+    CreateLink(table_splitter.outputs[0].id, cell_extractor.inputs[0].id,
+               table_splitter.id, cell_extractor.id);
+    // Cell Extractor: outputs[0]=Value, outputs[1]=Table
+    // Cell Updater: inputs[0]=Table, inputs[1]=Value
+    CreateLink(cell_extractor.outputs[0].id, cell_updater.inputs[1].id,  // Value -> Value
+               cell_extractor.id, cell_updater.id);
+    CreateLink(cell_extractor.outputs[1].id, cell_updater.inputs[0].id,  // Table -> Table
+               cell_extractor.id, cell_updater.id);
+    CreateLink(cell_updater.outputs[0].id, row_filter.inputs[0].id,
+               cell_updater.id, row_filter.id);
 
-    // Linear Attention: Q, K, V all come from positional encoding output
-    // (Self-attention pattern)
-    CreateLink(pos_enc.outputs[0].id, linear_attn.inputs[0].id,
-               pos_enc.id, linear_attn.id);  // Query
-    CreateLink(pos_enc.outputs[0].id, linear_attn.inputs[1].id,
-               pos_enc.id, linear_attn.id);  // Key
-    CreateLink(pos_enc.outputs[0].id, linear_attn.inputs[2].id,
-               pos_enc.id, linear_attn.id);  // Value
+    // MERGE: Row Filter -> Row Appender (Top input)
+    CreateLink(row_filter.outputs[0].id, row_appender.inputs[0].id,
+               row_filter.id, row_appender.id);
 
-    // Residual connection: Attention output + Position encoding -> Add
-    CreateLink(linear_attn.outputs[0].id, residual1.inputs[0].id,
-               linear_attn.id, residual1.id);
-    CreateLink(pos_enc.outputs[0].id, residual1.inputs[1].id,
-               pos_enc.id, residual1.id);
+    // BOTTOM BRANCH: Table Splitter (Bottom) -> Row Appender (Bottom input)
+    CreateLink(table_splitter.outputs[1].id, row_appender.inputs[1].id,
+               table_splitter.id, row_appender.id);
 
-    // LayerNorm after residual
-    CreateLink(residual1.outputs[0].id, layer_norm1.inputs[0].id,
-               residual1.id, layer_norm1.id);
+    // Continue: Row Appender -> Table Cropper -> Column Filter -> Row Aggregator
+    CreateLink(row_appender.outputs[0].id, table_cropper.inputs[0].id,
+               row_appender.id, table_cropper.id);
+    CreateLink(table_cropper.outputs[0].id, col_filter.inputs[0].id,
+               table_cropper.id, col_filter.id);
+    CreateLink(col_filter.outputs[0].id, row_aggregator.inputs[0].id,
+               col_filter.id, row_aggregator.id);
 
-    // Feed-Forward Network
-    CreateLink(layer_norm1.outputs[0].id, ffn1.inputs[0].id,
-               layer_norm1.id, ffn1.id);
+    // Final: Row Aggregator -> Column Renamer -> Column Appender -> Excel Writer
+    CreateLink(row_aggregator.outputs[0].id, col_renamer.inputs[0].id,
+               row_aggregator.id, col_renamer.id);
+    CreateLink(col_renamer.outputs[0].id, col_appender.inputs[0].id,
+               col_renamer.id, col_appender.id);
+    CreateLink(col_appender.outputs[0].id, excel_writer.inputs[0].id,
+               col_appender.id, excel_writer.id);
 
-    CreateLink(ffn1.outputs[0].id, gelu.inputs[0].id,
-               ffn1.id, gelu.id);
-
-    CreateLink(gelu.outputs[0].id, ffn2.inputs[0].id,
-               gelu.id, ffn2.id);
-
-    CreateLink(ffn2.outputs[0].id, dropout.inputs[0].id,
-               ffn2.id, dropout.id);
-
-    // Second residual: Dropout output + LayerNorm1 output -> Add
-    CreateLink(dropout.outputs[0].id, residual2.inputs[0].id,
-               dropout.id, residual2.id);
-    CreateLink(layer_norm1.outputs[0].id, residual2.inputs[1].id,
-               layer_norm1.id, residual2.id);
-
-    // LayerNorm after second residual
-    CreateLink(residual2.outputs[0].id, layer_norm2.inputs[0].id,
-               residual2.id, layer_norm2.id);
-
-    // Output head
-    CreateLink(layer_norm2.outputs[0].id, output_dense.inputs[0].id,
-               layer_norm2.id, output_dense.id);
-
-    CreateLink(output_dense.outputs[0].id, softmax.inputs[0].id,
-               output_dense.id, softmax.id);
-
-    CreateLink(softmax.outputs[0].id, output.inputs[0].id,
-               softmax.id, output.id);
-
-    // Labels flow
-    CreateLink(dataset_input.outputs[1].id, onehot.inputs[0].id,
-               dataset_input.id, onehot.id);
-
-    // Loss connections
-    CreateLink(output.outputs[0].id, loss.inputs[0].id,
-               output.id, loss.id);  // Predictions
-    CreateLink(onehot.outputs[0].id, loss.inputs[1].id,
-               onehot.id, loss.id);  // Targets
-
-    // Optimizer
-    CreateLink(loss.outputs[0].id, optimizer.inputs[0].id,
-               loss.id, optimizer.id);
-
-    spdlog::info("Created Linear Attention Transformer showcase with {} nodes and {} connections",
+    spdlog::info("Created KNIME-style Data Pipeline showcase with {} nodes and {} connections",
                  nodes_.size(), links_.size());
-    spdlog::info("Architecture: Embedding -> PositionalEncoding -> LinearAttention(O(n)) -> LayerNorm -> FFN -> Output");
+    spdlog::info("Pipeline: Excel Reader -> Row to Column Names -> Table Splitter (2 outputs) -> [Top: Cell Extractor -> Cell Updater -> Row Filter] + [Bottom] -> Concatenate -> Table Cropper -> Column Filter -> Row Aggregator -> Column Renamer -> Column Appender -> Excel Writer");
 }
 
 NodeEditor::~NodeEditor() {
@@ -409,6 +360,38 @@ void NodeEditor::Render() {
         }
 
         ImNodes::EndNodeEditor();
+
+        // === Handle drag-drop from Node Browser ===
+        // Check if a NODE_TYPE payload is being dropped on the canvas
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("NODE_TYPE")) {
+                // Get the dropped node type
+                cyxwiz::NodeType dropped_type = *(const cyxwiz::NodeType*)payload->Data;
+
+                // Get metadata to create proper node name
+                auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+                auto* metadata = registry.GetMetadata(dropped_type);
+                std::string node_name = metadata ? metadata->name : "Node";
+
+                // Calculate drop position in grid space (reuse mouse_pos from earlier)
+                ImVec2 editor_origin = ImGui::GetWindowPos();
+                ImVec2 panning = ImNodes::EditorContextGetPanning();
+                ImVec2 drop_pos(
+                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_  // Offset for toolbar
+                );
+
+                // Queue node for addition
+                PendingNode pending;
+                pending.type = static_cast<NodeType>(dropped_type);
+                pending.name = node_name;
+                pending.position = drop_pos;
+                pending_nodes_.push_back(pending);
+
+                spdlog::info("Drag-drop: Adding {} node at ({}, {})", node_name, drop_pos.x, drop_pos.y);
+            }
+            ImGui::EndDragDropTarget();
+        }
 
         // Pop zoom style variables
         ImNodes::PopStyleVar(5);
@@ -3523,6 +3506,20 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
         case NodeType::ExportParquet: return "ExportParquet";
         case NodeType::ExportJSON: return "ExportJSON";
         case NodeType::DescribeStats: return "DescribeStats";
+        // KNIME-style table manipulation nodes
+        case NodeType::ExcelFile: return "ExcelInput";
+        case NodeType::ExportExcel: return "ExportExcel";
+        case NodeType::RowToColumnNames: return "RowToColumnNames";
+        case NodeType::TableSplitter: return "TableSplitter";
+        case NodeType::CellExtractor: return "CellExtractor";
+        case NodeType::CellUpdater: return "CellUpdater";
+        case NodeType::TableCropper: return "TableCropper";
+        case NodeType::ColumnAppender: return "ColumnAppender";
+        case NodeType::RowAppender: return "RowAppender";
+        case NodeType::Unpivot: return "Unpivot";
+        case NodeType::StringManipulation: return "StringManipulation";
+        case NodeType::MathFormula: return "MathFormula";
+        case NodeType::RuleEngine: return "RuleEngine";
         default: return "Unknown";
     }
 }

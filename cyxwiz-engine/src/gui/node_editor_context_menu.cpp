@@ -486,6 +486,33 @@ void NodeEditor::ShowContextMenu() {
         ImGui::EndMenu();
     }
 
+    // ===== ANALYTICS (Clustering, Statistics) =====
+    if (ImGui::BeginMenu("Analytics")) {
+        if (ImGui::BeginMenu("Clustering")) {
+            if (ImGui::MenuItem("K-Means Clustering")) {
+                AddNode(NodeType::KMeansCluster, "K-Means Clustering");
+                ImGui::CloseCurrentPopup();
+            }
+            // TODO: Add more clustering algorithms as executors are implemented
+            // if (ImGui::MenuItem("DBSCAN")) { AddNode(NodeType::DBSCANCluster, "DBSCAN"); ImGui::CloseCurrentPopup(); }
+            // if (ImGui::MenuItem("Hierarchical")) { AddNode(NodeType::HierarchicalCluster, "Hierarchical"); ImGui::CloseCurrentPopup(); }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Dimensionality Reduction")) {
+            if (ImGui::MenuItem("PCA")) {
+                AddNode(NodeType::PCANode, "PCA");
+                ImGui::CloseCurrentPopup();
+            }
+            // TODO: Add more as executors are implemented
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Correlation Matrix")) {
+            AddNode(NodeType::CorrelationMatrix, "Correlation Matrix");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
     // ===== PLUGIN NODES (non-RL categories) =====
     {
         auto plugin_nodes = cyxwiz::plugin::PluginNodeRegistry::Instance().GetAllNodeTypesWithNames();
@@ -923,8 +950,9 @@ void NodeEditor::ShowCategorizedNodeMenu() {
             {NodeType::RenameColumns, "Rename Columns"}
         };
 
-        // Analytics
+        // Analytics (Clustering, Statistics, Visualization)
         nodes_by_category_[NodeCategory::Analytics] = {
+            {NodeType::KMeansCluster, "K-Means Clustering"},
             {NodeType::DescribeStats, "Describe Stats"},
             {NodeType::VisualizeData, "Visualize Data"},
             {NodeType::SampleRows, "Sample Rows"},

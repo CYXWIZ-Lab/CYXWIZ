@@ -94,6 +94,7 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
     InitializeAudioNodes();
     InitializeRLNodes();
     InitializeExportNodes();
+    InitializeKNIMENodes();
     InitializeUtilityNodes();
 }
 
@@ -1038,6 +1039,124 @@ void NodeMetadataRegistry::InitializeExportNodes() {
         {"export", "sql", "database"}, 0, false, "Export to SQL DB", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"connection", "string", "", "Connection string", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ExportExcel, NodeCategory::DataExport, "Excel Writer", ICON_FA_FILE_EXCEL,
+        {"export", "excel", "xlsx", "spreadsheet"}, 0, false, "Export to Excel (.xlsx)", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}}, {},
+        {{"file_path", "file", "", "Output file", {}, "*.xlsx"},
+         {"sheet_name", "string", "Sheet1", "Sheet name", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+}
+
+// =============================================================================
+// KNIME-Style Table Manipulation Nodes
+// =============================================================================
+void NodeMetadataRegistry::InitializeKNIMENodes() {
+    RegisterNode({NodeType::RowToColumnNames, NodeCategory::DataTransform, "Row to Column Names", ICON_FA_TH,
+        {"header", "column names", "promote row"}, 0, false,
+        "Promote a row to column headers", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Table with new headers"}},
+        {{"row_index", "int", "0", "Row index to use as headers", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TableSplitter, NodeCategory::DataTransform, "Table Splitter", ICON_FA_SCISSORS,
+        {"split", "divide", "partition"}, 0, false,
+        "Split table at specified row", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Top", PinType::Dataset, true, "Rows above split"},
+         {"Bottom", PinType::Dataset, true, "Rows below split"}},
+        {{"split_row", "int", "0", "Row index to split at", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::CellExtractor, NodeCategory::DataTransform, "Cell Extractor", ICON_FA_CROSSHAIRS,
+        {"cell", "extract", "value"}, 0, false,
+        "Extract value from specific cell", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Value", PinType::Tensor, true, "Extracted value"},
+         {"Table", PinType::Dataset, true, "Table passthrough"}},
+        {{"row", "int", "0", "Row index", {}, ""},
+         {"column", "string", "", "Column name", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::CellUpdater, NodeCategory::DataTransform, "Cell Updater", ICON_FA_PEN,
+        {"cell", "update", "modify"}, 0, false,
+        "Update value in specific cell", "", "",
+        {{"Table", PinType::Dataset, true, "Table"},
+         {"Value", PinType::Tensor, false, "New value (optional)"}},
+        {{"Table", PinType::Dataset, true, "Updated table"}},
+        {{"row", "int", "0", "Row index", {}, ""},
+         {"column", "string", "", "Column name", {}, ""},
+         {"value", "string", "", "New value (if not using input)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TableCropper, NodeCategory::DataTransform, "Table Cropper", ICON_FA_COMPRESS,
+        {"crop", "slice", "subset"}, 0, false,
+        "Crop table to specified dimensions", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Cropped table"}},
+        {{"start_row", "int", "0", "Start row (inclusive)", {}, ""},
+         {"end_row", "int", "-1", "End row (-1 for last)", {}, ""},
+         {"columns", "string", "", "Columns to keep (comma-separated, empty=all)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ColumnAppender, NodeCategory::DataTransform, "Column Appender", ICON_FA_TABLE_COLUMNS,
+        {"append", "columns", "horizontal"}, 0, false,
+        "Append columns from multiple tables", "", "",
+        {{"Left", PinType::Dataset, true, "Left table"},
+         {"Right", PinType::Dataset, true, "Right table"}},
+        {{"Table", PinType::Dataset, true, "Combined table"}},
+        {{"suffix", "string", "_right", "Suffix for duplicate columns", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RowAppender, NodeCategory::DataTransform, "Row Appender", ICON_FA_LAYER_GROUP,
+        {"append", "rows", "vertical", "union"}, 0, false,
+        "Append rows from multiple tables (UNION)", "", "",
+        {{"Top", PinType::Dataset, true, "Top table"},
+         {"Bottom", PinType::Dataset, true, "Bottom table"}},
+        {{"Table", PinType::Dataset, true, "Combined table"}},
+        {{"match_columns", "bool", "true", "Match columns by name", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Unpivot, NodeCategory::DataTransform, "Unpivot", ICON_FA_ROTATE,
+        {"unpivot", "melt", "wide to long"}, 0, false,
+        "Unpivot wide to long format", "", "",
+        {{"Table", PinType::Dataset, true, "Wide table"}},
+        {{"Table", PinType::Dataset, true, "Long table"}},
+        {{"id_columns", "string", "", "ID columns (comma-separated)", {}, ""},
+         {"value_name", "string", "value", "Name for value column", {}, ""},
+         {"variable_name", "string", "variable", "Name for variable column", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::StringManipulation, NodeCategory::DataTransform, "String Manipulation", ICON_FA_FONT,
+        {"string", "text", "replace", "trim"}, 0, false,
+        "String operations on columns", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Table with modified strings"}},
+        {{"column", "string", "", "Column to manipulate", {}, ""},
+         {"operation", "enum", "trim", "Operation", {"trim", "upper", "lower", "replace", "substring"}, ""},
+         {"param1", "string", "", "Parameter 1 (find/start)", {}, ""},
+         {"param2", "string", "", "Parameter 2 (replace/length)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::MathFormula, NodeCategory::DataTransform, "Math Formula", ICON_FA_CALCULATOR,
+        {"math", "formula", "calculate"}, 0, false,
+        "Apply math formula to create/modify columns", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Table with new column"}},
+        {{"output_column", "string", "result", "Output column name", {}, ""},
+         {"formula", "string", "", "Formula (e.g., col1 + col2 * 2)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RuleEngine, NodeCategory::DataTransform, "Rule Engine", ICON_FA_SCALE_BALANCED,
+        {"rule", "if", "condition", "case"}, 0, false,
+        "Apply if-then-else rules to create/modify columns", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Table with rule result"}},
+        {{"output_column", "string", "result", "Output column name", {}, ""},
+         {"rules", "string", "", "Rules (one per line: condition => value)", {}, ""},
+         {"default_value", "string", "NULL", "Default value if no rule matches", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 }
 

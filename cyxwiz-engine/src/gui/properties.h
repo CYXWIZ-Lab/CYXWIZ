@@ -6,6 +6,7 @@
 #include <deque>
 #include <functional>
 #include "../core/node_metadata.h"
+#include "../core/node_executors/node_executor_factory.h"
 
 namespace gui {
 
@@ -69,6 +70,11 @@ private:
     void RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadata* metadata);
     void RenderAdvancedSection(MLNode& node);
     void RenderPresetsSection(MLNode& node);
+
+    // Node executor integration (Phase: Node Executor Architecture)
+    void RenderExecutorSection(MLNode& node);
+    bool HasNodeExecutor(NodeType type);
+    void SetupExecutorInputData(cyxwiz::INodeExecutor* executor, MLNode& node);
 
     // Metadata-driven parameter rendering
     void RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition& param);

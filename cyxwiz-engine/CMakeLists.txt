@@ -114,6 +114,8 @@ set(ENGINE_SOURCES
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
+    # Node executors (shared logic for nodes and panels)
+    src/core/node_executors/kmeans_executor.cpp
     # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
@@ -376,6 +378,9 @@ set(ENGINE_HEADERS
     src/core/training_executor.h
     src/core/training_manager.h
     src/core/test_executor.h
+    src/core/node_executors/node_executor.h
+    src/core/node_executors/kmeans_executor.h
+    src/core/node_executors/node_executor_factory.h
     src/core/test_manager.h
     src/core/checkpoint_manager.h
     src/core/model_format.h

@@ -84,7 +84,7 @@ private:
     void RenderCategorySection(cyxwiz::NodeCategory category);
     void RenderNodeGrid(const std::vector<const cyxwiz::NodeMetadata*>& nodes, int max_visible = -1);
     void RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width);
-    void RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 size);
+    void RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size);
     void RenderPortIndicators(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 icon_size);
     void RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata);
 

@@ -359,7 +359,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     ImVec2 icon_size(NODE_ICON_SIZE, NODE_ICON_SIZE);
 
     // Draw node icon with color
-    RenderNodeIcon(metadata, icon_size);
+    RenderNodeIcon(metadata, icon_pos, icon_size);
 
     // Draw port indicators
     RenderPortIndicators(metadata, icon_pos, icon_size);
@@ -428,18 +428,12 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     ImGui::PopID();
 }
 
-void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 size) {
+void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    ImVec2 cursor = ImGui::GetCursorScreenPos();
 
-    // Position icon centered in card
-    float card_width = ImGui::GetItemRectSize().x;
-    float icon_x = cursor.x + (card_width - size.x) * 0.5f;
-    // Adjust Y since we're drawing after InvisibleButton
-    float icon_y = cursor.y - NODE_CARD_HEIGHT + 4;
-
-    ImVec2 p_min(icon_x, icon_y);
-    ImVec2 p_max(icon_x + size.x, icon_y + size.y);
+    // Use the passed icon position (calculated in RenderNodeCard)
+    ImVec2 p_min = icon_pos;
+    ImVec2 p_max(icon_pos.x + size.x, icon_pos.y + size.y);
 
     // Get category color
     ImU32 bg_color = GetNodeColor(metadata->category);
@@ -473,31 +467,31 @@ void NodeBrowserPanel::RenderPortIndicators(const cyxwiz::NodeMetadata* metadata
                                             ImVec2 icon_pos, ImVec2 icon_size) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-    // Input ports (left side triangles pointing right)
+    // Input ports (left side triangles pointing LEFT - into the node)
     if (!metadata->inputs.empty()) {
-        float tri_size = 6.0f;
+        float tri_size = 5.0f;
         float y_center = icon_pos.y + icon_size.y * 0.5f;
 
-        // Draw small triangle pointing right
-        ImVec2 p1(icon_pos.x - 2, y_center - tri_size);
-        ImVec2 p2(icon_pos.x - 2, y_center + tri_size);
-        ImVec2 p3(icon_pos.x + tri_size - 2, y_center);
+        // Draw small triangle pointing left (<)
+        ImVec2 p1(icon_pos.x - 1, y_center);  // tip points left
+        ImVec2 p2(icon_pos.x + tri_size - 1, y_center - tri_size);
+        ImVec2 p3(icon_pos.x + tri_size - 1, y_center + tri_size);
 
-        draw_list->AddTriangleFilled(p1, p2, p3, IM_COL32(60, 60, 60, 255));
+        draw_list->AddTriangleFilled(p1, p2, p3, IM_COL32(80, 80, 80, 255));
     }
 
-    // Output ports (right side triangles pointing right)
+    // Output ports (right side triangles pointing RIGHT - out of the node)
     if (!metadata->outputs.empty()) {
-        float tri_size = 6.0f;
+        float tri_size = 5.0f;
         float y_center = icon_pos.y + icon_size.y * 0.5f;
         float x_right = icon_pos.x + icon_size.x;
 
-        // Draw small triangle pointing right
-        ImVec2 p1(x_right - tri_size + 2, y_center - tri_size);
-        ImVec2 p2(x_right - tri_size + 2, y_center + tri_size);
-        ImVec2 p3(x_right + 2, y_center);
+        // Draw small triangle pointing right (>)
+        ImVec2 p1(x_right - tri_size + 1, y_center - tri_size);
+        ImVec2 p2(x_right - tri_size + 1, y_center + tri_size);
+        ImVec2 p3(x_right + 1, y_center);  // tip points right
 
-        draw_list->AddTriangleFilled(p1, p2, p3, IM_COL32(60, 60, 60, 255));
+        draw_list->AddTriangleFilled(p1, p2, p3, IM_COL32(80, 80, 80, 255));
     }
 }
 
