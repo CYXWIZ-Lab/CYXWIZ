@@ -420,6 +420,7 @@ struct MLNode {
     NodeType type;
     NodeCategory category;  // Unified Canvas Phase 1: Category for UI organization
     std::string name;
+    std::string description;  // KNIME-style: bound text displayed below node, moves with node
     std::vector<NodePin> inputs;
     std::vector<NodePin> outputs;
 
@@ -524,10 +525,38 @@ enum class DistributeType { Horizontal, Vertical };
 struct NodeGroup {
     int id;
     std::string name;
+    std::string description;  // KNIME-style: bullet-point description shown in header
     std::vector<int> node_ids;
     ImVec4 color;           // RGBA color for group box
     bool collapsed = false;
     float padding = 20.0f;  // Padding around contained nodes
+};
+
+// Canvas annotation (KNIME-style sticky note)
+struct CanvasAnnotation {
+    int id;
+    std::string title;
+    std::string content;
+    ImVec2 position;
+    ImVec2 size;
+    ImU32 color;            // Background color
+    bool is_minimized;
+
+    CanvasAnnotation()
+        : id(-1)
+        , position(0, 0)
+        , size(200, 100)
+        , color(IM_COL32(255, 255, 200, 255))  // Default yellow
+        , is_minimized(false) {}
+};
+
+// Annotation color presets
+enum class AnnotationColor {
+    Yellow,   // Default - IM_COL32(255, 255, 200, 255)
+    Blue,     // Info - IM_COL32(200, 220, 255, 255)
+    Green,    // Done - IM_COL32(200, 255, 200, 255)
+    Orange,   // TODO - IM_COL32(255, 230, 200, 255)
+    Pink      // Important - IM_COL32(255, 200, 220, 255)
 };
 
 // Validation warning severity levels
@@ -715,12 +744,44 @@ public:
     // Ungroup selected nodes
     void UngroupSelectedNodes();
 
+    // ===== Canvas Annotations (KNIME-style sticky notes) =====
+
+    // Add a new annotation at the center of the visible area
+    void AddAnnotation();
+
+    // Add annotation at specific position
+    void AddAnnotationAt(const ImVec2& position);
+
+    // Delete annotation by ID
+    void DeleteAnnotation(int annotation_id);
+
+    // Delete currently selected annotation
+    void DeleteSelectedAnnotation();
+
+    // Get annotations for serialization
+    const std::vector<CanvasAnnotation>& GetAnnotations() const { return annotations_; }
+
+    // Set annotations (for loading)
+    void SetAnnotations(const std::vector<CanvasAnnotation>& annotations);
+
+    // ===== Workflow Description =====
+
+    // Get workflow description buffer for UI editing
+    char* GetWorkflowDescriptionBuffer() { return workflow_description_; }
+    size_t GetWorkflowDescriptionBufferSize() const { return sizeof(workflow_description_); }
+
+    // Get/set workflow description as string
+    std::string GetWorkflowDescription() const { return workflow_description_; }
+    void SetWorkflowDescription(const std::string& desc);
+
 private:
     void ShowToolbar();
     void RenderNodes();
     void RenderMinimap();
     void HandleInteractions();
     void ShowContextMenu();
+    void ShowSingleNodeContextMenu();  // Node-specific context menu
+    void ShowNodeDescriptionEditPopup();  // KNIME-style node description editor
 
     // Unified Canvas Phase 3: Categorized node palette helpers
     void ShowCategorizedNodeMenu();
@@ -744,6 +805,10 @@ private:
     // Get visual color for a link based on its type
     ImU32 GetLinkColor(LinkType type) const;
     ImU32 GetLinkHoverColor(LinkType type) const;
+
+    // Get visual color for pins and links based on data type
+    ImU32 GetPinTypeColor(PinType type) const;
+    ImU32 GetPinTypeHoverColor(PinType type) const;
 
     // Connection tracking for variadic pins
     int GetConnectionCount(int pin_id) const;
@@ -830,6 +895,14 @@ private:
     void RenderGroups();
     NodeGroup* FindGroupContainingNode(int node_id);
 
+    // Annotation rendering and interaction
+    void RenderAnnotations();
+    void HandleAnnotationInteraction();
+    CanvasAnnotation* FindAnnotationById(int annotation_id);
+    void ShowAnnotationContextMenu(int annotation_id);
+    void ShowAnnotationEditPopup();
+    ImU32 GetAnnotationColorValue(AnnotationColor color) const;
+
     // Subgraph encapsulation
     void CreateSubgraphFromSelection(const std::string& name);
     void ExpandSubgraph(int node_id);
@@ -857,6 +930,7 @@ private:
 
     std::vector<int> TopologicalSort();
     const MLNode* FindNodeById(int node_id) const;
+    MLNode* FindNodeById(int node_id);  // Non-const version
 
     // Helper for code generation with variadic inputs
     std::vector<int> GetInputNodeIds(int node_id) const;
@@ -989,6 +1063,26 @@ private:
     bool show_create_group_dialog_ = false;
     char create_group_name_[256] = "";
     float create_group_color_[4] = {0.2f, 0.5f, 0.8f, 0.3f};
+
+    // Canvas annotations (KNIME-style sticky notes)
+    std::vector<CanvasAnnotation> annotations_;
+    int next_annotation_id_ = 1;
+    int selected_annotation_id_ = -1;
+    int dragging_annotation_id_ = -1;
+    ImVec2 annotation_drag_offset_ = ImVec2(0, 0);
+    bool editing_annotation_ = false;
+    int editing_annotation_id_ = -1;
+    char annotation_edit_title_[256] = "";
+    char annotation_edit_content_[2048] = "";
+
+    // KNIME-style: Node description editing
+    bool editing_node_description_ = false;
+    int editing_node_id_ = -1;
+    char node_description_buffer_[1024] = "";
+    int right_clicked_node_id_ = -1;  // Node that was right-clicked
+
+    // Workflow description (shown in CyxWiz Studio section)
+    char workflow_description_[2048] = "";
 
     // Subgraph data storage
     std::vector<SubgraphData> subgraphs_;

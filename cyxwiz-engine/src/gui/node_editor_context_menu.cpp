@@ -5,12 +5,127 @@
 
 #include "node_editor.h"
 #include "icons.h"
+#include "properties.h"
 #include "../core/project_manager.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <cstring>
 
 namespace gui {
+
+void NodeEditor::ShowSingleNodeContextMenu() {
+    MLNode* node = FindNodeById(right_clicked_node_id_);
+    if (!node) {
+        ImGui::Text("Node not found");
+        return;
+    }
+
+    ImGui::TextDisabled("%s", node->name.c_str());
+    ImGui::Separator();
+
+    // Set Description (KNIME-style)
+    if (ImGui::MenuItem(ICON_FA_COMMENT " Set Description...")) {
+        editing_node_description_ = true;
+        editing_node_id_ = right_clicked_node_id_;
+        strncpy(node_description_buffer_, node->description.c_str(), sizeof(node_description_buffer_) - 1);
+        node_description_buffer_[sizeof(node_description_buffer_) - 1] = '\0';
+        ImGui::CloseCurrentPopup();
+    }
+
+    // Rename
+    if (ImGui::MenuItem(ICON_FA_PEN " Rename...")) {
+        // TODO: Implement rename dialog
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::Separator();
+
+    // Duplicate
+    if (ImGui::MenuItem(ICON_FA_COPY " Duplicate", "Ctrl+D")) {
+        // Select only this node and duplicate
+        selected_node_ids_.clear();
+        selected_node_ids_.push_back(right_clicked_node_id_);
+        DuplicateSelection();
+        ImGui::CloseCurrentPopup();
+    }
+
+    // Delete
+    if (ImGui::MenuItem(ICON_FA_TRASH " Delete", "Delete")) {
+        DeleteNode(right_clicked_node_id_);
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::Separator();
+
+    // Configure (open properties)
+    if (ImGui::MenuItem(ICON_FA_GEAR " Configure...")) {
+        selected_node_id_ = right_clicked_node_id_;
+        selected_node_ids_.clear();
+        selected_node_ids_.push_back(right_clicked_node_id_);
+        if (properties_panel_) {
+            properties_panel_->SetSelectedNode(node);
+        }
+        ImGui::CloseCurrentPopup();
+    }
+
+    // Group operations
+    NodeGroup* existing_group = FindGroupContainingNode(right_clicked_node_id_);
+    if (existing_group) {
+        if (ImGui::MenuItem(ICON_FA_OBJECT_UNGROUP " Remove from Group")) {
+            existing_group->node_ids.erase(
+                std::remove(existing_group->node_ids.begin(), existing_group->node_ids.end(), right_clicked_node_id_),
+                existing_group->node_ids.end());
+            ImGui::CloseCurrentPopup();
+        }
+    }
+}
+
+void NodeEditor::ShowNodeDescriptionEditPopup() {
+    if (!editing_node_description_) return;
+
+    ImGui::OpenPopup("Edit Node Description");
+
+    // Center the modal
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(450, 250), ImGuiCond_Appearing);
+
+    if (ImGui::BeginPopupModal("Edit Node Description", &editing_node_description_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        MLNode* node = FindNodeById(editing_node_id_);
+        if (node) {
+            ImGui::Text("Node: %s", node->name.c_str());
+            ImGui::Separator();
+
+            ImGui::Text("Description:");
+            ImGui::PushItemWidth(-1);
+            ImGui::InputTextMultiline("##description", node_description_buffer_, sizeof(node_description_buffer_),
+                ImVec2(-1, 120), ImGuiInputTextFlags_AllowTabInput);
+            ImGui::PopItemWidth();
+
+            ImGui::TextDisabled("Tip: This text will appear below the node on the canvas.");
+
+            ImGui::Separator();
+
+            if (ImGui::Button("Save", ImVec2(120, 0))) {
+                node->description = node_description_buffer_;
+                editing_node_description_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                editing_node_description_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+        } else {
+            ImGui::Text("Node not found");
+            if (ImGui::Button("Close")) {
+                editing_node_description_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
 
 void NodeEditor::ShowContextMenu() {
     ImGui::Text("Add Node:");
@@ -839,6 +954,23 @@ void NodeEditor::ShowContextMenu() {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 ImGui::SetTooltip("Create or open a project first to save patterns");
+            }
+        }
+
+        // KNIME-style: Set description for single node
+        if (selected_node_ids_.size() == 1) {
+            if (ImGui::MenuItem(ICON_FA_COMMENT " Set Description...")) {
+                editing_node_description_ = true;
+                editing_node_id_ = selected_node_ids_[0];
+                // Copy current description to edit buffer
+                MLNode* node = FindNodeById(editing_node_id_);
+                if (node) {
+                    strncpy(node_description_buffer_, node->description.c_str(), sizeof(node_description_buffer_) - 1);
+                    node_description_buffer_[sizeof(node_description_buffer_) - 1] = '\0';
+                } else {
+                    node_description_buffer_[0] = '\0';
+                }
+                ImGui::CloseCurrentPopup();
             }
         }
 

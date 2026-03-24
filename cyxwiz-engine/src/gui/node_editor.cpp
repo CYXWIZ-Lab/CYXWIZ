@@ -39,6 +39,29 @@
 
 namespace gui {
 
+void NodeEditor::SetWorkflowDescription(const std::string& desc) {
+    strncpy(workflow_description_, desc.c_str(), sizeof(workflow_description_) - 1);
+    workflow_description_[sizeof(workflow_description_) - 1] = '\0';
+}
+
+void NodeEditor::AddAnnotation() {
+    // Add annotation at center of visible area
+    ImVec2 center_pos = ImVec2(400.0f, 300.0f);  // Default position
+    AddAnnotationAt(center_pos);
+}
+
+void NodeEditor::AddAnnotationAt(const ImVec2& position) {
+    CanvasAnnotation annotation;
+    annotation.id = next_annotation_id_++;
+    annotation.title = "Note";
+    annotation.content = "Enter description here...";
+    annotation.position = position;
+    annotation.size = ImVec2(200.0f, 100.0f);
+    annotation.color = IM_COL32(255, 255, 200, 255);  // Yellow
+    annotation.is_minimized = false;
+    annotations_.push_back(annotation);
+}
+
 NodeEditor::NodeEditor()
     : show_window_(true),
       next_node_id_(1),
@@ -295,6 +318,9 @@ void NodeEditor::Render() {
             pending_clear_imnodes_ = false;
         }
 
+        // Render annotations first (appear behind everything)
+        RenderAnnotations();
+
         // Render group backgrounds before nodes so they appear behind
         RenderGroups();
 
@@ -330,6 +356,7 @@ void NodeEditor::Render() {
         }
 
         // Handle right-click context menu (skip if mouse is over minimap)
+        bool right_click_detected = false;
         if (ImNodes::IsEditorHovered() && !mouse_in_minimap_bounds && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
             // Store mouse position for node placement in grid space
             // The editor origin is at the window content region start
@@ -343,13 +370,7 @@ void NodeEditor::Render() {
                 mouse_pos.x - editor_origin.x - panning.x,
                 mouse_pos.y - editor_origin.y - panning.y
             );
-
-            ImGui::OpenPopup("NodeContextMenu");
-        }
-
-        if (ImGui::BeginPopup("NodeContextMenu")) {
-            ShowContextMenu();
-            ImGui::EndPopup();
+            right_click_detected = true;
         }
 
         // Cache node positions while still inside BeginNodeEditor/EndNodeEditor scope
@@ -360,6 +381,36 @@ void NodeEditor::Render() {
         }
 
         ImNodes::EndNodeEditor();
+
+        // === Handle right-click context menu AFTER EndNodeEditor ===
+        // IsNodeHovered() only works after EndNodeEditor() is called
+        if (right_click_detected) {
+            int hovered_node_id = -1;
+            bool is_node_hovered = ImNodes::IsNodeHovered(&hovered_node_id);
+            if (is_node_hovered && hovered_node_id >= 0) {
+                // Right-click on node - show node-specific menu
+                right_clicked_node_id_ = hovered_node_id;
+                ImGui::OpenPopup("SingleNodeContextMenu");
+            } else {
+                // Right-click on canvas - show add node menu
+                ImGui::OpenPopup("NodeContextMenu");
+            }
+        }
+
+        // Node-specific context menu (right-click on node)
+        if (ImGui::BeginPopup("SingleNodeContextMenu")) {
+            ShowSingleNodeContextMenu();
+            ImGui::EndPopup();
+        }
+
+        // Canvas context menu (right-click on empty space)
+        if (ImGui::BeginPopup("NodeContextMenu")) {
+            ShowContextMenu();
+            ImGui::EndPopup();
+        }
+
+        // Node description edit popup
+        ShowNodeDescriptionEditPopup();
 
         // === Handle drag-drop from Node Browser ===
         // Check if a NODE_TYPE payload is being dropped on the canvas
@@ -389,6 +440,21 @@ void NodeEditor::Render() {
                 pending_nodes_.push_back(pending);
 
                 spdlog::info("Drag-drop: Adding {} node at ({}, {})", node_name, drop_pos.x, drop_pos.y);
+            }
+
+            // Handle ANNOTATION drag-drop
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ANNOTATION")) {
+                // Calculate drop position in grid space
+                ImVec2 editor_origin = ImGui::GetWindowPos();
+                ImVec2 panning = ImNodes::EditorContextGetPanning();
+                ImVec2 drop_pos(
+                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_
+                );
+
+                // Add annotation at drop position
+                AddAnnotationAt(drop_pos);
+                spdlog::info("Drag-drop: Adding annotation at ({}, {})", drop_pos.x, drop_pos.y);
             }
             ImGui::EndDragDropTarget();
         }
@@ -1987,6 +2053,73 @@ void NodeEditor::RenderNodes() {
             );
         }
 
+        // KNIME-style: Draw node description below the node (bound to node, moves with it)
+        if (!node.description.empty()) {
+            ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
+            ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+            // Calculate description position (below node with spacing)
+            float desc_y = node_pos.y + node_dims.y + 8.0f * zoom_;
+            // Wider max width for better readability
+            float max_width = std::max(node_dims.x * 1.5f, 220.0f * zoom_);
+
+            // Use larger, more readable font size
+            ImFont* font = ImGui::GetFont();
+            float font_size = 14.0f * zoom_;
+            const char* text_start = node.description.c_str();
+            const char* text_end = text_start + node.description.size();
+
+            // Word wrapping
+            std::string wrapped;
+            float line_width = 0.0f;
+            const char* word_start = text_start;
+            float space_width = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, " ").x;
+
+            for (const char* p = text_start; p <= text_end; ++p) {
+                if (*p == ' ' || *p == '\n' || p == text_end) {
+                    std::string word(word_start, p);
+                    if (!word.empty()) {
+                        ImVec2 word_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, word.c_str());
+                        if (line_width + word_size.x > max_width && line_width > 0) {
+                            if (!wrapped.empty() && wrapped.back() == ' ') wrapped.pop_back();
+                            wrapped += "\n";
+                            line_width = 0.0f;
+                        }
+                        wrapped += word;
+                        line_width += word_size.x;
+                        if (*p == ' ') { wrapped += " "; line_width += space_width; }
+                    }
+                    if (*p == '\n') { wrapped += "\n"; line_width = 0.0f; }
+                    word_start = p + 1;
+                }
+            }
+
+            // Calculate text dimensions
+            ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, max_width, wrapped.c_str());
+            float text_x = node_pos.x;
+            float padding_x = 10.0f * zoom_;
+            float padding_y = 8.0f * zoom_;
+
+            // Draw background box
+            ImVec2 box_min(text_x - padding_x, desc_y - padding_y);
+            ImVec2 box_max(text_x + text_size.x + padding_x, desc_y + text_size.y + padding_y);
+
+            draw_list->AddRectFilled(box_min, box_max, IM_COL32(30, 35, 50, 245), 5.0f * zoom_);
+            draw_list->AddRect(box_min, box_max, IM_COL32(80, 100, 130, 220), 5.0f * zoom_, 0, 1.2f * zoom_);
+
+            // Left accent line
+            draw_list->AddRectFilled(
+                ImVec2(box_min.x + 2.0f * zoom_, box_min.y + 3.0f * zoom_),
+                ImVec2(box_min.x + 5.0f * zoom_, box_max.y - 3.0f * zoom_),
+                IM_COL32(100, 149, 237, 255)
+            );
+
+            // Draw text
+            draw_list->AddText(font, font_size, ImVec2(text_x + 4.0f * zoom_, desc_y),
+                IM_COL32(230, 235, 245, 255), wrapped.c_str());
+        }
+
         // Apply any pending position AFTER the node has been created
         // (ImNodes needs the node to exist before SetNodeGridSpacePos works)
         // Keep applying positions while pending_positions_frames_ > 0 to ensure they stick
@@ -2714,6 +2847,141 @@ NodeGroup* NodeEditor::FindGroupContainingNode(int node_id) {
         }
     }
     return nullptr;
+}
+
+void NodeEditor::RenderAnnotations() {
+    if (annotations_.empty()) return;
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 editor_origin = ImGui::GetWindowPos();
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+
+    for (auto& annotation : annotations_) {
+        // Convert grid position to screen position
+        ImVec2 screen_pos(
+            editor_origin.x + annotation.position.x * zoom_ + panning.x,
+            editor_origin.y + annotation.position.y * zoom_ + panning.y + 50.0f  // Offset for toolbar
+        );
+
+        ImVec2 size(annotation.size.x * zoom_, annotation.size.y * zoom_);
+        ImVec2 p_min = screen_pos;
+        ImVec2 p_max(screen_pos.x + size.x, screen_pos.y + size.y);
+
+        // Title bar height for drag detection
+        float title_height = 24.0f * zoom_;
+
+        // Get mouse position
+        ImVec2 mouse_pos = ImGui::GetMousePos();
+
+        // Create invisible button to capture mouse input (blocks ImNodes from panning)
+        ImGui::SetCursorScreenPos(p_min);
+        std::string btn_id = "##annotation_" + std::to_string(annotation.id);
+        ImGui::InvisibleButton(btn_id.c_str(), size);
+
+        bool is_hovered = ImGui::IsItemHovered();
+        bool is_active = ImGui::IsItemActive();
+
+        // Check if mouse is in title bar area (only when hovered)
+        bool mouse_in_title = is_hovered && (mouse_pos.y >= p_min.y && mouse_pos.y <= p_min.y + title_height);
+
+        // Handle click to select
+        if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            selected_annotation_id_ = annotation.id;
+            // Start dragging if clicked on title bar
+            if (mouse_in_title) {
+                dragging_annotation_id_ = annotation.id;
+                annotation_drag_offset_ = ImVec2(
+                    mouse_pos.x - screen_pos.x,
+                    mouse_pos.y - screen_pos.y
+                );
+            }
+        }
+
+        // Handle dragging
+        if (dragging_annotation_id_ == annotation.id && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            // Calculate new position in grid space
+            ImVec2 new_screen_pos(
+                mouse_pos.x - annotation_drag_offset_.x,
+                mouse_pos.y - annotation_drag_offset_.y
+            );
+            annotation.position = ImVec2(
+                (new_screen_pos.x - editor_origin.x - panning.x) / zoom_,
+                (new_screen_pos.y - editor_origin.y - panning.y - 50.0f) / zoom_
+            );
+            // Update screen position for this frame
+            screen_pos = new_screen_pos;
+            p_min = screen_pos;
+            p_max = ImVec2(screen_pos.x + size.x, screen_pos.y + size.y);
+        }
+
+        // Stop dragging when mouse released
+        if (dragging_annotation_id_ == annotation.id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            dragging_annotation_id_ = -1;
+        }
+
+        // Draw sticky note background (yellow by default)
+        ImU32 bg_color = annotation.color;
+        ImU32 title_color = IM_COL32(
+            static_cast<int>((bg_color & 0xFF) * 0.7f),
+            static_cast<int>(((bg_color >> 8) & 0xFF) * 0.7f),
+            static_cast<int>(((bg_color >> 16) & 0xFF) * 0.7f),
+            255
+        );
+
+        // Draw title bar
+        draw_list->AddRectFilled(
+            p_min,
+            ImVec2(p_max.x, p_min.y + title_height),
+            title_color,
+            4.0f * zoom_,
+            ImDrawFlags_RoundCornersTop
+        );
+
+        // Draw content background
+        draw_list->AddRectFilled(
+            ImVec2(p_min.x, p_min.y + title_height),
+            p_max,
+            bg_color,
+            4.0f * zoom_,
+            ImDrawFlags_RoundCornersBottom
+        );
+
+        // Draw border (highlight when hovered or active)
+        ImU32 border_color = (is_hovered || is_active) ? IM_COL32(120, 120, 100, 255) : IM_COL32(100, 100, 80, 200);
+        draw_list->AddRect(p_min, p_max, border_color, 4.0f * zoom_, 0, 1.5f * zoom_);
+
+        // Draw title text
+        ImFont* font = ImGui::GetFont();
+        float title_font_size = 14.0f * zoom_;
+        ImVec2 title_pos(p_min.x + 8.0f * zoom_, p_min.y + 4.0f * zoom_);
+        draw_list->AddText(font, title_font_size, title_pos, IM_COL32(60, 50, 30, 255), annotation.title.c_str());
+
+        // Draw content text with word wrapping
+        if (!annotation.is_minimized) {
+            float content_font_size = 12.0f * zoom_;
+            float content_x = p_min.x + 8.0f * zoom_;
+            float content_y = p_min.y + title_height + 6.0f * zoom_;
+            float max_width = size.x - 16.0f * zoom_;
+
+            // Simple text rendering (content may be multi-line)
+            ImVec2 content_pos(content_x, content_y);
+            draw_list->AddText(font, content_font_size, content_pos,
+                IM_COL32(50, 40, 20, 255), annotation.content.c_str(),
+                nullptr, max_width);
+        }
+
+        // Selection highlight
+        if (selected_annotation_id_ == annotation.id) {
+            draw_list->AddRect(
+                ImVec2(p_min.x - 2, p_min.y - 2),
+                ImVec2(p_max.x + 2, p_max.y + 2),
+                IM_COL32(100, 150, 255, 200),
+                6.0f * zoom_,
+                0,
+                2.0f * zoom_
+            );
+        }
+    }
 }
 
 void NodeEditor::RenderGroups() {

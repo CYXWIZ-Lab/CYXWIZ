@@ -1,6 +1,7 @@
 #include "node_browser_panel.h"
 #include "../node_editor.h"
 #include "../../core/node_metadata_registry.h"
+#include "../patterns/pattern_library.h"
 #include "../icons.h"
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -43,6 +44,12 @@ void NodeBrowserPanel::Render() {
 
         // Main content area with scrolling
         ImGui::BeginChild("NodeGrid", ImVec2(0, 0), false);
+
+        // CyxWiz Studio section (always at top when not searching/in category)
+        if (search_query_.empty() && !showing_all_in_category_) {
+            RenderStudioSection();
+            ImGui::Spacing();
+        }
 
         if (!search_query_.empty()) {
             // Search results mode - show as grid
@@ -171,6 +178,254 @@ bool NodeBrowserPanel::HandleKeyboardShortcuts() {
     }
 
     return false;
+}
+
+void NodeBrowserPanel::RenderStudioSection() {
+    // CyxWiz Studio section header (same style as category headers)
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::TextUnformatted("Studio Tools");
+
+    // Horizontal separator line
+    ImVec2 line_start = ImGui::GetCursorScreenPos();
+    line_start.y -= 2;
+    float text_width = ImGui::CalcTextSize("Studio Tools").x + 8;
+    ImVec2 line_end = ImVec2(line_start.x + ImGui::GetContentRegionAvail().x, line_start.y);
+    line_start.x += text_width;
+    ImGui::GetWindowDrawList()->AddLine(line_start, line_end, IM_COL32(100, 100, 100, 128), 1.0f);
+    ImGui::PopStyleColor();
+
+    // Calculate card dimensions (same as node cards)
+    float available_width = ImGui::GetContentRegionAvail().x;
+    float card_width = (available_width - (GRID_COLUMNS - 1) * GRID_SPACING) / GRID_COLUMNS;
+    card_width = std::max(card_width, 70.0f);
+
+    // === Note Card ===
+    {
+        ImGui::PushID("StudioNote");
+        ImVec2 card_size(card_width, NODE_CARD_HEIGHT);
+        ImVec2 cursor_start = ImGui::GetCursorScreenPos();
+
+        ImGui::InvisibleButton("##notecard", card_size);
+        bool hovered = ImGui::IsItemHovered();
+
+        // Double-click to add annotation
+        if (hovered && ImGui::IsMouseDoubleClicked(0)) {
+            if (node_editor_) {
+                node_editor_->AddAnnotation();
+            }
+        }
+
+        // Drag-drop source for annotation
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+            int annotation_type = 1;  // Just a marker value
+            ImGui::SetDragDropPayload("ANNOTATION", &annotation_type, sizeof(int));
+            ImGui::Text(ICON_FA_COMMENT " Annotation");
+            ImGui::EndDragDropSource();
+        }
+
+        // Tooltip
+        if (hovered) {
+            ImGui::BeginTooltip();
+            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ICON_FA_COMMENT " Annotation");
+            ImGui::TextWrapped("Add a sticky note to the canvas for documentation");
+            ImGui::Separator();
+            ImGui::TextDisabled("Drag to canvas or double-click to add");
+            ImGui::TextDisabled("Shortcut: Ctrl+Shift+N");
+            ImGui::EndTooltip();
+        }
+
+        // Draw card
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        float icon_x = cursor_start.x + (card_width - NODE_ICON_SIZE) * 0.5f;
+        float icon_y = cursor_start.y + 4;
+        ImVec2 icon_pos(icon_x, icon_y);
+        ImVec2 p_max(icon_pos.x + NODE_ICON_SIZE, icon_pos.y + NODE_ICON_SIZE);
+
+        // Yellow background for note
+        ImU32 bg_color = IM_COL32(200, 180, 100, 255);
+        ImU32 border_color = IM_COL32(150, 130, 70, 255);
+        draw_list->AddRectFilled(icon_pos, p_max, bg_color, 6.0f);
+        draw_list->AddRect(icon_pos, p_max, border_color, 6.0f, 0, 2.0f);
+
+        // Icon
+        ImFont* icon_font = ImGui::GetFont();
+        float scaled_icon_size = NODE_ICON_SIZE * 0.55f;
+        const char* icon = ICON_FA_COMMENT;
+        ImVec2 icon_text_size = icon_font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
+        ImVec2 icon_text_pos(icon_pos.x + (NODE_ICON_SIZE - icon_text_size.x) * 0.5f,
+                            icon_pos.y + (NODE_ICON_SIZE - icon_text_size.y) * 0.5f);
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+
+        // Label
+        const char* label = "Note";
+        ImVec2 text_size = ImGui::CalcTextSize(label);
+        float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
+        float text_y = icon_y + NODE_ICON_SIZE + 4;
+        draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(220, 220, 220, 255), label);
+
+        // Hover highlight
+        if (hovered) {
+            draw_list->AddRect(cursor_start,
+                ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
+                IM_COL32(100, 150, 255, 100), 4.0f);
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::SameLine(0, GRID_SPACING);
+
+    // === Group Card ===
+    {
+        ImGui::PushID("StudioGroup");
+        ImVec2 card_size(card_width, NODE_CARD_HEIGHT);
+        ImVec2 cursor_start = ImGui::GetCursorScreenPos();
+
+        ImGui::InvisibleButton("##groupcard", card_size);
+        bool hovered = ImGui::IsItemHovered();
+
+        // Double-click to group selected nodes
+        if (hovered && ImGui::IsMouseDoubleClicked(0)) {
+            if (node_editor_) {
+                node_editor_->GroupSelectedNodes();
+            }
+        }
+
+        // Tooltip
+        if (hovered) {
+            ImGui::BeginTooltip();
+            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ICON_FA_OBJECT_GROUP " Group");
+            ImGui::TextWrapped("Group selected nodes together for organization");
+            ImGui::Separator();
+            ImGui::TextDisabled("Select nodes first, then double-click");
+            ImGui::TextDisabled("Shortcut: Ctrl+G");
+            ImGui::EndTooltip();
+        }
+
+        // Draw card
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        float icon_x = cursor_start.x + (card_width - NODE_ICON_SIZE) * 0.5f;
+        float icon_y = cursor_start.y + 4;
+        ImVec2 icon_pos(icon_x, icon_y);
+        ImVec2 p_max(icon_pos.x + NODE_ICON_SIZE, icon_pos.y + NODE_ICON_SIZE);
+
+        // Blue background for group
+        ImU32 bg_color = IM_COL32(100, 140, 180, 255);
+        ImU32 border_color = IM_COL32(70, 100, 140, 255);
+        draw_list->AddRectFilled(icon_pos, p_max, bg_color, 6.0f);
+        draw_list->AddRect(icon_pos, p_max, border_color, 6.0f, 0, 2.0f);
+
+        // Icon
+        ImFont* icon_font = ImGui::GetFont();
+        float scaled_icon_size = NODE_ICON_SIZE * 0.55f;
+        const char* icon = ICON_FA_OBJECT_GROUP;
+        ImVec2 icon_text_size = icon_font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
+        ImVec2 icon_text_pos(icon_pos.x + (NODE_ICON_SIZE - icon_text_size.x) * 0.5f,
+                            icon_pos.y + (NODE_ICON_SIZE - icon_text_size.y) * 0.5f);
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+
+        // Label
+        const char* label = "Group";
+        ImVec2 text_size = ImGui::CalcTextSize(label);
+        float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
+        float text_y = icon_y + NODE_ICON_SIZE + 4;
+        draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(220, 220, 220, 255), label);
+
+        // Hover highlight
+        if (hovered) {
+            draw_list->AddRect(cursor_start,
+                ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
+                IM_COL32(100, 150, 255, 100), 4.0f);
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::Spacing();
+    ImGui::Spacing();
+
+    // === Examples Section ===
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::TextUnformatted("Examples");
+
+    // Horizontal separator line
+    ImVec2 examples_line_start = ImGui::GetCursorScreenPos();
+    examples_line_start.y -= 2;
+    float examples_text_width = ImGui::CalcTextSize("Examples").x + 8;
+    ImVec2 examples_line_end = ImVec2(examples_line_start.x + ImGui::GetContentRegionAvail().x, examples_line_start.y);
+    examples_line_start.x += examples_text_width;
+    ImGui::GetWindowDrawList()->AddLine(examples_line_start, examples_line_end, IM_COL32(100, 100, 100, 128), 1.0f);
+    ImGui::PopStyleColor();
+
+    // Get pattern library
+    auto& pattern_lib = patterns::PatternLibrary::Instance();
+    if (!pattern_lib.IsInitialized()) {
+        pattern_lib.Initialize();
+    }
+
+    auto pattern_categories = pattern_lib.GetAvailableCategories();
+    for (auto cat : pattern_categories) {
+        auto cat_patterns = pattern_lib.GetByCategory(cat);
+        if (cat_patterns.empty()) continue;
+
+        // Category tree node
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+        const char* cat_icon = patterns::GetPatternCategoryIcon(cat);
+        std::string cat_label = std::string(cat_icon) + " " + patterns::PatternCategoryToString(cat);
+
+        if (ImGui::TreeNodeEx(cat_label.c_str(), flags)) {
+            for (const auto& pattern : cat_patterns) {
+                ImGui::PushID(pattern.id.c_str());
+
+                // Selectable item for each pattern
+                bool selected = false;
+                if (ImGui::Selectable(pattern.name.c_str(), &selected, ImGuiSelectableFlags_AllowDoubleClick)) {
+                    if (ImGui::IsMouseDoubleClicked(0)) {
+                        // Load pattern into canvas
+                        if (node_editor_) {
+                            std::vector<MLNode> nodes;
+                            std::vector<NodeLink> links;
+                            std::map<std::string, std::string> params;  // Default params
+                            static int base_id = 20000;
+                            int next_node_id = base_id;
+                            int next_link_id = base_id * 100;
+                            ImVec2 base_pos(200.0f, 200.0f);
+
+                            patterns::NodeCreatorCallback creator = [this](NodeType type, const std::string& name) {
+                                return node_editor_->CreateNode(type, name);
+                            };
+
+                            if (pattern_lib.InstantiatePatternWithCreator(
+                                pattern.id, params, nodes, links, next_node_id, next_link_id, base_pos, creator)) {
+                                node_editor_->InsertPattern(nodes, links);
+                                base_id = next_node_id + 100;
+                            }
+                        }
+                    }
+                }
+
+                // Tooltip
+                if (ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", pattern.name.c_str());
+                    if (!pattern.description.empty()) {
+                        ImGui::TextWrapped("%s", pattern.description.c_str());
+                    }
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Double-click to load");
+                    ImGui::EndTooltip();
+                }
+
+                ImGui::PopID();
+            }
+            ImGui::TreePop();
+        }
+    }
+
+    if (pattern_categories.empty()) {
+        ImGui::TextDisabled("No patterns available");
+    }
+
+    ImGui::Spacing();
+    ImGui::Spacing();
 }
 
 void NodeBrowserPanel::RenderFilterTags() {
@@ -572,27 +827,58 @@ void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata) {
 ImU32 NodeBrowserPanel::GetNodeColor(cyxwiz::NodeCategory category) const {
     switch (category) {
         case cyxwiz::NodeCategory::DataSources:
-            return IM_COL32(255, 180, 50, 255);   // Orange (like KNIME I/O)
+            return IM_COL32(100, 181, 246, 255);  // Light Blue
         case cyxwiz::NodeCategory::DataTransform:
-            return IM_COL32(255, 200, 80, 255);   // Yellow-orange
+            return IM_COL32(38, 166, 154, 255);   // Teal
         case cyxwiz::NodeCategory::Analytics:
-            return IM_COL32(100, 180, 255, 255);  // Blue
+            return IM_COL32(156, 39, 176, 255);   // Purple
+        case cyxwiz::NodeCategory::Preprocessing:
+            return IM_COL32(129, 199, 132, 255);  // Light Green
         case cyxwiz::NodeCategory::Layers:
-            return IM_COL32(150, 100, 200, 255);  // Purple
-        case cyxwiz::NodeCategory::Training:
-            return IM_COL32(100, 200, 150, 255);  // Green
-        case cyxwiz::NodeCategory::DataExport:
-            return IM_COL32(255, 100, 100, 255);  // Red
+            return IM_COL32(39, 174, 96, 255);    // Green
         case cyxwiz::NodeCategory::Activation:
-            return IM_COL32(255, 150, 200, 255);  // Pink
+            return IM_COL32(243, 156, 18, 255);   // Orange
         case cyxwiz::NodeCategory::Pooling:
-            return IM_COL32(150, 200, 255, 255);  // Light blue
+            return IM_COL32(155, 89, 182, 255);   // Light Purple
         case cyxwiz::NodeCategory::Normalization:
-            return IM_COL32(200, 200, 100, 255);  // Olive
+            return IM_COL32(236, 112, 99, 255);   // Coral
+        case cyxwiz::NodeCategory::Attention:
+            return IM_COL32(103, 58, 183, 255);   // Deep Purple
+        case cyxwiz::NodeCategory::Recurrent:
+            return IM_COL32(63, 81, 181, 255);    // Indigo
+        case cyxwiz::NodeCategory::ShapeOps:
+            return IM_COL32(26, 188, 156, 255);   // Turquoise
+        case cyxwiz::NodeCategory::MergeOps:
+            return IM_COL32(139, 195, 74, 255);   // Lime Green
+        case cyxwiz::NodeCategory::Training:
+            return IM_COL32(52, 73, 94, 255);     // Dark Blue Gray
+        case cyxwiz::NodeCategory::Regularization:
+            return IM_COL32(233, 30, 99, 255);    // Pink
         case cyxwiz::NodeCategory::Utility:
-            return IM_COL32(180, 180, 180, 255);  // Gray
+            return IM_COL32(96, 125, 139, 255);   // Blue Gray
+        case cyxwiz::NodeCategory::Signal:
+            return IM_COL32(0, 150, 136, 255);    // Teal
+        case cyxwiz::NodeCategory::DataPipeline:
+            return IM_COL32(0, 188, 212, 255);    // Cyan
+        case cyxwiz::NodeCategory::DNN:
+            return IM_COL32(41, 98, 255, 255);    // Deep Blue
+        case cyxwiz::NodeCategory::TextProcessing:
+            return IM_COL32(0, 121, 107, 255);    // Dark Teal
+        case cyxwiz::NodeCategory::Upsampling:
+            return IM_COL32(92, 107, 192, 255);   // Indigo
+        case cyxwiz::NodeCategory::TimeSeries:
+            return IM_COL32(255, 160, 0, 255);    // Amber
+        case cyxwiz::NodeCategory::Audio:
+            return IM_COL32(126, 87, 194, 255);   // Purple
+        case cyxwiz::NodeCategory::RL:
+            return IM_COL32(229, 57, 53, 255);    // Red
+        case cyxwiz::NodeCategory::DataExport:
+            return IM_COL32(76, 175, 80, 255);    // Green
+        case cyxwiz::NodeCategory::Plugin:
+            return IM_COL32(68, 136, 170, 255);   // Steel Blue
+        case cyxwiz::NodeCategory::Unknown:
         default:
-            return IM_COL32(150, 150, 150, 255);  // Default gray
+            return IM_COL32(127, 140, 141, 255);  // Gray
     }
 }
 
