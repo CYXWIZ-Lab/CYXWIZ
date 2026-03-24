@@ -2052,6 +2052,94 @@ void NodeEditor::RenderNodes() {
             }
         }
 
+        // =====================================================================
+        // KNIME-style traffic light status indicator below node
+        // =====================================================================
+        {
+            ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
+            ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+            // Position: centered below node
+            float indicator_radius = 5.0f * zoom_;
+            ImVec2 indicator_pos = ImVec2(
+                node_pos.x + node_dims.x / 2.0f,
+                node_pos.y + node_dims.y + indicator_radius + 4.0f * zoom_
+            );
+
+            // Determine color and style based on execution state
+            ImU32 indicator_color = 0;
+            bool show_indicator = true;
+            bool is_executing = false;
+
+            switch (exec_state) {
+                case NodeExecutionState::Completed:
+                    indicator_color = IM_COL32(76, 175, 80, 255);   // Green
+                    break;
+                case NodeExecutionState::Pending:
+                    indicator_color = IM_COL32(255, 193, 7, 255);   // Yellow/Amber
+                    break;
+                case NodeExecutionState::Executing:
+                    is_executing = true;
+                    break;
+                case NodeExecutionState::Error:
+                    indicator_color = IM_COL32(244, 67, 54, 255);   // Red
+                    break;
+                default:
+                    show_indicator = false;  // Idle - no indicator
+                    break;
+            }
+
+            if (show_indicator) {
+                if (is_executing) {
+                    // Spinning progress ring for executing state
+                    float angle = execution_pulse_time_ * 3.0f;  // Rotation speed
+                    float arc_length = 2.5f;  // Radians (~143 degrees)
+
+                    // Draw background circle (faded)
+                    draw_list->AddCircle(indicator_pos, indicator_radius,
+                                        IM_COL32(60, 150, 255, 60), 0, 2.0f * zoom_);
+
+                    // Draw spinning arc
+                    draw_list->PathArcTo(indicator_pos, indicator_radius, angle, angle + arc_length, 12);
+                    draw_list->PathStroke(IM_COL32(60, 150, 255, 255), false, 2.5f * zoom_);
+                } else {
+                    // Static filled circle for other states
+                    draw_list->AddCircleFilled(indicator_pos, indicator_radius, indicator_color);
+                    draw_list->AddCircle(indicator_pos, indicator_radius,
+                                        IM_COL32(0, 0, 0, 80), 0, 1.0f * zoom_);
+
+                    // Add X overlay for error state
+                    if (exec_state == NodeExecutionState::Error) {
+                        float x_size = indicator_radius * 0.5f;
+                        ImU32 x_color = IM_COL32(255, 255, 255, 255);
+                        draw_list->AddLine(
+                            ImVec2(indicator_pos.x - x_size, indicator_pos.y - x_size),
+                            ImVec2(indicator_pos.x + x_size, indicator_pos.y + x_size),
+                            x_color, 1.5f * zoom_
+                        );
+                        draw_list->AddLine(
+                            ImVec2(indicator_pos.x + x_size, indicator_pos.y - x_size),
+                            ImVec2(indicator_pos.x - x_size, indicator_pos.y + x_size),
+                            x_color, 1.5f * zoom_
+                        );
+                    }
+
+                    // Add checkmark for completed state
+                    if (exec_state == NodeExecutionState::Completed) {
+                        float check_size = indicator_radius * 0.5f;
+                        ImU32 check_color = IM_COL32(255, 255, 255, 255);
+                        // Draw checkmark: short line down-left, then long line down-right
+                        ImVec2 p1 = ImVec2(indicator_pos.x - check_size * 0.5f, indicator_pos.y);
+                        ImVec2 p2 = ImVec2(indicator_pos.x - check_size * 0.1f, indicator_pos.y + check_size * 0.4f);
+                        ImVec2 p3 = ImVec2(indicator_pos.x + check_size * 0.6f, indicator_pos.y - check_size * 0.4f);
+                        draw_list->AddLine(p1, p2, check_color, 1.5f * zoom_);
+                        draw_list->AddLine(p2, p3, check_color, 1.5f * zoom_);
+                    }
+                }
+            }
+        }
+
         // Pop color styles
         ImNodes::PopColorStyle();
         ImNodes::PopColorStyle();
