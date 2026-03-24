@@ -201,6 +201,8 @@ set(ENGINE_SOURCES
     src/gui/annotation/annotation_tools.cpp
     src/gui/annotation/grabcut_editor.cpp
     src/gui/annotation/watershed_editor.cpp
+    # Annotation Editor Panel (Phase 2 - UI Consolidation)
+    src/gui/panels/annotation_editor_panel.cpp
     src/gui/panels/task_progress_panel.cpp
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp

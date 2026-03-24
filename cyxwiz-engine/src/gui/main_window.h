@@ -36,6 +36,7 @@ class CommandWindowPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
 class DataExplorerPanel;
+class AnnotationEditorPanel;
 class VisualizationPanel;
 class ConnectionDialog;
 class JobStatusPanel;
@@ -239,6 +240,7 @@ private:
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
     std::unique_ptr<cyxwiz::DataExplorerPanel> data_explorer_panel_;
+    std::unique_ptr<cyxwiz::AnnotationEditorPanel> annotation_editor_panel_;
     std::unique_ptr<cyxwiz::VisualizationPanel> visualization_panel_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;

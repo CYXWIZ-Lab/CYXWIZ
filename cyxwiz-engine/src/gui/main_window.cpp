@@ -26,6 +26,7 @@
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "panels/data_explorer_panel.h"
+#include "panels/annotation_editor_panel.h"
 #include "panels/visualization_panel.h"
 #include "panels/connection_dialog.h"
 #include "panels/job_status_panel.h"
@@ -182,6 +183,7 @@ MainWindow::MainWindow()
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     data_explorer_panel_ = std::make_unique<cyxwiz::DataExplorerPanel>();
+    annotation_editor_panel_ = std::make_unique<cyxwiz::AnnotationEditorPanel>();
     visualization_panel_ = std::make_unique<cyxwiz::VisualizationPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
@@ -2150,6 +2152,7 @@ void MainWindow::Render() {
     if (script_editor_) script_editor_->Render();
     if (table_viewer_) table_viewer_->Render();
     if (data_explorer_panel_) data_explorer_panel_->Render();
+    if (annotation_editor_panel_) annotation_editor_panel_->Render();
     if (visualization_panel_) visualization_panel_->Render();
     if (connection_dialog_) connection_dialog_->Render();
     if (job_status_panel_) job_status_panel_->Render();
@@ -2545,6 +2548,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (data_explorer_panel_) {
         dock_style.RegisterPanel("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_->GetVisiblePtr());
+    }
+    if (annotation_editor_panel_) {
+        dock_style.RegisterPanel("Annotation Editor", ICON_FA_DRAW_POLYGON, annotation_editor_panel_->GetVisiblePtr());
     }
     if (data_studio_panel_) {
         dock_style.RegisterPanel("Data Studio", ICON_FA_DIAGRAM_PROJECT, data_studio_panel_->GetVisiblePtr());
