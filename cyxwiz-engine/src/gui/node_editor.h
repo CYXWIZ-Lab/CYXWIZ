@@ -320,6 +320,7 @@ enum class NodeType {
     LearningCurvesNode, // Training/validation learning curves
     FeatureImportanceNode, // Feature importance analysis
     CrossValidationNode,   // K-Fold cross-validation
+    RegressionMetricsNode,  // Regression metrics (MSE, RMSE, MAE, R²)
 
     // ===== Data Preprocessing Nodes (Phase 4) =====
     StandardScaler,     // Z-score standardization (mean=0, std=1)
@@ -329,6 +330,26 @@ enum class NodeType {
     OrdinalEncoder,     // Encode ordinal categories
     TargetEncoder,      // Target-based encoding
     TrainTestSplit,     // Stratified train/test split
+
+    // ===== Advanced Preprocessing Nodes (Phase 3 - UI Consolidation) =====
+    OutlierDetector,    // Detect/remove outliers (IQR, Z-score, Isolation Forest)
+    ImagePreprocessor,  // Image resize, crop, normalize pipeline
+    QualityAnalyzer,    // Image quality filtering (blur, brightness, contrast)
+    DataValidator,      // Schema validation and data quality checks
+
+    // ===== Dataset Source Nodes (Phase 4 - UI Consolidation) =====
+    ImageFolderDataset, // Load images from folder with class labels
+    MNISTDataset,       // Load MNIST handwritten digits dataset
+    CIFAR10Dataset,     // Load CIFAR-10 image classification dataset
+    HuggingFaceDataset, // Load dataset from HuggingFace Hub
+    KaggleDataset,      // Load dataset from Kaggle
+
+    // ===== Advanced Augmentation Nodes (Phase 6 - UI Consolidation) =====
+    AugmentationPreset, // Predefined augmentation pipelines (ImageNet, CIFAR, Medical, Self-Supervised)
+    GeometricTransform, // Geometric transforms (rotate, flip, crop, perspective, affine)
+    ColorTransform,     // Color transforms (brightness, contrast, saturation, hue, gamma)
+    MorphologyTransform,// Morphological operations (dilate, erode, blur, sharpen, edge)
+    AdvancedAugment,    // Advanced augmentation (Cutout, MixUp, CutMix, RandAugment, AutoAugment)
 
     // ===== Signal Processing Nodes (Phase 4) =====
     FFTNode,            // Fast Fourier Transform

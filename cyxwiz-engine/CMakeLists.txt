@@ -192,16 +192,12 @@ set(ENGINE_SOURCES
     src/gui/dialogs/python_setup_wizard.cpp
     src/gui/dialogs/project_selection_dialog.cpp
     src/gui/dialogs/start_page.cpp
-    src/gui/panels/dataset_panel.cpp
-    # Removed tabs (redundant with Data Studio):
-    # src/gui/panels/dataset_panel_preprocessing.cpp  # Preprocessing moved to Data Studio
-    # src/gui/panels/dataset_panel_datapipeline.cpp   # Pipeline moved to Data Studio
-    # src/gui/panels/dataset_panel_prepare.cpp        # Prepare moved to Data Studio
-    # Kept tabs (unique to Training & Evaluation):
-    src/gui/panels/dataset_panel_interactive.cpp
-    src/gui/panels/dataset_panel_evaluate.cpp
-    src/gui/panels/dataset_panel_export.cpp
-    # Interactive annotation tools (Phase 4)
+    # Phase 5: Dataset Manager removed - functionality moved to node-based workflow
+    # src/gui/panels/dataset_panel.cpp
+    # src/gui/panels/dataset_panel_interactive.cpp
+    # src/gui/panels/dataset_panel_evaluate.cpp
+    # src/gui/panels/dataset_panel_export.cpp
+    # Interactive annotation tools (Phase 4) - kept for future Annotation Editor panel
     src/gui/annotation/annotation_tools.cpp
     src/gui/annotation/grabcut_editor.cpp
     src/gui/annotation/watershed_editor.cpp
@@ -415,7 +411,7 @@ set(ENGINE_HEADERS
     src/gui/dialogs/python_setup_wizard.h
     src/gui/dialogs/project_selection_dialog.h
     src/gui/dialogs/start_page.h
-    src/gui/panels/dataset_panel.h
+    # src/gui/panels/dataset_panel.h  # Phase 5: Removed
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.h
     src/gui/annotation/grabcut_editor.h

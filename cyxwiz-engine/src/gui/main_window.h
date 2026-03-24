@@ -15,7 +15,7 @@ class NodeEditor;
 class Console;
 class Viewport;
 class Properties;
-class TrainingEvaluationPanel;
+// class TrainingEvaluationPanel;  // Phase 5: Removed - functionality moved to node-based workflow
 class WalletPanel;
 class CustomNodeEditorPanel;
 class ThemeEditorPanel;
@@ -228,7 +228,7 @@ private:
     std::unique_ptr<Console> console_;
     std::unique_ptr<Viewport> viewport_;
     std::unique_ptr<Properties> properties_;
-    std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;
+    // std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;  // Phase 5: Removed
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;

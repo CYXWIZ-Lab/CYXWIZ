@@ -227,6 +227,7 @@ private:
     bool ExecuteLearningCurves(const Node& node, ExecutionContext& ctx);
     bool ExecuteFeatureImportance(const Node& node, ExecutionContext& ctx);
     bool ExecuteCrossValidation(const Node& node, ExecutionContext& ctx);
+    bool ExecuteRegressionMetrics(const Node& node, ExecutionContext& ctx);
 
     // ===== Phase 4: Data Preprocessing =====
     bool ExecuteStandardScaler(const Node& node, ExecutionContext& ctx);
@@ -236,6 +237,26 @@ private:
     bool ExecuteOrdinalEncoder(const Node& node, ExecutionContext& ctx);
     bool ExecuteTargetEncoder(const Node& node, ExecutionContext& ctx);
     bool ExecuteTrainTestSplit(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 8: Advanced Preprocessing (UI Consolidation) =====
+    bool ExecuteOutlierDetector(const Node& node, ExecutionContext& ctx);
+    bool ExecuteImagePreprocessor(const Node& node, ExecutionContext& ctx);
+    bool ExecuteQualityAnalyzer(const Node& node, ExecutionContext& ctx);
+    bool ExecuteDataValidator(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 8: Dataset Source Nodes (UI Consolidation) =====
+    bool ExecuteImageFolderDataset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteMNISTDataset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteCIFAR10Dataset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteHuggingFaceDataset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteKaggleDataset(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 6: Advanced Augmentation (UI Consolidation) =====
+    bool ExecuteAugmentationPreset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteGeometricTransform(const Node& node, ExecutionContext& ctx);
+    bool ExecuteColorTransform(const Node& node, ExecutionContext& ctx);
+    bool ExecuteMorphologyTransform(const Node& node, ExecutionContext& ctx);
+    bool ExecuteAdvancedAugment(const Node& node, ExecutionContext& ctx);
 
     // ===== Phase 4: Signal Processing =====
     bool ExecuteFFT(const Node& node, ExecutionContext& ctx);

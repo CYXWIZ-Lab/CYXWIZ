@@ -20,6 +20,12 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::JSONFile:
         case NodeType::ExcelFile:
         case NodeType::RESTAPISource:
+        // Phase 4: Dataset Source Nodes (UI Consolidation)
+        case NodeType::ImageFolderDataset:
+        case NodeType::MNISTDataset:
+        case NodeType::CIFAR10Dataset:
+        case NodeType::HuggingFaceDataset:
+        case NodeType::KaggleDataset:
             return NodeCategory::DataSources;
 
         // Data Transforms
@@ -54,6 +60,10 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         // Preprocessing
         case NodeType::Normalize:
         case NodeType::OneHotEncode:
+        case NodeType::OutlierDetector:
+        case NodeType::ImagePreprocessor:
+        case NodeType::QualityAnalyzer:
+        case NodeType::DataValidator:
             return NodeCategory::Preprocessing;
 
         // Dense/Linear layers
@@ -183,6 +193,12 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::Augmentation:
         case NodeType::DataSplit:
         case NodeType::TensorReshape:
+        // Phase 6: Advanced Augmentation Nodes (UI Consolidation)
+        case NodeType::AugmentationPreset:
+        case NodeType::GeometricTransform:
+        case NodeType::ColorTransform:
+        case NodeType::MorphologyTransform:
+        case NodeType::AdvancedAugment:
             return NodeCategory::DataPipeline;
 
         // DNN Inference
@@ -3146,6 +3162,33 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        case NodeType::RegressionMetricsNode: {
+            // RegressionMetricsNode - Compute regression metrics
+            NodePin pred_in;
+            pred_in.id = next_pin_id_++;
+            pred_in.type = PinType::Tensor;
+            pred_in.name = "Predictions";
+            pred_in.is_input = true;
+            node.inputs.push_back(pred_in);
+
+            NodePin truth_in;
+            truth_in.id = next_pin_id_++;
+            truth_in.type = PinType::Tensor;
+            truth_in.name = "Ground Truth";
+            truth_in.is_input = true;
+            node.inputs.push_back(truth_in);
+
+            NodePin metrics_out;
+            metrics_out.id = next_pin_id_++;
+            metrics_out.type = PinType::Dataset;
+            metrics_out.name = "Metrics";
+            metrics_out.is_input = false;
+            node.outputs.push_back(metrics_out);
+
+            node.parameters["metrics"] = "mse,rmse,mae,r2";  // Comma-separated metrics to compute
+            break;
+        }
+
         // ===== Phase 4: Data Preprocessing Nodes =====
         case NodeType::StandardScaler: {
             NodePin input_pin;
@@ -3321,6 +3364,371 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["test_size"] = "0.2";
             node.parameters["stratify"] = "true";
             node.parameters["random_state"] = "42";
+            break;
+        }
+
+        // ===== Phase 8: Advanced Preprocessing Nodes (UI Consolidation) =====
+        case NodeType::OutlierDetector: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin clean_out;
+            clean_out.id = next_pin_id_++;
+            clean_out.type = PinType::Dataset;
+            clean_out.name = "Clean";
+            clean_out.is_input = false;
+            node.outputs.push_back(clean_out);
+
+            NodePin outliers_out;
+            outliers_out.id = next_pin_id_++;
+            outliers_out.type = PinType::Dataset;
+            outliers_out.name = "Outliers";
+            outliers_out.is_input = false;
+            node.outputs.push_back(outliers_out);
+
+            NodePin mask_out;
+            mask_out.id = next_pin_id_++;
+            mask_out.type = PinType::Tensor;
+            mask_out.name = "Mask";
+            mask_out.is_input = false;
+            node.outputs.push_back(mask_out);
+
+            node.parameters["method"] = "iqr";           // iqr, zscore, isolation_forest, lof
+            node.parameters["threshold"] = "1.5";        // IQR multiplier or Z-score threshold
+            node.parameters["columns"] = "all";          // Which columns to check
+            node.parameters["action"] = "remove";        // remove, clip, flag
+            break;
+        }
+
+        case NodeType::ImagePreprocessor: {
+            NodePin images_in;
+            images_in.id = next_pin_id_++;
+            images_in.type = PinType::Tensor;
+            images_in.name = "Images";
+            images_in.is_input = true;
+            node.inputs.push_back(images_in);
+
+            NodePin processed_out;
+            processed_out.id = next_pin_id_++;
+            processed_out.type = PinType::Tensor;
+            processed_out.name = "Processed";
+            processed_out.is_input = false;
+            node.outputs.push_back(processed_out);
+
+            node.parameters["resize_mode"] = "aspect_fit";  // exact, aspect_fit, aspect_fill, center
+            node.parameters["target_width"] = "224";
+            node.parameters["target_height"] = "224";
+            node.parameters["normalize"] = "true";
+            node.parameters["mean"] = "0.485,0.456,0.406";  // ImageNet mean
+            node.parameters["std"] = "0.229,0.224,0.225";   // ImageNet std
+            node.parameters["interpolation"] = "bilinear";  // nearest, bilinear, bicubic
+            node.parameters["padding_mode"] = "reflect";    // constant, reflect, replicate
+            break;
+        }
+
+        case NodeType::QualityAnalyzer: {
+            NodePin images_in;
+            images_in.id = next_pin_id_++;
+            images_in.type = PinType::Dataset;
+            images_in.name = "Images";
+            images_in.is_input = true;
+            node.inputs.push_back(images_in);
+
+            NodePin passed_out;
+            passed_out.id = next_pin_id_++;
+            passed_out.type = PinType::Dataset;
+            passed_out.name = "Passed";
+            passed_out.is_input = false;
+            node.outputs.push_back(passed_out);
+
+            NodePin rejected_out;
+            rejected_out.id = next_pin_id_++;
+            rejected_out.type = PinType::Dataset;
+            rejected_out.name = "Rejected";
+            rejected_out.is_input = false;
+            node.outputs.push_back(rejected_out);
+
+            NodePin report_out;
+            report_out.id = next_pin_id_++;
+            report_out.type = PinType::Dataset;
+            report_out.name = "Report";
+            report_out.is_input = false;
+            node.outputs.push_back(report_out);
+
+            node.parameters["blur_threshold"] = "100.0";      // Laplacian variance threshold
+            node.parameters["brightness_min"] = "30";         // Min acceptable brightness
+            node.parameters["brightness_max"] = "220";        // Max acceptable brightness
+            node.parameters["contrast_threshold"] = "0.2";    // Min contrast (std dev)
+            node.parameters["noise_threshold"] = "50.0";      // Max noise level
+            node.parameters["duplicate_check"] = "true";      // Check for duplicates
+            node.parameters["aspect_ratio_tolerance"] = "0.1"; // Aspect ratio consistency
+            break;
+        }
+
+        case NodeType::DataValidator: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin valid_out;
+            valid_out.id = next_pin_id_++;
+            valid_out.type = PinType::Dataset;
+            valid_out.name = "Valid";
+            valid_out.is_input = false;
+            node.outputs.push_back(valid_out);
+
+            NodePin invalid_out;
+            invalid_out.id = next_pin_id_++;
+            invalid_out.type = PinType::Dataset;
+            invalid_out.name = "Invalid";
+            invalid_out.is_input = false;
+            node.outputs.push_back(invalid_out);
+
+            NodePin issues_out;
+            issues_out.id = next_pin_id_++;
+            issues_out.type = PinType::Dataset;
+            issues_out.name = "Issues";
+            issues_out.is_input = false;
+            node.outputs.push_back(issues_out);
+
+            node.parameters["required_columns"] = "";       // Comma-separated required column names
+            node.parameters["unique_columns"] = "";         // Columns that must have unique values
+            node.parameters["column_types"] = "";           // JSON: {"col": "type"}
+            node.parameters["value_ranges"] = "";           // JSON: {"col": [min, max]}
+            node.parameters["not_null_columns"] = "";       // Columns that cannot have nulls
+            node.parameters["regex_patterns"] = "";         // JSON: {"col": "pattern"}
+            break;
+        }
+
+        // ===== Phase 4: Dataset Source Nodes (UI Consolidation) =====
+        case NodeType::ImageFolderDataset: {
+            // ImageFolderDataset - Load images from folder with class labels
+            NodePin images_out;
+            images_out.id = next_pin_id_++;
+            images_out.type = PinType::Dataset;
+            images_out.name = "Images";
+            images_out.is_input = false;
+            node.outputs.push_back(images_out);
+
+            NodePin labels_out;
+            labels_out.id = next_pin_id_++;
+            labels_out.type = PinType::Tensor;
+            labels_out.name = "Labels";
+            labels_out.is_input = false;
+            node.outputs.push_back(labels_out);
+
+            NodePin metadata_out;
+            metadata_out.id = next_pin_id_++;
+            metadata_out.type = PinType::Dataset;
+            metadata_out.name = "Metadata";
+            metadata_out.is_input = false;
+            node.outputs.push_back(metadata_out);
+
+            node.parameters["path"] = "";                      // Folder path
+            node.parameters["extensions"] = ".jpg,.png,.bmp";  // File extensions to include
+            node.parameters["class_mode"] = "folder";          // folder, filename, none
+            node.parameters["recursive"] = "true";             // Scan subdirectories
+            break;
+        }
+
+        case NodeType::MNISTDataset: {
+            // MNISTDataset - Load MNIST handwritten digits
+            NodePin images_out;
+            images_out.id = next_pin_id_++;
+            images_out.type = PinType::Tensor;
+            images_out.name = "Images";
+            images_out.is_input = false;
+            node.outputs.push_back(images_out);
+
+            NodePin labels_out;
+            labels_out.id = next_pin_id_++;
+            labels_out.type = PinType::Tensor;
+            labels_out.name = "Labels";
+            labels_out.is_input = false;
+            node.outputs.push_back(labels_out);
+
+            node.parameters["split"] = "train";                // train, test
+            node.parameters["path"] = "";                      // Cache directory (default: ~/.cyxwiz/datasets)
+            node.parameters["download"] = "true";              // Auto-download if missing
+            node.parameters["flatten"] = "false";              // Flatten 28x28 to 784
+            break;
+        }
+
+        case NodeType::CIFAR10Dataset: {
+            // CIFAR10Dataset - Load CIFAR-10 image classification dataset
+            NodePin images_out;
+            images_out.id = next_pin_id_++;
+            images_out.type = PinType::Tensor;
+            images_out.name = "Images";
+            images_out.is_input = false;
+            node.outputs.push_back(images_out);
+
+            NodePin labels_out;
+            labels_out.id = next_pin_id_++;
+            labels_out.type = PinType::Tensor;
+            labels_out.name = "Labels";
+            labels_out.is_input = false;
+            node.outputs.push_back(labels_out);
+
+            node.parameters["split"] = "train";                // train, test
+            node.parameters["path"] = "";                      // Cache directory (default: ~/.cyxwiz/datasets)
+            node.parameters["download"] = "true";              // Auto-download if missing
+            break;
+        }
+
+        case NodeType::HuggingFaceDataset: {
+            // HuggingFaceDataset - Load dataset from HuggingFace Hub
+            NodePin dataset_out;
+            dataset_out.id = next_pin_id_++;
+            dataset_out.type = PinType::Dataset;
+            dataset_out.name = "Dataset";
+            dataset_out.is_input = false;
+            node.outputs.push_back(dataset_out);
+
+            node.parameters["dataset_id"] = "";                // HuggingFace dataset ID (e.g., "imdb", "squad")
+            node.parameters["split"] = "train";                // train, test, validation
+            node.parameters["subset"] = "";                    // Dataset subset/config (optional)
+            node.parameters["streaming"] = "false";            // Enable streaming for large datasets
+            break;
+        }
+
+        case NodeType::KaggleDataset: {
+            // KaggleDataset - Load dataset from Kaggle
+            NodePin dataset_out;
+            dataset_out.id = next_pin_id_++;
+            dataset_out.type = PinType::Dataset;
+            dataset_out.name = "Dataset";
+            dataset_out.is_input = false;
+            node.outputs.push_back(dataset_out);
+
+            node.parameters["dataset_id"] = "";                // Kaggle dataset ID (e.g., "username/dataset-name")
+            node.parameters["path"] = "";                      // Download path
+            node.parameters["unzip"] = "true";                 // Auto-unzip downloaded files
+            break;
+        }
+
+        // ===== Phase 6: Advanced Augmentation Nodes (UI Consolidation) =====
+        case NodeType::AugmentationPreset: {
+            // AugmentationPreset - Predefined augmentation pipelines
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["preset"] = "ImageNet";            // ImageNet, CIFAR, Medical, SelfSupervised, Custom
+            node.parameters["normalize"] = "true";             // Apply normalization
+            node.parameters["resize"] = "224,224";             // Target size (preset-specific default)
+            break;
+        }
+
+        case NodeType::GeometricTransform: {
+            // GeometricTransform - Geometric transforms (rotate, flip, crop, perspective)
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["transform"] = "rotate";           // rotate, flip_h, flip_v, crop, perspective, affine
+            node.parameters["angle_range"] = "-30,30";         // Rotation angle range (degrees)
+            node.parameters["flip_prob"] = "0.5";              // Probability for flip transforms
+            node.parameters["crop_scale"] = "0.8,1.0";         // Random crop scale range
+            node.parameters["perspective_distortion"] = "0.2"; // Perspective distortion scale
+            break;
+        }
+
+        case NodeType::ColorTransform: {
+            // ColorTransform - Color space transforms
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["brightness_range"] = "0.8,1.2";   // Brightness multiplier range
+            node.parameters["contrast_range"] = "0.8,1.2";     // Contrast multiplier range
+            node.parameters["saturation_range"] = "0.8,1.2";   // Saturation multiplier range
+            node.parameters["hue_range"] = "-0.1,0.1";         // Hue shift range
+            node.parameters["gamma_range"] = "0.8,1.2";        // Gamma correction range
+            break;
+        }
+
+        case NodeType::MorphologyTransform: {
+            // MorphologyTransform - Morphological operations
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["operation"] = "blur";             // blur, sharpen, dilate, erode, edge
+            node.parameters["kernel_size"] = "3";              // Kernel size for morphological ops
+            node.parameters["sigma"] = "1.0";                  // Sigma for Gaussian blur
+            node.parameters["strength"] = "1.0";               // Effect strength
+            break;
+        }
+
+        case NodeType::AdvancedAugment: {
+            // AdvancedAugment - Advanced augmentation techniques
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["method"] = "Cutout";              // Cutout, MixUp, CutMix, RandAugment, AutoAugment
+            node.parameters["cutout_size"] = "16";             // Size of cutout region (Cutout)
+            node.parameters["mixup_alpha"] = "0.2";            // MixUp/CutMix alpha parameter
+            node.parameters["num_ops"] = "2";                  // Number of operations (RandAugment)
+            node.parameters["magnitude"] = "9";                // Magnitude level (RandAugment/AutoAugment)
             break;
         }
 

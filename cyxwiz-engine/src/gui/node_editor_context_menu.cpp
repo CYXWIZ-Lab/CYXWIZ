@@ -348,6 +348,30 @@ void NodeEditor::ShowContextMenu() {
             AddNode(NodeType::Augmentation, "Augmentation");
             ImGui::CloseCurrentPopup();
         }
+        // Phase 6: Advanced Augmentation Nodes
+        if (ImGui::BeginMenu("Advanced Augmentation")) {
+            if (ImGui::MenuItem("Augmentation Preset")) {
+                AddNode(NodeType::AugmentationPreset, "AugmentationPreset");
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Geometric Transform")) {
+                AddNode(NodeType::GeometricTransform, "GeometricTransform");
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Color Transform")) {
+                AddNode(NodeType::ColorTransform, "ColorTransform");
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Morphology Transform")) {
+                AddNode(NodeType::MorphologyTransform, "MorphologyTransform");
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Advanced Augment")) {
+                AddNode(NodeType::AdvancedAugment, "AdvancedAugment");
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("DataSplit")) {
             AddNode(NodeType::DataSplit, "DataSplit");
             ImGui::CloseCurrentPopup();
@@ -363,6 +387,60 @@ void NodeEditor::ShowContextMenu() {
         }
         if (ImGui::MenuItem("OneHotEncode")) {
             AddNode(NodeType::OneHotEncode, "OneHotEncode");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
+    // ===== MODEL EVALUATION (Phase 7: UI Consolidation) =====
+    if (ImGui::BeginMenu("Model Evaluation")) {
+        if (ImGui::MenuItem("Confusion Matrix")) {
+            AddNode(NodeType::ConfusionMatrixNode, "ConfusionMatrix");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("ROC Curve")) {
+            AddNode(NodeType::ROCCurveNode, "ROCCurve");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("PR Curve")) {
+            AddNode(NodeType::PRCurveNode, "PRCurve");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Learning Curves")) {
+            AddNode(NodeType::LearningCurvesNode, "LearningCurves");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Feature Importance")) {
+            AddNode(NodeType::FeatureImportanceNode, "FeatureImportance");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Cross Validation")) {
+            AddNode(NodeType::CrossValidationNode, "CrossValidation");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Regression Metrics")) {
+            AddNode(NodeType::RegressionMetricsNode, "RegressionMetrics");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndMenu();
+    }
+
+    // ===== PREPROCESSING (Phase 8: UI Consolidation) =====
+    if (ImGui::BeginMenu("Preprocessing")) {
+        if (ImGui::MenuItem("Outlier Detector")) {
+            AddNode(NodeType::OutlierDetector, "OutlierDetector");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Image Preprocessor")) {
+            AddNode(NodeType::ImagePreprocessor, "ImagePreprocessor");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Quality Analyzer")) {
+            AddNode(NodeType::QualityAnalyzer, "QualityAnalyzer");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Data Validator")) {
+            AddNode(NodeType::DataValidator, "DataValidator");
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndMenu();
@@ -933,7 +1011,13 @@ void NodeEditor::ShowCategorizedNodeMenu() {
             {NodeType::ParquetFile, "Parquet File"},
             {NodeType::JSONFile, "JSON File"},
             {NodeType::ExcelFile, "Excel File"},
-            {NodeType::RESTAPISource, "REST API"}
+            {NodeType::RESTAPISource, "REST API"},
+            // Phase 4: Dataset Source Nodes (UI Consolidation)
+            {NodeType::ImageFolderDataset, "Image Folder"},
+            {NodeType::MNISTDataset, "MNIST Dataset"},
+            {NodeType::CIFAR10Dataset, "CIFAR-10 Dataset"},
+            {NodeType::HuggingFaceDataset, "HuggingFace Dataset"},
+            {NodeType::KaggleDataset, "Kaggle Dataset"}
         };
 
         // Data Transforms
@@ -987,6 +1071,16 @@ void NodeEditor::ShowCategorizedNodeMenu() {
             {NodeType::Sigmoid, "Sigmoid"},
             {NodeType::Tanh, "Tanh"},
             {NodeType::Softmax, "Softmax"}
+        };
+
+        // Preprocessing (Phase 8: UI Consolidation)
+        nodes_by_category_[NodeCategory::Preprocessing] = {
+            {NodeType::Normalize, "Normalize"},
+            {NodeType::OneHotEncode, "One-Hot Encode"},
+            {NodeType::OutlierDetector, "Outlier Detector"},
+            {NodeType::ImagePreprocessor, "Image Preprocessor"},
+            {NodeType::QualityAnalyzer, "Quality Analyzer"},
+            {NodeType::DataValidator, "Data Validator"}
         };
 
         // ... (Add more categories as needed)

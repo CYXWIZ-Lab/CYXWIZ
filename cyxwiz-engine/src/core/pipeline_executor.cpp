@@ -349,6 +349,8 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteFeatureImportance(node, ctx);
     } else if (node.type == "CrossValidationNode") {
         return ExecuteCrossValidation(node, ctx);
+    } else if (node.type == "RegressionMetricsNode") {
+        return ExecuteRegressionMetrics(node, ctx);
     }
     // ===== Phase 4: Data Preprocessing Nodes =====
     else if (node.type == "StandardScaler") {
@@ -365,6 +367,40 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteTargetEncoder(node, ctx);
     } else if (node.type == "TrainTestSplit") {
         return ExecuteTrainTestSplit(node, ctx);
+    }
+    // ===== Phase 8: Advanced Preprocessing Nodes (UI Consolidation) =====
+    else if (node.type == "OutlierDetector") {
+        return ExecuteOutlierDetector(node, ctx);
+    } else if (node.type == "ImagePreprocessor") {
+        return ExecuteImagePreprocessor(node, ctx);
+    } else if (node.type == "QualityAnalyzer") {
+        return ExecuteQualityAnalyzer(node, ctx);
+    } else if (node.type == "DataValidator") {
+        return ExecuteDataValidator(node, ctx);
+    }
+    // ===== Phase 8: Dataset Source Nodes (UI Consolidation) =====
+    else if (node.type == "ImageFolderDataset") {
+        return ExecuteImageFolderDataset(node, ctx);
+    } else if (node.type == "MNISTDataset") {
+        return ExecuteMNISTDataset(node, ctx);
+    } else if (node.type == "CIFAR10Dataset") {
+        return ExecuteCIFAR10Dataset(node, ctx);
+    } else if (node.type == "HuggingFaceDataset") {
+        return ExecuteHuggingFaceDataset(node, ctx);
+    } else if (node.type == "KaggleDataset") {
+        return ExecuteKaggleDataset(node, ctx);
+    }
+    // ===== Phase 6: Advanced Augmentation Nodes (UI Consolidation) =====
+    else if (node.type == "AugmentationPreset") {
+        return ExecuteAugmentationPreset(node, ctx);
+    } else if (node.type == "GeometricTransform") {
+        return ExecuteGeometricTransform(node, ctx);
+    } else if (node.type == "ColorTransform") {
+        return ExecuteColorTransform(node, ctx);
+    } else if (node.type == "MorphologyTransform") {
+        return ExecuteMorphologyTransform(node, ctx);
+    } else if (node.type == "AdvancedAugment") {
+        return ExecuteAdvancedAugment(node, ctx);
     }
     // ===== Phase 4: Signal Processing Nodes =====
     else if (node.type == "FFTNode") {
@@ -3067,6 +3103,31 @@ bool PipelineExecutor::ExecuteCrossValidation(const Node& node, ExecutionContext
     return true;
 }
 
+bool PipelineExecutor::ExecuteRegressionMetrics(const Node& node, ExecutionContext& ctx) {
+    std::string output_name = "ds_reg_metrics_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto metrics_it = node.parameters.find("metrics");
+        std::string metrics = (metrics_it != node.parameters.end()) ? metrics_it->second : "mse,rmse,mae,r2";
+
+        spdlog::info("[Model Evaluation] RegressionMetrics: Computing {}", metrics);
+
+        // TODO: Compute regression metrics
+        // MSE: Mean Squared Error = mean((pred - truth)^2)
+        // RMSE: Root Mean Squared Error = sqrt(MSE)
+        // MAE: Mean Absolute Error = mean(|pred - truth|)
+        // R²: Coefficient of Determination = 1 - SS_res/SS_tot
+        spdlog::warn("[Model Evaluation] RegressionMetrics: Placeholder implementation");
+
+        ctx.node_results[node.id] = output_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("RegressionMetrics error: " + std::string(e.what()));
+        return false;
+    }
+}
+
 // ============================================================
 // Phase 4: Data Preprocessing Executors
 // ============================================================
@@ -3249,6 +3310,588 @@ bool PipelineExecutor::ExecuteTrainTestSplit(const Node& node, ExecutionContext&
         return true;
     } catch (const std::exception& e) {
         ReportError("Train/Test Split error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// ============================================================
+// Phase 8: Advanced Preprocessing Executors (UI Consolidation)
+// ============================================================
+
+bool PipelineExecutor::ExecuteOutlierDetector(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Outlier Detector: No input dataset");
+        return false;
+    }
+
+    std::string clean_output = "ds_outlier_clean_" + std::to_string(node.id);
+    std::string outliers_output = "ds_outliers_" + std::to_string(node.id);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) return false;
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Get parameters
+        auto method_it = node.parameters.find("method");
+        std::string method = (method_it != node.parameters.end()) ? method_it->second : "iqr";
+
+        auto threshold_it = node.parameters.find("threshold");
+        float threshold = (threshold_it != node.parameters.end()) ? std::stof(threshold_it->second) : 1.5f;
+
+        auto action_it = node.parameters.find("action");
+        std::string action = (action_it != node.parameters.end()) ? action_it->second : "remove";
+
+        spdlog::info("[Preprocessing] Outlier Detector: method={}, threshold={}, action={}",
+                     method, threshold, action);
+
+        // TODO: Implement actual outlier detection using IQR/Z-score
+        // For now, pass through data as placeholder
+        spdlog::warn("[Preprocessing] Outlier Detector: Placeholder - passing through data");
+
+        registry.RegisterArrowTable(input_table, clean_output);
+        ctx.node_results[node.id] = clean_output;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("Outlier Detector error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteImagePreprocessor(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Image Preprocessor: No input dataset");
+        return false;
+    }
+
+    std::string output_dataset_name = "ds_imgprep_" + std::to_string(node.id);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) return false;
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Get parameters
+        auto resize_mode_it = node.parameters.find("resize_mode");
+        std::string resize_mode = (resize_mode_it != node.parameters.end()) ? resize_mode_it->second : "aspect_fit";
+
+        auto target_width_it = node.parameters.find("target_width");
+        int target_width = (target_width_it != node.parameters.end()) ? std::stoi(target_width_it->second) : 224;
+
+        auto target_height_it = node.parameters.find("target_height");
+        int target_height = (target_height_it != node.parameters.end()) ? std::stoi(target_height_it->second) : 224;
+
+        auto normalize_it = node.parameters.find("normalize");
+        bool normalize = (normalize_it != node.parameters.end()) ? (normalize_it->second == "true") : true;
+
+        auto interpolation_it = node.parameters.find("interpolation");
+        std::string interpolation = (interpolation_it != node.parameters.end()) ? interpolation_it->second : "bilinear";
+
+        spdlog::info("[Preprocessing] Image Preprocessor: resize_mode={}, target={}x{}, normalize={}, interpolation={}",
+                     resize_mode, target_width, target_height, normalize, interpolation);
+
+        // TODO: Implement actual image preprocessing using OpenCV
+        // For now, pass through data as placeholder
+        spdlog::warn("[Preprocessing] Image Preprocessor: Placeholder - passing through data");
+
+        registry.RegisterArrowTable(input_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("Image Preprocessor error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteQualityAnalyzer(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Quality Analyzer: No input dataset");
+        return false;
+    }
+
+    std::string passed_output = "ds_quality_passed_" + std::to_string(node.id);
+    std::string rejected_output = "ds_quality_rejected_" + std::to_string(node.id);
+    std::string report_output = "ds_quality_report_" + std::to_string(node.id);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) return false;
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Get parameters
+        auto blur_it = node.parameters.find("blur_threshold");
+        float blur_threshold = (blur_it != node.parameters.end()) ? std::stof(blur_it->second) : 100.0f;
+
+        auto brightness_min_it = node.parameters.find("brightness_min");
+        int brightness_min = (brightness_min_it != node.parameters.end()) ? std::stoi(brightness_min_it->second) : 30;
+
+        auto brightness_max_it = node.parameters.find("brightness_max");
+        int brightness_max = (brightness_max_it != node.parameters.end()) ? std::stoi(brightness_max_it->second) : 220;
+
+        auto contrast_it = node.parameters.find("contrast_threshold");
+        float contrast_threshold = (contrast_it != node.parameters.end()) ? std::stof(contrast_it->second) : 0.2f;
+
+        auto duplicate_it = node.parameters.find("duplicate_check");
+        bool duplicate_check = (duplicate_it != node.parameters.end()) ? (duplicate_it->second == "true") : true;
+
+        spdlog::info("[Preprocessing] Quality Analyzer: blur_threshold={}, brightness=[{},{}], contrast={}, duplicate_check={}",
+                     blur_threshold, brightness_min, brightness_max, contrast_threshold, duplicate_check);
+
+        // TODO: Implement actual quality analysis using dataset_analyzer.cpp logic
+        // For now, pass through data as placeholder
+        spdlog::warn("[Preprocessing] Quality Analyzer: Placeholder - passing through data");
+
+        registry.RegisterArrowTable(input_table, passed_output);
+        ctx.node_results[node.id] = passed_output;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("Quality Analyzer error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataValidator(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Data Validator: No input dataset");
+        return false;
+    }
+
+    std::string valid_output = "ds_valid_" + std::to_string(node.id);
+    std::string invalid_output = "ds_invalid_" + std::to_string(node.id);
+    std::string issues_output = "ds_issues_" + std::to_string(node.id);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) return false;
+
+        auto input_table = input_dataset->GetArrowTable();
+
+        // Get parameters
+        auto required_it = node.parameters.find("required_columns");
+        std::string required_columns = (required_it != node.parameters.end()) ? required_it->second : "";
+
+        auto unique_it = node.parameters.find("unique_columns");
+        std::string unique_columns = (unique_it != node.parameters.end()) ? unique_it->second : "";
+
+        auto not_null_it = node.parameters.find("not_null_columns");
+        std::string not_null_columns = (not_null_it != node.parameters.end()) ? not_null_it->second : "";
+
+        spdlog::info("[Preprocessing] Data Validator: required={}, unique={}, not_null={}",
+                     required_columns, unique_columns, not_null_columns);
+
+        // TODO: Implement actual data validation
+        // For now, pass through data as placeholder
+        spdlog::warn("[Preprocessing] Data Validator: Placeholder - passing through data");
+
+        registry.RegisterArrowTable(input_table, valid_output);
+        ctx.node_results[node.id] = valid_output;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("Data Validator error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// ============================================================
+// Phase 8: Dataset Source Node Executors (UI Consolidation)
+// ============================================================
+
+bool PipelineExecutor::ExecuteImageFolderDataset(const Node& node, ExecutionContext& ctx) {
+    std::string output_dataset_name = "ds_imagefolder_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto path_it = node.parameters.find("path");
+        std::string path = (path_it != node.parameters.end()) ? path_it->second : "";
+
+        auto ext_it = node.parameters.find("extensions");
+        std::string extensions = (ext_it != node.parameters.end()) ? ext_it->second : ".jpg,.png,.bmp";
+
+        auto class_mode_it = node.parameters.find("class_mode");
+        std::string class_mode = (class_mode_it != node.parameters.end()) ? class_mode_it->second : "folder";
+
+        auto recursive_it = node.parameters.find("recursive");
+        bool recursive = (recursive_it != node.parameters.end()) && (recursive_it->second == "true");
+
+        if (path.empty()) {
+            ReportError("Image Folder Dataset: Path not specified");
+            return false;
+        }
+
+        spdlog::info("[Data Sources] ImageFolderDataset: path={}, extensions={}, class_mode={}, recursive={}",
+                     path, extensions, class_mode, recursive);
+
+        // TODO: Implement actual image folder scanning
+        // This would scan the folder, extract image paths, and build an Arrow table
+        // For now, create placeholder metadata
+        spdlog::warn("[Data Sources] ImageFolderDataset: Placeholder - full implementation pending");
+
+        // Create empty placeholder dataset
+        auto& registry = DataRegistry::Instance();
+        auto schema = arrow::schema({
+            arrow::field("path", arrow::utf8()),
+            arrow::field("label", arrow::int64()),
+            arrow::field("class_name", arrow::utf8())
+        });
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
+        auto empty_table = arrow::Table::Make(schema, empty_columns);
+        registry.RegisterArrowTable(empty_table, output_dataset_name);
+
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("Image Folder Dataset error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteMNISTDataset(const Node& node, ExecutionContext& ctx) {
+    std::string output_dataset_name = "ds_mnist_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto split_it = node.parameters.find("split");
+        std::string split = (split_it != node.parameters.end()) ? split_it->second : "train";
+
+        auto path_it = node.parameters.find("path");
+        std::string path = (path_it != node.parameters.end()) ? path_it->second : "";
+
+        auto download_it = node.parameters.find("download");
+        bool download = (download_it == node.parameters.end()) || (download_it->second == "true");
+
+        auto flatten_it = node.parameters.find("flatten");
+        bool flatten = (flatten_it != node.parameters.end()) && (flatten_it->second == "true");
+
+        spdlog::info("[Data Sources] MNISTDataset: split={}, download={}, flatten={}", split, download, flatten);
+
+        // TODO: Implement actual MNIST loading
+        // This would download/load MNIST and create an Arrow table with image data
+        spdlog::warn("[Data Sources] MNISTDataset: Placeholder - full implementation pending");
+
+        // Create placeholder metadata (would contain actual image tensors in full impl)
+        auto& registry = DataRegistry::Instance();
+        auto schema = arrow::schema({
+            arrow::field("image_id", arrow::int64()),
+            arrow::field("label", arrow::int64())
+        });
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
+        auto empty_table = arrow::Table::Make(schema, empty_columns);
+        registry.RegisterArrowTable(empty_table, output_dataset_name);
+
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("MNIST Dataset error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteCIFAR10Dataset(const Node& node, ExecutionContext& ctx) {
+    std::string output_dataset_name = "ds_cifar10_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto split_it = node.parameters.find("split");
+        std::string split = (split_it != node.parameters.end()) ? split_it->second : "train";
+
+        auto download_it = node.parameters.find("download");
+        bool download = (download_it == node.parameters.end()) || (download_it->second == "true");
+
+        spdlog::info("[Data Sources] CIFAR10Dataset: split={}, download={}", split, download);
+
+        // TODO: Implement actual CIFAR-10 loading
+        spdlog::warn("[Data Sources] CIFAR10Dataset: Placeholder - full implementation pending");
+
+        // Create placeholder metadata
+        auto& registry = DataRegistry::Instance();
+        auto schema = arrow::schema({
+            arrow::field("image_id", arrow::int64()),
+            arrow::field("label", arrow::int64()),
+            arrow::field("class_name", arrow::utf8())
+        });
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
+        auto empty_table = arrow::Table::Make(schema, empty_columns);
+        registry.RegisterArrowTable(empty_table, output_dataset_name);
+
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("CIFAR-10 Dataset error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteHuggingFaceDataset(const Node& node, ExecutionContext& ctx) {
+    std::string output_dataset_name = "ds_huggingface_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto dataset_id_it = node.parameters.find("dataset_id");
+        std::string dataset_id = (dataset_id_it != node.parameters.end()) ? dataset_id_it->second : "";
+
+        auto split_it = node.parameters.find("split");
+        std::string split = (split_it != node.parameters.end()) ? split_it->second : "train";
+
+        auto subset_it = node.parameters.find("subset");
+        std::string subset = (subset_it != node.parameters.end()) ? subset_it->second : "";
+
+        auto streaming_it = node.parameters.find("streaming");
+        bool streaming = (streaming_it != node.parameters.end()) && (streaming_it->second == "true");
+
+        if (dataset_id.empty()) {
+            ReportError("HuggingFace Dataset: Dataset ID not specified");
+            return false;
+        }
+
+        spdlog::info("[Data Sources] HuggingFaceDataset: id={}, split={}, subset={}, streaming={}",
+                     dataset_id, split, subset, streaming);
+
+        // TODO: Implement HuggingFace datasets API integration
+        // This would use the HuggingFace Python API or direct HTTP API
+        spdlog::warn("[Data Sources] HuggingFaceDataset: Placeholder - full implementation pending");
+
+        // Create placeholder metadata
+        auto& registry = DataRegistry::Instance();
+        auto schema = arrow::schema({
+            arrow::field("row_id", arrow::int64()),
+            arrow::field("dataset_source", arrow::utf8())
+        });
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
+        auto empty_table = arrow::Table::Make(schema, empty_columns);
+        registry.RegisterArrowTable(empty_table, output_dataset_name);
+
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("HuggingFace Dataset error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteKaggleDataset(const Node& node, ExecutionContext& ctx) {
+    std::string output_dataset_name = "ds_kaggle_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto dataset_id_it = node.parameters.find("dataset_id");
+        std::string dataset_id = (dataset_id_it != node.parameters.end()) ? dataset_id_it->second : "";
+
+        auto path_it = node.parameters.find("path");
+        std::string path = (path_it != node.parameters.end()) ? path_it->second : "";
+
+        auto unzip_it = node.parameters.find("unzip");
+        bool unzip = (unzip_it == node.parameters.end()) || (unzip_it->second == "true");
+
+        if (dataset_id.empty()) {
+            ReportError("Kaggle Dataset: Dataset ID not specified");
+            return false;
+        }
+
+        spdlog::info("[Data Sources] KaggleDataset: id={}, path={}, unzip={}", dataset_id, path, unzip);
+
+        // TODO: Implement Kaggle API integration
+        // This would use the Kaggle CLI or API to download datasets
+        spdlog::warn("[Data Sources] KaggleDataset: Placeholder - full implementation pending");
+
+        // Create placeholder metadata
+        auto& registry = DataRegistry::Instance();
+        auto schema = arrow::schema({
+            arrow::field("file_path", arrow::utf8()),
+            arrow::field("file_size", arrow::int64())
+        });
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> empty_columns;
+        auto empty_table = arrow::Table::Make(schema, empty_columns);
+        registry.RegisterArrowTable(empty_table, output_dataset_name);
+
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("Kaggle Dataset error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// ============================================================
+// Phase 6: Advanced Augmentation Executors (UI Consolidation)
+// ============================================================
+
+bool PipelineExecutor::ExecuteAugmentationPreset(const Node& node, ExecutionContext& ctx) {
+    std::string output_name = "ds_aug_preset_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto preset_it = node.parameters.find("preset");
+        std::string preset = (preset_it != node.parameters.end()) ? preset_it->second : "ImageNet";
+
+        auto normalize_it = node.parameters.find("normalize");
+        bool normalize = (normalize_it == node.parameters.end()) || (normalize_it->second == "true");
+
+        auto resize_it = node.parameters.find("resize");
+        std::string resize = (resize_it != node.parameters.end()) ? resize_it->second : "224,224";
+
+        spdlog::info("[Augmentation] Preset: {} (normalize={}, resize={})", preset, normalize, resize);
+
+        // TODO: Apply preset augmentation pipeline based on selected preset
+        // ImageNet: Resize(256), CenterCrop(224), Normalize(ImageNet mean/std)
+        // CIFAR: RandomCrop(32, padding=4), RandomHorizontalFlip, Normalize(CIFAR mean/std)
+        // Medical: Resize, RandomRotate90, ElasticDeformation, Normalize
+        // SelfSupervised: RandomResizedCrop, ColorJitter, GaussianBlur, RandomGrayscale
+        spdlog::warn("[Augmentation] AugmentationPreset: Placeholder - preset pipeline execution pending");
+
+        ctx.node_results[node.id] = output_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("AugmentationPreset error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteGeometricTransform(const Node& node, ExecutionContext& ctx) {
+    std::string output_name = "ds_geo_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto transform_it = node.parameters.find("transform");
+        std::string transform = (transform_it != node.parameters.end()) ? transform_it->second : "rotate";
+
+        auto angle_it = node.parameters.find("angle_range");
+        std::string angle_range = (angle_it != node.parameters.end()) ? angle_it->second : "-30,30";
+
+        auto flip_prob_it = node.parameters.find("flip_prob");
+        std::string flip_prob = (flip_prob_it != node.parameters.end()) ? flip_prob_it->second : "0.5";
+
+        spdlog::info("[Augmentation] GeometricTransform: {} (angle={}, flip_prob={})",
+                     transform, angle_range, flip_prob);
+
+        // TODO: Apply geometric transform using OpenCV or similar
+        // rotate: cv::getRotationMatrix2D, cv::warpAffine
+        // flip_h/flip_v: cv::flip
+        // crop: cv::Rect, ROI extraction
+        // perspective: cv::getPerspectiveTransform, cv::warpPerspective
+        spdlog::warn("[Augmentation] GeometricTransform: Placeholder implementation");
+
+        ctx.node_results[node.id] = output_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("GeometricTransform error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteColorTransform(const Node& node, ExecutionContext& ctx) {
+    std::string output_name = "ds_color_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto brightness_it = node.parameters.find("brightness_range");
+        std::string brightness = (brightness_it != node.parameters.end()) ? brightness_it->second : "0.8,1.2";
+
+        auto contrast_it = node.parameters.find("contrast_range");
+        std::string contrast = (contrast_it != node.parameters.end()) ? contrast_it->second : "0.8,1.2";
+
+        auto saturation_it = node.parameters.find("saturation_range");
+        std::string saturation = (saturation_it != node.parameters.end()) ? saturation_it->second : "0.8,1.2";
+
+        auto hue_it = node.parameters.find("hue_range");
+        std::string hue = (hue_it != node.parameters.end()) ? hue_it->second : "-0.1,0.1";
+
+        spdlog::info("[Augmentation] ColorTransform: brightness={}, contrast={}, saturation={}, hue={}",
+                     brightness, contrast, saturation, hue);
+
+        // TODO: Apply color transforms using OpenCV
+        // brightness: alpha * pixel + beta
+        // contrast: (pixel - mean) * factor + mean
+        // saturation: Convert to HSV, scale S channel
+        // hue: Convert to HSV, shift H channel
+        spdlog::warn("[Augmentation] ColorTransform: Placeholder implementation");
+
+        ctx.node_results[node.id] = output_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ColorTransform error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteMorphologyTransform(const Node& node, ExecutionContext& ctx) {
+    std::string output_name = "ds_morph_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto op_it = node.parameters.find("operation");
+        std::string operation = (op_it != node.parameters.end()) ? op_it->second : "blur";
+
+        auto kernel_it = node.parameters.find("kernel_size");
+        int kernel_size = (kernel_it != node.parameters.end()) ? std::stoi(kernel_it->second) : 3;
+
+        auto sigma_it = node.parameters.find("sigma");
+        float sigma = (sigma_it != node.parameters.end()) ? std::stof(sigma_it->second) : 1.0f;
+
+        spdlog::info("[Augmentation] MorphologyTransform: {} (kernel={}, sigma={})",
+                     operation, kernel_size, sigma);
+
+        // TODO: Apply morphological operations using OpenCV
+        // blur: cv::GaussianBlur or cv::blur
+        // sharpen: Unsharp mask (original + alpha * (original - blurred))
+        // dilate: cv::dilate
+        // erode: cv::erode
+        // edge: cv::Canny or cv::Laplacian
+        spdlog::warn("[Augmentation] MorphologyTransform: Placeholder implementation");
+
+        ctx.node_results[node.id] = output_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("MorphologyTransform error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteAdvancedAugment(const Node& node, ExecutionContext& ctx) {
+    std::string output_name = "ds_adv_aug_" + std::to_string(node.id);
+
+    try {
+        // Get parameters
+        auto method_it = node.parameters.find("method");
+        std::string method = (method_it != node.parameters.end()) ? method_it->second : "Cutout";
+
+        auto cutout_it = node.parameters.find("cutout_size");
+        int cutout_size = (cutout_it != node.parameters.end()) ? std::stoi(cutout_it->second) : 16;
+
+        auto alpha_it = node.parameters.find("mixup_alpha");
+        float mixup_alpha = (alpha_it != node.parameters.end()) ? std::stof(alpha_it->second) : 0.2f;
+
+        auto num_ops_it = node.parameters.find("num_ops");
+        int num_ops = (num_ops_it != node.parameters.end()) ? std::stoi(num_ops_it->second) : 2;
+
+        auto mag_it = node.parameters.find("magnitude");
+        int magnitude = (mag_it != node.parameters.end()) ? std::stoi(mag_it->second) : 9;
+
+        spdlog::info("[Augmentation] AdvancedAugment: {} (cutout={}, alpha={}, ops={}, mag={})",
+                     method, cutout_size, mixup_alpha, num_ops, magnitude);
+
+        // TODO: Apply advanced augmentation techniques
+        // Cutout: Random rectangular cutout with black/noise fill
+        // MixUp: Convex combination of two images and labels
+        // CutMix: Cut region from one image, paste to another
+        // RandAugment: Random selection of N augmentation ops at magnitude M
+        // AutoAugment: Learned augmentation policy
+        spdlog::warn("[Augmentation] AdvancedAugment: Placeholder implementation");
+
+        ctx.node_results[node.id] = output_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("AdvancedAugment error: " + std::string(e.what()));
         return false;
     }
 }
