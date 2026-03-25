@@ -73,6 +73,7 @@ private:
         double calinski_harabasz;
     };
     std::vector<EvalRecord> eval_history_;
+    static constexpr size_t kMaxEvalHistory = 100;
 
     // Async
     std::thread compute_thread_;

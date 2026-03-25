@@ -505,9 +505,9 @@ void OpenAIAPIServer::RegisterRoutes() {
 
         std::string prompt = request_body["prompt"].get<std::string>();
 
-        // Get optional parameters
-        int max_tokens = request_body.value("max_tokens", 256);
-        float temperature = request_body.value("temperature", 0.8f);
+        // Get optional parameters (TODO: use these for generation)
+        [[maybe_unused]] int max_tokens = request_body.value("max_tokens", 256);
+        [[maybe_unused]] float temperature = request_body.value("temperature", 0.8f);
 
         // Check deployment exists
         if (!deployment_manager_->HasDeployment(deployment_id)) {
@@ -605,7 +605,7 @@ void OpenAIAPIServer::RegisterRoutes() {
         json request_body;
         try {
             request_body = json::parse(req.body);
-        } catch (const json::exception& e) {
+        } catch (const json::exception&) {
             res.status = 400;
             res.set_content(R"({"error":{"message":"Invalid JSON"}})", "application/json");
             return;
@@ -718,7 +718,7 @@ void OpenAIAPIServer::RegisterRoutes() {
         json request_body;
         try {
             request_body = json::parse(req.body);
-        } catch (const json::exception& e) {
+        } catch (const json::exception&) {
             res.status = 400;
             res.set_content(R"({"error":{"message":"Invalid JSON"}})", "application/json");
             return;

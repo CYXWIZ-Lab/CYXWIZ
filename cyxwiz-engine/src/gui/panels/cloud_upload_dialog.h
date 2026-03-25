@@ -85,6 +85,9 @@ private:
     size_t current_upload_index_ = 0;
     std::vector<std::string> completed_file_ids_;
 
+    // Background upload thread (prevents use-after-free)
+    std::thread upload_thread_;
+
     // UI state
     bool show_file_browser_ = false;
     char file_path_buffer_[512] = "";

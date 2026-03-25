@@ -195,21 +195,21 @@ void ImPlotBackend::PlotHeatmap(const char* label, const double* values,
                        nullptr, ImPlotPoint(0, 0), ImPlotPoint(cols, rows));
 }
 
-void ImPlotBackend::PlotBoxPlot(const char* label, const double* values,
-                                int count) {
+void ImPlotBackend::PlotBoxPlot([[maybe_unused]] const char* label,
+                                const double* values, int count) {
     if (!state_->in_plot || count <= 0) {
         return;
     }
 
-    // Calculate box plot statistics
+    // Calculate box plot statistics for future implementation
     std::vector<double> sorted(values, values + count);
     std::sort(sorted.begin(), sorted.end());
 
-    double min = sorted.front();
-    double q1 = sorted[count / 4];
-    double median = sorted[count / 2];
-    double q3 = sorted[3 * count / 4];
-    double max = sorted.back();
+    [[maybe_unused]] double min = sorted.front();
+    [[maybe_unused]] double q1 = sorted[count / 4];
+    [[maybe_unused]] double median = sorted[count / 2];
+    [[maybe_unused]] double q3 = sorted[3 * count / 4];
+    [[maybe_unused]] double max = sorted.back();
 
     // ImPlot doesn't have built-in box plots, so we draw using error bars
     // TODO: Implement custom box plot rendering
@@ -238,7 +238,8 @@ void ImPlotBackend::PlotStairs(const char* label, const double* x_data,
     ImPlot::PlotStairs(label, x_data, y_data, count);
 }
 
-void ImPlotBackend::PlotPieChart(const char* label, const double* values,
+void ImPlotBackend::PlotPieChart([[maybe_unused]] const char* label,
+                                 const double* values,
                                  const char* const* labels, int count) {
     if (!state_->in_plot || count <= 0) {
         return;
@@ -320,7 +321,7 @@ void ImPlotBackend::SetGridVisible(bool visible) {
 // Export
 // ============================================================================
 
-bool ImPlotBackend::SaveToFile(const char* filepath) {
+bool ImPlotBackend::SaveToFile([[maybe_unused]] const char* filepath) {
     // ImPlot doesn't have built-in file export
     // TODO: Implement screenshot capture using framebuffer
     spdlog::warn("ImPlot SaveToFile not implemented - use matplotlib backend for export");

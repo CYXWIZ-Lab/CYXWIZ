@@ -16,7 +16,7 @@ DeploymentServiceImpl::DeploymentServiceImpl(std::shared_ptr<DeploymentManager> 
 }
 
 grpc::Status DeploymentServiceImpl::CreateDeployment(
-    grpc::ServerContext* context,
+    grpc::ServerContext* /*context*/,
     const protocol::CreateDeploymentRequest* request,
     protocol::CreateDeploymentResponse* response) {
 
@@ -56,7 +56,7 @@ grpc::Status DeploymentServiceImpl::CreateDeployment(
 }
 
 grpc::Status DeploymentServiceImpl::StopDeployment(
-    grpc::ServerContext* context,
+    grpc::ServerContext* /*context*/,
     const protocol::StopDeploymentRequest* request,
     protocol::StopDeploymentResponse* response) {
 
@@ -78,7 +78,7 @@ grpc::Status DeploymentServiceImpl::StopDeployment(
 }
 
 grpc::Status DeploymentServiceImpl::GetDeployment(
-    grpc::ServerContext* context,
+    grpc::ServerContext* /*context*/,
     const protocol::GetDeploymentRequest* request,
     protocol::GetDeploymentResponse* response) {
 
@@ -101,7 +101,7 @@ grpc::Status DeploymentServiceImpl::GetDeployment(
 }
 
 grpc::Status DeploymentServiceImpl::GetDeploymentMetrics(
-    grpc::ServerContext* context,
+    grpc::ServerContext* /*context*/,
     const protocol::GetDeploymentMetricsRequest* request,
     protocol::GetDeploymentMetricsResponse* response) {
 
@@ -132,8 +132,8 @@ grpc::Status DeploymentServiceImpl::GetDeploymentMetrics(
 }
 
 grpc::Status DeploymentServiceImpl::ListDeployments(
-    grpc::ServerContext* context,
-    const protocol::ListDeploymentsRequest* request,
+    grpc::ServerContext* /*context*/,
+    const protocol::ListDeploymentsRequest* /*request*/,
     protocol::ListDeploymentsResponse* response) {
 
     spdlog::debug("Received list deployments request");
@@ -161,7 +161,7 @@ grpc::Status DeploymentServiceImpl::ListDeployments(
 }
 
 grpc::Status DeploymentServiceImpl::DeleteDeployment(
-    grpc::ServerContext* context,
+    grpc::ServerContext* /*context*/,
     const protocol::DeleteDeploymentRequest* request,
     protocol::DeleteDeploymentResponse* response) {
 

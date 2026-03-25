@@ -5,6 +5,8 @@
 #include <memory>
 #include <vector>
 #include <functional>
+#include <atomic>
+#include <thread>
 
 // Fix Windows macro conflict with protobuf DeviceCapabilities message
 #ifdef _WIN32
@@ -161,12 +163,16 @@ private:
     void AddAuthMetadata(grpc::ClientContext& context);
 
     bool connected_ = false;
+    std::atomic<bool> shutdown_requested_{false};
     std::string server_address_;
     std::string last_error_;
     std::string auth_token_;  // JWT token for authentication
 
     std::shared_ptr<grpc::Channel> channel_;
     std::unique_ptr<cyxwiz::protocol::DeploymentService::Stub> stub_;
+
+    // Background thread for async operations (prevents use-after-free)
+    std::thread async_thread_;
 };
 
 } // namespace network

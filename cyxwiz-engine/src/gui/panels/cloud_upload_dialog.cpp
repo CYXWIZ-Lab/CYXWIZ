@@ -31,6 +31,9 @@ CloudUploadDialog::CloudUploadDialog()
 
 CloudUploadDialog::~CloudUploadDialog() {
     should_cancel_.store(true);
+    if (upload_thread_.joinable()) {
+        upload_thread_.join();
+    }
 }
 
 void CloudUploadDialog::Render() {
@@ -363,8 +366,13 @@ void CloudUploadDialog::UploadNextFile() {
         pending_files_[next_index].state = PendingFile::State::Uploading;
     }
 
+    // Wait for any previous upload thread
+    if (upload_thread_.joinable()) {
+        upload_thread_.join();
+    }
+
     // Upload in background thread
-    std::thread([this, next_index]() {
+    upload_thread_ = std::thread([this, next_index]() {
         PendingFile* file = nullptr;
         {
             std::lock_guard<std::mutex> lock(files_mutex_);
@@ -383,7 +391,7 @@ void CloudUploadDialog::UploadNextFile() {
         } else {
             is_uploading_.store(false);
         }
-    }).detach();
+    });
 }
 
 void CloudUploadDialog::UploadFile(PendingFile& file) {

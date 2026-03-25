@@ -124,6 +124,10 @@ void ClusterEvalPanel::RenderDataSelector() {
             record.davies_bouldin = metrics_.davies_bouldin_index;
             record.calinski_harabasz = metrics_.calinski_harabasz_score;
             eval_history_.push_back(record);
+            // Enforce size limit to prevent unbounded memory growth
+            while (eval_history_.size() > kMaxEvalHistory) {
+                eval_history_.erase(eval_history_.begin());
+            }
             name_buf[0] = '\0';
         }
     }

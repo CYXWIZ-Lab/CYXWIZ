@@ -14,10 +14,14 @@ ReservationClient::ReservationClient()
 }
 
 ReservationClient::~ReservationClient() {
+    shutdown_requested_.store(true);
     StopHeartbeat();
     connected_ = false;
     if (connect_thread_.joinable()) {
         connect_thread_.join();
+    }
+    if (async_reserve_thread_.joinable()) {
+        async_reserve_thread_.join();
     }
     Disconnect();
 }
@@ -170,14 +174,29 @@ void ReservationClient::ReserveNodeAsync(
     const cyxwiz::protocol::JobConfig& job_config,
     ReservationCallback callback) {
 
-    std::thread([this, node_id, user_wallet, duration_minutes, job_config, callback]() {
+    if (shutdown_requested_.load()) return;
+
+    // Wait for any previous async operation
+    if (async_reserve_thread_.joinable()) {
+        async_reserve_thread_.join();
+    }
+
+    async_reserve_thread_ = std::thread([this, node_id, user_wallet, duration_minutes, job_config, callback]() {
+        if (shutdown_requested_.load()) {
+            callback(false, ReservationInfo{}, "Shutdown requested");
+            return;
+        }
+
         auto result = ReserveNode(node_id, user_wallet, duration_minutes, job_config);
+
+        if (shutdown_requested_.load()) return;
+
         if (result.has_value()) {
             callback(true, result.value(), "");
         } else {
             callback(false, ReservationInfo{}, last_error_);
         }
-    }).detach();
+    });
 }
 
 bool ReservationClient::ConfirmJobComplete(

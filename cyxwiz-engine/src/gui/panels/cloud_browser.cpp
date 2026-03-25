@@ -43,7 +43,13 @@ CloudBrowserPanel::CloudBrowserPanel()
     : Panel("Cloud Browser", true) {
 }
 
-CloudBrowserPanel::~CloudBrowserPanel() = default;
+CloudBrowserPanel::~CloudBrowserPanel() {
+    // Signal shutdown and wait for any running async thread
+    shutdown_requested_.store(true);
+    if (async_thread_.joinable()) {
+        async_thread_.join();
+    }
+}
 
 void CloudBrowserPanel::Render() {
     if (!visible_) return;
@@ -640,24 +646,40 @@ void CloudBrowserPanel::RenderDeleteConfirmPopup() {
 
 void CloudBrowserPanel::RefreshDatasets() {
     if (!datastream_client_ || !datastream_client_->IsConnected()) return;
+    if (shutdown_requested_.load()) return;
+
+    // Wait for any existing async operation
+    if (async_thread_.joinable()) {
+        async_thread_.join();
+    }
 
     is_loading_.store(true);
     loading_message_ = "Loading datasets...";
 
-    std::thread([this]() {
-        FetchDatasets();
-    }).detach();
+    async_thread_ = std::thread([this]() {
+        if (!shutdown_requested_.load()) {
+            FetchDatasets();
+        }
+    });
 }
 
 void CloudBrowserPanel::RefreshPublicDatasets() {
     if (!datastream_client_ || !datastream_client_->IsConnected()) return;
+    if (shutdown_requested_.load()) return;
+
+    // Wait for any existing async operation
+    if (async_thread_.joinable()) {
+        async_thread_.join();
+    }
 
     is_loading_.store(true);
     loading_message_ = "Loading public datasets...";
 
-    std::thread([this]() {
-        FetchPublicDatasets();
-    }).detach();
+    async_thread_ = std::thread([this]() {
+        if (!shutdown_requested_.load()) {
+            FetchPublicDatasets();
+        }
+    });
 }
 
 void CloudBrowserPanel::FetchDatasets() {
@@ -751,28 +773,49 @@ void CloudBrowserPanel::ApplyFilter() {
 
 void CloudBrowserPanel::VerifySelectedDataset() {
     if (!selected_dataset_ || !datastream_client_) return;
+    if (shutdown_requested_.load()) return;
+
+    // Wait for any existing async operation
+    if (async_thread_.joinable()) {
+        async_thread_.join();
+    }
 
     verification_in_progress_ = true;
 
     std::string dataset_id = selected_dataset_->id;
-    std::thread([this, dataset_id]() {
+    async_thread_ = std::thread([this, dataset_id]() {
+        if (shutdown_requested_.load()) {
+            verification_in_progress_ = false;
+            return;
+        }
+
         bool success = datastream_client_->VerifyDataset(dataset_id, verification_result_);
 
-        if (!success) {
+        if (!success && !shutdown_requested_.load()) {
             last_error_ = datastream_client_->GetLastError();
             error_time_ = 5.0f;
         }
 
         verification_in_progress_ = false;
-    }).detach();
+    });
 }
 
 void CloudBrowserPanel::DeleteSelectedDataset() {
     if (!selected_dataset_ || !datastream_client_) return;
+    if (shutdown_requested_.load()) return;
+
+    // Wait for any existing async operation
+    if (async_thread_.joinable()) {
+        async_thread_.join();
+    }
 
     std::string dataset_id = selected_dataset_->id;
-    std::thread([this, dataset_id]() {
+    async_thread_ = std::thread([this, dataset_id]() {
+        if (shutdown_requested_.load()) return;
+
         bool success = datastream_client_->DeleteDataset(dataset_id);
+
+        if (shutdown_requested_.load()) return;
 
         if (success) {
             RefreshDatasets();
@@ -780,12 +823,18 @@ void CloudBrowserPanel::DeleteSelectedDataset() {
             last_error_ = datastream_client_->GetLastError();
             error_time_ = 5.0f;
         }
-    }).detach();
+    });
 }
 
 void CloudBrowserPanel::ShareSelectedDataset() {
     if (!selected_dataset_ || !datastream_client_) return;
     if (strlen(share_user_id_buffer_) == 0) return;
+    if (shutdown_requested_.load()) return;
+
+    // Wait for any existing async operation
+    if (async_thread_.joinable()) {
+        async_thread_.join();
+    }
 
     std::vector<std::string> permissions;
     if (share_permission_flags_ & 0x1) permissions.push_back("read");
@@ -795,14 +844,16 @@ void CloudBrowserPanel::ShareSelectedDataset() {
     std::string dataset_id = selected_dataset_->id;
     std::string user_id = share_user_id_buffer_;
 
-    std::thread([this, dataset_id, user_id, permissions]() {
+    async_thread_ = std::thread([this, dataset_id, user_id, permissions]() {
+        if (shutdown_requested_.load()) return;
+
         bool success = datastream_client_->ShareDataset(dataset_id, user_id, permissions);
 
-        if (!success) {
+        if (!success && !shutdown_requested_.load()) {
             last_error_ = datastream_client_->GetLastError();
             error_time_ = 5.0f;
         }
-    }).detach();
+    });
 }
 
 const network::CloudDatasetInfo* CloudBrowserPanel::GetSelectedDataset() const {

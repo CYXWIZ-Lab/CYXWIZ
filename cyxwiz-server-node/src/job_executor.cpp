@@ -660,6 +660,11 @@ bool JobExecutor::LoadMNISTDataset(
         return false;
     }
 
+    if (num_images != num_labels) {
+        spdlog::error("MNIST image/label count mismatch: {} images vs {} labels", num_images, num_labels);
+        return false;
+    }
+
     spdlog::info("MNIST: {} images, {}x{} pixels", num_images, num_rows, num_cols);
 
     int image_size = num_rows * num_cols;
@@ -1380,7 +1385,7 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
                 // Get batch indices
                 size_t start = batch_idx * batch_size;
                 size_t end = std::min(start + batch_size, num_samples);
-                size_t current_batch_size = end - start;
+                [[maybe_unused]] size_t current_batch_size = end - start;
 
                 // Stack batch data
                 std::vector<cyxwiz::Tensor> batch_inputs;
@@ -1497,8 +1502,8 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
 
 bool JobExecutor::SaveResults(
     const std::string& job_id,
-    cyxwiz::Model* model,
-    const TrainingMetrics& final_metrics)
+    [[maybe_unused]] cyxwiz::Model* model,
+    [[maybe_unused]] const TrainingMetrics& final_metrics)
 {
     spdlog::info("Saving results for job: {}", job_id);
 

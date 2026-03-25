@@ -196,11 +196,11 @@ public:
     virtual void OnMouseDown(float x, float y, MouseButton button) = 0;
     virtual void OnMouseUp(float x, float y, MouseButton button) = 0;
     virtual void OnMouseMove(float x, float y, bool dragging) = 0;
-    virtual void OnMouseScroll(float delta) {}
+    virtual void OnMouseScroll(float /*delta*/) {}
 
     // Keyboard event handlers
-    virtual void OnKeyDown(int key) {}
-    virtual void OnKeyUp(int key) {}
+    virtual void OnKeyDown(int /*key*/) {}
+    virtual void OnKeyUp(int /*key*/) {}
 
     /**
      * Render tool overlay (called during ImGui rendering)

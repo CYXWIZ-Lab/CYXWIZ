@@ -127,7 +127,7 @@ void PlotTestPanel::RenderRealtimeDemo() {
     ImGui::SameLine();
     if (ImGui::Button("Reset")) {
         current_epoch_ = 0;
-        auto& mgr = plotting::PlotManager::GetInstance();
+        [[maybe_unused]] auto& mgr = plotting::PlotManager::GetInstance();
         // Clear data (would need to implement this)
         spdlog::info("Reset training data");
     }
@@ -480,7 +480,7 @@ void PlotTestPanel::ExportPlotToFile() {
 }
 
 void PlotTestPanel::ClearAllPlots() {
-    auto& mgr = plotting::PlotManager::GetInstance();
+    [[maybe_unused]] auto& mgr = plotting::PlotManager::GetInstance();
     current_epoch_ = 0;
     is_training_ = false;
 

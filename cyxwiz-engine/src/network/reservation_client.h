@@ -164,10 +164,12 @@ private:
 
     // Connection state
     std::atomic<bool> connected_;
+    std::atomic<bool> shutdown_requested_{false};
     std::string server_address_;
     std::string last_error_;
     std::string auth_token_;
     std::thread connect_thread_;
+    std::thread async_reserve_thread_;
 
     // gRPC
     std::shared_ptr<grpc::Channel> channel_;

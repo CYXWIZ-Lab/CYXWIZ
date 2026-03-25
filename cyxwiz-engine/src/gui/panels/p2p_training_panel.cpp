@@ -653,6 +653,10 @@ void P2PTrainingPanel::OnCheckpoint(const network::CheckpointInfo& checkpoint) {
     entry.timestamp = std::chrono::system_clock::now();
 
     checkpoint_history_.push_back(entry);
+    // Enforce size limit to prevent unbounded memory growth
+    while (checkpoint_history_.size() > kMaxCheckpointHistory) {
+        checkpoint_history_.erase(checkpoint_history_.begin());
+    }
 
     AddLogEntry("INFO", "Checkpoint saved at epoch " + std::to_string(checkpoint.epoch));
 }
