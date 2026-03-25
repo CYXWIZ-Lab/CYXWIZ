@@ -31,12 +31,11 @@ class ShapeInferenceEngine;
 
 // Node category for organization and UI display (Unified Canvas Phase 1)
 enum class NodeCategory {
-    // Data I/O
-    DataSources,      // CSV, SQL, HDF5, API, etc.
+    // Data I/O (Read & Write)
+    DataSources,      // CSV, SQL, HDF5, API + Export CSV, Parquet, SQL, JSON
     Database,         // PostgreSQL, MySQL, SQLite, MongoDB (Coming Soon)
     CloudStorage,     // AWS S3, Azure Blob, Google Cloud (Coming Soon)
     DataTransform,    // Filter, Join, GroupBy, Sort, etc.
-    DataExport,       // Export CSV, Parquet, SQL, JSON
 
     // Analytics & Visualization
     Analytics,        // Stats, Visualize, Sample, Correlation

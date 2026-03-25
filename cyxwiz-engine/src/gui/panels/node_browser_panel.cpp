@@ -872,8 +872,6 @@ ImU32 NodeBrowserPanel::GetNodeColor(cyxwiz::NodeCategory category) const {
             return IM_COL32(126, 87, 194, 255);   // Purple
         case cyxwiz::NodeCategory::RL:
             return IM_COL32(229, 57, 53, 255);    // Red
-        case cyxwiz::NodeCategory::DataExport:
-            return IM_COL32(76, 175, 80, 255);    // Green
         case cyxwiz::NodeCategory::Plugin:
             return IM_COL32(68, 136, 170, 255);   // Steel Blue
         case cyxwiz::NodeCategory::Unknown:

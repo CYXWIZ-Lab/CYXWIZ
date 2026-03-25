@@ -92,7 +92,6 @@ inline std::string GetCategoryDisplayName(NodeCategory category) {
         case NodeCategory::Database:        return "Database";
         case NodeCategory::CloudStorage:    return "Cloud Storage";
         case NodeCategory::DataTransform:   return "Manipulation";
-        case NodeCategory::DataExport:      return "Export";
 
         // Analytics & Visualization
         case NodeCategory::Analytics:       return "Analytics";

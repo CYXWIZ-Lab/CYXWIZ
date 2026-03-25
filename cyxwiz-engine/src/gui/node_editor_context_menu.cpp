@@ -1094,7 +1094,6 @@ const char* NodeEditor::GetCategoryIcon(NodeCategory category) {
         case NodeCategory::TimeSeries:       return ICON_FA_ARROW_TREND_UP; // was ICON_FA_CHART_AREA
         case NodeCategory::Audio:            return ICON_FA_STETHOSCOPE;    // was ICON_FA_VOLUME_HIGH
         case NodeCategory::RL:               return ICON_FA_GRADUATION_CAP; // was ICON_FA_ROBOT
-        case NodeCategory::DataExport:       return ICON_FA_FILE_EXPORT;
         case NodeCategory::Plugin:           return ICON_FA_DIAGRAM_PROJECT; // was ICON_FA_PUZZLE_PIECE
         default:                             return ICON_FA_CUBE;
     }
@@ -1125,7 +1124,6 @@ const char* NodeEditor::GetCategoryName(NodeCategory category) {
         case NodeCategory::TimeSeries:       return "Time Series";
         case NodeCategory::Audio:            return "Audio";
         case NodeCategory::RL:               return "Reinforcement Learning";
-        case NodeCategory::DataExport:       return "Data Export";
         case NodeCategory::Plugin:           return "Plugin Nodes";
         default:                             return "Unknown";
     }
@@ -1178,7 +1176,7 @@ void NodeEditor::ShowCategorizedNodeMenu() {
         };
 
         // Data Export
-        nodes_by_category_[NodeCategory::DataExport] = {
+        nodes_by_category_[NodeCategory::DataSources] = {
             {NodeType::ExportCSV, "Export CSV"},
             {NodeType::ExportParquet, "Export Parquet"},
             {NodeType::ExportSQL, "Export SQL"},

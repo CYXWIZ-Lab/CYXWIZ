@@ -16,7 +16,6 @@ const std::vector<NodeCategory> NodeMetadataRegistry::category_order_ = {
     NodeCategory::Database,
     NodeCategory::CloudStorage,
     NodeCategory::DataTransform,
-    NodeCategory::DataExport,
 
     // Analytics & Visualization
     NodeCategory::Analytics,
@@ -70,7 +69,6 @@ const char* GetCategoryIcon(NodeCategory category) {
         case NodeCategory::Database:        return ICON_FA_DATABASE;
         case NodeCategory::CloudStorage:    return ICON_FA_CLOUD;
         case NodeCategory::DataTransform:   return ICON_FA_WAND_MAGIC_SPARKLES;
-        case NodeCategory::DataExport:      return ICON_FA_FILE_EXPORT;
 
         // Analytics & Visualization
         case NodeCategory::Analytics:       return ICON_FA_MAGNIFYING_GLASS_CHART;
@@ -1085,31 +1083,31 @@ void NodeMetadataRegistry::InitializeRLNodes() {
 // Export Nodes
 // =============================================================================
 void NodeMetadataRegistry::InitializeExportNodes() {
-    RegisterNode({NodeType::ExportCSV, NodeCategory::DataExport, "Export CSV", ICON_FA_FILE_EXPORT,
+    RegisterNode({NodeType::ExportCSV, NodeCategory::DataSources, "Export CSV", ICON_FA_FILE_EXPORT,
         {"export", "csv", "save"}, 0, false, "Export to CSV", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.csv"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::ExportParquet, NodeCategory::DataExport, "Export Parquet", ICON_FA_FILE_EXPORT,
+    RegisterNode({NodeType::ExportParquet, NodeCategory::DataSources, "Export Parquet", ICON_FA_FILE_EXPORT,
         {"export", "parquet"}, 0, false, "Export to Parquet", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.parquet"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::ExportJSON, NodeCategory::DataExport, "Export JSON", ICON_FA_FILE_EXPORT,
+    RegisterNode({NodeType::ExportJSON, NodeCategory::DataSources, "Export JSON", ICON_FA_FILE_EXPORT,
         {"export", "json"}, 0, false, "Export to JSON", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.json"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::ExportSQL, NodeCategory::DataExport, "Export SQL", ICON_FA_DATABASE,
+    RegisterNode({NodeType::ExportSQL, NodeCategory::DataSources, "Export SQL", ICON_FA_DATABASE,
         {"export", "sql", "database"}, 0, false, "Export to SQL DB", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"connection", "string", "", "Connection string", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::ExportExcel, NodeCategory::DataExport, "Excel Writer", ICON_FA_FILE_EXCEL,
+    RegisterNode({NodeType::ExportExcel, NodeCategory::DataSources, "Excel Writer", ICON_FA_FILE_EXCEL,
         {"export", "excel", "xlsx", "spreadsheet"}, 0, false, "Export to Excel (.xlsx)", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.xlsx"},
