@@ -2855,119 +2855,151 @@ void NodeEditor::RenderAnnotations() {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 editor_origin = ImGui::GetWindowPos();
     ImVec2 panning = ImNodes::EditorContextGetPanning();
+    ImVec2 mouse_pos = ImGui::GetMousePos();
 
     for (auto& annotation : annotations_) {
         // Convert grid position to screen position
         ImVec2 screen_pos(
             editor_origin.x + annotation.position.x * zoom_ + panning.x,
-            editor_origin.y + annotation.position.y * zoom_ + panning.y + 50.0f  // Offset for toolbar
+            editor_origin.y + annotation.position.y * zoom_ + panning.y + 50.0f
         );
 
-        ImVec2 size(annotation.size.x * zoom_, annotation.size.y * zoom_);
+        float title_height = 24.0f * zoom_;
+        float btn_size = 18.0f * zoom_;
+
+        // Calculate actual size based on minimized state
+        ImVec2 size;
+        if (annotation.is_minimized) {
+            size = ImVec2(annotation.size.x * zoom_, title_height);
+        } else {
+            size = ImVec2(annotation.size.x * zoom_, annotation.size.y * zoom_);
+        }
+
         ImVec2 p_min = screen_pos;
         ImVec2 p_max(screen_pos.x + size.x, screen_pos.y + size.y);
 
-        // Title bar height for drag detection
-        float title_height = 24.0f * zoom_;
-
-        // Get mouse position
-        ImVec2 mouse_pos = ImGui::GetMousePos();
-
-        // Create invisible button to capture mouse input (blocks ImNodes from panning)
+        // Create invisible button to capture mouse input
         ImGui::SetCursorScreenPos(p_min);
         std::string btn_id = "##annotation_" + std::to_string(annotation.id);
         ImGui::InvisibleButton(btn_id.c_str(), size);
 
         bool is_hovered = ImGui::IsItemHovered();
         bool is_active = ImGui::IsItemActive();
-
-        // Check if mouse is in title bar area (only when hovered)
         bool mouse_in_title = is_hovered && (mouse_pos.y >= p_min.y && mouse_pos.y <= p_min.y + title_height);
 
-        // Handle click to select
-        if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        // Minimize button bounds (right side of title bar)
+        ImVec2 min_btn_min(p_max.x - btn_size - 4.0f * zoom_, p_min.y + 3.0f * zoom_);
+        ImVec2 min_btn_max(p_max.x - 4.0f * zoom_, p_min.y + title_height - 3.0f * zoom_);
+        bool mouse_on_min_btn = (mouse_pos.x >= min_btn_min.x && mouse_pos.x <= min_btn_max.x &&
+                                  mouse_pos.y >= min_btn_min.y && mouse_pos.y <= min_btn_max.y);
+
+        // Handle minimize button click
+        if (mouse_on_min_btn && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            annotation.is_minimized = !annotation.is_minimized;
+        }
+        // Handle double-click to edit (not on minimize button)
+        else if (is_hovered && !mouse_on_min_btn && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            editing_annotation_ = true;
+            editing_annotation_id_ = annotation.id;
+            ImGui::OpenPopup("EditAnnotationPopup");
+        }
+        // Handle click to select and drag
+        else if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             selected_annotation_id_ = annotation.id;
-            // Start dragging if clicked on title bar
-            if (mouse_in_title) {
+            if (mouse_in_title && !mouse_on_min_btn) {
                 dragging_annotation_id_ = annotation.id;
-                annotation_drag_offset_ = ImVec2(
-                    mouse_pos.x - screen_pos.x,
-                    mouse_pos.y - screen_pos.y
-                );
+                annotation_drag_offset_ = ImVec2(mouse_pos.x - screen_pos.x, mouse_pos.y - screen_pos.y);
             }
         }
 
         // Handle dragging
         if (dragging_annotation_id_ == annotation.id && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            // Calculate new position in grid space
-            ImVec2 new_screen_pos(
-                mouse_pos.x - annotation_drag_offset_.x,
-                mouse_pos.y - annotation_drag_offset_.y
-            );
+            ImVec2 new_screen_pos(mouse_pos.x - annotation_drag_offset_.x, mouse_pos.y - annotation_drag_offset_.y);
             annotation.position = ImVec2(
                 (new_screen_pos.x - editor_origin.x - panning.x) / zoom_,
                 (new_screen_pos.y - editor_origin.y - panning.y - 50.0f) / zoom_
             );
-            // Update screen position for this frame
             screen_pos = new_screen_pos;
             p_min = screen_pos;
             p_max = ImVec2(screen_pos.x + size.x, screen_pos.y + size.y);
+            min_btn_min = ImVec2(p_max.x - btn_size - 4.0f * zoom_, p_min.y + 3.0f * zoom_);
+            min_btn_max = ImVec2(p_max.x - 4.0f * zoom_, p_min.y + title_height - 3.0f * zoom_);
         }
 
-        // Stop dragging when mouse released
         if (dragging_annotation_id_ == annotation.id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
             dragging_annotation_id_ = -1;
         }
 
-        // Draw sticky note background (yellow by default)
+        // Colors
         ImU32 bg_color = annotation.color;
         ImU32 title_color = IM_COL32(
-            static_cast<int>((bg_color & 0xFF) * 0.7f),
-            static_cast<int>(((bg_color >> 8) & 0xFF) * 0.7f),
-            static_cast<int>(((bg_color >> 16) & 0xFF) * 0.7f),
+            static_cast<int>((bg_color & 0xFF) * 0.75f),
+            static_cast<int>(((bg_color >> 8) & 0xFF) * 0.75f),
+            static_cast<int>(((bg_color >> 16) & 0xFF) * 0.75f),
             255
         );
 
         // Draw title bar
-        draw_list->AddRectFilled(
-            p_min,
-            ImVec2(p_max.x, p_min.y + title_height),
-            title_color,
-            4.0f * zoom_,
-            ImDrawFlags_RoundCornersTop
-        );
+        ImDrawFlags corners = annotation.is_minimized ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersTop;
+        draw_list->AddRectFilled(p_min, ImVec2(p_max.x, p_min.y + title_height), title_color, 4.0f * zoom_, corners);
 
-        // Draw content background
-        draw_list->AddRectFilled(
-            ImVec2(p_min.x, p_min.y + title_height),
-            p_max,
-            bg_color,
-            4.0f * zoom_,
-            ImDrawFlags_RoundCornersBottom
-        );
+        // Draw content background (only if not minimized)
+        if (!annotation.is_minimized) {
+            draw_list->AddRectFilled(
+                ImVec2(p_min.x, p_min.y + title_height), p_max,
+                bg_color, 4.0f * zoom_, ImDrawFlags_RoundCornersBottom
+            );
+        }
 
-        // Draw border (highlight when hovered or active)
-        ImU32 border_color = (is_hovered || is_active) ? IM_COL32(120, 120, 100, 255) : IM_COL32(100, 100, 80, 200);
+        // Draw border
+        ImU32 border_color = (is_hovered || is_active) ? IM_COL32(130, 130, 110, 255) : IM_COL32(100, 100, 80, 200);
         draw_list->AddRect(p_min, p_max, border_color, 4.0f * zoom_, 0, 1.5f * zoom_);
+
+        // Draw minimize button
+        ImU32 min_btn_color = mouse_on_min_btn ? IM_COL32(80, 70, 50, 255) : IM_COL32(100, 90, 70, 200);
+        draw_list->AddRectFilled(min_btn_min, min_btn_max, min_btn_color, 3.0f * zoom_);
+        // Draw - or + symbol
+        float sym_y = (min_btn_min.y + min_btn_max.y) * 0.5f;
+        float sym_margin = 4.0f * zoom_;
+        draw_list->AddLine(
+            ImVec2(min_btn_min.x + sym_margin, sym_y),
+            ImVec2(min_btn_max.x - sym_margin, sym_y),
+            IM_COL32(220, 210, 180, 255), 2.0f * zoom_
+        );
+        if (annotation.is_minimized) {
+            // Draw + (add vertical line)
+            float sym_x = (min_btn_min.x + min_btn_max.x) * 0.5f;
+            draw_list->AddLine(
+                ImVec2(sym_x, min_btn_min.y + sym_margin),
+                ImVec2(sym_x, min_btn_max.y - sym_margin),
+                IM_COL32(220, 210, 180, 255), 2.0f * zoom_
+            );
+        }
 
         // Draw title text
         ImFont* font = ImGui::GetFont();
-        float title_font_size = 14.0f * zoom_;
-        ImVec2 title_pos(p_min.x + 8.0f * zoom_, p_min.y + 4.0f * zoom_);
-        draw_list->AddText(font, title_font_size, title_pos, IM_COL32(60, 50, 30, 255), annotation.title.c_str());
+        float title_font_size = 13.0f * zoom_;
+        std::string display_title = annotation.title.empty() ? "Note" : annotation.title;
+        ImVec2 title_pos(p_min.x + 8.0f * zoom_, p_min.y + 5.0f * zoom_);
+        draw_list->AddText(font, title_font_size, title_pos, IM_COL32(50, 40, 20, 255), display_title.c_str());
 
-        // Draw content text with word wrapping
-        if (!annotation.is_minimized) {
+        // Draw content text (only if not minimized)
+        if (!annotation.is_minimized && !annotation.content.empty()) {
             float content_font_size = 12.0f * zoom_;
             float content_x = p_min.x + 8.0f * zoom_;
             float content_y = p_min.y + title_height + 6.0f * zoom_;
             float max_width = size.x - 16.0f * zoom_;
+            draw_list->AddText(font, content_font_size, ImVec2(content_x, content_y),
+                IM_COL32(40, 35, 20, 255), annotation.content.c_str(), nullptr, max_width);
+        }
 
-            // Simple text rendering (content may be multi-line)
-            ImVec2 content_pos(content_x, content_y);
-            draw_list->AddText(font, content_font_size, content_pos,
-                IM_COL32(50, 40, 20, 255), annotation.content.c_str(),
-                nullptr, max_width);
+        // Placeholder text if empty and not minimized
+        if (!annotation.is_minimized && annotation.content.empty()) {
+            float content_font_size = 11.0f * zoom_;
+            float content_x = p_min.x + 8.0f * zoom_;
+            float content_y = p_min.y + title_height + 8.0f * zoom_;
+            draw_list->AddText(font, content_font_size, ImVec2(content_x, content_y),
+                IM_COL32(120, 110, 90, 180), "Double-click to edit...");
         }
 
         // Selection highlight
@@ -2976,11 +3008,113 @@ void NodeEditor::RenderAnnotations() {
                 ImVec2(p_min.x - 2, p_min.y - 2),
                 ImVec2(p_max.x + 2, p_max.y + 2),
                 IM_COL32(100, 150, 255, 200),
-                6.0f * zoom_,
-                0,
-                2.0f * zoom_
+                6.0f * zoom_, 0, 2.0f * zoom_
             );
         }
+    }
+
+    // Render edit popup
+    RenderAnnotationEditPopup();
+}
+
+
+
+
+void NodeEditor::RenderAnnotationEditPopup() {
+    if (!editing_annotation_) return;
+
+    // Find the annotation being edited
+    CanvasAnnotation* ann = nullptr;
+    for (auto& a : annotations_) {
+        if (a.id == editing_annotation_id_) {
+            ann = &a;
+            break;
+        }
+    }
+
+    if (!ann) {
+        editing_annotation_ = false;
+        editing_annotation_id_ = -1;
+        return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+    if (ImGui::BeginPopupModal("EditAnnotationPopup", &editing_annotation_, ImGuiWindowFlags_NoResize)) {
+        ImGui::Text("Edit Annotation");
+        ImGui::Separator();
+
+        // Title input
+        ImGui::Text("Title:");
+        static char title_buf[256];
+        if (ImGui::IsWindowAppearing()) {
+            strncpy(title_buf, ann->title.c_str(), sizeof(title_buf) - 1);
+            title_buf[sizeof(title_buf) - 1] = '\0';
+        }
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##ann_title", title_buf, sizeof(title_buf));
+
+        ImGui::Spacing();
+
+        // Content input
+        ImGui::Text("Content:");
+        static char content_buf[2048];
+        if (ImGui::IsWindowAppearing()) {
+            strncpy(content_buf, ann->content.c_str(), sizeof(content_buf) - 1);
+            content_buf[sizeof(content_buf) - 1] = '\0';
+        }
+        ImGui::InputTextMultiline("##ann_content", content_buf, sizeof(content_buf),
+            ImVec2(-1, 150), ImGuiInputTextFlags_AllowTabInput);
+
+        ImGui::Spacing();
+
+        // Color picker
+        ImGui::Text("Color:");
+        static ImVec4 color;
+        if (ImGui::IsWindowAppearing()) {
+            color = ImGui::ColorConvertU32ToFloat4(ann->color);
+        }
+        ImGui::ColorEdit4("##ann_color", &color.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        // Buttons
+        if (ImGui::Button("Save", ImVec2(120, 0))) {
+            ann->title = title_buf;
+            ann->content = content_buf;
+            ann->color = ImGui::ColorConvertFloat4ToU32(color);
+            editing_annotation_ = false;
+            editing_annotation_id_ = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            editing_annotation_ = false;
+            editing_annotation_id_ = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 130);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
+        if (ImGui::Button("Delete", ImVec2(120, 0))) {
+            // Remove annotation
+            annotations_.erase(
+                std::remove_if(annotations_.begin(), annotations_.end(),
+                    [this](const CanvasAnnotation& a) { return a.id == editing_annotation_id_; }),
+                annotations_.end()
+            );
+            editing_annotation_ = false;
+            editing_annotation_id_ = -1;
+            selected_annotation_id_ = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::EndPopup();
+    } else {
+        // Popup was closed
+        editing_annotation_ = false;
+        editing_annotation_id_ = -1;
     }
 }
 

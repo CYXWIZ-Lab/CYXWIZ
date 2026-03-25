@@ -897,6 +897,7 @@ private:
 
     // Annotation rendering and interaction
     void RenderAnnotations();
+    void RenderAnnotationEditPopup();
     void HandleAnnotationInteraction();
     CanvasAnnotation* FindAnnotationById(int annotation_id);
     void ShowAnnotationContextMenu(int annotation_id);
