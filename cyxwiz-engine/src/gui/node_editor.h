@@ -396,6 +396,43 @@ enum class NodeType {
     JSONPathExtractor,  // Extract data using JSONPath
     DataProfiler,       // Comprehensive data profiling
 
+
+    // ===== Linear Algebra Nodes (Phase 5 - Tool-to-Node Migration) =====
+    SVDNode,            // Singular Value Decomposition
+    QRDecomposition,    // QR matrix decomposition
+    CholeskyDecomposition, // Cholesky factorization
+    EigenDecomposition, // Eigenvalue/eigenvector decomposition
+    MatrixCalculator,   // General matrix operations
+
+    // ===== Time Series Analysis Nodes (Phase 5) =====
+    TimeSeriesDecomposition, // Trend/Seasonal/Residual decomposition
+    ACFNode,            // Autocorrelation function
+    PACFNode,           // Partial autocorrelation function
+    StationarityTest,   // ADF/KPSS stationarity tests
+    SeasonalityDetector,// Detect seasonal patterns
+    ARIMAForecaster,    // ARIMA time series forecasting
+    ExponentialSmoothing, // Holt-Winters forecasting
+
+    // ===== Statistics Nodes (Phase 5) =====
+    HypothesisTest,     // t-test, ANOVA, Chi-Square
+    DistributionFitter, // Fit probability distributions
+
+    // ===== Deep Learning Interpretation Nodes (Phase 5) =====
+    GradCAMNode,        // Grad-CAM visualization
+    SaliencyMapNode,    // Gradient saliency maps
+
+    // ===== Optimization Nodes (Phase 5) =====
+    GradientDescentViz, // Visualize optimization paths
+    ConvexityAnalyzer,  // Analyze function convexity
+    LPSolver,           // Linear programming solver
+    QPSolver,           // Quadratic programming solver
+    NumericalDifferentiation, // Numerical derivatives
+    NumericalIntegration,     // Numerical integration
+
+    // ===== Additional Text Processing (Phase 5) =====
+    WordFrequencyNode,  // Word frequency analysis
+    TokenizerNode,      // Text tokenization
+
     // Plugin-defined nodes (sentinel — actual type resolved via string lookup)
     PluginCustom,
 

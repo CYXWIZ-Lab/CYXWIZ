@@ -176,6 +176,14 @@ private:
     // Initialize utility nodes
     void InitializeUtilityNodes();
 
+    // Tool-to-Node Migration (Phase 5)
+    void InitializeLinearAlgebraNodes();
+    void InitializeTimeSeriesAnalysisNodes();
+    void InitializeStatisticsNodes();
+    void InitializeInterpretationNodes();
+    void InitializeOptimizationNodes();
+    void InitializeAdditionalTextNodes();
+
     // Check if a node matches search query
     bool MatchesQuery(const NodeMetadata& metadata, const std::string& query) const;
 
