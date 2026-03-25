@@ -87,10 +87,18 @@ struct NodeMetadata {
  */
 inline std::string GetCategoryDisplayName(NodeCategory category) {
     switch (category) {
+        // Data I/O
         case NodeCategory::DataSources:     return "I/O";
+        case NodeCategory::Database:        return "Database";
+        case NodeCategory::CloudStorage:    return "Cloud Storage";
         case NodeCategory::DataTransform:   return "Manipulation";
+        case NodeCategory::DataExport:      return "Export";
+
+        // Analytics & Visualization
         case NodeCategory::Analytics:       return "Analytics";
-        case NodeCategory::Preprocessing:   return "Preprocessing";
+        case NodeCategory::Visualization:   return "Visualization";
+
+        // ML Layers
         case NodeCategory::Layers:          return "ML Layers";
         case NodeCategory::Activation:      return "Activation";
         case NodeCategory::Pooling:         return "Pooling";
@@ -99,18 +107,35 @@ inline std::string GetCategoryDisplayName(NodeCategory category) {
         case NodeCategory::Recurrent:       return "Recurrent";
         case NodeCategory::ShapeOps:        return "Shape Ops";
         case NodeCategory::MergeOps:        return "Merge Ops";
+        case NodeCategory::Upsampling:      return "Upsampling";
+
+        // Training & Models
         case NodeCategory::Training:        return "Training";
         case NodeCategory::Regularization:  return "Regularization";
-        case NodeCategory::Utility:         return "Utility";
-        case NodeCategory::Signal:          return "Signal";
+        case NodeCategory::ModelIO:         return "Model I/O";
+        case NodeCategory::MLServices:      return "ML Services";
+        case NodeCategory::Explainability:  return "Explainability";
+
+        // Data Processing
+        case NodeCategory::Preprocessing:   return "Preprocessing";
         case NodeCategory::DataPipeline:    return "Data Pipeline";
-        case NodeCategory::DNN:             return "DNN Models";
         case NodeCategory::TextProcessing:  return "Text";
-        case NodeCategory::Upsampling:      return "Upsampling";
         case NodeCategory::TimeSeries:      return "Time Series";
         case NodeCategory::Audio:           return "Audio";
+        case NodeCategory::JsonXml:         return "JSON/XML";
+
+        // Specialized
+        case NodeCategory::DNN:             return "DNN Models";
         case NodeCategory::RL:              return "RL";
-        case NodeCategory::DataExport:      return "Export";
+        case NodeCategory::BigData:         return "Big Data";
+
+        // Workflow & UI
+        case NodeCategory::Workflow:        return "Workflow";
+        case NodeCategory::Widgets:         return "Widgets";
+        case NodeCategory::Reporting:       return "Reporting";
+        case NodeCategory::Utility:         return "Utility";
+        case NodeCategory::Signal:          return "Signal";
+
         case NodeCategory::Plugin:          return "Plugins";
         default:                            return "Other";
     }

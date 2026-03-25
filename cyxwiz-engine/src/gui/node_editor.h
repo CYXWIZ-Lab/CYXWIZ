@@ -31,10 +31,18 @@ class ShapeInferenceEngine;
 
 // Node category for organization and UI display (Unified Canvas Phase 1)
 enum class NodeCategory {
+    // Data I/O
     DataSources,      // CSV, SQL, HDF5, API, etc.
+    Database,         // PostgreSQL, MySQL, SQLite, MongoDB (Coming Soon)
+    CloudStorage,     // AWS S3, Azure Blob, Google Cloud (Coming Soon)
     DataTransform,    // Filter, Join, GroupBy, Sort, etc.
+    DataExport,       // Export CSV, Parquet, SQL, JSON
+
+    // Analytics & Visualization
     Analytics,        // Stats, Visualize, Sample, Correlation
-    Preprocessing,    // Normalize, Scale, Encode (existing nodes)
+    Visualization,    // 3D Scatter, Maps, Network Graphs (Coming Soon)
+
+    // ML Layers
     Layers,           // Dense, Conv2D, LSTM, etc. (ML layers)
     Activation,       // ReLU, Sigmoid, Softmax, etc.
     Pooling,          // MaxPool, AvgPool, etc.
@@ -43,18 +51,35 @@ enum class NodeCategory {
     Recurrent,        // RNN, LSTM, GRU, etc.
     ShapeOps,         // Reshape, Permute, Squeeze, etc.
     MergeOps,         // Concatenate, Add, Multiply, etc.
+    Upsampling,       // ConvTranspose, Upsample, PixelShuffle
+
+    // Training & Models
     Training,         // Optimizer, Loss, LR Scheduler
     Regularization,   // L1, L2, Dropout
-    Utility,          // Lambda, Identity, Constant
-    Signal,           // Sliders, Sine, Scope (for simulation)
+    ModelIO,          // Model Reader/Writer, Checkpoints (Coming Soon)
+    MLServices,       // AutoML, HuggingFace, MLflow (Coming Soon)
+    Explainability,   // SHAP, LIME (Coming Soon)
+
+    // Data Processing
+    Preprocessing,    // Normalize, Scale, Encode (existing nodes)
     DataPipeline,     // DatasetInput, DataLoader, Augmentation
-    DNN,              // Pre-trained models, detection, pose
     TextProcessing,   // Tokenizer, Vocabulary, Padding
-    Upsampling,       // ConvTranspose, Upsample, PixelShuffle
     TimeSeries,       // Window, Features, Split
     Audio,            // AudioInput, Spectrogram, MFCC
+    JsonXml,          // JSON Path, XML Reader (Coming Soon)
+
+    // Specialized
+    DNN,              // Pre-trained models, detection, pose
     RL,               // Gym, ReplayBuffer, Policy, Value
-    DataExport,       // Export CSV, Parquet, SQL, JSON
+    BigData,          // Spark, Dask, Ray, Kafka (Coming Soon)
+
+    // Workflow & UI
+    Workflow,         // Loop, IF Switch, Try/Catch (Coming Soon)
+    Widgets,          // Interactive inputs (Coming Soon)
+    Reporting,        // PDF, HTML Reports (Coming Soon)
+    Utility,          // Lambda, Identity, Constant
+    Signal,           // Sliders, Sine, Scope (for simulation)
+
     Plugin,           // Plugin-defined custom nodes
     Unknown           // Fallback
 };
@@ -508,6 +533,13 @@ struct NodeAddSearchState {
     bool just_activated = false;      // Set focus on next frame
 };
 
+// Node implementation status for template/coming soon nodes
+enum class NodeImplementationStatus {
+    Implemented,    // Fully working node
+    Template,       // Coming Soon - defined but not implemented
+    Deprecated      // Being phased out
+};
+
 // Entry for searchable node
 struct SearchableNode {
     NodeType type;
@@ -515,6 +547,9 @@ struct SearchableNode {
     std::string category;  // Category (e.g., "Layers > Dense / Linear")
     std::string keywords;  // Additional keywords for search
     std::string plugin_qualified_name;  // For PluginCustom: "plugin_id:type_name"
+    NodeImplementationStatus status = NodeImplementationStatus::Implemented;  // Default to implemented
+    std::string description;  // Brief description for info panel
+    std::string tooltip;      // Tooltip text (for templates: why not available)
 };
 
 // Alignment types for arranging selected nodes
@@ -1130,3 +1165,5 @@ private:
 };
 
 } // namespace gui
+
+

@@ -1,0 +1,92 @@
+{
+  "category": "Visualization",
+  "category_icon": "chart-bar",
+  "description": "Advanced visualization nodes",
+  "templates": [
+    {
+      "type": "3DScatterPlot",
+      "name": "3D Scatter Plot",
+      "icon": "cube",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["3d", "scatter", "plot", "point", "cloud"],
+      "brief_description": "3D point cloud visualization",
+      "help_text": "Create interactive 3D scatter plots for visualizing point clouds and multidimensional data.",
+      "inputs": [{"name": "Data", "type": "Dataset", "required": true}],
+      "outputs": [],
+      "parameters": [
+        {"name": "x_column", "type": "string", "default": "", "description": "X axis column"},
+        {"name": "y_column", "type": "string", "default": "", "description": "Y axis column"},
+        {"name": "z_column", "type": "string", "default": "", "description": "Z axis column"}
+      ],
+      "target_phase": "Phase 3",
+      "dependencies": ["ImPlot3D or OpenGL"]
+    },
+    {
+      "type": "GeospatialMap",
+      "name": "Geospatial Map",
+      "icon": "map",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["map", "geo", "spatial", "location", "coordinates"],
+      "brief_description": "Map-based data visualization",
+      "help_text": "Visualize data on interactive maps with markers, heatmaps, and choropleth support.",
+      "inputs": [{"name": "Data", "type": "Dataset", "required": true}],
+      "outputs": [],
+      "parameters": [
+        {"name": "lat_column", "type": "string", "default": "latitude"},
+        {"name": "lon_column", "type": "string", "default": "longitude"},
+        {"name": "map_style", "type": "enum", "default": "streets", "enum_values": ["streets", "satellite", "terrain"]}
+      ],
+      "target_phase": "Phase 3",
+      "dependencies": ["Mapbox or Leaflet"]
+    },
+    {
+      "type": "NetworkGraph",
+      "name": "Network Graph",
+      "icon": "project-diagram",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["network", "graph", "node", "link", "relationship"],
+      "brief_description": "Node-link network diagram",
+      "help_text": "Create force-directed network graphs for visualizing relationships and connections.",
+      "inputs": [{"name": "Nodes", "type": "Dataset", "required": true}, {"name": "Edges", "type": "Dataset", "required": true}],
+      "outputs": [],
+      "parameters": [
+        {"name": "layout", "type": "enum", "default": "force", "enum_values": ["force", "circular", "hierarchical"]}
+      ],
+      "target_phase": "Phase 3"
+    },
+    {
+      "type": "SankeyDiagram",
+      "name": "Sankey Diagram",
+      "icon": "stream",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["sankey", "flow", "diagram", "energy"],
+      "brief_description": "Flow visualization diagram",
+      "help_text": "Create Sankey diagrams for visualizing flow and quantity between stages.",
+      "inputs": [{"name": "Flow Data", "type": "Dataset", "required": true}],
+      "outputs": [],
+      "parameters": [],
+      "target_phase": "Phase 3"
+    },
+    {
+      "type": "Treemap",
+      "name": "Treemap",
+      "icon": "th-large",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["treemap", "hierarchical", "rectangles", "nested"],
+      "brief_description": "Hierarchical rectangle visualization",
+      "help_text": "Create treemaps for visualizing hierarchical data as nested rectangles.",
+      "inputs": [{"name": "Data", "type": "Dataset", "required": true}],
+      "outputs": [],
+      "parameters": [
+        {"name": "value_column", "type": "string", "default": "value"},
+        {"name": "label_column", "type": "string", "default": "name"}
+      ],
+      "target_phase": "Phase 3"
+    }
+  ]
+}

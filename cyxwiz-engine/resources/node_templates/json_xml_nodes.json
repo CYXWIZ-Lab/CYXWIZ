@@ -1,0 +1,103 @@
+{
+  "category": "JSON/XML",
+  "category_icon": "code",
+  "description": "JSON and XML processing nodes",
+  "templates": [
+    {
+      "type": "JSONPath",
+      "name": "JSON Path",
+      "icon": "code",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["jsonpath", "extract", "query", "json"],
+      "brief_description": "Extract data using JSONPath",
+      "help_text": "Extract values from JSON documents using JSONPath expressions.",
+      "inputs": [{"name": "JSON Data", "type": "Dataset", "required": true}],
+      "outputs": [{"name": "Extracted", "type": "Dataset"}],
+      "parameters": [
+        {"name": "path", "type": "string", "default": "$.data", "description": "JSONPath expression"}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "JSONToTable",
+      "name": "JSON to Table",
+      "icon": "table",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["json", "flatten", "table", "convert"],
+      "brief_description": "Flatten JSON to table format",
+      "help_text": "Convert nested JSON structures to flat tabular format.",
+      "inputs": [{"name": "JSON Data", "type": "Dataset", "required": true}],
+      "outputs": [{"name": "Table", "type": "Dataset"}],
+      "parameters": [
+        {"name": "flatten_depth", "type": "int", "default": "1"}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "TableToJSON",
+      "name": "Table to JSON",
+      "icon": "file-code",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["table", "json", "convert", "serialize"],
+      "brief_description": "Convert table to JSON",
+      "help_text": "Serialize tabular data to JSON format.",
+      "inputs": [{"name": "Table", "type": "Dataset", "required": true}],
+      "outputs": [{"name": "JSON", "type": "Dataset"}],
+      "parameters": [
+        {"name": "orient", "type": "enum", "default": "records", "enum_values": ["records", "columns", "index"]}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "XMLReader",
+      "name": "XML Reader",
+      "icon": "file-code",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["xml", "read", "parse", "file"],
+      "brief_description": "Read XML file",
+      "help_text": "Parse XML files into structured data.",
+      "inputs": [],
+      "outputs": [{"name": "XML Data", "type": "Dataset"}],
+      "parameters": [
+        {"name": "file_path", "type": "file", "default": ""}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "XPath",
+      "name": "XPath",
+      "icon": "code-branch",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["xpath", "extract", "query", "xml"],
+      "brief_description": "Extract data using XPath",
+      "help_text": "Extract values from XML documents using XPath expressions.",
+      "inputs": [{"name": "XML Data", "type": "Dataset", "required": true}],
+      "outputs": [{"name": "Extracted", "type": "Dataset"}],
+      "parameters": [
+        {"name": "expression", "type": "string", "default": "//element"}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "JSONSchemaValidator",
+      "name": "JSON Schema Validator",
+      "icon": "check-circle",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["json", "schema", "validate", "check"],
+      "brief_description": "Validate JSON against schema",
+      "help_text": "Validate JSON documents against a JSON Schema specification.",
+      "inputs": [{"name": "JSON Data", "type": "Dataset", "required": true}],
+      "outputs": [{"name": "Valid", "type": "Dataset"}, {"name": "Errors", "type": "Dataset"}],
+      "parameters": [
+        {"name": "schema", "type": "string", "default": "", "description": "JSON Schema"}
+      ],
+      "target_phase": "Phase 2"
+    }
+  ]
+}

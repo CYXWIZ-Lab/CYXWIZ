@@ -11,47 +11,109 @@ namespace cyxwiz {
 
 // Category display order
 const std::vector<NodeCategory> NodeMetadataRegistry::category_order_ = {
+    // Data I/O
     NodeCategory::DataSources,
+    NodeCategory::Database,
+    NodeCategory::CloudStorage,
     NodeCategory::DataTransform,
+    NodeCategory::DataExport,
+
+    // Analytics & Visualization
     NodeCategory::Analytics,
+    NodeCategory::Visualization,
+
+    // ML Layers
     NodeCategory::Layers,
     NodeCategory::Activation,
     NodeCategory::Normalization,
     NodeCategory::Pooling,
     NodeCategory::Attention,
     NodeCategory::Recurrent,
+    NodeCategory::Upsampling,
+    NodeCategory::ShapeOps,
+    NodeCategory::MergeOps,
+
+    // Training & Models
     NodeCategory::Training,
+    NodeCategory::Regularization,
+    NodeCategory::ModelIO,
+    NodeCategory::MLServices,
+    NodeCategory::Explainability,
+
+    // Data Processing
+    NodeCategory::Preprocessing,
     NodeCategory::DataPipeline,
-    NodeCategory::DNN,
     NodeCategory::TextProcessing,
     NodeCategory::TimeSeries,
     NodeCategory::Audio,
+    NodeCategory::JsonXml,
+
+    // Specialized
+    NodeCategory::DNN,
     NodeCategory::RL,
-    NodeCategory::DataExport,
+    NodeCategory::BigData,
+
+    // Workflow & UI
+    NodeCategory::Workflow,
+    NodeCategory::Widgets,
+    NodeCategory::Reporting,
     NodeCategory::Utility,
+    NodeCategory::Signal,
+
     NodeCategory::Plugin
 };
 
 const char* GetCategoryIcon(NodeCategory category) {
     switch (category) {
+        // Data I/O
         case NodeCategory::DataSources:     return ICON_FA_FILE_IMPORT;
+        case NodeCategory::Database:        return ICON_FA_DATABASE;
+        case NodeCategory::CloudStorage:    return ICON_FA_CLOUD;
         case NodeCategory::DataTransform:   return ICON_FA_WAND_MAGIC_SPARKLES;
+        case NodeCategory::DataExport:      return ICON_FA_FILE_EXPORT;
+
+        // Analytics & Visualization
         case NodeCategory::Analytics:       return ICON_FA_MAGNIFYING_GLASS_CHART;
+        case NodeCategory::Visualization:   return ICON_FA_CHART_PIE;
+
+        // ML Layers
         case NodeCategory::Layers:          return ICON_FA_LAYER_GROUP;
         case NodeCategory::Activation:      return ICON_FA_BOLT;
         case NodeCategory::Normalization:   return ICON_FA_SCALE_BALANCED;
         case NodeCategory::Pooling:         return ICON_FA_COMPRESS;
         case NodeCategory::Attention:       return ICON_FA_BULLSEYE;
         case NodeCategory::Recurrent:       return ICON_FA_REPEAT;
+        case NodeCategory::Upsampling:      return ICON_FA_EXPAND;
+        case NodeCategory::ShapeOps:        return ICON_FA_CUBES;
+        case NodeCategory::MergeOps:        return ICON_FA_CODE_BRANCH;
+
+        // Training & Models
         case NodeCategory::Training:        return ICON_FA_GRADUATION_CAP;
-        case NodeCategory::DataPipeline:    return ICON_FA_DATABASE;
-        case NodeCategory::DNN:             return ICON_FA_BRAIN;
+        case NodeCategory::Regularization:  return ICON_FA_SHIELD_HALVED;
+        case NodeCategory::ModelIO:         return ICON_FA_FLOPPY_DISK;
+        case NodeCategory::MLServices:      return ICON_FA_CLOUD_ARROW_UP;
+        case NodeCategory::Explainability:  return ICON_FA_LIGHTBULB;
+
+        // Data Processing
+        case NodeCategory::Preprocessing:   return ICON_FA_FILTER;
+        case NodeCategory::DataPipeline:    return ICON_FA_BARS;
         case NodeCategory::TextProcessing:  return ICON_FA_ALIGN_LEFT;
         case NodeCategory::TimeSeries:      return ICON_FA_CHART_LINE;
         case NodeCategory::Audio:           return ICON_FA_WAVE_SQUARE;
+        case NodeCategory::JsonXml:         return ICON_FA_CODE;
+
+        // Specialized
+        case NodeCategory::DNN:             return ICON_FA_BRAIN;
         case NodeCategory::RL:              return ICON_FA_ROCKET;
-        case NodeCategory::DataExport:      return ICON_FA_FILE_EXPORT;
+        case NodeCategory::BigData:         return ICON_FA_SERVER;
+
+        // Workflow & UI
+        case NodeCategory::Workflow:        return ICON_FA_DIAGRAM_PROJECT;
+        case NodeCategory::Widgets:         return ICON_FA_SLIDERS;
+        case NodeCategory::Reporting:       return ICON_FA_FILE_EXPORT;
         case NodeCategory::Utility:         return ICON_FA_TOOLBOX;
+        case NodeCategory::Signal:          return ICON_FA_WAVE_SQUARE;
+
         case NodeCategory::Plugin:          return ICON_FA_PLUG;
         default:                            return ICON_FA_CUBE;
     }
@@ -256,12 +318,18 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
                         meta.status = NodeImplementationStatus::Template;
                         meta.badge = tmpl.value("badge", "Coming Soon");  // Badge text for display
 
-                        // Map category string to enum
-                        if (category_name == "DB") meta.category = NodeCategory::DataSources;
-                        else if (category_name == "Cloud") meta.category = NodeCategory::DataSources;
-                        else if (category_name == "Workflow") meta.category = NodeCategory::Utility;
-                        else if (category_name == "Reporting") meta.category = NodeCategory::DataExport;
-                        else if (category_name == "ML Services") meta.category = NodeCategory::Analytics;
+                        // Map category string to enum (proper categories for template nodes)
+                        if (category_name == "DB") meta.category = NodeCategory::Database;
+                        else if (category_name == "Cloud") meta.category = NodeCategory::CloudStorage;
+                        else if (category_name == "Workflow") meta.category = NodeCategory::Workflow;
+                        else if (category_name == "Reporting") meta.category = NodeCategory::Reporting;
+                        else if (category_name == "ML Services") meta.category = NodeCategory::MLServices;
+                        else if (category_name == "Visualization") meta.category = NodeCategory::Visualization;
+                        else if (category_name == "Big Data") meta.category = NodeCategory::BigData;
+                        else if (category_name == "ML Advanced") meta.category = NodeCategory::Explainability;
+                        else if (category_name == "Widgets") meta.category = NodeCategory::Widgets;
+                        else if (category_name == "JSON/XML") meta.category = NodeCategory::JsonXml;
+                        else if (category_name == "Model I/O") meta.category = NodeCategory::ModelIO;
                         else meta.category = NodeCategory::Utility;
 
                         // Keywords

@@ -1,0 +1,129 @@
+{
+  "category": "Widgets",
+  "category_icon": "sliders-h",
+  "description": "Interactive input widgets for workflow configuration",
+  "templates": [
+    {
+      "type": "StringWidget",
+      "name": "String Widget",
+      "icon": "font",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["string", "text", "input", "widget", "interactive"],
+      "brief_description": "Interactive text input widget",
+      "help_text": "Text input field for configuring workflows at runtime.",
+      "inputs": [],
+      "outputs": [{"name": "Value", "type": "Dataset"}],
+      "parameters": [
+        {"name": "label", "type": "string", "default": "Enter text"},
+        {"name": "default_value", "type": "string", "default": ""}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "IntegerWidget",
+      "name": "Integer Widget",
+      "icon": "hashtag",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["integer", "number", "input", "widget"],
+      "brief_description": "Interactive number input widget",
+      "help_text": "Number input field with validation.",
+      "inputs": [],
+      "outputs": [{"name": "Value", "type": "Dataset"}],
+      "parameters": [
+        {"name": "label", "type": "string", "default": "Enter number"},
+        {"name": "min", "type": "int", "default": "0"},
+        {"name": "max", "type": "int", "default": "100"},
+        {"name": "default_value", "type": "int", "default": "0"}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "SelectionWidget",
+      "name": "Selection Widget",
+      "icon": "list",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["selection", "dropdown", "combo", "widget", "choose"],
+      "brief_description": "Interactive dropdown selection",
+      "help_text": "Dropdown selector for choosing from predefined options.",
+      "inputs": [],
+      "outputs": [{"name": "Selection", "type": "Dataset"}],
+      "parameters": [
+        {"name": "label", "type": "string", "default": "Select option"},
+        {"name": "options", "type": "string", "default": "Option1,Option2,Option3"}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "FileUploadWidget",
+      "name": "File Upload Widget",
+      "icon": "upload",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["file", "upload", "picker", "widget", "browse"],
+      "brief_description": "Interactive file picker widget",
+      "help_text": "File browser for selecting input files at runtime.",
+      "inputs": [],
+      "outputs": [{"name": "File Path", "type": "Dataset"}],
+      "parameters": [
+        {"name": "label", "type": "string", "default": "Select file"},
+        {"name": "filter", "type": "string", "default": "*.*"}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "SliderWidget",
+      "name": "Slider Widget",
+      "icon": "sliders-h",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["slider", "range", "widget", "interactive"],
+      "brief_description": "Interactive range slider",
+      "help_text": "Slider for selecting numeric values within a range.",
+      "inputs": [],
+      "outputs": [{"name": "Value", "type": "Dataset"}],
+      "parameters": [
+        {"name": "label", "type": "string", "default": "Value"},
+        {"name": "min", "type": "float", "default": "0.0"},
+        {"name": "max", "type": "float", "default": "1.0"},
+        {"name": "step", "type": "float", "default": "0.01"}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "DateTimeWidget",
+      "name": "Date/Time Widget",
+      "icon": "calendar",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["date", "time", "picker", "widget", "calendar"],
+      "brief_description": "Interactive date/time picker",
+      "help_text": "Calendar-based date and time selection.",
+      "inputs": [],
+      "outputs": [{"name": "DateTime", "type": "Dataset"}],
+      "parameters": [
+        {"name": "label", "type": "string", "default": "Select date"},
+        {"name": "include_time", "type": "bool", "default": "false"}
+      ],
+      "target_phase": "Phase 3"
+    },
+    {
+      "type": "CredentialsWidget",
+      "name": "Credentials Widget",
+      "icon": "key",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["credentials", "password", "secure", "widget", "auth"],
+      "brief_description": "Secure credentials input",
+      "help_text": "Secure input for passwords and API keys with encryption.",
+      "inputs": [],
+      "outputs": [{"name": "Credentials", "type": "Dataset"}],
+      "parameters": [
+        {"name": "label", "type": "string", "default": "Enter credentials"}
+      ],
+      "target_phase": "Phase 3"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "category": "Big Data",
+  "category_icon": "server",
+  "description": "Big data processing and streaming nodes",
+  "templates": [
+    {
+      "type": "SparkConnector",
+      "name": "Apache Spark Connector",
+      "icon": "bolt",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["spark", "distributed", "processing", "hadoop", "big data"],
+      "brief_description": "Connect to Apache Spark cluster",
+      "help_text": "Execute distributed data processing jobs on Apache Spark clusters.",
+      "inputs": [],
+      "outputs": [{"name": "Spark Context", "type": "Dataset"}],
+      "parameters": [
+        {"name": "master_url", "type": "string", "default": "local[*]", "description": "Spark master URL"},
+        {"name": "app_name", "type": "string", "default": "CyxWiz", "description": "Application name"}
+      ],
+      "target_phase": "Phase 4",
+      "dependencies": ["PySpark"]
+    },
+    {
+      "type": "DaskConnector",
+      "name": "Dask Connector",
+      "icon": "th",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["dask", "python", "parallel", "distributed"],
+      "brief_description": "Connect to Dask for parallel processing",
+      "help_text": "Use Dask for parallel and distributed computing in Python.",
+      "inputs": [],
+      "outputs": [{"name": "Dask Client", "type": "Dataset"}],
+      "parameters": [
+        {"name": "scheduler_address", "type": "string", "default": "", "description": "Dask scheduler address (empty for local)"}
+      ],
+      "target_phase": "Phase 3"
+    },
+    {
+      "type": "RayConnector",
+      "name": "Ray Connector",
+      "icon": "radiation",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["ray", "distributed", "ml", "scaling"],
+      "brief_description": "Connect to Ray for distributed ML",
+      "help_text": "Use Ray for distributed machine learning and hyperparameter tuning.",
+      "inputs": [],
+      "outputs": [{"name": "Ray Context", "type": "Dataset"}],
+      "parameters": [],
+      "target_phase": "Phase 4"
+    },
+    {
+      "type": "KafkaConsumer",
+      "name": "Kafka Consumer",
+      "icon": "inbox",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["kafka", "streaming", "consumer", "message", "queue"],
+      "brief_description": "Read from Kafka stream",
+      "help_text": "Consume messages from Apache Kafka topics for real-time data processing.",
+      "inputs": [],
+      "outputs": [{"name": "Messages", "type": "Dataset"}],
+      "parameters": [
+        {"name": "bootstrap_servers", "type": "string", "default": "localhost:9092"},
+        {"name": "topic", "type": "string", "default": ""},
+        {"name": "group_id", "type": "string", "default": "cyxwiz-consumer"}
+      ],
+      "target_phase": "Phase 3",
+      "dependencies": ["librdkafka"]
+    },
+    {
+      "type": "KafkaProducer",
+      "name": "Kafka Producer",
+      "icon": "paper-plane",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["kafka", "streaming", "producer", "message", "publish"],
+      "brief_description": "Write to Kafka stream",
+      "help_text": "Produce messages to Apache Kafka topics.",
+      "inputs": [{"name": "Data", "type": "Dataset", "required": true}],
+      "outputs": [],
+      "parameters": [
+        {"name": "bootstrap_servers", "type": "string", "default": "localhost:9092"},
+        {"name": "topic", "type": "string", "default": ""}
+      ],
+      "target_phase": "Phase 3",
+      "dependencies": ["librdkafka"]
+    }
+  ]
+}
