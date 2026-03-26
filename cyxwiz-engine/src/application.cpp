@@ -14,7 +14,9 @@
 #include "core/training_manager.h"
 #include "core/engine_config.h"
 #include "core/python_detector.h"
+#include "core/texture_manager.h"
 
+#include <cstdlib>  // for _exit()
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #ifdef _WIN32
@@ -1052,10 +1054,25 @@ void CyxWizApp::Render() {
 void CyxWizApp::Shutdown() {
     spdlog::info("Shutting down application...");
 
+    // Remove console sink from spdlog BEFORE destroying main_window
+    // The console sink points to the Console panel which will be destroyed
+    {
+        auto logger = spdlog::default_logger();
+        auto& sinks = logger->sinks();
+        // Keep only the first sink (stdout) - remove any additional sinks like ConsoleSink
+        if (sinks.size() > 1) {
+            sinks.resize(1);
+        }
+    }
+
     // Cleanup components
     job_manager_.reset();
     grpc_client_.reset();
     main_window_.reset();
+
+    // Cleanup OpenGL resources BEFORE ImGui shutdown
+    // TextureManager uses OpenGL calls that require valid ImGui/GL state
+    cyxwiz::TextureManager::Instance().DeleteAllTextures();
 
     // Cleanup ImGui
     ImGui_ImplOpenGL3_Shutdown();
@@ -1071,6 +1088,11 @@ void CyxWizApp::Shutdown() {
     glfwTerminate();
 
     spdlog::info("Application shut down complete");
+
+    // Use _exit() to skip static destruction - many singletons have destructors
+    // that try to log or use resources that are already destroyed.
+    // This is safe because all important cleanup is already done above.
+    _exit(0);
 }
 
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
