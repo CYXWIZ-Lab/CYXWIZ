@@ -19,34 +19,56 @@ Theme::Theme() {
 
 const char* Theme::GetPresetName(ThemePreset preset) {
     switch (preset) {
+        // CyxWiz branded
         case ThemePreset::CyxWizDark:      return "CyxWiz Dark";
         case ThemePreset::CyxWizLight:     return "CyxWiz Light";
+        // Classic IDE
         case ThemePreset::VSCodeDark:      return "VS Code Dark";
         case ThemePreset::UnrealEngine:    return "Unreal Engine";
         case ThemePreset::ModernDark:      return "Modern Dark";
         case ThemePreset::HighContrast:    return "High Contrast";
-        // New vibrant themes
+        // Vibrant themes
         case ThemePreset::Dracula:         return "Dracula";
         case ThemePreset::OneDarkPro:      return "One Dark Pro";
         case ThemePreset::Nord:            return "Nord";
         case ThemePreset::CatppuccinMocha: return "Catppuccin Mocha";
+        // CyxOS Platform themes
+        case ThemePreset::CyxOSAqua:       return "CyxOS Aqua";
+        case ThemePreset::CyxOSFluent:     return "CyxOS Fluent";
+        case ThemePreset::CyxOSCoder:      return "CyxOS Coder";
+        case ThemePreset::CyxOSOffice:     return "CyxOS Office";
+        // CyxOS Retro TUI themes
+        case ThemePreset::CyxOSTuiClassic: return "CyxOS TUI Classic";
+        case ThemePreset::CyxOSTuiMatrix:  return "CyxOS TUI Matrix";
+        case ThemePreset::CyxOSTuiAmber:   return "CyxOS TUI Amber";
         default:                           return "Unknown";
     }
 }
 
 std::vector<ThemePreset> Theme::GetAvailablePresets() {
     return {
+        // CyxWiz branded
         ThemePreset::CyxWizDark,
         ThemePreset::CyxWizLight,
+        // Classic IDE
         ThemePreset::VSCodeDark,
         ThemePreset::UnrealEngine,
         ThemePreset::ModernDark,
         ThemePreset::HighContrast,
-        // New vibrant themes
+        // Vibrant themes
         ThemePreset::Dracula,
         ThemePreset::OneDarkPro,
         ThemePreset::Nord,
-        ThemePreset::CatppuccinMocha
+        ThemePreset::CatppuccinMocha,
+        // CyxOS Platform themes
+        ThemePreset::CyxOSAqua,
+        ThemePreset::CyxOSFluent,
+        ThemePreset::CyxOSCoder,
+        ThemePreset::CyxOSOffice,
+        // CyxOS Retro TUI themes
+        ThemePreset::CyxOSTuiClassic,
+        ThemePreset::CyxOSTuiMatrix,
+        ThemePreset::CyxOSTuiAmber
     };
 }
 
@@ -54,17 +76,28 @@ void Theme::ApplyPreset(ThemePreset preset) {
     current_preset_ = preset;
 
     switch (preset) {
+        // CyxWiz branded
         case ThemePreset::CyxWizDark:      ApplyCyxWizDark(); break;
         case ThemePreset::CyxWizLight:     ApplyCyxWizLight(); break;
+        // Classic IDE
         case ThemePreset::VSCodeDark:      ApplyVSCodeDark(); break;
         case ThemePreset::UnrealEngine:    ApplyUnrealEngine(); break;
         case ThemePreset::ModernDark:      ApplyModernDark(); break;
         case ThemePreset::HighContrast:    ApplyHighContrast(); break;
-        // New vibrant themes
+        // Vibrant themes
         case ThemePreset::Dracula:         ApplyDracula(); break;
         case ThemePreset::OneDarkPro:      ApplyOneDarkPro(); break;
         case ThemePreset::Nord:            ApplyNord(); break;
         case ThemePreset::CatppuccinMocha: ApplyCatppuccinMocha(); break;
+        // CyxOS Platform themes
+        case ThemePreset::CyxOSAqua:       ApplyCyxOSAqua(); break;
+        case ThemePreset::CyxOSFluent:     ApplyCyxOSFluent(); break;
+        case ThemePreset::CyxOSCoder:      ApplyCyxOSCoder(); break;
+        case ThemePreset::CyxOSOffice:     ApplyCyxOSOffice(); break;
+        // CyxOS Retro TUI themes
+        case ThemePreset::CyxOSTuiClassic: ApplyCyxOSTuiClassic(); break;
+        case ThemePreset::CyxOSTuiMatrix:  ApplyCyxOSTuiMatrix(); break;
+        case ThemePreset::CyxOSTuiAmber:   ApplyCyxOSTuiAmber(); break;
         default:                           ApplyCyxWizDark(); break;
     }
 
@@ -1212,6 +1245,933 @@ void Theme::ApplyCatppuccinMocha() {
 }
 
 // ============================================================================
+// CyxOS Aqua Theme - macOS Big Sur inspired
+// Clean, minimal design with subtle transparency and SF-style aesthetics
+// ============================================================================
+void Theme::ApplyCyxOSAqua() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    // macOS Big Sur color palette (dark mode)
+    ImVec4 bg_primary    = ImVec4(0.11f, 0.11f, 0.12f, 1.00f);  // #1D1D1F
+    ImVec4 bg_secondary  = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);  // #2D2D2D
+    ImVec4 bg_tertiary   = ImVec4(0.22f, 0.22f, 0.23f, 1.00f);  // #383839
+    ImVec4 text_primary  = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);  // #F5F5F7
+    ImVec4 text_secondary= ImVec4(0.60f, 0.60f, 0.62f, 1.00f);  // #999A9E
+    ImVec4 border        = ImVec4(0.26f, 0.26f, 0.27f, 1.00f);  // #424245
+
+    // macOS accent colors
+    ImVec4 accent_blue   = ImVec4(0.00f, 0.48f, 1.00f, 1.00f);  // #007AFF
+    ImVec4 accent_purple = ImVec4(0.34f, 0.34f, 0.84f, 1.00f);  // #5856D6
+    ImVec4 success       = ImVec4(0.20f, 0.78f, 0.35f, 1.00f);  // #34C759
+    ImVec4 warning       = ImVec4(1.00f, 0.58f, 0.00f, 1.00f);  // #FF9500
+    ImVec4 error         = ImVec4(1.00f, 0.23f, 0.19f, 1.00f);  // #FF3B30
+
+    // Text
+    colors[ImGuiCol_Text]                   = text_primary;
+    colors[ImGuiCol_TextDisabled]           = text_secondary;
+
+    // Window
+    colors[ImGuiCol_WindowBg]               = bg_primary;
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(bg_secondary.x, bg_secondary.y, bg_secondary.z, 0.95f);
+
+    // Borders
+    colors[ImGuiCol_Border]                 = border;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+
+    // Frame
+    colors[ImGuiCol_FrameBg]                = bg_secondary;
+    colors[ImGuiCol_FrameBgHovered]         = bg_tertiary;
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.40f);
+
+    // Title bar
+    colors[ImGuiCol_TitleBg]                = bg_primary;
+    colors[ImGuiCol_TitleBgActive]          = bg_secondary;
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg_primary.x, bg_primary.y, bg_primary.z, 0.75f);
+
+    // Menu bar
+    colors[ImGuiCol_MenuBarBg]              = bg_primary;
+
+    // Scrollbar
+    colors[ImGuiCol_ScrollbarBg]            = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_ScrollbarGrab]          = ImVec4(0.50f, 0.50f, 0.52f, 0.50f);
+    colors[ImGuiCol_ScrollbarGrabHovered]   = ImVec4(0.60f, 0.60f, 0.62f, 0.60f);
+    colors[ImGuiCol_ScrollbarGrabActive]    = ImVec4(0.70f, 0.70f, 0.72f, 0.70f);
+
+    // Check mark
+    colors[ImGuiCol_CheckMark]              = accent_blue;
+
+    // Slider
+    colors[ImGuiCol_SliderGrab]             = accent_blue;
+    colors[ImGuiCol_SliderGrabActive]       = ImVec4(accent_blue.x * 1.2f, accent_blue.y * 1.2f, accent_blue.z, 1.00f);
+
+    // Button
+    colors[ImGuiCol_Button]                 = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.85f);
+    colors[ImGuiCol_ButtonHovered]          = accent_blue;
+    colors[ImGuiCol_ButtonActive]           = ImVec4(accent_blue.x * 0.8f, accent_blue.y * 0.8f, accent_blue.z * 0.8f, 1.00f);
+
+    // Header
+    colors[ImGuiCol_Header]                 = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.30f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.50f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.70f);
+
+    // Separator
+    colors[ImGuiCol_Separator]              = border;
+    colors[ImGuiCol_SeparatorHovered]       = accent_blue;
+    colors[ImGuiCol_SeparatorActive]        = accent_blue;
+
+    // Resize grip
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(0.50f, 0.50f, 0.50f, 0.20f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.65f);
+    colors[ImGuiCol_ResizeGripActive]       = accent_blue;
+
+    // Tabs
+    colors[ImGuiCol_Tab]                    = bg_secondary;
+    colors[ImGuiCol_TabHovered]             = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.70f);
+    colors[ImGuiCol_TabActive]              = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.90f);
+    colors[ImGuiCol_TabUnfocused]           = bg_secondary;
+    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.50f);
+
+    // Docking
+    colors[ImGuiCol_DockingPreview]         = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg]         = bg_primary;
+
+    // Plot
+    colors[ImGuiCol_PlotLines]              = accent_blue;
+    colors[ImGuiCol_PlotLinesHovered]       = accent_purple;
+    colors[ImGuiCol_PlotHistogram]          = success;
+    colors[ImGuiCol_PlotHistogramHovered]   = warning;
+
+    // Table
+    colors[ImGuiCol_TableHeaderBg]          = bg_secondary;
+    colors[ImGuiCol_TableBorderStrong]      = border;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(border.x, border.y, border.z, 0.50f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(1.00f, 1.00f, 1.00f, 0.02f);
+
+    // Text selection
+    colors[ImGuiCol_TextSelectedBg]         = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.35f);
+
+    // Drag drop
+    colors[ImGuiCol_DragDropTarget]         = accent_blue;
+
+    // Navigation
+    colors[ImGuiCol_NavHighlight]           = accent_blue;
+    colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+
+    // Modal
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.60f);
+
+    // macOS-style rounded corners
+    config_.window_rounding = 10.0f;
+    config_.frame_rounding = 6.0f;
+    config_.popup_rounding = 10.0f;
+    config_.scrollbar_rounding = 10.0f;
+    config_.grab_rounding = 6.0f;
+    config_.tab_rounding = 6.0f;
+    config_.window_border_size = 1.0f;
+    config_.frame_border_size = 0.0f;
+    config_.window_padding = ImVec2(10.0f, 10.0f);
+    config_.frame_padding = ImVec2(8.0f, 5.0f);
+    config_.item_spacing = ImVec2(10.0f, 6.0f);
+}
+
+// ============================================================================
+// CyxOS Fluent Theme - Windows 11 Fluent Design
+// Mica-style effects, subtle transparency, modern Microsoft aesthetics
+// ============================================================================
+void Theme::ApplyCyxOSFluent() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    // Windows 11 Fluent Design palette (dark)
+    ImVec4 bg_mica       = ImVec4(0.13f, 0.13f, 0.13f, 1.00f);  // #202020
+    ImVec4 bg_surface    = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);  // #2D2D2D
+    ImVec4 bg_card       = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);  // #333333
+    ImVec4 text_primary  = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);  // #FFFFFF
+    ImVec4 text_secondary= ImVec4(0.70f, 0.70f, 0.70f, 1.00f);  // #B3B3B3
+    ImVec4 border        = ImVec4(0.24f, 0.24f, 0.24f, 1.00f);  // #3D3D3D
+
+    // Fluent accent colors
+    ImVec4 accent_blue   = ImVec4(0.00f, 0.47f, 0.83f, 1.00f);  // #0078D4
+    ImVec4 accent_light  = ImVec4(0.38f, 0.80f, 1.00f, 1.00f);  // #60CDFF
+    ImVec4 success       = ImVec4(0.42f, 0.80f, 0.37f, 1.00f);  // #6CCB5F
+    ImVec4 warning       = ImVec4(0.99f, 0.88f, 0.00f, 1.00f);  // #FCE100
+    ImVec4 error         = ImVec4(0.91f, 0.07f, 0.14f, 1.00f);  // #E81123
+
+    // Text
+    colors[ImGuiCol_Text]                   = text_primary;
+    colors[ImGuiCol_TextDisabled]           = text_secondary;
+
+    // Window
+    colors[ImGuiCol_WindowBg]               = bg_mica;
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(bg_surface.x, bg_surface.y, bg_surface.z, 0.98f);
+
+    // Borders - Fluent uses subtle borders
+    colors[ImGuiCol_Border]                 = border;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+
+    // Frame - Fluent card style
+    colors[ImGuiCol_FrameBg]                = bg_card;
+    colors[ImGuiCol_FrameBgHovered]         = ImVec4(bg_card.x + 0.05f, bg_card.y + 0.05f, bg_card.z + 0.05f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.40f);
+
+    // Title bar
+    colors[ImGuiCol_TitleBg]                = bg_mica;
+    colors[ImGuiCol_TitleBgActive]          = bg_surface;
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg_mica.x, bg_mica.y, bg_mica.z, 0.75f);
+
+    // Menu bar
+    colors[ImGuiCol_MenuBarBg]              = bg_mica;
+
+    // Scrollbar - Fluent thin style
+    colors[ImGuiCol_ScrollbarBg]            = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_ScrollbarGrab]          = ImVec4(0.55f, 0.55f, 0.55f, 0.40f);
+    colors[ImGuiCol_ScrollbarGrabHovered]   = ImVec4(0.65f, 0.65f, 0.65f, 0.50f);
+    colors[ImGuiCol_ScrollbarGrabActive]    = ImVec4(0.75f, 0.75f, 0.75f, 0.60f);
+
+    // Check mark
+    colors[ImGuiCol_CheckMark]              = accent_light;
+
+    // Slider
+    colors[ImGuiCol_SliderGrab]             = accent_blue;
+    colors[ImGuiCol_SliderGrabActive]       = accent_light;
+
+    // Button - Fluent accent button
+    colors[ImGuiCol_Button]                 = accent_blue;
+    colors[ImGuiCol_ButtonHovered]          = ImVec4(accent_blue.x * 1.1f, accent_blue.y * 1.1f, accent_blue.z * 1.1f, 1.00f);
+    colors[ImGuiCol_ButtonActive]           = ImVec4(accent_blue.x * 0.85f, accent_blue.y * 0.85f, accent_blue.z * 0.85f, 1.00f);
+
+    // Header
+    colors[ImGuiCol_Header]                 = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.25f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.45f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.65f);
+
+    // Separator
+    colors[ImGuiCol_Separator]              = border;
+    colors[ImGuiCol_SeparatorHovered]       = accent_light;
+    colors[ImGuiCol_SeparatorActive]        = accent_blue;
+
+    // Resize grip
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(0.50f, 0.50f, 0.50f, 0.15f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.55f);
+    colors[ImGuiCol_ResizeGripActive]       = accent_blue;
+
+    // Tabs - Fluent tab style
+    colors[ImGuiCol_Tab]                    = bg_surface;
+    colors[ImGuiCol_TabHovered]             = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.65f);
+    colors[ImGuiCol_TabActive]              = accent_blue;
+    colors[ImGuiCol_TabUnfocused]           = bg_surface;
+    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.45f);
+
+    // Docking
+    colors[ImGuiCol_DockingPreview]         = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg]         = bg_mica;
+
+    // Plot
+    colors[ImGuiCol_PlotLines]              = accent_light;
+    colors[ImGuiCol_PlotLinesHovered]       = accent_blue;
+    colors[ImGuiCol_PlotHistogram]          = success;
+    colors[ImGuiCol_PlotHistogramHovered]   = warning;
+
+    // Table
+    colors[ImGuiCol_TableHeaderBg]          = bg_surface;
+    colors[ImGuiCol_TableBorderStrong]      = border;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(border.x, border.y, border.z, 0.50f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(1.00f, 1.00f, 1.00f, 0.02f);
+
+    // Text selection
+    colors[ImGuiCol_TextSelectedBg]         = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.30f);
+
+    // Drag drop
+    colors[ImGuiCol_DragDropTarget]         = accent_light;
+
+    // Navigation
+    colors[ImGuiCol_NavHighlight]           = accent_blue;
+    colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+
+    // Modal
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.55f);
+
+    // Fluent Design rounded corners (8px standard)
+    config_.window_rounding = 8.0f;
+    config_.frame_rounding = 4.0f;
+    config_.popup_rounding = 8.0f;
+    config_.scrollbar_rounding = 8.0f;
+    config_.grab_rounding = 4.0f;
+    config_.tab_rounding = 4.0f;
+    config_.window_border_size = 1.0f;
+    config_.frame_border_size = 0.0f;
+    config_.window_padding = ImVec2(12.0f, 12.0f);
+    config_.frame_padding = ImVec2(12.0f, 6.0f);
+    config_.item_spacing = ImVec2(8.0f, 6.0f);
+}
+
+// ============================================================================
+// CyxOS Coder Theme - Developer IDE
+// Syntax highlighting colors, optimized for long coding sessions
+// ============================================================================
+void Theme::ApplyCyxOSCoder() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    // Developer IDE color palette
+    ImVec4 bg_dark       = ImVec4(0.12f, 0.12f, 0.18f, 1.00f);  // #1E1E2E
+    ImVec4 bg_medium     = ImVec4(0.16f, 0.16f, 0.21f, 1.00f);  // #282A36
+    ImVec4 bg_light      = ImVec4(0.20f, 0.20f, 0.26f, 1.00f);  // #313244
+    ImVec4 text_primary  = ImVec4(0.80f, 0.84f, 0.96f, 1.00f);  // #CDD6F4
+    ImVec4 text_dim      = ImVec4(0.42f, 0.44f, 0.53f, 1.00f);  // #6C7086
+    ImVec4 comment       = ImVec4(0.38f, 0.45f, 0.64f, 1.00f);  // #6272A4
+    ImVec4 border        = ImVec4(0.27f, 0.28f, 0.35f, 1.00f);  // #45475A
+
+    // Syntax highlighting colors
+    ImVec4 accent_blue   = ImVec4(0.54f, 0.71f, 0.98f, 1.00f);  // #89B4FA
+    ImVec4 accent_pink   = ImVec4(0.96f, 0.76f, 0.91f, 1.00f);  // #F5C2E7
+    ImVec4 string_green  = ImVec4(0.65f, 0.89f, 0.63f, 1.00f);  // #A6E3A1
+    ImVec4 number_orange = ImVec4(0.98f, 0.70f, 0.53f, 1.00f);  // #FAB387
+    ImVec4 keyword_purple= ImVec4(0.80f, 0.65f, 0.97f, 1.00f);  // #CBA6F7
+    ImVec4 function_cyan = ImVec4(0.54f, 0.86f, 0.92f, 1.00f);  // #89DCEB
+    ImVec4 error_red     = ImVec4(0.95f, 0.55f, 0.66f, 1.00f);  // #F38BA8
+    ImVec4 warning_yellow= ImVec4(0.98f, 0.89f, 0.69f, 1.00f);  // #F9E2AF
+
+    // Text
+    colors[ImGuiCol_Text]                   = text_primary;
+    colors[ImGuiCol_TextDisabled]           = text_dim;
+
+    // Window
+    colors[ImGuiCol_WindowBg]               = bg_dark;
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(bg_medium.x, bg_medium.y, bg_medium.z, 0.98f);
+
+    // Borders
+    colors[ImGuiCol_Border]                 = border;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+
+    // Frame
+    colors[ImGuiCol_FrameBg]                = bg_medium;
+    colors[ImGuiCol_FrameBgHovered]         = bg_light;
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.35f);
+
+    // Title bar
+    colors[ImGuiCol_TitleBg]                = bg_dark;
+    colors[ImGuiCol_TitleBgActive]          = bg_medium;
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg_dark.x, bg_dark.y, bg_dark.z, 0.75f);
+
+    // Menu bar
+    colors[ImGuiCol_MenuBarBg]              = bg_dark;
+
+    // Scrollbar
+    colors[ImGuiCol_ScrollbarBg]            = bg_dark;
+    colors[ImGuiCol_ScrollbarGrab]          = border;
+    colors[ImGuiCol_ScrollbarGrabHovered]   = comment;
+    colors[ImGuiCol_ScrollbarGrabActive]    = accent_blue;
+
+    // Check mark - use string green for success
+    colors[ImGuiCol_CheckMark]              = string_green;
+
+    // Slider - use accent blue
+    colors[ImGuiCol_SliderGrab]             = accent_blue;
+    colors[ImGuiCol_SliderGrabActive]       = function_cyan;
+
+    // Button - use keyword purple
+    colors[ImGuiCol_Button]                 = ImVec4(keyword_purple.x, keyword_purple.y, keyword_purple.z, 0.75f);
+    colors[ImGuiCol_ButtonHovered]          = keyword_purple;
+    colors[ImGuiCol_ButtonActive]           = ImVec4(keyword_purple.x * 0.85f, keyword_purple.y * 0.85f, keyword_purple.z * 0.85f, 1.00f);
+
+    // Header
+    colors[ImGuiCol_Header]                 = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.30f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.50f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.70f);
+
+    // Separator
+    colors[ImGuiCol_Separator]              = border;
+    colors[ImGuiCol_SeparatorHovered]       = function_cyan;
+    colors[ImGuiCol_SeparatorActive]        = accent_blue;
+
+    // Resize grip
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.20f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.55f);
+    colors[ImGuiCol_ResizeGripActive]       = accent_blue;
+
+    // Tabs
+    colors[ImGuiCol_Tab]                    = bg_medium;
+    colors[ImGuiCol_TabHovered]             = ImVec4(keyword_purple.x, keyword_purple.y, keyword_purple.z, 0.70f);
+    colors[ImGuiCol_TabActive]              = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.85f);
+    colors[ImGuiCol_TabUnfocused]           = bg_medium;
+    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.45f);
+
+    // Docking
+    colors[ImGuiCol_DockingPreview]         = ImVec4(accent_pink.x, accent_pink.y, accent_pink.z, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg]         = bg_dark;
+
+    // Plot - use syntax colors
+    colors[ImGuiCol_PlotLines]              = function_cyan;
+    colors[ImGuiCol_PlotLinesHovered]       = accent_pink;
+    colors[ImGuiCol_PlotHistogram]          = string_green;
+    colors[ImGuiCol_PlotHistogramHovered]   = warning_yellow;
+
+    // Table
+    colors[ImGuiCol_TableHeaderBg]          = bg_medium;
+    colors[ImGuiCol_TableBorderStrong]      = border;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(border.x, border.y, border.z, 0.50f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(1.00f, 1.00f, 1.00f, 0.02f);
+
+    // Text selection
+    colors[ImGuiCol_TextSelectedBg]         = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.35f);
+
+    // Drag drop
+    colors[ImGuiCol_DragDropTarget]         = accent_pink;
+
+    // Navigation
+    colors[ImGuiCol_NavHighlight]           = accent_blue;
+    colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+
+    // Modal
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.60f);
+
+    // Developer-focused minimal rounding
+    config_.window_rounding = 4.0f;
+    config_.frame_rounding = 3.0f;
+    config_.popup_rounding = 4.0f;
+    config_.scrollbar_rounding = 4.0f;
+    config_.grab_rounding = 3.0f;
+    config_.tab_rounding = 3.0f;
+    config_.window_border_size = 1.0f;
+    config_.frame_border_size = 0.0f;
+    config_.window_padding = ImVec2(8.0f, 8.0f);
+    config_.frame_padding = ImVec2(6.0f, 4.0f);
+    config_.item_spacing = ImVec2(8.0f, 4.0f);
+}
+
+// ============================================================================
+// CyxOS Office Theme - Professional Enterprise
+// Clean, productivity-focused design for business applications
+// ============================================================================
+void Theme::ApplyCyxOSOffice() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    // Professional enterprise palette (dark)
+    ImVec4 bg_primary    = ImVec4(0.12f, 0.16f, 0.22f, 1.00f);  // #1F2937
+    ImVec4 bg_secondary  = ImVec4(0.22f, 0.25f, 0.32f, 1.00f);  // #374151
+    ImVec4 bg_tertiary   = ImVec4(0.29f, 0.33f, 0.40f, 1.00f);  // #4B5563
+    ImVec4 text_primary  = ImVec4(0.97f, 0.97f, 0.98f, 1.00f);  // #F9FAFB
+    ImVec4 text_secondary= ImVec4(0.60f, 0.65f, 0.71f, 1.00f);  // #9CA3AF
+    ImVec4 border        = ImVec4(0.29f, 0.34f, 0.39f, 1.00f);  // #4B5563
+
+    // Enterprise accent colors
+    ImVec4 accent_blue   = ImVec4(0.15f, 0.39f, 0.92f, 1.00f);  // #2563EB
+    ImVec4 accent_light  = ImVec4(0.23f, 0.51f, 0.96f, 1.00f);  // #3B82F6
+    ImVec4 success       = ImVec4(0.06f, 0.72f, 0.51f, 1.00f);  // #10B981
+    ImVec4 warning       = ImVec4(0.96f, 0.62f, 0.04f, 1.00f);  // #F59E0B
+    ImVec4 error         = ImVec4(0.94f, 0.27f, 0.27f, 1.00f);  // #EF4444
+
+    // Text
+    colors[ImGuiCol_Text]                   = text_primary;
+    colors[ImGuiCol_TextDisabled]           = text_secondary;
+
+    // Window
+    colors[ImGuiCol_WindowBg]               = bg_primary;
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(bg_secondary.x, bg_secondary.y, bg_secondary.z, 0.98f);
+
+    // Borders
+    colors[ImGuiCol_Border]                 = border;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+
+    // Frame
+    colors[ImGuiCol_FrameBg]                = bg_secondary;
+    colors[ImGuiCol_FrameBgHovered]         = bg_tertiary;
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.35f);
+
+    // Title bar
+    colors[ImGuiCol_TitleBg]                = bg_primary;
+    colors[ImGuiCol_TitleBgActive]          = bg_secondary;
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg_primary.x, bg_primary.y, bg_primary.z, 0.75f);
+
+    // Menu bar
+    colors[ImGuiCol_MenuBarBg]              = bg_primary;
+
+    // Scrollbar
+    colors[ImGuiCol_ScrollbarBg]            = bg_primary;
+    colors[ImGuiCol_ScrollbarGrab]          = bg_tertiary;
+    colors[ImGuiCol_ScrollbarGrabHovered]   = ImVec4(bg_tertiary.x + 0.10f, bg_tertiary.y + 0.10f, bg_tertiary.z + 0.10f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive]    = accent_blue;
+
+    // Check mark
+    colors[ImGuiCol_CheckMark]              = success;
+
+    // Slider
+    colors[ImGuiCol_SliderGrab]             = accent_blue;
+    colors[ImGuiCol_SliderGrabActive]       = accent_light;
+
+    // Button - professional blue
+    colors[ImGuiCol_Button]                 = accent_blue;
+    colors[ImGuiCol_ButtonHovered]          = accent_light;
+    colors[ImGuiCol_ButtonActive]           = ImVec4(accent_blue.x * 0.85f, accent_blue.y * 0.85f, accent_blue.z * 0.85f, 1.00f);
+
+    // Header
+    colors[ImGuiCol_Header]                 = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.25f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.45f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.65f);
+
+    // Separator
+    colors[ImGuiCol_Separator]              = border;
+    colors[ImGuiCol_SeparatorHovered]       = accent_light;
+    colors[ImGuiCol_SeparatorActive]        = accent_blue;
+
+    // Resize grip
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(0.50f, 0.50f, 0.50f, 0.15f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.55f);
+    colors[ImGuiCol_ResizeGripActive]       = accent_blue;
+
+    // Tabs
+    colors[ImGuiCol_Tab]                    = bg_secondary;
+    colors[ImGuiCol_TabHovered]             = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.65f);
+    colors[ImGuiCol_TabActive]              = accent_blue;
+    colors[ImGuiCol_TabUnfocused]           = bg_secondary;
+    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.45f);
+
+    // Docking
+    colors[ImGuiCol_DockingPreview]         = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg]         = bg_primary;
+
+    // Plot
+    colors[ImGuiCol_PlotLines]              = accent_light;
+    colors[ImGuiCol_PlotLinesHovered]       = accent_blue;
+    colors[ImGuiCol_PlotHistogram]          = success;
+    colors[ImGuiCol_PlotHistogramHovered]   = warning;
+
+    // Table
+    colors[ImGuiCol_TableHeaderBg]          = bg_secondary;
+    colors[ImGuiCol_TableBorderStrong]      = border;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(border.x, border.y, border.z, 0.50f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(1.00f, 1.00f, 1.00f, 0.02f);
+
+    // Text selection
+    colors[ImGuiCol_TextSelectedBg]         = ImVec4(accent_blue.x, accent_blue.y, accent_blue.z, 0.30f);
+
+    // Drag drop
+    colors[ImGuiCol_DragDropTarget]         = accent_light;
+
+    // Navigation
+    colors[ImGuiCol_NavHighlight]           = accent_blue;
+    colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+
+    // Modal
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.55f);
+
+    // Professional modest rounding
+    config_.window_rounding = 6.0f;
+    config_.frame_rounding = 4.0f;
+    config_.popup_rounding = 6.0f;
+    config_.scrollbar_rounding = 6.0f;
+    config_.grab_rounding = 4.0f;
+    config_.tab_rounding = 4.0f;
+    config_.window_border_size = 1.0f;
+    config_.frame_border_size = 0.0f;
+    config_.window_padding = ImVec2(10.0f, 10.0f);
+    config_.frame_padding = ImVec2(10.0f, 6.0f);
+    config_.item_spacing = ImVec2(8.0f, 6.0f);
+}
+
+// ============================================================================
+// CyxOS TUI Classic Theme - Green Phosphor Terminal
+// IBM 3278 inspired, classic green on black terminal
+// ============================================================================
+void Theme::ApplyCyxOSTuiClassic() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    // Classic green phosphor CRT palette
+    ImVec4 bg_black      = ImVec4(0.04f, 0.04f, 0.04f, 1.00f);  // #0A0A0A
+    ImVec4 bg_dark       = ImVec4(0.05f, 0.05f, 0.05f, 1.00f);  // #0D0D0D
+    ImVec4 green_primary = ImVec4(0.20f, 1.00f, 0.20f, 1.00f);  // #33FF33
+    ImVec4 green_dim     = ImVec4(0.10f, 0.55f, 0.10f, 1.00f);  // #1A8C1A
+    ImVec4 green_glow    = ImVec4(0.00f, 1.00f, 0.00f, 1.00f);  // #00FF00
+    ImVec4 green_border  = ImVec4(0.10f, 0.30f, 0.10f, 1.00f);  // #1A4D1A
+    ImVec4 warning       = ImVec4(0.80f, 1.00f, 0.20f, 1.00f);  // #CCFF33
+    ImVec4 error         = ImVec4(1.00f, 0.20f, 0.20f, 1.00f);  // #FF3333
+
+    // Text
+    colors[ImGuiCol_Text]                   = green_primary;
+    colors[ImGuiCol_TextDisabled]           = green_dim;
+
+    // Window
+    colors[ImGuiCol_WindowBg]               = bg_black;
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(bg_dark.x, bg_dark.y, bg_dark.z, 0.98f);
+
+    // Borders - phosphor glow effect
+    colors[ImGuiCol_Border]                 = green_border;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.20f, 0.00f, 0.30f);
+
+    // Frame
+    colors[ImGuiCol_FrameBg]                = bg_dark;
+    colors[ImGuiCol_FrameBgHovered]         = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(green_glow.x, green_glow.y, green_glow.z, 0.25f);
+
+    // Title bar
+    colors[ImGuiCol_TitleBg]                = bg_black;
+    colors[ImGuiCol_TitleBgActive]          = ImVec4(green_border.x, green_border.y, green_border.z, 0.80f);
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg_black.x, bg_black.y, bg_black.z, 0.75f);
+
+    // Menu bar
+    colors[ImGuiCol_MenuBarBg]              = bg_black;
+
+    // Scrollbar - thin terminal style
+    colors[ImGuiCol_ScrollbarBg]            = bg_black;
+    colors[ImGuiCol_ScrollbarGrab]          = green_dim;
+    colors[ImGuiCol_ScrollbarGrabHovered]   = green_primary;
+    colors[ImGuiCol_ScrollbarGrabActive]    = green_glow;
+
+    // Check mark
+    colors[ImGuiCol_CheckMark]              = green_glow;
+
+    // Slider
+    colors[ImGuiCol_SliderGrab]             = green_primary;
+    colors[ImGuiCol_SliderGrabActive]       = green_glow;
+
+    // Button
+    colors[ImGuiCol_Button]                 = ImVec4(green_dim.x, green_dim.y, green_dim.z, 0.60f);
+    colors[ImGuiCol_ButtonHovered]          = ImVec4(green_primary.x, green_primary.y, green_primary.z, 0.70f);
+    colors[ImGuiCol_ButtonActive]           = green_glow;
+
+    // Header
+    colors[ImGuiCol_Header]                 = ImVec4(green_dim.x, green_dim.y, green_dim.z, 0.50f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(green_primary.x, green_primary.y, green_primary.z, 0.60f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(green_glow.x, green_glow.y, green_glow.z, 0.70f);
+
+    // Separator
+    colors[ImGuiCol_Separator]              = green_border;
+    colors[ImGuiCol_SeparatorHovered]       = green_primary;
+    colors[ImGuiCol_SeparatorActive]        = green_glow;
+
+    // Resize grip
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(green_dim.x, green_dim.y, green_dim.z, 0.30f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(green_primary.x, green_primary.y, green_primary.z, 0.60f);
+    colors[ImGuiCol_ResizeGripActive]       = green_glow;
+
+    // Tabs
+    colors[ImGuiCol_Tab]                    = ImVec4(green_border.x, green_border.y, green_border.z, 0.70f);
+    colors[ImGuiCol_TabHovered]             = ImVec4(green_primary.x, green_primary.y, green_primary.z, 0.70f);
+    colors[ImGuiCol_TabActive]              = ImVec4(green_glow.x, green_glow.y, green_glow.z, 0.80f);
+    colors[ImGuiCol_TabUnfocused]           = ImVec4(green_border.x, green_border.y, green_border.z, 0.50f);
+    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(green_dim.x, green_dim.y, green_dim.z, 0.70f);
+
+    // Docking
+    colors[ImGuiCol_DockingPreview]         = ImVec4(green_glow.x, green_glow.y, green_glow.z, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg]         = bg_black;
+
+    // Plot
+    colors[ImGuiCol_PlotLines]              = green_glow;
+    colors[ImGuiCol_PlotLinesHovered]       = warning;
+    colors[ImGuiCol_PlotHistogram]          = green_primary;
+    colors[ImGuiCol_PlotHistogramHovered]   = warning;
+
+    // Table
+    colors[ImGuiCol_TableHeaderBg]          = ImVec4(green_border.x, green_border.y, green_border.z, 0.50f);
+    colors[ImGuiCol_TableBorderStrong]      = green_border;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(green_border.x, green_border.y, green_border.z, 0.50f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(0.00f, 0.10f, 0.00f, 0.10f);
+
+    // Text selection
+    colors[ImGuiCol_TextSelectedBg]         = ImVec4(green_glow.x, green_glow.y, green_glow.z, 0.35f);
+
+    // Drag drop
+    colors[ImGuiCol_DragDropTarget]         = green_glow;
+
+    // Navigation
+    colors[ImGuiCol_NavHighlight]           = green_glow;
+    colors[ImGuiCol_NavWindowingHighlight]  = green_primary;
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.00f, 0.10f, 0.00f, 0.50f);
+
+    // Modal
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.05f, 0.00f, 0.70f);
+
+    // Terminal style - no rounding
+    config_.window_rounding = 0.0f;
+    config_.frame_rounding = 0.0f;
+    config_.popup_rounding = 0.0f;
+    config_.scrollbar_rounding = 0.0f;
+    config_.grab_rounding = 0.0f;
+    config_.tab_rounding = 0.0f;
+    config_.window_border_size = 1.0f;
+    config_.frame_border_size = 1.0f;
+    config_.window_padding = ImVec2(8.0f, 8.0f);
+    config_.frame_padding = ImVec2(6.0f, 4.0f);
+    config_.item_spacing = ImVec2(8.0f, 4.0f);
+}
+
+// ============================================================================
+// CyxOS TUI Matrix Theme - The Matrix Digital Rain
+// Neo's terminal, digital rain aesthetic
+// ============================================================================
+void Theme::ApplyCyxOSTuiMatrix() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    // Matrix digital rain palette
+    ImVec4 bg_void       = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);  // #000000
+    ImVec4 bg_subtle     = ImVec4(0.00f, 0.07f, 0.00f, 1.00f);  // #001100
+    ImVec4 green_matrix  = ImVec4(0.00f, 1.00f, 0.25f, 1.00f);  // #00FF41
+    ImVec4 green_dim     = ImVec4(0.00f, 0.23f, 0.00f, 1.00f);  // #003B00
+    ImVec4 green_bright  = ImVec4(0.50f, 1.00f, 0.00f, 1.00f);  // #7FFF00
+    ImVec4 green_border  = ImVec4(0.00f, 0.20f, 0.00f, 1.00f);  // #003300
+    ImVec4 warning       = ImVec4(0.68f, 1.00f, 0.18f, 1.00f);  // #ADFF2F
+    ImVec4 error         = ImVec4(1.00f, 0.00f, 0.00f, 1.00f);  // #FF0000
+
+    // Text
+    colors[ImGuiCol_Text]                   = green_matrix;
+    colors[ImGuiCol_TextDisabled]           = green_dim;
+
+    // Window
+    colors[ImGuiCol_WindowBg]               = bg_void;
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(bg_subtle.x, bg_subtle.y, bg_subtle.z, 0.98f);
+
+    // Borders - matrix glow
+    colors[ImGuiCol_Border]                 = green_border;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.30f, 0.00f, 0.40f);
+
+    // Frame
+    colors[ImGuiCol_FrameBg]                = bg_subtle;
+    colors[ImGuiCol_FrameBgHovered]         = ImVec4(0.00f, 0.12f, 0.00f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(green_matrix.x, green_matrix.y, green_matrix.z, 0.25f);
+
+    // Title bar
+    colors[ImGuiCol_TitleBg]                = bg_void;
+    colors[ImGuiCol_TitleBgActive]          = ImVec4(green_border.x, green_border.y, green_border.z, 0.90f);
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg_void.x, bg_void.y, bg_void.z, 0.75f);
+
+    // Menu bar
+    colors[ImGuiCol_MenuBarBg]              = bg_void;
+
+    // Scrollbar
+    colors[ImGuiCol_ScrollbarBg]            = bg_void;
+    colors[ImGuiCol_ScrollbarGrab]          = green_dim;
+    colors[ImGuiCol_ScrollbarGrabHovered]   = green_matrix;
+    colors[ImGuiCol_ScrollbarGrabActive]    = green_bright;
+
+    // Check mark
+    colors[ImGuiCol_CheckMark]              = green_bright;
+
+    // Slider
+    colors[ImGuiCol_SliderGrab]             = green_matrix;
+    colors[ImGuiCol_SliderGrabActive]       = green_bright;
+
+    // Button
+    colors[ImGuiCol_Button]                 = ImVec4(green_dim.x, green_dim.y, green_dim.z, 0.70f);
+    colors[ImGuiCol_ButtonHovered]          = ImVec4(green_matrix.x, green_matrix.y, green_matrix.z, 0.70f);
+    colors[ImGuiCol_ButtonActive]           = green_bright;
+
+    // Header
+    colors[ImGuiCol_Header]                 = ImVec4(green_dim.x, green_dim.y, green_dim.z, 0.55f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(green_matrix.x, green_matrix.y, green_matrix.z, 0.55f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(green_bright.x, green_bright.y, green_bright.z, 0.70f);
+
+    // Separator
+    colors[ImGuiCol_Separator]              = green_border;
+    colors[ImGuiCol_SeparatorHovered]       = green_matrix;
+    colors[ImGuiCol_SeparatorActive]        = green_bright;
+
+    // Resize grip
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(green_dim.x, green_dim.y, green_dim.z, 0.35f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(green_matrix.x, green_matrix.y, green_matrix.z, 0.60f);
+    colors[ImGuiCol_ResizeGripActive]       = green_bright;
+
+    // Tabs
+    colors[ImGuiCol_Tab]                    = ImVec4(green_border.x, green_border.y, green_border.z, 0.75f);
+    colors[ImGuiCol_TabHovered]             = ImVec4(green_matrix.x, green_matrix.y, green_matrix.z, 0.70f);
+    colors[ImGuiCol_TabActive]              = ImVec4(green_bright.x, green_bright.y, green_bright.z, 0.80f);
+    colors[ImGuiCol_TabUnfocused]           = ImVec4(green_border.x, green_border.y, green_border.z, 0.50f);
+    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(green_dim.x, green_dim.y, green_dim.z, 0.75f);
+
+    // Docking
+    colors[ImGuiCol_DockingPreview]         = ImVec4(green_bright.x, green_bright.y, green_bright.z, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg]         = bg_void;
+
+    // Plot
+    colors[ImGuiCol_PlotLines]              = green_bright;
+    colors[ImGuiCol_PlotLinesHovered]       = warning;
+    colors[ImGuiCol_PlotHistogram]          = green_matrix;
+    colors[ImGuiCol_PlotHistogramHovered]   = warning;
+
+    // Table
+    colors[ImGuiCol_TableHeaderBg]          = ImVec4(green_border.x, green_border.y, green_border.z, 0.55f);
+    colors[ImGuiCol_TableBorderStrong]      = green_border;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(green_border.x, green_border.y, green_border.z, 0.50f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(0.00f, 0.08f, 0.00f, 0.15f);
+
+    // Text selection
+    colors[ImGuiCol_TextSelectedBg]         = ImVec4(green_bright.x, green_bright.y, green_bright.z, 0.40f);
+
+    // Drag drop
+    colors[ImGuiCol_DragDropTarget]         = green_bright;
+
+    // Navigation
+    colors[ImGuiCol_NavHighlight]           = green_bright;
+    colors[ImGuiCol_NavWindowingHighlight]  = green_matrix;
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.00f, 0.15f, 0.00f, 0.50f);
+
+    // Modal
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.08f, 0.00f, 0.75f);
+
+    // Matrix style - sharp edges
+    config_.window_rounding = 0.0f;
+    config_.frame_rounding = 0.0f;
+    config_.popup_rounding = 0.0f;
+    config_.scrollbar_rounding = 0.0f;
+    config_.grab_rounding = 0.0f;
+    config_.tab_rounding = 0.0f;
+    config_.window_border_size = 1.0f;
+    config_.frame_border_size = 1.0f;
+    config_.window_padding = ImVec2(8.0f, 8.0f);
+    config_.frame_padding = ImVec2(6.0f, 4.0f);
+    config_.item_spacing = ImVec2(8.0f, 4.0f);
+}
+
+// ============================================================================
+// CyxOS TUI Amber Theme - Amber CRT P3 Phosphor
+// Warm retro terminal with amber glow
+// ============================================================================
+void Theme::ApplyCyxOSTuiAmber() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    // Amber CRT phosphor palette
+    ImVec4 bg_dark       = ImVec4(0.05f, 0.04f, 0.02f, 1.00f);  // #0D0906
+    ImVec4 bg_surface    = ImVec4(0.10f, 0.07f, 0.04f, 1.00f);  // #1A110A
+    ImVec4 amber_primary = ImVec4(1.00f, 0.69f, 0.00f, 1.00f);  // #FFB000
+    ImVec4 amber_dim     = ImVec4(0.55f, 0.37f, 0.00f, 1.00f);  // #8B5E00
+    ImVec4 amber_bright  = ImVec4(1.00f, 0.75f, 0.00f, 1.00f);  // #FFC000
+    ImVec4 amber_border  = ImVec4(0.30f, 0.22f, 0.00f, 1.00f);  // #4D3800
+    ImVec4 warning       = ImVec4(1.00f, 0.88f, 0.00f, 1.00f);  // #FFE000
+    ImVec4 error         = ImVec4(1.00f, 0.25f, 0.00f, 1.00f);  // #FF4000
+
+    // Text
+    colors[ImGuiCol_Text]                   = amber_primary;
+    colors[ImGuiCol_TextDisabled]           = amber_dim;
+
+    // Window
+    colors[ImGuiCol_WindowBg]               = bg_dark;
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(bg_surface.x, bg_surface.y, bg_surface.z, 0.98f);
+
+    // Borders - amber glow effect
+    colors[ImGuiCol_Border]                 = amber_border;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.30f, 0.15f, 0.00f, 0.35f);
+
+    // Frame
+    colors[ImGuiCol_FrameBg]                = bg_surface;
+    colors[ImGuiCol_FrameBgHovered]         = ImVec4(0.15f, 0.10f, 0.05f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(amber_bright.x, amber_bright.y, amber_bright.z, 0.25f);
+
+    // Title bar
+    colors[ImGuiCol_TitleBg]                = bg_dark;
+    colors[ImGuiCol_TitleBgActive]          = ImVec4(amber_border.x, amber_border.y, amber_border.z, 0.85f);
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg_dark.x, bg_dark.y, bg_dark.z, 0.75f);
+
+    // Menu bar
+    colors[ImGuiCol_MenuBarBg]              = bg_dark;
+
+    // Scrollbar
+    colors[ImGuiCol_ScrollbarBg]            = bg_dark;
+    colors[ImGuiCol_ScrollbarGrab]          = amber_dim;
+    colors[ImGuiCol_ScrollbarGrabHovered]   = amber_primary;
+    colors[ImGuiCol_ScrollbarGrabActive]    = amber_bright;
+
+    // Check mark
+    colors[ImGuiCol_CheckMark]              = amber_bright;
+
+    // Slider
+    colors[ImGuiCol_SliderGrab]             = amber_primary;
+    colors[ImGuiCol_SliderGrabActive]       = amber_bright;
+
+    // Button
+    colors[ImGuiCol_Button]                 = ImVec4(amber_dim.x, amber_dim.y, amber_dim.z, 0.65f);
+    colors[ImGuiCol_ButtonHovered]          = ImVec4(amber_primary.x, amber_primary.y, amber_primary.z, 0.70f);
+    colors[ImGuiCol_ButtonActive]           = amber_bright;
+
+    // Header
+    colors[ImGuiCol_Header]                 = ImVec4(amber_dim.x, amber_dim.y, amber_dim.z, 0.50f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(amber_primary.x, amber_primary.y, amber_primary.z, 0.55f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(amber_bright.x, amber_bright.y, amber_bright.z, 0.70f);
+
+    // Separator
+    colors[ImGuiCol_Separator]              = amber_border;
+    colors[ImGuiCol_SeparatorHovered]       = amber_primary;
+    colors[ImGuiCol_SeparatorActive]        = amber_bright;
+
+    // Resize grip
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(amber_dim.x, amber_dim.y, amber_dim.z, 0.30f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(amber_primary.x, amber_primary.y, amber_primary.z, 0.60f);
+    colors[ImGuiCol_ResizeGripActive]       = amber_bright;
+
+    // Tabs
+    colors[ImGuiCol_Tab]                    = ImVec4(amber_border.x, amber_border.y, amber_border.z, 0.70f);
+    colors[ImGuiCol_TabHovered]             = ImVec4(amber_primary.x, amber_primary.y, amber_primary.z, 0.70f);
+    colors[ImGuiCol_TabActive]              = ImVec4(amber_bright.x, amber_bright.y, amber_bright.z, 0.80f);
+    colors[ImGuiCol_TabUnfocused]           = ImVec4(amber_border.x, amber_border.y, amber_border.z, 0.50f);
+    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(amber_dim.x, amber_dim.y, amber_dim.z, 0.70f);
+
+    // Docking
+    colors[ImGuiCol_DockingPreview]         = ImVec4(amber_bright.x, amber_bright.y, amber_bright.z, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg]         = bg_dark;
+
+    // Plot
+    colors[ImGuiCol_PlotLines]              = amber_bright;
+    colors[ImGuiCol_PlotLinesHovered]       = warning;
+    colors[ImGuiCol_PlotHistogram]          = amber_primary;
+    colors[ImGuiCol_PlotHistogramHovered]   = warning;
+
+    // Table
+    colors[ImGuiCol_TableHeaderBg]          = ImVec4(amber_border.x, amber_border.y, amber_border.z, 0.50f);
+    colors[ImGuiCol_TableBorderStrong]      = amber_border;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(amber_border.x, amber_border.y, amber_border.z, 0.50f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(0.10f, 0.06f, 0.00f, 0.12f);
+
+    // Text selection
+    colors[ImGuiCol_TextSelectedBg]         = ImVec4(amber_bright.x, amber_bright.y, amber_bright.z, 0.35f);
+
+    // Drag drop
+    colors[ImGuiCol_DragDropTarget]         = amber_bright;
+
+    // Navigation
+    colors[ImGuiCol_NavHighlight]           = amber_bright;
+    colors[ImGuiCol_NavWindowingHighlight]  = amber_primary;
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.15f, 0.08f, 0.00f, 0.50f);
+
+    // Modal
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.08f, 0.04f, 0.00f, 0.70f);
+
+    // CRT terminal style - no rounding
+    config_.window_rounding = 0.0f;
+    config_.frame_rounding = 0.0f;
+    config_.popup_rounding = 0.0f;
+    config_.scrollbar_rounding = 0.0f;
+    config_.grab_rounding = 0.0f;
+    config_.tab_rounding = 0.0f;
+    config_.window_border_size = 1.0f;
+    config_.frame_border_size = 1.0f;
+    config_.window_padding = ImVec2(8.0f, 8.0f);
+    config_.frame_padding = ImVec2(6.0f, 4.0f);
+    config_.item_spacing = ImVec2(8.0f, 4.0f);
+}
+
+// ============================================================================
 // ImNodes Styling - Matches node editor to current theme
 // ============================================================================
 
@@ -1530,6 +2490,222 @@ void Theme::ApplyImNodesStyle() {
             break;
         }
 
+        // ============== CyxOS Platform Themes ==============
+
+        case ThemePreset::CyxOSAqua: {
+            // macOS Big Sur style - clean, rounded nodes
+            style.NodeCornerRounding = 10.0f;
+            style.NodeBorderThickness = 1.0f;
+            style.LinkThickness = 3.0f;
+
+            ImVec4 node_bg = ImVec4(0.18f, 0.18f, 0.18f, 1.0f);
+            ImVec4 accent = ImVec4(0.00f, 0.48f, 1.00f, 1.0f);  // #007AFF
+            ImVec4 border = ImVec4(0.26f, 0.26f, 0.27f, 1.0f);
+
+            style.Colors[ImNodesCol_NodeBackground] = ColorToU32(node_bg);
+            style.Colors[ImNodesCol_NodeBackgroundHovered] = ColorToU32(ImVec4(0.22f, 0.22f, 0.22f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundSelected] = ColorToU32(ImVec4(0.25f, 0.25f, 0.26f, 1.0f));
+            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(border);
+            style.Colors[ImNodesCol_TitleBar] = ColorToU32(accent);
+            style.Colors[ImNodesCol_TitleBarHovered] = ColorToU32(ImVec4(0.10f, 0.55f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_TitleBarSelected] = ColorToU32(ImVec4(0.20f, 0.60f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_Link] = ColorToU32(ImVec4(0.20f, 0.78f, 0.35f, 1.0f));  // Green success
+            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(ImVec4(0.30f, 0.88f, 0.45f, 1.0f));
+            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(accent);
+            style.Colors[ImNodesCol_Pin] = ColorToU32(accent);
+            style.Colors[ImNodesCol_PinHovered] = ColorToU32(ImVec4(0.34f, 0.34f, 0.84f, 1.0f));  // Purple secondary
+            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(ImVec4(accent.x, accent.y, accent.z, 0.30f));
+            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(accent);
+            style.Colors[ImNodesCol_GridBackground] = ColorToU32(ImVec4(0.11f, 0.11f, 0.12f, 1.0f));
+            style.Colors[ImNodesCol_GridLine] = ColorToU32(ImVec4(0.16f, 0.16f, 0.17f, 1.0f));
+            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(ImVec4(0.22f, 0.22f, 0.23f, 1.0f));
+            break;
+        }
+
+        case ThemePreset::CyxOSFluent: {
+            // Windows 11 Fluent Design - subtle rounded corners
+            style.NodeCornerRounding = 8.0f;
+            style.NodeBorderThickness = 1.0f;
+            style.LinkThickness = 2.5f;
+
+            ImVec4 node_bg = ImVec4(0.20f, 0.20f, 0.20f, 1.0f);
+            ImVec4 accent = ImVec4(0.00f, 0.47f, 0.83f, 1.0f);  // #0078D4
+            ImVec4 accent_light = ImVec4(0.38f, 0.80f, 1.00f, 1.0f);  // #60CDFF
+
+            style.Colors[ImNodesCol_NodeBackground] = ColorToU32(node_bg);
+            style.Colors[ImNodesCol_NodeBackgroundHovered] = ColorToU32(ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundSelected] = ColorToU32(ImVec4(0.28f, 0.28f, 0.28f, 1.0f));
+            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(ImVec4(0.24f, 0.24f, 0.24f, 1.0f));
+            style.Colors[ImNodesCol_TitleBar] = ColorToU32(accent);
+            style.Colors[ImNodesCol_TitleBarHovered] = ColorToU32(ImVec4(accent.x * 1.1f, accent.y * 1.1f, accent.z * 1.1f, 1.0f));
+            style.Colors[ImNodesCol_TitleBarSelected] = ColorToU32(accent_light);
+            style.Colors[ImNodesCol_Link] = ColorToU32(accent_light);
+            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(ImVec4(0.48f, 0.90f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(accent);
+            style.Colors[ImNodesCol_Pin] = ColorToU32(ImVec4(0.42f, 0.80f, 0.37f, 1.0f));  // Success green
+            style.Colors[ImNodesCol_PinHovered] = ColorToU32(ImVec4(0.52f, 0.90f, 0.47f, 1.0f));
+            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(ImVec4(accent.x, accent.y, accent.z, 0.30f));
+            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(accent);
+            style.Colors[ImNodesCol_GridBackground] = ColorToU32(ImVec4(0.13f, 0.13f, 0.13f, 1.0f));
+            style.Colors[ImNodesCol_GridLine] = ColorToU32(ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
+            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(ImVec4(0.22f, 0.22f, 0.22f, 1.0f));
+            break;
+        }
+
+        case ThemePreset::CyxOSCoder: {
+            // Developer IDE - syntax highlighting colors
+            style.NodeCornerRounding = 4.0f;
+            style.NodeBorderThickness = 1.0f;
+            style.LinkThickness = 2.0f;
+
+            ImVec4 bg = ImVec4(0.16f, 0.16f, 0.21f, 1.0f);
+            ImVec4 accent = ImVec4(0.54f, 0.71f, 0.98f, 1.0f);  // #89B4FA
+            ImVec4 func_cyan = ImVec4(0.54f, 0.86f, 0.92f, 1.0f);  // #89DCEB
+            ImVec4 keyword = ImVec4(0.80f, 0.65f, 0.97f, 1.0f);  // #CBA6F7
+            ImVec4 string = ImVec4(0.65f, 0.89f, 0.63f, 1.0f);  // #A6E3A1
+
+            style.Colors[ImNodesCol_NodeBackground] = ColorToU32(bg);
+            style.Colors[ImNodesCol_NodeBackgroundHovered] = ColorToU32(ImVec4(0.20f, 0.20f, 0.26f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundSelected] = ColorToU32(ImVec4(0.24f, 0.24f, 0.30f, 1.0f));
+            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(ImVec4(0.27f, 0.28f, 0.35f, 1.0f));
+            style.Colors[ImNodesCol_TitleBar] = ColorToU32(keyword);
+            style.Colors[ImNodesCol_TitleBarHovered] = ColorToU32(ImVec4(0.90f, 0.75f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_TitleBarSelected] = ColorToU32(accent);
+            style.Colors[ImNodesCol_Link] = ColorToU32(func_cyan);
+            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(ImVec4(0.64f, 0.96f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(accent);
+            style.Colors[ImNodesCol_Pin] = ColorToU32(string);
+            style.Colors[ImNodesCol_PinHovered] = ColorToU32(ImVec4(0.75f, 0.99f, 0.73f, 1.0f));
+            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(ImVec4(accent.x, accent.y, accent.z, 0.30f));
+            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(accent);
+            style.Colors[ImNodesCol_GridBackground] = ColorToU32(ImVec4(0.12f, 0.12f, 0.18f, 1.0f));
+            style.Colors[ImNodesCol_GridLine] = ColorToU32(ImVec4(0.16f, 0.16f, 0.22f, 1.0f));
+            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(ImVec4(0.20f, 0.20f, 0.26f, 1.0f));
+            break;
+        }
+
+        case ThemePreset::CyxOSOffice: {
+            // Professional enterprise - clean, corporate
+            style.NodeCornerRounding = 6.0f;
+            style.NodeBorderThickness = 1.0f;
+            style.LinkThickness = 2.5f;
+
+            ImVec4 bg = ImVec4(0.22f, 0.25f, 0.32f, 1.0f);
+            ImVec4 accent = ImVec4(0.15f, 0.39f, 0.92f, 1.0f);  // #2563EB
+            ImVec4 success = ImVec4(0.06f, 0.72f, 0.51f, 1.0f);  // #10B981
+
+            style.Colors[ImNodesCol_NodeBackground] = ColorToU32(bg);
+            style.Colors[ImNodesCol_NodeBackgroundHovered] = ColorToU32(ImVec4(0.26f, 0.29f, 0.36f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundSelected] = ColorToU32(ImVec4(0.30f, 0.33f, 0.40f, 1.0f));
+            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(ImVec4(0.29f, 0.34f, 0.39f, 1.0f));
+            style.Colors[ImNodesCol_TitleBar] = ColorToU32(accent);
+            style.Colors[ImNodesCol_TitleBarHovered] = ColorToU32(ImVec4(0.23f, 0.51f, 0.96f, 1.0f));
+            style.Colors[ImNodesCol_TitleBarSelected] = ColorToU32(ImVec4(0.30f, 0.58f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_Link] = ColorToU32(success);
+            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(ImVec4(0.16f, 0.82f, 0.61f, 1.0f));
+            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(accent);
+            style.Colors[ImNodesCol_Pin] = ColorToU32(accent);
+            style.Colors[ImNodesCol_PinHovered] = ColorToU32(ImVec4(0.25f, 0.49f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(ImVec4(accent.x, accent.y, accent.z, 0.30f));
+            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(accent);
+            style.Colors[ImNodesCol_GridBackground] = ColorToU32(ImVec4(0.12f, 0.16f, 0.22f, 1.0f));
+            style.Colors[ImNodesCol_GridLine] = ColorToU32(ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
+            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(ImVec4(0.24f, 0.28f, 0.34f, 1.0f));
+            break;
+        }
+
+        // ============== CyxOS Retro TUI Themes ==============
+
+        case ThemePreset::CyxOSTuiClassic: {
+            // Green phosphor terminal - sharp edges, glow effect
+            style.NodeCornerRounding = 0.0f;
+            style.NodeBorderThickness = 1.5f;
+            style.LinkThickness = 2.0f;
+
+            ImVec4 green = ImVec4(0.20f, 1.00f, 0.20f, 1.0f);
+            ImVec4 green_glow = ImVec4(0.00f, 1.00f, 0.00f, 1.0f);
+            ImVec4 green_dim = ImVec4(0.10f, 0.55f, 0.10f, 1.0f);
+
+            style.Colors[ImNodesCol_NodeBackground] = ColorToU32(ImVec4(0.05f, 0.05f, 0.05f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundHovered] = ColorToU32(ImVec4(0.08f, 0.08f, 0.08f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundSelected] = ColorToU32(ImVec4(0.10f, 0.12f, 0.10f, 1.0f));
+            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(green_dim);
+            style.Colors[ImNodesCol_TitleBar] = ColorToU32(green_dim);
+            style.Colors[ImNodesCol_TitleBarHovered] = ColorToU32(green);
+            style.Colors[ImNodesCol_TitleBarSelected] = ColorToU32(green_glow);
+            style.Colors[ImNodesCol_Link] = ColorToU32(green);
+            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(green_glow);
+            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(green_glow);
+            style.Colors[ImNodesCol_Pin] = ColorToU32(green_glow);
+            style.Colors[ImNodesCol_PinHovered] = ColorToU32(ImVec4(0.30f, 1.00f, 0.30f, 1.0f));
+            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(ImVec4(0.00f, 1.00f, 0.00f, 0.25f));
+            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(green_glow);
+            style.Colors[ImNodesCol_GridBackground] = ColorToU32(ImVec4(0.04f, 0.04f, 0.04f, 1.0f));
+            style.Colors[ImNodesCol_GridLine] = ColorToU32(ImVec4(0.08f, 0.12f, 0.08f, 1.0f));
+            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(ImVec4(0.10f, 0.20f, 0.10f, 1.0f));
+            break;
+        }
+
+        case ThemePreset::CyxOSTuiMatrix: {
+            // Matrix digital rain - deep black, neon green
+            style.NodeCornerRounding = 0.0f;
+            style.NodeBorderThickness = 1.5f;
+            style.LinkThickness = 2.0f;
+
+            ImVec4 matrix = ImVec4(0.00f, 1.00f, 0.25f, 1.0f);  // #00FF41
+            ImVec4 bright = ImVec4(0.50f, 1.00f, 0.00f, 1.0f);  // #7FFF00
+            ImVec4 dim = ImVec4(0.00f, 0.23f, 0.00f, 1.0f);
+
+            style.Colors[ImNodesCol_NodeBackground] = ColorToU32(ImVec4(0.00f, 0.04f, 0.00f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundHovered] = ColorToU32(ImVec4(0.00f, 0.08f, 0.00f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundSelected] = ColorToU32(ImVec4(0.00f, 0.12f, 0.02f, 1.0f));
+            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(dim);
+            style.Colors[ImNodesCol_TitleBar] = ColorToU32(dim);
+            style.Colors[ImNodesCol_TitleBarHovered] = ColorToU32(matrix);
+            style.Colors[ImNodesCol_TitleBarSelected] = ColorToU32(bright);
+            style.Colors[ImNodesCol_Link] = ColorToU32(matrix);
+            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(bright);
+            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(bright);
+            style.Colors[ImNodesCol_Pin] = ColorToU32(bright);
+            style.Colors[ImNodesCol_PinHovered] = ColorToU32(ImVec4(0.60f, 1.00f, 0.10f, 1.0f));
+            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(ImVec4(0.00f, 1.00f, 0.25f, 0.25f));
+            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(matrix);
+            style.Colors[ImNodesCol_GridBackground] = ColorToU32(ImVec4(0.00f, 0.00f, 0.00f, 1.0f));
+            style.Colors[ImNodesCol_GridLine] = ColorToU32(ImVec4(0.00f, 0.08f, 0.00f, 1.0f));
+            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(ImVec4(0.00f, 0.15f, 0.00f, 1.0f));
+            break;
+        }
+
+        case ThemePreset::CyxOSTuiAmber: {
+            // Amber CRT phosphor - warm retro
+            style.NodeCornerRounding = 0.0f;
+            style.NodeBorderThickness = 1.5f;
+            style.LinkThickness = 2.0f;
+
+            ImVec4 amber = ImVec4(1.00f, 0.69f, 0.00f, 1.0f);  // #FFB000
+            ImVec4 bright = ImVec4(1.00f, 0.75f, 0.00f, 1.0f);  // #FFC000
+            ImVec4 dim = ImVec4(0.55f, 0.37f, 0.00f, 1.0f);
+
+            style.Colors[ImNodesCol_NodeBackground] = ColorToU32(ImVec4(0.08f, 0.06f, 0.03f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundHovered] = ColorToU32(ImVec4(0.12f, 0.09f, 0.05f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundSelected] = ColorToU32(ImVec4(0.15f, 0.11f, 0.06f, 1.0f));
+            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(dim);
+            style.Colors[ImNodesCol_TitleBar] = ColorToU32(dim);
+            style.Colors[ImNodesCol_TitleBarHovered] = ColorToU32(amber);
+            style.Colors[ImNodesCol_TitleBarSelected] = ColorToU32(bright);
+            style.Colors[ImNodesCol_Link] = ColorToU32(amber);
+            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(bright);
+            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(bright);
+            style.Colors[ImNodesCol_Pin] = ColorToU32(bright);
+            style.Colors[ImNodesCol_PinHovered] = ColorToU32(ImVec4(1.00f, 0.85f, 0.10f, 1.0f));
+            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(ImVec4(1.00f, 0.69f, 0.00f, 0.25f));
+            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(amber);
+            style.Colors[ImNodesCol_GridBackground] = ColorToU32(ImVec4(0.05f, 0.04f, 0.02f, 1.0f));
+            style.Colors[ImNodesCol_GridLine] = ColorToU32(ImVec4(0.10f, 0.07f, 0.03f, 1.0f));
+            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(ImVec4(0.15f, 0.10f, 0.04f, 1.0f));
+            break;
+        }
+
         default:
             break;
     }
@@ -1684,6 +2860,143 @@ void Theme::ApplyDockStyle() {
             style.active_indicator_height = 2.0f;
             style.tab_rounding = 8.0f;
             style.dock_bg = ImVec4(0.12f, 0.12f, 0.18f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        // ============== CyxOS Platform Themes ==============
+
+        case ThemePreset::CyxOSAqua: {
+            // macOS Big Sur style - rounded, clean
+            dock_style.ApplyPreset(DockStylePreset::Unity);
+
+            DockTabStyle style = dock_style.GetStyle();
+            style.tab_bg = ImVec4(0.18f, 0.18f, 0.18f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
+            style.tab_bg_active = ImVec4(0.11f, 0.11f, 0.12f, 1.0f);
+            style.tab_bg_unfocused = ImVec4(0.15f, 0.15f, 0.15f, 1.0f);
+            style.tab_text = ImVec4(0.60f, 0.60f, 0.62f, 1.0f);
+            style.tab_text_active = ImVec4(0.96f, 0.96f, 0.97f, 1.0f);
+            style.active_indicator_color = ImVec4(0.00f, 0.48f, 1.00f, 1.0f);  // #007AFF
+            style.active_indicator_height = 2.0f;
+            style.tab_rounding = 6.0f;
+            style.dock_bg = ImVec4(0.11f, 0.11f, 0.12f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        case ThemePreset::CyxOSFluent: {
+            // Windows 11 Fluent Design
+            dock_style.ApplyPreset(DockStylePreset::VSCode);
+
+            DockTabStyle style = dock_style.GetStyle();
+            style.tab_bg = ImVec4(0.18f, 0.18f, 0.18f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
+            style.tab_bg_active = ImVec4(0.13f, 0.13f, 0.13f, 1.0f);
+            style.tab_bg_unfocused = ImVec4(0.16f, 0.16f, 0.16f, 1.0f);
+            style.tab_text = ImVec4(0.70f, 0.70f, 0.70f, 1.0f);
+            style.tab_text_active = ImVec4(1.00f, 1.00f, 1.00f, 1.0f);
+            style.active_indicator_color = ImVec4(0.00f, 0.47f, 0.83f, 1.0f);  // #0078D4
+            style.active_indicator_height = 2.0f;
+            style.tab_rounding = 4.0f;
+            style.dock_bg = ImVec4(0.13f, 0.13f, 0.13f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        case ThemePreset::CyxOSCoder: {
+            // Developer IDE - syntax colored
+            dock_style.ApplyPreset(DockStylePreset::VSCode);
+
+            DockTabStyle style = dock_style.GetStyle();
+            style.tab_bg = ImVec4(0.16f, 0.16f, 0.21f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.20f, 0.20f, 0.26f, 1.0f);
+            style.tab_bg_active = ImVec4(0.12f, 0.12f, 0.18f, 1.0f);
+            style.tab_bg_unfocused = ImVec4(0.14f, 0.14f, 0.19f, 1.0f);
+            style.tab_text = ImVec4(0.42f, 0.44f, 0.53f, 1.0f);
+            style.tab_text_active = ImVec4(0.80f, 0.84f, 0.96f, 1.0f);
+            style.active_indicator_color = ImVec4(0.80f, 0.65f, 0.97f, 1.0f);  // #CBA6F7 purple
+            style.active_indicator_height = 2.0f;
+            style.tab_rounding = 3.0f;
+            style.dock_bg = ImVec4(0.12f, 0.12f, 0.18f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        case ThemePreset::CyxOSOffice: {
+            // Professional enterprise
+            dock_style.ApplyPreset(DockStylePreset::Unity);
+
+            DockTabStyle style = dock_style.GetStyle();
+            style.tab_bg = ImVec4(0.22f, 0.25f, 0.32f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.26f, 0.29f, 0.36f, 1.0f);
+            style.tab_bg_active = ImVec4(0.12f, 0.16f, 0.22f, 1.0f);
+            style.tab_bg_unfocused = ImVec4(0.18f, 0.21f, 0.28f, 1.0f);
+            style.tab_text = ImVec4(0.60f, 0.65f, 0.71f, 1.0f);
+            style.tab_text_active = ImVec4(0.97f, 0.97f, 0.98f, 1.0f);
+            style.active_indicator_color = ImVec4(0.15f, 0.39f, 0.92f, 1.0f);  // #2563EB
+            style.active_indicator_height = 2.0f;
+            style.tab_rounding = 4.0f;
+            style.dock_bg = ImVec4(0.12f, 0.16f, 0.22f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        // ============== CyxOS Retro TUI Themes ==============
+
+        case ThemePreset::CyxOSTuiClassic: {
+            // Green phosphor terminal - sharp edges
+            dock_style.ApplyPreset(DockStylePreset::VSCode);
+
+            DockTabStyle style = dock_style.GetStyle();
+            style.tab_bg = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.08f, 0.12f, 0.08f, 1.0f);
+            style.tab_bg_active = ImVec4(0.04f, 0.04f, 0.04f, 1.0f);
+            style.tab_bg_unfocused = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
+            style.tab_text = ImVec4(0.10f, 0.55f, 0.10f, 1.0f);
+            style.tab_text_active = ImVec4(0.20f, 1.00f, 0.20f, 1.0f);
+            style.active_indicator_color = ImVec4(0.00f, 1.00f, 0.00f, 1.0f);  // Glow green
+            style.active_indicator_height = 2.0f;
+            style.tab_rounding = 0.0f;
+            style.dock_bg = ImVec4(0.04f, 0.04f, 0.04f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        case ThemePreset::CyxOSTuiMatrix: {
+            // Matrix digital rain - neon green
+            dock_style.ApplyPreset(DockStylePreset::VSCode);
+
+            DockTabStyle style = dock_style.GetStyle();
+            style.tab_bg = ImVec4(0.00f, 0.04f, 0.00f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.00f, 0.10f, 0.00f, 1.0f);
+            style.tab_bg_active = ImVec4(0.00f, 0.00f, 0.00f, 1.0f);
+            style.tab_bg_unfocused = ImVec4(0.00f, 0.02f, 0.00f, 1.0f);
+            style.tab_text = ImVec4(0.00f, 0.23f, 0.00f, 1.0f);
+            style.tab_text_active = ImVec4(0.00f, 1.00f, 0.25f, 1.0f);
+            style.active_indicator_color = ImVec4(0.50f, 1.00f, 0.00f, 1.0f);  // #7FFF00
+            style.active_indicator_height = 2.0f;
+            style.tab_rounding = 0.0f;
+            style.dock_bg = ImVec4(0.00f, 0.00f, 0.00f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
+        case ThemePreset::CyxOSTuiAmber: {
+            // Amber CRT phosphor - warm glow
+            dock_style.ApplyPreset(DockStylePreset::VSCode);
+
+            DockTabStyle style = dock_style.GetStyle();
+            style.tab_bg = ImVec4(0.08f, 0.06f, 0.03f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.12f, 0.09f, 0.05f, 1.0f);
+            style.tab_bg_active = ImVec4(0.05f, 0.04f, 0.02f, 1.0f);
+            style.tab_bg_unfocused = ImVec4(0.06f, 0.05f, 0.03f, 1.0f);
+            style.tab_text = ImVec4(0.55f, 0.37f, 0.00f, 1.0f);
+            style.tab_text_active = ImVec4(1.00f, 0.69f, 0.00f, 1.0f);
+            style.active_indicator_color = ImVec4(1.00f, 0.75f, 0.00f, 1.0f);  // #FFC000
+            style.active_indicator_height = 2.0f;
+            style.tab_rounding = 0.0f;
+            style.dock_bg = ImVec4(0.05f, 0.04f, 0.02f, 1.0f);
             dock_style.SetStyle(style);
             break;
         }

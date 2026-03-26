@@ -15,17 +15,33 @@ namespace gui {
  * Available theme presets for the CyxWiz Engine
  */
 enum class ThemePreset {
+    // CYXWIZ BRANDED THEMES
     CyxWizDark,      // Custom dark theme with CyxWiz branding
     CyxWizLight,     // Light theme variant
+
+    // CLASSIC IDE THEMES
     VSCodeDark,      // Visual Studio Code inspired dark theme
     UnrealEngine,    // Unreal Engine inspired theme
     ModernDark,      // Clean modern dark theme
     HighContrast,    // High contrast for accessibility
-    // NEW VIBRANT THEMES
+
+    // VIBRANT THEMES
     Dracula,         // Vibrant purple/pink theme
     OneDarkPro,      // VSCode One Dark Pro (blue/cyan)
     Nord,            // Cool pastel arctic theme
     CatppuccinMocha, // Pastel rainbow cozy theme
+
+    // CYXOS PLATFORM THEMES
+    CyxOSAqua,       // macOS Big Sur inspired - clean, minimal
+    CyxOSFluent,     // Windows 11 Fluent Design - Mica effects
+    CyxOSCoder,      // Developer IDE - syntax highlighting colors
+    CyxOSOffice,     // Professional enterprise theme
+
+    // CYXOS RETRO TUI THEMES
+    CyxOSTuiClassic, // Green phosphor IBM 3278 terminal
+    CyxOSTuiMatrix,  // The Matrix digital rain aesthetic
+    CyxOSTuiAmber,   // Amber CRT P3 phosphor terminal
+
     COUNT
 };
 
@@ -103,11 +119,22 @@ private:
     void ApplyUnrealEngine();
     void ApplyModernDark();
     void ApplyHighContrast();
-    // New vibrant themes
+    // Vibrant themes
     void ApplyDracula();
     void ApplyOneDarkPro();
     void ApplyNord();
     void ApplyCatppuccinMocha();
+
+    // CyxOS Platform themes
+    void ApplyCyxOSAqua();
+    void ApplyCyxOSFluent();
+    void ApplyCyxOSCoder();
+    void ApplyCyxOSOffice();
+
+    // CyxOS Retro TUI themes
+    void ApplyCyxOSTuiClassic();
+    void ApplyCyxOSTuiMatrix();
+    void ApplyCyxOSTuiAmber();
 
     // Apply common style settings
     void ApplyStyleConfig();
