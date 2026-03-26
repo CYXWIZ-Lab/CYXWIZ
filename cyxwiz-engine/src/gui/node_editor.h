@@ -271,6 +271,15 @@ enum class NodeType {
     ExcelFile,          // Load Excel file into Arrow
     RESTAPISource,      // Fetch data from REST API
 
+    // Additional I/O formats (supported by engine)
+    TSVFile,            // Load TSV file into Arrow
+    TXTFile,            // Load plain text file
+    ImageCSVDataset,    // Images folder + CSV labels
+    StreamingDataset,   // Stream large datasets
+    ARFFFile,           // Weka ARFF format
+    FashionMNISTDataset,// Fashion-MNIST dataset
+    CIFAR100Dataset,    // CIFAR-100 dataset
+
     // ===== Data Transform Nodes (Unified Canvas Phase 1) =====
     FilterRows,         // Filter rows by SQL WHERE condition
     SelectColumns,      // Select specific columns

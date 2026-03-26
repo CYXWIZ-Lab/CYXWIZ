@@ -493,6 +493,59 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {}, {{"Data", PinType::Tensor, true, "Samples"}, {"Labels", PinType::Labels, true, "Labels"}},
         {{"dataset_name", "string", "", "Dataset name", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TSVFile, NodeCategory::DataSources, "TSV Reader", ICON_FA_FILE_LINES,
+        {"tsv", "tab", "separated", "import", "load"}, 0, false,
+        "Load TSV (tab-separated) file", "", "",
+        {}, {{"Table", PinType::Dataset, false, "Table"}},
+        {{"file_path", "file", "", "TSV file path", {}, "*.tsv"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TXTFile, NodeCategory::DataSources, "Text Reader", ICON_FA_FILE_LINES,
+        {"txt", "text", "plain", "import", "load"}, 0, false,
+        "Load plain text file", "", "",
+        {}, {{"Text", PinType::Dataset, false, "Text"}},
+        {{"file_path", "file", "", "Text file path", {}, "*.txt"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageCSVDataset, NodeCategory::DataSources, "Image+CSV Dataset", ICON_FA_IMAGES,
+        {"image", "csv", "labels", "folder", "dataset"}, 0, false,
+        "Load images from folder with CSV labels", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"image_folder", "folder", "", "Image folder", {}, ""},
+         {"labels_csv", "file", "", "Labels CSV", {}, "*.csv"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::StreamingDataset, NodeCategory::DataSources, "Streaming Dataset", ICON_FA_WATER,
+        {"streaming", "large", "lazy", "dataset"}, 0, false,
+        "Stream large datasets without full memory load", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"path", "folder", "", "Dataset path", {}, ""},
+         {"batch_size", "int", "32", "Batch size", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ARFFFile, NodeCategory::DataSources, "ARFF Reader", ICON_FA_FILE_CODE,
+        {"arff", "weka", "import", "load"}, 0, false,
+        "Load Weka ARFF file", "", "",
+        {}, {{"Table", PinType::Dataset, false, "Table"}},
+        {{"file_path", "file", "", "ARFF file path", {}, "*.arff"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::FashionMNISTDataset, NodeCategory::DataSources, "Fashion-MNIST", ICON_FA_TAG,
+        {"fashion", "mnist", "clothing", "dataset", "benchmark"}, 0, false,
+        "Load Fashion-MNIST dataset", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"split", "dropdown", "train", "Split", {"train", "test"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::CIFAR100Dataset, NodeCategory::DataSources, "CIFAR-100", ICON_FA_IMAGE,
+        {"cifar", "100", "dataset", "classification", "benchmark"}, 0, false,
+        "Load CIFAR-100 dataset (100 classes)", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"split", "dropdown", "train", "Split", {"train", "test"}, ""},
+         {"label_type", "dropdown", "fine", "Labels", {"fine", "coarse"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
 }
 
 // =============================================================================
