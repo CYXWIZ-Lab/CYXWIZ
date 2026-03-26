@@ -169,10 +169,12 @@ set(ENGINE_SOURCES
     src/gui/viewport.cpp
     src/gui/properties.cpp
     src/gui/node_config_dialog.cpp
+    src/gui/data_input_dialog.cpp
     src/gui/panels/toolbar.cpp
     src/gui/panels/toolbar_file_menu.cpp
     src/gui/panels/toolbar_edit_menu.cpp
     src/gui/panels/toolbar_view_menu.cpp
+    src/gui/panels/toolbar_profile_menu.cpp
     src/gui/panels/toolbar_other_menus.cpp
     src/gui/panels/toolbar_tools_menu.cpp
     src/gui/panels/asset_browser.cpp
