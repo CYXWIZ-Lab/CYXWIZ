@@ -280,6 +280,14 @@ enum class NodeType {
     FashionMNISTDataset,// Fashion-MNIST dataset
     CIFAR100Dataset,    // CIFAR-100 dataset
 
+    // Additional I/O formats (Arrow, NumPy, Domain-specific)
+    FeatherFile,        // Apache Arrow Feather format
+    ArrowIPCFile,       // Arrow IPC binary format
+    NumPyFile,          // NumPy .npy/.npz files
+    AudioFolderDataset, // Audio files with class folders
+    TimeSeriesCSV,      // Time series CSV with windowing
+    TextCorpusDataset,  // Text corpus for NLP
+
     // ===== Data Transform Nodes (Unified Canvas Phase 1) =====
     FilterRows,         // Filter rows by SQL WHERE condition
     SelectColumns,      // Select specific columns

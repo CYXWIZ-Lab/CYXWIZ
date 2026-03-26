@@ -546,6 +546,56 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"label_type", "dropdown", "fine", "Labels", {"fine", "coarse"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::FeatherFile, NodeCategory::DataSources, "Feather Reader", ICON_FA_FILE_CODE,
+        {"feather", "arrow", "columnar", "import"}, 0, false,
+        "Load Apache Arrow Feather file", "", "",
+        {}, {{"Table", PinType::Dataset, false, "Table"}},
+        {{"file_path", "file", "", "Feather file", {}, "*.feather;*.fea"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ArrowIPCFile, NodeCategory::DataSources, "Arrow IPC Reader", ICON_FA_FILE_IMPORT,
+        {"arrow", "ipc", "binary", "import"}, 0, false,
+        "Load Arrow IPC binary file", "", "",
+        {}, {{"Table", PinType::Dataset, false, "Table"}},
+        {{"file_path", "file", "", "Arrow file", {}, "*.arrow;*.ipc"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::NumPyFile, NodeCategory::DataSources, "NumPy Reader", ICON_FA_CUBES,
+        {"numpy", "npy", "npz", "array", "import"}, 0, false,
+        "Load NumPy array file", "", "",
+        {}, {{"Array", PinType::Tensor, false, "Array"}},
+        {{"file_path", "file", "", "NumPy file", {}, "*.npy;*.npz"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::AudioFolderDataset, NodeCategory::DataSources, "Audio Folder", ICON_FA_FOLDER_OPEN,
+        {"audio", "wav", "flac", "ogg", "sound", "folder"}, 0, false,
+        "Load audio files from class folders", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"folder", "folder", "", "Audio folder", {}, ""},
+         {"feature", "dropdown", "mfcc", "Feature", {"waveform", "spectrogram", "mel_spectrogram", "mfcc"}, ""},
+         {"sample_rate", "int", "16000", "Sample rate", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TimeSeriesCSV, NodeCategory::DataSources, "Time Series Reader", ICON_FA_CHART_LINE,
+        {"timeseries", "csv", "temporal", "sequence", "forecast"}, 0, false,
+        "Load time series CSV with windowing", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"file_path", "file", "", "CSV file", {}, "*.csv"},
+         {"target_column", "string", "", "Target column", {}, ""},
+         {"lookback", "int", "10", "Lookback window", {}, ""},
+         {"horizon", "int", "1", "Forecast horizon", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TextCorpusDataset, NodeCategory::DataSources, "Text Corpus", ICON_FA_BOOK,
+        {"text", "corpus", "nlp", "tokenize", "language"}, 0, false,
+        "Load text corpus for NLP", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"path", "file", "", "Text file/folder", {}, "*.txt;*.csv;*.json"},
+         {"text_column", "string", "text", "Text column (CSV)", {}, ""},
+         {"label_column", "string", "label", "Label column (CSV)", {}, ""},
+         {"max_length", "int", "512", "Max sequence length", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
 }
 
 // =============================================================================
