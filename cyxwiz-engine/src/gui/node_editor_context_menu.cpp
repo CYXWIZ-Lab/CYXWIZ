@@ -1133,21 +1133,10 @@ void NodeEditor::ShowCategorizedNodeMenu() {
     // Initialize nodes_by_category_ on first call
     if (!nodes_by_category_initialized_) {
         // Group all node types by category
-        // Data Sources
+        // Data I/O (Smart unified nodes)
         nodes_by_category_[NodeCategory::DataSources] = {
-            {NodeType::CSVFile, "CSV File"},
-            {NodeType::SQLQuery, "SQL Query"},
-            {NodeType::HDF5Dataset, "HDF5 Dataset"},
-            {NodeType::ParquetFile, "Parquet File"},
-            {NodeType::JSONFile, "JSON File"},
-            {NodeType::ExcelFile, "Excel File"},
-            {NodeType::RESTAPISource, "REST API"},
-            // Phase 4: Dataset Source Nodes (UI Consolidation)
-            {NodeType::ImageFolderDataset, "Image Folder"},
-            {NodeType::MNISTDataset, "MNIST Dataset"},
-            {NodeType::CIFAR10Dataset, "CIFAR-10 Dataset"},
-            {NodeType::HuggingFaceDataset, "HuggingFace Dataset"},
-            {NodeType::KaggleDataset, "Kaggle Dataset"}
+            {NodeType::DataInput, "Data Input"},
+            {NodeType::DataOutput, "Data Output"}
         };
 
         // Data Transforms
@@ -1175,13 +1164,8 @@ void NodeEditor::ShowCategorizedNodeMenu() {
             {NodeType::CrossTabulation, "Cross Tabulation"}
         };
 
-        // Data Export
-        nodes_by_category_[NodeCategory::DataSources] = {
-            {NodeType::ExportCSV, "Export CSV"},
-            {NodeType::ExportParquet, "Export Parquet"},
-            {NodeType::ExportSQL, "Export SQL"},
-            {NodeType::ExportJSON, "Export JSON"}
-        };
+        // Data Export (consolidated into DataOutput node above)
+        // Legacy export nodes removed - use DataOutput instead
 
         // Layers (Dense, Conv, etc.)
         nodes_by_category_[NodeCategory::Layers] = {

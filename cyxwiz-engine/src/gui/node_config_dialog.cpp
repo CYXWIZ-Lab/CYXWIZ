@@ -910,6 +910,15 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
     RegisterDialog(NT::ExcelFile, [](MLNode* node) {
         return std::make_unique<CSVReaderDialog>(node);  // Reuse CSV dialog for now
     });
+
+    // Smart I/O Nodes - Universal dialogs
+    RegisterDialog(NT::DataInput, [](MLNode* node) {
+        return std::make_unique<DataInputDialog>(node);
+    });
+
+    RegisterDialog(NT::DataOutput, [](MLNode* node) {
+        return std::make_unique<DataOutputDialog>(node);
+    });
 }
 
 void NodeConfigDialogFactory::RegisterDialog(NodeType type, DialogCreator creator) {
@@ -936,6 +945,10 @@ bool ShouldShowOpenDialogButton(NT type) {
     // List of node types that should have "Open Dialog" button
     // Use correct NodeType enum values from node_editor.h
     switch (type) {
+        // Smart I/O Nodes (primary)
+        case NT::DataInput:
+        case NT::DataOutput:
+        // Legacy file nodes
         case NT::CSVFile:
         case NT::ExcelFile:
         case NT::JSONFile:

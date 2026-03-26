@@ -442,6 +442,26 @@ bool NodeMetadataRegistry::MatchesQuery(const NodeMetadata& metadata, const std:
 // Data Source Nodes (I/O)
 // =============================================================================
 void NodeMetadataRegistry::InitializeDataSourceNodes() {
+    // ===== Smart I/O Nodes (Universal - replaces individual format nodes) =====
+    RegisterNode({NodeType::DataInput, NodeCategory::DataSources, "Data Input", ICON_FA_FILE_IMPORT,
+        {"csv", "excel", "json", "parquet", "hdf5", "input", "load", "read", "import", "file"}, 0, false,
+        "Universal data loader - auto-detects CSV, Excel, JSON, Parquet, HDF5", "", "",
+        {}, {{"Data", PinType::Dataset, true, "Output dataset"}},
+        {{"file_path", "file", "", "Data file", {}, "*.csv;*.xlsx;*.json;*.parquet;*.hdf5"},
+         {"configured", "bool", "false", "Dialog configured", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::DataOutput, NodeCategory::DataSources, "Data Output", ICON_FA_FILE_EXPORT,
+        {"csv", "excel", "json", "parquet", "hdf5", "output", "save", "write", "export", "file"}, 0, false,
+        "Universal data exporter - supports CSV, Excel, JSON, Parquet, HDF5", "", "",
+        {{"Data", PinType::Dataset, true, "Input dataset"}}, {},
+        {{"file_path", "file", "", "Output file", {}, "*.csv;*.xlsx;*.json;*.parquet;*.hdf5"},
+         {"configured", "bool", "false", "Dialog configured", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    // ===== Legacy File Format Nodes (hidden - use DataInput/DataOutput instead) =====
+    // Note: Commented out to clean up Node Browser - functionality consolidated into DataInput/DataOutput
+    /*
     RegisterNode({NodeType::CSVFile, NodeCategory::DataSources, "CSV Reader", ICON_FA_FILE_CSV,
         {"csv", "file", "read", "import"}, 0, false, "Read CSV file into Arrow table", "", "",
         {}, {{"Table", PinType::Dataset, true, "Arrow table"}},
@@ -595,6 +615,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"label_column", "string", "label", "Label column (CSV)", {}, ""},
          {"max_length", "int", "512", "Max sequence length", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
+    */  // End of legacy file format nodes comment
 
 }
 

@@ -105,7 +105,9 @@ void NodeEditor::InitializeSearchableNodes() {
         all_searchable_nodes_.push_back(std::move(node));
     };
 
-    // Output
+    // Smart I/O Nodes (Universal)
+    addNode(NodeType::DataInput, "Data Input", "Input/Output", "csv excel json parquet hdf5 load import read file data source input");
+    addNode(NodeType::DataOutput, "Data Output", "Input/Output", "csv excel json parquet hdf5 save export write file data output");
     addNode(NodeType::Output, "Output", "Input/Output", "data out end result");
 
     // Data Pipeline

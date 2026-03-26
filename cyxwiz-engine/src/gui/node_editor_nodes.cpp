@@ -12,7 +12,10 @@ namespace gui {
 // Unified Canvas Phase 1: Map NodeType to NodeCategory for UI organization
 NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
     switch (type) {
-        // Data Sources
+        // Smart I/O Nodes (Universal)
+        case NodeType::DataInput:
+        case NodeType::DataOutput:
+        // Legacy Data Sources
         case NodeType::CSVFile:
         case NodeType::SQLQuery:
         case NodeType::HDF5Dataset:
@@ -55,7 +58,7 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::ExportParquet:
         case NodeType::ExportSQL:
         case NodeType::ExportJSON:
-            return NodeCategory::DataExport;
+            return NodeCategory::DataSources;
 
         // Preprocessing
         case NodeType::Normalize:
@@ -2064,7 +2067,69 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
-        // ========== Data Transformation Nodes (Unified Canvas Phase 4) ==========
+        // ========== Smart I/O Nodes (Universal Data Input/Output) ==========
+
+        case NodeType::DataInput: {
+            // Universal Data Input node - smart dialog auto-detects format
+            // Supports: CSV, TSV, JSON, Parquet, Excel, HDF5, and more
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Data";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            // Core parameters (set by DataInputDialog)
+            node.parameters["file_path"] = "";
+            node.parameters["file_type"] = "auto";  // auto, csv, tsv, json, parquet, excel, hdf5
+            node.parameters["configured"] = "false";  // Triggers dialog on first use
+
+            // Format options (dynamically shown based on file_type)
+            node.parameters["delimiter"] = ",";
+            node.parameters["header"] = "true";
+            node.parameters["sheet_name"] = "";
+            node.parameters["hdf5_key"] = "";
+
+            // Column selection
+            node.parameters["columns"] = "*";  // * = all, or comma-separated list
+
+            // Row filtering
+            node.parameters["skip_rows"] = "0";
+            node.parameters["max_rows"] = "";  // empty = all
+            node.parameters["where_clause"] = "";
+
+            // Streaming settings
+            node.parameters["chunk_size"] = "10000";
+            node.parameters["enable_streaming"] = "false";
+
+            // Memory policy
+            node.parameters["memory_policy"] = "cache";  // cache or disc
+            break;
+        }
+
+        case NodeType::DataOutput: {
+            // Universal Data Output node - smart dialog for export
+            // Supports: CSV, TSV, JSON, Parquet, Excel, HDF5
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            // Core parameters (set by DataOutputDialog)
+            node.parameters["file_path"] = "";
+            node.parameters["file_type"] = "csv";  // csv, tsv, json, parquet, excel, hdf5
+            node.parameters["configured"] = "false";  // Triggers dialog on first use
+
+            // Export options
+            node.parameters["overwrite"] = "true";
+            node.parameters["include_header"] = "true";
+            node.parameters["compression"] = "none";  // none, gzip, snappy, zstd
+            break;
+        }
+
+        // ========== Legacy Data Source Nodes (kept for compatibility) ==========
 
         case NodeType::CSVFile: {
             // CSV File data source node - loads CSV into dataset
@@ -4121,6 +4186,12 @@ void NodeEditor::ClearGraph() {
     // Clear any pending positions
     pending_positions_.clear();
 
+    // CyxWiz Studio: Clear groups and annotations
+    groups_.clear();
+    next_group_id_ = 1;
+    annotations_.clear();
+    next_annotation_id_ = 1;
+
     spdlog::info("Cleared node graph");
 }
 
@@ -4181,6 +4252,15 @@ void NodeEditor::InsertPattern(const std::vector<MLNode>& nodes, const std::vect
 
 const MLNode* NodeEditor::FindNodeById(int node_id) const {
     for (const auto& node : nodes_) {
+        if (node.id == node_id) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+MLNode* NodeEditor::FindNodeById(int node_id) {
+    for (auto& node : nodes_) {
         if (node.id == node_id) {
             return &node;
         }
@@ -4396,6 +4476,185 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(244, 113, 108, 255);
         case NodeType::RLTraining:
             return IM_COL32(198, 40, 40, 255);
+
+        // ===== DNN Inference Nodes - Deep Blue =====
+        case NodeType::DNNModelLoad:
+        case NodeType::DNNDetect:
+        case NodeType::DNNClassify:
+        case NodeType::DNNPoseEstimate:
+        case NodeType::DNNFaceDetect:
+        case NodeType::DNNPreprocess:
+        case NodeType::PretrainedYOLO:
+        case NodeType::PretrainedMobileNet:
+        case NodeType::PretrainedOpenPose:
+        case NodeType::PretrainedFaceNet:
+            return IM_COL32(41, 98, 255, 255);
+
+        // ===== Post-processing Nodes - Steel Blue =====
+        case NodeType::NonMaxSuppression:
+        case NodeType::ArgMax:
+        case NodeType::TopK:
+        case NodeType::ThresholdFilter:
+            return IM_COL32(70, 130, 180, 255);
+
+        // ===== Smart I/O Nodes - Bright Blue =====
+        case NodeType::DataInput:
+        case NodeType::DataOutput:
+            return IM_COL32(30, 136, 229, 255);  // Material Blue 600
+
+        // ===== Legacy Data Source Nodes - Light Blue =====
+        case NodeType::CSVFile:
+        case NodeType::SQLQuery:
+        case NodeType::HDF5Dataset:
+        case NodeType::ParquetFile:
+        case NodeType::JSONFile:
+        case NodeType::ExcelFile:
+        case NodeType::RESTAPISource:
+            return IM_COL32(100, 181, 246, 255);
+
+        // ===== Data Transform Nodes - Teal =====
+        case NodeType::FilterRows:
+        case NodeType::SelectColumns:
+        case NodeType::JoinTables:
+        case NodeType::GroupByAggregate:
+        case NodeType::SortRows:
+        case NodeType::FillMissingValues:
+        case NodeType::RemoveDuplicateRows:
+        case NodeType::PivotTable:
+        case NodeType::UnionTables:
+        case NodeType::RenameColumns:
+            return IM_COL32(38, 166, 154, 255);
+
+        // ===== Analytics Nodes - Purple =====
+        case NodeType::DescribeStats:
+        case NodeType::VisualizeData:
+        case NodeType::SampleRows:
+        case NodeType::CorrelationMatrix:
+        case NodeType::ValueCounts:
+        case NodeType::CrossTabulation:
+            return IM_COL32(156, 39, 176, 255);
+
+        // ===== Data Export Nodes - Green =====
+        case NodeType::ExportCSV:
+        case NodeType::ExportParquet:
+        case NodeType::ExportSQL:
+        case NodeType::ExportJSON:
+        case NodeType::ExportExcel:
+            return IM_COL32(76, 175, 80, 255);
+
+        // ===== KNIME-Style Table Nodes - Orange =====
+        case NodeType::RowToColumnNames:
+        case NodeType::TableSplitter:
+        case NodeType::CellExtractor:
+        case NodeType::CellUpdater:
+        case NodeType::TableCropper:
+        case NodeType::ColumnAppender:
+        case NodeType::RowAppender:
+        case NodeType::Unpivot:
+        case NodeType::StringManipulation:
+        case NodeType::MathFormula:
+        case NodeType::RuleEngine:
+            return IM_COL32(255, 152, 0, 255);
+
+        // ===== ML Clustering Nodes - Indigo =====
+        case NodeType::KMeansCluster:
+        case NodeType::DBSCANCluster:
+        case NodeType::HierarchicalCluster:
+        case NodeType::GMMCluster:
+            return IM_COL32(63, 81, 181, 255);
+
+        // ===== Dimensionality Reduction - Blue =====
+        case NodeType::PCANode:
+        case NodeType::TSNENode:
+        case NodeType::UMAPNode:
+            return IM_COL32(33, 150, 243, 255);
+
+        // ===== ML Classification Nodes - Blue Green =====
+        case NodeType::DecisionTreeClassifier:
+        case NodeType::RandomForestClassifier:
+        case NodeType::GradientBoostingClassifier:
+        case NodeType::SVMClassifier:
+        case NodeType::KNNClassifier:
+        case NodeType::NaiveBayesClassifier:
+        case NodeType::LogisticRegressionNode:
+            return IM_COL32(0, 137, 123, 255);
+
+        // ===== ML Regression Nodes - Light Teal =====
+        case NodeType::LinearRegressionNode:
+        case NodeType::PolynomialRegressionNode:
+        case NodeType::SVMRegressor:
+            return IM_COL32(77, 182, 172, 255);
+
+        // ===== Model Evaluation Nodes - Pink =====
+        case NodeType::ConfusionMatrixNode:
+        case NodeType::ROCCurveNode:
+        case NodeType::PRCurveNode:
+        case NodeType::LearningCurvesNode:
+        case NodeType::FeatureImportanceNode:
+        case NodeType::CrossValidationNode:
+        case NodeType::RegressionMetricsNode:
+            return IM_COL32(233, 30, 99, 255);
+
+        // ===== Data Preprocessing Nodes - Light Green =====
+        case NodeType::StandardScaler:
+        case NodeType::MinMaxScaler:
+        case NodeType::RobustScaler:
+        case NodeType::LabelEncoder:
+        case NodeType::OrdinalEncoder:
+        case NodeType::TargetEncoder:
+        case NodeType::TrainTestSplit:
+            return IM_COL32(129, 199, 132, 255);
+
+        // ===== Advanced Preprocessing Nodes - Amber =====
+        case NodeType::OutlierDetector:
+        case NodeType::ImagePreprocessor:
+        case NodeType::QualityAnalyzer:
+        case NodeType::DataValidator:
+            return IM_COL32(255, 193, 7, 255);
+
+        // ===== Dataset Source Nodes - Cyan =====
+        case NodeType::ImageFolderDataset:
+        case NodeType::MNISTDataset:
+        case NodeType::CIFAR10Dataset:
+        case NodeType::HuggingFaceDataset:
+        case NodeType::KaggleDataset:
+            return IM_COL32(0, 188, 212, 255);
+
+        // ===== Advanced Augmentation Nodes - Light Purple =====
+        case NodeType::AugmentationPreset:
+        case NodeType::GeometricTransform:
+        case NodeType::ColorTransform:
+        case NodeType::MorphologyTransform:
+        case NodeType::AdvancedAugment:
+            return IM_COL32(179, 136, 255, 255);
+
+        // ===== Signal Processing Nodes - Deep Blue =====
+        case NodeType::FFTNode:
+        case NodeType::IFFTNode:
+        case NodeType::FilterDesigner:
+        case NodeType::Convolution1D:
+        case NodeType::WaveletTransform:
+            return IM_COL32(48, 63, 159, 255);
+
+        // ===== Text Analytics Nodes - Dark Teal =====
+        case NodeType::TFIDFVectorizer:
+        case NodeType::CountVectorizer:
+        case NodeType::WordEmbeddings:
+        case NodeType::SentimentAnalyzer:
+        case NodeType::NamedEntityRecognizer:
+            return IM_COL32(0, 121, 107, 255);
+
+        // ===== Utility Nodes - Blue Gray =====
+        case NodeType::CalculatorNode:
+        case NodeType::UnitConverter:
+        case NodeType::RegexTester:
+        case NodeType::JSONPathExtractor:
+        case NodeType::DataProfiler:
+            return IM_COL32(96, 125, 139, 255);
+
+        // ===== Composite Nodes - Dark Cyan =====
+        case NodeType::Subgraph:
+            return IM_COL32(0, 131, 143, 255);
 
         case NodeType::PluginCustom:
             return IM_COL32(68, 136, 170, 255);
