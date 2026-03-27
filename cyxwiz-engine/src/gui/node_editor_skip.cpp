@@ -67,6 +67,43 @@ ImU32 NodeEditor::GetLinkHoverColor(LinkType type) const {
     return IM_COL32(r, g, b, 255);
 }
 
+// ========== Pin Type Color Functions ==========
+// Professional color palette for different data types flowing through the graph
+
+ImU32 NodeEditor::GetPinTypeColor(PinType type) const {
+    switch (type) {
+        case PinType::Tensor:
+            return IM_COL32(65, 150, 255, 255);   // Bright blue - tensor data
+        case PinType::Labels:
+            return IM_COL32(100, 200, 100, 255);  // Green - labels/targets
+        case PinType::Parameters:
+            return IM_COL32(255, 165, 80, 255);   // Orange - model parameters
+        case PinType::Loss:
+            return IM_COL32(220, 80, 80, 255);    // Red - loss values
+        case PinType::Optimizer:
+            return IM_COL32(180, 100, 220, 255);  // Purple - optimizer state
+        case PinType::Dataset:
+            return IM_COL32(80, 200, 200, 255);   // Cyan - dataset handles
+        default:
+            return IM_COL32(180, 180, 180, 255);  // Gray - fallback
+    }
+}
+
+ImU32 NodeEditor::GetPinTypeHoverColor(PinType type) const {
+    // Return brighter version of the pin type color
+    ImU32 base = GetPinTypeColor(type);
+    int r = (base & 0xFF);
+    int g = ((base >> 8) & 0xFF);
+    int b = ((base >> 16) & 0xFF);
+
+    // Brighten by 30%
+    r = std::min(255, r + 60);
+    g = std::min(255, g + 60);
+    b = std::min(255, b + 60);
+
+    return IM_COL32(r, g, b, 255);
+}
+
 // ========== Skip Connection Detection ==========
 
 bool NodeEditor::IsSkipConnection(const NodeLink& link) const {

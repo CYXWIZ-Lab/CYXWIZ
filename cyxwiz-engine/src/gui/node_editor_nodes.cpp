@@ -4904,6 +4904,12 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::RLTraining:
             return ICON_FA_CROSSHAIRS;
 
+        // Smart I/O Nodes
+        case NodeType::DataInput:
+            return ICON_FA_FILE_IMPORT;
+        case NodeType::DataOutput:
+            return ICON_FA_FILE_EXPORT;
+
         case NodeType::PluginCustom:
             return ICON_FA_PLUG;
 

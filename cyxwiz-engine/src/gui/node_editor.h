@@ -1168,6 +1168,10 @@ private:
     char annotation_edit_title_[256] = "";
     char annotation_edit_content_[2048] = "";
 
+    // KNIME-style node dragging (icon-only drag to avoid pin-drag moving the node)
+    int dragging_knime_node_id_ = -1;
+    ImVec2 knime_drag_offset_ = ImVec2(0, 0);
+
     // KNIME-style: Node description editing
     bool editing_node_description_ = false;
     int editing_node_id_ = -1;

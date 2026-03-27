@@ -800,11 +800,19 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Memory Monitor callback (from Tools menu)
+    // Set up Memory Monitor callback (System Monitor in Profile menu)
     toolbar_->SetOpenMemoryMonitorCallback([this]() {
         if (memory_monitor_) {
             memory_monitor_->Toggle();
             spdlog::info("Toggled Memory Monitor");
+        }
+    });
+
+    // Set up Memory Panel callback (Memory Visualization in Profile menu)
+    toolbar_->SetOpenMemoryPanelCallback([this]() {
+        if (memory_panel_) {
+            memory_panel_->Show();
+            spdlog::info("Opened Memory Visualization panel");
         }
     });
 

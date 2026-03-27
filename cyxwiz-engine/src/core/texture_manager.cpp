@@ -16,7 +16,8 @@ TextureManager& TextureManager::Instance() {
 }
 
 TextureManager::~TextureManager() {
-    DeleteAllTextures();
+    // Do nothing - cleanup is done in CyxWizApp::Shutdown() before OpenGL context is destroyed.
+    // This destructor runs during static destruction when the context is already gone.
 }
 
 uint32_t TextureManager::CreateTextureFromFloatData(const float* data, int width, int height, int channels) {

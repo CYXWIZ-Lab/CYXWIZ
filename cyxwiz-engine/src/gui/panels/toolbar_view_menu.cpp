@@ -152,27 +152,7 @@ void ToolbarPanel::RenderViewMenu() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // ========== Developer Tools ==========
-        if (ImGui::MenuItem(ICON_FA_GAUGE_HIGH " Performance Profiler")) {
-            if (open_profiler_callback_) {
-                open_profiler_callback_();
-            }
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Open per-layer timing profiler for training analysis");
-        }
-
-        if (ImGui::MenuItem(ICON_FA_MICROCHIP " Memory Monitor")) {
-            if (open_memory_monitor_callback_) {
-                open_memory_monitor_callback_();
-            }
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Monitor CPU and GPU memory usage in real-time");
-        }
-
-        ImGui::Spacing();
-
+        // ========== Debug Logging ==========
         // Debug logging toggles
         if (idle_log_ptr_) {
             bool idle_log = *idle_log_ptr_;
