@@ -1174,6 +1174,11 @@ private:
     char node_description_buffer_[1024] = "";
     int right_clicked_node_id_ = -1;  // Node that was right-clicked
 
+    // KNIME-style: Per-node display options (stored in node parameters)
+    // show_name: "true" or "false" - whether to show name below node
+    // show_description: "true" or "false" - whether to show description below node
+    // Use GetNodeDisplayOption() and SetNodeDisplayOption() to access
+
     // Workflow description (shown in CyxWiz Studio section)
     char workflow_description_[2048] = "";
 

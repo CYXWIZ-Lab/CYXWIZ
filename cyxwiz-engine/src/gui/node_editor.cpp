@@ -1638,21 +1638,198 @@ void NodeEditor::RenderNodes() {
             title_color = GetNodeColor(node.type);
         }
 
-        ImNodes::PushColorStyle(ImNodesCol_TitleBar, title_color);
-        ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, title_color);
-        ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, title_color);
+        // ===== KNIME-STYLE RENDERING for Smart I/O Nodes =====
+        bool is_knime_style = (node.type == NodeType::DataInput || node.type == NodeType::DataOutput);
+
+        if (is_knime_style) {
+            // Make ImNodes node completely invisible - we draw our own icon box
+            ImU32 transparent = IM_COL32(0, 0, 0, 0);
+            // Push pin closer to node content (negative offset pulls it inward)
+            ImNodes::PushStyleVar(ImNodesStyleVar_PinOffset, 0.0f);
+            ImNodes::PushColorStyle(ImNodesCol_TitleBar, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_NodeBackground, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_NodeBackgroundHovered, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_NodeBackgroundSelected, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_NodeOutline, transparent);
+            // Hide ImNodes pin - we draw our own red dot
+            ImU32 transparent_pin = IM_COL32(0, 0, 0, 0);
+            ImNodes::PushColorStyle(ImNodesCol_Pin, transparent_pin);
+            ImNodes::PushColorStyle(ImNodesCol_PinHovered, transparent_pin);
+        } else {
+            ImNodes::PushColorStyle(ImNodesCol_TitleBar, title_color);
+            ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, title_color);
+            ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, title_color);
+        }
 
         ImNodes::BeginNode(node.id);
 
-        // Node title bar
-        ImNodes::BeginNodeTitleBar();
-        ImGui::TextUnformatted(node.name.c_str());
-        ImNodes::EndNodeTitleBar();
+        if (is_knime_style) {
 
-        // Input pins
-        for (const auto& pin : node.inputs) {
-            ImNodes::BeginInputAttribute(pin.id);
-            ImGui::TextUnformatted(pin.name.c_str());
+            // Settings - match Node Browser exactly
+            const float ICON_BOX_SIZE = 64.0f * zoom_;
+            const float CORNER_RADIUS = 6.0f;
+            const float BORDER_THICKNESS = 2.0f;
+
+            bool show_name = true;
+            auto show_name_it = node.parameters.find("show_name");
+            if (show_name_it != node.parameters.end()) {
+                show_name = (show_name_it->second == "true");
+            }
+
+            // Minimal invisible title bar (required by ImNodes)
+            ImNodes::BeginNodeTitleBar();
+            ImGui::Dummy(ImVec2(ICON_BOX_SIZE, 1));
+            ImNodes::EndNodeTitleBar();
+
+            // Standard horizontal layout: [input] [icon] [output]
+            // Using BeginGroup to keep everything on one line
+            ImGui::BeginGroup();
+
+            // Input pins (left side)
+            if (!node.inputs.empty()) {
+                ImGui::BeginGroup();
+                // Vertical centering
+                float vert_offset = (ICON_BOX_SIZE - 12.0f) * 0.5f;
+                ImGui::Dummy(ImVec2(1, vert_offset));
+                for (const auto& pin : node.inputs) {
+                    ImNodes::BeginInputAttribute(pin.id, ImNodesPinShape_CircleFilled);
+                    ImGui::Dummy(ImVec2(1, 12));
+                    ImNodes::EndInputAttribute();
+                }
+                ImGui::EndGroup();
+                ImGui::SameLine(0, 0);  // Exactly at icon edge
+            }
+
+            // Icon box (center)
+            ImVec2 icon_pos = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(ICON_BOX_SIZE, ICON_BOX_SIZE));
+
+            // Output pins (right side) - positioned outside icon for click detection
+            if (!node.outputs.empty()) {
+                ImGui::SameLine(0, 4);  // Small gap outside icon
+                ImGui::BeginGroup();
+                float vert_offset = (ICON_BOX_SIZE - 10.0f) * 0.5f;
+                ImGui::Dummy(ImVec2(1, vert_offset));
+                for (const auto& pin : node.outputs) {
+                    ImNodes::BeginOutputAttribute(pin.id, ImNodesPinShape_CircleFilled);
+                    ImGui::Dummy(ImVec2(1, 10));
+                    ImNodes::EndOutputAttribute();
+                }
+                ImGui::EndGroup();
+            }
+
+            ImGui::EndGroup();
+
+            // Draw custom icon box
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            ImVec2 icon_max(icon_pos.x + ICON_BOX_SIZE, icon_pos.y + ICON_BOX_SIZE);
+
+            // Background with subtle border
+            ImU32 bg_color = title_color;
+            draw_list->AddRectFilled(icon_pos, icon_max, bg_color, CORNER_RADIUS);
+            // Add rounded border around the icon box
+            ImU32 border_color = IM_COL32(80, 80, 90, 200);
+            draw_list->AddRect(icon_pos, icon_max, border_color, CORNER_RADIUS, 0, 1.5f);
+
+            // Draw connection dot on the right border - state based
+            float dot_radius = 5.0f;
+            ImVec2 dot_center(icon_pos.x + ICON_BOX_SIZE, icon_pos.y + ICON_BOX_SIZE * 0.5f);
+            
+            // Check connection state for output pins
+            bool is_connected = false;
+            for (const auto& pin : node.outputs) {
+                if (IsPinConnected(pin.id)) {
+                    is_connected = true;
+                    break;
+                }
+            }
+            
+            // Check execution state
+            bool is_running = (exec_state == NodeExecutionState::Executing);
+            bool has_error = (exec_state == NodeExecutionState::Error);
+            
+            if (has_error) {
+                // Yellow filled for error
+                draw_list->AddCircleFilled(dot_center, dot_radius, IM_COL32(220, 180, 50, 255));
+            } else if (is_running) {
+                // Green filled when running
+                draw_list->AddCircleFilled(dot_center, dot_radius, IM_COL32(50, 200, 50, 255));
+            } else if (is_connected) {
+                // Red filled when connected
+                draw_list->AddCircleFilled(dot_center, dot_radius, IM_COL32(220, 50, 50, 255));
+            } else {
+                // Red outline when not connected
+                draw_list->AddCircle(dot_center, dot_radius, IM_COL32(220, 50, 50, 255), 0, 2.0f);
+            }
+            
+            // Tooltip on hover for output dot
+            ImVec2 mouse_pos = ImGui::GetMousePos();
+            float dist = std::sqrt((mouse_pos.x - dot_center.x) * (mouse_pos.x - dot_center.x) + 
+                                   (mouse_pos.y - dot_center.y) * (mouse_pos.y - dot_center.y));
+            if (dist <= dot_radius + 3.0f) {
+                ImGui::BeginTooltip();
+                ImGui::Text("Output");
+                ImGui::EndTooltip();
+            }
+
+            // Draw centered icon (55% of box height, like Node Browser)
+            const char* icon = GetNodeIcon(node.type);
+            ImFont* font = ImGui::GetFont();
+            float scaled_icon_size = ICON_BOX_SIZE * 0.55f;
+            ImVec2 icon_text_size = font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
+            ImVec2 icon_text_pos(
+                icon_pos.x + (ICON_BOX_SIZE - icon_text_size.x) * 0.5f,
+                icon_pos.y + (ICON_BOX_SIZE - icon_text_size.y) * 0.5f
+            );
+            draw_list->AddText(font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+
+            // Draw node name below the icon
+            float text_y = icon_max.y + 4.0f;
+            if (show_name) {
+                ImVec2 name_size = ImGui::CalcTextSize(node.name.c_str());
+                float name_x = icon_pos.x + (ICON_BOX_SIZE - name_size.x) * 0.5f;
+                draw_list->AddText(ImVec2(name_x, text_y), IM_COL32(200, 200, 200, 255), node.name.c_str());
+                text_y += name_size.y + 2.0f;
+            }
+
+            // Draw description below the name (e.g., "Reading adult.csv")
+            std::string display_desc = node.description;
+            if (display_desc.empty()) {
+                // Show default text for unconfigured nodes
+                display_desc = "Double-click to configure";
+            }
+            ImVec2 desc_size = ImGui::CalcTextSize(display_desc.c_str());
+            float desc_x = icon_pos.x + (ICON_BOX_SIZE - desc_size.x) * 0.5f;
+            // Clamp to icon left edge if description is wider
+            desc_x = std::max(desc_x, icon_pos.x - 10.0f);
+            ImU32 desc_color = node.description.empty() ? IM_COL32(120, 120, 120, 200) : IM_COL32(150, 180, 220, 255);
+            draw_list->AddText(ImVec2(desc_x, text_y), desc_color, display_desc.c_str());
+
+            // Pop styles (9 color + 1 var for KNIME-style)
+            ImNodes::PopStyleVar();    // PinOffset
+            ImNodes::PopColorStyle();  // PinHovered
+            ImNodes::PopColorStyle();  // Pin
+            ImNodes::PopColorStyle();  // NodeOutline
+            ImNodes::PopColorStyle();  // NodeBackgroundSelected
+            ImNodes::PopColorStyle();  // NodeBackgroundHovered
+            ImNodes::PopColorStyle();  // NodeBackground
+            ImNodes::PopColorStyle();  // TitleBarSelected
+            ImNodes::PopColorStyle();  // TitleBarHovered
+            ImNodes::PopColorStyle();  // TitleBar
+
+        } else {
+            // ===== STANDARD NODE RENDERING =====
+            // Node title bar
+            ImNodes::BeginNodeTitleBar();
+            ImGui::TextUnformatted(node.name.c_str());
+            ImNodes::EndNodeTitleBar();
+
+            // Input pins
+            for (const auto& pin : node.inputs) {
+                ImNodes::BeginInputAttribute(pin.id);
+                ImGui::TextUnformatted(pin.name.c_str());
 
             // Unified Canvas Phase 6: Pin tooltips
             if (ImGui::IsItemHovered()) {
@@ -1983,6 +2160,11 @@ void NodeEditor::RenderNodes() {
 
             ImNodes::EndOutputAttribute();
         }
+        // Pop standard node title bar styles
+            ImNodes::PopColorStyle();  // TitleBarSelected
+            ImNodes::PopColorStyle();  // TitleBarHovered
+            ImNodes::PopColorStyle();  // TitleBar
+        } // End of standard node rendering else block
 
         ImNodes::EndNode();
 
@@ -2019,8 +2201,9 @@ void NodeEditor::RenderNodes() {
             NodeDocumentationManager::Instance().RenderTooltip(node.type);
         }
 
-        // Draw selection glow effect for selected nodes
-        if (ImNodes::IsNodeSelected(node.id)) {
+        // Draw selection glow effect for selected nodes (skip for KNIME-style)
+        bool skip_glow = (node.type == NodeType::DataInput || node.type == NodeType::DataOutput);
+        if (!skip_glow && ImNodes::IsNodeSelected(node.id)) {
             ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
             ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -2272,11 +2455,6 @@ void NodeEditor::RenderNodes() {
                 }
             }
         }
-
-        // Pop color styles
-        ImNodes::PopColorStyle();
-        ImNodes::PopColorStyle();
-        ImNodes::PopColorStyle();
     }
 
     // Render all links with color based on link type (and training animation if active)

@@ -55,6 +55,12 @@ void DataInputDialog::Apply() {
     node_->parameters["memory_policy"] = (memory_policy_ == MemoryPolicy::WriteToDisc) ? "disc" : "memory";
     node_->parameters["configured"] = "true";
 
+    // Auto-generate description from file path (KNIME-style: "Reading <filename>")
+    if (strlen(file_path_) > 0) {
+        std::filesystem::path p(file_path_);
+        node_->description = "Reading " + p.filename().string();
+    }
+
     has_changes_ = false;
     spdlog::info("DataInputDialog: Applied settings for '{}'", file_path_);
 }
@@ -98,15 +104,16 @@ void DataInputDialog::RenderContent() {
 }
 
 void DataInputDialog::RenderSettingsTab() {
+    // Get theme colors for consistent styling
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 header_color = style.Colors[ImGuiCol_HeaderActive];
+    ImVec4 text_selected = style.Colors[ImGuiCol_TextSelectedBg];
+
     // ===== FILE SELECTION SECTION =====
-    // Prominent file input with visual feedback
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.18f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, style.FrameRounding);
     if (ImGui::BeginChild("FileSelection", ImVec2(0, 130), true)) {
-        // Section header with icon-like indicator
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
-        ImGui::Text("[FILE]  Input File");
-        ImGui::PopStyleColor();
+        // Section header using theme accent color
+        ImGui::TextColored(header_color, "[FILE]  Input File");
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -114,12 +121,8 @@ void DataInputDialog::RenderSettingsTab() {
         ImGui::Text("Path:");
         ImGui::SameLine(60);
 
-        // Style the input field
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.10f, 0.14f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.12f, 0.15f, 0.20f, 1.0f));
+        // Input field uses theme styling automatically
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
         std::string path_str = file_path_;
         if (ImGui::InputText("##filepath", file_path_, sizeof(file_path_))) {
@@ -127,15 +130,11 @@ void DataInputDialog::RenderSettingsTab() {
             preview_loaded_ = false;
             has_changes_ = true;
         }
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar();
 
         ImGui::SameLine();
 
-        // Styled Browse button
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.52f, 0.88f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.62f, 0.98f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        // Browse button uses theme button color
         if (ImGui::Button("Browse...", ImVec2(80, 0))) {
             if (FileSelector("Select Data File:", path_str, "All Files\0*.*\0CSV\0*.csv\0Excel\0*.xlsx;*.xls\0JSON\0*.json;*.jsonl\0Parquet\0*.parquet;*.pq\0HDF5\0*.h5;*.hdf5\0")) {
                 strncpy(file_path_, path_str.c_str(), sizeof(file_path_) - 1);
@@ -144,45 +143,40 @@ void DataInputDialog::RenderSettingsTab() {
                 has_changes_ = true;
             }
         }
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor(2);
 
         // File info display
         ImGui::Spacing();
         if (strlen(file_path_) > 0) {
-            // Show detected type with color coding
-            ImVec4 type_color = ImVec4(0.5f, 0.8f, 0.5f, 1.0f);  // Green for detected
-            ImGui::TextColored(type_color, "Type: %s", GetFileTypeName());
+            // Show detected type with theme-based color
+            ImGui::TextColored(text_selected, "Type: %s", GetFileTypeName());
             ImGui::SameLine(150);
 
             // Show file size
             if (file_size_ > 0) {
+                ImVec4 info_color = style.Colors[ImGuiCol_TextDisabled];
+                info_color.w = 1.0f;  // Make it more visible
                 if (file_size_ >= 1024 * 1024) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.8f, 1.0f), "Size: %.1f MB", file_size_ / (1024.0f * 1024.0f));
+                    ImGui::TextColored(info_color, "Size: %.1f MB", file_size_ / (1024.0f * 1024.0f));
                 } else if (file_size_ >= 1024) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.8f, 1.0f), "Size: %.1f KB", file_size_ / 1024.0f);
+                    ImGui::TextColored(info_color, "Size: %.1f KB", file_size_ / 1024.0f);
                 } else {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.8f, 1.0f), "Size: %zu bytes", file_size_);
+                    ImGui::TextColored(info_color, "Size: %zu bytes", file_size_);
                 }
             }
         } else {
-            ImGui::TextColored(ImVec4(0.7f, 0.5f, 0.3f, 1.0f), "No file selected - click Browse to select a data file");
+            ImGui::TextDisabled("No file selected - click Browse to select a data file");
         }
     }
     ImGui::EndChild();
     ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
 
     ImGui::Spacing();
 
     // ===== READER OPTIONS SECTION =====
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.18f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, style.FrameRounding);
     if (ImGui::BeginChild("ReaderOptions", ImVec2(0, 200), true)) {
-        // Section header
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
-        ImGui::Text("[OPTIONS]  Reader Options");
-        ImGui::PopStyleColor();
+        // Section header using theme color
+        ImGui::TextColored(header_color, "[OPTIONS]  Reader Options");
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -190,19 +184,14 @@ void DataInputDialog::RenderSettingsTab() {
         ImGui::Text("Format:");
         ImGui::SameLine(80);
 
-        // Styled autodetect button
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.4f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        // Autodetect button uses theme styling
         if (ImGui::Button("Autodetect", ImVec2(90, 0))) {
             DetectFileType();
             preview_loaded_ = false;
         }
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor(2);
 
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "-> %s", GetFileTypeName());
+        ImGui::TextColored(text_selected, "-> %s", GetFileTypeName());
 
         // Delimiter options (for CSV/TSV)
         if (detected_type_ <= 2) {
@@ -289,7 +278,6 @@ void DataInputDialog::RenderSettingsTab() {
     }
     ImGui::EndChild();
     ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
 
     ImGui::Spacing();
 
@@ -298,8 +286,11 @@ void DataInputDialog::RenderSettingsTab() {
 }
 
 void DataInputDialog::RenderTransformationTab() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 header_color = style.Colors[ImGuiCol_HeaderActive];
+
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Column transformations");
+    ImGui::TextColored(header_color, "Column transformations");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -331,8 +322,11 @@ void DataInputDialog::RenderTransformationTab() {
 }
 
 void DataInputDialog::RenderAdvancedSettingsTab() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 header_color = style.Colors[ImGuiCol_HeaderActive];
+
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Advanced parsing options");
+    ImGui::TextColored(header_color, "Advanced parsing options");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -367,8 +361,11 @@ void DataInputDialog::RenderAdvancedSettingsTab() {
 }
 
 void DataInputDialog::RenderLimitRowsTab() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 header_color = style.Colors[ImGuiCol_HeaderActive];
+
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Row filtering options");
+    ImGui::TextColored(header_color, "Row filtering options");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -411,8 +408,11 @@ void DataInputDialog::RenderLimitRowsTab() {
 }
 
 void DataInputDialog::RenderEncodingTab() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 header_color = style.Colors[ImGuiCol_HeaderActive];
+
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Character encoding");
+    ImGui::TextColored(header_color, "Character encoding");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -429,8 +429,11 @@ void DataInputDialog::RenderEncodingTab() {
 }
 
 void DataInputDialog::RenderMemoryPolicyTab() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 header_color = style.Colors[ImGuiCol_HeaderActive];
+
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory management");
+    ImGui::TextColored(header_color, "Memory management");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -499,13 +502,14 @@ void DataInputDialog::RenderMemoryPolicyTab() {
 }
 
 void DataInputDialog::RenderPreviewTable() {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+    // Get theme colors
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 header_color = style.Colors[ImGuiCol_HeaderActive];
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, style.FrameRounding);
     if (ImGui::BeginChild("Preview", ImVec2(0, 250), true)) {
-        // Section header
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
-        ImGui::Text("[PREVIEW]  Data Preview");
-        ImGui::PopStyleColor();
+        // Section header using theme color
+        ImGui::TextColored(header_color, "[PREVIEW]  Data Preview");
 
         // Info text
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 350);
@@ -515,22 +519,17 @@ void DataInputDialog::RenderPreviewTable() {
 
         if (strlen(file_path_) == 0) {
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.6f, 1.0f), "  Select a file to see data preview");
+            ImGui::TextDisabled("  Select a file to see data preview");
         } else if (!preview_loaded_) {
             ImGui::Spacing();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.52f, 0.88f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.62f, 0.98f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
             if (ImGui::Button("  Load Preview  ", ImVec2(120, 30))) {
                 LoadColumnList();
                 preview_loaded_ = true;
             }
-            ImGui::PopStyleVar();
-            ImGui::PopStyleColor(2);
             ImGui::SameLine();
             ImGui::TextDisabled("Click to load data preview from file");
         } else if (preview_data_.empty()) {
-            ImGui::TextColored(ImVec4(0.8f, 0.5f, 0.3f, 1.0f), "  No data found in file");
+            ImGui::TextDisabled("  No data found in file");
         } else {
             // Render table with scrolling
             if (ImGui::BeginTable("PreviewTable", static_cast<int>(preview_columns_.size()) + 1,
@@ -568,7 +567,6 @@ void DataInputDialog::RenderPreviewTable() {
     }
     ImGui::EndChild();
     ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
 }
 
 const char* DataInputDialog::GetFileTypeName() const {
@@ -751,6 +749,12 @@ void DataOutputDialog::Apply() {
     node_->parameters["compression"] = compressions[compression_];
     node_->parameters["configured"] = "true";
 
+    // Auto-generate description from file path (KNIME-style: "Writing to <filename>")
+    if (strlen(file_path_) > 0) {
+        std::filesystem::path p(file_path_);
+        node_->description = "Writing to " + p.filename().string();
+    }
+
     has_changes_ = false;
     spdlog::info("DataOutputDialog: Applied settings for '{}'", file_path_);
 }
@@ -777,19 +781,21 @@ void DataOutputDialog::RenderContent() {
 }
 
 void DataOutputDialog::RenderSettingsTab() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 header_color = style.Colors[ImGuiCol_HeaderActive];
+
     ImGui::Spacing();
 
-    // Output location
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.17f, 1.0f));
+    // Output location - use theme styling
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, style.FrameRounding);
     if (ImGui::BeginChild("OutputLocation", ImVec2(0, 80), true)) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Output location");
+        ImGui::TextColored(header_color, "Output location");
         ImGui::Separator();
         ImGui::Spacing();
 
         ImGui::Text("File");
         ImGui::SameLine(80);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
-        std::string path_str = file_path_;
         if (ImGui::InputText("##outpath", file_path_, sizeof(file_path_))) {
             has_changes_ = true;
         }
@@ -800,14 +806,14 @@ void DataOutputDialog::RenderSettingsTab() {
         }
     }
     ImGui::EndChild();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
 
     ImGui::Spacing();
 
-    // Writer options
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.17f, 1.0f));
+    // Writer options - use theme styling
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, style.FrameRounding);
     if (ImGui::BeginChild("WriterOptions", ImVec2(0, 150), true)) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Writer options");
+        ImGui::TextColored(header_color, "Writer options");
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -834,12 +840,15 @@ void DataOutputDialog::RenderSettingsTab() {
         }
     }
     ImGui::EndChild();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
 }
 
 void DataOutputDialog::RenderAdvancedTab() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 header_color = style.Colors[ImGuiCol_HeaderActive];
+
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Compression");
+    ImGui::TextColored(header_color, "Compression");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -861,7 +870,7 @@ void DataOutputDialog::RenderAdvancedTab() {
     ImGui::Spacing();
 
     // Encoding
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Encoding");
+    ImGui::TextColored(header_color, "Encoding");
     ImGui::Spacing();
 
     const char* encodings[] = {"UTF-8", "UTF-8 with BOM", "ASCII", "ISO-8859-1"};
