@@ -9,6 +9,7 @@
 #include "../core/project_manager.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
+#include <algorithm>
 #include <cstring>
 
 namespace gui {
@@ -127,6 +128,7 @@ void NodeEditor::ShowNodeDescriptionEditPopup() {
     }
 }
 
+#if 0
 void NodeEditor::ShowContextMenu() {
     ImGui::Text("Add Node:");
     ImGui::Separator();
@@ -1063,6 +1065,164 @@ void NodeEditor::ShowContextMenu() {
     }
 
     ImGui::Separator();
+}
+#endif
+
+void NodeEditor::ShowContextMenu() {
+    InitializeSearchableNodes();
+
+    ImGui::TextDisabled("Add Node");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##ctx_search",
+                             ICON_FA_MAGNIFYING_GLASS " Search nodes...",
+                             context_menu_search_, sizeof(context_menu_search_));
+    ImGui::Separator();
+
+    std::string search_lower = context_menu_search_;
+    std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(), ::tolower);
+    const bool is_searching = !search_lower.empty();
+
+    // Group nodes by category label (from searchable list)
+    std::map<std::string, std::vector<SearchableNode*>> grouped;
+    for (auto& node : all_searchable_nodes_) {
+        if (node.status == NodeImplementationStatus::Deprecated) {
+            continue;
+        }
+        if (is_searching) {
+            std::string name_lower = node.name;
+            std::string cat_lower = node.category;
+            std::string key_lower = node.keywords;
+            std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+            std::transform(cat_lower.begin(), cat_lower.end(), cat_lower.begin(), ::tolower);
+            std::transform(key_lower.begin(), key_lower.end(), key_lower.begin(), ::tolower);
+            if (name_lower.find(search_lower) == std::string::npos &&
+                cat_lower.find(search_lower) == std::string::npos &&
+                key_lower.find(search_lower) == std::string::npos) {
+                continue;
+            }
+        }
+        grouped[node.category].push_back(&node);
+    }
+
+    if (grouped.empty()) {
+        ImGui::TextDisabled("No matches");
+    } else {
+        for (auto& [category, nodes] : grouped) {
+            if (ImGui::CollapsingHeader(category.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Indent();
+                for (auto* node : nodes) {
+                    const bool is_template = (node->status == NodeImplementationStatus::Template);
+                    if (is_template) ImGui::BeginDisabled();
+                    if (ImGui::Selectable(node->name.c_str())) {
+                        if (!is_template && node->type != NodeType::Unknown) {
+                            AddNode(node->type, node->name);
+                            context_menu_search_[0] = '\0';
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    if (is_template) {
+                        if (ImGui::IsItemHovered() && !node->tooltip.empty()) {
+                            ImGui::BeginTooltip();
+                            ImGui::TextUnformatted(node->tooltip.c_str());
+                            ImGui::EndTooltip();
+                        }
+                        ImGui::EndDisabled();
+                    }
+                }
+                ImGui::Unindent();
+            }
+        }
+    }
+
+    ImGui::Separator();
+    if (ImGui::BeginMenu("Actions")) {
+        const bool has_selection = !selected_node_ids_.empty();
+
+        if (ImGui::MenuItem(ICON_FA_PASTE " Paste", "Ctrl+V", false, clipboard_.valid)) {
+            PasteClipboard();
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (ImGui::BeginMenu("Align / Distribute", has_selection)) {
+            ImGui::TextDisabled("Align");
+            if (ImGui::MenuItem("Align Left", nullptr, false, selected_node_ids_.size() >= 2)) {
+                AlignSelectedNodes(AlignmentType::Left);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Align Center", nullptr, false, selected_node_ids_.size() >= 2)) {
+                AlignSelectedNodes(AlignmentType::Center);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Align Right", nullptr, false, selected_node_ids_.size() >= 2)) {
+                AlignSelectedNodes(AlignmentType::Right);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Align Top", nullptr, false, selected_node_ids_.size() >= 2)) {
+                AlignSelectedNodes(AlignmentType::Top);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Align Middle", nullptr, false, selected_node_ids_.size() >= 2)) {
+                AlignSelectedNodes(AlignmentType::Middle);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Align Bottom", nullptr, false, selected_node_ids_.size() >= 2)) {
+                AlignSelectedNodes(AlignmentType::Bottom);
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Distribute");
+            if (ImGui::MenuItem("Distribute Horizontally", nullptr, false, selected_node_ids_.size() >= 3)) {
+                DistributeSelectedNodes(DistributeType::Horizontal);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Distribute Vertically", nullptr, false, selected_node_ids_.size() >= 3)) {
+                DistributeSelectedNodes(DistributeType::Vertical);
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::Separator();
+            if (ImGui::MenuItem("Auto Layout (Grid)", nullptr, false, has_selection)) {
+                AutoLayoutSelection();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
+        if (ImGui::MenuItem(ICON_FA_OBJECT_GROUP " Create Group", "Ctrl+G", false, has_selection)) {
+            CreateGroupFromSelection("");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem(ICON_FA_OBJECT_UNGROUP " Ungroup", "Ctrl+Shift+G", false, has_selection)) {
+            UngroupSelection();
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (ImGui::MenuItem(ICON_FA_COMPRESS " Create Subgraph", "Ctrl+Shift+S", false, selected_node_ids_.size() >= 2)) {
+            CreateSubgraphFromSelection("");
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (selected_node_ids_.size() == 1 && IsSubgraphNode(selected_node_ids_[0])) {
+            SubgraphData* data = GetSubgraphData(selected_node_ids_[0]);
+            if (data) {
+                if (data->expanded) {
+                    if (ImGui::MenuItem(ICON_FA_COMPRESS " Collapse Subgraph")) {
+                        CollapseSubgraph(selected_node_ids_[0]);
+                        ImGui::CloseCurrentPopup();
+                    }
+                } else {
+                    if (ImGui::MenuItem(ICON_FA_EXPAND " Expand Subgraph")) {
+                        ExpandSubgraph(selected_node_ids_[0]);
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+            }
+        }
+
+        ImGui::EndMenu();
+    }
 }
 
 // ============================================================================

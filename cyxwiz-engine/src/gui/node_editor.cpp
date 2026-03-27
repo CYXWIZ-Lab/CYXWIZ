@@ -385,7 +385,7 @@ void NodeEditor::Render() {
 
         ImNodes::EndNodeEditor();
 
-        // Pin hover tooltip for KNIME-style nodes (after EndNodeEditor)
+        // Pin hover tooltip for all nodes (after EndNodeEditor)
         int hovered_pin_id = -1;
         if (ImNodes::IsPinHovered(&hovered_pin_id)) {
             const MLNode* hovered_node = nullptr;
@@ -413,14 +413,19 @@ void NodeEditor::Render() {
                 if (hovered_pin) break;
             }
 
-            if (hovered_node && hovered_pin &&
-                (hovered_node->type == NodeType::DataInput || hovered_node->type == NodeType::DataOutput)) {
+            if (hovered_node && hovered_pin) {
                 ImGui::BeginTooltip();
-                ImGui::Text("%s %s", hovered_node->name.c_str(),
+                ImGui::Text("%s - %s", hovered_node->name.c_str(),
                             hovered_is_input ? "Input" : "Output");
                 ImGui::Separator();
                 ImGui::Text("Pin: %s", hovered_pin->name.c_str());
                 ImGui::Text("Type: %s", GetPinTypeName(hovered_pin->type).c_str());
+                int connections = GetConnectionCount(hovered_pin->id);
+                if (connections > 0) {
+                    ImGui::Text("Connections: %d", connections);
+                } else {
+                    ImGui::TextDisabled("Not connected");
+                }
                 ImGui::EndTooltip();
             }
         }
@@ -1681,8 +1686,8 @@ void NodeEditor::RenderNodes() {
             title_color = GetNodeColor(node.type);
         }
 
-        // ===== KNIME-STYLE RENDERING for Smart I/O Nodes =====
-        bool is_knime_style = (node.type == NodeType::DataInput || node.type == NodeType::DataOutput);
+        // ===== KNIME-STYLE RENDERING for ALL Nodes =====
+        bool is_knime_style = true;  // Apply to all node types
 
         if (is_knime_style) {
             // Make ImNodes node completely invisible - we draw our own icon box
@@ -1898,26 +1903,6 @@ void NodeEditor::RenderNodes() {
             for (const auto& pin : node.inputs) {
                 ImNodes::BeginInputAttribute(pin.id);
                 ImGui::TextUnformatted(pin.name.c_str());
-
-            // Unified Canvas Phase 6: Pin tooltips
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::Text("%s (Input)", pin.name.c_str());
-                ImGui::Separator();
-
-                // Show pin type
-                ImGui::Text("Type: %s", GetPinTypeName(pin.type).c_str());
-
-                // Show connection info
-                bool is_connected = IsPinConnected(pin.id);
-                if (is_connected) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_LINK " Connected");
-                } else {
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_LINK " Not connected");
-                }
-
-                ImGui::EndTooltip();
-            }
 
             ImNodes::EndInputAttribute();
         }
@@ -2205,27 +2190,6 @@ void NodeEditor::RenderNodes() {
             ImGui::Indent(120.0f + ImGui::CalcTextSize(pin.name.c_str()).x - text_width);
             ImGui::TextUnformatted(pin.name.c_str());
 
-            // Unified Canvas Phase 6: Pin tooltips
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::Text("%s (Output)", pin.name.c_str());
-                ImGui::Separator();
-
-                // Show pin type
-                ImGui::Text("Type: %s", GetPinTypeName(pin.type).c_str());
-
-                // Show connection info
-                bool is_connected = IsPinConnected(pin.id);
-                int num_connections = GetConnectionCount(pin.id);
-                if (is_connected) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_LINK " %d connection(s)", num_connections);
-                } else {
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_LINK " Not connected");
-                }
-
-                ImGui::EndTooltip();
-            }
-
             ImNodes::EndOutputAttribute();
         }
         // Pop standard node title bar styles
@@ -2270,7 +2234,7 @@ void NodeEditor::RenderNodes() {
         }
 
         // Draw selection glow effect for selected nodes (skip for KNIME-style)
-        bool skip_glow = (node.type == NodeType::DataInput || node.type == NodeType::DataOutput);
+        bool skip_glow = true;  // All nodes are KNIME-style now
         if (!skip_glow && ImNodes::IsNodeSelected(node.id)) {
             ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
             ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
