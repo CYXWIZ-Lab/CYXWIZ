@@ -1096,10 +1096,10 @@ void CyxWizApp::Shutdown() {
 }
 
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
-    // Font configuration for crisp rendering
+    // Font configuration for crisp rendering (high quality)
     ImFontConfig font_config;
-    font_config.OversampleH = 2;
-    font_config.OversampleV = 1;
+    font_config.OversampleH = 3;  // Higher oversampling for sharper text/icons
+    font_config.OversampleV = 2;  // Vertical oversampling for better quality
     font_config.PixelSnapH = true;
 
     // Try multiple font paths (running from different directories)
@@ -1176,10 +1176,12 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // Icon font glyph ranges (FontAwesome 6)
     static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
 
-    // Icon font config (for merging)
+    // Icon font config (for merging) - high quality
     ImFontConfig icon_config;
     icon_config.MergeMode = true;
     icon_config.PixelSnapH = true;
+    icon_config.OversampleH = 3;  // Sharp icons
+    icon_config.OversampleV = 2;
     icon_config.GlyphMinAdvanceX = base_font_size;  // Make icons monospaced
 
     // Load regular font (this becomes the default)
