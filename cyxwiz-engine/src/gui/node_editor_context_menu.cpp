@@ -167,13 +167,14 @@ void NodeEditor::ShowContextMenu() {
     if (grouped.empty()) {
         ImGui::TextDisabled("No matches");
     } else {
-        for (auto& [category, nodes] : grouped) {
-            if (ImGui::CollapsingHeader(category.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::Indent();
+        // When searching, show flat list; otherwise use submenus
+        if (is_searching) {
+            for (auto& [category, nodes] : grouped) {
+                ImGui::TextDisabled("%s", category.c_str());
                 for (auto* node : nodes) {
                     const bool is_template = (node->status == NodeImplementationStatus::Template);
                     if (is_template) ImGui::BeginDisabled();
-                    if (ImGui::Selectable(node->name.c_str())) {
+                    if (ImGui::MenuItem(node->name.c_str())) {
                         if (!is_template && node->type != NodeType::Unknown) {
                             AddNode(node->type, node->name);
                             context_menu_search_[0] = '\0';
@@ -182,14 +183,35 @@ void NodeEditor::ShowContextMenu() {
                     }
                     if (is_template) {
                         if (ImGui::IsItemHovered() && !node->tooltip.empty()) {
-                            ImGui::BeginTooltip();
-                            ImGui::TextUnformatted(node->tooltip.c_str());
-                            ImGui::EndTooltip();
+                            ImGui::SetTooltip("%s", node->tooltip.c_str());
                         }
                         ImGui::EndDisabled();
                     }
                 }
-                ImGui::Unindent();
+            }
+        } else {
+            // Use submenus with > indicator for categories
+            for (auto& [category, nodes] : grouped) {
+                if (ImGui::BeginMenu(category.c_str())) {
+                    for (auto* node : nodes) {
+                        const bool is_template = (node->status == NodeImplementationStatus::Template);
+                        if (is_template) ImGui::BeginDisabled();
+                        if (ImGui::MenuItem(node->name.c_str())) {
+                            if (!is_template && node->type != NodeType::Unknown) {
+                                AddNode(node->type, node->name);
+                                context_menu_search_[0] = '\0';
+                                ImGui::CloseCurrentPopup();
+                            }
+                        }
+                        if (is_template) {
+                            if (ImGui::IsItemHovered() && !node->tooltip.empty()) {
+                                ImGui::SetTooltip("%s", node->tooltip.c_str());
+                            }
+                            ImGui::EndDisabled();
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
             }
         }
     }
@@ -461,10 +483,11 @@ void NodeEditor::RenderNodeCategory(NodeCategory category, const char* category_
     auto it = nodes_by_category_.find(category);
     if (it == nodes_by_category_.end()) return;
 
-    // Category header with icon
-    if (ImGui::CollapsingHeader((std::string(icon) + " " + category_name).c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Indent();
+    // Build menu label with icon
+    std::string menu_label = std::string(icon) + " " + category_name;
 
+    // Use submenu with > indicator
+    if (ImGui::BeginMenu(menu_label.c_str())) {
         for (auto& [type, name] : it->second) {
             // Filter by search
             if (strlen(context_menu_search_) > 0) {
@@ -477,14 +500,13 @@ void NodeEditor::RenderNodeCategory(NodeCategory category, const char* category_
                 }
             }
 
-            if (ImGui::Selectable(name.c_str())) {
+            if (ImGui::MenuItem(name.c_str())) {
                 AddNode(type, name);
                 context_menu_search_[0] = '\0';  // Clear search on selection
                 ImGui::CloseCurrentPopup();
             }
         }
-
-        ImGui::Unindent();
+        ImGui::EndMenu();
     }
 }
 
