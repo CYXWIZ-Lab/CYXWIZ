@@ -327,6 +327,9 @@ void NodeEditor::Render() {
         // Render group backgrounds before nodes so they appear behind
         RenderGroups();
 
+        // Render frames (visual organization boxes) before nodes
+        RenderFrames();
+
         RenderNodes();
 
         // Handle mouse wheel zoom (skip if mouse is over minimap)
@@ -432,7 +435,8 @@ void NodeEditor::Render() {
 
         // === Handle right-click context menu AFTER EndNodeEditor ===
         // IsNodeHovered() only works after EndNodeEditor() is called
-        if (right_click_detected) {
+        // Skip if right-click was on a frame (frame menu already shown)
+        if (right_click_detected && !frame_right_clicked_) {
             int hovered_node_id = -1;
             bool is_node_hovered = ImNodes::IsNodeHovered(&hovered_node_id);
             if (is_node_hovered && hovered_node_id >= 0) {
@@ -503,6 +507,21 @@ void NodeEditor::Render() {
                 // Add annotation at drop position
                 AddAnnotationAt(drop_pos);
                 spdlog::info("Drag-drop: Adding annotation at ({}, {})", drop_pos.x, drop_pos.y);
+            }
+
+            // Handle STUDIO_FRAME drag-drop
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("STUDIO_FRAME")) {
+                // Calculate drop position in grid space
+                ImVec2 editor_origin = ImGui::GetWindowPos();
+                ImVec2 panning = ImNodes::EditorContextGetPanning();
+                ImVec2 drop_pos(
+                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_
+                );
+
+                // Add frame at drop position
+                AddFrameAt(drop_pos);
+                spdlog::info("Drag-drop: Adding frame at ({}, {})", drop_pos.x, drop_pos.y);
             }
             ImGui::EndDragDropTarget();
         }
@@ -3384,6 +3403,298 @@ void NodeEditor::RenderGroups() {
         ImVec2 label_pos = ImVec2(screen_min.x + 8.0f, screen_min.y + 4.0f);
         draw_list->AddText(label_pos, IM_COL32(255, 255, 255, 220), group.name.c_str());
     }
+}
+
+// ===== Canvas Frames (Visual Organization Boxes) =====
+
+void NodeEditor::RenderFrames() {
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    // Reset frame right-click flag each frame
+    frame_right_clicked_ = false;
+
+    const float HEADER_HEIGHT = 28.0f * zoom_;
+    const float CORNER_RADIUS = 8.0f * zoom_;
+    const float BORDER_WIDTH = 2.0f;
+    const float RESIZE_HANDLE = 14.0f * zoom_;
+
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+
+    for (auto& frame : frames_) {
+        // Convert to screen coordinates
+        ImVec2 screen_min = ImVec2(
+            origin.x + frame.position.x * zoom_ + panning.x,
+            origin.y + frame.position.y * zoom_ + panning.y);
+        ImVec2 screen_max = ImVec2(
+            screen_min.x + frame.size.x * zoom_,
+            screen_min.y + frame.size.y * zoom_);
+
+        // Colors
+        ImU32 header_color = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(frame.color.x * 0.9f, frame.color.y * 0.9f, frame.color.z * 0.9f, 0.95f));
+        ImU32 body_color = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(frame.color.x * 0.2f, frame.color.y * 0.2f, frame.color.z * 0.2f, 0.15f));
+        ImU32 border_color = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(frame.color.x, frame.color.y, frame.color.z, frame.is_selected ? 1.0f : 0.6f));
+        ImU32 text_color = IM_COL32(255, 255, 255, 230);
+        ImU32 desc_color = IM_COL32(200, 200, 200, 180);
+
+        // Draw body background
+        ImVec2 body_min = ImVec2(screen_min.x, screen_min.y + HEADER_HEIGHT);
+        draw_list->AddRectFilled(body_min, screen_max, body_color, CORNER_RADIUS,
+            ImDrawFlags_RoundCornersBottom);
+
+        // Draw header background
+        ImVec2 header_max = ImVec2(screen_max.x, screen_min.y + HEADER_HEIGHT);
+        draw_list->AddRectFilled(screen_min, header_max, header_color, CORNER_RADIUS,
+            ImDrawFlags_RoundCornersTop);
+
+        // Draw border (thicker if selected)
+        float border_thick = frame.is_selected ? 3.0f : BORDER_WIDTH;
+        draw_list->AddRect(screen_min, screen_max, border_color, CORNER_RADIUS, 0, border_thick);
+
+        // Draw header line
+        draw_list->AddLine(
+            ImVec2(screen_min.x, screen_min.y + HEADER_HEIGHT),
+            ImVec2(screen_max.x, screen_min.y + HEADER_HEIGHT),
+            border_color, 1.0f);
+
+        // Draw title
+        ImVec2 title_pos = ImVec2(screen_min.x + 10.0f * zoom_, screen_min.y + 6.0f * zoom_);
+        draw_list->AddText(title_pos, text_color, frame.title.c_str());
+
+        // Draw description (if present)
+        if (!frame.description.empty()) {
+            ImVec2 desc_pos = ImVec2(screen_min.x + 10.0f * zoom_, screen_min.y + HEADER_HEIGHT + 8.0f * zoom_);
+
+            // Truncate if needed
+            float max_width = (screen_max.x - screen_min.x) - 20.0f * zoom_;
+            std::string display_desc = frame.description;
+            if (ImGui::CalcTextSize(display_desc.c_str()).x > max_width) {
+                while (!display_desc.empty() && ImGui::CalcTextSize((display_desc + "...").c_str()).x > max_width) {
+                    display_desc.pop_back();
+                }
+                display_desc += "...";
+            }
+            draw_list->AddText(desc_pos, desc_color, display_desc.c_str());
+        }
+
+        // Draw resize handle (bottom-right corner)
+        draw_list->AddTriangleFilled(
+            ImVec2(screen_max.x, screen_max.y - RESIZE_HANDLE),
+            ImVec2(screen_max.x - RESIZE_HANDLE, screen_max.y),
+            screen_max,
+            IM_COL32(200, 200, 200, 120));
+
+        // Handle interactions - header for drag, resize corner for resize
+        ImGui::SetCursorScreenPos(screen_min);
+        std::string header_id = "##frame_header_" + std::to_string(frame.id);
+        ImGui::InvisibleButton(header_id.c_str(), ImVec2(screen_max.x - screen_min.x, HEADER_HEIGHT));
+
+        bool header_hovered = ImGui::IsItemHovered();
+        bool header_clicked = ImGui::IsItemClicked(0);
+        bool header_right_clicked = ImGui::IsItemClicked(1);
+
+        // Resize handle button
+        ImVec2 resize_pos(screen_max.x - RESIZE_HANDLE, screen_max.y - RESIZE_HANDLE);
+        ImGui::SetCursorScreenPos(resize_pos);
+        std::string resize_id = "##frame_resize_" + std::to_string(frame.id);
+        ImGui::InvisibleButton(resize_id.c_str(), ImVec2(RESIZE_HANDLE, RESIZE_HANDLE));
+
+        bool resize_hovered = ImGui::IsItemHovered();
+        bool resize_clicked = ImGui::IsItemClicked(0);
+
+        // Change cursor on resize hover
+        if (resize_hovered) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+        }
+
+        // Check for right-click in body area
+        ImVec2 mouse_pos = ImGui::GetMousePos();
+        bool in_body = (mouse_pos.x >= screen_min.x && mouse_pos.x <= screen_max.x &&
+                        mouse_pos.y > screen_min.y + HEADER_HEIGHT && mouse_pos.y <= screen_max.y);
+        bool body_right_clicked = in_body && ImGui::IsMouseClicked(1);
+
+        // Selection
+        if (header_clicked || resize_clicked) {
+            for (auto& f : frames_) f.is_selected = false;
+            frame.is_selected = true;
+            selected_frame_id_ = frame.id;
+        }
+
+        // Start dragging (header only)
+        if (header_clicked && dragging_frame_id_ == -1 && resizing_frame_id_ == -1) {
+            dragging_frame_id_ = frame.id;
+            frame_drag_offset_ = ImVec2(mouse_pos.x - screen_min.x, mouse_pos.y - screen_min.y);
+        }
+
+        // Start resizing (resize handle)
+        if (resize_clicked && resizing_frame_id_ == -1 && dragging_frame_id_ == -1) {
+            resizing_frame_id_ = frame.id;
+        }
+
+        // Double-click header to edit
+        if (header_hovered && ImGui::IsMouseDoubleClicked(0)) {
+            editing_frame_ = true;
+            editing_frame_id_ = frame.id;
+            strncpy(frame_edit_title_, frame.title.c_str(), sizeof(frame_edit_title_) - 1);
+            strncpy(frame_edit_desc_, frame.description.c_str(), sizeof(frame_edit_desc_) - 1);
+        }
+
+        // Right-click menu (header or body)
+        if (header_right_clicked || body_right_clicked) {
+            frame_right_clicked_ = true;  // Prevent canvas context menu
+            ImGui::OpenPopup(("FrameMenu_" + std::to_string(frame.id)).c_str());
+        }
+
+        if (ImGui::BeginPopup(("FrameMenu_" + std::to_string(frame.id)).c_str())) {
+            if (ImGui::MenuItem(ICON_FA_PEN " Edit Description")) {
+                editing_frame_ = true;
+                editing_frame_id_ = frame.id;
+                strncpy(frame_edit_title_, frame.title.c_str(), sizeof(frame_edit_title_) - 1);
+                strncpy(frame_edit_desc_, frame.description.c_str(), sizeof(frame_edit_desc_) - 1);
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(ICON_FA_COPY " Copy", "Ctrl+C")) {
+                // TODO: Copy frame to clipboard
+                spdlog::info("Copy frame {} (not yet implemented)", frame.id);
+            }
+            if (ImGui::MenuItem(ICON_FA_SCISSORS " Cut", "Ctrl+X")) {
+                // TODO: Cut frame to clipboard
+                spdlog::info("Cut frame {} (not yet implemented)", frame.id);
+            }
+            if (ImGui::MenuItem(ICON_FA_TRASH " Delete", "Del")) {
+                DeleteFrame(frame.id);
+                ImGui::EndPopup();
+                break;  // List modified, exit loop
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(ICON_FA_OBJECT_GROUP " Group Nodes Inside")) {
+                // Find all nodes inside this frame's bounds and group them
+                std::vector<int> nodes_inside;
+                for (const auto& node : nodes_) {
+                    auto pos_it = cached_node_positions_.find(node.id);
+                    if (pos_it != cached_node_positions_.end()) {
+                        ImVec2 node_pos = pos_it->second;
+                        if (node_pos.x >= frame.position.x &&
+                            node_pos.x <= frame.position.x + frame.size.x &&
+                            node_pos.y >= frame.position.y &&
+                            node_pos.y <= frame.position.y + frame.size.y) {
+                            nodes_inside.push_back(node.id);
+                        }
+                    }
+                }
+                if (nodes_inside.size() >= 2) {
+                    // Select these nodes and create group
+                    selected_node_ids_.clear();
+                    for (int id : nodes_inside) {
+                        selected_node_ids_.push_back(id);
+                    }
+                    CreateGroupFromSelection(frame.title);
+                    spdlog::info("Grouped {} nodes inside frame '{}'", nodes_inside.size(), frame.title);
+                } else {
+                    spdlog::warn("Need at least 2 nodes inside frame to create a group");
+                }
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    // Handle dragging
+    if (dragging_frame_id_ != -1) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            ImVec2 mouse_pos = ImGui::GetMousePos();
+            for (auto& frame : frames_) {
+                if (frame.id == dragging_frame_id_) {
+                    frame.position.x = (mouse_pos.x - origin.x - panning.x - frame_drag_offset_.x) / zoom_;
+                    frame.position.y = (mouse_pos.y - origin.y - panning.y - frame_drag_offset_.y) / zoom_;
+                    break;
+                }
+            }
+        } else {
+            dragging_frame_id_ = -1;
+        }
+    }
+
+    // Handle resizing (bottom-right corner only)
+    if (resizing_frame_id_ != -1) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            ImVec2 mouse_pos = ImGui::GetMousePos();
+            for (auto& frame : frames_) {
+                if (frame.id == resizing_frame_id_) {
+                    ImVec2 screen_min = ImVec2(
+                        origin.x + frame.position.x * zoom_ + panning.x,
+                        origin.y + frame.position.y * zoom_ + panning.y);
+                    float new_w = (mouse_pos.x - screen_min.x) / zoom_;
+                    float new_h = (mouse_pos.y - screen_min.y) / zoom_;
+                    frame.size.x = std::max(100.0f, new_w);
+                    frame.size.y = std::max(80.0f, new_h);
+                    break;
+                }
+            }
+        } else {
+            resizing_frame_id_ = -1;
+        }
+    }
+
+    // Frame edit popup
+    if (editing_frame_) {
+        ImGui::OpenPopup("Edit Frame");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    }
+
+    if (ImGui::BeginPopupModal("Edit Frame", &editing_frame_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Title:");
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputText("##frame_title", frame_edit_title_, sizeof(frame_edit_title_));
+
+        ImGui::Text("Description:");
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputTextMultiline("##frame_desc", frame_edit_desc_, sizeof(frame_edit_desc_),
+            ImVec2(300, 80));
+
+        ImGui::Spacing();
+        if (ImGui::Button("Save", ImVec2(100, 0))) {
+            for (auto& frame : frames_) {
+                if (frame.id == editing_frame_id_) {
+                    frame.title = frame_edit_title_;
+                    frame.description = frame_edit_desc_;
+                    break;
+                }
+            }
+            editing_frame_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            editing_frame_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void NodeEditor::AddFrameAt(const ImVec2& canvas_position) {
+    CanvasFrame frame;
+    frame.id = next_frame_id_++;
+    frame.title = "Frame " + std::to_string(frame.id);
+    frame.position = canvas_position;
+    frame.size = ImVec2(300, 200);
+    frames_.push_back(frame);
+    spdlog::info("Added frame {} at ({}, {})", frame.id, canvas_position.x, canvas_position.y);
+}
+
+void NodeEditor::DeleteFrame(int frame_id) {
+    frames_.erase(
+        std::remove_if(frames_.begin(), frames_.end(),
+            [frame_id](const CanvasFrame& f) { return f.id == frame_id; }),
+        frames_.end());
+    if (selected_frame_id_ == frame_id) {
+        selected_frame_id_ = -1;
+    }
+    spdlog::info("Deleted frame {}", frame_id);
 }
 
 // ===== Subgraph Encapsulation =====

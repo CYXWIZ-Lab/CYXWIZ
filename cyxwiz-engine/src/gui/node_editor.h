@@ -642,6 +642,24 @@ struct CanvasAnnotation {
         , is_minimized(false) {}
 };
 
+// Canvas Frame - visual organization box (drag from Node Browser)
+struct CanvasFrame {
+    int id;
+    std::string title;
+    std::string description;
+    ImVec2 position;        // Canvas position (not screen)
+    ImVec2 size;
+    ImVec4 color;           // RGBA color
+    bool is_selected = false;
+
+    CanvasFrame()
+        : id(-1)
+        , title("Frame")
+        , position(0, 0)
+        , size(300, 200)
+        , color(0.3f, 0.5f, 0.7f, 0.8f) {}  // Default blue
+};
+
 // Annotation color presets
 enum class AnnotationColor {
     Yellow,   // Default - IM_COL32(255, 255, 200, 255)
@@ -985,7 +1003,13 @@ private:
     void DeleteGroup(int group_id);
     void UngroupSelection();
     void RenderGroups();
+    void RenderFrames();
     NodeGroup* FindGroupContainingNode(int node_id);
+
+    // Frame management
+    void AddFrameAt(const ImVec2& canvas_position);
+    void DeleteFrame(int frame_id);
+    const std::vector<CanvasFrame>& GetFrames() const { return frames_; }
 
     // Annotation rendering and interaction
     void RenderAnnotations();
@@ -1167,6 +1191,19 @@ private:
     int editing_annotation_id_ = -1;
     char annotation_edit_title_[256] = "";
     char annotation_edit_content_[2048] = "";
+
+    // Canvas frames (visual organization boxes - drag from Node Browser)
+    std::vector<CanvasFrame> frames_;
+    int next_frame_id_ = 1;
+    int selected_frame_id_ = -1;
+    int dragging_frame_id_ = -1;
+    int resizing_frame_id_ = -1;
+    ImVec2 frame_drag_offset_ = ImVec2(0, 0);
+    bool editing_frame_ = false;
+    int editing_frame_id_ = -1;
+    char frame_edit_title_[256] = "";
+    char frame_edit_desc_[1024] = "";
+    bool frame_right_clicked_ = false;  // Prevents canvas menu when frame is right-clicked
 
     // KNIME-style node dragging (icon-only drag to avoid pin-drag moving the node)
     int dragging_knime_node_id_ = -1;

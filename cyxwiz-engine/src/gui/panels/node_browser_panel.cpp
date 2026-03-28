@@ -339,6 +339,71 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImGui::PopID();
     }
 
+    // Frame card (drag to canvas to create visual organization box)
+    {
+        ImGui::PushID("frame_card");
+        ImVec2 card_size(card_width, NODE_ICON_SIZE + 24);
+        ImVec2 cursor_start = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##framecard", card_size);
+        bool hovered = ImGui::IsItemHovered();
+
+        // Drag source for creating frame on canvas
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+            const char* payload = "STUDIO_FRAME";
+            ImGui::SetDragDropPayload("STUDIO_FRAME", payload, strlen(payload) + 1);
+            ImGui::Text(ICON_FA_SQUARE " Frame");
+            ImGui::TextDisabled("Drop on canvas to create");
+            ImGui::EndDragDropSource();
+        }
+
+        // Tooltip
+        if (hovered && !ImGui::GetDragDropPayload()) {
+            ImGui::BeginTooltip();
+            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ICON_FA_SQUARE " Frame");
+            ImGui::TextWrapped("Visual organization box for arranging nodes");
+            ImGui::Separator();
+            ImGui::TextDisabled("Drag to canvas to create");
+            ImGui::EndTooltip();
+        }
+
+        // Draw card
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        float icon_x = cursor_start.x + (card_width - NODE_ICON_SIZE) * 0.5f;
+        float icon_y = cursor_start.y + 4;
+        ImVec2 icon_pos(icon_x, icon_y);
+        ImVec2 p_max(icon_pos.x + NODE_ICON_SIZE, icon_pos.y + NODE_ICON_SIZE);
+
+        // Teal background for frame
+        ImU32 bg_color = IM_COL32(70, 140, 130, 255);
+        ImU32 border_color = IM_COL32(50, 100, 95, 255);
+        draw_list->AddRectFilled(icon_pos, p_max, bg_color, 6.0f);
+        draw_list->AddRect(icon_pos, p_max, border_color, 6.0f, 0, 2.0f);
+
+        // Icon
+        ImFont* icon_font = ImGui::GetFont();
+        float scaled_icon_size = NODE_ICON_SIZE * 0.55f;
+        const char* icon = ICON_FA_SQUARE;
+        ImVec2 icon_text_size = icon_font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
+        ImVec2 icon_text_pos(icon_pos.x + (NODE_ICON_SIZE - icon_text_size.x) * 0.5f,
+                            icon_pos.y + (NODE_ICON_SIZE - icon_text_size.y) * 0.5f);
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+
+        // Label
+        const char* label = "Frame";
+        ImVec2 text_size = ImGui::CalcTextSize(label);
+        float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
+        float text_y = icon_y + NODE_ICON_SIZE + 4;
+        draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(220, 220, 220, 255), label);
+
+        // Hover highlight
+        if (hovered) {
+            draw_list->AddRect(cursor_start,
+                ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
+                IM_COL32(100, 150, 255, 100), 4.0f);
+        }
+        ImGui::PopID();
+    }
+
     ImGui::Spacing();
     ImGui::Spacing();
 
