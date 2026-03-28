@@ -164,6 +164,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_shape_inference.cpp
     src/gui/node_editor_skip.cpp
     src/gui/node_editor_add_search.cpp
+    src/gui/node_editor_icons.cpp
     src/gui/node_documentation.cpp
     src/gui/console.cpp
     src/gui/viewport.cpp
