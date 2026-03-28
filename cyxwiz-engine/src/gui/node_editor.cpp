@@ -1884,6 +1884,17 @@ void NodeEditor::RenderNodes() {
             ImGui::SetCursorScreenPos(icon_pos);
             std::string drag_id = "##knime_drag_" + std::to_string(node.id);
             ImGui::InvisibleButton(drag_id.c_str(), ImVec2(ICON_BOX_SIZE, ICON_BOX_SIZE));
+
+            // Select node when clicked (InvisibleButton consumes click before ImNodes)
+            if (ImGui::IsItemClicked(0)) {
+                if (!ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift) {
+                    // Single click without modifier - select only this node
+                    ImNodes::ClearNodeSelection();
+                }
+                ImNodes::SelectNode(node.id);
+                selected_node_id_ = node.id;
+            }
+
             if (ImGui::IsItemActivated()) {
                 dragging_knime_node_id_ = node.id;
                 ImVec2 mouse_pos = ImGui::GetMousePos();
