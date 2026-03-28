@@ -71,6 +71,55 @@ void ToolbarPanel::RenderNodesMenu() {
 
         ImGui::Separator();
 
+        // Icon Pack selection submenu
+        if (ImGui::BeginMenu(ICON_FA_PALETTE " Icon Pack")) {
+            int current_pack = get_icon_pack_callback_ ? get_icon_pack_callback_() : 0;
+
+            if (ImGui::MenuItem("FontAwesome (Default)", nullptr, current_pack == 0)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(0);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Solid, filled icons - FontAwesome 6");
+            }
+
+            if (ImGui::MenuItem("Tabler Icons", nullptr, current_pack == 1)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(1);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Clean 2px outline style - 6,000+ icons");
+            }
+
+            if (ImGui::MenuItem("Remix Icon", nullptr, current_pack == 2)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(2);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Filled style icons - 2,800+ icons");
+            }
+
+            if (ImGui::MenuItem("Lucide Icons", nullptr, current_pack == 3)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(3);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Clean minimal stroke style - 1,500+ icons");
+            }
+
+            if (ImGui::MenuItem("Iconoir", nullptr, current_pack == 4)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(4);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Simple consistent stroke icons - 1,500+ icons");
+            }
+
+            if (ImGui::MenuItem("Phosphor Icons", nullptr, current_pack == 5)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(5);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Flexible icon family with multiple weights - 9,000+ icons");
+            }
+
+            ImGui::EndMenu();
+        }
+
         if (ImGui::MenuItem(ICON_FA_WAND_MAGIC_SPARKLES " Custom Node Editor...")) {
             if (open_custom_node_editor_callback_) {
                 open_custom_node_editor_callback_();

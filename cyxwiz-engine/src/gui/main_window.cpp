@@ -732,6 +732,18 @@ MainWindow::MainWindow()
         }
     });
 
+    // Set up Icon Pack selection callbacks
+    toolbar_->SetSetIconPackCallback([this](int pack) {
+        if (node_editor_) {
+            node_editor_->SetIconPack(static_cast<gui::IconPack>(pack));
+            const char* pack_names[] = {"FontAwesome", "Tabler", "Remix", "Lucide", "Iconoir", "Phosphor"};
+            spdlog::info("Changed icon pack to: {}", pack < 6 ? pack_names[pack] : "Unknown");
+        }
+    });
+    toolbar_->SetGetIconPackCallback([this]() -> int {
+        return node_editor_ ? static_cast<int>(node_editor_->GetIconPack()) : 0;
+    });
+
     // Set up Node Editor operation callbacks (Nodes menu)
     toolbar_->SetAddDenseNodeCallback([this]() {
         if (node_editor_) {

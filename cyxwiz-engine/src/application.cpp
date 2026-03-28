@@ -1173,8 +1173,26 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // FontAwesome icon font
     std::string fa_solid = font_base_path + "fa-solid-900.ttf";
 
+    // Tabler Icons font (POC for node icon themes)
+    std::string tabler_icons = font_base_path + "tabler-icons.ttf";
+
+    // Additional icon packs
+    std::string remix_icons = font_base_path + "remixicon.ttf";
+    std::string lucide_icons = font_base_path + "lucide.ttf";
+    std::string iconoir_icons = font_base_path + "iconoir.ttf";
+    std::string phosphor_icons = font_base_path + "phosphor.ttf";
+
     // Icon font glyph ranges (FontAwesome 6)
     static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
+
+    // Tabler Icons glyph ranges (0xea00 - 0xf9ff)
+    static const ImWchar tabler_icon_ranges[] = { 0xea00, 0xf9ff, 0 };
+
+    // Additional icon pack glyph ranges (all use Private Use Area)
+    static const ImWchar remix_icon_ranges[] = { 0xea01, 0xf2ff, 0 };
+    static const ImWchar lucide_icon_ranges[] = { 0xe900, 0xefff, 0 };
+    static const ImWchar iconoir_icon_ranges[] = { 0xe900, 0xefff, 0 };
+    static const ImWchar phosphor_icon_ranges[] = { 0xe000, 0xf8ff, 0 };
 
     // Icon font config (for merging) - high quality
     ImFontConfig icon_config;
@@ -1194,6 +1212,36 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
                 spdlog::info("Merged FontAwesome icons into regular font");
+            }
+
+            // Merge Tabler icons into regular font (POC for node icon themes)
+            if (std::filesystem::exists(tabler_icons)) {
+                io.Fonts->AddFontFromFileTTF(tabler_icons.c_str(), base_font_size - 1.0f, &icon_config, tabler_icon_ranges);
+                spdlog::info("Merged Tabler icons into regular font");
+            }
+
+            // Merge Remix icons into regular font
+            if (std::filesystem::exists(remix_icons)) {
+                io.Fonts->AddFontFromFileTTF(remix_icons.c_str(), base_font_size - 1.0f, &icon_config, remix_icon_ranges);
+                spdlog::info("Merged Remix icons into regular font");
+            }
+
+            // Merge Lucide icons into regular font
+            if (std::filesystem::exists(lucide_icons)) {
+                io.Fonts->AddFontFromFileTTF(lucide_icons.c_str(), base_font_size - 1.0f, &icon_config, lucide_icon_ranges);
+                spdlog::info("Merged Lucide icons into regular font");
+            }
+
+            // Merge Iconoir icons into regular font
+            if (std::filesystem::exists(iconoir_icons)) {
+                io.Fonts->AddFontFromFileTTF(iconoir_icons.c_str(), base_font_size - 1.0f, &icon_config, iconoir_icon_ranges);
+                spdlog::info("Merged Iconoir icons into regular font");
+            }
+
+            // Merge Phosphor icons into regular font
+            if (std::filesystem::exists(phosphor_icons)) {
+                io.Fonts->AddFontFromFileTTF(phosphor_icons.c_str(), base_font_size - 1.0f, &icon_config, phosphor_icon_ranges);
+                spdlog::info("Merged Phosphor icons into regular font");
             }
         }
     }

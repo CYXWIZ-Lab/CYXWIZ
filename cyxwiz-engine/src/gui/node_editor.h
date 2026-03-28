@@ -83,6 +83,16 @@ enum class NodeCategory {
     Unknown           // Fallback
 };
 
+// Icon pack selection for node icons
+enum class IconPack {
+    FontAwesome,    // Default - FontAwesome 6 icons (solid style)
+    Tabler,         // Tabler Icons - clean 2px outline style
+    Remix,          // Remix Icon - filled style icons
+    Lucide,         // Lucide Icons - clean minimal stroke style
+    Iconoir,        // Iconoir Icons - simple consistent stroke icons
+    Phosphor        // Phosphor Icons - flexible icon family with multiple weights
+};
+
 // Node types for ML model building
 enum class NodeType {
     // ===== Core Layers =====
@@ -735,6 +745,10 @@ public:
     bool GetShowMinimap() const { return show_minimap_; }
     bool* GetShowMinimapPtr() { return &show_minimap_; }
 
+    // Icon pack selection (for node icons)
+    void SetIconPack(IconPack pack) { icon_pack_ = pack; }
+    IconPack GetIconPack() const { return icon_pack_; }
+
     // Access to graph data for compilation
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
@@ -1102,6 +1116,9 @@ private:
     float zoom_ = 1.0f;
     static constexpr float ZOOM_MIN = 0.5f;
     static constexpr float ZOOM_MAX = 2.0f;
+
+    // Icon pack selection (for node icons)
+    IconPack icon_pack_ = IconPack::FontAwesome;  // Default to FontAwesome
 
     // Minimap state
     bool show_minimap_ = true;
