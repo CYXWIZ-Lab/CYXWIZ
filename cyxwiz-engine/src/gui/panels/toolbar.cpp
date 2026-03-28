@@ -276,7 +276,6 @@ void ToolbarPanel::Render() {
         RenderToolsMenu();
         RenderDatasetMenu();
         RenderScriptMenu();
-        RenderPlotsMenu();
         RenderDeployMenu();
         RenderAppsMenu();
         RenderHelpMenu();
@@ -2480,9 +2479,6 @@ void ToolbarPanel::InitializeToolEntries() {
     all_tools_.push_back({"Preferences", "View", "preferences settings options", ICON_FA_GEAR, "", [this]() { show_preferences_dialog_ = true; }});
     all_tools_.push_back({"Theme Editor", "View", "theme color customize", ICON_FA_PALETTE, "", [this]() { if (open_theme_editor_callback_) open_theme_editor_callback_(); }});
     // Profiling tools moved to "Profile" category
-
-    // ==================== Plots Commands ====================
-    all_tools_.push_back({"Plot Test Control", "Plots", "plot test visualization", ICON_FA_CHART_LINE, "", [this]() { if (toggle_plot_test_control_callback_) toggle_plot_test_control_callback_(); }});
 
     // Model Analysis (Phase 2)
     all_tools_.push_back({"Model Summary", "Model Analysis", "model summary architecture layers parameters", ICON_FA_CUBES, "", [this]() { if (open_model_summary_callback_) open_model_summary_callback_(); }});

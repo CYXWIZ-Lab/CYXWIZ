@@ -80,6 +80,10 @@ public:
     void SetGroupNodesCallback(std::function<void()> cb) { group_nodes_callback_ = cb; }
     void SetUngroupNodesCallback(std::function<void()> cb) { ungroup_nodes_callback_ = cb; }
 
+    // Icon pack selection callbacks
+    void SetSetIconPackCallback(std::function<void(int)> cb) { set_icon_pack_callback_ = cb; }
+    void SetGetIconPackCallback(std::function<int()> cb) { get_icon_pack_callback_ = cb; }
+
     void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
     void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
@@ -298,7 +302,6 @@ private:
     void RenderSimulationMenu();
     void RenderDatasetMenu();
     void RenderScriptMenu();
-    void RenderPlotsMenu();
     void RenderDeployMenu();
     void RenderToolsMenu();
     void RenderProfileMenu();
@@ -389,6 +392,10 @@ private:
     std::function<void()> delete_nodes_callback_;
     std::function<void()> group_nodes_callback_;
     std::function<void()> ungroup_nodes_callback_;
+
+    // Icon pack selection callbacks
+    std::function<void(int)> set_icon_pack_callback_;
+    std::function<int()> get_icon_pack_callback_;
 
     std::function<void()> open_custom_node_editor_callback_;
     std::function<void()> open_theme_editor_callback_;

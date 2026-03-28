@@ -464,6 +464,40 @@ enum class NodeType {
     WordFrequencyNode,  // Word frequency analysis
     TokenizerNode,      // Text tokenization
 
+    // ===== Visualization Nodes (Phase 8 - Plot Types) =====
+    // Basic 2D Plots
+    LinePlot,           // Line plot (plot())
+    ScatterPlot,        // Scatter plot (scatter())
+    BarChart,           // Bar chart (bar/barh)
+    Histogram,          // Histogram distribution (hist())
+    PieChart,           // Pie chart (pie())
+    AreaPlot,           // Filled area plot (fill_between())
+
+    // Advanced 2D Plots
+    BoxPlot,            // Box plot statistics (boxplot())
+    ViolinPlot,         // Violin plot distribution (violinplot())
+    ErrorBarPlot,       // Error bar plot (errorbar())
+    StepPlot,           // Step plot (step())
+    HexbinPlot,         // Hexagonal binning (hexbin())
+
+    // Heatmaps & Matrices
+    Heatmap,            // Heatmap visualization
+    ContourPlot,        // Contour plot (contour/contourf())
+    Imshow,             // Image display (imshow())
+
+    // 3D Plots
+    Plot3D,             // 3D line plot
+    Scatter3D,          // 3D scatter plot
+    SurfacePlot,        // 3D surface plot
+    WireframePlot,      // 3D wireframe plot
+
+    // Specialized Plots
+    PolarPlot,          // Polar coordinate plot
+    QuiverPlot,         // Vector field plot (quiver())
+    StreamPlot,         // Streamline plot (streamplot())
+    SpectrogramPlot,    // Spectrogram visualization
+    NetworkGraph,       // Network/graph visualization
+
     // Plugin-defined nodes (sentinel — actual type resolved via string lookup)
     PluginCustom,
 

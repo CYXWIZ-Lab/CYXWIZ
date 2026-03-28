@@ -439,7 +439,37 @@ void NodeEditor::ShowCategorizedNodeMenu() {
             {NodeType::DataValidator, "Data Validator"}
         };
 
-        // ... (Add more categories as needed)
+        // Visualization (Phase 8: Plot Types)
+        nodes_by_category_[NodeCategory::Visualization] = {
+            // Basic 2D Plots
+            {NodeType::LinePlot, "Line Plot"},
+            {NodeType::ScatterPlot, "Scatter Plot"},
+            {NodeType::BarChart, "Bar Chart"},
+            {NodeType::Histogram, "Histogram"},
+            {NodeType::PieChart, "Pie Chart"},
+            {NodeType::AreaPlot, "Area Plot"},
+            // Advanced 2D Plots
+            {NodeType::BoxPlot, "Box Plot"},
+            {NodeType::ViolinPlot, "Violin Plot"},
+            {NodeType::ErrorBarPlot, "Error Bar Plot"},
+            {NodeType::StepPlot, "Step Plot"},
+            {NodeType::HexbinPlot, "Hexbin Plot"},
+            // Heatmaps & Matrices
+            {NodeType::Heatmap, "Heatmap"},
+            {NodeType::ContourPlot, "Contour Plot"},
+            {NodeType::Imshow, "Image Display"},
+            // 3D Plots
+            {NodeType::Plot3D, "3D Line Plot"},
+            {NodeType::Scatter3D, "3D Scatter Plot"},
+            {NodeType::SurfacePlot, "Surface Plot"},
+            {NodeType::WireframePlot, "Wireframe Plot"},
+            // Specialized Plots
+            {NodeType::PolarPlot, "Polar Plot"},
+            {NodeType::QuiverPlot, "Vector Field"},
+            {NodeType::StreamPlot, "Stream Plot"},
+            {NodeType::SpectrogramPlot, "Spectrogram"},
+            {NodeType::NetworkGraph, "Network Graph"}
+        };
 
         nodes_by_category_initialized_ = true;
     }

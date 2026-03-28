@@ -264,6 +264,39 @@ void NodeEditor::InitializeSearchableNodes() {
     // Composite
     addNode(NodeType::Subgraph, "Subgraph", "Composite", "subgraph module encapsulate block");
 
+    // Visualization - Basic 2D Plots
+    addNode(NodeType::LinePlot, "Line Plot", "Visualization", "line plot chart graph xy");
+    addNode(NodeType::ScatterPlot, "Scatter Plot", "Visualization", "scatter plot points xy data");
+    addNode(NodeType::BarChart, "Bar Chart", "Visualization", "bar chart histogram category");
+    addNode(NodeType::Histogram, "Histogram", "Visualization", "histogram distribution frequency bins");
+    addNode(NodeType::PieChart, "Pie Chart", "Visualization", "pie chart percentage proportion");
+    addNode(NodeType::AreaPlot, "Area Plot", "Visualization", "area fill between stacked");
+
+    // Visualization - Advanced 2D Plots
+    addNode(NodeType::BoxPlot, "Box Plot", "Visualization", "box plot whisker quartile statistics");
+    addNode(NodeType::ViolinPlot, "Violin Plot", "Visualization", "violin plot distribution density");
+    addNode(NodeType::ErrorBarPlot, "Error Bar Plot", "Visualization", "error bar uncertainty confidence");
+    addNode(NodeType::StepPlot, "Step Plot", "Visualization", "step plot stairs discrete");
+    addNode(NodeType::HexbinPlot, "Hexbin Plot", "Visualization", "hexbin hexagonal binning density");
+
+    // Visualization - Heatmaps & Matrices
+    addNode(NodeType::Heatmap, "Heatmap", "Visualization", "heatmap matrix color intensity");
+    addNode(NodeType::ContourPlot, "Contour Plot", "Visualization", "contour level isolines topology");
+    addNode(NodeType::Imshow, "Image Display", "Visualization", "imshow image display matrix pixels");
+
+    // Visualization - 3D Plots
+    addNode(NodeType::Plot3D, "3D Line Plot", "Visualization", "3d line plot xyz trajectory");
+    addNode(NodeType::Scatter3D, "3D Scatter Plot", "Visualization", "3d scatter points cloud xyz");
+    addNode(NodeType::SurfacePlot, "Surface Plot", "Visualization", "surface plot 3d mesh terrain");
+    addNode(NodeType::WireframePlot, "Wireframe Plot", "Visualization", "wireframe 3d mesh grid");
+
+    // Visualization - Specialized Plots
+    addNode(NodeType::PolarPlot, "Polar Plot", "Visualization", "polar plot radial angle circular");
+    addNode(NodeType::QuiverPlot, "Vector Field", "Visualization", "quiver vector field arrows flow");
+    addNode(NodeType::StreamPlot, "Stream Plot", "Visualization", "streamplot streamlines flow field");
+    addNode(NodeType::SpectrogramPlot, "Spectrogram", "Visualization", "spectrogram frequency time audio");
+    addNode(NodeType::NetworkGraph, "Network Graph", "Visualization", "network graph nodes edges connections");
+
     // Plugin-provided nodes
     try {
         auto plugin_nodes = cyxwiz::plugin::PluginNodeRegistry::Instance().GetAllNodeTypesWithNames();
@@ -339,10 +372,8 @@ void NodeEditor::InitializeSearchableNodes() {
     addTemplateNode("Credentials Widget", "Widgets", "credentials password secure widget", "Secure credentials input", "Planned for Phase 3");
 
     // Advanced Visualization
-    addTemplateNode("3D Scatter Plot", "Visualization", "3d scatter plot point cloud", "3D point cloud visualization", "Requires ImPlot3D or OpenGL");
     addTemplateNode("Interactive Dashboard", "Visualization", "dashboard interactive web charts", "Web-based interactive charts", "Embedded WebView");
     addTemplateNode("Geospatial Map", "Visualization", "map geo spatial location", "Map-based visualization", "Requires Mapbox or Leaflet");
-    addTemplateNode("Network Graph", "Visualization", "network graph node link", "Node-link network diagram", "Force-directed algorithm");
     addTemplateNode("Sankey Diagram", "Visualization", "sankey flow diagram", "Flow visualization diagram", "Custom renderer");
     addTemplateNode("Treemap", "Visualization", "treemap hierarchical rectangles", "Hierarchical rectangle visualization", "Custom renderer");
 
