@@ -105,13 +105,12 @@ void NodeEditor::InitializeSearchableNodes() {
         all_searchable_nodes_.push_back(std::move(node));
     };
 
-    // Smart I/O Nodes (Universal)
-    addNode(NodeType::DataInput, "Data Input", "Input/Output", "csv excel json parquet hdf5 load import read file data source input");
+    // Smart I/O Nodes (Universal - DataInput handles both files and datasets)
+    addNode(NodeType::DataInput, "Data Input", "Input/Output", "csv excel json parquet hdf5 load import read file data source input dataset mnist cifar imagenet huggingface kaggle");
     addNode(NodeType::DataOutput, "Data Output", "Input/Output", "csv excel json parquet hdf5 save export write file data output");
     addNode(NodeType::Output, "Output", "Input/Output", "data out end result");
 
-    // Data Pipeline
-    addNode(NodeType::DatasetInput, "DatasetInput", "Data Pipeline", "dataset mnist cifar load input data");
+    // Data Pipeline (DatasetInput consolidated into DataInput)
     addNode(NodeType::DataLoader, "DataLoader", "Data Pipeline", "batch iterator shuffle loader");
     addNode(NodeType::Augmentation, "Augmentation", "Data Pipeline", "transform augment preprocess");
     addNode(NodeType::DataSplit, "DataSplit", "Data Pipeline", "train val test split partition");

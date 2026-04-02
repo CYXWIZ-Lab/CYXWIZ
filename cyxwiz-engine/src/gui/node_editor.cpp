@@ -98,158 +98,105 @@ NodeEditor::NodeEditor()
     // Initialize shape inference engine
     shape_inference_ = std::make_unique<ShapeInferenceEngine>();
 
-    // Create a KNIME-style Data Processing Pipeline showcase (based on example3.png)
-    // Task: Clean non-standard Excel spreadsheet with misplaced data
-    // This demonstrates: Table Splitter with 2 outputs, split/merge pattern, data cleaning
+    // Create ML Training Pipeline showcase
+    // Demonstrates: Complete machine learning workflow with data preparation, model, loss, and optimizer
     //
-    // Flow: Excel Reader -> Row to Column Names -> Table Splitter (2 outputs)
-    //       Top branch: Cell Extractor -> Cell Updater -> Row Filter -+
-    //       Bottom branch: ------------------------------------------>+ Row Appender
-    //       Then: Table Cropper -> Column Filter -> Row Aggregator -> Column Renamer -> Column Appender -> Excel Writer
+    // Flow: DataInput → DataSplit → Normalize → Dense(128) → ReLU → Dense(10) → MSELoss → Adam → Output
 
-    // ========== SECTION 1: READ & PREPARE HEADERS ==========
+    // ========== DATA PREPARATION ==========
 
-    // 1. Excel Reader - Load non-standard format spreadsheet
-    MLNode excel_reader = CreateNode(NodeType::ExcelFile, "Excel Reader");
-    excel_reader.parameters["file_path"] = "athlete_bio.xlsx";
-    excel_reader.parameters["sheet"] = "Sheet1";
-    nodes_.push_back(excel_reader);
-    ImNodes::SetNodeGridSpacePos(excel_reader.id, ImVec2(50.0f, 250.0f));
+    // 1. Data Input - Load dataset
+    MLNode data_input = CreateNode(NodeType::DataInput, "Data Input");
+    data_input.parameters["format"] = "csv";
+    data_input.parameters["file_path"] = "dataset.csv";
+    nodes_.push_back(data_input);
+    ImNodes::SetNodeGridSpacePos(data_input.id, ImVec2(50.0f, 200.0f));
 
-    // 2. Row to Column Names - Promote row to column headers
-    MLNode row_to_cols = CreateNode(NodeType::RowToColumnNames, "Row to Column Names");
-    row_to_cols.parameters["row_index"] = "1";
-    nodes_.push_back(row_to_cols);
-    ImNodes::SetNodeGridSpacePos(row_to_cols.id, ImVec2(250.0f, 250.0f));
+    // 2. Data Split - Split into train/val/test
+    MLNode data_split = CreateNode(NodeType::DataSplit, "Train/Test Split");
+    data_split.parameters["train_ratio"] = "0.8";
+    data_split.parameters["val_ratio"] = "0.1";
+    data_split.parameters["test_ratio"] = "0.1";
+    data_split.parameters["shuffle"] = "true";
+    nodes_.push_back(data_split);
+    ImNodes::SetNodeGridSpacePos(data_split.id, ImVec2(250.0f, 200.0f));
 
-    // ========== SECTION 2: SPLIT TABLE (2 OUTPUTS) ==========
+    // 3. Normalize - Normalize input features
+    MLNode normalize = CreateNode(NodeType::Normalize, "Normalize");
+    normalize.parameters["method"] = "z-score";
+    normalize.parameters["mean"] = "0.0";
+    normalize.parameters["std"] = "1.0";
+    nodes_.push_back(normalize);
+    ImNodes::SetNodeGridSpacePos(normalize.id, ImVec2(450.0f, 200.0f));
 
-    // 3. Table Splitter - Split at separator row (HAS 2 OUTPUTS: Top & Bottom)
-    MLNode table_splitter = CreateNode(NodeType::TableSplitter, "Table Splitter");
-    table_splitter.parameters["split_row"] = "5";
-    nodes_.push_back(table_splitter);
-    ImNodes::SetNodeGridSpacePos(table_splitter.id, ImVec2(450.0f, 250.0f));
+    // ========== NEURAL NETWORK ==========
 
-    // ========== TOP BRANCH: Fix misplaced cell ==========
+    // 4. Dense Layer - First hidden layer
+    MLNode dense1 = CreateNode(NodeType::Dense, "Dense (128)");
+    dense1.parameters["units"] = "128";
+    dense1.parameters["use_bias"] = "true";
+    nodes_.push_back(dense1);
+    ImNodes::SetNodeGridSpacePos(dense1.id, ImVec2(650.0f, 200.0f));
 
-    // 4. Cell Extractor - Extract date from misplaced cell (from TOP output)
-    MLNode cell_extractor = CreateNode(NodeType::CellExtractor, "Cell Extractor");
-    cell_extractor.parameters["row"] = "0";
-    cell_extractor.parameters["column"] = "date";
-    nodes_.push_back(cell_extractor);
-    ImNodes::SetNodeGridSpacePos(cell_extractor.id, ImVec2(650.0f, 100.0f));
+    // 5. ReLU Activation
+    MLNode relu = CreateNode(NodeType::ReLU, "ReLU");
+    nodes_.push_back(relu);
+    ImNodes::SetNodeGridSpacePos(relu.id, ImVec2(850.0f, 200.0f));
 
-    // 5. Cell Updater - Place extracted value in correct location
-    MLNode cell_updater = CreateNode(NodeType::CellUpdater, "Cell Updater");
-    cell_updater.parameters["row"] = "1";
-    cell_updater.parameters["column"] = "birth_date";
-    nodes_.push_back(cell_updater);
-    ImNodes::SetNodeGridSpacePos(cell_updater.id, ImVec2(850.0f, 100.0f));
+    // 6. Dense Layer - Output layer
+    MLNode dense2 = CreateNode(NodeType::Dense, "Dense (10)");
+    dense2.parameters["units"] = "10";
+    dense2.parameters["use_bias"] = "true";
+    nodes_.push_back(dense2);
+    ImNodes::SetNodeGridSpacePos(dense2.id, ImVec2(1050.0f, 200.0f));
 
-    // 6. Row Filter - Remove the now-empty row
-    MLNode row_filter = CreateNode(NodeType::FilterRows, "Row Filter");
-    row_filter.parameters["condition"] = "RowID != 'Row0'";
-    nodes_.push_back(row_filter);
-    ImNodes::SetNodeGridSpacePos(row_filter.id, ImVec2(1050.0f, 100.0f));
+    // ========== TRAINING CONFIGURATION ==========
 
-    // ========== MERGE BRANCHES ==========
+    // 7. Loss Function
+    MLNode loss = CreateNode(NodeType::MSELoss, "MSE Loss");
+    nodes_.push_back(loss);
+    ImNodes::SetNodeGridSpacePos(loss.id, ImVec2(1250.0f, 200.0f));
 
-    // 7. Row Appender (Concatenate) - Merge top and bottom branches
-    MLNode row_appender = CreateNode(NodeType::RowAppender, "Concatenate");
-    row_appender.parameters["match_columns"] = "true";
-    nodes_.push_back(row_appender);
-    ImNodes::SetNodeGridSpacePos(row_appender.id, ImVec2(1250.0f, 250.0f));
+    // 8. Optimizer
+    MLNode optimizer = CreateNode(NodeType::Adam, "Adam");
+    optimizer.parameters["learning_rate"] = "0.001";
+    optimizer.parameters["beta1"] = "0.9";
+    optimizer.parameters["beta2"] = "0.999";
+    nodes_.push_back(optimizer);
+    ImNodes::SetNodeGridSpacePos(optimizer.id, ImVec2(1450.0f, 200.0f));
 
-    // ========== SECTION 3: CLEAN & SHAPE DATA ==========
-
-    // 8. Table Cropper - Crop to desired dimensions
-    MLNode table_cropper = CreateNode(NodeType::TableCropper, "Table Cropper");
-    table_cropper.parameters["start_row"] = "0";
-    table_cropper.parameters["end_row"] = "-1";
-    nodes_.push_back(table_cropper);
-    ImNodes::SetNodeGridSpacePos(table_cropper.id, ImVec2(1450.0f, 250.0f));
-
-    // 9. Column Filter - Remove unnecessary columns
-    MLNode col_filter = CreateNode(NodeType::SelectColumns, "Column Filter");
-    col_filter.parameters["columns"] = "name, gender, birth_date, country";
-    nodes_.push_back(col_filter);
-    ImNodes::SetNodeGridSpacePos(col_filter.id, ImVec2(1650.0f, 250.0f));
-
-    // ========== SECTION 4: AGGREGATE & EXPORT ==========
-
-    // 10. Row Aggregator - Count by gender
-    MLNode row_aggregator = CreateNode(NodeType::GroupByAggregate, "Row Aggregator");
-    row_aggregator.parameters["group_by"] = "gender";
-    row_aggregator.parameters["aggregations"] = "count(*) as count";
-    nodes_.push_back(row_aggregator);
-    ImNodes::SetNodeGridSpacePos(row_aggregator.id, ImVec2(1850.0f, 250.0f));
-
-    // 11. Column Renamer - Clean up names
-    MLNode col_renamer = CreateNode(NodeType::RenameColumns, "Column Renamer");
-    col_renamer.parameters["mappings"] = "count:Total";
-    nodes_.push_back(col_renamer);
-    ImNodes::SetNodeGridSpacePos(col_renamer.id, ImVec2(2050.0f, 250.0f));
-
-    // 12. Column Appender - Append statistics
-    MLNode col_appender = CreateNode(NodeType::ColumnAppender, "Column Appender");
-    col_appender.parameters["suffix"] = "_stats";
-    nodes_.push_back(col_appender);
-    ImNodes::SetNodeGridSpacePos(col_appender.id, ImVec2(2250.0f, 250.0f));
-
-    // 13. Excel Writer - Export to new sheet
-    MLNode excel_writer = CreateNode(NodeType::ExportExcel, "Excel Writer");
-    excel_writer.parameters["file_path"] = "athlete_bio_cleaned.xlsx";
-    excel_writer.parameters["sheet_name"] = "Summary";
-    nodes_.push_back(excel_writer);
-    ImNodes::SetNodeGridSpacePos(excel_writer.id, ImVec2(2450.0f, 250.0f));
+    // 9. Output
+    MLNode output = CreateNode(NodeType::Output, "Output");
+    nodes_.push_back(output);
+    ImNodes::SetNodeGridSpacePos(output.id, ImVec2(1650.0f, 200.0f));
 
     // ========== CREATE CONNECTIONS ==========
 
-    // Initial flow: Excel Reader -> Row to Column Names -> Table Splitter
-    CreateLink(excel_reader.outputs[0].id, row_to_cols.inputs[0].id,
-               excel_reader.id, row_to_cols.id);
-    CreateLink(row_to_cols.outputs[0].id, table_splitter.inputs[0].id,
-               row_to_cols.id, table_splitter.id);
+    // Data flow: DataInput -> DataSplit -> Normalize
+    CreateLink(data_input.outputs[0].id, data_split.inputs[0].id,
+               data_input.id, data_split.id);
+    CreateLink(data_split.outputs[0].id, normalize.inputs[0].id,
+               data_split.id, normalize.id);
 
-    // TOP BRANCH: Table Splitter (Top) -> Cell Extractor -> Cell Updater -> Row Filter
-    CreateLink(table_splitter.outputs[0].id, cell_extractor.inputs[0].id,
-               table_splitter.id, cell_extractor.id);
-    // Cell Extractor: outputs[0]=Value, outputs[1]=Table
-    // Cell Updater: inputs[0]=Table, inputs[1]=Value
-    CreateLink(cell_extractor.outputs[0].id, cell_updater.inputs[1].id,  // Value -> Value
-               cell_extractor.id, cell_updater.id);
-    CreateLink(cell_extractor.outputs[1].id, cell_updater.inputs[0].id,  // Table -> Table
-               cell_extractor.id, cell_updater.id);
-    CreateLink(cell_updater.outputs[0].id, row_filter.inputs[0].id,
-               cell_updater.id, row_filter.id);
+    // Model flow: Normalize -> Dense(128) -> ReLU -> Dense(10)
+    CreateLink(normalize.outputs[0].id, dense1.inputs[0].id,
+               normalize.id, dense1.id);
+    CreateLink(dense1.outputs[0].id, relu.inputs[0].id,
+               dense1.id, relu.id);
+    CreateLink(relu.outputs[0].id, dense2.inputs[0].id,
+               relu.id, dense2.id);
 
-    // MERGE: Row Filter -> Row Appender (Top input)
-    CreateLink(row_filter.outputs[0].id, row_appender.inputs[0].id,
-               row_filter.id, row_appender.id);
+    // Training flow: Dense(10) -> MSELoss -> Adam -> Output
+    CreateLink(dense2.outputs[0].id, loss.inputs[0].id,
+               dense2.id, loss.id);
+    CreateLink(loss.outputs[0].id, optimizer.inputs[0].id,
+               loss.id, optimizer.id);
+    CreateLink(optimizer.outputs[0].id, output.inputs[0].id,
+               optimizer.id, output.id);
 
-    // BOTTOM BRANCH: Table Splitter (Bottom) -> Row Appender (Bottom input)
-    CreateLink(table_splitter.outputs[1].id, row_appender.inputs[1].id,
-               table_splitter.id, row_appender.id);
-
-    // Continue: Row Appender -> Table Cropper -> Column Filter -> Row Aggregator
-    CreateLink(row_appender.outputs[0].id, table_cropper.inputs[0].id,
-               row_appender.id, table_cropper.id);
-    CreateLink(table_cropper.outputs[0].id, col_filter.inputs[0].id,
-               table_cropper.id, col_filter.id);
-    CreateLink(col_filter.outputs[0].id, row_aggregator.inputs[0].id,
-               col_filter.id, row_aggregator.id);
-
-    // Final: Row Aggregator -> Column Renamer -> Column Appender -> Excel Writer
-    CreateLink(row_aggregator.outputs[0].id, col_renamer.inputs[0].id,
-               row_aggregator.id, col_renamer.id);
-    CreateLink(col_renamer.outputs[0].id, col_appender.inputs[0].id,
-               col_renamer.id, col_appender.id);
-    CreateLink(col_appender.outputs[0].id, excel_writer.inputs[0].id,
-               col_appender.id, excel_writer.id);
-
-    spdlog::info("Created KNIME-style Data Pipeline showcase with {} nodes and {} connections",
+    spdlog::info("Created ML Training Pipeline with {} nodes and {} connections",
                  nodes_.size(), links_.size());
-    spdlog::info("Pipeline: Excel Reader -> Row to Column Names -> Table Splitter (2 outputs) -> [Top: Cell Extractor -> Cell Updater -> Row Filter] + [Bottom] -> Concatenate -> Table Cropper -> Column Filter -> Row Aggregator -> Column Renamer -> Column Appender -> Excel Writer");
+    spdlog::info("Pipeline: DataInput -> DataSplit -> Normalize -> Dense(128) -> ReLU -> Dense(10) -> MSELoss -> Adam -> Output");
 }
 
 NodeEditor::~NodeEditor() {
@@ -1757,9 +1704,11 @@ void NodeEditor::RenderNodes() {
             // Input pins (left side)
             if (!node.inputs.empty()) {
                 ImGui::BeginGroup();
-                // Vertical centering
-                float vert_offset = (ICON_BOX_SIZE - 12.0f) * 0.5f;
-                ImGui::Dummy(ImVec2(0, vert_offset));
+                // Vertical centering for ALL input pins
+                const float PIN_HEIGHT = 12.0f;
+                float total_pin_height = node.inputs.size() * PIN_HEIGHT;
+                float vert_offset = (ICON_BOX_SIZE - total_pin_height) * 0.5f;
+                if (vert_offset > 0) ImGui::Dummy(ImVec2(0, vert_offset));
                 for (const auto& pin : node.inputs) {
                     bool is_connected = IsPinConnected(pin.id);
                     bool is_running = (exec_state == NodeExecutionState::Executing);
@@ -1800,8 +1749,11 @@ void NodeEditor::RenderNodes() {
             if (!node.outputs.empty()) {
                 ImGui::SameLine(0, 0);  // No gap so pin is tied to icon edge
                 ImGui::BeginGroup();
-                float vert_offset = (ICON_BOX_SIZE - 10.0f) * 0.5f;
-                ImGui::Dummy(ImVec2(0, vert_offset));
+                // Vertical centering for ALL output pins
+                const float PIN_HEIGHT = 10.0f;
+                float total_pin_height = node.outputs.size() * PIN_HEIGHT;
+                float vert_offset = (ICON_BOX_SIZE - total_pin_height) * 0.5f;
+                if (vert_offset > 0) ImGui::Dummy(ImVec2(0, vert_offset));
                 for (const auto& pin : node.outputs) {
                     bool is_connected = IsPinConnected(pin.id);
                     bool is_running = (exec_state == NodeExecutionState::Executing);
@@ -1846,6 +1798,14 @@ void NodeEditor::RenderNodes() {
             ImU32 border_color = IM_COL32(80, 80, 90, 200);
             draw_list->AddRect(icon_pos, icon_max, border_color, CORNER_RADIUS, 0, 1.5f);
 
+            // Draw node name ABOVE the icon
+            if (show_name) {
+                ImVec2 name_size = ImGui::CalcTextSize(node.name.c_str());
+                float name_x = icon_pos.x + (ICON_BOX_SIZE - name_size.x) * 0.5f;
+                float name_y = icon_pos.y - name_size.y - 4.0f;
+                draw_list->AddText(ImVec2(name_x, name_y), IM_COL32(200, 200, 200, 255), node.name.c_str());
+            }
+
             // Draw centered icon (55% of box height, like Node Browser)
             const char* icon = GetNodeIcon(node.type);
             ImFont* font = ImGui::GetFont();
@@ -1857,27 +1817,19 @@ void NodeEditor::RenderNodes() {
             );
             draw_list->AddText(font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
 
-            // Draw node name below the icon
-            float text_y = icon_max.y + 4.0f;
-            if (show_name) {
-                ImVec2 name_size = ImGui::CalcTextSize(node.name.c_str());
-                float name_x = icon_pos.x + (ICON_BOX_SIZE - name_size.x) * 0.5f;
-                draw_list->AddText(ImVec2(name_x, text_y), IM_COL32(200, 200, 200, 255), node.name.c_str());
-                text_y += name_size.y + 2.0f;
-            }
-
-            // Draw description below the name (e.g., "Reading adult.csv")
+            // Draw description BELOW the icon (e.g., "Reading adult.csv")
             std::string display_desc = node.description;
             if (display_desc.empty()) {
                 // Show default text for unconfigured nodes
                 display_desc = "Double-click to configure";
             }
+            float desc_y = icon_max.y + 4.0f;
             ImVec2 desc_size = ImGui::CalcTextSize(display_desc.c_str());
             float desc_x = icon_pos.x + (ICON_BOX_SIZE - desc_size.x) * 0.5f;
             // Clamp to icon left edge if description is wider
             desc_x = std::max(desc_x, icon_pos.x - 10.0f);
             ImU32 desc_color = node.description.empty() ? IM_COL32(120, 120, 120, 200) : IM_COL32(150, 180, 220, 255);
-            draw_list->AddText(ImVec2(desc_x, text_y), desc_color, display_desc.c_str());
+            draw_list->AddText(ImVec2(desc_x, desc_y), desc_color, display_desc.c_str());
 
             // Drag handle: icon box only (keeps pin drag separate from node move)
             ImVec2 cursor_backup = ImGui::GetCursorScreenPos();

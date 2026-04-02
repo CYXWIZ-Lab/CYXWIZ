@@ -707,36 +707,43 @@ void Properties::Render() {
             const cyxwiz::NodeMetadata* metadata =
                 cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(selected_node_->type);
 
+            // Check if this is a dialog-only node (DataInput/DataOutput)
+            bool is_dialog_only = (selected_node_->type == NodeType::DataInput ||
+                                   selected_node_->type == NodeType::DataOutput);
+
             // Phase 3: Section-based rendering
             RenderGeneralSection(*selected_node_);
 
-            ImGui::Spacing();
+            // Skip other sections for dialog-only nodes
+            if (!is_dialog_only) {
+                ImGui::Spacing();
 
-            // Parameters section - use metadata-driven rendering if available
-            RenderParametersSection(*selected_node_, metadata);
+                // Parameters section - use metadata-driven rendering if available
+                RenderParametersSection(*selected_node_, metadata);
 
-            ImGui::Spacing();
+                ImGui::Spacing();
 
-            // Shape information section
-            if (ImGui::CollapsingHeader("Shape Info", ImGuiTreeNodeFlags_DefaultOpen)) {
-                NodeShapeInfo shape_info = ComputeNodeShape(selected_node_->id);
-                RenderShapeInfo(shape_info);
+                // Shape information section
+                if (ImGui::CollapsingHeader("Shape Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    NodeShapeInfo shape_info = ComputeNodeShape(selected_node_->id);
+                    RenderShapeInfo(shape_info);
+                }
+
+                ImGui::Spacing();
+
+                // Advanced section
+                RenderAdvancedSection(*selected_node_);
+
+                ImGui::Spacing();
+
+                // Presets section
+                RenderPresetsSection(*selected_node_);
+
+                ImGui::Spacing();
+
+                // Node Executor section (for analytics nodes like KMeans, PCA, etc.)
+                RenderExecutorSection(*selected_node_);
             }
-
-            ImGui::Spacing();
-
-            // Advanced section
-            RenderAdvancedSection(*selected_node_);
-
-            ImGui::Spacing();
-
-            // Presets section
-            RenderPresetsSection(*selected_node_);
-
-            ImGui::Spacing();
-
-            // Node Executor section (for analytics nodes like KMeans, PCA, etc.)
-            RenderExecutorSection(*selected_node_);
         }
     }
     ImGui::End();
@@ -1911,6 +1918,13 @@ void Properties::RenderNodeProperties(MLNode& node) {
             }
             break;
         }
+
+        // ========== Smart I/O Nodes (Dialog-only configuration) ==========
+        case NodeType::DataInput:
+        case NodeType::DataOutput:
+            // These nodes are configured via the Open Dialog button only
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Use 'Open Dialog' to configure");
+            break;
 
         default:
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No editable parameters for this node type");
