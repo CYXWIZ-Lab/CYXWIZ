@@ -4155,6 +4155,7 @@ void NodeEditor::DeleteNode(int node_id) {
             links_.end());
 
         nodes_.erase(node_it);
+        RebuildPinLookup();  // Rebuild pin lookup after deleting node
     }
 }
 
@@ -4190,6 +4191,9 @@ void NodeEditor::ClearGraph() {
     next_group_id_ = 1;
     annotations_.clear();
     next_annotation_id_ = 1;
+
+    // Clear pin lookup
+    pin_lookup_.clear();
 
     spdlog::info("Cleared node graph");
 }
@@ -4242,6 +4246,9 @@ void NodeEditor::InsertPattern(const std::vector<MLNode>& nodes, const std::vect
     if (!pending_positions_.empty()) {
         pending_positions_frames_ = 3;  // Apply for 3 frames to ensure positions stick
     }
+
+    // Rebuild pin lookup after inserting pattern
+    RebuildPinLookup();
 
     spdlog::info("Inserted pattern with {} nodes and {} links (positions queued: {})",
                  nodes.size(), links.size(), pending_positions_.size());

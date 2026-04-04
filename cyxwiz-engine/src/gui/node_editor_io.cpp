@@ -633,6 +633,10 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
         next_link_id_ = max_link_id + 1;
 
         current_file_path_ = filepath;
+
+        // Rebuild pin lookup after loading graph
+        RebuildPinLookup();
+
         spdlog::info("Graph loaded from: {} ({} nodes, {} links)",
                      filepath, nodes_.size(), links_.size());
         return true;
@@ -834,6 +838,9 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
         // Update next IDs
         next_node_id_ = max_node_id + 1;
         next_link_id_ = max_link_id + 1;
+
+        // Rebuild pin lookup after loading graph
+        RebuildPinLookup();
 
         spdlog::info("Graph loaded from JSON string ({} nodes, {} links)",
                      nodes_.size(), links_.size());

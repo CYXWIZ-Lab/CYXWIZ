@@ -537,10 +537,27 @@ void NodeEditor::ShowNodeAddSearch() {
         node_add_search_.show_results = true;
     }
 
-    // Update results when text changes
+    // Debouncing logic: Start timer when text changes
+    std::string current_query(node_add_search_.search_buffer);
     if (text_changed || ImGui::IsItemEdited()) {
+        // Check if the query actually changed (prevents unnecessary updates)
+        if (current_query != node_add_search_.last_search_query_) {
+            node_add_search_.search_dirty_ = true;
+            node_add_search_.search_debounce_timer_ = 0.15f;  // 150ms debounce delay
+        }
+    }
+
+    // Decrement timer each frame
+    if (node_add_search_.search_debounce_timer_ > 0.0f) {
+        node_add_search_.search_debounce_timer_ -= ImGui::GetIO().DeltaTime;
+    }
+
+    // Execute search when timer expires and search is dirty
+    if (node_add_search_.search_dirty_ && node_add_search_.search_debounce_timer_ <= 0.0f) {
         UpdateNodeAddSearchResults();
         node_add_search_.selected_index = 0;
+        node_add_search_.search_dirty_ = false;
+        node_add_search_.last_search_query_ = current_query;
     }
 
     // Handle keyboard navigation

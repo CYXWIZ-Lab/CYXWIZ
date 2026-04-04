@@ -16,7 +16,6 @@
 #include "icons.h"
 #include "theme.h"
 #include "../core/keyboard_shortcuts.h"
-// #include "panels/dataset_panel.h"  // Phase 5: Removed
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
@@ -162,7 +161,6 @@ MainWindow::MainWindow()
     console_ = std::make_unique<Console>();
     viewport_ = std::make_unique<Viewport>();
     properties_ = std::make_unique<Properties>();
-    // training_eval_panel_ = std::make_unique<TrainingEvaluationPanel>();  // Phase 5: Removed
 
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
@@ -171,12 +169,6 @@ MainWindow::MainWindow()
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
-
-    // Phase 5: TrainingEvaluationPanel removed - local training through node-based workflow
-    // if (training_eval_panel_ && training_plot_panel_) {
-    //     training_eval_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
-    //     training_eval_panel_->SetNodeEditor(node_editor_.get());
-    // }
 
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
@@ -344,7 +336,6 @@ MainWindow::MainWindow()
 
     // Data Studio panel (Phase 1 Week 1)
     data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();
-    // Unified Canvas Phase 5: SetMainWindow removed (Pipeline Canvas moved to Node Editor)
 
     // Set NAS panel callbacks for node editor integration
     nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
@@ -401,9 +392,6 @@ MainWindow::MainWindow()
     // Connect Query Console to Node Editor for graph queries
     query_console_->SetNodeEditor(node_editor_.get());
 
-    // Phase 5: Dataset Panel removed
-    // training_eval_panel_->SetNodeEditor(node_editor_.get());
-
     // Set up training callback for Node Editor
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
@@ -442,19 +430,17 @@ MainWindow::MainWindow()
         }
     });
 
-    // Phase 5: Dataset Manager removed - redirect to Data Explorer
     toolbar_->SetImportDatasetCallback([this]() {
         if (data_explorer_panel_) {
             data_explorer_panel_->SetVisible(true);
-            spdlog::info("Opened Data Explorer panel (Dataset Manager removed)");
+            spdlog::info("Opened Data Explorer panel");
         }
     });
 
-    // Phase 5: Dataset Manager removed - redirect to Data Explorer
     toolbar_->SetCreateCustomDatasetCallback([this]() {
         if (data_explorer_panel_) {
             data_explorer_panel_->SetVisible(true);
-            spdlog::info("Opened Data Explorer panel (Dataset Manager removed)");
+            spdlog::info("Opened Data Explorer panel");
         }
     });
 
@@ -474,7 +460,6 @@ MainWindow::MainWindow()
         }
     });
 
-    // Phase 5: Dataset Manager removed - augmentation now through nodes
     toolbar_->SetAugmentDatasetCallback([this]() {
         if (node_editor_) {
             node_editor_->Show();
@@ -482,7 +467,6 @@ MainWindow::MainWindow()
         }
     });
 
-    // Phase 5: Dataset Manager removed - stats in Data Explorer
     toolbar_->SetDatasetStatisticsCallback([this]() {
         if (data_explorer_panel_) {
             data_explorer_panel_->SetVisible(true);
@@ -1611,7 +1595,6 @@ MainWindow::MainWindow()
     // Set up asset browser callback for dataset loading
     asset_browser_->SetOnDatasetLoaded([this](const std::string& path, cyxwiz::DatasetHandle handle) {
         if (handle.IsValid()) {
-            // Phase 5: Dataset Manager removed - show Data Explorer instead
             spdlog::info("Dataset loaded from Asset Browser: {}", path);
             if (data_explorer_panel_) {
                 data_explorer_panel_->SetVisible(true);
@@ -1917,8 +1900,6 @@ MainWindow::~MainWindow() {
     asset_browser_.reset();
     spdlog::info("~MainWindow: toolbar_");
     toolbar_.reset();
-    // spdlog::info("~MainWindow: training_eval_panel_");  // Phase 5: Removed
-    // training_eval_panel_.reset();
     spdlog::info("~MainWindow: properties_");
     properties_.reset();
     spdlog::info("~MainWindow: viewport_");
@@ -1990,17 +1971,6 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         job_status_panel_->SetJobManager(job_manager);
         job_manager->SetJobStatusPanel(job_status_panel_.get());
     }
-
-    // Phase 5: TrainingEvaluationPanel removed - job submission through P2P panel
-    // if (training_eval_panel_) {
-    //     training_eval_panel_->SetJobManager(job_manager);
-    //     training_eval_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
-    //     training_eval_panel_->SetNodeEditor(node_editor_.get());
-    //     training_eval_panel_->SetWalletPanel(wallet_panel_.get());
-    //     training_eval_panel_->SetTrainingStartCallback([this](const std::string& job_id) {
-    //         StartJobMonitoring(job_id);
-    //     });
-    // }
 
     // Set up callback in toolbar to show connection dialog
     if (toolbar_) {
@@ -2315,7 +2285,6 @@ void MainWindow::Render() {
     if (console_) console_->Render();
     if (viewport_) viewport_->Render();
     if (properties_) properties_->Render();
-    // if (training_eval_panel_) training_eval_panel_->Render();  // Phase 5: Removed
 
     if (show_about_dialog_) {
         ShowAboutDialog();
@@ -2557,12 +2526,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
 
     // Additional panels (less commonly used)
-    // Phase 5: TrainingEvaluationPanel removed
-    // if (training_eval_panel_) {
-    //     dock_style.RegisterPanel("Training & Evaluation", ICON_FA_GRADUATION_CAP, training_eval_panel_->GetVisiblePtr(), [this]() {
-    //         spdlog::info("Training & Evaluation panel toggled, visible={}", training_eval_panel_->IsVisible());
-    //     });
-    // }
     if (table_viewer_) {
         dock_style.RegisterPanel("Table Viewer", ICON_FA_TABLE, table_viewer_->GetVisiblePtr());
     }
@@ -2648,7 +2611,6 @@ void MainWindow::SetDefaultPanelVisibility() {
     // Users can enable these via View menu when needed
 
     // Main panels - hide by default
-    // if (training_eval_panel_) training_eval_panel_->SetVisible(false);  // Phase 5: Removed
     if (training_plot_panel_) training_plot_panel_->SetVisible(false);
     if (plot_test_control_) plot_test_control_->SetVisible(false);
     if (command_window_) command_window_->SetVisible(false);
@@ -2782,8 +2744,6 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
                  config.layers.size(), config.input_size, config.output_size);
 
-    // Phase 5: Dataset Manager removed - local training through node graph disabled
-    // Use P2P Training panel for remote training, or use DuckDB Pipeline execution mode
     spdlog::warn("Local training from node graph is temporarily disabled.");
     spdlog::info("To train your model:");
     spdlog::info("  1. Use P2P Training panel for remote training on compute nodes");
@@ -2812,7 +2772,6 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
     spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
                  config.layers.size(), config.input_size, config.output_size);
 
-    // Phase 5: Dataset Manager removed - local testing disabled
     spdlog::warn("Local testing from node graph is temporarily disabled.");
     spdlog::info("To test your model:");
     spdlog::info("  1. Use P2P Training panel for remote testing on compute nodes");

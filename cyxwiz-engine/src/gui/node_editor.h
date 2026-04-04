@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <functional>
 #include <atomic>
@@ -632,6 +633,11 @@ struct NodeAddSearchState {
     bool show_results = false;        // Show dropdown results
     int selected_index = 0;           // Currently selected result (keyboard navigation)
     bool just_activated = false;      // Set focus on next frame
+
+    // Debouncing state
+    float search_debounce_timer_ = 0.0f;      // Time remaining before search triggers
+    std::string last_search_query_;           // Last processed query
+    bool search_dirty_ = false;               // True if search needs to be updated
 };
 
 // Node implementation status for template/coming soon nodes
@@ -979,6 +985,9 @@ private:
     const NodePin* FindPinById(int pin_id) const;
     bool ValidateLink(int from_pin, int to_pin, std::string& error) const;
 
+    // Pin lookup optimization
+    void RebuildPinLookup();
+
     // File operations
     bool SaveGraph(const std::string& filepath);
     void ShowSaveDialog();
@@ -1110,6 +1119,9 @@ private:
     int next_node_id_;
     int next_pin_id_;
     int next_link_id_;
+
+    // Pin lookup optimization - O(1) pin ID -> (node*, pin*) mapping
+    std::unordered_map<int, std::pair<MLNode*, NodePin*>> pin_lookup_;
 
     // UI state
     bool show_context_menu_;

@@ -342,25 +342,12 @@ void NodeEditor::Render() {
             const NodePin* hovered_pin = nullptr;
             bool hovered_is_input = false;
 
-            for (const auto& node : nodes_) {
-                for (const auto& pin : node.inputs) {
-                    if (pin.id == hovered_pin_id) {
-                        hovered_node = &node;
-                        hovered_pin = &pin;
-                        hovered_is_input = true;
-                        break;
-                    }
-                }
-                if (hovered_pin) break;
-                for (const auto& pin : node.outputs) {
-                    if (pin.id == hovered_pin_id) {
-                        hovered_node = &node;
-                        hovered_pin = &pin;
-                        hovered_is_input = false;
-                        break;
-                    }
-                }
-                if (hovered_pin) break;
+            // O(1) pin lookup using hash map
+            auto it = pin_lookup_.find(hovered_pin_id);
+            if (it != pin_lookup_.end()) {
+                hovered_node = it->second.first;
+                hovered_pin = it->second.second;
+                hovered_is_input = hovered_pin->is_input;
             }
 
             if (hovered_node && hovered_pin) {
@@ -508,6 +495,9 @@ void NodeEditor::Render() {
 
             spdlog::info("Added node: {} (ID: {}) at position ({}, {})",
                         pending.name, node.id, position.x, position.y);
+        }
+        if (!pending_nodes_.empty()) {
+            RebuildPinLookup();  // Rebuild pin lookup after adding nodes
         }
         pending_nodes_.clear();
 
@@ -1615,6 +1605,18 @@ static std::string GetPinTypeName(PinType type) {
     if (type == PinType::Optimizer) return "Optimizer";
     if (type == PinType::Dataset) return "Dataset";
     return "Unknown";
+}
+
+void NodeEditor::RebuildPinLookup() {
+    pin_lookup_.clear();
+    for (auto& node : nodes_) {
+        for (auto& pin : node.inputs) {
+            pin_lookup_[pin.id] = std::make_pair(&node, &pin);
+        }
+        for (auto& pin : node.outputs) {
+            pin_lookup_[pin.id] = std::make_pair(&node, &pin);
+        }
+    }
 }
 
 void NodeEditor::RenderNodes() {
@@ -4334,6 +4336,9 @@ void NodeEditor::SetDatasetFromDataStudio(const std::string& dataset_name) {
 
         nodes_.push_back(new_node);
         dataset_input = &nodes_.back();
+
+        // Rebuild pin lookup after adding node
+        RebuildPinLookup();
 
         // Set position for next frame
         pending_positions_[dataset_input->id] = center_pos;

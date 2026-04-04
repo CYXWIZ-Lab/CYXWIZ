@@ -109,9 +109,13 @@ public:
      */
     size_t GetNumSamples() const { return indices_.size(); }
 
-    // Preprocessing options
+    // Preprocessing options (DEPRECATED - use SetPreprocessingConfig instead)
+    [[deprecated("Use SetPreprocessingConfig() with the new preprocessing pipeline instead")]]
     void SetNormalization(float mean, float std);
+
+    [[deprecated("Use SetPreprocessingConfig() with the new preprocessing pipeline instead")]]
     void SetOneHotEncoding(size_t num_classes);
+
     void SetFlatten(bool flatten) { flatten_ = flatten; }
 
     // New preprocessing pipeline
@@ -192,10 +196,10 @@ private:
     int mask_height_ = 0;
 
     // Preprocessing pipeline
-    struct PreprocessingConfig* preprocessing_config_ = nullptr;
-    std::vector<class NormalizationTransform*> normalization_transforms_;
-    std::vector<class ScalingTransform*> scaling_transforms_;
-    std::vector<class ImageTransform*> image_transforms_;
+    std::unique_ptr<struct PreprocessingConfig> preprocessing_config_;
+    std::vector<std::unique_ptr<class NormalizationTransform>> normalization_transforms_;
+    std::vector<std::unique_ptr<class ScalingTransform>> scaling_transforms_;
+    std::vector<std::unique_ptr<class ImageTransform>> image_transforms_;
     bool preprocessing_enabled_ = false;
 
     // Augmentation pipeline (applied BEFORE preprocessing, only on training split)
@@ -238,8 +242,12 @@ public:
 
     void ResetAll();
 
+    [[deprecated("Use SetPreprocessingConfig() with the new preprocessing pipeline instead")]]
     void SetNormalization(float mean, float std);
+
+    [[deprecated("Use SetPreprocessingConfig() with the new preprocessing pipeline instead")]]
     void SetOneHotEncoding(size_t num_classes);
+
     void SetFlatten(bool flatten);
 
 private:

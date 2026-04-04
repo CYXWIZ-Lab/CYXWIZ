@@ -128,11 +128,13 @@ int PythonDetector::ExecuteCommand(const std::string& command, std::string& outp
         return -1;
     }
 
+    // Read output from pipe
     char buffer[2048];
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         output += buffer;
     }
 
+    // Always close the pipe, even if fgets encounters an error
 #ifdef _WIN32
     int exit_code = _pclose(pipe);
 #else

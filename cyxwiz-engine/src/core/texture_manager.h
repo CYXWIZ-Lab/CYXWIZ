@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
+#include <deque>
 #include <string>
 
 namespace cyxwiz {
@@ -112,10 +114,10 @@ private:
 
     // Cache for dataset preview textures
     std::unordered_map<std::string, uint32_t> texture_cache_;
-    std::vector<std::string> cache_order_;  // LRU order
+    std::deque<std::string> cache_order_;  // LRU order - O(1) pop_front
 
-    // All managed textures
-    std::vector<uint32_t> all_textures_;
+    // All managed textures - O(1) lookup and insert
+    std::unordered_set<uint32_t> all_textures_;
 
     // Settings
     size_t max_cache_size_ = 100;

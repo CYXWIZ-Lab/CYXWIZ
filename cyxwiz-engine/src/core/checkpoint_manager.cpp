@@ -261,9 +261,14 @@ bool CheckpointManager::SaveMetadata(const fs::path& dir, const CheckpointMetada
         fs::path metadata_path = dir / "metadata.json";
         std::ofstream file(metadata_path);
         if (!file.is_open()) {
+            spdlog::error("CheckpointManager: Failed to open metadata file for writing: {}", metadata_path.string());
             return false;
         }
         file << j.dump(2);  // Pretty print with 2-space indent
+        if (!file.good()) {
+            spdlog::error("CheckpointManager: Failed to write metadata to file: {}", metadata_path.string());
+            return false;
+        }
         return true;
     } catch (const std::exception& e) {
         spdlog::error("CheckpointManager: Error saving metadata: {}", e.what());
@@ -350,8 +355,17 @@ bool CheckpointManager::SaveModelParameters(const fs::path& dir, const Sequentia
             manifest[filename] = name;
         }
 
-        std::ofstream manifest_file(model_dir / "manifest.json");
+        fs::path manifest_path = model_dir / "manifest.json";
+        std::ofstream manifest_file(manifest_path);
+        if (!manifest_file.is_open()) {
+            spdlog::error("CheckpointManager: Failed to open manifest file for writing: {}", manifest_path.string());
+            return false;
+        }
         manifest_file << manifest.dump(2);
+        if (!manifest_file.good()) {
+            spdlog::error("CheckpointManager: Failed to write manifest to file: {}", manifest_path.string());
+            return false;
+        }
 
         return true;
     } catch (const std::exception& e) {
@@ -406,6 +420,7 @@ bool CheckpointManager::SaveTensor(const fs::path& path, const Tensor& tensor) {
     try {
         std::ofstream file(path, std::ios::binary);
         if (!file.is_open()) {
+            spdlog::error("CheckpointManager: Failed to open tensor file for writing: {}", path.string());
             return false;
         }
 
@@ -415,16 +430,34 @@ bool CheckpointManager::SaveTensor(const fs::path& path, const Tensor& tensor) {
         uint32_t dtype = static_cast<uint32_t>(tensor.GetDataType());
 
         file.write(reinterpret_cast<const char*>(&ndims), sizeof(ndims));
+        if (!file.good()) {
+            spdlog::error("CheckpointManager: Failed to write tensor ndims to file: {}", path.string());
+            return false;
+        }
+
         for (size_t dim : shape) {
             uint64_t d = static_cast<uint64_t>(dim);
             file.write(reinterpret_cast<const char*>(&d), sizeof(d));
+            if (!file.good()) {
+                spdlog::error("CheckpointManager: Failed to write tensor shape to file: {}", path.string());
+                return false;
+            }
         }
+
         file.write(reinterpret_cast<const char*>(&dtype), sizeof(dtype));
+        if (!file.good()) {
+            spdlog::error("CheckpointManager: Failed to write tensor dtype to file: {}", path.string());
+            return false;
+        }
 
         // Write data
         const float* data = tensor.Data<float>();
         size_t num_elements = tensor.NumElements();
         file.write(reinterpret_cast<const char*>(data), num_elements * sizeof(float));
+        if (!file.good()) {
+            spdlog::error("CheckpointManager: Failed to write tensor data to file: {}", path.string());
+            return false;
+        }
 
         return true;
     } catch (const std::exception& e) {
