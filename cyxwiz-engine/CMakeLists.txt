@@ -81,6 +81,9 @@ set(ENGINE_SOURCES
     src/core/python_detector.cpp
     src/core/window_manager.cpp
     src/core/data_registry.cpp
+    src/core/data_registry_config.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_base.cpp
     src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/hdf5_dataset.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -99,6 +102,7 @@ set(ENGINE_SOURCES
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/annotation_manager.cpp
+    src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
     src/core/graph_compiler.cpp
@@ -110,6 +114,8 @@ set(ENGINE_SOURCES
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
+    # Node executors (shared logic for nodes and panels)
+    src/core/node_executors/kmeans_executor.cpp
     # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
@@ -158,14 +164,18 @@ set(ENGINE_SOURCES
     src/gui/node_editor_shape_inference.cpp
     src/gui/node_editor_skip.cpp
     src/gui/node_editor_add_search.cpp
+    src/gui/node_editor_icons.cpp
     src/gui/node_documentation.cpp
     src/gui/console.cpp
     src/gui/viewport.cpp
     src/gui/properties.cpp
+    src/gui/node_config_dialog.cpp
+    src/gui/data_input_dialog.cpp
     src/gui/panels/toolbar.cpp
     src/gui/panels/toolbar_file_menu.cpp
     src/gui/panels/toolbar_edit_menu.cpp
     src/gui/panels/toolbar_view_menu.cpp
+    src/gui/panels/toolbar_profile_menu.cpp
     src/gui/panels/toolbar_other_menus.cpp
     src/gui/panels/toolbar_tools_menu.cpp
     src/gui/panels/asset_browser.cpp
@@ -185,19 +195,17 @@ set(ENGINE_SOURCES
     src/gui/dialogs/python_setup_wizard.cpp
     src/gui/dialogs/project_selection_dialog.cpp
     src/gui/dialogs/start_page.cpp
-    src/gui/panels/dataset_panel.cpp
-    # Removed tabs (redundant with Data Studio):
-    # src/gui/panels/dataset_panel_preprocessing.cpp  # Preprocessing moved to Data Studio
-    # src/gui/panels/dataset_panel_datapipeline.cpp   # Pipeline moved to Data Studio
-    # src/gui/panels/dataset_panel_prepare.cpp        # Prepare moved to Data Studio
-    # Kept tabs (unique to Training & Evaluation):
-    src/gui/panels/dataset_panel_interactive.cpp
-    src/gui/panels/dataset_panel_evaluate.cpp
-    src/gui/panels/dataset_panel_export.cpp
-    # Interactive annotation tools (Phase 4)
+    # Phase 5: Dataset Manager removed - functionality moved to node-based workflow
+    # src/gui/panels/dataset_panel.cpp
+    # src/gui/panels/dataset_panel_interactive.cpp
+    # src/gui/panels/dataset_panel_evaluate.cpp
+    # src/gui/panels/dataset_panel_export.cpp
+    # Interactive annotation tools (Phase 4) - kept for future Annotation Editor panel
     src/gui/annotation/annotation_tools.cpp
     src/gui/annotation/grabcut_editor.cpp
     src/gui/annotation/watershed_editor.cpp
+    # Annotation Editor Panel (Phase 2 - UI Consolidation)
+    src/gui/panels/annotation_editor_panel.cpp
     src/gui/panels/task_progress_panel.cpp
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp
@@ -324,6 +332,8 @@ set(ENGINE_SOURCES
     src/network/datastream_client.cpp
     src/core/cloud_data_registry.cpp
     src/gui/panels/cloud_browser.cpp
+    src/gui/panels/node_browser_panel.cpp  # Node Browser: KNIME-style node palette
+    src/gui/panels/node_info_panel.cpp     # Node Info: Context-sensitive documentation
     src/gui/panels/cloud_dataset_manager.cpp
     src/gui/panels/cloud_upload_dialog.cpp
     src/gui/panels/trust_badge.cpp
@@ -361,6 +371,8 @@ set(ENGINE_HEADERS
     src/core/arrow_converters.h
     src/core/duckdb_connector.h
     src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/node_metadata.h       # Node Browser: node metadata structures
+    src/core/node_metadata_registry.h  # Node Browser: metadata registry
     src/core/texture_manager.h
     src/core/async_task_manager.h
     src/core/graph_compiler.h
@@ -368,6 +380,9 @@ set(ENGINE_HEADERS
     src/core/training_executor.h
     src/core/training_manager.h
     src/core/test_executor.h
+    src/core/node_executors/node_executor.h
+    src/core/node_executors/kmeans_executor.h
+    src/core/node_executors/node_executor_factory.h
     src/core/test_manager.h
     src/core/checkpoint_manager.h
     src/core/model_format.h
@@ -401,7 +416,7 @@ set(ENGINE_HEADERS
     src/gui/dialogs/python_setup_wizard.h
     src/gui/dialogs/project_selection_dialog.h
     src/gui/dialogs/start_page.h
-    src/gui/panels/dataset_panel.h
+    # src/gui/panels/dataset_panel.h  # Phase 5: Removed
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.h
     src/gui/annotation/grabcut_editor.h
@@ -518,6 +533,8 @@ set(ENGINE_HEADERS
     src/network/datastream_client.h
     src/core/cloud_data_registry.h
     src/gui/panels/cloud_browser.h
+    src/gui/panels/node_browser_panel.h  # Node Browser: KNIME-style node palette
+    src/gui/panels/node_info_panel.h     # Node Info: Context-sensitive documentation
     src/gui/panels/cloud_dataset_manager.h
     src/gui/panels/cloud_upload_dialog.h
     src/gui/panels/trust_badge.h
@@ -871,7 +888,9 @@ add_executable(test_arrow_integration
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/data_registry.cpp
-    src/core/annotation_manager.cpp
+    src/core/data_registry_config.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_base.cpp
 )
 
 target_include_directories(test_arrow_integration PRIVATE

@@ -99,8 +99,9 @@ Plot3D::SurfaceData Plot3DGenerator::GenerateSphere(
             surface.y_grid[j] = phi;
 
             // Sphere parametric equations
-            double x = radius * std::sin(phi) * std::cos(theta);
-            double y = radius * std::sin(phi) * std::sin(theta);
+            // Note: x,y computed for future 3D rendering but only z stored currently
+            [[maybe_unused]] double x = radius * std::sin(phi) * std::cos(theta);
+            [[maybe_unused]] double y = radius * std::sin(phi) * std::sin(theta);
             double z = radius * std::cos(phi);
 
             surface.z_values[i * phi_steps + j] = z;
@@ -131,8 +132,9 @@ Plot3D::SurfaceData Plot3DGenerator::GenerateTorus(
             surface.y_grid[j] = v;
 
             // Torus parametric equations
-            double x = (major_radius + minor_radius * std::cos(v)) * std::cos(u);
-            double y = (major_radius + minor_radius * std::cos(v)) * std::sin(u);
+            // Note: x,y computed for future 3D rendering but only z stored currently
+            [[maybe_unused]] double x = (major_radius + minor_radius * std::cos(v)) * std::cos(u);
+            [[maybe_unused]] double y = (major_radius + minor_radius * std::cos(v)) * std::sin(u);
             double z = minor_radius * std::sin(v);
 
             surface.z_values[i * v_steps + j] = z;

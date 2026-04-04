@@ -81,16 +81,36 @@ void NodeEditor::InitializeSearchableNodes() {
 
     all_searchable_nodes_.clear();
 
-    // Helper lambda to add a node
+    // Helper lambda to add an implemented node
     auto addNode = [this](NodeType type, const std::string& name, const std::string& category, const std::string& keywords = "") {
-        all_searchable_nodes_.push_back({type, name, category, keywords});
+        SearchableNode node;
+        node.type = type;
+        node.name = name;
+        node.category = category;
+        node.keywords = keywords;
+        node.status = NodeImplementationStatus::Implemented;
+        all_searchable_nodes_.push_back(std::move(node));
     };
 
-    // Output
+    // Helper lambda to add a template/coming soon node
+    auto addTemplateNode = [this](const std::string& name, const std::string& category, const std::string& keywords, const std::string& description, const std::string& tooltip = "Planned for future release") {
+        SearchableNode node;
+        node.type = NodeType::Unknown;  // Template nodes use Unknown type
+        node.name = name;
+        node.category = category;
+        node.keywords = keywords;
+        node.status = NodeImplementationStatus::Template;
+        node.description = description;
+        node.tooltip = tooltip;
+        all_searchable_nodes_.push_back(std::move(node));
+    };
+
+    // Smart I/O Nodes (Universal - DataInput handles both files and datasets)
+    addNode(NodeType::DataInput, "Data Input", "Input/Output", "csv excel json parquet hdf5 load import read file data source input dataset mnist cifar imagenet huggingface kaggle");
+    addNode(NodeType::DataOutput, "Data Output", "Input/Output", "csv excel json parquet hdf5 save export write file data output");
     addNode(NodeType::Output, "Output", "Input/Output", "data out end result");
 
-    // Data Pipeline
-    addNode(NodeType::DatasetInput, "DatasetInput", "Data Pipeline", "dataset mnist cifar load input data");
+    // Data Pipeline (DatasetInput consolidated into DataInput)
     addNode(NodeType::DataLoader, "DataLoader", "Data Pipeline", "batch iterator shuffle loader");
     addNode(NodeType::Augmentation, "Augmentation", "Data Pipeline", "transform augment preprocess");
     addNode(NodeType::DataSplit, "DataSplit", "Data Pipeline", "train val test split partition");
@@ -243,6 +263,39 @@ void NodeEditor::InitializeSearchableNodes() {
     // Composite
     addNode(NodeType::Subgraph, "Subgraph", "Composite", "subgraph module encapsulate block");
 
+    // Visualization - Basic 2D Plots
+    addNode(NodeType::LinePlot, "Line Plot", "Visualization", "line plot chart graph xy");
+    addNode(NodeType::ScatterPlot, "Scatter Plot", "Visualization", "scatter plot points xy data");
+    addNode(NodeType::BarChart, "Bar Chart", "Visualization", "bar chart histogram category");
+    addNode(NodeType::Histogram, "Histogram", "Visualization", "histogram distribution frequency bins");
+    addNode(NodeType::PieChart, "Pie Chart", "Visualization", "pie chart percentage proportion");
+    addNode(NodeType::AreaPlot, "Area Plot", "Visualization", "area fill between stacked");
+
+    // Visualization - Advanced 2D Plots
+    addNode(NodeType::BoxPlot, "Box Plot", "Visualization", "box plot whisker quartile statistics");
+    addNode(NodeType::ViolinPlot, "Violin Plot", "Visualization", "violin plot distribution density");
+    addNode(NodeType::ErrorBarPlot, "Error Bar Plot", "Visualization", "error bar uncertainty confidence");
+    addNode(NodeType::StepPlot, "Step Plot", "Visualization", "step plot stairs discrete");
+    addNode(NodeType::HexbinPlot, "Hexbin Plot", "Visualization", "hexbin hexagonal binning density");
+
+    // Visualization - Heatmaps & Matrices
+    addNode(NodeType::Heatmap, "Heatmap", "Visualization", "heatmap matrix color intensity");
+    addNode(NodeType::ContourPlot, "Contour Plot", "Visualization", "contour level isolines topology");
+    addNode(NodeType::Imshow, "Image Display", "Visualization", "imshow image display matrix pixels");
+
+    // Visualization - 3D Plots
+    addNode(NodeType::Plot3D, "3D Line Plot", "Visualization", "3d line plot xyz trajectory");
+    addNode(NodeType::Scatter3D, "3D Scatter Plot", "Visualization", "3d scatter points cloud xyz");
+    addNode(NodeType::SurfacePlot, "Surface Plot", "Visualization", "surface plot 3d mesh terrain");
+    addNode(NodeType::WireframePlot, "Wireframe Plot", "Visualization", "wireframe 3d mesh grid");
+
+    // Visualization - Specialized Plots
+    addNode(NodeType::PolarPlot, "Polar Plot", "Visualization", "polar plot radial angle circular");
+    addNode(NodeType::QuiverPlot, "Vector Field", "Visualization", "quiver vector field arrows flow");
+    addNode(NodeType::StreamPlot, "Stream Plot", "Visualization", "streamplot streamlines flow field");
+    addNode(NodeType::SpectrogramPlot, "Spectrogram", "Visualization", "spectrogram frequency time audio");
+    addNode(NodeType::NetworkGraph, "Network Graph", "Visualization", "network graph nodes edges connections");
+
     // Plugin-provided nodes
     try {
         auto plugin_nodes = cyxwiz::plugin::PluginNodeRegistry::Instance().GetAllNodeTypesWithNames();
@@ -260,6 +313,98 @@ void NodeEditor::InitializeSearchableNodes() {
     } catch (...) {
         spdlog::warn("Unknown error loading plugin nodes into search");
     }
+
+    // ===== TEMPLATE NODES (Coming Soon) =====
+
+    // Database Connectors
+    addTemplateNode("PostgreSQL Connector", "Database", "postgresql postgres sql database connect", "Connect to PostgreSQL database server", "Requires libpq - planned for Phase 2");
+    addTemplateNode("MySQL Connector", "Database", "mysql sql database connect", "Connect to MySQL database server", "Requires mysql-connector-c++");
+    addTemplateNode("SQLite Connector", "Database", "sqlite sql database local", "Connect to local SQLite database", "Planned for Phase 2");
+    addTemplateNode("MongoDB Connector", "Database", "mongodb nosql database document", "Connect to MongoDB database", "Requires mongocxx driver");
+    addTemplateNode("Oracle Connector", "Database", "oracle sql database enterprise", "Connect to Oracle database", "Requires Oracle client libraries");
+    addTemplateNode("MS SQL Connector", "Database", "mssql sqlserver microsoft database", "Connect to Microsoft SQL Server", "Requires ODBC driver");
+    addTemplateNode("Snowflake Connector", "Database", "snowflake cloud data warehouse", "Connect to Snowflake data warehouse", "Requires Snowflake SDK");
+    addTemplateNode("DB Query Executor", "Database", "sql query execute database", "Execute SQL queries on database connection", "Depends on connector nodes");
+    addTemplateNode("DB Table Writer", "Database", "sql write insert database table", "Write table data to database", "Depends on connector nodes");
+
+    // Cloud Storage
+    addTemplateNode("AWS S3 Reader", "Cloud Storage", "aws s3 amazon cloud read", "Read files from AWS S3 bucket", "Requires aws-sdk-cpp");
+    addTemplateNode("AWS S3 Writer", "Cloud Storage", "aws s3 amazon cloud write upload", "Write files to AWS S3 bucket", "Requires aws-sdk-cpp");
+    addTemplateNode("Azure Blob Reader", "Cloud Storage", "azure blob microsoft cloud read", "Read from Azure Blob Storage", "Requires azure-storage-cpp");
+    addTemplateNode("Azure Blob Writer", "Cloud Storage", "azure blob microsoft cloud write", "Write to Azure Blob Storage", "Requires azure-storage-cpp");
+    addTemplateNode("Google Cloud Storage", "Cloud Storage", "gcs google cloud storage", "Read/write Google Cloud Storage", "Requires google-cloud-cpp");
+    addTemplateNode("Google Drive Connector", "Cloud Storage", "google drive cloud files", "Access files from Google Drive", "Requires Google OAuth flow");
+    addTemplateNode("Google Sheets Connector", "Cloud Storage", "google sheets spreadsheet", "Read/write Google Sheets", "Requires Google OAuth flow");
+
+    // External ML Services
+    addTemplateNode("Google AutoML", "ML Services", "google automl vertex ai cloud", "Train models with Google Vertex AI", "Requires Vertex AI SDK");
+    addTemplateNode("Azure AutoML", "ML Services", "azure automl microsoft cloud", "Train models with Azure ML", "Requires Azure ML SDK");
+    addTemplateNode("AWS SageMaker", "ML Services", "aws sagemaker amazon cloud", "Train models with SageMaker", "Requires AWS SDK");
+    addTemplateNode("OpenAI Embeddings", "ML Services", "openai embeddings api gpt", "Generate embeddings via OpenAI API", "REST API integration");
+    addTemplateNode("HuggingFace Hub", "ML Services", "huggingface transformers models download", "Download models from HuggingFace Hub", "Requires huggingface_hub");
+    addTemplateNode("MLflow Tracker", "ML Services", "mlflow experiment tracking", "Log experiments to MLflow", "Requires MLflow SDK");
+    addTemplateNode("Weights & Biases", "ML Services", "wandb weights biases tracking", "Log experiments to W&B", "Requires wandb SDK");
+
+    // Workflow Control
+    addTemplateNode("Loop Start", "Workflow", "loop start iterate begin", "Begin a loop iteration block", "Requires state management");
+    addTemplateNode("Loop End", "Workflow", "loop end iterate finish", "End a loop iteration block", "Requires state management");
+    addTemplateNode("Counting Loop", "Workflow", "loop count iterate fixed", "Loop for fixed number of iterations", "Requires state management");
+    addTemplateNode("IF Switch", "Workflow", "if switch conditional branch", "Conditional branching node", "Planned for Phase 3");
+    addTemplateNode("CASE Switch", "Workflow", "case switch multi branch", "Multi-way conditional branching", "Planned for Phase 3");
+    addTemplateNode("Try/Catch", "Workflow", "try catch error handling exception", "Error handling wrapper", "Planned for Phase 3");
+    addTemplateNode("Breakpoint", "Workflow", "breakpoint debug pause", "Debug pause point", "Planned for Phase 3");
+
+    // Reporting
+    addTemplateNode("PDF Report Writer", "Reporting", "pdf report export document", "Export workflow to PDF report", "Requires libharu or PDFium");
+    addTemplateNode("HTML Report Writer", "Reporting", "html report export web", "Export workflow to HTML report", "Template engine");
+    addTemplateNode("PowerPoint Writer", "Reporting", "pptx powerpoint export slides", "Export to PowerPoint presentation", "Requires libpptx");
+    addTemplateNode("Word Document Writer", "Reporting", "docx word export document", "Export to Word document", "Requires libdocx");
+    addTemplateNode("Dashboard Creator", "Reporting", "dashboard interactive html", "Create interactive HTML dashboard", "HTML/JS generation");
+
+    // Widgets (Interactive Inputs)
+    addTemplateNode("String Widget", "Widgets", "string text input widget interactive", "Interactive text input widget", "Planned for Phase 2");
+    addTemplateNode("Integer Widget", "Widgets", "integer number input widget interactive", "Interactive number input widget", "Planned for Phase 2");
+    addTemplateNode("Selection Widget", "Widgets", "selection dropdown combo widget", "Interactive dropdown selection", "Planned for Phase 2");
+    addTemplateNode("File Upload Widget", "Widgets", "file upload picker widget", "Interactive file picker widget", "Planned for Phase 2");
+    addTemplateNode("Date/Time Widget", "Widgets", "date time picker widget calendar", "Interactive date/time picker", "Planned for Phase 3");
+    addTemplateNode("Slider Widget", "Widgets", "slider range widget interactive", "Interactive range slider", "Planned for Phase 2");
+    addTemplateNode("Credentials Widget", "Widgets", "credentials password secure widget", "Secure credentials input", "Planned for Phase 3");
+
+    // Advanced Visualization
+    addTemplateNode("Interactive Dashboard", "Visualization", "dashboard interactive web charts", "Web-based interactive charts", "Embedded WebView");
+    addTemplateNode("Geospatial Map", "Visualization", "map geo spatial location", "Map-based visualization", "Requires Mapbox or Leaflet");
+    addTemplateNode("Sankey Diagram", "Visualization", "sankey flow diagram", "Flow visualization diagram", "Custom renderer");
+    addTemplateNode("Treemap", "Visualization", "treemap hierarchical rectangles", "Hierarchical rectangle visualization", "Custom renderer");
+
+    // Big Data & Streaming
+    addTemplateNode("Apache Spark Connector", "Big Data", "spark distributed processing hadoop", "Connect to Apache Spark", "Enterprise feature");
+    addTemplateNode("Dask Connector", "Big Data", "dask python parallel distributed", "Connect to Dask for parallel processing", "Requires Dask");
+    addTemplateNode("Ray Connector", "Big Data", "ray distributed ml scaling", "Connect to Ray for distributed ML", "Requires Ray");
+    addTemplateNode("Kafka Consumer", "Big Data", "kafka streaming consumer message", "Read from Kafka stream", "Requires librdkafka");
+    addTemplateNode("Kafka Producer", "Big Data", "kafka streaming producer message", "Write to Kafka stream", "Requires librdkafka");
+
+    // Deep Learning Advanced
+    addTemplateNode("SHAP Explainer", "Explainability", "shap feature importance explain", "SHAP feature importance analysis", "Python bridge required");
+    addTemplateNode("LIME Explainer", "Explainability", "lime local interpretability explain", "LIME local interpretability", "Python bridge required");
+    addTemplateNode("Hyperband Tuner", "AutoML", "hyperband hyperparameter tuning", "Hyperband hyperparameter search", "Algorithm implementation");
+    addTemplateNode("Neural Architecture Search", "AutoML", "nas architecture search auto", "Automatic architecture search", "NAS framework required");
+    addTemplateNode("Federated Learning", "Privacy", "federated learning privacy distributed", "Privacy-preserving ML training", "FL framework required");
+    addTemplateNode("Model Quantizer", "Optimization", "quantize compress model int8", "Model quantization/compression", "TensorRT or ONNX Runtime");
+
+    // Model I/O
+    addTemplateNode("Model Reader", "Model I/O", "model load read import weights", "Load trained model from file", "Planned for Phase 2");
+    addTemplateNode("Model Writer", "Model I/O", "model save write export weights", "Save trained model to file", "Planned for Phase 2");
+    addTemplateNode("Checkpoint Saver", "Model I/O", "checkpoint save training resume", "Save training checkpoint", "Planned for Phase 2");
+    addTemplateNode("Checkpoint Loader", "Model I/O", "checkpoint load resume training", "Resume training from checkpoint", "Planned for Phase 2");
+
+    // JSON/XML Processing
+    addTemplateNode("JSON Path", "JSON/XML", "jsonpath extract query json", "Extract data using JSONPath", "JSON library integration");
+    addTemplateNode("JSON to Table", "JSON/XML", "json flatten table convert", "Flatten JSON to table format", "Planned for Phase 2");
+    addTemplateNode("Table to JSON", "JSON/XML", "table json convert serialize", "Convert table to JSON", "Planned for Phase 2");
+    addTemplateNode("XML Reader", "JSON/XML", "xml read parse file", "Read XML file", "Planned for Phase 2");
+    addTemplateNode("XPath", "JSON/XML", "xpath extract query xml", "Extract data using XPath", "XML library integration");
+    addTemplateNode("JSON Schema Validator", "JSON/XML", "json schema validate", "Validate JSON against schema", "Planned for Phase 2");
+
 
     searchable_nodes_initialized_ = true;
 }
@@ -392,10 +537,27 @@ void NodeEditor::ShowNodeAddSearch() {
         node_add_search_.show_results = true;
     }
 
-    // Update results when text changes
+    // Debouncing logic: Start timer when text changes
+    std::string current_query(node_add_search_.search_buffer);
     if (text_changed || ImGui::IsItemEdited()) {
+        // Check if the query actually changed (prevents unnecessary updates)
+        if (current_query != node_add_search_.last_search_query_) {
+            node_add_search_.search_dirty_ = true;
+            node_add_search_.search_debounce_timer_ = 0.15f;  // 150ms debounce delay
+        }
+    }
+
+    // Decrement timer each frame
+    if (node_add_search_.search_debounce_timer_ > 0.0f) {
+        node_add_search_.search_debounce_timer_ -= ImGui::GetIO().DeltaTime;
+    }
+
+    // Execute search when timer expires and search is dirty
+    if (node_add_search_.search_dirty_ && node_add_search_.search_debounce_timer_ <= 0.0f) {
         UpdateNodeAddSearchResults();
         node_add_search_.selected_index = 0;
+        node_add_search_.search_dirty_ = false;
+        node_add_search_.last_search_query_ = current_query;
     }
 
     // Handle keyboard navigation
@@ -418,24 +580,29 @@ void NodeEditor::ShowNodeAddSearch() {
             // Add the selected node
             SearchableNode* selected = filtered_nodes_[node_add_search_.selected_index].second;
 
-            // Set position for new node (center of visible canvas)
-            ImVec2 editor_pan = ImNodes::EditorContextGetPanning();
-            context_menu_pos_ = ImVec2(
-                canvas_size.x / 2 - editor_pan.x,
-                canvas_size.y / 2 - editor_pan.y
-            );
+            // Block template nodes - they're not implemented yet
+            if (selected->status == NodeImplementationStatus::Template) {
+                // Don't add template nodes - just show they're not available
+            } else {
+                // Set position for new node (center of visible canvas)
+                ImVec2 editor_pan = ImNodes::EditorContextGetPanning();
+                context_menu_pos_ = ImVec2(
+                    canvas_size.x / 2 - editor_pan.x,
+                    canvas_size.y / 2 - editor_pan.y
+                );
 
-            // For plugin nodes, pass qualified name so CreateNode can look up the registry
-            if (selected->type == NodeType::PluginCustom && !selected->plugin_qualified_name.empty())
-                AddNode(selected->type, selected->plugin_qualified_name);
-            else
-                AddNode(selected->type, selected->name);
+                // For plugin nodes, pass qualified name so CreateNode can look up the registry
+                if (selected->type == NodeType::PluginCustom && !selected->plugin_qualified_name.empty())
+                    AddNode(selected->type, selected->plugin_qualified_name);
+                else
+                    AddNode(selected->type, selected->name);
 
-            // Reset search state
-            node_add_search_.show_results = false;
-            node_add_search_.is_active = false;
-            node_add_search_.search_buffer[0] = '\0';
-            UpdateNodeAddSearchResults();
+                // Reset search state
+                node_add_search_.show_results = false;
+                node_add_search_.is_active = false;
+                node_add_search_.search_buffer[0] = '\0';
+                UpdateNodeAddSearchResults();
+            }
         }
     }
 
@@ -493,10 +660,11 @@ void NodeEditor::ShowNodeAddSearch() {
                     );
                 }
 
-                // Handle click
+                // Handle click - block template nodes
+                bool is_template = (node->status == NodeImplementationStatus::Template);
                 ImGui::InvisibleButton(("node_result_" + std::to_string(i)).c_str(), item_size);
-                if (ImGui::IsItemClicked()) {
-                    // Add the clicked node
+                if (ImGui::IsItemClicked() && !is_template) {
+                    // Add the clicked node (not template)
                     ImVec2 editor_pan = ImNodes::EditorContextGetPanning();
                     context_menu_pos_ = ImVec2(
                         canvas_size.x / 2 - editor_pan.x,
@@ -513,11 +681,25 @@ void NodeEditor::ShowNodeAddSearch() {
                 }
                 if (ImGui::IsItemHovered()) {
                     node_add_search_.selected_index = static_cast<int>(i);
+                    // Show tooltip for template nodes
+                    if (is_template && !node->tooltip.empty()) {
+                        ImGui::SetTooltip("%s", node->tooltip.c_str());
+                    }
                 }
 
-                // Draw node name and category
+                // Draw node name and category (with Coming Soon badge for templates)
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 4));
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", node->name.c_str());
+                if (is_template) {
+                    // Grayed out name for template nodes
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", node->name.c_str());
+                    // Add "Coming Soon" badge
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.6f, 0.2f, 1.0f));
+                    ImGui::TextUnformatted(" [Coming Soon]");
+                    ImGui::PopStyleColor();
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", node->name.c_str());
+                }
 
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 18));
                 ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.6f, 1.0f), "%s", node->category.c_str());
@@ -545,3 +727,4 @@ void NodeEditor::ShowNodeAddSearch() {
 }
 
 } // namespace gui
+

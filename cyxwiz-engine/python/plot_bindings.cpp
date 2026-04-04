@@ -153,7 +153,7 @@ std::string plot_scatter(const py::object& x_data, const py::object& y_data,
  * Convenience function: Create histogram
  */
 std::string plot_histogram(const py::object& data,
-                          int bins = 10,
+                          [[maybe_unused]] int bins = 10,
                           const std::string& title = "Histogram",
                           const std::string& x_label = "Value",
                           const std::string& y_label = "Frequency") {

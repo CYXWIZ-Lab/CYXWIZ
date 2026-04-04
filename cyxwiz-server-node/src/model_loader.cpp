@@ -11,8 +11,17 @@
 #ifdef CYXWIZ_HAS_ONNX
 #include <onnxruntime_cxx_api.h>
 #ifdef CYXWIZ_PLATFORM_WINDOWS
-#include <codecvt>
-#include <locale>
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+// Helper to convert UTF-8 to wide string (replaces deprecated codecvt)
+static std::wstring Utf8ToWide(const std::string& utf8) {
+    if (utf8.empty()) return {};
+    int size = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+    std::wstring wide(size - 1, 0);
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, &wide[0], size);
+    return wide;
+}
 #endif
 #endif
 
@@ -249,8 +258,7 @@ bool ONNXLoader::Load(const std::string& model_path) {
         // Create session
 #ifdef CYXWIZ_PLATFORM_WINDOWS
         // Windows: convert path to wide string for ONNX Runtime
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-        std::wstring wide_path = converter.from_bytes(model_path);
+        std::wstring wide_path = Utf8ToWide(model_path);
         impl_->session = std::make_unique<Ort::Session>(
             *impl_->env, wide_path.c_str(), *impl_->session_options);
 #else
@@ -430,8 +438,7 @@ bool ONNXLoader::Infer(
 
                 // Create new session with CPU only
 #ifdef CYXWIZ_PLATFORM_WINDOWS
-                std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-                std::wstring wide_path = converter.from_bytes(impl_->model_path);
+                std::wstring wide_path = Utf8ToWide(impl_->model_path);
                 impl_->session = std::make_unique<Ort::Session>(
                     *impl_->env, wide_path.c_str(), *impl_->session_options);
 #else
@@ -551,7 +558,7 @@ public:
         if (!model) return false;
 
         const llama_vocab* vocab = llama_model_get_vocab(model);
-        vocab_size = llama_n_vocab(vocab);
+        vocab_size = llama_vocab_n_tokens(vocab);
         embedding_dim = llama_model_n_embd(model);
 
         // Try to detect embedding model from metadata
@@ -822,7 +829,7 @@ bool GGUFLoader::InferTextGeneration(
         llama_token new_token = llama_sampler_sample(impl_->sampler, impl_->ctx, -1);
 
         // Check for end of generation
-        if (llama_token_is_eog(vocab, new_token)) {
+        if (llama_vocab_is_eog(vocab, new_token)) {
             break;
         }
 
@@ -964,7 +971,7 @@ bool GGUFLoader::InferTokens(
     for (int i = 0; i < impl_->max_tokens; ++i) {
         llama_token new_token = llama_sampler_sample(impl_->sampler, impl_->ctx, -1);
 
-        if (llama_token_is_eog(vocab, new_token)) {
+        if (llama_vocab_is_eog(vocab, new_token)) {
             break;
         }
 

@@ -15,12 +15,13 @@ class NodeEditor;
 class Console;
 class Viewport;
 class Properties;
-class TrainingEvaluationPanel;
+// class TrainingEvaluationPanel;  // Phase 5: Removed - functionality moved to node-based workflow
 class WalletPanel;
 class CustomNodeEditorPanel;
 class ThemeEditorPanel;
 class CloudBrowserPanel;
 class CloudDatasetManagerPanel;
+class NodeBrowserPanel;
 struct MLNode;
 struct NodeLink;
 
@@ -35,6 +36,7 @@ class CommandWindowPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
 class DataExplorerPanel;
+class AnnotationEditorPanel;
 class VisualizationPanel;
 class ConnectionDialog;
 class JobStatusPanel;
@@ -128,6 +130,8 @@ class RegexTesterPanel;
 class PluginManagerPanel;
 // Data Studio panel (Phase 1 Week 1)
 class DataStudioPanel;
+// Node Info panel (Phase 2)
+class NodeInfoPanel;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -225,7 +229,7 @@ private:
     std::unique_ptr<Console> console_;
     std::unique_ptr<Viewport> viewport_;
     std::unique_ptr<Properties> properties_;
-    std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;
+    // std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;  // Phase 5: Removed
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
@@ -236,6 +240,7 @@ private:
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
     std::unique_ptr<cyxwiz::DataExplorerPanel> data_explorer_panel_;
+    std::unique_ptr<cyxwiz::AnnotationEditorPanel> annotation_editor_panel_;
     std::unique_ptr<cyxwiz::VisualizationPanel> visualization_panel_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
@@ -350,6 +355,8 @@ private:
     
     // Cloud panels (DataStream)
     std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
+    std::unique_ptr<gui::NodeBrowserPanel> node_browser_panel_;
+    std::unique_ptr<cyxwiz::NodeInfoPanel> node_info_panel_;
     std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
 
     // Plugin Manager

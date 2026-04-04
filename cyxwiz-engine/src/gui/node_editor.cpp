@@ -16,7 +16,9 @@
 #include "../core/rl_script_generator.h"
 #include "../scripting/scripting_engine.h"
 #include "../plugin/registries/plugin_node_registry.h"
+#include "../core/node_metadata_registry.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -36,6 +38,32 @@
 #endif
 
 namespace gui {
+
+// Forward declaration (used in Render before definition)
+static std::string GetPinTypeName(PinType type);
+
+void NodeEditor::SetWorkflowDescription(const std::string& desc) {
+    strncpy(workflow_description_, desc.c_str(), sizeof(workflow_description_) - 1);
+    workflow_description_[sizeof(workflow_description_) - 1] = '\0';
+}
+
+void NodeEditor::AddAnnotation() {
+    // Add annotation at center of visible area
+    ImVec2 center_pos = ImVec2(400.0f, 300.0f);  // Default position
+    AddAnnotationAt(center_pos);
+}
+
+void NodeEditor::AddAnnotationAt(const ImVec2& position) {
+    CanvasAnnotation annotation;
+    annotation.id = next_annotation_id_++;
+    annotation.title = "Note";
+    annotation.content = "Enter description here...";
+    annotation.position = position;
+    annotation.size = ImVec2(200.0f, 100.0f);
+    annotation.color = IM_COL32(255, 255, 200, 255);  // Yellow
+    annotation.is_minimized = false;
+    annotations_.push_back(annotation);
+}
 
 NodeEditor::NodeEditor()
     : show_window_(true),
@@ -70,209 +98,105 @@ NodeEditor::NodeEditor()
     // Initialize shape inference engine
     shape_inference_ = std::make_unique<ShapeInferenceEngine>();
 
-    // Create a Linear Attention Transformer showcase model
-    // This demonstrates the O(n) Linear Attention node for efficient sequence processing
-    // Architecture: Embedding -> PositionalEncoding -> LinearAttention -> LayerNorm -> FFN -> Output
+    // Create ML Training Pipeline showcase
+    // Demonstrates: Complete machine learning workflow with data preparation, model, loss, and optimizer
+    //
+    // Flow: DataInput → DataSplit → Normalize → Dense(128) → ReLU → Dense(10) → MSELoss → Adam → Output
 
-    // ========== INPUT PIPELINE (Left side) ==========
+    // ========== DATA PREPARATION ==========
 
-    // 1. Dataset Input - Sequence data (e.g., text tokens)
-    MLNode dataset_input = CreateNode(NodeType::DatasetInput, "Sequence Data");
-    dataset_input.parameters["dataset_name"] = "";
-    dataset_input.parameters["split"] = "train";
-    nodes_.push_back(dataset_input);
-    ImNodes::SetNodeGridSpacePos(dataset_input.id, ImVec2(50.0f, 200.0f));
+    // 1. Data Input - Load dataset
+    MLNode data_input = CreateNode(NodeType::DataInput, "Data Input");
+    data_input.parameters["format"] = "csv";
+    data_input.parameters["file_path"] = "dataset.csv";
+    nodes_.push_back(data_input);
+    ImNodes::SetNodeGridSpacePos(data_input.id, ImVec2(50.0f, 200.0f));
 
-    // 2. Embedding - Convert token IDs to vectors
-    MLNode embedding = CreateNode(NodeType::Embedding, "Token Embedding");
-    embedding.parameters["num_embeddings"] = "30000";  // Vocabulary size
-    embedding.parameters["embedding_dim"] = "512";
-    nodes_.push_back(embedding);
-    ImNodes::SetNodeGridSpacePos(embedding.id, ImVec2(250.0f, 200.0f));
+    // 2. Data Split - Split into train/val/test
+    MLNode data_split = CreateNode(NodeType::DataSplit, "Train/Test Split");
+    data_split.parameters["train_ratio"] = "0.8";
+    data_split.parameters["val_ratio"] = "0.1";
+    data_split.parameters["test_ratio"] = "0.1";
+    data_split.parameters["shuffle"] = "true";
+    nodes_.push_back(data_split);
+    ImNodes::SetNodeGridSpacePos(data_split.id, ImVec2(250.0f, 200.0f));
 
-    // 3. Positional Encoding - Add position information
-    MLNode pos_enc = CreateNode(NodeType::PositionalEncoding, "Positional Encoding");
-    pos_enc.parameters["max_seq_len"] = "512";
-    pos_enc.parameters["embed_dim"] = "512";
-    nodes_.push_back(pos_enc);
-    ImNodes::SetNodeGridSpacePos(pos_enc.id, ImVec2(450.0f, 200.0f));
+    // 3. Normalize - Normalize input features
+    MLNode normalize = CreateNode(NodeType::Normalize, "Normalize");
+    normalize.parameters["method"] = "z-score";
+    normalize.parameters["mean"] = "0.0";
+    normalize.parameters["std"] = "1.0";
+    nodes_.push_back(normalize);
+    ImNodes::SetNodeGridSpacePos(normalize.id, ImVec2(450.0f, 200.0f));
 
-    // ========== LINEAR ATTENTION BLOCK (Center - Purple) ==========
+    // ========== NEURAL NETWORK ==========
 
-    // 4. Linear Attention - O(n) efficient attention (MAIN SHOWCASE)
-    MLNode linear_attn = CreateNode(NodeType::LinearAttention, "Linear Attention");
-    linear_attn.parameters["embed_dim"] = "512";
-    linear_attn.parameters["num_heads"] = "8";
-    linear_attn.parameters["feature_map"] = "elu";  // ELU feature map (Performer-style)
-    linear_attn.parameters["eps"] = "1e-6";
-    nodes_.push_back(linear_attn);
-    ImNodes::SetNodeGridSpacePos(linear_attn.id, ImVec2(700.0f, 200.0f));
+    // 4. Dense Layer - First hidden layer
+    MLNode dense1 = CreateNode(NodeType::Dense, "Dense (128)");
+    dense1.parameters["units"] = "128";
+    dense1.parameters["use_bias"] = "true";
+    nodes_.push_back(dense1);
+    ImNodes::SetNodeGridSpacePos(dense1.id, ImVec2(650.0f, 200.0f));
 
-    // 5. Add (Residual Connection) - Skip connection around attention
-    MLNode residual1 = CreateNode(NodeType::Add, "Residual Add");
-    nodes_.push_back(residual1);
-    ImNodes::SetNodeGridSpacePos(residual1.id, ImVec2(950.0f, 200.0f));
+    // 5. ReLU Activation
+    MLNode relu = CreateNode(NodeType::ReLU, "ReLU");
+    nodes_.push_back(relu);
+    ImNodes::SetNodeGridSpacePos(relu.id, ImVec2(850.0f, 200.0f));
 
-    // 6. Layer Normalization after attention
-    MLNode layer_norm1 = CreateNode(NodeType::LayerNorm, "LayerNorm");
-    layer_norm1.parameters["normalized_shape"] = "512";
-    layer_norm1.parameters["eps"] = "1e-5";
-    nodes_.push_back(layer_norm1);
-    ImNodes::SetNodeGridSpacePos(layer_norm1.id, ImVec2(1150.0f, 200.0f));
+    // 6. Dense Layer - Output layer
+    MLNode dense2 = CreateNode(NodeType::Dense, "Dense (10)");
+    dense2.parameters["units"] = "10";
+    dense2.parameters["use_bias"] = "true";
+    nodes_.push_back(dense2);
+    ImNodes::SetNodeGridSpacePos(dense2.id, ImVec2(1050.0f, 200.0f));
 
-    // ========== FEED-FORWARD NETWORK ==========
+    // ========== TRAINING CONFIGURATION ==========
 
-    // 7. Dense (FFN expand) - 4x expansion
-    MLNode ffn1 = CreateNode(NodeType::Dense, "FFN Expand (2048)");
-    ffn1.parameters["units"] = "2048";
-    nodes_.push_back(ffn1);
-    ImNodes::SetNodeGridSpacePos(ffn1.id, ImVec2(1350.0f, 100.0f));
-
-    // 8. GELU Activation
-    MLNode gelu = CreateNode(NodeType::GELU, "GELU");
-    nodes_.push_back(gelu);
-    ImNodes::SetNodeGridSpacePos(gelu.id, ImVec2(1550.0f, 100.0f));
-
-    // 9. Dense (FFN contract) - Back to 512
-    MLNode ffn2 = CreateNode(NodeType::Dense, "FFN Contract (512)");
-    ffn2.parameters["units"] = "512";
-    nodes_.push_back(ffn2);
-    ImNodes::SetNodeGridSpacePos(ffn2.id, ImVec2(1750.0f, 100.0f));
-
-    // 10. Dropout
-    MLNode dropout = CreateNode(NodeType::Dropout, "Dropout");
-    dropout.parameters["rate"] = "0.1";
-    nodes_.push_back(dropout);
-    ImNodes::SetNodeGridSpacePos(dropout.id, ImVec2(1350.0f, 300.0f));
-
-    // 11. Add (Residual Connection) - Skip connection around FFN
-    MLNode residual2 = CreateNode(NodeType::Add, "Residual Add");
-    nodes_.push_back(residual2);
-    ImNodes::SetNodeGridSpacePos(residual2.id, ImVec2(1550.0f, 300.0f));
-
-    // 12. Layer Normalization after FFN
-    MLNode layer_norm2 = CreateNode(NodeType::LayerNorm, "LayerNorm");
-    layer_norm2.parameters["normalized_shape"] = "512";
-    nodes_.push_back(layer_norm2);
-    ImNodes::SetNodeGridSpacePos(layer_norm2.id, ImVec2(1750.0f, 300.0f));
-
-    // ========== OUTPUT HEAD ==========
-
-    // 13. Output Dense - Classification head
-    MLNode output_dense = CreateNode(NodeType::Dense, "Output Dense");
-    output_dense.parameters["units"] = "10";  // 10 classes
-    nodes_.push_back(output_dense);
-    ImNodes::SetNodeGridSpacePos(output_dense.id, ImVec2(1950.0f, 200.0f));
-
-    // 14. Softmax
-    MLNode softmax = CreateNode(NodeType::Softmax, "Softmax");
-    nodes_.push_back(softmax);
-    ImNodes::SetNodeGridSpacePos(softmax.id, ImVec2(2150.0f, 200.0f));
-
-    // 15. Output
-    MLNode output = CreateNode(NodeType::Output, "Output");
-    output.parameters["classes"] = "10";
-    nodes_.push_back(output);
-    ImNodes::SetNodeGridSpacePos(output.id, ImVec2(2350.0f, 200.0f));
-
-    // ========== LOSS & OPTIMIZER ==========
-
-    // 16. One-Hot Encode labels
-    MLNode onehot = CreateNode(NodeType::OneHotEncode, "One-Hot Labels");
-    onehot.parameters["num_classes"] = "10";
-    nodes_.push_back(onehot);
-    ImNodes::SetNodeGridSpacePos(onehot.id, ImVec2(2150.0f, 450.0f));
-
-    // 17. Cross Entropy Loss
-    MLNode loss = CreateNode(NodeType::CrossEntropyLoss, "CrossEntropy Loss");
+    // 7. Loss Function
+    MLNode loss = CreateNode(NodeType::MSELoss, "MSE Loss");
     nodes_.push_back(loss);
-    ImNodes::SetNodeGridSpacePos(loss.id, ImVec2(2350.0f, 350.0f));
+    ImNodes::SetNodeGridSpacePos(loss.id, ImVec2(1250.0f, 200.0f));
 
-    // 18. AdamW Optimizer (commonly used for transformers)
-    MLNode optimizer = CreateNode(NodeType::AdamW, "AdamW Optimizer");
-    optimizer.parameters["learning_rate"] = "1e-4";
-    optimizer.parameters["weight_decay"] = "0.01";
+    // 8. Optimizer
+    MLNode optimizer = CreateNode(NodeType::Adam, "Adam");
+    optimizer.parameters["learning_rate"] = "0.001";
+    optimizer.parameters["beta1"] = "0.9";
+    optimizer.parameters["beta2"] = "0.999";
     nodes_.push_back(optimizer);
-    ImNodes::SetNodeGridSpacePos(optimizer.id, ImVec2(2550.0f, 350.0f));
+    ImNodes::SetNodeGridSpacePos(optimizer.id, ImVec2(1450.0f, 200.0f));
+
+    // 9. Output
+    MLNode output = CreateNode(NodeType::Output, "Output");
+    nodes_.push_back(output);
+    ImNodes::SetNodeGridSpacePos(output.id, ImVec2(1650.0f, 200.0f));
 
     // ========== CREATE CONNECTIONS ==========
 
-    // Input flow: DatasetInput -> Embedding -> PositionalEncoding
-    CreateLink(dataset_input.outputs[0].id, embedding.inputs[0].id,
-               dataset_input.id, embedding.id);
+    // Data flow: DataInput -> DataSplit -> Normalize
+    CreateLink(data_input.outputs[0].id, data_split.inputs[0].id,
+               data_input.id, data_split.id);
+    CreateLink(data_split.outputs[0].id, normalize.inputs[0].id,
+               data_split.id, normalize.id);
 
-    CreateLink(embedding.outputs[0].id, pos_enc.inputs[0].id,
-               embedding.id, pos_enc.id);
+    // Model flow: Normalize -> Dense(128) -> ReLU -> Dense(10)
+    CreateLink(normalize.outputs[0].id, dense1.inputs[0].id,
+               normalize.id, dense1.id);
+    CreateLink(dense1.outputs[0].id, relu.inputs[0].id,
+               dense1.id, relu.id);
+    CreateLink(relu.outputs[0].id, dense2.inputs[0].id,
+               relu.id, dense2.id);
 
-    // Linear Attention: Q, K, V all come from positional encoding output
-    // (Self-attention pattern)
-    CreateLink(pos_enc.outputs[0].id, linear_attn.inputs[0].id,
-               pos_enc.id, linear_attn.id);  // Query
-    CreateLink(pos_enc.outputs[0].id, linear_attn.inputs[1].id,
-               pos_enc.id, linear_attn.id);  // Key
-    CreateLink(pos_enc.outputs[0].id, linear_attn.inputs[2].id,
-               pos_enc.id, linear_attn.id);  // Value
-
-    // Residual connection: Attention output + Position encoding -> Add
-    CreateLink(linear_attn.outputs[0].id, residual1.inputs[0].id,
-               linear_attn.id, residual1.id);
-    CreateLink(pos_enc.outputs[0].id, residual1.inputs[1].id,
-               pos_enc.id, residual1.id);
-
-    // LayerNorm after residual
-    CreateLink(residual1.outputs[0].id, layer_norm1.inputs[0].id,
-               residual1.id, layer_norm1.id);
-
-    // Feed-Forward Network
-    CreateLink(layer_norm1.outputs[0].id, ffn1.inputs[0].id,
-               layer_norm1.id, ffn1.id);
-
-    CreateLink(ffn1.outputs[0].id, gelu.inputs[0].id,
-               ffn1.id, gelu.id);
-
-    CreateLink(gelu.outputs[0].id, ffn2.inputs[0].id,
-               gelu.id, ffn2.id);
-
-    CreateLink(ffn2.outputs[0].id, dropout.inputs[0].id,
-               ffn2.id, dropout.id);
-
-    // Second residual: Dropout output + LayerNorm1 output -> Add
-    CreateLink(dropout.outputs[0].id, residual2.inputs[0].id,
-               dropout.id, residual2.id);
-    CreateLink(layer_norm1.outputs[0].id, residual2.inputs[1].id,
-               layer_norm1.id, residual2.id);
-
-    // LayerNorm after second residual
-    CreateLink(residual2.outputs[0].id, layer_norm2.inputs[0].id,
-               residual2.id, layer_norm2.id);
-
-    // Output head
-    CreateLink(layer_norm2.outputs[0].id, output_dense.inputs[0].id,
-               layer_norm2.id, output_dense.id);
-
-    CreateLink(output_dense.outputs[0].id, softmax.inputs[0].id,
-               output_dense.id, softmax.id);
-
-    CreateLink(softmax.outputs[0].id, output.inputs[0].id,
-               softmax.id, output.id);
-
-    // Labels flow
-    CreateLink(dataset_input.outputs[1].id, onehot.inputs[0].id,
-               dataset_input.id, onehot.id);
-
-    // Loss connections
-    CreateLink(output.outputs[0].id, loss.inputs[0].id,
-               output.id, loss.id);  // Predictions
-    CreateLink(onehot.outputs[0].id, loss.inputs[1].id,
-               onehot.id, loss.id);  // Targets
-
-    // Optimizer
+    // Training flow: Dense(10) -> MSELoss -> Adam -> Output
+    CreateLink(dense2.outputs[0].id, loss.inputs[0].id,
+               dense2.id, loss.id);
     CreateLink(loss.outputs[0].id, optimizer.inputs[0].id,
                loss.id, optimizer.id);
+    CreateLink(optimizer.outputs[0].id, output.inputs[0].id,
+               optimizer.id, output.id);
 
-    spdlog::info("Created Linear Attention Transformer showcase with {} nodes and {} connections",
+    spdlog::info("Created ML Training Pipeline with {} nodes and {} connections",
                  nodes_.size(), links_.size());
-    spdlog::info("Architecture: Embedding -> PositionalEncoding -> LinearAttention(O(n)) -> LayerNorm -> FFN -> Output");
+    spdlog::info("Pipeline: DataInput -> DataSplit -> Normalize -> Dense(128) -> ReLU -> Dense(10) -> MSELoss -> Adam -> Output");
 }
 
 NodeEditor::~NodeEditor() {
@@ -344,8 +268,14 @@ void NodeEditor::Render() {
             pending_clear_imnodes_ = false;
         }
 
+        // Render annotations first (appear behind everything)
+        RenderAnnotations();
+
         // Render group backgrounds before nodes so they appear behind
         RenderGroups();
+
+        // Render frames (visual organization boxes) before nodes
+        RenderFrames();
 
         RenderNodes();
 
@@ -379,6 +309,7 @@ void NodeEditor::Render() {
         }
 
         // Handle right-click context menu (skip if mouse is over minimap)
+        bool right_click_detected = false;
         if (ImNodes::IsEditorHovered() && !mouse_in_minimap_bounds && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
             // Store mouse position for node placement in grid space
             // The editor origin is at the window content region start
@@ -392,13 +323,7 @@ void NodeEditor::Render() {
                 mouse_pos.x - editor_origin.x - panning.x,
                 mouse_pos.y - editor_origin.y - panning.y
             );
-
-            ImGui::OpenPopup("NodeContextMenu");
-        }
-
-        if (ImGui::BeginPopup("NodeContextMenu")) {
-            ShowContextMenu();
-            ImGui::EndPopup();
+            right_click_detected = true;
         }
 
         // Cache node positions while still inside BeginNodeEditor/EndNodeEditor scope
@@ -409,6 +334,131 @@ void NodeEditor::Render() {
         }
 
         ImNodes::EndNodeEditor();
+
+        // Pin hover tooltip for all nodes (after EndNodeEditor)
+        int hovered_pin_id = -1;
+        if (ImNodes::IsPinHovered(&hovered_pin_id)) {
+            const MLNode* hovered_node = nullptr;
+            const NodePin* hovered_pin = nullptr;
+            bool hovered_is_input = false;
+
+            // O(1) pin lookup using hash map
+            auto it = pin_lookup_.find(hovered_pin_id);
+            if (it != pin_lookup_.end()) {
+                hovered_node = it->second.first;
+                hovered_pin = it->second.second;
+                hovered_is_input = hovered_pin->is_input;
+            }
+
+            if (hovered_node && hovered_pin) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s - %s", hovered_node->name.c_str(),
+                            hovered_is_input ? "Input" : "Output");
+                ImGui::Separator();
+                ImGui::Text("Pin: %s", hovered_pin->name.c_str());
+                ImGui::Text("Type: %s", GetPinTypeName(hovered_pin->type).c_str());
+                int connections = GetConnectionCount(hovered_pin->id);
+                if (connections > 0) {
+                    ImGui::Text("Connections: %d", connections);
+                } else {
+                    ImGui::TextDisabled("Not connected");
+                }
+                ImGui::EndTooltip();
+            }
+        }
+
+        // === Handle right-click context menu AFTER EndNodeEditor ===
+        // IsNodeHovered() only works after EndNodeEditor() is called
+        // Skip if right-click was on a frame (frame menu already shown)
+        if (right_click_detected && !frame_right_clicked_) {
+            int hovered_node_id = -1;
+            bool is_node_hovered = ImNodes::IsNodeHovered(&hovered_node_id);
+            if (is_node_hovered && hovered_node_id >= 0) {
+                // Right-click on node - show node-specific menu
+                right_clicked_node_id_ = hovered_node_id;
+                ImGui::OpenPopup("SingleNodeContextMenu");
+            } else {
+                // Right-click on canvas - show add node menu
+                ImGui::OpenPopup("NodeContextMenu");
+            }
+        }
+
+        // Node-specific context menu (right-click on node)
+        if (ImGui::BeginPopup("SingleNodeContextMenu")) {
+            ShowSingleNodeContextMenu();
+            ImGui::EndPopup();
+        }
+
+        // Canvas context menu (right-click on empty space)
+        if (ImGui::BeginPopup("NodeContextMenu")) {
+            ShowContextMenu();
+            ImGui::EndPopup();
+        }
+
+        // Node description edit popup
+        ShowNodeDescriptionEditPopup();
+
+        // === Handle drag-drop from Node Browser ===
+        // Check if a NODE_TYPE payload is being dropped on the canvas
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("NODE_TYPE")) {
+                // Get the dropped node type
+                cyxwiz::NodeType dropped_type = *(const cyxwiz::NodeType*)payload->Data;
+
+                // Get metadata to create proper node name
+                auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+                auto* metadata = registry.GetMetadata(dropped_type);
+                std::string node_name = metadata ? metadata->name : "Node";
+
+                // Calculate drop position in grid space (reuse mouse_pos from earlier)
+                ImVec2 editor_origin = ImGui::GetWindowPos();
+                ImVec2 panning = ImNodes::EditorContextGetPanning();
+                ImVec2 drop_pos(
+                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_  // Offset for toolbar
+                );
+
+                // Queue node for addition
+                PendingNode pending;
+                pending.type = static_cast<NodeType>(dropped_type);
+                pending.name = node_name;
+                pending.position = drop_pos;
+                pending_nodes_.push_back(pending);
+
+                spdlog::info("Drag-drop: Adding {} node at ({}, {})", node_name, drop_pos.x, drop_pos.y);
+            }
+
+            // Handle ANNOTATION drag-drop
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ANNOTATION")) {
+                // Calculate drop position in grid space
+                ImVec2 editor_origin = ImGui::GetWindowPos();
+                ImVec2 panning = ImNodes::EditorContextGetPanning();
+                ImVec2 drop_pos(
+                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_
+                );
+
+                // Add annotation at drop position
+                AddAnnotationAt(drop_pos);
+                spdlog::info("Drag-drop: Adding annotation at ({}, {})", drop_pos.x, drop_pos.y);
+            }
+
+            // Handle STUDIO_FRAME drag-drop
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("STUDIO_FRAME")) {
+                // Calculate drop position in grid space
+                ImVec2 editor_origin = ImGui::GetWindowPos();
+                ImVec2 panning = ImNodes::EditorContextGetPanning();
+                ImVec2 drop_pos(
+                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_
+                );
+
+                // Add frame at drop position
+                AddFrameAt(drop_pos);
+                spdlog::info("Drag-drop: Adding frame at ({}, {})", drop_pos.x, drop_pos.y);
+            }
+            ImGui::EndDragDropTarget();
+        }
 
         // Pop zoom style variables
         ImNodes::PopStyleVar(5);
@@ -445,6 +495,9 @@ void NodeEditor::Render() {
 
             spdlog::info("Added node: {} (ID: {}) at position ({}, {})",
                         pending.name, node.id, position.x, position.y);
+        }
+        if (!pending_nodes_.empty()) {
+            RebuildPinLookup();  // Rebuild pin lookup after adding nodes
         }
         pending_nodes_.clear();
 
@@ -1554,6 +1607,18 @@ static std::string GetPinTypeName(PinType type) {
     return "Unknown";
 }
 
+void NodeEditor::RebuildPinLookup() {
+    pin_lookup_.clear();
+    for (auto& node : nodes_) {
+        for (auto& pin : node.inputs) {
+            pin_lookup_[pin.id] = std::make_pair(&node, &pin);
+        }
+        for (auto& pin : node.outputs) {
+            pin_lookup_[pin.id] = std::make_pair(&node, &pin);
+        }
+    }
+}
+
 void NodeEditor::RenderNodes() {
     // Update execution pulse animation
     execution_pulse_time_ += ImGui::GetIO().DeltaTime;
@@ -1589,41 +1654,239 @@ void NodeEditor::RenderNodes() {
             title_color = GetNodeColor(node.type);
         }
 
-        ImNodes::PushColorStyle(ImNodesCol_TitleBar, title_color);
-        ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, title_color);
-        ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, title_color);
+        // ===== KNIME-STYLE RENDERING for ALL Nodes =====
+        bool is_knime_style = true;  // Apply to all node types
+
+        if (is_knime_style) {
+            // Make ImNodes node completely invisible - we draw our own icon box
+            ImU32 transparent = IM_COL32(0, 0, 0, 0);
+            // Push pin closer to node content (negative offset pulls it inward)
+            ImNodes::PushStyleVar(ImNodesStyleVar_PinOffset, 0.0f);
+            // Remove node padding so pins sit flush with the icon box
+            ImNodes::PushStyleVar(ImNodesStyleVar_NodePadding, ImVec2(0.0f, 0.0f));
+            ImNodes::PushColorStyle(ImNodesCol_TitleBar, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_NodeBackground, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_NodeBackgroundHovered, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_NodeBackgroundSelected, transparent);
+            ImNodes::PushColorStyle(ImNodesCol_NodeOutline, transparent);
+        } else {
+            ImNodes::PushColorStyle(ImNodesCol_TitleBar, title_color);
+            ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, title_color);
+            ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, title_color);
+        }
 
         ImNodes::BeginNode(node.id);
 
-        // Node title bar
-        ImNodes::BeginNodeTitleBar();
-        ImGui::TextUnformatted(node.name.c_str());
-        ImNodes::EndNodeTitleBar();
+        if (is_knime_style) {
+            // Disable default node drag for KNIME nodes; we drag via icon handle
+            ImNodes::SetNodeDraggable(node.id, false);
 
-        // Input pins
-        for (const auto& pin : node.inputs) {
-            ImNodes::BeginInputAttribute(pin.id);
-            ImGui::TextUnformatted(pin.name.c_str());
+            // Settings - match Node Browser exactly
+            const float ICON_BOX_SIZE = 64.0f * zoom_;
+            const float CORNER_RADIUS = 6.0f;
+            const float BORDER_THICKNESS = 2.0f;
 
-            // Unified Canvas Phase 6: Pin tooltips
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::Text("%s (Input)", pin.name.c_str());
-                ImGui::Separator();
-
-                // Show pin type
-                ImGui::Text("Type: %s", GetPinTypeName(pin.type).c_str());
-
-                // Show connection info
-                bool is_connected = IsPinConnected(pin.id);
-                if (is_connected) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_LINK " Connected");
-                } else {
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_LINK " Not connected");
-                }
-
-                ImGui::EndTooltip();
+            bool show_name = true;
+            auto show_name_it = node.parameters.find("show_name");
+            if (show_name_it != node.parameters.end()) {
+                show_name = (show_name_it->second == "true");
             }
+
+            // Minimal invisible title bar (required by ImNodes)
+            ImNodes::BeginNodeTitleBar();
+            ImGui::Dummy(ImVec2(ICON_BOX_SIZE, 1));
+            ImNodes::EndNodeTitleBar();
+
+            // Standard horizontal layout: [input] [icon] [output]
+            // Using BeginGroup to keep everything on one line
+            ImGui::BeginGroup();
+
+            // Input pins (left side)
+            if (!node.inputs.empty()) {
+                ImGui::BeginGroup();
+                // Vertical centering for ALL input pins
+                const float PIN_HEIGHT = 12.0f;
+                float total_pin_height = node.inputs.size() * PIN_HEIGHT;
+                float vert_offset = (ICON_BOX_SIZE - total_pin_height) * 0.5f;
+                if (vert_offset > 0) ImGui::Dummy(ImVec2(0, vert_offset));
+                for (const auto& pin : node.inputs) {
+                    bool is_connected = IsPinConnected(pin.id);
+                    bool is_running = (exec_state == NodeExecutionState::Executing);
+                    bool has_error = (exec_state == NodeExecutionState::Error);
+                    ImU32 pin_color = IM_COL32(220, 50, 50, 255);
+                    ImU32 pin_hover = IM_COL32(255, 80, 80, 255);
+                    ImNodesPinShape pin_shape = ImNodesPinShape_Circle;
+                    if (has_error) {
+                        pin_color = IM_COL32(220, 180, 50, 255);
+                        pin_hover = IM_COL32(240, 200, 80, 255);
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                    } else if (is_running) {
+                        pin_color = IM_COL32(50, 200, 50, 255);
+                        pin_hover = IM_COL32(80, 230, 80, 255);
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                    } else if (is_connected) {
+                        pin_color = IM_COL32(220, 50, 50, 255);
+                        pin_hover = IM_COL32(255, 80, 80, 255);
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                    }
+                    ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
+                    ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
+                    ImNodes::BeginInputAttribute(pin.id, pin_shape);
+                    ImGui::Dummy(ImVec2(0, 12));
+                    ImNodes::EndInputAttribute();
+                    ImNodes::PopColorStyle();
+                    ImNodes::PopColorStyle();
+                }
+                ImGui::EndGroup();
+                ImGui::SameLine(0, 0);  // Exactly at icon edge
+            }
+
+            // Icon box (center)
+            ImVec2 icon_pos = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(ICON_BOX_SIZE, ICON_BOX_SIZE));
+
+            // Output pins (right side) - positioned outside icon for click detection
+            if (!node.outputs.empty()) {
+                ImGui::SameLine(0, 0);  // No gap so pin is tied to icon edge
+                ImGui::BeginGroup();
+                // Vertical centering for ALL output pins
+                const float PIN_HEIGHT = 10.0f;
+                float total_pin_height = node.outputs.size() * PIN_HEIGHT;
+                float vert_offset = (ICON_BOX_SIZE - total_pin_height) * 0.5f;
+                if (vert_offset > 0) ImGui::Dummy(ImVec2(0, vert_offset));
+                for (const auto& pin : node.outputs) {
+                    bool is_connected = IsPinConnected(pin.id);
+                    bool is_running = (exec_state == NodeExecutionState::Executing);
+                    bool has_error = (exec_state == NodeExecutionState::Error);
+                    ImU32 pin_color = IM_COL32(220, 50, 50, 255);
+                    ImU32 pin_hover = IM_COL32(255, 80, 80, 255);
+                    ImNodesPinShape pin_shape = ImNodesPinShape_Circle;
+                    if (has_error) {
+                        pin_color = IM_COL32(220, 180, 50, 255);
+                        pin_hover = IM_COL32(240, 200, 80, 255);
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                    } else if (is_running) {
+                        pin_color = IM_COL32(50, 200, 50, 255);
+                        pin_hover = IM_COL32(80, 230, 80, 255);
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                    } else if (is_connected) {
+                        pin_color = IM_COL32(220, 50, 50, 255);
+                        pin_hover = IM_COL32(255, 80, 80, 255);
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                    }
+                    ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
+                    ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
+                    ImNodes::BeginOutputAttribute(pin.id, pin_shape);
+                    ImGui::Dummy(ImVec2(0, 10));
+                    ImNodes::EndOutputAttribute();
+                    ImNodes::PopColorStyle();
+                    ImNodes::PopColorStyle();
+                }
+                ImGui::EndGroup();
+            }
+
+            ImGui::EndGroup();
+
+            // Draw custom icon box
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            ImVec2 icon_max(icon_pos.x + ICON_BOX_SIZE, icon_pos.y + ICON_BOX_SIZE);
+
+            // Background with subtle border
+            ImU32 bg_color = title_color;
+            draw_list->AddRectFilled(icon_pos, icon_max, bg_color, CORNER_RADIUS);
+            // Add rounded border around the icon box
+            ImU32 border_color = IM_COL32(80, 80, 90, 200);
+            draw_list->AddRect(icon_pos, icon_max, border_color, CORNER_RADIUS, 0, 1.5f);
+
+            // Draw node name ABOVE the icon
+            if (show_name) {
+                ImVec2 name_size = ImGui::CalcTextSize(node.name.c_str());
+                float name_x = icon_pos.x + (ICON_BOX_SIZE - name_size.x) * 0.5f;
+                float name_y = icon_pos.y - name_size.y - 4.0f;
+                draw_list->AddText(ImVec2(name_x, name_y), IM_COL32(200, 200, 200, 255), node.name.c_str());
+            }
+
+            // Draw centered icon (55% of box height, like Node Browser)
+            const char* icon = GetNodeIcon(node.type);
+            ImFont* font = ImGui::GetFont();
+            float scaled_icon_size = ICON_BOX_SIZE * 0.55f;
+            ImVec2 icon_text_size = font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
+            ImVec2 icon_text_pos(
+                icon_pos.x + (ICON_BOX_SIZE - icon_text_size.x) * 0.5f,
+                icon_pos.y + (ICON_BOX_SIZE - icon_text_size.y) * 0.5f
+            );
+            draw_list->AddText(font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+
+            // Draw description BELOW the icon (e.g., "Reading adult.csv")
+            std::string display_desc = node.description;
+            if (display_desc.empty()) {
+                // Show default text for unconfigured nodes
+                display_desc = "Double-click to configure";
+            }
+            float desc_y = icon_max.y + 4.0f;
+            ImVec2 desc_size = ImGui::CalcTextSize(display_desc.c_str());
+            float desc_x = icon_pos.x + (ICON_BOX_SIZE - desc_size.x) * 0.5f;
+            // Clamp to icon left edge if description is wider
+            desc_x = std::max(desc_x, icon_pos.x - 10.0f);
+            ImU32 desc_color = node.description.empty() ? IM_COL32(120, 120, 120, 200) : IM_COL32(150, 180, 220, 255);
+            draw_list->AddText(ImVec2(desc_x, desc_y), desc_color, display_desc.c_str());
+
+            // Drag handle: icon box only (keeps pin drag separate from node move)
+            ImVec2 cursor_backup = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(icon_pos);
+            std::string drag_id = "##knime_drag_" + std::to_string(node.id);
+            ImGui::InvisibleButton(drag_id.c_str(), ImVec2(ICON_BOX_SIZE, ICON_BOX_SIZE));
+
+            // Select node when clicked (InvisibleButton consumes click before ImNodes)
+            if (ImGui::IsItemClicked(0)) {
+                if (!ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift) {
+                    // Single click without modifier - select only this node
+                    ImNodes::ClearNodeSelection();
+                }
+                ImNodes::SelectNode(node.id);
+                selected_node_id_ = node.id;
+            }
+
+            if (ImGui::IsItemActivated()) {
+                dragging_knime_node_id_ = node.id;
+                ImVec2 mouse_pos = ImGui::GetMousePos();
+                ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
+                knime_drag_offset_ = ImVec2(mouse_pos.x - node_pos.x, mouse_pos.y - node_pos.y);
+            }
+            if (dragging_knime_node_id_ == node.id && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                ImVec2 mouse_pos = ImGui::GetMousePos();
+                ImVec2 new_pos(mouse_pos.x - knime_drag_offset_.x, mouse_pos.y - knime_drag_offset_.y);
+                ImNodes::SetNodeScreenSpacePos(node.id, new_pos);
+            }
+            if (dragging_knime_node_id_ == node.id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                dragging_knime_node_id_ = -1;
+            }
+            ImGui::SetCursorScreenPos(cursor_backup);
+
+            // Pop styles (7 color + 2 vars for KNIME-style)
+            ImNodes::PopStyleVar();    // NodePadding
+            ImNodes::PopStyleVar();    // PinOffset
+            ImNodes::PopColorStyle();  // NodeOutline
+            ImNodes::PopColorStyle();  // NodeBackgroundSelected
+            ImNodes::PopColorStyle();  // NodeBackgroundHovered
+            ImNodes::PopColorStyle();  // NodeBackground
+            ImNodes::PopColorStyle();  // TitleBarSelected
+            ImNodes::PopColorStyle();  // TitleBarHovered
+            ImNodes::PopColorStyle();  // TitleBar
+
+        } else {
+            // ===== STANDARD NODE RENDERING =====
+            // Node title bar
+            ImNodes::BeginNodeTitleBar();
+            ImGui::TextUnformatted(node.name.c_str());
+            ImNodes::EndNodeTitleBar();
+
+            // Input pins
+            for (const auto& pin : node.inputs) {
+                ImNodes::BeginInputAttribute(pin.id);
+                ImGui::TextUnformatted(pin.name.c_str());
 
             ImNodes::EndInputAttribute();
         }
@@ -1911,29 +2174,13 @@ void NodeEditor::RenderNodes() {
             ImGui::Indent(120.0f + ImGui::CalcTextSize(pin.name.c_str()).x - text_width);
             ImGui::TextUnformatted(pin.name.c_str());
 
-            // Unified Canvas Phase 6: Pin tooltips
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::Text("%s (Output)", pin.name.c_str());
-                ImGui::Separator();
-
-                // Show pin type
-                ImGui::Text("Type: %s", GetPinTypeName(pin.type).c_str());
-
-                // Show connection info
-                bool is_connected = IsPinConnected(pin.id);
-                int num_connections = GetConnectionCount(pin.id);
-                if (is_connected) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_LINK " %d connection(s)", num_connections);
-                } else {
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_LINK " Not connected");
-                }
-
-                ImGui::EndTooltip();
-            }
-
             ImNodes::EndOutputAttribute();
         }
+        // Pop standard node title bar styles
+            ImNodes::PopColorStyle();  // TitleBarSelected
+            ImNodes::PopColorStyle();  // TitleBarHovered
+            ImNodes::PopColorStyle();  // TitleBar
+        } // End of standard node rendering else block
 
         ImNodes::EndNode();
 
@@ -1970,8 +2217,9 @@ void NodeEditor::RenderNodes() {
             NodeDocumentationManager::Instance().RenderTooltip(node.type);
         }
 
-        // Draw selection glow effect for selected nodes
-        if (ImNodes::IsNodeSelected(node.id)) {
+        // Draw selection glow effect for selected nodes (skip for KNIME-style)
+        bool skip_glow = true;  // All nodes are KNIME-style now
+        if (!skip_glow && ImNodes::IsNodeSelected(node.id)) {
             ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
             ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -2002,6 +2250,73 @@ void NodeEditor::RenderNodes() {
                 0,
                 2.0f
             );
+        }
+
+        // KNIME-style: Draw node description below the node (bound to node, moves with it)
+        if (!node.description.empty()) {
+            ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
+            ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+            // Calculate description position (below node with spacing)
+            float desc_y = node_pos.y + node_dims.y + 8.0f * zoom_;
+            // Wider max width for better readability
+            float max_width = std::max(node_dims.x * 1.5f, 220.0f * zoom_);
+
+            // Use larger, more readable font size
+            ImFont* font = ImGui::GetFont();
+            float font_size = 14.0f * zoom_;
+            const char* text_start = node.description.c_str();
+            const char* text_end = text_start + node.description.size();
+
+            // Word wrapping
+            std::string wrapped;
+            float line_width = 0.0f;
+            const char* word_start = text_start;
+            float space_width = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, " ").x;
+
+            for (const char* p = text_start; p <= text_end; ++p) {
+                if (*p == ' ' || *p == '\n' || p == text_end) {
+                    std::string word(word_start, p);
+                    if (!word.empty()) {
+                        ImVec2 word_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, word.c_str());
+                        if (line_width + word_size.x > max_width && line_width > 0) {
+                            if (!wrapped.empty() && wrapped.back() == ' ') wrapped.pop_back();
+                            wrapped += "\n";
+                            line_width = 0.0f;
+                        }
+                        wrapped += word;
+                        line_width += word_size.x;
+                        if (*p == ' ') { wrapped += " "; line_width += space_width; }
+                    }
+                    if (*p == '\n') { wrapped += "\n"; line_width = 0.0f; }
+                    word_start = p + 1;
+                }
+            }
+
+            // Calculate text dimensions
+            ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, max_width, wrapped.c_str());
+            float text_x = node_pos.x;
+            float padding_x = 10.0f * zoom_;
+            float padding_y = 8.0f * zoom_;
+
+            // Draw background box
+            ImVec2 box_min(text_x - padding_x, desc_y - padding_y);
+            ImVec2 box_max(text_x + text_size.x + padding_x, desc_y + text_size.y + padding_y);
+
+            draw_list->AddRectFilled(box_min, box_max, IM_COL32(30, 35, 50, 245), 5.0f * zoom_);
+            draw_list->AddRect(box_min, box_max, IM_COL32(80, 100, 130, 220), 5.0f * zoom_, 0, 1.2f * zoom_);
+
+            // Left accent line
+            draw_list->AddRectFilled(
+                ImVec2(box_min.x + 2.0f * zoom_, box_min.y + 3.0f * zoom_),
+                ImVec2(box_min.x + 5.0f * zoom_, box_max.y - 3.0f * zoom_),
+                IM_COL32(100, 149, 237, 255)
+            );
+
+            // Draw text
+            draw_list->AddText(font, font_size, ImVec2(text_x + 4.0f * zoom_, desc_y),
+                IM_COL32(230, 235, 245, 255), wrapped.c_str());
         }
 
         // Apply any pending position AFTER the node has been created
@@ -2069,10 +2384,93 @@ void NodeEditor::RenderNodes() {
             }
         }
 
-        // Pop color styles
-        ImNodes::PopColorStyle();
-        ImNodes::PopColorStyle();
-        ImNodes::PopColorStyle();
+        // =====================================================================
+        // KNIME-style traffic light status indicator below node
+        // =====================================================================
+        {
+            ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
+            ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+            // Position: centered below node
+            float indicator_radius = 5.0f * zoom_;
+            ImVec2 indicator_pos = ImVec2(
+                node_pos.x + node_dims.x / 2.0f,
+                node_pos.y + node_dims.y + indicator_radius + 4.0f * zoom_
+            );
+
+            // Determine color and style based on execution state
+            ImU32 indicator_color = 0;
+            bool show_indicator = true;
+            bool is_executing = false;
+
+            switch (exec_state) {
+                case NodeExecutionState::Completed:
+                    indicator_color = IM_COL32(76, 175, 80, 255);   // Green
+                    break;
+                case NodeExecutionState::Pending:
+                    indicator_color = IM_COL32(255, 193, 7, 255);   // Yellow/Amber
+                    break;
+                case NodeExecutionState::Executing:
+                    is_executing = true;
+                    break;
+                case NodeExecutionState::Error:
+                    indicator_color = IM_COL32(244, 67, 54, 255);   // Red
+                    break;
+                default:
+                    show_indicator = false;  // Idle - no indicator
+                    break;
+            }
+
+            if (show_indicator) {
+                if (is_executing) {
+                    // Spinning progress ring for executing state
+                    float angle = execution_pulse_time_ * 3.0f;  // Rotation speed
+                    float arc_length = 2.5f;  // Radians (~143 degrees)
+
+                    // Draw background circle (faded)
+                    draw_list->AddCircle(indicator_pos, indicator_radius,
+                                        IM_COL32(60, 150, 255, 60), 0, 2.0f * zoom_);
+
+                    // Draw spinning arc
+                    draw_list->PathArcTo(indicator_pos, indicator_radius, angle, angle + arc_length, 12);
+                    draw_list->PathStroke(IM_COL32(60, 150, 255, 255), false, 2.5f * zoom_);
+                } else {
+                    // Static filled circle for other states
+                    draw_list->AddCircleFilled(indicator_pos, indicator_radius, indicator_color);
+                    draw_list->AddCircle(indicator_pos, indicator_radius,
+                                        IM_COL32(0, 0, 0, 80), 0, 1.0f * zoom_);
+
+                    // Add X overlay for error state
+                    if (exec_state == NodeExecutionState::Error) {
+                        float x_size = indicator_radius * 0.5f;
+                        ImU32 x_color = IM_COL32(255, 255, 255, 255);
+                        draw_list->AddLine(
+                            ImVec2(indicator_pos.x - x_size, indicator_pos.y - x_size),
+                            ImVec2(indicator_pos.x + x_size, indicator_pos.y + x_size),
+                            x_color, 1.5f * zoom_
+                        );
+                        draw_list->AddLine(
+                            ImVec2(indicator_pos.x + x_size, indicator_pos.y - x_size),
+                            ImVec2(indicator_pos.x - x_size, indicator_pos.y + x_size),
+                            x_color, 1.5f * zoom_
+                        );
+                    }
+
+                    // Add checkmark for completed state
+                    if (exec_state == NodeExecutionState::Completed) {
+                        float check_size = indicator_radius * 0.5f;
+                        ImU32 check_color = IM_COL32(255, 255, 255, 255);
+                        // Draw checkmark: short line down-left, then long line down-right
+                        ImVec2 p1 = ImVec2(indicator_pos.x - check_size * 0.5f, indicator_pos.y);
+                        ImVec2 p2 = ImVec2(indicator_pos.x - check_size * 0.1f, indicator_pos.y + check_size * 0.4f);
+                        ImVec2 p3 = ImVec2(indicator_pos.x + check_size * 0.6f, indicator_pos.y - check_size * 0.4f);
+                        draw_list->AddLine(p1, p2, check_color, 1.5f * zoom_);
+                        draw_list->AddLine(p2, p3, check_color, 1.5f * zoom_);
+                    }
+                }
+            }
+        }
     }
 
     // Render all links with color based on link type (and training animation if active)
@@ -2645,6 +3043,275 @@ NodeGroup* NodeEditor::FindGroupContainingNode(int node_id) {
     return nullptr;
 }
 
+void NodeEditor::RenderAnnotations() {
+    if (annotations_.empty()) return;
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 editor_origin = ImGui::GetWindowPos();
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    ImVec2 mouse_pos = ImGui::GetMousePos();
+
+    for (auto& annotation : annotations_) {
+        // Convert grid position to screen position
+        ImVec2 screen_pos(
+            editor_origin.x + annotation.position.x * zoom_ + panning.x,
+            editor_origin.y + annotation.position.y * zoom_ + panning.y + 50.0f
+        );
+
+        float title_height = 24.0f * zoom_;
+        float btn_size = 18.0f * zoom_;
+
+        // Calculate actual size based on minimized state
+        ImVec2 size;
+        if (annotation.is_minimized) {
+            size = ImVec2(annotation.size.x * zoom_, title_height);
+        } else {
+            size = ImVec2(annotation.size.x * zoom_, annotation.size.y * zoom_);
+        }
+
+        ImVec2 p_min = screen_pos;
+        ImVec2 p_max(screen_pos.x + size.x, screen_pos.y + size.y);
+
+        // Create invisible button to capture mouse input
+        ImGui::SetCursorScreenPos(p_min);
+        std::string btn_id = "##annotation_" + std::to_string(annotation.id);
+        ImGui::InvisibleButton(btn_id.c_str(), size);
+
+        bool is_hovered = ImGui::IsItemHovered();
+        bool is_active = ImGui::IsItemActive();
+        bool mouse_in_title = is_hovered && (mouse_pos.y >= p_min.y && mouse_pos.y <= p_min.y + title_height);
+
+        // Minimize button bounds (right side of title bar)
+        ImVec2 min_btn_min(p_max.x - btn_size - 4.0f * zoom_, p_min.y + 3.0f * zoom_);
+        ImVec2 min_btn_max(p_max.x - 4.0f * zoom_, p_min.y + title_height - 3.0f * zoom_);
+        bool mouse_on_min_btn = (mouse_pos.x >= min_btn_min.x && mouse_pos.x <= min_btn_max.x &&
+                                  mouse_pos.y >= min_btn_min.y && mouse_pos.y <= min_btn_max.y);
+
+        // Handle minimize button click
+        if (mouse_on_min_btn && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            annotation.is_minimized = !annotation.is_minimized;
+        }
+        // Handle double-click to edit (not on minimize button)
+        else if (is_hovered && !mouse_on_min_btn && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            editing_annotation_ = true;
+            editing_annotation_id_ = annotation.id;
+            ImGui::OpenPopup("EditAnnotationPopup");
+        }
+        // Handle click to select and drag
+        else if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            selected_annotation_id_ = annotation.id;
+            if (mouse_in_title && !mouse_on_min_btn) {
+                dragging_annotation_id_ = annotation.id;
+                annotation_drag_offset_ = ImVec2(mouse_pos.x - screen_pos.x, mouse_pos.y - screen_pos.y);
+            }
+        }
+
+        // Handle dragging
+        if (dragging_annotation_id_ == annotation.id && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            ImVec2 new_screen_pos(mouse_pos.x - annotation_drag_offset_.x, mouse_pos.y - annotation_drag_offset_.y);
+            annotation.position = ImVec2(
+                (new_screen_pos.x - editor_origin.x - panning.x) / zoom_,
+                (new_screen_pos.y - editor_origin.y - panning.y - 50.0f) / zoom_
+            );
+            screen_pos = new_screen_pos;
+            p_min = screen_pos;
+            p_max = ImVec2(screen_pos.x + size.x, screen_pos.y + size.y);
+            min_btn_min = ImVec2(p_max.x - btn_size - 4.0f * zoom_, p_min.y + 3.0f * zoom_);
+            min_btn_max = ImVec2(p_max.x - 4.0f * zoom_, p_min.y + title_height - 3.0f * zoom_);
+        }
+
+        if (dragging_annotation_id_ == annotation.id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            dragging_annotation_id_ = -1;
+        }
+
+        // Colors
+        ImU32 bg_color = annotation.color;
+        ImU32 title_color = IM_COL32(
+            static_cast<int>((bg_color & 0xFF) * 0.75f),
+            static_cast<int>(((bg_color >> 8) & 0xFF) * 0.75f),
+            static_cast<int>(((bg_color >> 16) & 0xFF) * 0.75f),
+            255
+        );
+
+        // Draw title bar
+        ImDrawFlags corners = annotation.is_minimized ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersTop;
+        draw_list->AddRectFilled(p_min, ImVec2(p_max.x, p_min.y + title_height), title_color, 4.0f * zoom_, corners);
+
+        // Draw content background (only if not minimized)
+        if (!annotation.is_minimized) {
+            draw_list->AddRectFilled(
+                ImVec2(p_min.x, p_min.y + title_height), p_max,
+                bg_color, 4.0f * zoom_, ImDrawFlags_RoundCornersBottom
+            );
+        }
+
+        // Draw border
+        ImU32 border_color = (is_hovered || is_active) ? IM_COL32(130, 130, 110, 255) : IM_COL32(100, 100, 80, 200);
+        draw_list->AddRect(p_min, p_max, border_color, 4.0f * zoom_, 0, 1.5f * zoom_);
+
+        // Draw minimize button
+        ImU32 min_btn_color = mouse_on_min_btn ? IM_COL32(80, 70, 50, 255) : IM_COL32(100, 90, 70, 200);
+        draw_list->AddRectFilled(min_btn_min, min_btn_max, min_btn_color, 3.0f * zoom_);
+        // Draw - or + symbol
+        float sym_y = (min_btn_min.y + min_btn_max.y) * 0.5f;
+        float sym_margin = 4.0f * zoom_;
+        draw_list->AddLine(
+            ImVec2(min_btn_min.x + sym_margin, sym_y),
+            ImVec2(min_btn_max.x - sym_margin, sym_y),
+            IM_COL32(220, 210, 180, 255), 2.0f * zoom_
+        );
+        if (annotation.is_minimized) {
+            // Draw + (add vertical line)
+            float sym_x = (min_btn_min.x + min_btn_max.x) * 0.5f;
+            draw_list->AddLine(
+                ImVec2(sym_x, min_btn_min.y + sym_margin),
+                ImVec2(sym_x, min_btn_max.y - sym_margin),
+                IM_COL32(220, 210, 180, 255), 2.0f * zoom_
+            );
+        }
+
+        // Draw title text
+        ImFont* font = ImGui::GetFont();
+        float title_font_size = 13.0f * zoom_;
+        std::string display_title = annotation.title.empty() ? "Note" : annotation.title;
+        ImVec2 title_pos(p_min.x + 8.0f * zoom_, p_min.y + 5.0f * zoom_);
+        draw_list->AddText(font, title_font_size, title_pos, IM_COL32(50, 40, 20, 255), display_title.c_str());
+
+        // Draw content text (only if not minimized)
+        if (!annotation.is_minimized && !annotation.content.empty()) {
+            float content_font_size = 12.0f * zoom_;
+            float content_x = p_min.x + 8.0f * zoom_;
+            float content_y = p_min.y + title_height + 6.0f * zoom_;
+            float max_width = size.x - 16.0f * zoom_;
+            draw_list->AddText(font, content_font_size, ImVec2(content_x, content_y),
+                IM_COL32(40, 35, 20, 255), annotation.content.c_str(), nullptr, max_width);
+        }
+
+        // Placeholder text if empty and not minimized
+        if (!annotation.is_minimized && annotation.content.empty()) {
+            float content_font_size = 11.0f * zoom_;
+            float content_x = p_min.x + 8.0f * zoom_;
+            float content_y = p_min.y + title_height + 8.0f * zoom_;
+            draw_list->AddText(font, content_font_size, ImVec2(content_x, content_y),
+                IM_COL32(120, 110, 90, 180), "Double-click to edit...");
+        }
+
+        // Selection highlight
+        if (selected_annotation_id_ == annotation.id) {
+            draw_list->AddRect(
+                ImVec2(p_min.x - 2, p_min.y - 2),
+                ImVec2(p_max.x + 2, p_max.y + 2),
+                IM_COL32(100, 150, 255, 200),
+                6.0f * zoom_, 0, 2.0f * zoom_
+            );
+        }
+    }
+
+    // Render edit popup
+    RenderAnnotationEditPopup();
+}
+
+
+
+
+void NodeEditor::RenderAnnotationEditPopup() {
+    if (!editing_annotation_) return;
+
+    // Find the annotation being edited
+    CanvasAnnotation* ann = nullptr;
+    for (auto& a : annotations_) {
+        if (a.id == editing_annotation_id_) {
+            ann = &a;
+            break;
+        }
+    }
+
+    if (!ann) {
+        editing_annotation_ = false;
+        editing_annotation_id_ = -1;
+        return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+    if (ImGui::BeginPopupModal("EditAnnotationPopup", &editing_annotation_, ImGuiWindowFlags_NoResize)) {
+        ImGui::Text("Edit Annotation");
+        ImGui::Separator();
+
+        // Title input
+        ImGui::Text("Title:");
+        static char title_buf[256];
+        if (ImGui::IsWindowAppearing()) {
+            strncpy(title_buf, ann->title.c_str(), sizeof(title_buf) - 1);
+            title_buf[sizeof(title_buf) - 1] = '\0';
+        }
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##ann_title", title_buf, sizeof(title_buf));
+
+        ImGui::Spacing();
+
+        // Content input
+        ImGui::Text("Content:");
+        static char content_buf[2048];
+        if (ImGui::IsWindowAppearing()) {
+            strncpy(content_buf, ann->content.c_str(), sizeof(content_buf) - 1);
+            content_buf[sizeof(content_buf) - 1] = '\0';
+        }
+        ImGui::InputTextMultiline("##ann_content", content_buf, sizeof(content_buf),
+            ImVec2(-1, 150), ImGuiInputTextFlags_AllowTabInput);
+
+        ImGui::Spacing();
+
+        // Color picker
+        ImGui::Text("Color:");
+        static ImVec4 color;
+        if (ImGui::IsWindowAppearing()) {
+            color = ImGui::ColorConvertU32ToFloat4(ann->color);
+        }
+        ImGui::ColorEdit4("##ann_color", &color.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        // Buttons
+        if (ImGui::Button("Save", ImVec2(120, 0))) {
+            ann->title = title_buf;
+            ann->content = content_buf;
+            ann->color = ImGui::ColorConvertFloat4ToU32(color);
+            editing_annotation_ = false;
+            editing_annotation_id_ = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            editing_annotation_ = false;
+            editing_annotation_id_ = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 130);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
+        if (ImGui::Button("Delete", ImVec2(120, 0))) {
+            // Remove annotation
+            annotations_.erase(
+                std::remove_if(annotations_.begin(), annotations_.end(),
+                    [this](const CanvasAnnotation& a) { return a.id == editing_annotation_id_; }),
+                annotations_.end()
+            );
+            editing_annotation_ = false;
+            editing_annotation_id_ = -1;
+            selected_annotation_id_ = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::EndPopup();
+    } else {
+        // Popup was closed
+        editing_annotation_ = false;
+        editing_annotation_id_ = -1;
+    }
+}
+
 void NodeEditor::RenderGroups() {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
@@ -2701,6 +3368,298 @@ void NodeEditor::RenderGroups() {
         ImVec2 label_pos = ImVec2(screen_min.x + 8.0f, screen_min.y + 4.0f);
         draw_list->AddText(label_pos, IM_COL32(255, 255, 255, 220), group.name.c_str());
     }
+}
+
+// ===== Canvas Frames (Visual Organization Boxes) =====
+
+void NodeEditor::RenderFrames() {
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    // Reset frame right-click flag each frame
+    frame_right_clicked_ = false;
+
+    const float HEADER_HEIGHT = 28.0f * zoom_;
+    const float CORNER_RADIUS = 8.0f * zoom_;
+    const float BORDER_WIDTH = 2.0f;
+    const float RESIZE_HANDLE = 14.0f * zoom_;
+
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+
+    for (auto& frame : frames_) {
+        // Convert to screen coordinates
+        ImVec2 screen_min = ImVec2(
+            origin.x + frame.position.x * zoom_ + panning.x,
+            origin.y + frame.position.y * zoom_ + panning.y);
+        ImVec2 screen_max = ImVec2(
+            screen_min.x + frame.size.x * zoom_,
+            screen_min.y + frame.size.y * zoom_);
+
+        // Colors
+        ImU32 header_color = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(frame.color.x * 0.9f, frame.color.y * 0.9f, frame.color.z * 0.9f, 0.95f));
+        ImU32 body_color = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(frame.color.x * 0.2f, frame.color.y * 0.2f, frame.color.z * 0.2f, 0.15f));
+        ImU32 border_color = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(frame.color.x, frame.color.y, frame.color.z, frame.is_selected ? 1.0f : 0.6f));
+        ImU32 text_color = IM_COL32(255, 255, 255, 230);
+        ImU32 desc_color = IM_COL32(200, 200, 200, 180);
+
+        // Draw body background
+        ImVec2 body_min = ImVec2(screen_min.x, screen_min.y + HEADER_HEIGHT);
+        draw_list->AddRectFilled(body_min, screen_max, body_color, CORNER_RADIUS,
+            ImDrawFlags_RoundCornersBottom);
+
+        // Draw header background
+        ImVec2 header_max = ImVec2(screen_max.x, screen_min.y + HEADER_HEIGHT);
+        draw_list->AddRectFilled(screen_min, header_max, header_color, CORNER_RADIUS,
+            ImDrawFlags_RoundCornersTop);
+
+        // Draw border (thicker if selected)
+        float border_thick = frame.is_selected ? 3.0f : BORDER_WIDTH;
+        draw_list->AddRect(screen_min, screen_max, border_color, CORNER_RADIUS, 0, border_thick);
+
+        // Draw header line
+        draw_list->AddLine(
+            ImVec2(screen_min.x, screen_min.y + HEADER_HEIGHT),
+            ImVec2(screen_max.x, screen_min.y + HEADER_HEIGHT),
+            border_color, 1.0f);
+
+        // Draw title
+        ImVec2 title_pos = ImVec2(screen_min.x + 10.0f * zoom_, screen_min.y + 6.0f * zoom_);
+        draw_list->AddText(title_pos, text_color, frame.title.c_str());
+
+        // Draw description (if present)
+        if (!frame.description.empty()) {
+            ImVec2 desc_pos = ImVec2(screen_min.x + 10.0f * zoom_, screen_min.y + HEADER_HEIGHT + 8.0f * zoom_);
+
+            // Truncate if needed
+            float max_width = (screen_max.x - screen_min.x) - 20.0f * zoom_;
+            std::string display_desc = frame.description;
+            if (ImGui::CalcTextSize(display_desc.c_str()).x > max_width) {
+                while (!display_desc.empty() && ImGui::CalcTextSize((display_desc + "...").c_str()).x > max_width) {
+                    display_desc.pop_back();
+                }
+                display_desc += "...";
+            }
+            draw_list->AddText(desc_pos, desc_color, display_desc.c_str());
+        }
+
+        // Draw resize handle (bottom-right corner)
+        draw_list->AddTriangleFilled(
+            ImVec2(screen_max.x, screen_max.y - RESIZE_HANDLE),
+            ImVec2(screen_max.x - RESIZE_HANDLE, screen_max.y),
+            screen_max,
+            IM_COL32(200, 200, 200, 120));
+
+        // Handle interactions - header for drag, resize corner for resize
+        ImGui::SetCursorScreenPos(screen_min);
+        std::string header_id = "##frame_header_" + std::to_string(frame.id);
+        ImGui::InvisibleButton(header_id.c_str(), ImVec2(screen_max.x - screen_min.x, HEADER_HEIGHT));
+
+        bool header_hovered = ImGui::IsItemHovered();
+        bool header_clicked = ImGui::IsItemClicked(0);
+        bool header_right_clicked = ImGui::IsItemClicked(1);
+
+        // Resize handle button
+        ImVec2 resize_pos(screen_max.x - RESIZE_HANDLE, screen_max.y - RESIZE_HANDLE);
+        ImGui::SetCursorScreenPos(resize_pos);
+        std::string resize_id = "##frame_resize_" + std::to_string(frame.id);
+        ImGui::InvisibleButton(resize_id.c_str(), ImVec2(RESIZE_HANDLE, RESIZE_HANDLE));
+
+        bool resize_hovered = ImGui::IsItemHovered();
+        bool resize_clicked = ImGui::IsItemClicked(0);
+
+        // Change cursor on resize hover
+        if (resize_hovered) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+        }
+
+        // Check for right-click in body area
+        ImVec2 mouse_pos = ImGui::GetMousePos();
+        bool in_body = (mouse_pos.x >= screen_min.x && mouse_pos.x <= screen_max.x &&
+                        mouse_pos.y > screen_min.y + HEADER_HEIGHT && mouse_pos.y <= screen_max.y);
+        bool body_right_clicked = in_body && ImGui::IsMouseClicked(1);
+
+        // Selection
+        if (header_clicked || resize_clicked) {
+            for (auto& f : frames_) f.is_selected = false;
+            frame.is_selected = true;
+            selected_frame_id_ = frame.id;
+        }
+
+        // Start dragging (header only)
+        if (header_clicked && dragging_frame_id_ == -1 && resizing_frame_id_ == -1) {
+            dragging_frame_id_ = frame.id;
+            frame_drag_offset_ = ImVec2(mouse_pos.x - screen_min.x, mouse_pos.y - screen_min.y);
+        }
+
+        // Start resizing (resize handle)
+        if (resize_clicked && resizing_frame_id_ == -1 && dragging_frame_id_ == -1) {
+            resizing_frame_id_ = frame.id;
+        }
+
+        // Double-click header to edit
+        if (header_hovered && ImGui::IsMouseDoubleClicked(0)) {
+            editing_frame_ = true;
+            editing_frame_id_ = frame.id;
+            strncpy(frame_edit_title_, frame.title.c_str(), sizeof(frame_edit_title_) - 1);
+            strncpy(frame_edit_desc_, frame.description.c_str(), sizeof(frame_edit_desc_) - 1);
+        }
+
+        // Right-click menu (header or body)
+        if (header_right_clicked || body_right_clicked) {
+            frame_right_clicked_ = true;  // Prevent canvas context menu
+            ImGui::OpenPopup(("FrameMenu_" + std::to_string(frame.id)).c_str());
+        }
+
+        if (ImGui::BeginPopup(("FrameMenu_" + std::to_string(frame.id)).c_str())) {
+            if (ImGui::MenuItem(ICON_FA_PEN " Edit Description")) {
+                editing_frame_ = true;
+                editing_frame_id_ = frame.id;
+                strncpy(frame_edit_title_, frame.title.c_str(), sizeof(frame_edit_title_) - 1);
+                strncpy(frame_edit_desc_, frame.description.c_str(), sizeof(frame_edit_desc_) - 1);
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(ICON_FA_COPY " Copy", "Ctrl+C")) {
+                // TODO: Copy frame to clipboard
+                spdlog::info("Copy frame {} (not yet implemented)", frame.id);
+            }
+            if (ImGui::MenuItem(ICON_FA_SCISSORS " Cut", "Ctrl+X")) {
+                // TODO: Cut frame to clipboard
+                spdlog::info("Cut frame {} (not yet implemented)", frame.id);
+            }
+            if (ImGui::MenuItem(ICON_FA_TRASH " Delete", "Del")) {
+                DeleteFrame(frame.id);
+                ImGui::EndPopup();
+                break;  // List modified, exit loop
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(ICON_FA_OBJECT_GROUP " Group Nodes Inside")) {
+                // Find all nodes inside this frame's bounds and group them
+                std::vector<int> nodes_inside;
+                for (const auto& node : nodes_) {
+                    auto pos_it = cached_node_positions_.find(node.id);
+                    if (pos_it != cached_node_positions_.end()) {
+                        ImVec2 node_pos = pos_it->second;
+                        if (node_pos.x >= frame.position.x &&
+                            node_pos.x <= frame.position.x + frame.size.x &&
+                            node_pos.y >= frame.position.y &&
+                            node_pos.y <= frame.position.y + frame.size.y) {
+                            nodes_inside.push_back(node.id);
+                        }
+                    }
+                }
+                if (nodes_inside.size() >= 2) {
+                    // Select these nodes and create group
+                    selected_node_ids_.clear();
+                    for (int id : nodes_inside) {
+                        selected_node_ids_.push_back(id);
+                    }
+                    CreateGroupFromSelection(frame.title);
+                    spdlog::info("Grouped {} nodes inside frame '{}'", nodes_inside.size(), frame.title);
+                } else {
+                    spdlog::warn("Need at least 2 nodes inside frame to create a group");
+                }
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    // Handle dragging
+    if (dragging_frame_id_ != -1) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            ImVec2 mouse_pos = ImGui::GetMousePos();
+            for (auto& frame : frames_) {
+                if (frame.id == dragging_frame_id_) {
+                    frame.position.x = (mouse_pos.x - origin.x - panning.x - frame_drag_offset_.x) / zoom_;
+                    frame.position.y = (mouse_pos.y - origin.y - panning.y - frame_drag_offset_.y) / zoom_;
+                    break;
+                }
+            }
+        } else {
+            dragging_frame_id_ = -1;
+        }
+    }
+
+    // Handle resizing (bottom-right corner only)
+    if (resizing_frame_id_ != -1) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            ImVec2 mouse_pos = ImGui::GetMousePos();
+            for (auto& frame : frames_) {
+                if (frame.id == resizing_frame_id_) {
+                    ImVec2 screen_min = ImVec2(
+                        origin.x + frame.position.x * zoom_ + panning.x,
+                        origin.y + frame.position.y * zoom_ + panning.y);
+                    float new_w = (mouse_pos.x - screen_min.x) / zoom_;
+                    float new_h = (mouse_pos.y - screen_min.y) / zoom_;
+                    frame.size.x = std::max(100.0f, new_w);
+                    frame.size.y = std::max(80.0f, new_h);
+                    break;
+                }
+            }
+        } else {
+            resizing_frame_id_ = -1;
+        }
+    }
+
+    // Frame edit popup
+    if (editing_frame_) {
+        ImGui::OpenPopup("Edit Frame");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    }
+
+    if (ImGui::BeginPopupModal("Edit Frame", &editing_frame_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Title:");
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputText("##frame_title", frame_edit_title_, sizeof(frame_edit_title_));
+
+        ImGui::Text("Description:");
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputTextMultiline("##frame_desc", frame_edit_desc_, sizeof(frame_edit_desc_),
+            ImVec2(300, 80));
+
+        ImGui::Spacing();
+        if (ImGui::Button("Save", ImVec2(100, 0))) {
+            for (auto& frame : frames_) {
+                if (frame.id == editing_frame_id_) {
+                    frame.title = frame_edit_title_;
+                    frame.description = frame_edit_desc_;
+                    break;
+                }
+            }
+            editing_frame_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            editing_frame_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void NodeEditor::AddFrameAt(const ImVec2& canvas_position) {
+    CanvasFrame frame;
+    frame.id = next_frame_id_++;
+    frame.title = "Frame " + std::to_string(frame.id);
+    frame.position = canvas_position;
+    frame.size = ImVec2(300, 200);
+    frames_.push_back(frame);
+    spdlog::info("Added frame {} at ({}, {})", frame.id, canvas_position.x, canvas_position.y);
+}
+
+void NodeEditor::DeleteFrame(int frame_id) {
+    frames_.erase(
+        std::remove_if(frames_.begin(), frames_.end(),
+            [frame_id](const CanvasFrame& f) { return f.id == frame_id; }),
+        frames_.end());
+    if (selected_frame_id_ == frame_id) {
+        selected_frame_id_ = -1;
+    }
+    spdlog::info("Deleted frame {}", frame_id);
 }
 
 // ===== Subgraph Encapsulation =====
@@ -3378,6 +4337,9 @@ void NodeEditor::SetDatasetFromDataStudio(const std::string& dataset_name) {
         nodes_.push_back(new_node);
         dataset_input = &nodes_.back();
 
+        // Rebuild pin lookup after adding node
+        RebuildPinLookup();
+
         // Set position for next frame
         pending_positions_[dataset_input->id] = center_pos;
         pending_positions_frames_ = 3;  // Apply for 3 frames to ensure ImNodes registers it
@@ -3523,6 +4485,20 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
         case NodeType::ExportParquet: return "ExportParquet";
         case NodeType::ExportJSON: return "ExportJSON";
         case NodeType::DescribeStats: return "DescribeStats";
+        // KNIME-style table manipulation nodes
+        case NodeType::ExcelFile: return "ExcelInput";
+        case NodeType::ExportExcel: return "ExportExcel";
+        case NodeType::RowToColumnNames: return "RowToColumnNames";
+        case NodeType::TableSplitter: return "TableSplitter";
+        case NodeType::CellExtractor: return "CellExtractor";
+        case NodeType::CellUpdater: return "CellUpdater";
+        case NodeType::TableCropper: return "TableCropper";
+        case NodeType::ColumnAppender: return "ColumnAppender";
+        case NodeType::RowAppender: return "RowAppender";
+        case NodeType::Unpivot: return "Unpivot";
+        case NodeType::StringManipulation: return "StringManipulation";
+        case NodeType::MathFormula: return "MathFormula";
+        case NodeType::RuleEngine: return "RuleEngine";
         default: return "Unknown";
     }
 }

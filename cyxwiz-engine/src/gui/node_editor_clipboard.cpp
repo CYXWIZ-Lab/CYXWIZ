@@ -57,6 +57,9 @@ void NodeEditor::Undo() {
     next_pin_id_ = previous.next_pin_id;
     next_link_id_ = previous.next_link_id;
 
+    // Rebuild pin lookup after restoring state
+    RebuildPinLookup();
+
     // Clear selection
     ImNodes::ClearNodeSelection();
     ImNodes::ClearLinkSelection();
@@ -90,6 +93,9 @@ void NodeEditor::Redo() {
     next_node_id_ = next.next_node_id;
     next_pin_id_ = next.next_pin_id;
     next_link_id_ = next.next_link_id;
+
+    // Rebuild pin lookup after restoring state
+    RebuildPinLookup();
 
     // Clear selection
     ImNodes::ClearNodeSelection();
@@ -345,6 +351,9 @@ void NodeEditor::PasteClipboard() {
     if (paste_offset_.x > 300.0f) {
         paste_offset_ = ImVec2(50.0f, 50.0f);
     }
+
+    // Rebuild pin lookup after pasting nodes
+    RebuildPinLookup();
 
     spdlog::info("Pasted {} nodes and {} links",
                  clipboard_.nodes.size(), clipboard_.links.size());

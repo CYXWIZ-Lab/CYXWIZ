@@ -20,6 +20,10 @@ void DeploymentClient::AddAuthMetadata(grpc::ClientContext& context) {
 }
 
 DeploymentClient::~DeploymentClient() {
+    shutdown_requested_.store(true);
+    if (async_thread_.joinable()) {
+        async_thread_.join();
+    }
     Disconnect();
 }
 
@@ -188,12 +192,29 @@ DeploymentResult DeploymentClient::Deploy(const DeploymentConfig& config) {
 
 void DeploymentClient::DeployAsync(const DeploymentConfig& config,
                                     std::function<void(const DeploymentResult&)> callback) {
-    std::thread([this, config, callback]() {
+    if (shutdown_requested_.load()) return;
+
+    // Wait for any previous async operation
+    if (async_thread_.joinable()) {
+        async_thread_.join();
+    }
+
+    async_thread_ = std::thread([this, config, callback]() {
+        if (shutdown_requested_.load()) {
+            if (callback) {
+                DeploymentResult result;
+                result.error_message = "Shutdown requested";
+                callback(result);
+            }
+            return;
+        }
+
         auto result = Deploy(config);
-        if (callback) {
+
+        if (callback && !shutdown_requested_.load()) {
             callback(result);
         }
-    }).detach();
+    });
 }
 
 bool DeploymentClient::ListDeployments(std::vector<DeploymentSummary>& deployments) {

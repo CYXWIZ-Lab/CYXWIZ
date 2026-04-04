@@ -1,17 +1,30 @@
+// Include Windows headers first, then undef conflicting macros
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+// Undefine Windows macros that conflict with our method names
+#ifdef CreateDialog
+#undef CreateDialog
+#endif
+#ifdef CreateDialogA
+#undef CreateDialogA
+#endif
+#ifdef CreateDialogW
+#undef CreateDialogW
+#endif
+#endif
+
 #include "properties.h"
+#include "../core/node_metadata_registry.h"
 #include "node_editor.h"
 #include "../core/data_registry.h"
 #include "../plugin/registries/plugin_node_registry.h"
+#include "node_config_dialog.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <queue>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
 #include <set>
 #include <algorithm>
 
@@ -669,29 +682,79 @@ void Properties::Render() {
     if (!show_window_) return;
 
     if (ImGui::Begin("Properties", &show_window_)) {
-        ImGui::Text("Node Properties");
-        ImGui::Separator();
-
         if (!selected_node_) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No node selected");
-            ImGui::Text("Click on a node in CyxWiz Studio to view its properties");
+            // Placeholder when no node selected
+            ImVec2 avail = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosY(avail.y * 0.3f);
+
+            // Center icon
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+            ImGui::SetWindowFontScale(2.0f);
+            float icon_width = ImGui::CalcTextSize("\xef\x80\x85").x;  // ICON_FA_SLIDERS
+            ImGui::SetCursorPosX((avail.x - icon_width) * 0.5f);
+            ImGui::Text("\xef\x80\x85");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopStyleColor();
+
+            ImGui::Spacing();
+
+            const char* text = "Select a node to edit properties";
+            ImVec2 text_size = ImGui::CalcTextSize(text);
+            ImGui::SetCursorPosX((avail.x - text_size.x) * 0.5f);
+            ImGui::TextDisabled("%s", text);
         } else {
-            // Display selected node info
-            ImGui::Text("Node: %s", selected_node_->name.c_str());
-            ImGui::Text("ID: %d", selected_node_->id);
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
+            // Get metadata for this node type
+            const cyxwiz::NodeMetadata* metadata =
+                cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(selected_node_->type);
 
-            // Render node-specific properties
-            RenderNodeProperties(*selected_node_);
+            // Check if this is a dialog-only node (DataInput/DataOutput)
+            bool is_dialog_only = (selected_node_->type == NodeType::DataInput ||
+                                   selected_node_->type == NodeType::DataOutput);
 
-            // Compute and render shape information
-            NodeShapeInfo shape_info = ComputeNodeShape(selected_node_->id);
-            RenderShapeInfo(shape_info);
+            // Phase 3: Section-based rendering
+            RenderGeneralSection(*selected_node_);
+
+            // Skip other sections for dialog-only nodes
+            if (!is_dialog_only) {
+                ImGui::Spacing();
+
+                // Parameters section - use metadata-driven rendering if available
+                RenderParametersSection(*selected_node_, metadata);
+
+                ImGui::Spacing();
+
+                // Shape information section
+                if (ImGui::CollapsingHeader("Shape Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    NodeShapeInfo shape_info = ComputeNodeShape(selected_node_->id);
+                    RenderShapeInfo(shape_info);
+                }
+
+                ImGui::Spacing();
+
+                // Advanced section
+                RenderAdvancedSection(*selected_node_);
+
+                ImGui::Spacing();
+
+                // Presets section
+                RenderPresetsSection(*selected_node_);
+
+                ImGui::Spacing();
+
+                // Node Executor section (for analytics nodes like KMeans, PCA, etc.)
+                RenderExecutorSection(*selected_node_);
+            }
         }
     }
     ImGui::End();
+
+    // Render active configuration dialog (if open)
+    if (active_dialog_ && active_dialog_->IsOpen()) {
+        if (!active_dialog_->Render()) {
+            // Dialog was closed
+            active_dialog_.reset();
+        }
+    }
 }
 
 void Properties::RenderNodeProperties(MLNode& node) {
@@ -1856,10 +1919,551 @@ void Properties::RenderNodeProperties(MLNode& node) {
             break;
         }
 
+        // ========== Smart I/O Nodes (Dialog-only configuration) ==========
+        case NodeType::DataInput:
+        case NodeType::DataOutput:
+            // These nodes are configured via the Open Dialog button only
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Use 'Open Dialog' to configure");
+            break;
+
         default:
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No editable parameters for this node type");
             break;
     }
+}
+
+// ========== Phase 3: Enhanced Property Sections ==========
+
+void Properties::RenderGeneralSection(MLNode& node) {
+    ImGui::SetNextItemOpen(section_general_open_, ImGuiCond_Once);
+    if (ImGui::CollapsingHeader("General", ImGuiTreeNodeFlags_DefaultOpen)) {
+        section_general_open_ = true;
+
+        // Node name (editable)
+        char name_buf[128];
+        strncpy(name_buf, node.name.c_str(), sizeof(name_buf) - 1);
+        name_buf[sizeof(name_buf) - 1] = '\0';
+
+        ImGui::Text("Name:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::InputText("##node_name", name_buf, sizeof(name_buf))) {
+            node.name = name_buf;
+        }
+
+        // Node ID (read-only)
+        ImGui::Text("ID: %d", node.id);
+
+        // Node type
+        auto* metadata = cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(node.type);
+        if (metadata) {
+            ImGui::Text("Type: %s", metadata->name.c_str());
+
+            // Category badge
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%s)", cyxwiz::GetCategoryDisplayName(metadata->category).c_str());
+
+            // Icon display
+            if (!metadata->icon.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
+                ImGui::Text("%s", metadata->icon.c_str());
+                ImGui::PopStyleColor();
+            }
+        }
+
+        // KNIME-style "Open Dialog" button for complex nodes
+        RenderOpenDialogButton(node);
+    } else {
+        section_general_open_ = false;
+    }
+}
+
+void Properties::RenderOpenDialogButton(MLNode& node) {
+    // Check if this node type should have an "Open Dialog" button
+    bool should_show = ShouldShowOpenDialogButton(node.type);
+    spdlog::debug("RenderOpenDialogButton: node='{}', type={}, should_show={}",
+                  node.name, static_cast<int>(node.type), should_show);
+    if (!should_show) {
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Center the button
+    float button_width = 150.0f;
+    float avail_width = ImGui::GetContentRegionAvail().x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail_width - button_width) * 0.5f);
+
+    // Styled "Open Dialog" button (similar to KNIME)
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.35f, 0.55f, 1.0f));
+
+    if (ImGui::Button("Open Dialog...", ImVec2(button_width, 0))) {
+        // Create and open the dialog for this node
+        active_dialog_ = NodeConfigDialogFactory::Instance().CreateDialog(&node);
+        if (active_dialog_) {
+            active_dialog_->Open();
+            spdlog::info("Opened configuration dialog for node '{}'", node.name);
+        }
+    }
+
+    ImGui::PopStyleColor(3);
+
+    // Tooltip
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::Text("Open detailed configuration dialog");
+        ImGui::TextDisabled("(Configure all settings with preview)");
+        ImGui::EndTooltip();
+    }
+}
+
+void Properties::RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadata* metadata) {
+    ImGui::SetNextItemOpen(section_parameters_open_, ImGuiCond_Once);
+    if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+        section_parameters_open_ = true;
+
+        if (metadata && !metadata->parameters.empty()) {
+            for (const auto& param : metadata->parameters) {
+                RenderParameter(node, param);
+            }
+        } else {
+            // Fallback to existing node-specific rendering
+            RenderNodeProperties(node);
+        }
+    } else {
+        section_parameters_open_ = false;
+    }
+}
+
+void Properties::RenderAdvancedSection(MLNode& node) {
+    ImGui::SetNextItemOpen(section_advanced_open_, ImGuiCond_Once);
+    if (ImGui::CollapsingHeader("Advanced")) {
+        section_advanced_open_ = true;
+
+        // Initial position (if set for pattern insertion)
+        if (node.has_initial_position) {
+            ImGui::Text("Initial Position: (%.1f, %.1f)", node.initial_pos_x, node.initial_pos_y);
+        }
+
+        // Connections info
+        if (node_editor_) {
+            const auto& links = node_editor_->GetLinks();
+            int input_count = 0, output_count = 0;
+            for (const auto& link : links) {
+                if (link.to_node == node.id) input_count++;
+                if (link.from_node == node.id) output_count++;
+            }
+            ImGui::Text("Connections: %d in, %d out", input_count, output_count);
+        }
+
+        // Raw parameters (debug)
+        if (ImGui::TreeNode("Raw Parameters")) {
+            for (const auto& [key, value] : node.parameters) {
+                ImGui::Text("%s: %s", key.c_str(), value.c_str());
+            }
+            ImGui::TreePop();
+        }
+    } else {
+        section_advanced_open_ = false;
+    }
+}
+
+void Properties::RenderPresetsSection(MLNode& node) {
+    ImGui::SetNextItemOpen(section_presets_open_, ImGuiCond_Once);
+    if (ImGui::CollapsingHeader("Presets")) {
+        section_presets_open_ = true;
+
+        // List available presets
+        auto presets = GetPresetsForNodeType(node.type);
+        if (!presets.empty()) {
+            ImGui::Text("Available Presets:");
+            for (const auto& preset : presets) {
+                if (ImGui::Button(preset.c_str())) {
+                    LoadPreset(node, preset);
+                }
+                ImGui::SameLine();
+            }
+            ImGui::NewLine();
+            ImGui::Separator();
+        }
+
+        // Save new preset
+        ImGui::Text("Save Current as Preset:");
+        ImGui::SetNextItemWidth(150.0f);
+        ImGui::InputText("##preset_name", preset_name_buffer_, sizeof(preset_name_buffer_));
+        ImGui::SameLine();
+        if (ImGui::Button("Save") && preset_name_buffer_[0] != '\0') {
+            SavePreset(node, preset_name_buffer_);
+            preset_name_buffer_[0] = '\0';
+        }
+    } else {
+        section_presets_open_ = false;
+    }
+}
+
+void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition& param) {
+    ImGui::PushID(param.name.c_str());
+
+    std::string& value = node.parameters[param.name];
+
+    // Initialize with default if empty
+    if (value.empty() && !param.default_value.empty()) {
+        value = param.default_value;
+    }
+
+    // Check for validation errors
+    bool has_error = validation_errors_.count(param.name) > 0;
+    if (has_error) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+    }
+
+    // Label
+    ImGui::Text("%s:", param.name.c_str());
+    if (has_error) {
+        ImGui::PopStyleColor();
+    }
+
+    // Tooltip with description
+    if (!param.description.empty() && ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(param.description.c_str());
+        if (!param.default_value.empty()) {
+            ImGui::TextDisabled("Default: %s", param.default_value.c_str());
+        }
+        ImGui::EndTooltip();
+    }
+
+    ImGui::SameLine();
+
+    bool changed = false;
+
+    // Render based on parameter type
+    if (param.type == "int") {
+        int int_val = value.empty() ? 0 : std::stoi(value);
+        ImGui::SetNextItemWidth(120.0f);
+        if (ImGui::InputInt("##value", &int_val)) {
+            value = std::to_string(int_val);
+            changed = true;
+        }
+    }
+    else if (param.type == "float") {
+        float float_val = value.empty() ? 0.0f : std::stof(value);
+        ImGui::SetNextItemWidth(120.0f);
+
+        // Try to parse range from validation string (e.g., "0.0-1.0")
+        float min_v = 0.0f, max_v = 1.0f;
+        bool has_range = false;
+        if (!param.validation.empty()) {
+            size_t dash_pos = param.validation.find('-');
+            // Handle negative numbers: look for dash that's not at the start
+            if (dash_pos != std::string::npos && dash_pos > 0) {
+                try {
+                    min_v = std::stof(param.validation.substr(0, dash_pos));
+                    max_v = std::stof(param.validation.substr(dash_pos + 1));
+                    has_range = true;
+                } catch (...) {}
+            }
+        }
+
+        if (has_range) {
+            if (ImGui::SliderFloat("##value", &float_val, min_v, max_v, "%.4f")) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%.4f", float_val);
+                value = buf;
+                changed = true;
+            }
+        } else {
+            if (ImGui::InputFloat("##value", &float_val, 0.01f, 0.1f, "%.4f")) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%.4f", float_val);
+                value = buf;
+                changed = true;
+            }
+        }
+    }
+    else if (param.type == "bool") {
+        bool bool_val = (value == "true" || value == "1");
+        if (ImGui::Checkbox("##value", &bool_val)) {
+            value = bool_val ? "true" : "false";
+            changed = true;
+        }
+    }
+    else if (param.type == "enum" && !param.enum_values.empty()) {
+        // Find current index
+        int current_idx = 0;
+        for (size_t i = 0; i < param.enum_values.size(); i++) {
+            if (param.enum_values[i] == value) {
+                current_idx = static_cast<int>(i);
+                break;
+            }
+        }
+
+        // Build combo items
+        std::vector<const char*> items;
+        for (const auto& ev : param.enum_values) {
+            items.push_back(ev.c_str());
+        }
+
+        ImGui::SetNextItemWidth(150.0f);
+        if (ImGui::Combo("##value", &current_idx, items.data(), static_cast<int>(items.size()))) {
+            value = param.enum_values[current_idx];
+            changed = true;
+        }
+    }
+    else if (param.type == "file") {
+        char file_buf[512];
+        strncpy(file_buf, value.c_str(), sizeof(file_buf) - 1);
+        file_buf[sizeof(file_buf) - 1] = '\0';
+
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::InputText("##value", file_buf, sizeof(file_buf))) {
+            value = file_buf;
+            changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Browse")) {
+#ifdef _WIN32
+            OPENFILENAMEA ofn = {};
+            char file[512] = {};
+            strncpy(file, value.c_str(), sizeof(file) - 1);
+            ofn.lStructSize = sizeof(ofn);
+            ofn.lpstrFilter = "All Files\0*.*\0";
+            ofn.lpstrFile = file;
+            ofn.nMaxFile = sizeof(file);
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+            if (GetOpenFileNameA(&ofn)) {
+                value = file;
+                changed = true;
+            }
+#endif
+        }
+    }
+    else {
+        // Default: string input
+        char str_buf[256];
+        strncpy(str_buf, value.c_str(), sizeof(str_buf) - 1);
+        str_buf[sizeof(str_buf) - 1] = '\0';
+
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::InputText("##value", str_buf, sizeof(str_buf))) {
+            value = str_buf;
+            changed = true;
+        }
+    }
+
+    // Validation on change
+    if (changed) {
+        std::string error;
+        if (!ValidateParameter(value, param, error)) {
+            validation_errors_[param.name] = error;
+        } else {
+            validation_errors_.erase(param.name);
+        }
+        InvalidateShapes();
+    }
+
+    // Show validation error
+    if (has_error) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "!");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", validation_errors_[param.name].c_str());
+            ImGui::EndTooltip();
+        }
+    }
+
+    ImGui::PopID();
+}
+
+bool Properties::ValidateParameter(const std::string& value, const cyxwiz::ParameterDefinition& param, std::string& error) {
+    // Empty value is typically allowed (uses default)
+    if (value.empty()) {
+        return true;
+    }
+
+    // Parse validation string for range (e.g., "0-100" or "0.0-1.0")
+    auto parseRange = [](const std::string& validation, double& min_val, double& max_val) -> bool {
+        if (validation.empty()) return false;
+        size_t dash_pos = validation.find('-');
+        if (dash_pos != std::string::npos && dash_pos > 0) {
+            try {
+                min_val = std::stod(validation.substr(0, dash_pos));
+                max_val = std::stod(validation.substr(dash_pos + 1));
+                return true;
+            } catch (...) {}
+        }
+        return false;
+    };
+
+    // Type-specific validation
+    if (param.type == "int") {
+        try {
+            int v = std::stoi(value);
+            double min_val, max_val;
+            if (parseRange(param.validation, min_val, max_val)) {
+                if (v < static_cast<int>(min_val)) {
+                    error = "Value must be >= " + std::to_string(static_cast<int>(min_val));
+                    return false;
+                }
+                if (v > static_cast<int>(max_val)) {
+                    error = "Value must be <= " + std::to_string(static_cast<int>(max_val));
+                    return false;
+                }
+            }
+        } catch (...) {
+            error = "Invalid integer";
+            return false;
+        }
+    }
+    else if (param.type == "float") {
+        try {
+            float v = std::stof(value);
+            double min_val, max_val;
+            if (parseRange(param.validation, min_val, max_val)) {
+                if (v < static_cast<float>(min_val)) {
+                    error = "Value must be >= " + std::to_string(static_cast<float>(min_val));
+                    return false;
+                }
+                if (v > static_cast<float>(max_val)) {
+                    error = "Value must be <= " + std::to_string(static_cast<float>(max_val));
+                    return false;
+                }
+            }
+        } catch (...) {
+            error = "Invalid number";
+            return false;
+        }
+    }
+    else if (param.type == "enum" && !param.enum_values.empty()) {
+        bool found = false;
+        for (const auto& ev : param.enum_values) {
+            if (ev == value) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            error = "Invalid option";
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void Properties::SavePreset(const MLNode& node, const std::string& name) {
+    // TODO: Implement preset persistence (save to JSON file)
+    spdlog::info("Saved preset '{}' for node type {}", name, static_cast<int>(node.type));
+}
+
+void Properties::LoadPreset(MLNode& node, const std::string& name) {
+    // TODO: Implement preset loading (read from JSON file)
+    spdlog::info("Loading preset '{}' for node type {}", name, static_cast<int>(node.type));
+    InvalidateShapes();
+}
+
+std::vector<std::string> Properties::GetPresetsForNodeType(NodeType type) {
+    // TODO: Implement preset discovery (scan presets directory)
+    std::vector<std::string> presets;
+
+    // Return some built-in presets for common node types
+    switch (type) {
+        case NodeType::Conv2D:
+            presets = {"VGG-style", "ResNet-style", "MobileNet-style"};
+            break;
+        case NodeType::Dense:
+            presets = {"Small (64)", "Medium (256)", "Large (1024)"};
+            break;
+        case NodeType::Adam:
+            presets = {"Default", "Fast Learning", "Fine-tuning"};
+            break;
+        default:
+            break;
+    }
+
+    return presets;
+}
+
+// ==================== Node Executor Integration ====================
+
+void Properties::RenderExecutorSection(MLNode& node) {
+    // Check if this node type has an executor
+    if (!HasNodeExecutor(node.type)) {
+        return;  // No executor for this node type
+    }
+
+    auto* executor = cyxwiz::NodeExecutorFactory::Instance().GetExecutor(node.type);
+    if (!executor) return;
+
+    ImGui::Separator();
+
+    // Executor header with name
+    bool executor_open = ImGui::CollapsingHeader(
+        (std::string(executor->GetName()) + " Configuration").c_str(),
+        ImGuiTreeNodeFlags_DefaultOpen
+    );
+
+    if (executor_open) {
+        ImGui::Indent(10.0f);
+
+        // Setup input data from connected nodes if available
+        SetupExecutorInputData(executor, node);
+
+        // Render configuration UI
+        ImGui::PushID("ExecutorConfig");
+        executor->RenderConfigUI();
+        ImGui::PopID();
+
+        ImGui::Unindent(10.0f);
+    }
+
+    // Results section (shown after execution)
+    if (executor->GetState() == cyxwiz::ExecutorState::Completed ||
+        executor->GetState() == cyxwiz::ExecutorState::Executing ||
+        executor->GetState() == cyxwiz::ExecutorState::Error) {
+
+        bool results_open = ImGui::CollapsingHeader("Results", ImGuiTreeNodeFlags_DefaultOpen);
+
+        if (results_open) {
+            ImGui::Indent(10.0f);
+
+            ImGui::PushID("ExecutorResults");
+            executor->RenderResultsUI();
+            ImGui::PopID();
+
+            ImGui::Unindent(10.0f);
+        }
+    }
+}
+
+bool Properties::HasNodeExecutor(NodeType type) {
+    return cyxwiz::NodeExecutorFactory::Instance().HasExecutor(type);
+}
+
+void Properties::SetupExecutorInputData(cyxwiz::INodeExecutor* executor, MLNode& node) {
+    if (!node_editor_) return;
+
+    // TODO: Get input data from connected upstream nodes
+    // For now, check if there's a DatasetInput node connected
+    // and load its data
+
+    // This is a placeholder - in a real implementation:
+    // 1. Find all nodes connected to this node's input pins
+    // 2. Get their output data (Arrow tables or raw vectors)
+    // 3. Pass to executor via SetInputData()
+
+    // For demo/testing, we could generate sample data
+    // if (executor->GetState() == cyxwiz::ExecutorState::Idle) {
+    //     // Generate sample data for testing
+    //     std::vector<std::vector<double>> sample_data;
+    //     // ... generate random cluster data
+    //     executor->SetInputData(sample_data);
+    // }
 }
 
 } // namespace gui

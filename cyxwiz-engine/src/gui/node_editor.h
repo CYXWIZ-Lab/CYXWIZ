@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <functional>
 #include <atomic>
@@ -31,10 +32,17 @@ class ShapeInferenceEngine;
 
 // Node category for organization and UI display (Unified Canvas Phase 1)
 enum class NodeCategory {
-    DataSources,      // CSV, SQL, HDF5, API, etc.
+    // Data I/O (Read & Write)
+    DataSources,      // CSV, SQL, HDF5, API + Export CSV, Parquet, SQL, JSON
+    Database,         // PostgreSQL, MySQL, SQLite, MongoDB (Coming Soon)
+    CloudStorage,     // AWS S3, Azure Blob, Google Cloud (Coming Soon)
     DataTransform,    // Filter, Join, GroupBy, Sort, etc.
+
+    // Analytics & Visualization
     Analytics,        // Stats, Visualize, Sample, Correlation
-    Preprocessing,    // Normalize, Scale, Encode (existing nodes)
+    Visualization,    // 3D Scatter, Maps, Network Graphs (Coming Soon)
+
+    // ML Layers
     Layers,           // Dense, Conv2D, LSTM, etc. (ML layers)
     Activation,       // ReLU, Sigmoid, Softmax, etc.
     Pooling,          // MaxPool, AvgPool, etc.
@@ -43,20 +51,47 @@ enum class NodeCategory {
     Recurrent,        // RNN, LSTM, GRU, etc.
     ShapeOps,         // Reshape, Permute, Squeeze, etc.
     MergeOps,         // Concatenate, Add, Multiply, etc.
+    Upsampling,       // ConvTranspose, Upsample, PixelShuffle
+
+    // Training & Models
     Training,         // Optimizer, Loss, LR Scheduler
     Regularization,   // L1, L2, Dropout
-    Utility,          // Lambda, Identity, Constant
-    Signal,           // Sliders, Sine, Scope (for simulation)
+    ModelIO,          // Model Reader/Writer, Checkpoints (Coming Soon)
+    MLServices,       // AutoML, HuggingFace, MLflow (Coming Soon)
+    Explainability,   // SHAP, LIME (Coming Soon)
+
+    // Data Processing
+    Preprocessing,    // Normalize, Scale, Encode (existing nodes)
     DataPipeline,     // DatasetInput, DataLoader, Augmentation
-    DNN,              // Pre-trained models, detection, pose
     TextProcessing,   // Tokenizer, Vocabulary, Padding
-    Upsampling,       // ConvTranspose, Upsample, PixelShuffle
     TimeSeries,       // Window, Features, Split
     Audio,            // AudioInput, Spectrogram, MFCC
+    JsonXml,          // JSON Path, XML Reader (Coming Soon)
+
+    // Specialized
+    DNN,              // Pre-trained models, detection, pose
     RL,               // Gym, ReplayBuffer, Policy, Value
-    DataExport,       // Export CSV, Parquet, SQL, JSON
+    BigData,          // Spark, Dask, Ray, Kafka (Coming Soon)
+
+    // Workflow & UI
+    Workflow,         // Loop, IF Switch, Try/Catch (Coming Soon)
+    Widgets,          // Interactive inputs (Coming Soon)
+    Reporting,        // PDF, HTML Reports (Coming Soon)
+    Utility,          // Lambda, Identity, Constant
+    Signal,           // Sliders, Sine, Scope (for simulation)
+
     Plugin,           // Plugin-defined custom nodes
     Unknown           // Fallback
+};
+
+// Icon pack selection for node icons
+enum class IconPack {
+    FontAwesome,    // Default - FontAwesome 6 icons (solid style)
+    Tabler,         // Tabler Icons - clean 2px outline style
+    Remix,          // Remix Icon - filled style icons
+    Lucide,         // Lucide Icons - clean minimal stroke style
+    Iconoir,        // Iconoir Icons - simple consistent stroke icons
+    Phosphor        // Phosphor Icons - flexible icon family with multiple weights
 };
 
 // Node types for ML model building
@@ -238,7 +273,11 @@ enum class NodeType {
     ValueNetwork,       // Critic network for RL
     RLTraining,         // RL training loop controller
 
-    // ===== Data Source Nodes (Unified Canvas Phase 1) =====
+    // ===== Smart I/O Nodes (Unified - replaces individual format nodes) =====
+    DataInput,          // Universal data input with smart dialog (auto-detects format)
+    DataOutput,         // Universal data export with smart dialog (supports all formats)
+
+    // ===== Legacy Data Source Nodes (kept for compatibility) =====
     CSVFile,            // Load CSV file into Arrow table
     SQLQuery,           // Execute SQL query, return Arrow table
     HDF5Dataset,        // Load HDF5 dataset into Arrow
@@ -246,6 +285,23 @@ enum class NodeType {
     JSONFile,           // Load JSON file into Arrow
     ExcelFile,          // Load Excel file into Arrow
     RESTAPISource,      // Fetch data from REST API
+
+    // Additional I/O formats (supported by engine)
+    TSVFile,            // Load TSV file into Arrow
+    TXTFile,            // Load plain text file
+    ImageCSVDataset,    // Images folder + CSV labels
+    StreamingDataset,   // Stream large datasets
+    ARFFFile,           // Weka ARFF format
+    FashionMNISTDataset,// Fashion-MNIST dataset
+    CIFAR100Dataset,    // CIFAR-100 dataset
+
+    // Additional I/O formats (Arrow, NumPy, Domain-specific)
+    FeatherFile,        // Apache Arrow Feather format
+    ArrowIPCFile,       // Arrow IPC binary format
+    NumPyFile,          // NumPy .npy/.npz files
+    AudioFolderDataset, // Audio files with class folders
+    TimeSeriesCSV,      // Time series CSV with windowing
+    TextCorpusDataset,  // Text corpus for NLP
 
     // ===== Data Transform Nodes (Unified Canvas Phase 1) =====
     FilterRows,         // Filter rows by SQL WHERE condition
@@ -272,9 +328,182 @@ enum class NodeType {
     ExportParquet,      // Export dataset to Parquet
     ExportSQL,          // Write dataset to SQL database
     ExportJSON,         // Export dataset to JSON
+    ExportExcel,        // Export dataset to Excel (.xlsx)
+
+    // ===== KNIME-Style Table Manipulation Nodes =====
+    RowToColumnNames,   // Promote a row to column headers
+    TableSplitter,      // Split table at specified row
+    CellExtractor,      // Extract value from specific cell
+    CellUpdater,        // Update value in specific cell
+    TableCropper,       // Crop table to specified dimensions
+    ColumnAppender,     // Append columns from multiple tables
+    RowAppender,        // Append rows from multiple tables (alias for UnionTables)
+    Unpivot,            // Unpivot wide to long format
+    StringManipulation, // String operations (replace, trim, upper, lower)
+    MathFormula,        // Apply math formula to columns
+    RuleEngine,         // Apply if-then-else rules to create/modify columns
+
+    // ===== Machine Learning Algorithms (Phase 4 - Tool-to-Node Migration) =====
+    // Clustering
+    KMeansCluster,      // K-Means clustering algorithm
+    DBSCANCluster,      // DBSCAN density-based clustering
+    HierarchicalCluster,// Hierarchical/Agglomerative clustering
+    GMMCluster,         // Gaussian Mixture Model clustering
+
+    // Dimensionality Reduction
+    PCANode,            // Principal Component Analysis
+    TSNENode,           // t-SNE visualization
+    UMAPNode,           // UMAP dimensionality reduction
+
+    // Classification
+    DecisionTreeClassifier,  // Decision Tree classifier
+    RandomForestClassifier,  // Random Forest ensemble
+    GradientBoostingClassifier, // Gradient Boosted Trees
+    SVMClassifier,      // Support Vector Machine classifier
+    KNNClassifier,      // K-Nearest Neighbors classifier
+    NaiveBayesClassifier, // Naive Bayes classifier
+    LogisticRegressionNode, // Logistic Regression
+
+    // Regression
+    LinearRegressionNode,   // Linear Regression
+    PolynomialRegressionNode, // Polynomial Regression
+    SVMRegressor,       // Support Vector Regression
+
+    // ===== Model Evaluation Nodes (Phase 4) =====
+    ConfusionMatrixNode,    // Confusion matrix visualization
+    ROCCurveNode,       // ROC curve and AUC computation
+    PRCurveNode,        // Precision-Recall curve
+    LearningCurvesNode, // Training/validation learning curves
+    FeatureImportanceNode, // Feature importance analysis
+    CrossValidationNode,   // K-Fold cross-validation
+    RegressionMetricsNode,  // Regression metrics (MSE, RMSE, MAE, R²)
+
+    // ===== Data Preprocessing Nodes (Phase 4) =====
+    StandardScaler,     // Z-score standardization (mean=0, std=1)
+    MinMaxScaler,       // Min-Max scaling to [0,1]
+    RobustScaler,       // Robust scaling using median/IQR
+    LabelEncoder,       // Encode categorical labels as integers
+    OrdinalEncoder,     // Encode ordinal categories
+    TargetEncoder,      // Target-based encoding
+    TrainTestSplit,     // Stratified train/test split
+
+    // ===== Advanced Preprocessing Nodes (Phase 3 - UI Consolidation) =====
+    OutlierDetector,    // Detect/remove outliers (IQR, Z-score, Isolation Forest)
+    ImagePreprocessor,  // Image resize, crop, normalize pipeline
+    QualityAnalyzer,    // Image quality filtering (blur, brightness, contrast)
+    DataValidator,      // Schema validation and data quality checks
+
+    // ===== Dataset Source Nodes (Phase 4 - UI Consolidation) =====
+    ImageFolderDataset, // Load images from folder with class labels
+    MNISTDataset,       // Load MNIST handwritten digits dataset
+    CIFAR10Dataset,     // Load CIFAR-10 image classification dataset
+    HuggingFaceDataset, // Load dataset from HuggingFace Hub
+    KaggleDataset,      // Load dataset from Kaggle
+
+    // ===== Advanced Augmentation Nodes (Phase 6 - UI Consolidation) =====
+    AugmentationPreset, // Predefined augmentation pipelines (ImageNet, CIFAR, Medical, Self-Supervised)
+    GeometricTransform, // Geometric transforms (rotate, flip, crop, perspective, affine)
+    ColorTransform,     // Color transforms (brightness, contrast, saturation, hue, gamma)
+    MorphologyTransform,// Morphological operations (dilate, erode, blur, sharpen, edge)
+    AdvancedAugment,    // Advanced augmentation (Cutout, MixUp, CutMix, RandAugment, AutoAugment)
+
+    // ===== Signal Processing Nodes (Phase 4) =====
+    FFTNode,            // Fast Fourier Transform
+    IFFTNode,           // Inverse FFT
+    FilterDesigner,     // Design FIR/IIR filters
+    Convolution1D,      // 1D signal convolution
+    WaveletTransform,   // Discrete Wavelet Transform
+
+    // ===== Text Analytics Nodes (Phase 4) =====
+    TFIDFVectorizer,    // TF-IDF text vectorization
+    CountVectorizer,    // Bag-of-words vectorization
+    WordEmbeddings,     // Word embeddings (Word2Vec, GloVe)
+    SentimentAnalyzer,  // Sentiment analysis
+    NamedEntityRecognizer, // NER extraction
+
+    // ===== Utility Nodes (Phase 4) =====
+    CalculatorNode,     // Math expression calculator
+    UnitConverter,      // Unit conversion utility
+    RegexTester,        // Regular expression tester
+    JSONPathExtractor,  // Extract data using JSONPath
+    DataProfiler,       // Comprehensive data profiling
+
+
+    // ===== Linear Algebra Nodes (Phase 5 - Tool-to-Node Migration) =====
+    SVDNode,            // Singular Value Decomposition
+    QRDecomposition,    // QR matrix decomposition
+    CholeskyDecomposition, // Cholesky factorization
+    EigenDecomposition, // Eigenvalue/eigenvector decomposition
+    MatrixCalculator,   // General matrix operations
+
+    // ===== Time Series Analysis Nodes (Phase 5) =====
+    TimeSeriesDecomposition, // Trend/Seasonal/Residual decomposition
+    ACFNode,            // Autocorrelation function
+    PACFNode,           // Partial autocorrelation function
+    StationarityTest,   // ADF/KPSS stationarity tests
+    SeasonalityDetector,// Detect seasonal patterns
+    ARIMAForecaster,    // ARIMA time series forecasting
+    ExponentialSmoothing, // Holt-Winters forecasting
+
+    // ===== Statistics Nodes (Phase 5) =====
+    HypothesisTest,     // t-test, ANOVA, Chi-Square
+    DistributionFitter, // Fit probability distributions
+
+    // ===== Deep Learning Interpretation Nodes (Phase 5) =====
+    GradCAMNode,        // Grad-CAM visualization
+    SaliencyMapNode,    // Gradient saliency maps
+
+    // ===== Optimization Nodes (Phase 5) =====
+    GradientDescentViz, // Visualize optimization paths
+    ConvexityAnalyzer,  // Analyze function convexity
+    LPSolver,           // Linear programming solver
+    QPSolver,           // Quadratic programming solver
+    NumericalDifferentiation, // Numerical derivatives
+    NumericalIntegration,     // Numerical integration
+
+    // ===== Additional Text Processing (Phase 5) =====
+    WordFrequencyNode,  // Word frequency analysis
+    TokenizerNode,      // Text tokenization
+
+    // ===== Visualization Nodes (Phase 8 - Plot Types) =====
+    // Basic 2D Plots
+    LinePlot,           // Line plot (plot())
+    ScatterPlot,        // Scatter plot (scatter())
+    BarChart,           // Bar chart (bar/barh)
+    Histogram,          // Histogram distribution (hist())
+    PieChart,           // Pie chart (pie())
+    AreaPlot,           // Filled area plot (fill_between())
+
+    // Advanced 2D Plots
+    BoxPlot,            // Box plot statistics (boxplot())
+    ViolinPlot,         // Violin plot distribution (violinplot())
+    ErrorBarPlot,       // Error bar plot (errorbar())
+    StepPlot,           // Step plot (step())
+    HexbinPlot,         // Hexagonal binning (hexbin())
+
+    // Heatmaps & Matrices
+    Heatmap,            // Heatmap visualization
+    ContourPlot,        // Contour plot (contour/contourf())
+    Imshow,             // Image display (imshow())
+
+    // 3D Plots
+    Plot3D,             // 3D line plot
+    Scatter3D,          // 3D scatter plot
+    SurfacePlot,        // 3D surface plot
+    WireframePlot,      // 3D wireframe plot
+
+    // Specialized Plots
+    PolarPlot,          // Polar coordinate plot
+    QuiverPlot,         // Vector field plot (quiver())
+    StreamPlot,         // Streamline plot (streamplot())
+    SpectrogramPlot,    // Spectrogram visualization
+    NetworkGraph,       // Network/graph visualization
 
     // Plugin-defined nodes (sentinel — actual type resolved via string lookup)
-    PluginCustom
+    PluginCustom,
+
+    // Special sentinel value
+    Unknown
 };
 
 // Attribute for node pins (inputs/outputs)
@@ -318,6 +547,7 @@ struct MLNode {
     NodeType type;
     NodeCategory category;  // Unified Canvas Phase 1: Category for UI organization
     std::string name;
+    std::string description;  // KNIME-style: bound text displayed below node, moves with node
     std::vector<NodePin> inputs;
     std::vector<NodePin> outputs;
 
@@ -403,6 +633,18 @@ struct NodeAddSearchState {
     bool show_results = false;        // Show dropdown results
     int selected_index = 0;           // Currently selected result (keyboard navigation)
     bool just_activated = false;      // Set focus on next frame
+
+    // Debouncing state
+    float search_debounce_timer_ = 0.0f;      // Time remaining before search triggers
+    std::string last_search_query_;           // Last processed query
+    bool search_dirty_ = false;               // True if search needs to be updated
+};
+
+// Node implementation status for template/coming soon nodes
+enum class NodeImplementationStatus {
+    Implemented,    // Fully working node
+    Template,       // Coming Soon - defined but not implemented
+    Deprecated      // Being phased out
 };
 
 // Entry for searchable node
@@ -412,6 +654,9 @@ struct SearchableNode {
     std::string category;  // Category (e.g., "Layers > Dense / Linear")
     std::string keywords;  // Additional keywords for search
     std::string plugin_qualified_name;  // For PluginCustom: "plugin_id:type_name"
+    NodeImplementationStatus status = NodeImplementationStatus::Implemented;  // Default to implemented
+    std::string description;  // Brief description for info panel
+    std::string tooltip;      // Tooltip text (for templates: why not available)
 };
 
 // Alignment types for arranging selected nodes
@@ -422,10 +667,56 @@ enum class DistributeType { Horizontal, Vertical };
 struct NodeGroup {
     int id;
     std::string name;
+    std::string description;  // KNIME-style: bullet-point description shown in header
     std::vector<int> node_ids;
     ImVec4 color;           // RGBA color for group box
     bool collapsed = false;
     float padding = 20.0f;  // Padding around contained nodes
+};
+
+// Canvas annotation (KNIME-style sticky note)
+struct CanvasAnnotation {
+    int id;
+    std::string title;
+    std::string content;
+    ImVec2 position;
+    ImVec2 size;
+    ImU32 color;            // Background color
+    bool is_minimized;
+
+    CanvasAnnotation()
+        : id(-1)
+        , position(0, 0)
+        , size(200, 100)
+        , color(IM_COL32(255, 255, 200, 255))  // Default yellow
+        , is_minimized(false) {}
+};
+
+// Canvas Frame - visual organization box (drag from Node Browser)
+struct CanvasFrame {
+    int id;
+    std::string title;
+    std::string description;
+    ImVec2 position;        // Canvas position (not screen)
+    ImVec2 size;
+    ImVec4 color;           // RGBA color
+    bool is_selected = false;
+
+    CanvasFrame()
+        : id(-1)
+        , title("Frame")
+        , position(0, 0)
+        , size(300, 200)
+        , color(0.3f, 0.5f, 0.7f, 0.8f) {}  // Default blue
+};
+
+// Annotation color presets
+enum class AnnotationColor {
+    Yellow,   // Default - IM_COL32(255, 255, 200, 255)
+    Blue,     // Info - IM_COL32(200, 220, 255, 255)
+    Green,    // Done - IM_COL32(200, 255, 200, 255)
+    Orange,   // TODO - IM_COL32(255, 230, 200, 255)
+    Pink      // Important - IM_COL32(255, 200, 220, 255)
 };
 
 // Validation warning severity levels
@@ -493,6 +784,10 @@ public:
     void SetShowMinimap(bool show) { show_minimap_ = show; }
     bool GetShowMinimap() const { return show_minimap_; }
     bool* GetShowMinimapPtr() { return &show_minimap_; }
+
+    // Icon pack selection (for node icons)
+    void SetIconPack(IconPack pack) { icon_pack_ = pack; }
+    IconPack GetIconPack() const { return icon_pack_; }
 
     // Access to graph data for compilation
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
@@ -613,12 +908,44 @@ public:
     // Ungroup selected nodes
     void UngroupSelectedNodes();
 
+    // ===== Canvas Annotations (KNIME-style sticky notes) =====
+
+    // Add a new annotation at the center of the visible area
+    void AddAnnotation();
+
+    // Add annotation at specific position
+    void AddAnnotationAt(const ImVec2& position);
+
+    // Delete annotation by ID
+    void DeleteAnnotation(int annotation_id);
+
+    // Delete currently selected annotation
+    void DeleteSelectedAnnotation();
+
+    // Get annotations for serialization
+    const std::vector<CanvasAnnotation>& GetAnnotations() const { return annotations_; }
+
+    // Set annotations (for loading)
+    void SetAnnotations(const std::vector<CanvasAnnotation>& annotations);
+
+    // ===== Workflow Description =====
+
+    // Get workflow description buffer for UI editing
+    char* GetWorkflowDescriptionBuffer() { return workflow_description_; }
+    size_t GetWorkflowDescriptionBufferSize() const { return sizeof(workflow_description_); }
+
+    // Get/set workflow description as string
+    std::string GetWorkflowDescription() const { return workflow_description_; }
+    void SetWorkflowDescription(const std::string& desc);
+
 private:
     void ShowToolbar();
     void RenderNodes();
     void RenderMinimap();
     void HandleInteractions();
     void ShowContextMenu();
+    void ShowSingleNodeContextMenu();  // Node-specific context menu
+    void ShowNodeDescriptionEditPopup();  // KNIME-style node description editor
 
     // Unified Canvas Phase 3: Categorized node palette helpers
     void ShowCategorizedNodeMenu();
@@ -643,6 +970,10 @@ private:
     ImU32 GetLinkColor(LinkType type) const;
     ImU32 GetLinkHoverColor(LinkType type) const;
 
+    // Get visual color for pins and links based on data type
+    ImU32 GetPinTypeColor(PinType type) const;
+    ImU32 GetPinTypeHoverColor(PinType type) const;
+
     // Connection tracking for variadic pins
     int GetConnectionCount(int pin_id) const;
     std::vector<int> GetConnectedPins(int pin_id) const;
@@ -653,6 +984,9 @@ private:
     std::vector<NodeLink> GetLinksFromPin(int pin_id) const;
     const NodePin* FindPinById(int pin_id) const;
     bool ValidateLink(int from_pin, int to_pin, std::string& error) const;
+
+    // Pin lookup optimization
+    void RebuildPinLookup();
 
     // File operations
     bool SaveGraph(const std::string& filepath);
@@ -726,7 +1060,22 @@ private:
     void DeleteGroup(int group_id);
     void UngroupSelection();
     void RenderGroups();
+    void RenderFrames();
     NodeGroup* FindGroupContainingNode(int node_id);
+
+    // Frame management
+    void AddFrameAt(const ImVec2& canvas_position);
+    void DeleteFrame(int frame_id);
+    const std::vector<CanvasFrame>& GetFrames() const { return frames_; }
+
+    // Annotation rendering and interaction
+    void RenderAnnotations();
+    void RenderAnnotationEditPopup();
+    void HandleAnnotationInteraction();
+    CanvasAnnotation* FindAnnotationById(int annotation_id);
+    void ShowAnnotationContextMenu(int annotation_id);
+    void ShowAnnotationEditPopup();
+    ImU32 GetAnnotationColorValue(AnnotationColor color) const;
 
     // Subgraph encapsulation
     void CreateSubgraphFromSelection(const std::string& name);
@@ -755,6 +1104,7 @@ private:
 
     std::vector<int> TopologicalSort();
     const MLNode* FindNodeById(int node_id) const;
+    MLNode* FindNodeById(int node_id);  // Non-const version
 
     // Helper for code generation with variadic inputs
     std::vector<int> GetInputNodeIds(int node_id) const;
@@ -769,6 +1119,9 @@ private:
     int next_node_id_;
     int next_pin_id_;
     int next_link_id_;
+
+    // Pin lookup optimization - O(1) pin ID -> (node*, pin*) mapping
+    std::unordered_map<int, std::pair<MLNode*, NodePin*>> pin_lookup_;
 
     // UI state
     bool show_context_menu_;
@@ -809,6 +1162,9 @@ private:
     float zoom_ = 1.0f;
     static constexpr float ZOOM_MIN = 0.5f;
     static constexpr float ZOOM_MAX = 2.0f;
+
+    // Icon pack selection (for node icons)
+    IconPack icon_pack_ = IconPack::FontAwesome;  // Default to FontAwesome
 
     // Minimap state
     bool show_minimap_ = true;
@@ -888,6 +1244,48 @@ private:
     char create_group_name_[256] = "";
     float create_group_color_[4] = {0.2f, 0.5f, 0.8f, 0.3f};
 
+    // Canvas annotations (KNIME-style sticky notes)
+    std::vector<CanvasAnnotation> annotations_;
+    int next_annotation_id_ = 1;
+    int selected_annotation_id_ = -1;
+    int dragging_annotation_id_ = -1;
+    ImVec2 annotation_drag_offset_ = ImVec2(0, 0);
+    bool editing_annotation_ = false;
+    int editing_annotation_id_ = -1;
+    char annotation_edit_title_[256] = "";
+    char annotation_edit_content_[2048] = "";
+
+    // Canvas frames (visual organization boxes - drag from Node Browser)
+    std::vector<CanvasFrame> frames_;
+    int next_frame_id_ = 1;
+    int selected_frame_id_ = -1;
+    int dragging_frame_id_ = -1;
+    int resizing_frame_id_ = -1;
+    ImVec2 frame_drag_offset_ = ImVec2(0, 0);
+    bool editing_frame_ = false;
+    int editing_frame_id_ = -1;
+    char frame_edit_title_[256] = "";
+    char frame_edit_desc_[1024] = "";
+    bool frame_right_clicked_ = false;  // Prevents canvas menu when frame is right-clicked
+
+    // KNIME-style node dragging (icon-only drag to avoid pin-drag moving the node)
+    int dragging_knime_node_id_ = -1;
+    ImVec2 knime_drag_offset_ = ImVec2(0, 0);
+
+    // KNIME-style: Node description editing
+    bool editing_node_description_ = false;
+    int editing_node_id_ = -1;
+    char node_description_buffer_[1024] = "";
+    int right_clicked_node_id_ = -1;  // Node that was right-clicked
+
+    // KNIME-style: Per-node display options (stored in node parameters)
+    // show_name: "true" or "false" - whether to show name below node
+    // show_description: "true" or "false" - whether to show description below node
+    // Use GetNodeDisplayOption() and SetNodeDisplayOption() to access
+
+    // Workflow description (shown in CyxWiz Studio section)
+    char workflow_description_[2048] = "";
+
     // Subgraph data storage
     std::vector<SubgraphData> subgraphs_;
 
@@ -933,3 +1331,5 @@ private:
 };
 
 } // namespace gui
+
+

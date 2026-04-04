@@ -5,6 +5,10 @@
 #include <vector>
 #include <deque>
 #include <functional>
+#include <memory>
+#include "../core/node_metadata.h"
+#include "../core/node_executors/node_executor_factory.h"
+#include "node_config_dialog.h"
 
 namespace gui {
 
@@ -63,6 +67,26 @@ private:
     void RenderNodeProperties(MLNode& node);
     void RenderShapeInfo(const NodeShapeInfo& shape_info);
 
+    // Enhanced property sections (Phase 3)
+    void RenderGeneralSection(MLNode& node);
+    void RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadata* metadata);
+    void RenderAdvancedSection(MLNode& node);
+    void RenderPresetsSection(MLNode& node);
+
+    // Node executor integration (Phase: Node Executor Architecture)
+    void RenderExecutorSection(MLNode& node);
+    bool HasNodeExecutor(NodeType type);
+    void SetupExecutorInputData(cyxwiz::INodeExecutor* executor, MLNode& node);
+
+    // Metadata-driven parameter rendering
+    void RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition& param);
+    bool ValidateParameter(const std::string& value, const cyxwiz::ParameterDefinition& param, std::string& error);
+
+    // Preset management
+    void SavePreset(const MLNode& node, const std::string& name);
+    void LoadPreset(MLNode& node, const std::string& name);
+    std::vector<std::string> GetPresetsForNodeType(NodeType type);
+
     // Shape inference methods
     NodeShapeInfo ComputeNodeShape(int node_id);
     std::vector<size_t> GetInputShapeFromDataset();
@@ -105,6 +129,18 @@ private:
     };
     std::map<int, ScopeBuffer> scope_buffers_;
     float scope_demo_time_ = 0.0f;  // Demo animation timer
+
+    // Phase 3: Enhanced properties state
+    std::map<std::string, std::string> validation_errors_;  // param_name -> error message
+    bool section_general_open_ = true;
+    bool section_parameters_open_ = true;
+    bool section_advanced_open_ = false;
+    bool section_presets_open_ = false;
+    char preset_name_buffer_[64] = {};
+
+    // KNIME-style configuration dialogs
+    std::unique_ptr<NodeConfigDialog> active_dialog_;
+    void RenderOpenDialogButton(MLNode& node);
 };
 
 } // namespace gui

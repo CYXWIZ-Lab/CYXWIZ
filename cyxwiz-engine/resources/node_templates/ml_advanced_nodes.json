@@ -1,0 +1,98 @@
+{
+  "category": "ML Advanced",
+  "category_icon": "brain",
+  "description": "Advanced ML tools: explainability, AutoML, and optimization",
+  "templates": [
+    {
+      "type": "SHAPExplainer",
+      "name": "SHAP Explainer",
+      "icon": "lightbulb",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["shap", "feature", "importance", "explain", "interpretability"],
+      "brief_description": "SHAP feature importance analysis",
+      "help_text": "Compute SHAP values to explain model predictions and understand feature importance.",
+      "inputs": [{"name": "Model", "type": "Tensor", "required": true}, {"name": "Data", "type": "Dataset", "required": true}],
+      "outputs": [{"name": "SHAP Values", "type": "Dataset"}],
+      "parameters": [],
+      "target_phase": "Phase 3",
+      "dependencies": ["Python SHAP library"]
+    },
+    {
+      "type": "LIMEExplainer",
+      "name": "LIME Explainer",
+      "icon": "search-plus",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["lime", "local", "interpretability", "explain"],
+      "brief_description": "LIME local interpretability",
+      "help_text": "Generate local explanations for individual predictions using LIME.",
+      "inputs": [{"name": "Model", "type": "Tensor", "required": true}, {"name": "Instance", "type": "Dataset", "required": true}],
+      "outputs": [{"name": "Explanation", "type": "Dataset"}],
+      "parameters": [],
+      "target_phase": "Phase 3"
+    },
+    {
+      "type": "HyperbandTuner",
+      "name": "Hyperband Tuner",
+      "icon": "sliders-h",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["hyperband", "hyperparameter", "tuning", "optimization"],
+      "brief_description": "Hyperband hyperparameter search",
+      "help_text": "Efficiently search hyperparameter space using Hyperband algorithm.",
+      "inputs": [{"name": "Search Space", "type": "Dataset", "required": true}],
+      "outputs": [{"name": "Best Parameters", "type": "Dataset"}],
+      "parameters": [
+        {"name": "max_epochs", "type": "int", "default": "100"},
+        {"name": "reduction_factor", "type": "int", "default": "3"}
+      ],
+      "target_phase": "Phase 3"
+    },
+    {
+      "type": "NeuralArchitectureSearch",
+      "name": "Neural Architecture Search",
+      "icon": "sitemap",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["nas", "architecture", "search", "auto", "automl"],
+      "brief_description": "Automatic architecture search",
+      "help_text": "Automatically search for optimal neural network architectures.",
+      "inputs": [{"name": "Dataset", "type": "Dataset", "required": true}],
+      "outputs": [{"name": "Architecture", "type": "Dataset"}],
+      "parameters": [],
+      "target_phase": "Phase 4"
+    },
+    {
+      "type": "FederatedLearning",
+      "name": "Federated Learning",
+      "icon": "users",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["federated", "learning", "privacy", "distributed"],
+      "brief_description": "Privacy-preserving ML training",
+      "help_text": "Train models across distributed nodes without sharing raw data.",
+      "inputs": [],
+      "outputs": [],
+      "parameters": [],
+      "target_phase": "Phase 4"
+    },
+    {
+      "type": "ModelQuantizer",
+      "name": "Model Quantizer",
+      "icon": "compress-arrows-alt",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["quantize", "compress", "model", "int8", "optimization"],
+      "brief_description": "Model quantization/compression",
+      "help_text": "Quantize models to INT8 or other formats for faster inference.",
+      "inputs": [{"name": "Model", "type": "Tensor", "required": true}],
+      "outputs": [{"name": "Quantized Model", "type": "Tensor"}],
+      "parameters": [
+        {"name": "precision", "type": "enum", "default": "int8", "enum_values": ["int8", "fp16", "int4"]}
+      ],
+      "target_phase": "Phase 3",
+      "dependencies": ["TensorRT or ONNX Runtime"]
+    }
+  ]
+}

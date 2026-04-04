@@ -269,13 +269,13 @@ void ToolbarPanel::Render() {
         RenderFileMenu();
         RenderEditMenu();
         RenderViewMenu();
+        RenderProfileMenu();
         RenderNodesMenu();
         RenderTrainMenu();
         RenderSimulationMenu();
         RenderToolsMenu();
         RenderDatasetMenu();
         RenderScriptMenu();
-        RenderPlotsMenu();
         RenderDeployMenu();
         RenderAppsMenu();
         RenderHelpMenu();
@@ -2478,11 +2478,7 @@ void ToolbarPanel::InitializeToolEntries() {
     all_tools_.push_back({"Save Layout", "View", "save layout dock", ICON_FA_FLOPPY_DISK, "", [this]() { if (save_layout_callback_) save_layout_callback_(); }});
     all_tools_.push_back({"Preferences", "View", "preferences settings options", ICON_FA_GEAR, "", [this]() { show_preferences_dialog_ = true; }});
     all_tools_.push_back({"Theme Editor", "View", "theme color customize", ICON_FA_PALETTE, "", [this]() { if (open_theme_editor_callback_) open_theme_editor_callback_(); }});
-    all_tools_.push_back({"Memory Monitor", "View", "memory monitor usage ram", ICON_FA_MEMORY, "", [this]() { if (open_memory_monitor_callback_) open_memory_monitor_callback_(); }});
-    all_tools_.push_back({"Profiler", "View", "profiler performance cpu", ICON_FA_GAUGE_HIGH, "", [this]() { if (open_profiler_callback_) open_profiler_callback_(); }});
-
-    // ==================== Plots Commands ====================
-    all_tools_.push_back({"Plot Test Control", "Plots", "plot test visualization", ICON_FA_CHART_LINE, "", [this]() { if (toggle_plot_test_control_callback_) toggle_plot_test_control_callback_(); }});
+    // Profiling tools moved to "Profile" category
 
     // Model Analysis (Phase 2)
     all_tools_.push_back({"Model Summary", "Model Analysis", "model summary architecture layers parameters", ICON_FA_CUBES, "", [this]() { if (open_model_summary_callback_) open_model_summary_callback_(); }});
@@ -2575,9 +2571,12 @@ void ToolbarPanel::InitializeToolEntries() {
     all_tools_.push_back({"JSON Viewer", "Utilities", "json viewer formatter", ICON_FA_CODE, "", [this]() { if (open_json_viewer_callback_) open_json_viewer_callback_(); }});
     all_tools_.push_back({"Regex Tester", "Utilities", "regex regular expression test", ICON_FA_ASTERISK, "", [this]() { if (open_regex_tester_callback_) open_regex_tester_callback_(); }});
 
+    // ==================== Profile Commands ====================
+    all_tools_.push_back({"Performance Profiler", "Profile", "profiler performance timing cpu gpu layer", ICON_FA_GAUGE_HIGH, "", [this]() { if (open_profiler_callback_) open_profiler_callback_(); }});
+    all_tools_.push_back({"Memory Visualization", "Profile", "memory visualization cpu gpu tensor heap", ICON_FA_CHART_PIE, "", [this]() { if (open_memory_panel_callback_) open_memory_panel_callback_(); }});
+    all_tools_.push_back({"System Monitor", "Profile", "system monitor cpu ram gpu usage", ICON_FA_MICROCHIP, "", [this]() { if (open_memory_monitor_callback_) open_memory_monitor_callback_(); }});
+
     // Development tools
-    all_tools_.push_back({"Profiler", "Developer", "profiler performance timing", ICON_FA_GAUGE_HIGH, "", [this]() { if (open_profiler_callback_) open_profiler_callback_(); }});
-    all_tools_.push_back({"Memory Monitor", "Developer", "memory monitor ram usage", ICON_FA_MEMORY, "", [this]() { if (open_memory_monitor_callback_) open_memory_monitor_callback_(); }});
     all_tools_.push_back({"Theme Editor", "Developer", "theme editor colors style", ICON_FA_PALETTE, "", [this]() { if (open_theme_editor_callback_) open_theme_editor_callback_(); }});
     all_tools_.push_back({"Custom Node Editor", "Developer", "custom node create define", ICON_FA_GEARS, "", [this]() { if (open_custom_node_editor_callback_) open_custom_node_editor_callback_(); }});
 

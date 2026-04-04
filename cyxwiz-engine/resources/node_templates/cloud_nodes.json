@@ -1,0 +1,184 @@
+{
+  "category": "Cloud",
+  "category_icon": "cloud",
+  "description": "Cloud storage and service connectors",
+  "templates": [
+    {
+      "type": "AWSS3Reader",
+      "name": "AWS S3 Reader",
+      "icon": "cloud-arrow-down",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["aws", "s3", "amazon", "cloud", "storage", "read"],
+      "brief_description": "Read files from AWS S3 bucket",
+      "help_text": "Downloads and reads files from Amazon S3 buckets. Supports various file formats (CSV, Parquet, JSON).",
+      "inputs": [],
+      "outputs": [
+        {"name": "Data", "type": "Dataset", "description": "Loaded data"}
+      ],
+      "parameters": [
+        {"name": "bucket", "type": "string", "default": "", "description": "S3 bucket name"},
+        {"name": "key", "type": "string", "default": "", "description": "Object key (file path)"},
+        {"name": "region", "type": "string", "default": "us-east-1", "description": "AWS region"},
+        {"name": "access_key", "type": "string", "default": "", "description": "AWS access key ID"},
+        {"name": "secret_key", "type": "string", "default": "", "description": "AWS secret access key"}
+      ],
+      "implementation_notes": "Use aws-sdk-cpp",
+      "target_phase": "Phase 3",
+      "dependencies": ["aws-sdk-cpp"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "AWSS3Writer",
+      "name": "AWS S3 Writer",
+      "icon": "cloud-arrow-up",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["aws", "s3", "amazon", "cloud", "storage", "write", "upload"],
+      "brief_description": "Write files to AWS S3 bucket",
+      "help_text": "Uploads data to Amazon S3 buckets. Supports multipart upload for large files.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Data to upload"}
+      ],
+      "outputs": [
+        {"name": "Status", "type": "Dataset", "description": "Upload status"}
+      ],
+      "parameters": [
+        {"name": "bucket", "type": "string", "default": "", "description": "S3 bucket name"},
+        {"name": "key", "type": "string", "default": "", "description": "Object key (file path)"},
+        {"name": "format", "type": "enum", "default": "parquet", "description": "Output format", "enum_values": ["csv", "parquet", "json"]},
+        {"name": "region", "type": "string", "default": "us-east-1", "description": "AWS region"}
+      ],
+      "implementation_notes": "Use aws-sdk-cpp with multipart upload",
+      "target_phase": "Phase 3",
+      "dependencies": ["aws-sdk-cpp"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "AzureBlobReader",
+      "name": "Azure Blob Reader",
+      "icon": "cloud-arrow-down",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["azure", "blob", "microsoft", "cloud", "storage", "read"],
+      "brief_description": "Read files from Azure Blob Storage",
+      "help_text": "Downloads and reads files from Azure Blob Storage containers.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Data", "type": "Dataset", "description": "Loaded data"}
+      ],
+      "parameters": [
+        {"name": "connection_string", "type": "string", "default": "", "description": "Azure storage connection string"},
+        {"name": "container", "type": "string", "default": "", "description": "Container name"},
+        {"name": "blob_name", "type": "string", "default": "", "description": "Blob name (file path)"}
+      ],
+      "implementation_notes": "Use azure-storage-cpp",
+      "target_phase": "Phase 3",
+      "dependencies": ["azure-storage-cpp"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "AzureBlobWriter",
+      "name": "Azure Blob Writer",
+      "icon": "cloud-arrow-up",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["azure", "blob", "microsoft", "cloud", "storage", "write"],
+      "brief_description": "Write files to Azure Blob Storage",
+      "help_text": "Uploads data to Azure Blob Storage containers.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Data to upload"}
+      ],
+      "outputs": [
+        {"name": "Status", "type": "Dataset", "description": "Upload status"}
+      ],
+      "parameters": [
+        {"name": "connection_string", "type": "string", "default": "", "description": "Azure storage connection string"},
+        {"name": "container", "type": "string", "default": "", "description": "Container name"},
+        {"name": "blob_name", "type": "string", "default": "", "description": "Blob name (file path)"},
+        {"name": "format", "type": "enum", "default": "parquet", "description": "Output format", "enum_values": ["csv", "parquet", "json"]}
+      ],
+      "implementation_notes": "Use azure-storage-cpp",
+      "target_phase": "Phase 3",
+      "dependencies": ["azure-storage-cpp"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "GCSReader",
+      "name": "Google Cloud Storage Reader",
+      "icon": "cloud-arrow-down",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["google", "gcs", "cloud", "storage", "read"],
+      "brief_description": "Read files from Google Cloud Storage",
+      "help_text": "Downloads and reads files from Google Cloud Storage buckets.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Data", "type": "Dataset", "description": "Loaded data"}
+      ],
+      "parameters": [
+        {"name": "bucket", "type": "string", "default": "", "description": "GCS bucket name"},
+        {"name": "object", "type": "string", "default": "", "description": "Object name (file path)"},
+        {"name": "credentials_file", "type": "file", "default": "", "description": "Service account JSON file"}
+      ],
+      "implementation_notes": "Use google-cloud-cpp",
+      "target_phase": "Phase 3",
+      "dependencies": ["google-cloud-cpp"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "GoogleSheetsConnector",
+      "name": "Google Sheets Connector",
+      "icon": "table",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["google", "sheets", "spreadsheet", "cloud"],
+      "brief_description": "Read/write Google Sheets",
+      "help_text": "Connects to Google Sheets for reading and writing spreadsheet data. Requires OAuth authentication.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Data", "type": "Dataset", "description": "Sheet data as table"}
+      ],
+      "parameters": [
+        {"name": "spreadsheet_id", "type": "string", "default": "", "description": "Google Sheets ID (from URL)"},
+        {"name": "sheet_name", "type": "string", "default": "Sheet1", "description": "Sheet/tab name"},
+        {"name": "range", "type": "string", "default": "A1:Z1000", "description": "Cell range to read"},
+        {"name": "credentials_file", "type": "file", "default": "", "description": "OAuth credentials JSON"}
+      ],
+      "implementation_notes": "Use Google Sheets API v4 with OAuth2",
+      "target_phase": "Phase 3",
+      "dependencies": ["google-api-cpp-client"],
+      "effort_estimate": "High",
+      "user_votes": 0
+    },
+    {
+      "type": "GoogleDriveConnector",
+      "name": "Google Drive Connector",
+      "icon": "hard-drive",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["google", "drive", "cloud", "storage"],
+      "brief_description": "Access files from Google Drive",
+      "help_text": "Lists and downloads files from Google Drive. Requires OAuth authentication.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Data", "type": "Dataset", "description": "File data or file list"}
+      ],
+      "parameters": [
+        {"name": "file_id", "type": "string", "default": "", "description": "Google Drive file ID"},
+        {"name": "folder_id", "type": "string", "default": "", "description": "Folder ID (for listing)"},
+        {"name": "credentials_file", "type": "file", "default": "", "description": "OAuth credentials JSON"}
+      ],
+      "implementation_notes": "Use Google Drive API v3 with OAuth2",
+      "target_phase": "Phase 3",
+      "dependencies": ["google-api-cpp-client"],
+      "effort_estimate": "High",
+      "user_votes": 0
+    }
+  ]
+}

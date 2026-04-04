@@ -285,10 +285,48 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
 
     try {
         json j;
-        // Unified Canvas Phase 7: Update to v2.0 format with execution_mode
-        j["version"] = "2.0";
+        // CyxWiz Studio: Update to v2.1 format with annotations
+        j["version"] = "2.1";
         j["framework"] = static_cast<int>(selected_framework_);
         j["execution_mode"] = static_cast<int>(execution_mode_);  // Save execution mode
+
+        // CyxWiz Studio: Save workflow description
+        j["workflow_description"] = std::string(workflow_description_);
+
+        // CyxWiz Studio: Save canvas annotations
+        json annotations_array = json::array();
+        for (const auto& annotation : annotations_) {
+            json ann_json;
+            ann_json["id"] = annotation.id;
+            ann_json["title"] = annotation.title;
+            ann_json["content"] = annotation.content;
+            ann_json["pos_x"] = annotation.position.x;
+            ann_json["pos_y"] = annotation.position.y;
+            ann_json["width"] = annotation.size.x;
+            ann_json["height"] = annotation.size.y;
+            ann_json["color"] = annotation.color;
+            ann_json["minimized"] = annotation.is_minimized;
+            annotations_array.push_back(ann_json);
+        }
+        j["annotations"] = annotations_array;
+
+        // CyxWiz Studio: Save node groups
+        json groups_array = json::array();
+        for (const auto& group : groups_) {
+            json group_json;
+            group_json["id"] = group.id;
+            group_json["name"] = group.name;
+            group_json["description"] = group.description;
+            group_json["node_ids"] = group.node_ids;
+            group_json["color_r"] = group.color.x;
+            group_json["color_g"] = group.color.y;
+            group_json["color_b"] = group.color.z;
+            group_json["color_a"] = group.color.w;
+            group_json["collapsed"] = group.collapsed;
+            group_json["padding"] = group.padding;
+            groups_array.push_back(group_json);
+        }
+        j["groups"] = groups_array;
 
         // Serialize nodes
         json nodes_array = json::array();
@@ -297,6 +335,7 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
             node_json["id"] = node.id;
             node_json["type"] = static_cast<int>(node.type);
             node_json["name"] = node.name;
+            node_json["description"] = node.description;
             node_json["parameters"] = node.parameters;
 
             // Unified Canvas Phase 7: Save node category for better organization
@@ -423,12 +462,71 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             spdlog::info("Legacy v1.0 format - defaulting to CodeGeneration mode");
         }
 
+        // CyxWiz Studio: Load workflow description (v2.1+)
+        if (j.contains("workflow_description")) {
+            std::string desc = j["workflow_description"].get<std::string>();
+            SetWorkflowDescription(desc);
+            spdlog::info("Loaded workflow description ({} chars)", desc.length());
+        } else {
+            SetWorkflowDescription("");
+        }
+
+        // CyxWiz Studio: Load canvas annotations (v2.1+)
+        annotations_.clear();
+        next_annotation_id_ = 1;
+        if (j.contains("annotations") && j["annotations"].is_array()) {
+            for (const auto& ann_json : j["annotations"]) {
+                CanvasAnnotation annotation;
+                annotation.id = ann_json.value("id", next_annotation_id_);
+                annotation.title = ann_json.value("title", "");
+                annotation.content = ann_json.value("content", "");
+                annotation.position.x = ann_json.value("pos_x", 0.0f);
+                annotation.position.y = ann_json.value("pos_y", 0.0f);
+                annotation.size.x = ann_json.value("width", 200.0f);
+                annotation.size.y = ann_json.value("height", 100.0f);
+                annotation.color = ann_json.value("color", (ImU32)IM_COL32(255, 255, 200, 255));
+                annotation.is_minimized = ann_json.value("minimized", false);
+
+                annotations_.push_back(annotation);
+                next_annotation_id_ = std::max(next_annotation_id_, annotation.id + 1);
+            }
+            spdlog::info("Loaded {} canvas annotations", annotations_.size());
+        }
+
+        // CyxWiz Studio: Load node groups (v2.1+)
+        groups_.clear();
+        next_group_id_ = 1;
+        if (j.contains("groups") && j["groups"].is_array()) {
+            for (const auto& group_json : j["groups"]) {
+                NodeGroup group;
+                group.id = group_json.value("id", next_group_id_);
+                group.name = group_json.value("name", "Group");
+                group.description = group_json.value("description", "");
+                if (group_json.contains("node_ids") && group_json["node_ids"].is_array()) {
+                    group.node_ids = group_json["node_ids"].get<std::vector<int>>();
+                }
+                group.color.x = group_json.value("color_r", 0.2f);
+                group.color.y = group_json.value("color_g", 0.3f);
+                group.color.z = group_json.value("color_b", 0.4f);
+                group.color.w = group_json.value("color_a", 0.3f);
+                group.collapsed = group_json.value("collapsed", false);
+                group.padding = group_json.value("padding", 20.0f);
+
+                groups_.push_back(group);
+                next_group_id_ = std::max(next_group_id_, group.id + 1);
+            }
+            spdlog::info("Loaded {} node groups", groups_.size());
+        }
+
         // Load nodes
         for (const auto& node_json : j["nodes"]) {
             MLNode node;
             node.id = node_json["id"];
             node.type = static_cast<NodeType>(node_json["type"].get<int>());
             node.name = node_json["name"];
+            if (node_json.contains("description")) {
+                node.description = node_json["description"];
+            }
 
             if (node_json.contains("parameters")) {
                 node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
@@ -535,6 +633,10 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
         next_link_id_ = max_link_id + 1;
 
         current_file_path_ = filepath;
+
+        // Rebuild pin lookup after loading graph
+        RebuildPinLookup();
+
         spdlog::info("Graph loaded from: {} ({} nodes, {} links)",
                      filepath, nodes_.size(), links_.size());
         return true;
@@ -560,6 +662,7 @@ std::string NodeEditor::GetGraphJson() const {
             node_json["id"] = node.id;
             node_json["type"] = static_cast<int>(node.type);
             node_json["name"] = node.name;
+            node_json["description"] = node.description;
             node_json["parameters"] = node.parameters;
 
             // Save node position
@@ -653,6 +756,9 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
             node.id = node_json["id"];
             node.type = static_cast<NodeType>(node_json["type"].get<int>());
             node.name = node_json["name"];
+            if (node_json.contains("description")) {
+                node.description = node_json["description"];
+            }
 
             if (node_json.contains("parameters")) {
                 node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
@@ -732,6 +838,9 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
         // Update next IDs
         next_node_id_ = max_node_id + 1;
         next_link_id_ = max_link_id + 1;
+
+        // Rebuild pin lookup after loading graph
+        RebuildPinLookup();
 
         spdlog::info("Graph loaded from JSON string ({} nodes, {} links)",
                      nodes_.size(), links_.size());

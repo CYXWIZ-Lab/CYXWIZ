@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
+#include <memory>
 
 namespace cyxwiz {
 
@@ -252,7 +253,7 @@ void DatasetBatcher::SetPreprocessingConfig(const PreprocessingConfig& config) {
     ClearPreprocessing();
 
     // Create new config
-    preprocessing_config_ = new PreprocessingConfig(config);
+    preprocessing_config_ = std::make_unique<PreprocessingConfig>(config);
     spdlog::info("DatasetBatcher: Set preprocessing config (enabled={})", config.enabled);
 }
 
@@ -285,25 +286,24 @@ void DatasetBatcher::InitializePreprocessing(const DatasetStatistics& stats) {
         config.image_config.convert_to_grayscale ||
         config.image_config.convert_to_rgb) {
 
-        auto* transform = new ImageTransform(config.image_config);
-        image_transforms_.push_back(transform);
+        image_transforms_.push_back(std::make_unique<ImageTransform>(config.image_config));
         spdlog::info("DatasetBatcher: Added ImageTransform to pipeline");
     }
 
     // 2. Normalization
     if (config.normalization_config.strategy != NormalizationStrategy::None) {
-        auto* transform = new NormalizationTransform(config.normalization_config);
+        auto transform = std::make_unique<NormalizationTransform>(config.normalization_config);
         transform->Initialize(stats);
-        normalization_transforms_.push_back(transform);
+        normalization_transforms_.push_back(std::move(transform));
         spdlog::info("DatasetBatcher: Added NormalizationTransform to pipeline (strategy={})",
                      static_cast<int>(config.normalization_config.strategy));
     }
 
     // 3. Scaling
     if (config.scaling_config.strategy != ScalingStrategy::None) {
-        auto* transform = new ScalingTransform(config.scaling_config);
+        auto transform = std::make_unique<ScalingTransform>(config.scaling_config);
         transform->Initialize(stats);
-        scaling_transforms_.push_back(transform);
+        scaling_transforms_.push_back(std::move(transform));
         spdlog::info("DatasetBatcher: Added ScalingTransform to pipeline (strategy={})",
                      static_cast<int>(config.scaling_config.strategy));
     }
@@ -318,28 +318,16 @@ void DatasetBatcher::InitializePreprocessing(const DatasetStatistics& stats) {
 
 void DatasetBatcher::ClearPreprocessing() {
     // Clean up image transforms
-    for (auto* transform : image_transforms_) {
-        delete transform;
-    }
     image_transforms_.clear();
 
     // Clean up normalization transforms
-    for (auto* transform : normalization_transforms_) {
-        delete transform;
-    }
     normalization_transforms_.clear();
 
     // Clean up scaling transforms
-    for (auto* transform : scaling_transforms_) {
-        delete transform;
-    }
     scaling_transforms_.clear();
 
     // Clean up config
-    if (preprocessing_config_) {
-        delete preprocessing_config_;
-        preprocessing_config_ = nullptr;
-    }
+    preprocessing_config_.reset();
 
     preprocessing_enabled_ = false;
 }
@@ -351,17 +339,17 @@ void DatasetBatcher::ApplyPreprocessing(Tensor& batch) {
 
     // Apply transforms in order:
     // 1. Image preprocessing
-    for (auto* transform : image_transforms_) {
+    for (const auto& transform : image_transforms_) {
         batch = transform->Apply(batch);
     }
 
     // 2. Normalization
-    for (auto* transform : normalization_transforms_) {
+    for (const auto& transform : normalization_transforms_) {
         batch = transform->Apply(batch);
     }
 
     // 3. Scaling
-    for (auto* transform : scaling_transforms_) {
+    for (const auto& transform : scaling_transforms_) {
         batch = transform->Apply(batch);
     }
 }

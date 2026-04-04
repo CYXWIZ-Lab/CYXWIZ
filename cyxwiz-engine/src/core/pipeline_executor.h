@@ -185,6 +185,101 @@ private:
     bool ExecutePolynomialFeatures(const Node& node, ExecutionContext& ctx);
     bool ExecuteBinning(const Node& node, ExecutionContext& ctx);
 
+    // KNIME-Style Table Manipulation Nodes
+    bool ExecuteExcelInput(const Node& node, ExecutionContext& ctx);
+    bool ExecuteExportExcel(const Node& node, ExecutionContext& ctx);
+    bool ExecuteRowToColumnNames(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTableSplitter(const Node& node, ExecutionContext& ctx);
+    bool ExecuteCellExtractor(const Node& node, ExecutionContext& ctx);
+    bool ExecuteCellUpdater(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTableCropper(const Node& node, ExecutionContext& ctx);
+    bool ExecuteColumnAppender(const Node& node, ExecutionContext& ctx);
+    bool ExecuteRowAppender(const Node& node, ExecutionContext& ctx);
+    bool ExecuteUnpivot(const Node& node, ExecutionContext& ctx);
+    bool ExecuteStringManipulation(const Node& node, ExecutionContext& ctx);
+    bool ExecuteMathFormula(const Node& node, ExecutionContext& ctx);
+    bool ExecuteRuleEngine(const Node& node, ExecutionContext& ctx);
+    bool ExecuteRenameColumns(const Node& node, ExecutionContext& ctx);
+    bool ExecuteExportCSV(const Node& node, ExecutionContext& ctx);
+    bool ExecuteExportJSON(const Node& node, ExecutionContext& ctx);
+    // ===== Phase 4: Machine Learning Algorithms =====
+    bool ExecuteKMeans(const Node& node, ExecutionContext& ctx);
+    bool ExecuteDBSCAN(const Node& node, ExecutionContext& ctx);
+    bool ExecuteHierarchical(const Node& node, ExecutionContext& ctx);
+    bool ExecuteGMM(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTSNE(const Node& node, ExecutionContext& ctx);
+    bool ExecuteUMAP(const Node& node, ExecutionContext& ctx);
+    bool ExecuteDecisionTree(const Node& node, ExecutionContext& ctx);
+    bool ExecuteRandomForest(const Node& node, ExecutionContext& ctx);
+    bool ExecuteGradientBoosting(const Node& node, ExecutionContext& ctx);
+    bool ExecuteSVM(const Node& node, ExecutionContext& ctx);
+    bool ExecuteKNN(const Node& node, ExecutionContext& ctx);
+    bool ExecuteNaiveBayes(const Node& node, ExecutionContext& ctx);
+    bool ExecuteLogisticRegression(const Node& node, ExecutionContext& ctx);
+    bool ExecuteLinearRegression(const Node& node, ExecutionContext& ctx);
+    bool ExecutePolynomialRegression(const Node& node, ExecutionContext& ctx);
+    bool ExecuteSVMRegressor(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 4: Model Evaluation =====
+    bool ExecuteConfusionMatrix(const Node& node, ExecutionContext& ctx);
+    bool ExecuteROCCurve(const Node& node, ExecutionContext& ctx);
+    bool ExecutePRCurve(const Node& node, ExecutionContext& ctx);
+    bool ExecuteLearningCurves(const Node& node, ExecutionContext& ctx);
+    bool ExecuteFeatureImportance(const Node& node, ExecutionContext& ctx);
+    bool ExecuteCrossValidation(const Node& node, ExecutionContext& ctx);
+    bool ExecuteRegressionMetrics(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 4: Data Preprocessing =====
+    bool ExecuteStandardScaler(const Node& node, ExecutionContext& ctx);
+    bool ExecuteMinMaxScaler(const Node& node, ExecutionContext& ctx);
+    bool ExecuteRobustScaler(const Node& node, ExecutionContext& ctx);
+    bool ExecuteLabelEncoder(const Node& node, ExecutionContext& ctx);
+    bool ExecuteOrdinalEncoder(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTargetEncoder(const Node& node, ExecutionContext& ctx);
+    bool ExecuteTrainTestSplit(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 8: Advanced Preprocessing (UI Consolidation) =====
+    bool ExecuteOutlierDetector(const Node& node, ExecutionContext& ctx);
+    bool ExecuteImagePreprocessor(const Node& node, ExecutionContext& ctx);
+    bool ExecuteQualityAnalyzer(const Node& node, ExecutionContext& ctx);
+    bool ExecuteDataValidator(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 8: Dataset Source Nodes (UI Consolidation) =====
+    bool ExecuteImageFolderDataset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteMNISTDataset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteCIFAR10Dataset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteHuggingFaceDataset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteKaggleDataset(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 6: Advanced Augmentation (UI Consolidation) =====
+    bool ExecuteAugmentationPreset(const Node& node, ExecutionContext& ctx);
+    bool ExecuteGeometricTransform(const Node& node, ExecutionContext& ctx);
+    bool ExecuteColorTransform(const Node& node, ExecutionContext& ctx);
+    bool ExecuteMorphologyTransform(const Node& node, ExecutionContext& ctx);
+    bool ExecuteAdvancedAugment(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 4: Signal Processing =====
+    bool ExecuteFFT(const Node& node, ExecutionContext& ctx);
+    bool ExecuteIFFT(const Node& node, ExecutionContext& ctx);
+    bool ExecuteFilterDesigner(const Node& node, ExecutionContext& ctx);
+    bool ExecuteConvolution1D(const Node& node, ExecutionContext& ctx);
+    bool ExecuteWavelet(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 4: Text Analytics =====
+    bool ExecuteTFIDF(const Node& node, ExecutionContext& ctx);
+    bool ExecuteCountVectorizer(const Node& node, ExecutionContext& ctx);
+    bool ExecuteWordEmbeddings(const Node& node, ExecutionContext& ctx);
+    bool ExecuteSentiment(const Node& node, ExecutionContext& ctx);
+    bool ExecuteNER(const Node& node, ExecutionContext& ctx);
+
+    // ===== Phase 4: Utilities =====
+    bool ExecuteCalculator(const Node& node, ExecutionContext& ctx);
+    bool ExecuteUnitConverter(const Node& node, ExecutionContext& ctx);
+    bool ExecuteRegex(const Node& node, ExecutionContext& ctx);
+    bool ExecuteJSONPath(const Node& node, ExecutionContext& ctx);
+    bool ExecuteDataProfiler(const Node& node, ExecutionContext& ctx);
+
+
     // Helper methods
     void UpdateProgress(float progress, const std::string& status = "");  // Phase 8: Added status parameter
     void ReportError(const std::string& error);

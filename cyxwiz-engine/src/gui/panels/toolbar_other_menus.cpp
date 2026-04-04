@@ -71,6 +71,55 @@ void ToolbarPanel::RenderNodesMenu() {
 
         ImGui::Separator();
 
+        // Icon Pack selection submenu
+        if (ImGui::BeginMenu(ICON_FA_PALETTE " Icon Pack")) {
+            int current_pack = get_icon_pack_callback_ ? get_icon_pack_callback_() : 0;
+
+            if (ImGui::MenuItem("FontAwesome (Default)", nullptr, current_pack == 0)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(0);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Solid, filled icons - FontAwesome 6");
+            }
+
+            if (ImGui::MenuItem("Tabler Icons", nullptr, current_pack == 1)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(1);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Clean 2px outline style - 6,000+ icons");
+            }
+
+            if (ImGui::MenuItem("Remix Icon", nullptr, current_pack == 2)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(2);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Filled style icons - 2,800+ icons");
+            }
+
+            if (ImGui::MenuItem("Lucide Icons", nullptr, current_pack == 3)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(3);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Clean minimal stroke style - 1,500+ icons");
+            }
+
+            if (ImGui::MenuItem("Iconoir", nullptr, current_pack == 4)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(4);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Simple consistent stroke icons - 1,500+ icons");
+            }
+
+            if (ImGui::MenuItem("Phosphor Icons", nullptr, current_pack == 5)) {
+                if (set_icon_pack_callback_) set_icon_pack_callback_(5);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Flexible icon family with multiple weights - 9,000+ icons");
+            }
+
+            ImGui::EndMenu();
+        }
+
         if (ImGui::MenuItem(ICON_FA_WAND_MAGIC_SPARKLES " Custom Node Editor...")) {
             if (open_custom_node_editor_callback_) {
                 open_custom_node_editor_callback_();
@@ -243,94 +292,6 @@ void ToolbarPanel::RenderScriptMenu() {
         if (ImGui::MenuItem(ICON_FA_PLAY " Run Script", "Ctrl+R")) {
             // TODO: Run current script
         }
-
-        ImGui::EndMenu();
-    }
-}
-
-void ToolbarPanel::RenderPlotsMenu() {
-    if (ImGui::BeginMenu("Plots")) {
-        // Test Control - Interactive option
-        if (ImGui::MenuItem("Test Control")) {
-            if (toggle_plot_test_control_callback_) {
-                toggle_plot_test_control_callback_();
-            }
-        }
-
-        ImGui::Separator();
-        ImGui::TextDisabled("Available Plot Types (View Only)");
-        ImGui::Separator();
-
-        // Basic 2D Plots (from cheatsheet)
-        if (ImGui::BeginMenu("Basic 2D", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("plot() - Line plot");
-        ImGui::TextDisabled("scatter() - Scatter plot");
-        ImGui::TextDisabled("bar() / barh() - Bar chart");
-        ImGui::TextDisabled("imshow() - Image display");
-        ImGui::TextDisabled("contour() / contourf() - Contour plot");
-        ImGui::TextDisabled("pcolormesh() - Pseudocolor plot");
-        ImGui::TextDisabled("quiver() - Vector field");
-        ImGui::TextDisabled("pie() - Pie chart");
-        ImGui::TextDisabled("fill_between() - Filled area");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // Advanced 2D Plots
-        if (ImGui::BeginMenu("Advanced 2D", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("step() - Step plot");
-        ImGui::TextDisabled("boxplot() - Box plot");
-        ImGui::TextDisabled("errorbar() - Error bar plot");
-        ImGui::TextDisabled("hist() - Histogram");
-        ImGui::TextDisabled("violinplot() - Violin plot");
-        ImGui::TextDisabled("barbs() - Barbs plot");
-        ImGui::TextDisabled("eventplot() - Event plot");
-        ImGui::TextDisabled("hexbin() - Hexagonal binning");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // 3D Plots
-        if (ImGui::BeginMenu("3D Plots", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("plot3D() - 3D line plot");
-        ImGui::TextDisabled("scatter3D() - 3D scatter");
-        ImGui::TextDisabled("plot_surface() - Surface plot");
-        ImGui::TextDisabled("plot_wireframe() - Wireframe");
-        ImGui::TextDisabled("contour3D() - 3D contour");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // Polar Plots
-        if (ImGui::BeginMenu("Polar", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("polar() - Polar plot");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // Statistical Plots
-        if (ImGui::BeginMenu("Statistical", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("hist() - Histogram");
-        ImGui::TextDisabled("boxplot() - Box plot");
-        ImGui::TextDisabled("violinplot() - Violin plot");
-        ImGui::TextDisabled("kde plot - Density estimation");
-        ImGui::Unindent();
-
-        ImGui::Separator();
-
-        // Specialized Plots
-        if (ImGui::BeginMenu("Specialized", false)) { ImGui::EndMenu(); }
-        ImGui::Indent();
-        ImGui::TextDisabled("heatmap - Heat map");
-        ImGui::TextDisabled("streamplot() - Stream plot");
-        ImGui::TextDisabled("specgram() - Spectrogram");
-        ImGui::TextDisabled("spy() - Sparse matrix viz");
-        ImGui::Unindent();
 
         ImGui::EndMenu();
     }

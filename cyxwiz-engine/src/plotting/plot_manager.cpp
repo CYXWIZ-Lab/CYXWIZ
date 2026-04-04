@@ -24,11 +24,10 @@ PlotManager::PlotManager() {
 }
 
 PlotManager::~PlotManager() {
+    // During static destruction, spdlog and other resources may already be gone.
+    // Just clear plots without logging. OS will cleanup Python resources.
     ClearAllPlots();
-    if (python_initialized_) {
-        ShutdownPythonBackend();
-    }
-    spdlog::info("PlotManager shutdown");
+    // Note: Python backend cleanup skipped during static destruction - OS handles it
 }
 
 // ============================================================================

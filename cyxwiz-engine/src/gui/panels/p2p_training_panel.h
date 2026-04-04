@@ -142,6 +142,7 @@ private:
         std::chrono::system_clock::time_point timestamp;
     };
     std::vector<CheckpointEntry> checkpoint_history_;
+    static constexpr size_t kMaxCheckpointHistory = 100;
 
     // Logs
     struct LogEntry {

@@ -1,0 +1,117 @@
+{
+  "category": "Reporting",
+  "category_icon": "file-pdf",
+  "description": "Report generation and export nodes",
+  "templates": [
+    {
+      "type": "PDFReportWriter",
+      "name": "PDF Report Writer",
+      "icon": "file-pdf",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["pdf", "report", "export", "document"],
+      "brief_description": "Export report to PDF",
+      "help_text": "Generates a PDF report from data and visualizations. Supports templates and custom layouts.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Data to include in report"},
+        {"name": "Charts", "type": "Dataset", "required": false, "description": "Chart images to embed"}
+      ],
+      "outputs": [
+        {"name": "Status", "type": "Dataset", "description": "Export status and file path"}
+      ],
+      "parameters": [
+        {"name": "output_path", "type": "file", "default": "report.pdf", "description": "Output PDF file path"},
+        {"name": "title", "type": "string", "default": "Data Report", "description": "Report title"},
+        {"name": "template", "type": "enum", "default": "default", "description": "Report template", "enum_values": ["default", "minimal", "detailed"]}
+      ],
+      "implementation_notes": "Use libharu or PDFium",
+      "target_phase": "Phase 3",
+      "dependencies": ["libharu"],
+      "effort_estimate": "High",
+      "user_votes": 0
+    },
+    {
+      "type": "HTMLReportWriter",
+      "name": "HTML Report Writer",
+      "icon": "file-code",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["html", "report", "web", "export"],
+      "brief_description": "Export report to HTML",
+      "help_text": "Generates an interactive HTML report with embedded charts and data tables.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Data to include"},
+        {"name": "Charts", "type": "Dataset", "required": false, "description": "Chart configurations"}
+      ],
+      "outputs": [
+        {"name": "Status", "type": "Dataset", "description": "Export status and file path"}
+      ],
+      "parameters": [
+        {"name": "output_path", "type": "file", "default": "report.html", "description": "Output HTML file path"},
+        {"name": "title", "type": "string", "default": "Data Report", "description": "Report title"},
+        {"name": "include_plotly", "type": "bool", "default": "true", "description": "Include Plotly.js for interactive charts"}
+      ],
+      "implementation_notes": "Use template engine, embed Plotly.js",
+      "target_phase": "Phase 2",
+      "dependencies": [],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "EmailSender",
+      "name": "Email Sender",
+      "icon": "envelope",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["email", "send", "smtp", "notification"],
+      "brief_description": "Send email with attachments",
+      "help_text": "Sends an email via SMTP with optional data attachments. Useful for automated reporting.",
+      "inputs": [
+        {"name": "Attachment", "type": "Dataset", "required": false, "description": "Data to attach (converted to CSV/PDF)"}
+      ],
+      "outputs": [
+        {"name": "Status", "type": "Dataset", "description": "Send status"}
+      ],
+      "parameters": [
+        {"name": "smtp_server", "type": "string", "default": "", "description": "SMTP server address"},
+        {"name": "smtp_port", "type": "int", "default": "587", "description": "SMTP port"},
+        {"name": "username", "type": "string", "default": "", "description": "SMTP username"},
+        {"name": "password", "type": "string", "default": "", "description": "SMTP password"},
+        {"name": "to", "type": "string", "default": "", "description": "Recipient email"},
+        {"name": "subject", "type": "string", "default": "", "description": "Email subject"},
+        {"name": "body", "type": "string", "default": "", "description": "Email body"}
+      ],
+      "implementation_notes": "Use libcurl with SMTP",
+      "target_phase": "Phase 3",
+      "dependencies": ["libcurl"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "DashboardCreator",
+      "name": "Dashboard Creator",
+      "icon": "gauge",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["dashboard", "interactive", "web", "visualization"],
+      "brief_description": "Create interactive dashboard",
+      "help_text": "Generates an interactive web dashboard with multiple charts and KPIs. Output can be served or exported.",
+      "inputs": [
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Dashboard data sources"}
+      ],
+      "outputs": [
+        {"name": "Dashboard", "type": "Dataset", "description": "Dashboard configuration/URL"}
+      ],
+      "parameters": [
+        {"name": "title", "type": "string", "default": "Dashboard", "description": "Dashboard title"},
+        {"name": "layout", "type": "enum", "default": "grid", "description": "Layout type", "enum_values": ["grid", "tabs", "single"]},
+        {"name": "theme", "type": "enum", "default": "light", "description": "Color theme", "enum_values": ["light", "dark"]}
+      ],
+      "implementation_notes": "Generate static HTML with Plotly/Chart.js",
+      "target_phase": "Phase 4",
+      "dependencies": [],
+      "effort_estimate": "High",
+      "user_votes": 0
+    }
+  ]
+}

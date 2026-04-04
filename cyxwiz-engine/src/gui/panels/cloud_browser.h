@@ -123,7 +123,11 @@ private:
 
     // Thread safety
     std::mutex datasets_mutex_;
-    
+
+    // Background thread for async operations (prevents use-after-free)
+    std::thread async_thread_;
+    std::atomic<bool> shutdown_requested_{false};
+
     // Owned DataStreamClient for auto-connection
     std::unique_ptr<network::DataStreamClient> owned_client_;
     bool auto_connect_attempted_ = false;

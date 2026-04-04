@@ -60,7 +60,7 @@ InferenceServiceImpl::InferenceServiceImpl(DeploymentManager* manager)
 }
 
 grpc::Status InferenceServiceImpl::Infer(
-    grpc::ServerContext* context,
+    grpc::ServerContext* /*context*/,
     const protocol::InferRequest* request,
     protocol::InferResponse* response) {
 
@@ -132,7 +132,7 @@ grpc::Status InferenceServiceImpl::Infer(
 }
 
 grpc::Status InferenceServiceImpl::GetModelInfo(
-    grpc::ServerContext* context,
+    grpc::ServerContext* /*context*/,
     const protocol::GetModelInfoRequest* request,
     protocol::GetModelInfoResponse* response) {
 

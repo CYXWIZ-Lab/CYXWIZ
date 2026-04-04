@@ -881,6 +881,29 @@ void ThemeEditorPanel::RenderGalleryTab() {
                 case ThemePreset::CatppuccinMocha:
                     description = "Cozy pastel rainbow theme with soft colors";
                     break;
+                // CyxOS Platform themes
+                case ThemePreset::CyxOSAqua:
+                    description = "macOS Big Sur inspired - clean and minimal";
+                    break;
+                case ThemePreset::CyxOSFluent:
+                    description = "Windows 11 Fluent Design with Mica effects";
+                    break;
+                case ThemePreset::CyxOSCoder:
+                    description = "Developer IDE with syntax highlighting colors";
+                    break;
+                case ThemePreset::CyxOSOffice:
+                    description = "Clean professional theme for enterprise";
+                    break;
+                // CyxOS Retro TUI themes
+                case ThemePreset::CyxOSTuiClassic:
+                    description = "Classic green phosphor IBM 3278 terminal";
+                    break;
+                case ThemePreset::CyxOSTuiMatrix:
+                    description = "The Matrix digital rain aesthetic";
+                    break;
+                case ThemePreset::CyxOSTuiAmber:
+                    description = "Warm amber CRT P3 phosphor terminal";
+                    break;
                 default:
                     description = "Custom theme";
                     break;

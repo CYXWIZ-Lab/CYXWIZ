@@ -16,7 +16,6 @@
 #include "icons.h"
 #include "theme.h"
 #include "../core/keyboard_shortcuts.h"
-#include "panels/dataset_panel.h"
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
@@ -26,6 +25,7 @@
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "panels/data_explorer_panel.h"
+#include "panels/annotation_editor_panel.h"
 #include "panels/visualization_panel.h"
 #include "panels/connection_dialog.h"
 #include "panels/job_status_panel.h"
@@ -114,6 +114,9 @@
 #include "panels/json_viewer_panel.h"
 #include "panels/regex_tester_panel.h"
 #include "panels/cloud_browser.h"
+#include "panels/node_browser_panel.h"
+#include "panels/node_info_panel.h"
+#include "../core/node_metadata.h"
 #include "panels/cloud_dataset_manager.h"
 #include "panels/plugin_manager_panel.h"
 #include "data_studio/data_studio_panel.h"
@@ -158,7 +161,6 @@ MainWindow::MainWindow()
     console_ = std::make_unique<Console>();
     viewport_ = std::make_unique<Viewport>();
     properties_ = std::make_unique<Properties>();
-    training_eval_panel_ = std::make_unique<TrainingEvaluationPanel>();
 
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
@@ -168,17 +170,12 @@ MainWindow::MainWindow()
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
 
-    // Wire up TrainingPlotPanel to TrainingEvaluationPanel for local training visualization
-    if (training_eval_panel_ && training_plot_panel_) {
-        training_eval_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
-        training_eval_panel_->SetNodeEditor(node_editor_.get());
-    }
-
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     data_explorer_panel_ = std::make_unique<cyxwiz::DataExplorerPanel>();
+    annotation_editor_panel_ = std::make_unique<cyxwiz::AnnotationEditorPanel>();
     visualization_panel_ = std::make_unique<cyxwiz::VisualizationPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
@@ -323,6 +320,15 @@ MainWindow::MainWindow()
     
     // Cloud panels (DataStream)
     cloud_browser_panel_ = std::make_unique<gui::CloudBrowserPanel>();
+    node_browser_panel_ = std::make_unique<gui::NodeBrowserPanel>();
+    node_browser_panel_->SetNodeEditor(node_editor_.get());
+    node_info_panel_ = std::make_unique<cyxwiz::NodeInfoPanel>();
+    // Connect Node Browser hover to Info Panel
+    if (node_browser_panel_ && node_info_panel_) {
+        node_browser_panel_->SetNodeHoverCallback([this](cyxwiz::NodeType type) {
+            node_info_panel_->SetSelectedNode(type);
+        });
+    }
     cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();
 
     // Plugin Manager panel
@@ -330,7 +336,6 @@ MainWindow::MainWindow()
 
     // Data Studio panel (Phase 1 Week 1)
     data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();
-    // Unified Canvas Phase 5: SetMainWindow removed (Pipeline Canvas moved to Node Editor)
 
     // Set NAS panel callbacks for node editor integration
     nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
@@ -387,9 +392,6 @@ MainWindow::MainWindow()
     // Connect Query Console to Node Editor for graph queries
     query_console_->SetNodeEditor(node_editor_.get());
 
-    // Connect Dataset Panel to Node Editor for graph validation
-    training_eval_panel_->SetNodeEditor(node_editor_.get());
-
     // Set up training callback for Node Editor
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
@@ -428,20 +430,17 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Import Dataset callback - shows Dataset Manager panel
     toolbar_->SetImportDatasetCallback([this]() {
-        if (training_eval_panel_) {
-            training_eval_panel_->Show();
-            spdlog::info("Opened Dataset Manager panel");
+        if (data_explorer_panel_) {
+            data_explorer_panel_->SetVisible(true);
+            spdlog::info("Opened Data Explorer panel");
         }
     });
 
-    // Create Custom Dataset - opens TrainingEvaluationPanel to Load Dataset tab
     toolbar_->SetCreateCustomDatasetCallback([this]() {
-        if (training_eval_panel_) {
-            training_eval_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
-            training_eval_panel_->SetVisible(true);
-            spdlog::info("Opened Dataset panel for custom dataset creation");
+        if (data_explorer_panel_) {
+            data_explorer_panel_->SetVisible(true);
+            spdlog::info("Opened Data Explorer panel");
         }
     });
 
@@ -461,21 +460,17 @@ MainWindow::MainWindow()
         }
     });
 
-    // Augment - opens TrainingEvaluationPanel to Data Pipeline tab
     toolbar_->SetAugmentDatasetCallback([this]() {
-        if (training_eval_panel_) {
-            training_eval_panel_->SetActiveTab(gui::DatasetTab::DataPipeline);
-            training_eval_panel_->SetVisible(true);
-            spdlog::info("Opened Dataset panel Data Pipeline tab");
+        if (node_editor_) {
+            node_editor_->Show();
+            spdlog::info("Opened Node Editor - use Augmentation nodes for data augmentation");
         }
     });
 
-    // Dataset Statistics - opens TrainingEvaluationPanel (stats shown in Load Dataset tab)
     toolbar_->SetDatasetStatisticsCallback([this]() {
-        if (training_eval_panel_) {
-            training_eval_panel_->SetActiveTab(gui::DatasetTab::LoadDataset);
-            training_eval_panel_->SetVisible(true);
-            spdlog::info("Opened Dataset panel for statistics");
+        if (data_explorer_panel_) {
+            data_explorer_panel_->SetVisible(true);
+            spdlog::info("Opened Data Explorer panel for statistics");
         }
     });
 
@@ -721,6 +716,18 @@ MainWindow::MainWindow()
         }
     });
 
+    // Set up Icon Pack selection callbacks
+    toolbar_->SetSetIconPackCallback([this](int pack) {
+        if (node_editor_) {
+            node_editor_->SetIconPack(static_cast<gui::IconPack>(pack));
+            const char* pack_names[] = {"FontAwesome", "Tabler", "Remix", "Lucide", "Iconoir", "Phosphor"};
+            spdlog::info("Changed icon pack to: {}", pack < 6 ? pack_names[pack] : "Unknown");
+        }
+    });
+    toolbar_->SetGetIconPackCallback([this]() -> int {
+        return node_editor_ ? static_cast<int>(node_editor_->GetIconPack()) : 0;
+    });
+
     // Set up Node Editor operation callbacks (Nodes menu)
     toolbar_->SetAddDenseNodeCallback([this]() {
         if (node_editor_) {
@@ -789,11 +796,19 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Memory Monitor callback (from Tools menu)
+    // Set up Memory Monitor callback (System Monitor in Profile menu)
     toolbar_->SetOpenMemoryMonitorCallback([this]() {
         if (memory_monitor_) {
             memory_monitor_->Toggle();
             spdlog::info("Toggled Memory Monitor");
+        }
+    });
+
+    // Set up Memory Panel callback (Memory Visualization in Profile menu)
+    toolbar_->SetOpenMemoryPanelCallback([this]() {
+        if (memory_panel_) {
+            memory_panel_->Show();
+            spdlog::info("Opened Memory Visualization panel");
         }
     });
 
@@ -1579,11 +1594,11 @@ MainWindow::MainWindow()
 
     // Set up asset browser callback for dataset loading
     asset_browser_->SetOnDatasetLoaded([this](const std::string& path, cyxwiz::DatasetHandle handle) {
-        if (training_eval_panel_ && handle.IsValid()) {
-            // Dataset is already loaded via DataRegistry, just update the TrainingEvaluationPanel to use it
+        if (handle.IsValid()) {
             spdlog::info("Dataset loaded from Asset Browser: {}", path);
-            // Show the dataset panel so user can see the loaded data
-            training_eval_panel_->SetVisible(true);
+            if (data_explorer_panel_) {
+                data_explorer_panel_->SetVisible(true);
+            }
 
             // Update node editor with dataset name
             if (node_editor_) {
@@ -1885,8 +1900,6 @@ MainWindow::~MainWindow() {
     asset_browser_.reset();
     spdlog::info("~MainWindow: toolbar_");
     toolbar_.reset();
-    spdlog::info("~MainWindow: training_eval_panel_");
-    training_eval_panel_.reset();
     spdlog::info("~MainWindow: properties_");
     properties_.reset();
     spdlog::info("~MainWindow: viewport_");
@@ -1957,25 +1970,6 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
     if (job_status_panel_) {
         job_status_panel_->SetJobManager(job_manager);
         job_manager->SetJobStatusPanel(job_status_panel_.get());
-    }
-
-    // Set JobManager for TrainingEvaluationPanel (enables training job submission)
-    if (training_eval_panel_) {
-        training_eval_panel_->SetJobManager(job_manager);
-
-        // Set TrainingPlotPanel for local training visualization
-        training_eval_panel_->SetTrainingPlotPanel(training_plot_panel_.get());
-
-        // Connect NodeEditor so TrainingEvaluationPanel can compile the graph for training
-        training_eval_panel_->SetNodeEditor(node_editor_.get());
-
-        // Connect WalletPanel so TrainingEvaluationPanel can get wallet address for job submission
-        training_eval_panel_->SetWalletPanel(wallet_panel_.get());
-
-        // Set callback to start P2P monitoring when training starts
-        training_eval_panel_->SetTrainingStartCallback([this](const std::string& job_id) {
-            StartJobMonitoring(job_id);
-        });
     }
 
     // Set up callback in toolbar to show connection dialog
@@ -2148,6 +2142,7 @@ void MainWindow::Render() {
     if (script_editor_) script_editor_->Render();
     if (table_viewer_) table_viewer_->Render();
     if (data_explorer_panel_) data_explorer_panel_->Render();
+    if (annotation_editor_panel_) annotation_editor_panel_->Render();
     if (visualization_panel_) visualization_panel_->Render();
     if (connection_dialog_) connection_dialog_->Render();
     if (job_status_panel_) job_status_panel_->Render();
@@ -2269,6 +2264,8 @@ void MainWindow::Render() {
     
     // Cloud panels
     if (cloud_browser_panel_) cloud_browser_panel_->Render();
+    if (node_browser_panel_) node_browser_panel_->Render();
+    if (node_info_panel_) node_info_panel_->Render();
     if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->Render();
 
     // Plugin Manager panel
@@ -2288,7 +2285,6 @@ void MainWindow::Render() {
     if (console_) console_->Render();
     if (viewport_) viewport_->Render();
     if (properties_) properties_->Render();
-    if (training_eval_panel_) training_eval_panel_->Render();
 
     if (show_about_dialog_) {
         ShowAboutDialog();
@@ -2530,16 +2526,14 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
 
     // Additional panels (less commonly used)
-    if (training_eval_panel_) {
-        dock_style.RegisterPanel("Training & Evaluation", ICON_FA_GRADUATION_CAP, training_eval_panel_->GetVisiblePtr(), [this]() {
-            spdlog::info("Training & Evaluation panel toggled, visible={}", training_eval_panel_->IsVisible());
-        });
-    }
     if (table_viewer_) {
         dock_style.RegisterPanel("Table Viewer", ICON_FA_TABLE, table_viewer_->GetVisiblePtr());
     }
     if (data_explorer_panel_) {
         dock_style.RegisterPanel("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_->GetVisiblePtr());
+    }
+    if (annotation_editor_panel_) {
+        dock_style.RegisterPanel("Annotation Editor", ICON_FA_DRAW_POLYGON, annotation_editor_panel_->GetVisiblePtr());
     }
     if (data_studio_panel_) {
         dock_style.RegisterPanel("Data Studio", ICON_FA_DIAGRAM_PROJECT, data_studio_panel_->GetVisiblePtr());
@@ -2573,6 +2567,12 @@ void MainWindow::RegisterPanelsWithSidebar() {
     }
     if (cloud_browser_panel_) {
         dock_style.RegisterPanel("Cloud Browser", ICON_FA_CLOUD, cloud_browser_panel_->GetVisiblePtr());
+    }
+    if (node_browser_panel_) {
+        dock_style.RegisterPanel("Node Browser", ICON_FA_CUBES, node_browser_panel_->GetVisiblePtr());
+    }
+    if (node_info_panel_) {
+        dock_style.RegisterPanel("Node Info", ICON_FA_CIRCLE_INFO, node_info_panel_->GetVisiblePtr());
     }
     if (cloud_dataset_manager_panel_) {
         dock_style.RegisterPanel("Cloud Manager", ICON_FA_DATABASE, cloud_dataset_manager_panel_->GetVisiblePtr());
@@ -2611,7 +2611,6 @@ void MainWindow::SetDefaultPanelVisibility() {
     // Users can enable these via View menu when needed
 
     // Main panels - hide by default
-    if (training_eval_panel_) training_eval_panel_->SetVisible(false);
     if (training_plot_panel_) training_plot_panel_->SetVisible(false);
     if (plot_test_control_) plot_test_control_->SetVisible(false);
     if (command_window_) command_window_->SetVisible(false);
@@ -2745,64 +2744,16 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
                  config.layers.size(), config.input_size, config.output_size);
 
-    // Check if we have a dataset loaded
-    if (!training_eval_panel_ || !training_eval_panel_->IsDatasetLoaded()) {
-        spdlog::error("No dataset loaded. Please load a dataset first.");
-        return;
-    }
+    spdlog::warn("Local training from node graph is temporarily disabled.");
+    spdlog::info("To train your model:");
+    spdlog::info("  1. Use P2P Training panel for remote training on compute nodes");
+    spdlog::info("  2. Or use 'Generate Code' to export PyTorch/TensorFlow code");
+    spdlog::info("  3. Or set Execution Mode to 'DuckDB Pipeline' for data pipelines");
 
-    // Get the dataset handle from TrainingEvaluationPanel
-    cyxwiz::DatasetHandle dataset = training_eval_panel_->GetCurrentDataset();
-    if (!dataset.IsValid()) {
-        spdlog::error("Invalid dataset handle");
-        return;
-    }
-
-    // Update config with dataset info from the loaded dataset
-    const auto& dataset_info = training_eval_panel_->GetDatasetInfo();
-    config.dataset_name = dataset_info.name;
-
-    // Calculate input size from shape (product of dimensions)
-    size_t input_size = 1;
-    for (auto dim : dataset_info.shape) {
-        input_size *= dim;
-    }
-    config.input_size = input_size;
-    config.output_size = dataset_info.num_classes;
-
-    // Log training start
-    spdlog::info("Starting training from node graph:");
-    spdlog::info("  Dataset: {} ({} samples, {} classes)",
-                 config.dataset_name, dataset_info.num_samples, config.output_size);
-    spdlog::info("  Optimizer: {} (lr={})", config.GetOptimizerName(), config.learning_rate);
-    spdlog::info("  Loss: {}", config.GetLossName());
-
-    // Get training parameters from Dataset Panel's Hyperparameters section
-    int epochs = training_eval_panel_->GetTrainEpochs();
-    int batch_size = training_eval_panel_->GetTrainBatchSize();
-    spdlog::info("  Epochs: {}, Batch Size: {}", epochs, batch_size);
-
-    // Create callback to update node editor training animation
-    auto node_editor_callback = [this](bool active) {
-        if (node_editor_) {
-            node_editor_->SetTrainingActive(active);
-        }
-    };
-
-    // Use TrainingManager to start training (ensures mutual exclusion)
-    bool started = cyxwiz::TrainingManager::Instance().StartTraining(
-        std::move(config),
-        dataset,
-        epochs,
-        batch_size,
-        training_plot_panel_.get(),
-        node_editor_callback
-    );
-
-    if (started) {
-        spdlog::info("Training started from node graph via TrainingManager");
-    } else {
-        spdlog::warn("Could not start training - another training session may be in progress");
+    // Show P2P Training panel for user convenience
+    if (p2p_training_panel_) {
+        p2p_training_panel_->SetVisible(true);
+        spdlog::info("P2P Training panel opened - connect to a compute node to train");
     }
 }
 
@@ -2821,80 +2772,11 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
     spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
                  config.layers.size(), config.input_size, config.output_size);
 
-    // Check if we have a dataset loaded
-    if (!training_eval_panel_ || !training_eval_panel_->IsDatasetLoaded()) {
-        spdlog::error("No dataset loaded. Please load a dataset first.");
-        return;
-    }
-
-    // Get the dataset handle from TrainingEvaluationPanel
-    cyxwiz::DatasetHandle dataset = training_eval_panel_->GetCurrentDataset();
-    if (!dataset.IsValid()) {
-        spdlog::error("Invalid dataset handle");
-        return;
-    }
-
-    // Update config with dataset info
-    const auto& dataset_info = training_eval_panel_->GetDatasetInfo();
-    config.dataset_name = dataset_info.name;
-
-    size_t input_size = 1;
-    for (auto dim : dataset_info.shape) {
-        input_size *= dim;
-    }
-    config.input_size = input_size;
-    config.output_size = dataset_info.num_classes;
-
-    spdlog::info("Starting testing from node graph:");
-    spdlog::info("  Dataset: {} ({} samples, {} classes)",
-                 config.dataset_name, dataset_info.num_samples, config.output_size);
-
-    // Check if we have a trained model
-    auto& tm = cyxwiz::TrainingManager::Instance();
-    if (!tm.HasTrainedModel()) {
-        spdlog::error("No trained model available! Please train the model first before testing.");
-        return;
-    }
-
-    // Get the trained model
-    auto* trained_model = tm.GetLastTrainedModel();
-    if (!trained_model) {
-        spdlog::error("Failed to get trained model from TrainingManager");
-        return;
-    }
-
-    spdlog::info("Using trained model for testing ({} layers)", trained_model->Size());
-
-    int batch_size = 32;
-
-    // Get callback to update test results panel
-    auto complete_callback = [this](const cyxwiz::TestingMetrics& results) {
-        if (test_results_panel_) {
-            test_results_panel_->SetResults(results);
-            test_results_panel_->Show();
-        }
-        spdlog::info("Testing complete! Accuracy: {:.2f}%", results.test_accuracy * 100);
-    };
-
-    // Use TestManager to start testing with the TRAINED model
-    // We need to create a shared_ptr from the raw pointer (non-owning)
-    auto model_ptr = std::shared_ptr<cyxwiz::SequentialModel>(
-        trained_model, [](cyxwiz::SequentialModel*) {} // No-op deleter - TrainingManager owns it
-    );
-
-    bool started = cyxwiz::TestManager::Instance().StartTesting(
-        std::move(config),
-        dataset,
-        batch_size,
-        model_ptr,  // Use the TRAINED model!
-        complete_callback
-    );
-
-    if (started) {
-        spdlog::info("Testing started from node graph via TestManager");
-    } else {
-        spdlog::warn("Could not start testing - another testing session may be in progress");
-    }
+    spdlog::warn("Local testing from node graph is temporarily disabled.");
+    spdlog::info("To test your model:");
+    spdlog::info("  1. Use P2P Training panel for remote testing on compute nodes");
+    spdlog::info("  2. Or use 'Generate Code' to export and run locally");
+    (void)config;  // Suppress unused variable warning
 }
 
 void MainWindow::RenderSidebar() {

@@ -63,9 +63,10 @@ add_library(cyxwiz-protocol STATIC
     common/utils.cpp
 )
 
-target_include_directories(cyxwiz-protocol PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_BINARY_DIR}
+# Mark generated protobuf headers as SYSTEM to suppress warnings when included
+target_include_directories(cyxwiz-protocol
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    SYSTEM PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_link_libraries(cyxwiz-protocol PUBLIC
@@ -85,12 +86,14 @@ endif()
 
 # Suppress warnings in generated protobuf code
 if(MSVC)
-    # Disable warnings for protobuf-generated code
+    # Disable warnings for protobuf-generated code (.cc files)
     set_source_files_properties(
         ${PROTO_SRCS} ${GRPC_SRCS}
         PROPERTIES
         COMPILE_FLAGS "/wd4100 /wd4244 /wd4267 /wd4996"  # unreferenced params, size_t conversions, deprecated
     )
+    # Also suppress warnings for generated headers when included by this library
+    target_compile_options(cyxwiz-protocol PRIVATE /wd4267 /wd4244)
 endif()
 
 # Export header location

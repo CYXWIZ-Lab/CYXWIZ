@@ -1,0 +1,166 @@
+{
+  "category": "ML Services",
+  "category_icon": "brain",
+  "description": "External ML services and experiment tracking",
+  "templates": [
+    {
+      "type": "OpenAIEmbeddings",
+      "name": "OpenAI Embeddings",
+      "icon": "brain",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["openai", "embeddings", "text", "vector"],
+      "brief_description": "Generate embeddings with OpenAI API",
+      "help_text": "Converts text to vector embeddings using OpenAI's embedding models (text-embedding-ada-002).",
+      "inputs": [
+        {"name": "Text", "type": "Dataset", "required": true, "description": "Text column to embed"}
+      ],
+      "outputs": [
+        {"name": "Embeddings", "type": "Dataset", "description": "Vector embeddings"}
+      ],
+      "parameters": [
+        {"name": "api_key", "type": "string", "default": "", "description": "OpenAI API key"},
+        {"name": "model", "type": "enum", "default": "text-embedding-ada-002", "description": "Embedding model", "enum_values": ["text-embedding-ada-002", "text-embedding-3-small", "text-embedding-3-large"]},
+        {"name": "batch_size", "type": "int", "default": "100", "description": "Batch size for API calls"}
+      ],
+      "implementation_notes": "Use REST API with libcurl",
+      "target_phase": "Phase 2",
+      "dependencies": ["libcurl", "nlohmann-json"],
+      "effort_estimate": "Low",
+      "user_votes": 0
+    },
+    {
+      "type": "HuggingFaceHub",
+      "name": "HuggingFace Hub",
+      "icon": "download",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["huggingface", "model", "download", "hub"],
+      "brief_description": "Download models from HuggingFace Hub",
+      "help_text": "Downloads pre-trained models from HuggingFace Hub for local inference.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Model", "type": "Parameters", "description": "Downloaded model"}
+      ],
+      "parameters": [
+        {"name": "model_id", "type": "string", "default": "", "description": "Model ID (e.g., bert-base-uncased)"},
+        {"name": "revision", "type": "string", "default": "main", "description": "Model revision/branch"},
+        {"name": "cache_dir", "type": "file", "default": "", "description": "Local cache directory"}
+      ],
+      "implementation_notes": "Use HuggingFace Hub API",
+      "target_phase": "Phase 3",
+      "dependencies": ["libcurl"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "MLflowTracker",
+      "name": "MLflow Tracker",
+      "icon": "chart-line",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["mlflow", "experiment", "tracking", "logging"],
+      "brief_description": "Log experiments to MLflow",
+      "help_text": "Logs metrics, parameters, and artifacts to an MLflow tracking server.",
+      "inputs": [
+        {"name": "Metrics", "type": "Dataset", "required": false, "description": "Metrics to log"},
+        {"name": "Model", "type": "Parameters", "required": false, "description": "Model to log as artifact"}
+      ],
+      "outputs": [
+        {"name": "RunID", "type": "Dataset", "description": "MLflow run ID"}
+      ],
+      "parameters": [
+        {"name": "tracking_uri", "type": "string", "default": "http://localhost:5000", "description": "MLflow tracking server URI"},
+        {"name": "experiment_name", "type": "string", "default": "Default", "description": "Experiment name"},
+        {"name": "run_name", "type": "string", "default": "", "description": "Run name (optional)"}
+      ],
+      "implementation_notes": "Use MLflow REST API",
+      "target_phase": "Phase 2",
+      "dependencies": ["libcurl"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "WandBTracker",
+      "name": "Weights & Biases",
+      "icon": "chart-line",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["wandb", "weights", "biases", "experiment", "tracking"],
+      "brief_description": "Log experiments to W&B",
+      "help_text": "Logs metrics, hyperparameters, and artifacts to Weights & Biases.",
+      "inputs": [
+        {"name": "Metrics", "type": "Dataset", "required": false, "description": "Metrics to log"},
+        {"name": "Model", "type": "Parameters", "required": false, "description": "Model to log"}
+      ],
+      "outputs": [
+        {"name": "RunURL", "type": "Dataset", "description": "W&B run URL"}
+      ],
+      "parameters": [
+        {"name": "api_key", "type": "string", "default": "", "description": "W&B API key"},
+        {"name": "project", "type": "string", "default": "", "description": "Project name"},
+        {"name": "entity", "type": "string", "default": "", "description": "Team/user entity"}
+      ],
+      "implementation_notes": "Use W&B REST API",
+      "target_phase": "Phase 3",
+      "dependencies": ["libcurl"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "SHAPExplainer",
+      "name": "SHAP Explainer",
+      "icon": "lightbulb",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["shap", "explainability", "feature", "importance"],
+      "brief_description": "SHAP feature importance analysis",
+      "help_text": "Computes SHAP values for model explainability. Shows feature contributions to predictions.",
+      "inputs": [
+        {"name": "Model", "type": "Parameters", "required": true, "description": "Trained model"},
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Data to explain"}
+      ],
+      "outputs": [
+        {"name": "SHAPValues", "type": "Dataset", "description": "SHAP values for each feature"},
+        {"name": "Summary", "type": "Dataset", "description": "Feature importance summary"}
+      ],
+      "parameters": [
+        {"name": "explainer_type", "type": "enum", "default": "tree", "description": "Explainer type", "enum_values": ["tree", "kernel", "deep"]},
+        {"name": "max_samples", "type": "int", "default": "100", "description": "Max samples to explain"}
+      ],
+      "implementation_notes": "Use Python bridge to SHAP library",
+      "target_phase": "Phase 4",
+      "dependencies": ["pybind11", "shap"],
+      "effort_estimate": "High",
+      "user_votes": 0
+    },
+    {
+      "type": "AutoMLNode",
+      "name": "AutoML",
+      "icon": "wand-magic-sparkles",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["automl", "automatic", "hyperparameter", "tuning"],
+      "brief_description": "Automatic model selection and tuning",
+      "help_text": "Automatically selects the best model and hyperparameters for your data.",
+      "inputs": [
+        {"name": "X", "type": "Dataset", "required": true, "description": "Features"},
+        {"name": "y", "type": "Labels", "required": true, "description": "Target"}
+      ],
+      "outputs": [
+        {"name": "BestModel", "type": "Parameters", "description": "Best model found"},
+        {"name": "Results", "type": "Dataset", "description": "All model results"}
+      ],
+      "parameters": [
+        {"name": "task", "type": "enum", "default": "classification", "description": "Task type", "enum_values": ["classification", "regression"]},
+        {"name": "time_limit", "type": "int", "default": "300", "description": "Time limit in seconds"},
+        {"name": "metric", "type": "enum", "default": "accuracy", "description": "Optimization metric", "enum_values": ["accuracy", "f1", "roc_auc", "mse", "r2"]}
+      ],
+      "implementation_notes": "Implement grid/random search or use auto-sklearn",
+      "target_phase": "Phase 4",
+      "dependencies": [],
+      "effort_estimate": "High",
+      "user_votes": 0
+    }
+  ]
+}

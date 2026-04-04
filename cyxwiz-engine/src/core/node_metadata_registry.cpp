@@ -11,47 +11,107 @@ namespace cyxwiz {
 
 // Category display order
 const std::vector<NodeCategory> NodeMetadataRegistry::category_order_ = {
+    // Data I/O
     NodeCategory::DataSources,
+    NodeCategory::Database,
+    NodeCategory::CloudStorage,
     NodeCategory::DataTransform,
+
+    // Analytics & Visualization
     NodeCategory::Analytics,
+    NodeCategory::Visualization,
+
+    // ML Layers
     NodeCategory::Layers,
     NodeCategory::Activation,
     NodeCategory::Normalization,
     NodeCategory::Pooling,
     NodeCategory::Attention,
     NodeCategory::Recurrent,
+    NodeCategory::Upsampling,
+    NodeCategory::ShapeOps,
+    NodeCategory::MergeOps,
+
+    // Training & Models
     NodeCategory::Training,
+    NodeCategory::Regularization,
+    NodeCategory::ModelIO,
+    NodeCategory::MLServices,
+    NodeCategory::Explainability,
+
+    // Data Processing
+    NodeCategory::Preprocessing,
     NodeCategory::DataPipeline,
-    NodeCategory::DNN,
     NodeCategory::TextProcessing,
     NodeCategory::TimeSeries,
     NodeCategory::Audio,
+    NodeCategory::JsonXml,
+
+    // Specialized
+    NodeCategory::DNN,
     NodeCategory::RL,
-    NodeCategory::DataExport,
+    NodeCategory::BigData,
+
+    // Workflow & UI
+    NodeCategory::Workflow,
+    NodeCategory::Widgets,
+    NodeCategory::Reporting,
     NodeCategory::Utility,
+    NodeCategory::Signal,
+
     NodeCategory::Plugin
 };
 
 const char* GetCategoryIcon(NodeCategory category) {
     switch (category) {
+        // Data I/O
         case NodeCategory::DataSources:     return ICON_FA_FILE_IMPORT;
+        case NodeCategory::Database:        return ICON_FA_DATABASE;
+        case NodeCategory::CloudStorage:    return ICON_FA_CLOUD;
         case NodeCategory::DataTransform:   return ICON_FA_WAND_MAGIC_SPARKLES;
+
+        // Analytics & Visualization
         case NodeCategory::Analytics:       return ICON_FA_MAGNIFYING_GLASS_CHART;
+        case NodeCategory::Visualization:   return ICON_FA_CHART_PIE;
+
+        // ML Layers
         case NodeCategory::Layers:          return ICON_FA_LAYER_GROUP;
         case NodeCategory::Activation:      return ICON_FA_BOLT;
         case NodeCategory::Normalization:   return ICON_FA_SCALE_BALANCED;
         case NodeCategory::Pooling:         return ICON_FA_COMPRESS;
         case NodeCategory::Attention:       return ICON_FA_BULLSEYE;
         case NodeCategory::Recurrent:       return ICON_FA_REPEAT;
+        case NodeCategory::Upsampling:      return ICON_FA_EXPAND;
+        case NodeCategory::ShapeOps:        return ICON_FA_CUBES;
+        case NodeCategory::MergeOps:        return ICON_FA_CODE_BRANCH;
+
+        // Training & Models
         case NodeCategory::Training:        return ICON_FA_GRADUATION_CAP;
-        case NodeCategory::DataPipeline:    return ICON_FA_DATABASE;
-        case NodeCategory::DNN:             return ICON_FA_BRAIN;
+        case NodeCategory::Regularization:  return ICON_FA_SHIELD_HALVED;
+        case NodeCategory::ModelIO:         return ICON_FA_FLOPPY_DISK;
+        case NodeCategory::MLServices:      return ICON_FA_CLOUD_ARROW_UP;
+        case NodeCategory::Explainability:  return ICON_FA_LIGHTBULB;
+
+        // Data Processing
+        case NodeCategory::Preprocessing:   return ICON_FA_FILTER;
+        case NodeCategory::DataPipeline:    return ICON_FA_BARS;
         case NodeCategory::TextProcessing:  return ICON_FA_ALIGN_LEFT;
         case NodeCategory::TimeSeries:      return ICON_FA_CHART_LINE;
         case NodeCategory::Audio:           return ICON_FA_WAVE_SQUARE;
+        case NodeCategory::JsonXml:         return ICON_FA_CODE;
+
+        // Specialized
+        case NodeCategory::DNN:             return ICON_FA_BRAIN;
         case NodeCategory::RL:              return ICON_FA_ROCKET;
-        case NodeCategory::DataExport:      return ICON_FA_FILE_EXPORT;
+        case NodeCategory::BigData:         return ICON_FA_SERVER;
+
+        // Workflow & UI
+        case NodeCategory::Workflow:        return ICON_FA_DIAGRAM_PROJECT;
+        case NodeCategory::Widgets:         return ICON_FA_SLIDERS;
+        case NodeCategory::Reporting:       return ICON_FA_FILE_EXPORT;
         case NodeCategory::Utility:         return ICON_FA_TOOLBOX;
+        case NodeCategory::Signal:          return ICON_FA_WAVE_SQUARE;
+
         case NodeCategory::Plugin:          return ICON_FA_PLUG;
         default:                            return ICON_FA_CUBE;
     }
@@ -94,6 +154,14 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
     InitializeAudioNodes();
     InitializeRLNodes();
     InitializeExportNodes();
+    InitializeLinearAlgebraNodes();
+    InitializeTimeSeriesAnalysisNodes();
+    InitializeStatisticsNodes();
+    InitializeInterpretationNodes();
+    InitializeOptimizationNodes();
+    InitializeAdditionalTextNodes();
+
+    InitializeKNIMENodes();
     InitializeUtilityNodes();
 }
 
@@ -255,12 +323,18 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
                         meta.status = NodeImplementationStatus::Template;
                         meta.badge = tmpl.value("badge", "Coming Soon");  // Badge text for display
 
-                        // Map category string to enum
-                        if (category_name == "DB") meta.category = NodeCategory::DataSources;
-                        else if (category_name == "Cloud") meta.category = NodeCategory::DataSources;
-                        else if (category_name == "Workflow") meta.category = NodeCategory::Utility;
-                        else if (category_name == "Reporting") meta.category = NodeCategory::DataExport;
-                        else if (category_name == "ML Services") meta.category = NodeCategory::Analytics;
+                        // Map category string to enum (proper categories for template nodes)
+                        if (category_name == "DB") meta.category = NodeCategory::Database;
+                        else if (category_name == "Cloud") meta.category = NodeCategory::CloudStorage;
+                        else if (category_name == "Workflow") meta.category = NodeCategory::Workflow;
+                        else if (category_name == "Reporting") meta.category = NodeCategory::Reporting;
+                        else if (category_name == "ML Services") meta.category = NodeCategory::MLServices;
+                        else if (category_name == "Visualization") meta.category = NodeCategory::Visualization;
+                        else if (category_name == "Big Data") meta.category = NodeCategory::BigData;
+                        else if (category_name == "ML Advanced") meta.category = NodeCategory::Explainability;
+                        else if (category_name == "Widgets") meta.category = NodeCategory::Widgets;
+                        else if (category_name == "JSON/XML") meta.category = NodeCategory::JsonXml;
+                        else if (category_name == "Model I/O") meta.category = NodeCategory::ModelIO;
                         else meta.category = NodeCategory::Utility;
 
                         // Keywords
@@ -368,6 +442,26 @@ bool NodeMetadataRegistry::MatchesQuery(const NodeMetadata& metadata, const std:
 // Data Source Nodes (I/O)
 // =============================================================================
 void NodeMetadataRegistry::InitializeDataSourceNodes() {
+    // ===== Smart I/O Nodes (Universal - replaces individual format nodes) =====
+    RegisterNode({NodeType::DataInput, NodeCategory::DataSources, "Data Input", ICON_FA_FILE_IMPORT,
+        {"csv", "excel", "json", "parquet", "hdf5", "input", "load", "read", "import", "file"}, 0, false,
+        "Universal data loader - auto-detects CSV, Excel, JSON, Parquet, HDF5", "", "",
+        {}, {{"Data", PinType::Dataset, true, "Output dataset"}},
+        {{"file_path", "file", "", "Data file", {}, "*.csv;*.xlsx;*.json;*.parquet;*.hdf5"},
+         {"configured", "bool", "false", "Dialog configured", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::DataOutput, NodeCategory::DataSources, "Data Output", ICON_FA_FILE_EXPORT,
+        {"csv", "excel", "json", "parquet", "hdf5", "output", "save", "write", "export", "file"}, 0, false,
+        "Universal data exporter - supports CSV, Excel, JSON, Parquet, HDF5", "", "",
+        {{"Data", PinType::Dataset, true, "Input dataset"}}, {},
+        {{"file_path", "file", "", "Output file", {}, "*.csv;*.xlsx;*.json;*.parquet;*.hdf5"},
+         {"configured", "bool", "false", "Dialog configured", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    // ===== Legacy File Format Nodes (hidden - use DataInput/DataOutput instead) =====
+    // Note: Commented out to clean up Node Browser - functionality consolidated into DataInput/DataOutput
+    /*
     RegisterNode({NodeType::CSVFile, NodeCategory::DataSources, "CSV Reader", ICON_FA_FILE_CSV,
         {"csv", "file", "read", "import"}, 0, false, "Read CSV file into Arrow table", "", "",
         {}, {{"Table", PinType::Dataset, true, "Arrow table"}},
@@ -419,6 +513,110 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {}, {{"Data", PinType::Tensor, true, "Samples"}, {"Labels", PinType::Labels, true, "Labels"}},
         {{"dataset_name", "string", "", "Dataset name", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TSVFile, NodeCategory::DataSources, "TSV Reader", ICON_FA_FILE_LINES,
+        {"tsv", "tab", "separated", "import", "load"}, 0, false,
+        "Load TSV (tab-separated) file", "", "",
+        {}, {{"Table", PinType::Dataset, false, "Table"}},
+        {{"file_path", "file", "", "TSV file path", {}, "*.tsv"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TXTFile, NodeCategory::DataSources, "Text Reader", ICON_FA_FILE_LINES,
+        {"txt", "text", "plain", "import", "load"}, 0, false,
+        "Load plain text file", "", "",
+        {}, {{"Text", PinType::Dataset, false, "Text"}},
+        {{"file_path", "file", "", "Text file path", {}, "*.txt"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageCSVDataset, NodeCategory::DataSources, "Image+CSV Dataset", ICON_FA_IMAGES,
+        {"image", "csv", "labels", "folder", "dataset"}, 0, false,
+        "Load images from folder with CSV labels", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"image_folder", "folder", "", "Image folder", {}, ""},
+         {"labels_csv", "file", "", "Labels CSV", {}, "*.csv"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::StreamingDataset, NodeCategory::DataSources, "Streaming Dataset", ICON_FA_WATER,
+        {"streaming", "large", "lazy", "dataset"}, 0, false,
+        "Stream large datasets without full memory load", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"path", "folder", "", "Dataset path", {}, ""},
+         {"batch_size", "int", "32", "Batch size", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ARFFFile, NodeCategory::DataSources, "ARFF Reader", ICON_FA_FILE_CODE,
+        {"arff", "weka", "import", "load"}, 0, false,
+        "Load Weka ARFF file", "", "",
+        {}, {{"Table", PinType::Dataset, false, "Table"}},
+        {{"file_path", "file", "", "ARFF file path", {}, "*.arff"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::FashionMNISTDataset, NodeCategory::DataSources, "Fashion-MNIST", ICON_FA_TAG,
+        {"fashion", "mnist", "clothing", "dataset", "benchmark"}, 0, false,
+        "Load Fashion-MNIST dataset", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"split", "dropdown", "train", "Split", {"train", "test"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::CIFAR100Dataset, NodeCategory::DataSources, "CIFAR-100", ICON_FA_IMAGE,
+        {"cifar", "100", "dataset", "classification", "benchmark"}, 0, false,
+        "Load CIFAR-100 dataset (100 classes)", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"split", "dropdown", "train", "Split", {"train", "test"}, ""},
+         {"label_type", "dropdown", "fine", "Labels", {"fine", "coarse"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::FeatherFile, NodeCategory::DataSources, "Feather Reader", ICON_FA_FILE_CODE,
+        {"feather", "arrow", "columnar", "import"}, 0, false,
+        "Load Apache Arrow Feather file", "", "",
+        {}, {{"Table", PinType::Dataset, false, "Table"}},
+        {{"file_path", "file", "", "Feather file", {}, "*.feather;*.fea"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ArrowIPCFile, NodeCategory::DataSources, "Arrow IPC Reader", ICON_FA_FILE_IMPORT,
+        {"arrow", "ipc", "binary", "import"}, 0, false,
+        "Load Arrow IPC binary file", "", "",
+        {}, {{"Table", PinType::Dataset, false, "Table"}},
+        {{"file_path", "file", "", "Arrow file", {}, "*.arrow;*.ipc"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::NumPyFile, NodeCategory::DataSources, "NumPy Reader", ICON_FA_CUBES,
+        {"numpy", "npy", "npz", "array", "import"}, 0, false,
+        "Load NumPy array file", "", "",
+        {}, {{"Array", PinType::Tensor, false, "Array"}},
+        {{"file_path", "file", "", "NumPy file", {}, "*.npy;*.npz"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::AudioFolderDataset, NodeCategory::DataSources, "Audio Folder", ICON_FA_FOLDER_OPEN,
+        {"audio", "wav", "flac", "ogg", "sound", "folder"}, 0, false,
+        "Load audio files from class folders", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"folder", "folder", "", "Audio folder", {}, ""},
+         {"feature", "dropdown", "mfcc", "Feature", {"waveform", "spectrogram", "mel_spectrogram", "mfcc"}, ""},
+         {"sample_rate", "int", "16000", "Sample rate", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TimeSeriesCSV, NodeCategory::DataSources, "Time Series Reader", ICON_FA_CHART_LINE,
+        {"timeseries", "csv", "temporal", "sequence", "forecast"}, 0, false,
+        "Load time series CSV with windowing", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"file_path", "file", "", "CSV file", {}, "*.csv"},
+         {"target_column", "string", "", "Target column", {}, ""},
+         {"lookback", "int", "10", "Lookback window", {}, ""},
+         {"horizon", "int", "1", "Forecast horizon", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TextCorpusDataset, NodeCategory::DataSources, "Text Corpus", ICON_FA_BOOK,
+        {"text", "corpus", "nlp", "tokenize", "language"}, 0, false,
+        "Load text corpus for NLP", "", "",
+        {}, {{"Dataset", PinType::Dataset, false, "Dataset"}},
+        {{"path", "file", "", "Text file/folder", {}, "*.txt;*.csv;*.json"},
+         {"text_column", "string", "text", "Text column (CSV)", {}, ""},
+         {"label_column", "string", "label", "Label column (CSV)", {}, ""},
+         {"max_length", "int", "512", "Max sequence length", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+    */  // End of legacy file format nodes comment
+
 }
 
 // =============================================================================
@@ -1016,28 +1214,146 @@ void NodeMetadataRegistry::InitializeRLNodes() {
 // Export Nodes
 // =============================================================================
 void NodeMetadataRegistry::InitializeExportNodes() {
-    RegisterNode({NodeType::ExportCSV, NodeCategory::DataExport, "Export CSV", ICON_FA_FILE_EXPORT,
+    RegisterNode({NodeType::ExportCSV, NodeCategory::DataSources, "Export CSV", ICON_FA_FILE_EXPORT,
         {"export", "csv", "save"}, 0, false, "Export to CSV", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.csv"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::ExportParquet, NodeCategory::DataExport, "Export Parquet", ICON_FA_FILE_EXPORT,
+    RegisterNode({NodeType::ExportParquet, NodeCategory::DataSources, "Export Parquet", ICON_FA_FILE_EXPORT,
         {"export", "parquet"}, 0, false, "Export to Parquet", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.parquet"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::ExportJSON, NodeCategory::DataExport, "Export JSON", ICON_FA_FILE_EXPORT,
+    RegisterNode({NodeType::ExportJSON, NodeCategory::DataSources, "Export JSON", ICON_FA_FILE_EXPORT,
         {"export", "json"}, 0, false, "Export to JSON", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.json"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::ExportSQL, NodeCategory::DataExport, "Export SQL", ICON_FA_DATABASE,
+    RegisterNode({NodeType::ExportSQL, NodeCategory::DataSources, "Export SQL", ICON_FA_DATABASE,
         {"export", "sql", "database"}, 0, false, "Export to SQL DB", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"connection", "string", "", "Connection string", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ExportExcel, NodeCategory::DataSources, "Excel Writer", ICON_FA_FILE_EXCEL,
+        {"export", "excel", "xlsx", "spreadsheet"}, 0, false, "Export to Excel (.xlsx)", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}}, {},
+        {{"file_path", "file", "", "Output file", {}, "*.xlsx"},
+         {"sheet_name", "string", "Sheet1", "Sheet name", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+}
+
+// =============================================================================
+// KNIME-Style Table Manipulation Nodes
+// =============================================================================
+void NodeMetadataRegistry::InitializeKNIMENodes() {
+    RegisterNode({NodeType::RowToColumnNames, NodeCategory::DataTransform, "Row to Column Names", ICON_FA_TH,
+        {"header", "column names", "promote row"}, 0, false,
+        "Promote a row to column headers", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Table with new headers"}},
+        {{"row_index", "int", "0", "Row index to use as headers", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TableSplitter, NodeCategory::DataTransform, "Table Splitter", ICON_FA_SCISSORS,
+        {"split", "divide", "partition"}, 0, false,
+        "Split table at specified row", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Top", PinType::Dataset, true, "Rows above split"},
+         {"Bottom", PinType::Dataset, true, "Rows below split"}},
+        {{"split_row", "int", "0", "Row index to split at", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::CellExtractor, NodeCategory::DataTransform, "Cell Extractor", ICON_FA_CROSSHAIRS,
+        {"cell", "extract", "value"}, 0, false,
+        "Extract value from specific cell", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Value", PinType::Tensor, true, "Extracted value"},
+         {"Table", PinType::Dataset, true, "Table passthrough"}},
+        {{"row", "int", "0", "Row index", {}, ""},
+         {"column", "string", "", "Column name", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::CellUpdater, NodeCategory::DataTransform, "Cell Updater", ICON_FA_PEN,
+        {"cell", "update", "modify"}, 0, false,
+        "Update value in specific cell", "", "",
+        {{"Table", PinType::Dataset, true, "Table"},
+         {"Value", PinType::Tensor, false, "New value (optional)"}},
+        {{"Table", PinType::Dataset, true, "Updated table"}},
+        {{"row", "int", "0", "Row index", {}, ""},
+         {"column", "string", "", "Column name", {}, ""},
+         {"value", "string", "", "New value (if not using input)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TableCropper, NodeCategory::DataTransform, "Table Cropper", ICON_FA_COMPRESS,
+        {"crop", "slice", "subset"}, 0, false,
+        "Crop table to specified dimensions", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Cropped table"}},
+        {{"start_row", "int", "0", "Start row (inclusive)", {}, ""},
+         {"end_row", "int", "-1", "End row (-1 for last)", {}, ""},
+         {"columns", "string", "", "Columns to keep (comma-separated, empty=all)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ColumnAppender, NodeCategory::DataTransform, "Column Appender", ICON_FA_TABLE_COLUMNS,
+        {"append", "columns", "horizontal"}, 0, false,
+        "Append columns from multiple tables", "", "",
+        {{"Left", PinType::Dataset, true, "Left table"},
+         {"Right", PinType::Dataset, true, "Right table"}},
+        {{"Table", PinType::Dataset, true, "Combined table"}},
+        {{"suffix", "string", "_right", "Suffix for duplicate columns", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RowAppender, NodeCategory::DataTransform, "Row Appender", ICON_FA_LAYER_GROUP,
+        {"append", "rows", "vertical", "union"}, 0, false,
+        "Append rows from multiple tables (UNION)", "", "",
+        {{"Top", PinType::Dataset, true, "Top table"},
+         {"Bottom", PinType::Dataset, true, "Bottom table"}},
+        {{"Table", PinType::Dataset, true, "Combined table"}},
+        {{"match_columns", "bool", "true", "Match columns by name", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Unpivot, NodeCategory::DataTransform, "Unpivot", ICON_FA_ROTATE,
+        {"unpivot", "melt", "wide to long"}, 0, false,
+        "Unpivot wide to long format", "", "",
+        {{"Table", PinType::Dataset, true, "Wide table"}},
+        {{"Table", PinType::Dataset, true, "Long table"}},
+        {{"id_columns", "string", "", "ID columns (comma-separated)", {}, ""},
+         {"value_name", "string", "value", "Name for value column", {}, ""},
+         {"variable_name", "string", "variable", "Name for variable column", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::StringManipulation, NodeCategory::DataTransform, "String Manipulation", ICON_FA_FONT,
+        {"string", "text", "replace", "trim"}, 0, false,
+        "String operations on columns", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Table with modified strings"}},
+        {{"column", "string", "", "Column to manipulate", {}, ""},
+         {"operation", "enum", "trim", "Operation", {"trim", "upper", "lower", "replace", "substring"}, ""},
+         {"param1", "string", "", "Parameter 1 (find/start)", {}, ""},
+         {"param2", "string", "", "Parameter 2 (replace/length)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::MathFormula, NodeCategory::DataTransform, "Math Formula", ICON_FA_CALCULATOR,
+        {"math", "formula", "calculate"}, 0, false,
+        "Apply math formula to create/modify columns", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Table with new column"}},
+        {{"output_column", "string", "result", "Output column name", {}, ""},
+         {"formula", "string", "", "Formula (e.g., col1 + col2 * 2)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RuleEngine, NodeCategory::DataTransform, "Rule Engine", ICON_FA_SCALE_BALANCED,
+        {"rule", "if", "condition", "case"}, 0, false,
+        "Apply if-then-else rules to create/modify columns", "", "",
+        {{"Table", PinType::Dataset, true, "Table"}},
+        {{"Table", PinType::Dataset, true, "Table with rule result"}},
+        {{"output_column", "string", "result", "Output column name", {}, ""},
+         {"rules", "string", "", "Rules (one per line: condition => value)", {}, ""},
+         {"default_value", "string", "NULL", "Default value if no rule matches", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 }
 
@@ -1179,5 +1495,261 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"path", "string", "$.data[*].value", "JSONPath expression", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 }
+
+// =============================================================================
+// Linear Algebra Nodes (Tool-to-Node Migration)
+// =============================================================================
+void NodeMetadataRegistry::InitializeLinearAlgebraNodes() {
+    RegisterNode({NodeType::SVDNode, NodeCategory::Analytics, "SVD", ICON_FA_TABLE_CELLS,
+        {"svd", "singular", "value", "decomposition", "matrix"}, 0, false,
+        "Singular Value Decomposition", "", "",
+        {{"Matrix", PinType::Dataset, true, "Matrix"}},
+        {{"U", PinType::Dataset, false, "U"}, {"S", PinType::Dataset, false, "S"}, {"V", PinType::Dataset, false, "V"}},
+        {},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::QRDecomposition, NodeCategory::Analytics, "QR Decomposition", ICON_FA_TABLE_COLUMNS,
+        {"qr", "decomposition", "matrix", "orthogonal"}, 0, false,
+        "QR Matrix Decomposition", "", "",
+        {{"Matrix", PinType::Dataset, true, "Matrix"}},
+        {{"Q", PinType::Dataset, false, "Q"}, {"R", PinType::Dataset, false, "R"}},
+        {},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::CholeskyDecomposition, NodeCategory::Analytics, "Cholesky", ICON_FA_SQUARE_ROOT_VARIABLE,
+        {"cholesky", "decomposition", "matrix", "positive", "definite"}, 0, false,
+        "Cholesky Decomposition", "", "",
+        {{"Matrix", PinType::Dataset, true, "Matrix"}},
+        {{"L", PinType::Dataset, false, "L"}},
+        {},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::EigenDecomposition, NodeCategory::Analytics, "Eigenvalue", ICON_FA_CHART_LINE,
+        {"eigen", "eigenvalue", "eigenvector", "decomposition"}, 0, false,
+        "Eigenvalue Decomposition", "", "",
+        {{"Matrix", PinType::Dataset, true, "Matrix"}},
+        {{"Eigenvalues", PinType::Dataset, false, "Eigenvalues"}, {"Eigenvectors", PinType::Dataset, false, "Eigenvectors"}},
+        {},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::MatrixCalculator, NodeCategory::Analytics, "Matrix Calculator", ICON_FA_CALCULATOR,
+        {"matrix", "calculator", "operations", "multiply", "transpose", "inverse"}, 0, false,
+        "Matrix Operations", "", "",
+        {{"A", PinType::Dataset, true, "A"}, {"B", PinType::Dataset, false, "B"}},
+        {{"Result", PinType::Dataset, false, "Result"}},
+        {{"operation", "dropdown", "multiply", "Operation", {"multiply", "add", "subtract", "transpose", "inverse", "determinant"}, ""}},
+        NodeImplementationStatus::Template, 0});
+}
+
+// =============================================================================
+// Time Series Analysis Nodes (Tool-to-Node Migration)
+// =============================================================================
+void NodeMetadataRegistry::InitializeTimeSeriesAnalysisNodes() {
+    RegisterNode({NodeType::TimeSeriesDecomposition, NodeCategory::TimeSeries, "Decomposition", ICON_FA_LAYER_GROUP,
+        {"decomposition", "trend", "seasonal", "residual", "stl"}, 0, false,
+        "Time Series Decomposition", "", "",
+        {{"Series", PinType::Dataset, true, "Series"}},
+        {{"Trend", PinType::Dataset, false, "Trend"}, {"Seasonal", PinType::Dataset, false, "Seasonal"}, {"Residual", PinType::Dataset, false, "Residual"}},
+        {{"method", "dropdown", "classical", "Method", {"classical", "stl"}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::ACFNode, NodeCategory::TimeSeries, "ACF", ICON_FA_CHART_BAR,
+        {"acf", "autocorrelation", "correlogram", "time", "series"}, 0, false,
+        "Autocorrelation Function", "", "",
+        {{"Series", PinType::Dataset, true, "Series"}},
+        {{"ACF", PinType::Dataset, false, "ACF"}},
+        {{"lags", "int", "40", "Number of lags", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::PACFNode, NodeCategory::TimeSeries, "PACF", ICON_FA_CHART_BAR,
+        {"pacf", "partial", "autocorrelation", "time", "series"}, 0, false,
+        "Partial Autocorrelation", "", "",
+        {{"Series", PinType::Dataset, true, "Series"}},
+        {{"PACF", PinType::Dataset, false, "PACF"}},
+        {{"lags", "int", "40", "Number of lags", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::StationarityTest, NodeCategory::TimeSeries, "Stationarity Test", ICON_FA_SCALE_BALANCED,
+        {"stationarity", "adf", "kpss", "unit", "root", "test"}, 0, false,
+        "Test for Stationarity", "", "",
+        {{"Series", PinType::Dataset, true, "Series"}},
+        {{"Results", PinType::Dataset, false, "Results"}},
+        {{"test", "dropdown", "adf", "Test Type", {"adf", "kpss", "both"}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::SeasonalityDetector, NodeCategory::TimeSeries, "Seasonality Detector", ICON_FA_CALENDAR,
+        {"seasonality", "period", "detect", "frequency"}, 0, false,
+        "Detect Seasonal Patterns", "", "",
+        {{"Series", PinType::Dataset, true, "Series"}},
+        {{"Periods", PinType::Dataset, false, "Periods"}},
+        {},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::ARIMAForecaster, NodeCategory::TimeSeries, "ARIMA", ICON_FA_CHART_LINE,
+        {"arima", "forecast", "prediction", "time", "series"}, 0, false,
+        "ARIMA Forecasting", "", "",
+        {{"Series", PinType::Dataset, true, "Series"}},
+        {{"Forecast", PinType::Dataset, false, "Forecast"}},
+        {{"p", "int", "1", "AR order", {}, ""}, {"d", "int", "1", "Differencing", {}, ""}, {"q", "int", "1", "MA order", {}, ""}, {"horizon", "int", "10", "Forecast horizon", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::ExponentialSmoothing, NodeCategory::TimeSeries, "Exp. Smoothing", ICON_FA_CHART_LINE,
+        {"exponential", "smoothing", "holt", "winters", "forecast"}, 0, false,
+        "Exponential Smoothing", "", "",
+        {{"Series", PinType::Dataset, true, "Series"}},
+        {{"Forecast", PinType::Dataset, false, "Forecast"}},
+        {{"method", "dropdown", "simple", "Method", {"simple", "holt", "holt_winters"}, ""}},
+        NodeImplementationStatus::Template, 0});
+}
+
+// =============================================================================
+// Statistics Nodes (Tool-to-Node Migration)
+// =============================================================================
+void NodeMetadataRegistry::InitializeStatisticsNodes() {
+    RegisterNode({NodeType::HypothesisTest, NodeCategory::Analytics, "Hypothesis Test", ICON_FA_FLASK,
+        {"hypothesis", "test", "ttest", "anova", "chi", "square", "statistics"}, 0, false,
+        "Statistical Hypothesis Testing", "", "",
+        {{"Data", PinType::Dataset, true, "Data"}},
+        {{"Results", PinType::Dataset, false, "Results"}},
+        {{"test", "dropdown", "ttest", "Test Type", {"ttest_1samp", "ttest_ind", "ttest_paired", "anova", "chi_square", "mann_whitney"}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::DistributionFitter, NodeCategory::Analytics, "Distribution Fitter", ICON_FA_CHART_AREA,
+        {"distribution", "fit", "normal", "exponential", "probability"}, 0, false,
+        "Fit Probability Distribution", "", "",
+        {{"Data", PinType::Dataset, true, "Data"}},
+        {{"Parameters", PinType::Dataset, false, "Parameters"}},
+        {{"distribution", "dropdown", "normal", "Distribution", {"normal", "uniform", "exponential", "lognormal", "poisson", "gamma"}, ""}},
+        NodeImplementationStatus::Template, 0});
+}
+
+// =============================================================================
+// Deep Learning Interpretation Nodes (Tool-to-Node Migration)
+// =============================================================================
+void NodeMetadataRegistry::InitializeInterpretationNodes() {
+    RegisterNode({NodeType::GradCAMNode, NodeCategory::Visualization, "Grad-CAM", ICON_FA_FIRE,
+        {"gradcam", "visualization", "cnn", "attention", "heatmap"}, 0, false,
+        "Grad-CAM Visualization", "", "",
+        {{"Model", PinType::Parameters, true, "Model"}, {"Image", PinType::Tensor, true, "Image"}},
+        {{"Heatmap", PinType::Tensor, false, "Heatmap"}},
+        {{"layer", "string", "", "Target layer", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::SaliencyMapNode, NodeCategory::Visualization, "Saliency Map", ICON_FA_EYE,
+        {"saliency", "gradient", "visualization", "attention"}, 0, false,
+        "Gradient Saliency Maps", "", "",
+        {{"Model", PinType::Parameters, true, "Model"}, {"Image", PinType::Tensor, true, "Image"}},
+        {{"Saliency", PinType::Tensor, false, "Saliency"}},
+        {{"method", "dropdown", "vanilla", "Method", {"vanilla", "smoothgrad", "integrated"}, ""}},
+        NodeImplementationStatus::Template, 0});
+}
+
+// =============================================================================
+// Optimization Nodes (Tool-to-Node Migration)
+// =============================================================================
+void NodeMetadataRegistry::InitializeOptimizationNodes() {
+    RegisterNode({NodeType::GradientDescentViz, NodeCategory::Visualization, "GD Visualizer", ICON_FA_CHART_LINE,
+        {"gradient", "descent", "optimizer", "visualize", "adam", "sgd"}, 0, false,
+        "Gradient Descent Visualizer", "", "",
+        {{"Function", PinType::Dataset, true, "Function"}},
+        {{"Path", PinType::Dataset, false, "Path"}},
+        {{"optimizer", "dropdown", "sgd", "Optimizer", {"sgd", "momentum", "adam", "rmsprop"}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::ConvexityAnalyzer, NodeCategory::Analytics, "Convexity Analyzer", ICON_FA_MOUNTAIN,
+        {"convex", "hessian", "eigenvalue", "analysis"}, 0, false,
+        "Analyze Function Convexity", "", "",
+        {{"Function", PinType::Dataset, true, "Function"}},
+        {{"Analysis", PinType::Dataset, false, "Analysis"}},
+        {},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::LPSolver, NodeCategory::Analytics, "LP Solver", ICON_FA_CHART_PIE,
+        {"linear", "programming", "optimization", "simplex"}, 0, false,
+        "Linear Programming Solver", "", "",
+        {{"Objective", PinType::Dataset, true, "Objective"}, {"Constraints", PinType::Dataset, true, "Constraints"}},
+        {{"Solution", PinType::Dataset, false, "Solution"}},
+        {},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::QPSolver, NodeCategory::Analytics, "QP Solver", ICON_FA_SQUARE_POLL_VERTICAL,
+        {"quadratic", "programming", "optimization"}, 0, false,
+        "Quadratic Programming Solver", "", "",
+        {{"Objective", PinType::Dataset, true, "Objective"}, {"Constraints", PinType::Dataset, true, "Constraints"}},
+        {{"Solution", PinType::Dataset, false, "Solution"}},
+        {},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::NumericalDifferentiation, NodeCategory::Analytics, "Differentiation", ICON_FA_SUPERSCRIPT,
+        {"differentiation", "derivative", "gradient", "numerical"}, 0, false,
+        "Numerical Differentiation", "", "",
+        {{"Data", PinType::Dataset, true, "Data"}},
+        {{"Derivative", PinType::Dataset, false, "Derivative"}},
+        {{"method", "dropdown", "central", "Method", {"forward", "backward", "central"}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::NumericalIntegration, NodeCategory::Analytics, "Integration", ICON_FA_CHART_AREA,
+        {"integration", "integral", "trapezoid", "simpson", "numerical"}, 0, false,
+        "Numerical Integration", "", "",
+        {{"Data", PinType::Dataset, true, "Data"}},
+        {{"Integral", PinType::Dataset, false, "Integral"}},
+        {{"method", "dropdown", "trapezoid", "Method", {"trapezoid", "simpson", "romberg", "gaussian"}, ""}},
+        NodeImplementationStatus::Template, 0});
+}
+
+// =============================================================================
+// Additional Text Processing Nodes (Tool-to-Node Migration)
+// =============================================================================
+void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
+    RegisterNode({NodeType::WordFrequencyNode, NodeCategory::TextProcessing, "Word Frequency", ICON_FA_CHART_BAR,
+        {"word", "frequency", "count", "text", "analysis"}, 0, false,
+        "Word Frequency Analysis", "", "",
+        {{"Text", PinType::Dataset, true, "Text"}},
+        {{"Frequencies", PinType::Dataset, false, "Frequencies"}},
+        {{"top_n", "int", "100", "Top N words", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TokenizerNode, NodeCategory::TextProcessing, "Tokenizer", ICON_FA_SCISSORS,
+        {"tokenize", "text", "words", "split", "nlp"}, 0, false,
+        "Text Tokenization", "", "",
+        {{"Text", PinType::Dataset, true, "Text"}},
+        {{"Tokens", PinType::Dataset, false, "Tokens"}},
+        {{"method", "dropdown", "word", "Method", {"word", "sentence", "ngram", "bpe"}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    // Also register existing enum entries that weren't registered
+    RegisterNode({NodeType::GMMCluster, NodeCategory::Analytics, "GMM Clustering", ICON_FA_CHART_PIE,
+        {"gmm", "gaussian", "mixture", "clustering", "soft"}, 0, false,
+        "Gaussian Mixture Model", "", "",
+        {{"Data", PinType::Dataset, true, "Data"}},
+        {{"Clustered", PinType::Dataset, false, "Clustered"}},
+        {{"n_components", "int", "3", "Components", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::Convolution1D, NodeCategory::Signal, "Convolution 1D", ICON_FA_WAVE_SQUARE,
+        {"convolution", "1d", "signal", "filter", "kernel"}, 0, false,
+        "1D Signal Convolution", "", "",
+        {{"Signal", PinType::Dataset, true, "Signal"}, {"Kernel", PinType::Dataset, true, "Kernel"}},
+        {{"Result", PinType::Dataset, false, "Result"}},
+        {{"mode", "dropdown", "same", "Mode", {"full", "same", "valid"}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::WordEmbeddings, NodeCategory::TextProcessing, "Word Embeddings", ICON_FA_CUBE,
+        {"embeddings", "word2vec", "glove", "vectors", "nlp"}, 0, false,
+        "Word Embeddings", "", "",
+        {{"Text", PinType::Dataset, true, "Text"}},
+        {{"Embeddings", PinType::Dataset, false, "Embeddings"}},
+        {{"method", "dropdown", "word2vec", "Method", {"word2vec", "glove", "fasttext"}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::NamedEntityRecognizer, NodeCategory::TextProcessing, "NER", ICON_FA_TAG,
+        {"ner", "named", "entity", "recognition", "nlp"}, 0, false,
+        "Named Entity Recognition", "", "",
+        {{"Text", PinType::Dataset, true, "Text"}},
+        {{"Entities", PinType::Dataset, false, "Entities"}},
+        {},
+        NodeImplementationStatus::Template, 0});
+}
+
 
 } // namespace cyxwiz

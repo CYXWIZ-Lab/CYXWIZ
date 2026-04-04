@@ -1,0 +1,185 @@
+{
+  "category": "DB",
+  "category_icon": "database",
+  "description": "Database connectors for reading and writing data",
+  "templates": [
+    {
+      "type": "PostgreSQLConnector",
+      "name": "PostgreSQL Connector",
+      "icon": "database",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["postgresql", "postgres", "database", "sql"],
+      "brief_description": "Connect to a PostgreSQL database server",
+      "help_text": "Establishes a connection to PostgreSQL for executing queries and reading/writing data. Supports connection pooling and SSL.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Connection", "type": "Dataset", "description": "Database connection handle"}
+      ],
+      "parameters": [
+        {"name": "host", "type": "string", "default": "localhost", "description": "Database host"},
+        {"name": "port", "type": "int", "default": "5432", "description": "Port number"},
+        {"name": "database", "type": "string", "default": "", "description": "Database name"},
+        {"name": "username", "type": "string", "default": "", "description": "Username"},
+        {"name": "password", "type": "string", "default": "", "description": "Password (stored securely)"}
+      ],
+      "implementation_notes": "Use libpq for connection. Consider connection pooling.",
+      "target_phase": "Phase 2",
+      "dependencies": ["libpq"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "MySQLConnector",
+      "name": "MySQL Connector",
+      "icon": "database",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["mysql", "mariadb", "database", "sql"],
+      "brief_description": "Connect to MySQL/MariaDB database",
+      "help_text": "Establishes a connection to MySQL or MariaDB servers for data operations.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Connection", "type": "Dataset", "description": "Database connection handle"}
+      ],
+      "parameters": [
+        {"name": "host", "type": "string", "default": "localhost", "description": "Database host"},
+        {"name": "port", "type": "int", "default": "3306", "description": "Port number"},
+        {"name": "database", "type": "string", "default": "", "description": "Database name"},
+        {"name": "username", "type": "string", "default": "", "description": "Username"},
+        {"name": "password", "type": "string", "default": "", "description": "Password"}
+      ],
+      "implementation_notes": "Use mysql-connector-c++ library",
+      "target_phase": "Phase 2",
+      "dependencies": ["mysql-connector-c++"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "SQLiteConnector",
+      "name": "SQLite Connector",
+      "icon": "database",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["sqlite", "database", "embedded", "local"],
+      "brief_description": "Connect to SQLite database file",
+      "help_text": "Opens a local SQLite database file for reading and writing. Ideal for embedded or local storage scenarios.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Connection", "type": "Dataset", "description": "Database connection handle"}
+      ],
+      "parameters": [
+        {"name": "file_path", "type": "file", "default": "", "description": "Path to SQLite database file"},
+        {"name": "create_if_missing", "type": "bool", "default": "true", "description": "Create database if it doesn't exist"}
+      ],
+      "implementation_notes": "Already have sqlite3 dependency - easy to implement",
+      "target_phase": "Phase 1",
+      "dependencies": ["sqlite3"],
+      "effort_estimate": "Low",
+      "user_votes": 0
+    },
+    {
+      "type": "MongoDBConnector",
+      "name": "MongoDB Connector",
+      "icon": "database",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["mongodb", "nosql", "document", "database"],
+      "brief_description": "Connect to MongoDB database",
+      "help_text": "Connects to MongoDB for document-based data operations. Supports authentication and replica sets.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Connection", "type": "Dataset", "description": "Database connection handle"}
+      ],
+      "parameters": [
+        {"name": "connection_string", "type": "string", "default": "mongodb://localhost:27017", "description": "MongoDB connection URI"},
+        {"name": "database", "type": "string", "default": "", "description": "Database name"},
+        {"name": "collection", "type": "string", "default": "", "description": "Collection name"}
+      ],
+      "implementation_notes": "Use mongocxx driver",
+      "target_phase": "Phase 3",
+      "dependencies": ["mongocxx"],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "SnowflakeConnector",
+      "name": "Snowflake Connector",
+      "icon": "database",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["snowflake", "cloud", "warehouse", "database"],
+      "brief_description": "Connect to Snowflake data warehouse",
+      "help_text": "Connects to Snowflake cloud data warehouse for analytics workloads.",
+      "inputs": [],
+      "outputs": [
+        {"name": "Connection", "type": "Dataset", "description": "Database connection handle"}
+      ],
+      "parameters": [
+        {"name": "account", "type": "string", "default": "", "description": "Snowflake account identifier"},
+        {"name": "warehouse", "type": "string", "default": "", "description": "Warehouse name"},
+        {"name": "database", "type": "string", "default": "", "description": "Database name"},
+        {"name": "schema", "type": "string", "default": "PUBLIC", "description": "Schema name"},
+        {"name": "username", "type": "string", "default": "", "description": "Username"},
+        {"name": "password", "type": "string", "default": "", "description": "Password"}
+      ],
+      "implementation_notes": "Use Snowflake ODBC driver or REST API",
+      "target_phase": "Phase 3",
+      "dependencies": ["snowflake-odbc"],
+      "effort_estimate": "High",
+      "user_votes": 0
+    },
+    {
+      "type": "DBQueryExecutor",
+      "name": "DB Query Executor",
+      "icon": "database",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["sql", "query", "execute", "database"],
+      "brief_description": "Execute SQL query on database connection",
+      "help_text": "Executes a SQL query on an existing database connection and returns the result as a table.",
+      "inputs": [
+        {"name": "Connection", "type": "Dataset", "required": true, "description": "Database connection"}
+      ],
+      "outputs": [
+        {"name": "Result", "type": "Dataset", "description": "Query result as table"}
+      ],
+      "parameters": [
+        {"name": "query", "type": "string", "default": "SELECT * FROM table_name", "description": "SQL query to execute"},
+        {"name": "fetch_size", "type": "int", "default": "1000", "description": "Batch fetch size"}
+      ],
+      "implementation_notes": "Generic executor that works with any DB connector",
+      "target_phase": "Phase 2",
+      "dependencies": [],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    },
+    {
+      "type": "DBTableWriter",
+      "name": "DB Table Writer",
+      "icon": "database",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["sql", "write", "insert", "database", "table"],
+      "brief_description": "Write table to database",
+      "help_text": "Writes a data table to a database table. Supports insert, update, and upsert modes.",
+      "inputs": [
+        {"name": "Connection", "type": "Dataset", "required": true, "description": "Database connection"},
+        {"name": "Data", "type": "Dataset", "required": true, "description": "Data to write"}
+      ],
+      "outputs": [
+        {"name": "Status", "type": "Dataset", "description": "Write status and row count"}
+      ],
+      "parameters": [
+        {"name": "table_name", "type": "string", "default": "", "description": "Target table name"},
+        {"name": "mode", "type": "enum", "default": "append", "description": "Write mode", "enum_values": ["append", "overwrite", "upsert"]},
+        {"name": "batch_size", "type": "int", "default": "1000", "description": "Insert batch size"}
+      ],
+      "implementation_notes": "Use prepared statements for efficiency",
+      "target_phase": "Phase 2",
+      "dependencies": [],
+      "effort_estimate": "Medium",
+      "user_votes": 0
+    }
+  ]
+}

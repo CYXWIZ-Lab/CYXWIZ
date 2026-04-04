@@ -291,6 +291,9 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
         node->resolved_config = trigger_value;
     }
 
+    // Rebuild pin lookup after changing pins
+    RebuildPinLookup();
+
     spdlog::info("ResolveDynamicPins: node {} rebuilt with {} inputs, {} outputs",
                  node->name, node->inputs.size(), node->outputs.size());
 }

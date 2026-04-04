@@ -1,0 +1,75 @@
+{
+  "category": "Model I/O",
+  "category_icon": "save",
+  "description": "Model saving, loading, and checkpoint management",
+  "templates": [
+    {
+      "type": "ModelReader",
+      "name": "Model Reader",
+      "icon": "file-import",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["model", "load", "read", "import", "weights"],
+      "brief_description": "Load trained model from file",
+      "help_text": "Load a trained model from disk. Supports multiple formats including ONNX, PyTorch, and CyxWiz native format.",
+      "inputs": [],
+      "outputs": [{"name": "Model", "type": "Tensor"}],
+      "parameters": [
+        {"name": "file_path", "type": "file", "default": "", "description": "Path to model file"},
+        {"name": "format", "type": "enum", "default": "auto", "enum_values": ["auto", "onnx", "pytorch", "cyxwiz"]}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "ModelWriter",
+      "name": "Model Writer",
+      "icon": "file-export",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["model", "save", "write", "export", "weights"],
+      "brief_description": "Save trained model to file",
+      "help_text": "Save a trained model to disk in various formats.",
+      "inputs": [{"name": "Model", "type": "Tensor", "required": true}],
+      "outputs": [],
+      "parameters": [
+        {"name": "file_path", "type": "file", "default": "", "description": "Output path"},
+        {"name": "format", "type": "enum", "default": "cyxwiz", "enum_values": ["onnx", "pytorch", "cyxwiz"]}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "CheckpointSaver",
+      "name": "Checkpoint Saver",
+      "icon": "clock",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["checkpoint", "save", "training", "resume", "snapshot"],
+      "brief_description": "Save training checkpoint",
+      "help_text": "Save model weights, optimizer state, and training progress for resumption.",
+      "inputs": [{"name": "Model", "type": "Tensor", "required": true}, {"name": "Optimizer", "type": "Optimizer", "required": true}],
+      "outputs": [],
+      "parameters": [
+        {"name": "checkpoint_dir", "type": "string", "default": "./checkpoints"},
+        {"name": "save_frequency", "type": "int", "default": "1", "description": "Save every N epochs"},
+        {"name": "keep_last_n", "type": "int", "default": "3", "description": "Keep last N checkpoints"}
+      ],
+      "target_phase": "Phase 2"
+    },
+    {
+      "type": "CheckpointLoader",
+      "name": "Checkpoint Loader",
+      "icon": "history",
+      "status": "template",
+      "badge": "Coming Soon",
+      "keywords": ["checkpoint", "load", "resume", "training"],
+      "brief_description": "Resume training from checkpoint",
+      "help_text": "Load model weights and optimizer state to resume interrupted training.",
+      "inputs": [],
+      "outputs": [{"name": "Model", "type": "Tensor"}, {"name": "Optimizer", "type": "Optimizer"}, {"name": "Epoch", "type": "Dataset"}],
+      "parameters": [
+        {"name": "checkpoint_path", "type": "file", "default": "", "description": "Path to checkpoint file"}
+      ],
+      "target_phase": "Phase 2"
+    }
+  ]
+}

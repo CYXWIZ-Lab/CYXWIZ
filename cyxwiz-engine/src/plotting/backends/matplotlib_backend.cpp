@@ -248,8 +248,8 @@ void MatplotlibBackend::PlotHistogram(const char* label, const double* values,
 // Advanced Plot Types
 // ============================================================================
 
-void MatplotlibBackend::PlotHeatmap(const char* label, const double* values,
-                                    int rows, int cols) {
+void MatplotlibBackend::PlotHeatmap([[maybe_unused]] const char* label,
+                                    const double* values, int rows, int cols) {
     if (!in_plot_ || rows <= 0 || cols <= 0) {
         return;
     }
@@ -307,7 +307,8 @@ void MatplotlibBackend::PlotKDE(const char* label, const double* values, int cou
     python_commands_ += cmd.str();
 }
 
-void MatplotlibBackend::PlotQQPlot(const char* label, const double* values, int count) {
+void MatplotlibBackend::PlotQQPlot([[maybe_unused]] const char* label,
+                                   const double* values, int count) {
     if (!in_plot_ || count <= 0) {
         return;
     }
@@ -325,7 +326,8 @@ void MatplotlibBackend::PlotQQPlot(const char* label, const double* values, int 
     python_commands_ += cmd.str();
 }
 
-void MatplotlibBackend::PlotViolin(const char* label, const double* values, int count) {
+void MatplotlibBackend::PlotViolin([[maybe_unused]] const char* label,
+                                   const double* values, int count) {
     if (!in_plot_ || count <= 0) {
         return;
     }
@@ -342,8 +344,10 @@ void MatplotlibBackend::PlotViolin(const char* label, const double* values, int 
     python_commands_ += cmd.str();
 }
 
-void MatplotlibBackend::PlotMosaic(const char* label, const double* categories,
-                                   int rows, int cols) {
+void MatplotlibBackend::PlotMosaic([[maybe_unused]] const char* label,
+                                   [[maybe_unused]] const double* categories,
+                                   [[maybe_unused]] int rows,
+                                   [[maybe_unused]] int cols) {
     // Mosaic plots are complex and typically require categorical data
     spdlog::warn("Mosaic plot not yet implemented in matplotlib backend");
 }
@@ -402,7 +406,8 @@ void MatplotlibBackend::PlotStairs(const char* label, const double* x_data,
     python_commands_ += cmd.str();
 }
 
-void MatplotlibBackend::PlotPieChart(const char* label, const double* values,
+void MatplotlibBackend::PlotPieChart([[maybe_unused]] const char* label,
+                                     const double* values,
                                      const char* const* labels, int count) {
     if (!in_plot_ || count <= 0) {
         return;

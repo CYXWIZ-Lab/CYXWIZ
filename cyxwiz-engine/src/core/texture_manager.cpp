@@ -16,7 +16,8 @@ TextureManager& TextureManager::Instance() {
 }
 
 TextureManager::~TextureManager() {
-    DeleteAllTextures();
+    // Do nothing - cleanup is done in CyxWizApp::Shutdown() before OpenGL context is destroyed.
+    // This destructor runs during static destruction when the context is already gone.
 }
 
 uint32_t TextureManager::CreateTextureFromFloatData(const float* data, int width, int height, int channels) {
@@ -84,8 +85,8 @@ uint32_t TextureManager::CreateTextureFromUint8Data(const unsigned char* data, i
 
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    // Track texture
-    all_textures_.push_back(texture_id);
+    // Track texture - O(1) insert
+    all_textures_.insert(texture_id);
     memory_usage_ += width * height * channels;
 
     return texture_id;
@@ -142,11 +143,8 @@ void TextureManager::DeleteTexture(uint32_t texture_id) {
     GLuint id = texture_id;
     glDeleteTextures(1, &id);
 
-    // Remove from tracking
-    auto it = std::find(all_textures_.begin(), all_textures_.end(), texture_id);
-    if (it != all_textures_.end()) {
-        all_textures_.erase(it);
-    }
+    // Remove from tracking - O(1) erase
+    all_textures_.erase(texture_id);
 
     // Remove from cache if present
     for (auto cache_it = texture_cache_.begin(); cache_it != texture_cache_.end(); ) {
@@ -174,7 +172,8 @@ uint32_t TextureManager::GetOrCreateCachedTexture(const std::string& cache_key,
     // Check if already cached
     auto it = texture_cache_.find(cache_key);
     if (it != texture_cache_.end()) {
-        // Move to front of LRU
+        // Move to back of LRU - O(n) but only for cache_order_ which is typically small
+        // Could optimize further with std::list + unordered_map if needed
         auto order_it = std::find(cache_order_.begin(), cache_order_.end(), cache_key);
         if (order_it != cache_order_.end()) {
             cache_order_.erase(order_it);
@@ -200,12 +199,11 @@ uint32_t TextureManager::GetOrCreateCachedTexture(const std::string& cache_key,
 
 void TextureManager::ClearCache() {
     for (const auto& [key, tex_id] : texture_cache_) {
-        // Only delete if not in general tracking
-        auto it = std::find(all_textures_.begin(), all_textures_.end(), tex_id);
-        if (it != all_textures_.end()) {
+        // Only delete if in general tracking - O(1) find
+        if (all_textures_.find(tex_id) != all_textures_.end()) {
             GLuint id = tex_id;
             glDeleteTextures(1, &id);
-            all_textures_.erase(it);
+            all_textures_.erase(tex_id);
         }
     }
     texture_cache_.clear();
@@ -220,7 +218,7 @@ void TextureManager::EvictOldest() {
     if (cache_order_.empty()) return;
 
     std::string oldest_key = cache_order_.front();
-    cache_order_.erase(cache_order_.begin());
+    cache_order_.pop_front();  // O(1) pop from front using deque
 
     auto it = texture_cache_.find(oldest_key);
     if (it != texture_cache_.end()) {
@@ -237,31 +235,17 @@ void RenderImageWithTexture(const float* data, int width, int height, int channe
 
     auto& tm = TextureManager::Instance();
 
-    // Create a unique key based on data pointer (temporary, will recreate each frame)
-    // For proper caching, use GetOrCreateCachedTexture with a meaningful key
-    static uint32_t temp_texture = 0;
-    static int last_width = 0, last_height = 0, last_channels = 0;
+    // Create a unique cache key based on data pointer and dimensions
+    // This allows reuse across frames when the same image is displayed
+    std::string cache_key = "render_temp_" +
+                           std::to_string(reinterpret_cast<uintptr_t>(data)) + "_" +
+                           std::to_string(width) + "x" + std::to_string(height) + "x" +
+                           std::to_string(channels);
 
-    // Check if we need to recreate the texture
-    bool needs_recreate = (temp_texture == 0 ||
-                          width != last_width ||
-                          height != last_height ||
-                          channels != last_channels);
+    // Use the existing cache mechanism instead of static variable
+    uint32_t texture_id = tm.GetOrCreateCachedTexture(cache_key, data, width, height, channels);
 
-    if (needs_recreate) {
-        if (temp_texture != 0) {
-            tm.DeleteTexture(temp_texture);
-        }
-        temp_texture = tm.CreateTextureFromFloatData(data, width, height, channels);
-        last_width = width;
-        last_height = height;
-        last_channels = channels;
-    } else {
-        // Just update the data
-        tm.UpdateTexture(temp_texture, data, width, height, channels);
-    }
-
-    if (temp_texture == 0) {
+    if (texture_id == 0) {
         ImGui::Text("Failed to create texture");
         return;
     }
@@ -278,7 +262,7 @@ void RenderImageWithTexture(const float* data, int width, int height, int channe
     }
 
     // Render with ImGui
-    ImGui::Image((ImTextureID)(intptr_t)temp_texture, ImVec2(display_width, display_height));
+    ImGui::Image((ImTextureID)(intptr_t)texture_id, ImVec2(display_width, display_height));
 }
 
 void RenderImageGrid(const std::vector<std::vector<float>>& images,
