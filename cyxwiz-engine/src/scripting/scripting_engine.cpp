@@ -261,14 +261,14 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
 
     // Skip timeout for internal commands (fast operations)
     if (is_internal || console_timeout_seconds_ <= 0) {
-        return ExecuteCommandDirect(command);
+        return ExecuteCommandDirect(command, is_internal);
     }
 
     // Use Python's own threading for timeout (safer than C++ threading with pybind11)
     return ExecuteCommandWithPythonTimeout(command);
 }
 
-ExecutionResult ScriptingEngine::ExecuteCommandDirect(const std::string& command) {
+ExecutionResult ScriptingEngine::ExecuteCommandDirect(const std::string& command, bool suppress_output_callback) {
     ExecutionResult result;
     result.success = false;
 
@@ -351,8 +351,8 @@ ExecutionResult ScriptingEngine::ExecuteCommandDirect(const std::string& command
             result.success = false; // Mark as failure if there's stderr output
         }
 
-        // Call output callback if set
-        if (output_callback_ && !result.output.empty()) {
+        // Call output callback if set (skip for internal commands)
+        if (!suppress_output_callback && output_callback_ && !result.output.empty()) {
             output_callback_(result.output);
         }
 

@@ -206,7 +206,7 @@ private:
     std::condition_variable command_cv_;
     std::atomic<bool> command_finished_{false};
     ExecutionResult command_result_;
-    ExecutionResult ExecuteCommandDirect(const std::string& command);
+    ExecutionResult ExecuteCommandDirect(const std::string& command, bool suppress_output_callback);
     ExecutionResult ExecuteCommandWithPythonTimeout(const std::string& command);
     void ExecuteCommandWorker(const std::string& command);
 

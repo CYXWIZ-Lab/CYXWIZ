@@ -36,10 +36,12 @@ void VariableExplorerPanel::Render() {
 
         // Auto-refresh logic
         if (auto_refresh_ && scripting_engine_ && scripting_engine_->IsInitialized()) {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration<float>(now - last_refresh_).count();
-            if (elapsed >= refresh_interval_) {
-                RefreshVariables();
+            if (scripting_engine_->IsSafeForNewCommand()) {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration<float>(now - last_refresh_).count();
+                if (elapsed >= refresh_interval_) {
+                    RefreshVariables();
+                }
             }
         }
     }
@@ -207,8 +209,6 @@ void VariableExplorerPanel::RenderVariable(const PythonVariable& var, int depth)
 }
 
 void VariableExplorerPanel::RefreshVariables() {
-    last_refresh_ = std::chrono::steady_clock::now();
-
     if (!scripting_engine_ || !scripting_engine_->IsInitialized()) {
         return;
     }
@@ -218,6 +218,7 @@ void VariableExplorerPanel::RefreshVariables() {
         return;
     }
 
+    last_refresh_ = std::chrono::steady_clock::now();
     variables_ = FetchVariablesFromPython();
 }
 
