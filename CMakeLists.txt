@@ -29,6 +29,7 @@ option(CYXWIZ_ENABLE_ONNX "Enable ONNX Runtime support" ON)
 option(CYXWIZ_ENABLE_GGUF "Enable GGUF/llama.cpp support for LLMs" ON)
 option(CYXWIZ_ENABLE_PYTORCH "Enable PyTorch/LibTorch support" ON)
 option(CYXWIZ_ANDROID_BUILD "Build for Android" OFF)
+option(CYXWIZ_ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
 
 # Platform detection
 if(WIN32)
@@ -70,6 +71,45 @@ else()
         add_compile_options(-g -O0)
     else()
         add_compile_options(-O3)
+    endif()
+endif()
+
+# AddressSanitizer support
+# MSVC ASan requires all linked libraries to be built with ASan.
+# Since vcpkg binaries aren't ASan-enabled, we can only use ASan for:
+#   1. Standalone tests that don't link vcpkg (test_asan_memory)
+#   2. Linux/macOS builds with Clang (better mixed-binary support)
+#   3. Full rebuild with custom vcpkg ASan triplet
+if(CYXWIZ_ENABLE_ASAN)
+    message(STATUS "AddressSanitizer enabled")
+
+    # Helper function to enable ASan on specific targets
+    function(target_enable_asan target_name)
+        if(MSVC)
+            target_compile_options(${target_name} PRIVATE /fsanitize=address /Zi)
+            target_link_options(${target_name} PRIVATE /DEBUG)
+        else()
+            target_compile_options(${target_name} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+            target_link_options(${target_name} PRIVATE -fsanitize=address)
+            if(NOT APPLE)
+                target_compile_options(${target_name} PRIVATE -fsanitize=leak)
+                target_link_options(${target_name} PRIVATE -fsanitize=leak)
+            endif()
+        endif()
+    endfunction()
+
+    # On non-MSVC (Clang/GCC), enable ASan globally - better mixed-binary support
+    if(NOT MSVC)
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=address)
+        if(NOT APPLE)
+            add_compile_options(-fsanitize=leak)
+            add_link_options(-fsanitize=leak)
+        endif()
+        message(STATUS "  Global ASan enabled (Clang/GCC)")
+    else()
+        message(STATUS "  MSVC: ASan available for standalone tests only (test_asan_memory)")
+        message(STATUS "  For full ASan, use Clang or rebuild vcpkg with ASan triplet")
     endif()
 endif()
 

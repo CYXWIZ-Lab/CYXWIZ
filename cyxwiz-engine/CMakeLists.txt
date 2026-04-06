@@ -916,3 +916,30 @@ endif()
 set_target_properties(test_arrow_integration PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== ASan Memory Test (standalone, no vcpkg deps) =====
+if(CYXWIZ_ENABLE_ASAN)
+    add_executable(test_asan_memory
+        tests/test_asan_memory.cpp
+    )
+
+    target_include_directories(test_asan_memory PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    # Apply ASan to this target
+    target_enable_asan(test_asan_memory)
+
+    if(WIN32)
+        target_compile_definitions(test_asan_memory PRIVATE
+            _CRT_SECURE_NO_WARNINGS
+            NOMINMAX
+        )
+    endif()
+
+    set_target_properties(test_asan_memory PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
+    message(STATUS "ASan memory test enabled - run test_asan_memory to verify")
+endif()
