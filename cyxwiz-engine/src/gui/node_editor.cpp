@@ -4469,6 +4469,9 @@ bool NodeEditor::ExecuteDataPipeline() {
 // Helper to get node type name as string for PipelineExecutor
 std::string NodeEditor::GetNodeTypeName(NodeType type) const {
     switch (type) {
+        // Smart I/O nodes (universal data input/output)
+        case NodeType::DataInput: return "DataInput";
+        case NodeType::DataOutput: return "DataOutput";
         case NodeType::CSVFile: return "FileInput";
         case NodeType::FilterRows: return "FilterRows";
         case NodeType::SelectColumns: return "SelectColumns";

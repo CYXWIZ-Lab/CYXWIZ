@@ -1981,8 +1981,6 @@ void Properties::RenderGeneralSection(MLNode& node) {
 void Properties::RenderOpenDialogButton(MLNode& node) {
     // Check if this node type should have an "Open Dialog" button
     bool should_show = ShouldShowOpenDialogButton(node.type);
-    spdlog::debug("RenderOpenDialogButton: node='{}', type={}, should_show={}",
-                  node.name, static_cast<int>(node.type), should_show);
     if (!should_show) {
         return;
     }

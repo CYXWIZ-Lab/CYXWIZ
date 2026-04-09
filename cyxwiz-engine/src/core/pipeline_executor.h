@@ -155,6 +155,8 @@ private:
 
     // Node type executors
     bool ExecuteFileInput(const Node& node, ExecutionContext& ctx);
+    bool ExecuteDataInput(const Node& node, ExecutionContext& ctx);   // Smart universal data input
+    bool ExecuteDataOutput(const Node& node, ExecutionContext& ctx);  // Smart universal data output
     bool ExecuteFilterRows(const Node& node, ExecutionContext& ctx);
     bool ExecuteSelectColumns(const Node& node, ExecutionContext& ctx);
     bool ExecuteRemoveDuplicates(const Node& node, ExecutionContext& ctx);

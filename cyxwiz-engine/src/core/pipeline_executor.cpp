@@ -216,6 +216,10 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
 
     if (node.type == "FileInput") {
         return ExecuteFileInput(node, ctx);
+    } else if (node.type == "DataInput") {
+        return ExecuteDataInput(node, ctx);
+    } else if (node.type == "DataOutput") {
+        return ExecuteDataOutput(node, ctx);
     } else if (node.type == "FilterRows") {
         return ExecuteFilterRows(node, ctx);
     } else if (node.type == "SelectColumns") {
@@ -477,6 +481,170 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
 
     } catch (const std::exception& e) {
         ReportError("FileInput error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx) {
+    // Universal DataInput node - supports multiple source types from DataInputDialog
+    // Parameters: source_type, file_path, folder_path, file_category, type, etc.
+
+    auto source_type_it = node.parameters.find("source_type");
+    std::string source_type = (source_type_it != node.parameters.end()) ? source_type_it->second : "file";
+
+    std::string dataset_name = "ds_datainput_" + std::to_string(node.id);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        std::shared_ptr<ArrowDataset> arrow_dataset;
+
+        if (source_type == "file") {
+            // File input mode
+            auto path_it = node.parameters.find("file_path");
+            if (path_it == node.parameters.end() || path_it->second.empty()) {
+                ReportError(GetImprovedErrorMessage("DataInput", "missing_parameter", "file_path"));
+                return false;
+            }
+            const std::string& file_path = path_it->second;
+            spdlog::info("[Pipeline] DataInput loading file: {}", file_path);
+
+            // Get file type and options from parameters
+            auto type_it = node.parameters.find("type");
+            std::string file_type = (type_it != node.parameters.end()) ? type_it->second : "csv";
+
+            // Load based on file type
+            if (file_type == "csv" || file_type == "tsv") {
+                bool has_header = node.parameters.count("has_header") && node.parameters.at("has_header") == "true";
+                std::string delimiter = (file_type == "tsv") ? "\t" : ",";
+                auto delim_it = node.parameters.find("delimiter");
+                if (delim_it != node.parameters.end() && !delim_it->second.empty()) {
+                    delimiter = delim_it->second;
+                }
+                int skip_rows = 0;
+                auto skip_it = node.parameters.find("skip_rows");
+                if (skip_it != node.parameters.end()) {
+                    skip_rows = std::stoi(skip_it->second);
+                }
+
+                arrow_dataset = registry.LoadCSVToArrow(file_path, dataset_name, has_header, delimiter[0], skip_rows);
+            } else if (file_type == "parquet") {
+                arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
+            } else if (file_type == "json") {
+                bool json_lines = node.parameters.count("json_lines") && node.parameters.at("json_lines") == "true";
+                arrow_dataset = registry.LoadJSONToArrow(file_path, dataset_name, json_lines);
+            } else if (file_type == "excel") {
+                int sheet_idx = 0;
+                auto sheet_it = node.parameters.find("sheet_idx");
+                if (sheet_it != node.parameters.end()) {
+                    sheet_idx = std::stoi(sheet_it->second);
+                }
+                arrow_dataset = registry.LoadExcelToArrow(file_path, dataset_name, sheet_idx);
+            } else {
+                // Default: try auto-detect via LoadArrowTable
+                arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
+            }
+
+        } else if (source_type == "folder") {
+            // Image folder mode
+            auto path_it = node.parameters.find("folder_path");
+            if (path_it == node.parameters.end() || path_it->second.empty()) {
+                ReportError(GetImprovedErrorMessage("DataInput", "missing_parameter", "folder_path"));
+                return false;
+            }
+            const std::string& folder_path = path_it->second;
+            spdlog::info("[Pipeline] DataInput loading folder: {}", folder_path);
+
+            // For image folders, create a table with file paths and labels
+            arrow_dataset = registry.LoadImageFolderToArrow(folder_path, dataset_name);
+
+        } else if (source_type == "ml_dataset") {
+            // ML dataset (MNIST, CIFAR, etc.)
+            auto ml_type_it = node.parameters.find("ml_dataset_type");
+            std::string ml_type = (ml_type_it != node.parameters.end()) ? ml_type_it->second : "mnist";
+            spdlog::info("[Pipeline] DataInput loading ML dataset: {}", ml_type);
+
+            arrow_dataset = registry.LoadMLDatasetToArrow(ml_type, dataset_name);
+        } else {
+            ReportError("DataInput: Unknown source type: " + source_type);
+            return false;
+        }
+
+        if (!arrow_dataset) {
+            ReportError("DataInput: Failed to load dataset");
+            return false;
+        }
+
+        // Store result for downstream nodes
+        ctx.node_results[node.id] = dataset_name;
+        if (ctx.input_dataset.empty()) {
+            ctx.input_dataset = dataset_name;
+        }
+
+        spdlog::info("[Pipeline] DataInput loaded {} rows, {} columns",
+                    arrow_dataset->GetNumRows(), arrow_dataset->GetNumColumns());
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("DataInput error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx) {
+    // Universal DataOutput node - exports data to various formats
+
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("DataOutput: No input connection or dataset not found");
+        return false;
+    }
+
+    auto path_it = node.parameters.find("file_path");
+    if (path_it == node.parameters.end() || path_it->second.empty()) {
+        ReportError(GetImprovedErrorMessage("DataOutput", "missing_parameter", "file_path"));
+        return false;
+    }
+    const std::string& output_path = path_it->second;
+
+    auto format_it = node.parameters.find("format");
+    std::string format = (format_it != node.parameters.end()) ? format_it->second : "csv";
+
+    spdlog::info("[Pipeline] DataOutput exporting to {} (format: {})", output_path, format);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("DataOutput: Input dataset not found in registry");
+            return false;
+        }
+
+        bool success = false;
+        if (format == "csv") {
+            success = registry.ExportArrowToCSV(input_dataset_name, output_path);
+        } else if (format == "parquet") {
+            success = registry.ExportArrowToParquet(input_dataset_name, output_path);
+        } else if (format == "json") {
+            success = registry.ExportArrowToJSON(input_dataset_name, output_path);
+        } else {
+            ReportError("DataOutput: Unsupported export format: " + format);
+            return false;
+        }
+
+        if (!success) {
+            ReportError("DataOutput: Export failed");
+            return false;
+        }
+
+        // Pass through the dataset for any downstream nodes
+        ctx.node_results[node.id] = input_dataset_name;
+        ctx.output_dataset = output_path;
+
+        spdlog::info("[Pipeline] DataOutput successfully exported to {}", output_path);
+        return true;
+
+    } catch (const std::exception& e) {
+        ReportError("DataOutput error: " + std::string(e.what()));
         return false;
     }
 }
