@@ -15,11 +15,16 @@
 #include "node_config_dialog.h"
 #include "node_editor.h"
 #include "../core/data_registry.h"
+#include "../core/arrow_dataset.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <filesystem>
+#include <unordered_set>
+#include <limits>
+#include <arrow/api.h>
+#include <arrow/table.h>
 
 namespace fs = std::filesystem;
 
@@ -154,6 +159,108 @@ void DataInputDialog::Apply() {
         node_->description = "Loading from " + std::string(cloud_bucket_);
     }
 
+    // === NEW: Actually load data and provide feedback ===
+    apply_in_progress_ = true;
+    apply_success_ = false;
+    apply_status_message_.clear();
+
+    if (source_type_ == SourceType::File && strlen(file_path_) > 0) {
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        loaded_dataset_name_ = GenerateDatasetName();
+
+        try {
+            std::shared_ptr<cyxwiz::ArrowDataset> dataset;
+
+            // Load based on detected file type
+            const char* types[] = {"auto", "csv", "tsv", "json", "parquet", "excel", "hdf5", "feather", "arrow", "txt", "arff"};
+            int type_idx = (detected_type_ >= 0 && detected_type_ < 11) ? detected_type_ : 0;
+            std::string file_type = types[type_idx];
+
+            if (file_type == "csv" || file_type == "tsv" || file_type == "txt" || file_type == "arff") {
+                char delim = (file_type == "tsv") ? '\t' : custom_delimiter_[0];
+                dataset = registry.LoadCSVToArrow(file_path_, loaded_dataset_name_, has_header_, delim, skip_rows_);
+            } else if (file_type == "parquet") {
+                dataset = registry.LoadParquetToArrow(file_path_, loaded_dataset_name_);
+            } else if (file_type == "json") {
+                dataset = registry.LoadJSONToArrow(file_path_, loaded_dataset_name_, json_lines_);
+            } else if (file_type == "excel") {
+                dataset = registry.LoadExcelToArrow(file_path_, loaded_dataset_name_, sheet_idx_);
+            } else {
+                // Auto-detect
+                dataset = registry.LoadArrowTable(file_path_, loaded_dataset_name_);
+            }
+
+            if (dataset) {
+                loaded_rows_ = dataset->GetNumRows();
+                loaded_cols_ = dataset->GetNumColumns();
+                loaded_memory_bytes_ = dataset->GetMemoryUsage();
+                data_load_state_ = DataLoadState::InMemory;
+
+                // Store in node parameters
+                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
+                node_->parameters["dataset_name"] = loaded_dataset_name_;
+                node_->parameters["data_loaded"] = "true";
+
+                // Update node description with stats
+                fs::path p(file_path_);
+                node_->description = p.filename().string() + "\n" +
+                    std::to_string(loaded_rows_) + " rows, " +
+                    std::to_string(loaded_cols_) + " cols";
+
+                // Format status message
+                apply_status_message_ = "Loaded " + p.filename().string() +
+                    " (" + std::to_string(loaded_rows_) + " rows, " +
+                    std::to_string(loaded_cols_) + " cols, " +
+                    FormatBytes(loaded_memory_bytes_) + ")";
+
+                apply_success_ = true;
+                spdlog::info("DataInputDialog: {}", apply_status_message_);
+            } else {
+                apply_status_message_ = "Failed to load data - check file format";
+                node_->parameters["data_loaded"] = "false";
+            }
+        } catch (const std::exception& e) {
+            apply_status_message_ = std::string("Error: ") + e.what();
+            node_->parameters["data_loaded"] = "false";
+            spdlog::error("DataInputDialog: {}", apply_status_message_);
+        }
+    } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0) {
+        // Image folder loading
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        loaded_dataset_name_ = GenerateDatasetName();
+
+        try {
+            auto dataset = registry.LoadImageFolderToArrow(folder_path_, loaded_dataset_name_);
+            if (dataset) {
+                loaded_rows_ = dataset->GetNumRows();
+                loaded_cols_ = dataset->GetNumColumns();
+                loaded_memory_bytes_ = dataset->GetMemoryUsage();
+                data_load_state_ = DataLoadState::InMemory;
+
+                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                node_->parameters["dataset_name"] = loaded_dataset_name_;
+                node_->parameters["data_loaded"] = "true";
+
+                fs::path p(folder_path_);
+                node_->description = p.filename().string() + "\n" +
+                    std::to_string(loaded_rows_) + " images";
+
+                apply_status_message_ = "Loaded " + std::to_string(loaded_rows_) +
+                    " images from " + p.filename().string();
+                apply_success_ = true;
+            }
+        } catch (const std::exception& e) {
+            apply_status_message_ = std::string("Error: ") + e.what();
+            spdlog::error("DataInputDialog: {}", apply_status_message_);
+        }
+    }
+
+    apply_in_progress_ = false;
+    apply_status_timer_ = 5.0f;  // Show for 5 seconds
+
     has_changes_ = false;
     spdlog::info("DataInputDialog: Applied settings");
 }
@@ -171,6 +278,10 @@ void DataInputDialog::RenderContent() {
         if (ImGui::BeginTabBar("DataInputTabs", ImGuiTabBarFlags_None)) {
             if (ImGui::BeginTabItem("Settings")) {
                 RenderFileSource();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Data Profiling")) {
+                RenderDataProfilingTab();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Transformation")) {
@@ -220,6 +331,35 @@ void DataInputDialog::RenderContent() {
     }
     else if (source_type_ == SourceType::Cloud) {
         RenderCloudSource();
+    }
+
+    // === Status bar (Apply feedback) ===
+    if (apply_status_timer_ > 0.0f) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Fade out effect
+        float alpha = std::min(1.0f, apply_status_timer_);
+        ImVec4 color = apply_success_
+            ? ImVec4(0.2f, 0.8f, 0.2f, alpha)  // Green for success
+            : ImVec4(0.9f, 0.3f, 0.3f, alpha); // Red for error
+
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+
+        // Icon
+        if (apply_success_) {
+            ImGui::TextUnformatted("\xE2\x9C\x93");  // Checkmark (UTF-8)
+        } else {
+            ImGui::TextUnformatted("\xE2\x9C\x97");  // X mark (UTF-8)
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(apply_status_message_.c_str());
+
+        ImGui::PopStyleColor();
+
+        // Decrease timer (assuming ~60fps, subtract per frame)
+        apply_status_timer_ -= ImGui::GetIO().DeltaTime;
     }
 
     // Preview section
@@ -678,6 +818,51 @@ void DataInputDialog::RenderMemoryTab() {
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Memory Management");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // === Current data status ===
+    ImGui::Text("Current Status:");
+    ImGui::SameLine(120);
+
+    switch (data_load_state_) {
+        case DataLoadState::InMemory: {
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "In Memory");
+            ImGui::SameLine();
+            ImGui::TextDisabled("- %s", FormatBytes(loaded_memory_bytes_).c_str());
+
+            ImGui::Text("Rows:");
+            ImGui::SameLine(120);
+            ImGui::Text("%lld", static_cast<long long>(loaded_rows_));
+            ImGui::SameLine(200);
+            ImGui::Text("Columns:");
+            ImGui::SameLine(280);
+            ImGui::Text("%lld", static_cast<long long>(loaded_cols_));
+
+            ImGui::Spacing();
+
+            // Unload button
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.4f, 0.4f, 1.0f));
+            if (ImGui::Button("Unload from Memory", ImVec2(180, 0))) {
+                UnloadDataset();
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::SameLine();
+            ImGui::TextDisabled("Free RAM by removing cached data");
+            break;
+        }
+        case DataLoadState::OnDisk:
+            ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.0f, 1.0f), "On Disk (streaming)");
+            break;
+        case DataLoadState::NotLoaded:
+        default:
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Not Loaded");
+            ImGui::TextDisabled("Click Apply to load data");
+            break;
+    }
+
+    ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -1543,6 +1728,365 @@ void DataInputDialog::DownloadMLDataset() {
     status_message_ = "Dataset ready (simulated)";
 
     spdlog::info("ML dataset download: {}", dataset_name_);
+}
+
+// ==================== DataInputDialog Helper Methods ====================
+
+std::string DataInputDialog::FormatBytes(size_t bytes) {
+    const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+    int unit_idx = 0;
+    double size = static_cast<double>(bytes);
+
+    while (size >= 1024.0 && unit_idx < 4) {
+        size /= 1024.0;
+        unit_idx++;
+    }
+
+    char buffer[32];
+    if (unit_idx == 0) {
+        snprintf(buffer, sizeof(buffer), "%zu %s", bytes, units[unit_idx]);
+    } else {
+        snprintf(buffer, sizeof(buffer), "%.1f %s", size, units[unit_idx]);
+    }
+    return std::string(buffer);
+}
+
+std::string DataInputDialog::GenerateDatasetName() const {
+    // Generate a unique dataset name based on source
+    std::string name;
+
+    if (source_type_ == SourceType::File) {
+        if (strlen(file_path_) > 0) {
+            fs::path p(file_path_);
+            name = p.stem().string();
+        } else if (strlen(folder_path_) > 0) {
+            fs::path p(folder_path_);
+            name = p.filename().string();
+        }
+    } else if (source_type_ == SourceType::MLDataset) {
+        name = dataset_name_;
+    } else if (source_type_ == SourceType::Database) {
+        name = std::string("db_") + db_name_;
+    } else if (source_type_ == SourceType::Cloud) {
+        name = std::string("cloud_") + cloud_bucket_;
+    }
+
+    // Sanitize: replace spaces and special chars
+    for (char& c : name) {
+        if (!isalnum(c) && c != '_' && c != '-') {
+            c = '_';
+        }
+    }
+
+    if (name.empty()) {
+        name = "dataset";
+    }
+
+    return name;
+}
+
+void DataInputDialog::RenderDataProfilingTab() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "DATA QUALITY ANALYSIS");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Check if data is loaded
+    if (data_load_state_ != DataLoadState::InMemory) {
+        ImGui::TextDisabled("No data loaded in memory.");
+        ImGui::TextDisabled("Click Apply to load data, then return here to analyze.");
+        return;
+    }
+
+    // Analyze button
+    if (profile_in_progress_) {
+        ImGui::TextDisabled("Computing statistics...");
+    } else {
+        if (ImGui::Button("Analyze Data", ImVec2(150, 30))) {
+            ComputeDataProfile();
+        }
+    }
+
+    if (!profile_computed_) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Click 'Analyze Data' to compute column statistics");
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Data Quality Score
+    ImGui::TextColored(accent, "Data Quality Score");
+    ImGui::Spacing();
+
+    // Calculate color based on score
+    ImVec4 score_color;
+    if (data_quality_score_ >= 0.8f)
+        score_color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green
+    else if (data_quality_score_ >= 0.5f)
+        score_color = ImVec4(0.9f, 0.7f, 0.0f, 1.0f);  // Yellow
+    else
+        score_color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);  // Red
+
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, score_color);
+    ImGui::ProgressBar(data_quality_score_, ImVec2(-1, 20));
+    ImGui::PopStyleColor();
+    ImGui::Text("%.1f%% complete data (%.1f%% missing values)",
+        data_quality_score_ * 100.0f, (1.0f - data_quality_score_) * 100.0f);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Column Statistics Table
+    ImGui::TextColored(accent, "COLUMN STATISTICS");
+    ImGui::Spacing();
+
+    if (column_stats_.empty()) {
+        ImGui::TextDisabled("No column statistics available");
+        return;
+    }
+
+    if (ImGui::BeginTable("ColumnStats", 8,
+        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
+        ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+        ImVec2(0, ImGui::GetContentRegionAvail().y - 30))) {
+
+        ImGui::TableSetupColumn("Column", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableSetupColumn("Unique", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableSetupColumn("Missing", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Min", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupColumn("Mean", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableHeadersRow();
+
+        for (const auto& stat : column_stats_) {
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(stat.name.c_str());
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(stat.dtype.c_str());
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%zu", stat.count);
+
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%zu", stat.unique_count);
+
+            ImGui::TableSetColumnIndex(4);
+            if (stat.null_percentage > 5.0f) {
+                ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f), "%.1f%%", stat.null_percentage);
+            } else {
+                ImGui::Text("%.1f%%", stat.null_percentage);
+            }
+
+            ImGui::TableSetColumnIndex(5);
+            if (stat.dtype == "numeric" || stat.dtype == "integer") {
+                ImGui::Text("%.2f", stat.min_val);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableSetColumnIndex(6);
+            if (stat.dtype == "numeric" || stat.dtype == "integer") {
+                ImGui::Text("%.2f", stat.max_val);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableSetColumnIndex(7);
+            if (stat.dtype == "numeric" || stat.dtype == "integer") {
+                ImGui::Text("%.2f", stat.mean);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+        }
+
+        ImGui::EndTable();
+    }
+}
+
+void DataInputDialog::ComputeDataProfile() {
+    profile_in_progress_ = true;
+    column_stats_.clear();
+
+    // Get dataset from registry
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    auto dataset = registry.GetArrowDataset(loaded_dataset_name_);
+
+    if (!dataset) {
+        profile_in_progress_ = false;
+        spdlog::warn("Cannot compute profile: dataset '{}' not found", loaded_dataset_name_);
+        return;
+    }
+
+    // Get column names and compute basic stats for each
+    auto column_names = dataset->GetColumnNames();
+    size_t total_nulls = 0;
+    size_t total_values = 0;
+
+    for (const auto& col_name : column_names) {
+        ColumnStats stat;
+        stat.name = col_name;
+
+        // Get column type from Arrow schema
+        auto arrow_table = dataset->GetArrowTable();
+        if (arrow_table) {
+            auto schema = arrow_table->schema();
+            auto field = schema->GetFieldByName(col_name);
+            if (field) {
+                auto type = field->type();
+                if (type->id() == arrow::Type::INT64 || type->id() == arrow::Type::INT32 ||
+                    type->id() == arrow::Type::INT16 || type->id() == arrow::Type::INT8 ||
+                    type->id() == arrow::Type::UINT64 || type->id() == arrow::Type::UINT32 ||
+                    type->id() == arrow::Type::UINT16 || type->id() == arrow::Type::UINT8) {
+                    stat.dtype = "integer";
+                } else if (type->id() == arrow::Type::DOUBLE || type->id() == arrow::Type::FLOAT ||
+                           type->id() == arrow::Type::HALF_FLOAT) {
+                    stat.dtype = "numeric";
+                } else if (type->id() == arrow::Type::STRING || type->id() == arrow::Type::LARGE_STRING) {
+                    stat.dtype = "string";
+                } else if (type->id() == arrow::Type::BOOL) {
+                    stat.dtype = "boolean";
+                } else {
+                    stat.dtype = "other";
+                }
+            }
+
+            // Get column data for statistics
+            auto column = arrow_table->GetColumnByName(col_name);
+            if (column) {
+                stat.count = static_cast<size_t>(column->length());
+                stat.null_count = static_cast<size_t>(column->null_count());
+                stat.null_percentage = stat.count > 0
+                    ? (static_cast<float>(stat.null_count) / static_cast<float>(stat.count)) * 100.0f
+                    : 0.0f;
+
+                total_nulls += stat.null_count;
+                total_values += stat.count;
+
+                // Compute numeric statistics
+                if (stat.dtype == "numeric" || stat.dtype == "integer") {
+                    double sum = 0.0;
+                    double min_v = std::numeric_limits<double>::max();
+                    double max_v = std::numeric_limits<double>::lowest();
+                    size_t valid_count = 0;
+
+                    // Helper lambda to process numeric values
+                    auto process_value = [&](double val) {
+                        sum += val;
+                        min_v = std::min(min_v, val);
+                        max_v = std::max(max_v, val);
+                        valid_count++;
+                    };
+
+                    for (int chunk_idx = 0; chunk_idx < column->num_chunks(); chunk_idx++) {
+                        auto chunk = column->chunk(chunk_idx);
+                        // Handle all numeric types
+                        if (auto arr = std::dynamic_pointer_cast<arrow::DoubleArray>(chunk)) {
+                            for (int64_t i = 0; i < arr->length(); i++) {
+                                if (!arr->IsNull(i)) process_value(arr->Value(i));
+                            }
+                        } else if (auto arr = std::dynamic_pointer_cast<arrow::FloatArray>(chunk)) {
+                            for (int64_t i = 0; i < arr->length(); i++) {
+                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                            }
+                        } else if (auto arr = std::dynamic_pointer_cast<arrow::Int64Array>(chunk)) {
+                            for (int64_t i = 0; i < arr->length(); i++) {
+                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                            }
+                        } else if (auto arr = std::dynamic_pointer_cast<arrow::Int32Array>(chunk)) {
+                            for (int64_t i = 0; i < arr->length(); i++) {
+                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                            }
+                        } else if (auto arr = std::dynamic_pointer_cast<arrow::Int16Array>(chunk)) {
+                            for (int64_t i = 0; i < arr->length(); i++) {
+                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                            }
+                        } else if (auto arr = std::dynamic_pointer_cast<arrow::Int8Array>(chunk)) {
+                            for (int64_t i = 0; i < arr->length(); i++) {
+                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                            }
+                        } else if (auto arr = std::dynamic_pointer_cast<arrow::UInt64Array>(chunk)) {
+                            for (int64_t i = 0; i < arr->length(); i++) {
+                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                            }
+                        } else if (auto arr = std::dynamic_pointer_cast<arrow::UInt32Array>(chunk)) {
+                            for (int64_t i = 0; i < arr->length(); i++) {
+                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                            }
+                        }
+                    }
+
+                    if (valid_count > 0) {
+                        stat.min_val = min_v;
+                        stat.max_val = max_v;
+                        stat.mean = sum / static_cast<double>(valid_count);
+                    }
+                }
+
+                // Estimate unique count (simplified - use hash set for smaller datasets)
+                std::unordered_set<std::string> unique_vals;
+                if (stat.count <= 10000) {  // Only for smaller datasets
+                    for (int chunk_idx = 0; chunk_idx < column->num_chunks(); chunk_idx++) {
+                        auto chunk = column->chunk(chunk_idx);
+                        if (auto str_array = std::dynamic_pointer_cast<arrow::StringArray>(chunk)) {
+                            for (int64_t i = 0; i < str_array->length(); i++) {
+                                if (!str_array->IsNull(i)) {
+                                    unique_vals.insert(str_array->GetString(i));
+                                }
+                            }
+                        }
+                    }
+                }
+                stat.unique_count = unique_vals.empty() ? 0 : unique_vals.size();
+            }
+        }
+
+        column_stats_.push_back(stat);
+    }
+
+    // Calculate overall data quality score (based on missing values)
+    if (total_values > 0) {
+        data_quality_score_ = 1.0f - (static_cast<float>(total_nulls) / static_cast<float>(total_values));
+    } else {
+        data_quality_score_ = 1.0f;
+    }
+
+    profile_computed_ = true;
+    profile_in_progress_ = false;
+
+    spdlog::info("Data profile computed: {} columns, quality score: {:.1f}%",
+        column_stats_.size(), data_quality_score_ * 100.0f);
+}
+
+void DataInputDialog::UnloadDataset() {
+    if (loaded_dataset_name_.empty()) return;
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    registry.UnloadDataset(loaded_dataset_name_);
+
+    data_load_state_ = DataLoadState::NotLoaded;
+    loaded_rows_ = 0;
+    loaded_cols_ = 0;
+    loaded_memory_bytes_ = 0;
+    profile_computed_ = false;
+    column_stats_.clear();
+
+    if (node_) {
+        node_->parameters["data_loaded"] = "false";
+    }
+
+    spdlog::info("Dataset '{}' unloaded from memory", loaded_dataset_name_);
 }
 
 // ==================== DataOutputDialog ====================
