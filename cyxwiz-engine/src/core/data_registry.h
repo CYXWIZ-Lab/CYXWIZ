@@ -299,6 +299,20 @@ public:
     std::shared_ptr<class ArrowDataset> GetArrowDataset(const std::string& name);
     bool IsArrowDataset(const std::string& name) const;
 
+    // Arrow format-specific loaders (for DataInput node)
+    std::shared_ptr<class ArrowDataset> LoadCSVToArrow(const std::string& path, const std::string& name,
+                                                        bool has_header = true, char delimiter = ',', int skip_rows = 0);
+    std::shared_ptr<class ArrowDataset> LoadParquetToArrow(const std::string& path, const std::string& name);
+    std::shared_ptr<class ArrowDataset> LoadJSONToArrow(const std::string& path, const std::string& name, bool json_lines = false);
+    std::shared_ptr<class ArrowDataset> LoadExcelToArrow(const std::string& path, const std::string& name, int sheet_idx = 0);
+    std::shared_ptr<class ArrowDataset> LoadImageFolderToArrow(const std::string& path, const std::string& name);
+    std::shared_ptr<class ArrowDataset> LoadMLDatasetToArrow(const std::string& ml_type, const std::string& name);
+
+    // Arrow export methods (for DataOutput node)
+    bool ExportArrowToCSV(const std::string& dataset_name, const std::string& output_path);
+    bool ExportArrowToParquet(const std::string& dataset_name, const std::string& output_path);
+    bool ExportArrowToJSON(const std::string& dataset_name, const std::string& output_path);
+
     // Dataset unloading
     void UnloadDataset(const std::string& name);
     void UnloadAll();

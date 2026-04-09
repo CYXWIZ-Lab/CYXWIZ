@@ -1076,5 +1076,266 @@ void DataRegistry::TrimMemory(size_t target_bytes) {
     }
 }
 
+// =============================================================================
+// Arrow Format-Specific Loaders (for DataInput node pipeline execution)
+// =============================================================================
+
+std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
+    const std::string& path, const std::string& name,
+    bool has_header, char delimiter, int skip_rows) {
+
+    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
+
+    try {
+        // Configure CSV reading options
+        auto read_options = arrow::csv::ReadOptions::Defaults();
+        read_options.skip_rows = skip_rows;
+
+        auto parse_options = arrow::csv::ParseOptions::Defaults();
+        parse_options.delimiter = delimiter;
+
+        auto convert_options = arrow::csv::ConvertOptions::Defaults();
+
+        // Handle header
+        if (!has_header) {
+            read_options.autogenerate_column_names = true;
+        }
+
+        auto dataset = ArrowDataset::FromCSV(path, unique_name, read_options, parse_options, convert_options);
+        if (!dataset) {
+            spdlog::error("LoadCSVToArrow: Failed to load {}", path);
+            return nullptr;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        arrow_datasets_[unique_name] = dataset;
+
+        spdlog::info("LoadCSVToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
+                    path, unique_name, dataset->GetNumRows(), dataset->GetNumColumns());
+        return dataset;
+
+    } catch (const std::exception& e) {
+        spdlog::error("LoadCSVToArrow exception: {}", e.what());
+        return nullptr;
+    }
+}
+
+std::shared_ptr<ArrowDataset> DataRegistry::LoadParquetToArrow(
+    const std::string& path, const std::string& name) {
+
+    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
+
+    try {
+        auto dataset = ArrowDataset::FromParquet(path, unique_name);
+        if (!dataset) {
+            spdlog::error("LoadParquetToArrow: Failed to load {}", path);
+            return nullptr;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        arrow_datasets_[unique_name] = dataset;
+
+        spdlog::info("LoadParquetToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
+                    path, unique_name, dataset->GetNumRows(), dataset->GetNumColumns());
+        return dataset;
+
+    } catch (const std::exception& e) {
+        spdlog::error("LoadParquetToArrow exception: {}", e.what());
+        return nullptr;
+    }
+}
+
+std::shared_ptr<ArrowDataset> DataRegistry::LoadJSONToArrow(
+    const std::string& path, const std::string& name, bool json_lines) {
+
+    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
+
+    try {
+        // JSON loading via DuckDB (Arrow doesn't have native JSON reader)
+        // For now, fall back to FromFile which auto-detects
+        auto dataset = ArrowDataset::FromFile(path, unique_name);
+        if (!dataset) {
+            spdlog::warn("LoadJSONToArrow: Direct load failed, JSON may need DuckDB conversion");
+            // TODO: Use DuckDB to read JSON and convert to Arrow
+            return nullptr;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        arrow_datasets_[unique_name] = dataset;
+
+        spdlog::info("LoadJSONToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
+                    path, unique_name, dataset->GetNumRows(), dataset->GetNumColumns());
+        return dataset;
+
+    } catch (const std::exception& e) {
+        spdlog::error("LoadJSONToArrow exception: {}", e.what());
+        return nullptr;
+    }
+}
+
+std::shared_ptr<ArrowDataset> DataRegistry::LoadExcelToArrow(
+    const std::string& path, const std::string& name, int sheet_idx) {
+
+    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
+
+    try {
+        // Excel requires external library (xlsxio or similar)
+        // For now, log and return nullptr - pipeline should handle gracefully
+        spdlog::warn("LoadExcelToArrow: Excel support requires additional library (sheet {})", sheet_idx);
+        // TODO: Integrate xlsxio or use DuckDB's Excel extension
+        return nullptr;
+
+    } catch (const std::exception& e) {
+        spdlog::error("LoadExcelToArrow exception: {}", e.what());
+        return nullptr;
+    }
+}
+
+std::shared_ptr<ArrowDataset> DataRegistry::LoadImageFolderToArrow(
+    const std::string& path, const std::string& name) {
+
+    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
+
+    try {
+        // Build a table with file paths and labels from directory structure
+        // Format: image_path | label_name | label_id
+        std::vector<std::string> image_paths;
+        std::vector<std::string> label_names;
+        std::vector<int32_t> label_ids;
+        std::map<std::string, int32_t> label_map;
+        int32_t next_label = 0;
+
+        for (const auto& entry : fs::recursive_directory_iterator(path)) {
+            if (!entry.is_regular_file()) continue;
+
+            auto ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+            if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp" || ext == ".gif") {
+                image_paths.push_back(entry.path().string());
+
+                // Use parent directory name as label
+                std::string label = entry.path().parent_path().filename().string();
+                label_names.push_back(label);
+
+                if (label_map.find(label) == label_map.end()) {
+                    label_map[label] = next_label++;
+                }
+                label_ids.push_back(label_map[label]);
+            }
+        }
+
+        if (image_paths.empty()) {
+            spdlog::warn("LoadImageFolderToArrow: No images found in {}", path);
+            return nullptr;
+        }
+
+        // Build Arrow table
+        arrow::StringBuilder path_builder;
+        arrow::StringBuilder label_builder;
+        arrow::Int32Builder id_builder;
+
+        for (size_t i = 0; i < image_paths.size(); i++) {
+            (void)path_builder.Append(image_paths[i]);
+            (void)label_builder.Append(label_names[i]);
+            (void)id_builder.Append(label_ids[i]);
+        }
+
+        std::shared_ptr<arrow::Array> path_array, label_array, id_array;
+        (void)path_builder.Finish(&path_array);
+        (void)label_builder.Finish(&label_array);
+        (void)id_builder.Finish(&id_array);
+
+        auto schema = arrow::schema({
+            arrow::field("image_path", arrow::utf8()),
+            arrow::field("label_name", arrow::utf8()),
+            arrow::field("label_id", arrow::int32())
+        });
+
+        auto table = arrow::Table::Make(schema, {path_array, label_array, id_array});
+        auto dataset = std::make_shared<ArrowDataset>(table, unique_name);
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        arrow_datasets_[unique_name] = dataset;
+
+        spdlog::info("LoadImageFolderToArrow: Loaded {} images with {} classes from '{}'",
+                    image_paths.size(), label_map.size(), path);
+        return dataset;
+
+    } catch (const std::exception& e) {
+        spdlog::error("LoadImageFolderToArrow exception: {}", e.what());
+        return nullptr;
+    }
+}
+
+std::shared_ptr<ArrowDataset> DataRegistry::LoadMLDatasetToArrow(
+    const std::string& ml_type, const std::string& name) {
+
+    std::string unique_name = GenerateUniqueName(name.empty() ? ml_type : name);
+
+    try {
+        // ML datasets (MNIST, CIFAR, etc.) need conversion from binary format to Arrow
+        // For now, placeholder that creates metadata table
+        spdlog::warn("LoadMLDatasetToArrow: '{}' - ML datasets require loading via DatasetHandle first", ml_type);
+        // TODO: Bridge existing LoadMNIST/LoadCIFAR10 to Arrow format
+        return nullptr;
+
+    } catch (const std::exception& e) {
+        spdlog::error("LoadMLDatasetToArrow exception: {}", e.what());
+        return nullptr;
+    }
+}
+
+// =============================================================================
+// Arrow Export Methods (for DataOutput node pipeline execution)
+// =============================================================================
+
+bool DataRegistry::ExportArrowToCSV(const std::string& dataset_name, const std::string& output_path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = arrow_datasets_.find(dataset_name);
+    if (it == arrow_datasets_.end()) {
+        spdlog::error("ExportArrowToCSV: Dataset '{}' not found", dataset_name);
+        return false;
+    }
+
+    bool success = it->second->ExportCSV(output_path);
+    if (success) {
+        spdlog::info("ExportArrowToCSV: Exported '{}' to '{}'", dataset_name, output_path);
+    }
+    return success;
+}
+
+bool DataRegistry::ExportArrowToParquet(const std::string& dataset_name, const std::string& output_path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = arrow_datasets_.find(dataset_name);
+    if (it == arrow_datasets_.end()) {
+        spdlog::error("ExportArrowToParquet: Dataset '{}' not found", dataset_name);
+        return false;
+    }
+
+    bool success = it->second->ExportParquet(output_path);
+    if (success) {
+        spdlog::info("ExportArrowToParquet: Exported '{}' to '{}'", dataset_name, output_path);
+    }
+    return success;
+}
+
+bool DataRegistry::ExportArrowToJSON(const std::string& dataset_name, const std::string& output_path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = arrow_datasets_.find(dataset_name);
+    if (it == arrow_datasets_.end()) {
+        spdlog::error("ExportArrowToJSON: Dataset '{}' not found", dataset_name);
+        return false;
+    }
+
+    // JSON export - Arrow doesn't have native JSON writer, use custom implementation
+    // For now, write as CSV with .json extension (will need proper JSON serialization)
+    spdlog::warn("ExportArrowToJSON: Native JSON export not implemented, consider CSV");
+    // TODO: Implement proper JSON export using nlohmann/json
+    return false;
+}
 
 } // namespace cyxwiz
