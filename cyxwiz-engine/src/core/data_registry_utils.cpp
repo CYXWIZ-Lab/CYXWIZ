@@ -4,6 +4,7 @@
 
 #include "data_registry.h"
 #include "arrow_dataset.h"
+#include "parquet_backed_dataset.h"
 #include "annotation_manager.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../transforms/transform.h"
@@ -258,6 +259,41 @@ std::shared_ptr<ArrowDataset> DataRegistry::GetArrowDataset(const std::string& n
 bool DataRegistry::IsArrowDataset(const std::string& name) const {
     std::lock_guard<std::mutex> lock(mutex_);
     return arrow_datasets_.find(name) != arrow_datasets_.end();
+}
+
+// -----------------------------------------------------------------------------
+// Parquet-backed dataset accessors (disk-backed lazy tabular data)
+// -----------------------------------------------------------------------------
+
+std::shared_ptr<ParquetBackedDataset> DataRegistry::GetParquetBackedDataset(
+    const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = parquet_backed_datasets_.find(name);
+    if (it == parquet_backed_datasets_.end()) {
+        return nullptr;
+    }
+    return it->second;
+}
+
+bool DataRegistry::IsParquetBackedDataset(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return parquet_backed_datasets_.find(name) != parquet_backed_datasets_.end();
+}
+
+void DataRegistry::RegisterParquetBacked(
+    const std::string& name,
+    std::shared_ptr<ParquetBackedDataset> dataset) {
+    if (!dataset) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (parquet_backed_datasets_.find(name) != parquet_backed_datasets_.end()) {
+        spdlog::warn("RegisterParquetBacked: overwriting existing dataset '{}'", name);
+    }
+    parquet_backed_datasets_[name] = dataset;
+    spdlog::info("Registered ParquetBackedDataset '{}': {} rows, {} columns, {:.1f} MB on disk",
+                 name,
+                 dataset->GetNumRows(),
+                 dataset->GetNumColumns(),
+                 dataset->GetFileSizeBytes() / (1024.0 * 1024.0));
 }
 
 } // namespace cyxwiz

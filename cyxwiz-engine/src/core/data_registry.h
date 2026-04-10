@@ -299,6 +299,48 @@ public:
     std::shared_ptr<class ArrowDataset> GetArrowDataset(const std::string& name);
     bool IsArrowDataset(const std::string& name) const;
 
+    // Disk-backed Parquet dataset support — used automatically for files that
+    // are larger than available RAM. See LoadTabularCSV below for the
+    // dispatcher that picks between in-memory Arrow and disk-backed Parquet.
+    // The backing file is a Snappy-compressed Parquet written to the system
+    // temp directory (see ParquetBackedDataset::GetCacheFilePath).
+    std::shared_ptr<class ParquetBackedDataset> GetParquetBackedDataset(const std::string& name) const;
+    bool IsParquetBackedDataset(const std::string& name) const;
+    void RegisterParquetBacked(const std::string& name,
+                               std::shared_ptr<class ParquetBackedDataset> dataset);
+
+    // Which backing store a successful LoadTabularCSV call ended up using.
+    enum class TabularLoadBackend {
+        Failed,      // load failed; nothing is registered
+        InMemory,    // ArrowDataset registered in arrow_datasets_
+        DiskBacked   // ParquetBackedDataset registered in parquet_backed_datasets_
+    };
+
+    /**
+     * High-level CSV loader with automatic in-memory vs disk-backed dispatch.
+     *
+     * Compares the source file size to the available RAM. If the file comfortably
+     * fits (file_size < 0.75 * available RAM) or force_disk_backed is false and
+     * the file is under a safety threshold, uses LoadCSVToArrow (in-memory Arrow
+     * table). Otherwise converts the CSV to a Snappy Parquet cache in the system
+     * temp dir and opens that via memory-mapped reads.
+     *
+     * The force_disk_backed flag is the Advanced-tab escape hatch: users can
+     * force the disk-backed path even for small datasets (for testing, or to
+     * simulate the experience on limited hardware).
+     *
+     * Returns the backend that was used so the caller (DataInput dialog, etc.)
+     * can show an honest status line. On success the dataset is queryable via
+     * the matching GetArrowDataset / GetParquetBackedDataset accessor.
+     */
+    TabularLoadBackend LoadTabularCSV(const std::string& path,
+                                       const std::string& name,
+                                       bool has_header = true,
+                                       char delimiter = ',',
+                                       int skip_rows = 0,
+                                       int64_t max_rows = 0,
+                                       bool force_disk_backed = false);
+
     // Arrow format-specific loaders (for DataInput node)
     //
     // LoadCSVToArrow auto-detects the right Arrow CSV block_size from the
@@ -426,6 +468,11 @@ private:
 
     // Arrow dataset storage (separate for Data Studio columnar data)
     std::map<std::string, std::shared_ptr<class ArrowDataset>> arrow_datasets_;
+
+    // Disk-backed Parquet datasets — populated by LoadTabularCSV when a file
+    // is too large to fit comfortably in RAM. Lookups by name fall through
+    // to this map when not found in arrow_datasets_.
+    std::map<std::string, std::shared_ptr<class ParquetBackedDataset>> parquet_backed_datasets_;
 
     mutable std::mutex mutex_;
 

@@ -1,8 +1,35 @@
 #include "data_registry.h"
 #include "dataset_base.h"
 #include "arrow_dataset.h"
+#include "parquet_backed_dataset.h"
 #include <arrow/compute/api.h>  // for arrow::compute::Cast (integer column compaction)
 #include <limits>              // for std::numeric_limits (Arrow block_size cap)
+
+// Cross-platform headers for GetAvailableMemoryBytes(). Each branch is gated
+// by the platform preprocessor so only one is ever compiled, and the fallback
+// path uses a safe conservative default so builds without an implementation
+// still work.
+#ifdef _WIN32
+// <windows.h> defines LoadImage as a preprocessor macro (LoadImageA or
+// LoadImageW depending on UNICODE). That collides with
+// cyxwiz::ImageUtils::LoadImage - under unity builds the ImageFolderDataset
+// code compiled into this TU gets its LoadImage call rewritten to
+// LoadImageA, which then fails at link time. NOGDI / WIN32_LEAN_AND_MEAN
+// don't exclude it because LoadImage lives in <winuser.h>, not GDI.
+// The surgical fix is to #undef it right after the include.
+#define WIN32_LEAN_AND_MEAN
+#define NOGDI
+#include <windows.h>
+#ifdef LoadImage
+#undef LoadImage
+#endif
+#elif defined(__linux__)
+#include <sys/sysinfo.h>
+#elif defined(__APPLE__)
+#include <sys/sysctl.h>
+#include <mach/mach.h>
+#include <mach/vm_statistics.h>
+#endif
 #include "annotation_manager.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -1400,6 +1427,144 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         spdlog::error("LoadCSVToArrow exception: {}", e.what());
         return nullptr;
     }
+}
+
+// -----------------------------------------------------------------------------
+// GetAvailableMemoryBytes - cross-platform available RAM detection
+//
+// Returns the amount of physical memory the OS says is currently available for
+// allocation (not the total RAM, which doesn't account for what other processes
+// are using). Used by LoadTabularCSV to decide whether a dataset will fit in
+// memory or needs the disk-backed Parquet path.
+//
+// Conservative fallback: if detection fails, returns 2 GB. That's enough to
+// comfortably load MNIST-scale datasets in memory, and anything larger will
+// take the disk-backed path as a safe default.
+// -----------------------------------------------------------------------------
+static size_t GetAvailableMemoryBytes() {
+#ifdef _WIN32
+    MEMORYSTATUSEX memInfo;
+    memInfo.dwLength = sizeof(MEMORYSTATUSEX);
+    if (GlobalMemoryStatusEx(&memInfo)) {
+        return static_cast<size_t>(memInfo.ullAvailPhys);
+    }
+    return 2ULL * 1024 * 1024 * 1024;  // 2 GB fallback
+#elif defined(__linux__)
+    // Linux: sysinfo() gives us freeram in units of si.mem_unit bytes.
+    // freeram is approximate (doesn't count page cache as "free"), but
+    // that's fine for our 75%-threshold decision — we'd rather err toward
+    // disk-backed mode than OOM during load.
+    struct sysinfo si;
+    if (sysinfo(&si) == 0) {
+        return static_cast<size_t>(si.freeram) * static_cast<size_t>(si.mem_unit);
+    }
+    return 2ULL * 1024 * 1024 * 1024;
+#elif defined(__APPLE__)
+    // macOS: host_statistics64() gives us free + inactive pages, which is
+    // the closest analog to Windows' AvailPhys. pagesize is queried via
+    // sysctl.
+    vm_size_t page_size = 0;
+    host_page_size(mach_host_self(), &page_size);
+    vm_statistics64_data_t vmstat;
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                          reinterpret_cast<host_info64_t>(&vmstat), &count) == KERN_SUCCESS) {
+        const uint64_t free_bytes = (static_cast<uint64_t>(vmstat.free_count) +
+                                     static_cast<uint64_t>(vmstat.inactive_count)) *
+                                    static_cast<uint64_t>(page_size);
+        return static_cast<size_t>(free_bytes);
+    }
+    return 2ULL * 1024 * 1024 * 1024;
+#else
+    // Unknown platform — conservative fallback. Small datasets still take
+    // the in-memory path; anything larger goes disk-backed.
+    return 2ULL * 1024 * 1024 * 1024;
+#endif
+}
+
+// -----------------------------------------------------------------------------
+// LoadTabularCSV - automatic in-memory vs disk-backed dispatcher
+//
+// Decision rule:
+//   - If force_disk_backed is true, always take the Parquet path.
+//   - If file_size < 0.75 * available RAM, take the in-memory Arrow path
+//     (LoadCSVToArrow). This is the fast common case.
+//   - Otherwise, convert the CSV to a Snappy-compressed Parquet cache in
+//     the system temp dir (with mtime-based cache freshness check), open
+//     it via memory-mapped reads, and register as ParquetBackedDataset.
+//
+// On success the dataset is queryable via the matching accessor. The caller
+// uses the returned TabularLoadBackend tag to know which map to query.
+// -----------------------------------------------------------------------------
+DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
+    const std::string& path, const std::string& name,
+    bool has_header, char delimiter, int skip_rows,
+    int64_t max_rows, bool force_disk_backed) {
+
+    // File size check (required for dispatch decision and for logging)
+    int64_t file_size_bytes = 0;
+    try {
+        file_size_bytes = static_cast<int64_t>(fs::file_size(path));
+    } catch (const std::exception& e) {
+        spdlog::error("LoadTabularCSV: cannot stat '{}': {}", path, e.what());
+        return TabularLoadBackend::Failed;
+    }
+
+    const size_t available_ram = GetAvailableMemoryBytes();
+    const size_t memory_threshold = static_cast<size_t>(available_ram * 0.75);
+    const bool file_fits_in_ram = static_cast<size_t>(file_size_bytes) < memory_threshold;
+    const bool use_disk_backed = force_disk_backed || !file_fits_in_ram;
+
+    spdlog::info("LoadTabularCSV: '{}' file={:.1f} MB, available RAM={:.1f} MB, "
+                 "threshold={:.1f} MB, force_disk={}, decision={}",
+                 path,
+                 file_size_bytes / (1024.0 * 1024.0),
+                 available_ram / (1024.0 * 1024.0),
+                 memory_threshold / (1024.0 * 1024.0),
+                 force_disk_backed ? "true" : "false",
+                 use_disk_backed ? "disk-backed" : "in-memory");
+
+    if (!use_disk_backed) {
+        // Fast path: fits in RAM, use the existing in-memory loader.
+        auto dataset = LoadCSVToArrow(path, name, has_header, delimiter, skip_rows, max_rows);
+        return dataset ? TabularLoadBackend::InMemory : TabularLoadBackend::Failed;
+    }
+
+    // Slow path: file is too big (or forced). Convert to a Parquet cache
+    // next to the system temp dir, open it via memory-mapped reads.
+    const std::string cache_path = ParquetBackedDataset::GetCacheFilePath(path);
+
+    if (ParquetBackedDataset::IsCacheFresh(path, cache_path)) {
+        spdlog::info("LoadTabularCSV: reusing existing Parquet cache at '{}'", cache_path);
+    } else {
+        spdlog::info("LoadTabularCSV: converting CSV to Parquet cache at '{}'", cache_path);
+        if (!ParquetBackedDataset::ConvertCsvToParquet(path, cache_path,
+                                                       has_header, delimiter, skip_rows)) {
+            spdlog::error("LoadTabularCSV: CSV-to-Parquet conversion failed for '{}'", path);
+            return TabularLoadBackend::Failed;
+        }
+    }
+
+    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
+    auto pq_dataset = ParquetBackedDataset::Open(cache_path, unique_name);
+    if (!pq_dataset) {
+        spdlog::error("LoadTabularCSV: failed to open Parquet cache '{}'", cache_path);
+        return TabularLoadBackend::Failed;
+    }
+
+    RegisterParquetBacked(unique_name, pq_dataset);
+
+    // Note: max_rows is intentionally ignored on the disk-backed path for
+    // now. Applying it would require reading a row-limit subset into memory,
+    // which defeats the purpose. When we want Limit Rows to work for large
+    // datasets, it'll be implemented via the batcher's row-group scan.
+    if (max_rows > 0) {
+        spdlog::warn("LoadTabularCSV: max_rows={} requested but ignored on disk-backed path "
+                     "(not yet supported; will be applied by the Parquet batcher in a future version)",
+                     max_rows);
+    }
+
+    return TabularLoadBackend::DiskBacked;
 }
 
 std::shared_ptr<ArrowDataset> DataRegistry::LoadParquetToArrow(
