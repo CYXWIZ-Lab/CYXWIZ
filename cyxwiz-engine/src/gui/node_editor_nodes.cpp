@@ -2110,12 +2110,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["max_rows"] = "";  // empty = all
             node.parameters["where_clause"] = "";
 
-            // Streaming settings
+            // Streaming settings (legacy defaults; streaming path is being removed)
             node.parameters["chunk_size"] = "10000";
             node.parameters["enable_streaming"] = "false";
-
-            // Memory policy
-            node.parameters["memory_policy"] = "cache";  // cache or disc
             break;
         }
 

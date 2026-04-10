@@ -56,10 +56,6 @@ DataInputDialog::DataInputDialog(MLNode* node)
         if (node_->parameters.count("dataset_name")) {
             strncpy(dataset_name_, node_->parameters["dataset_name"].c_str(), sizeof(dataset_name_) - 1);
         }
-        if (node_->parameters.count("memory_policy")) {
-            memory_policy_ = (node_->parameters["memory_policy"] == "disc")
-                ? MemoryPolicy::WriteToDisc : MemoryPolicy::CacheInMemory;
-        }
         // Restore label column selection
         if (node_->parameters.count("label_column") && !node_->parameters["label_column"].empty()) {
             std::string label_col = node_->parameters["label_column"];
@@ -109,7 +105,6 @@ void DataInputDialog::Apply() {
     // Common parameters
     node_->parameters["file_path"] = file_path_;
     node_->parameters["folder_path"] = folder_path_;
-    node_->parameters["memory_policy"] = (memory_policy_ == MemoryPolicy::WriteToDisc) ? "disc" : "memory";
     node_->parameters["configured"] = "true";
 
     // Source-specific parameters
@@ -222,12 +217,10 @@ void DataInputDialog::Apply() {
 
             if (file_type == "csv" || file_type == "tsv" || file_type == "txt" || file_type == "arff") {
                 char delim = (file_type == "tsv") ? '\t' : custom_delimiter_[0];
-                // Pass chunk_size_kb_ (KB) through as block_size (bytes) to the
-                // Arrow CSV reader. Larger = faster batching, bounded by RAM.
-                int64_t block_size_bytes = static_cast<int64_t>(chunk_size_kb_) * 1024;
+                // max_rows_ from the Limit Rows tab: 0 means "all rows".
+                int64_t cap = (max_rows_ > 0) ? static_cast<int64_t>(max_rows_) : 0;
                 dataset = registry.LoadCSVToArrow(file_path_, loaded_dataset_name_,
-                                                   has_header_, delim, skip_rows_,
-                                                   block_size_bytes);
+                                                   has_header_, delim, skip_rows_, cap);
             } else if (file_type == "parquet") {
                 dataset = registry.LoadParquetToArrow(file_path_, loaded_dataset_name_);
             } else if (file_type == "json") {
@@ -982,81 +975,20 @@ void DataInputDialog::RenderMemoryTab() {
             break;
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Memory policy
-    int policy = (memory_policy_ == MemoryPolicy::CacheInMemory) ? 0 : 1;
-    ImGui::Text("Memory policy:");
-    ImGui::Spacing();
-    if (ImGui::RadioButton("Cache in memory (fast access)", &policy, 0)) {
-        memory_policy_ = MemoryPolicy::CacheInMemory;
-        has_changes_ = true;
+    // Pre-load size estimate (honest: shows file size on disk, not a made-up
+    // multiplier). Actual in-memory footprint after load is shown by the
+    // Current Status section above once the data is applied, and is typically
+    // smaller than file size thanks to CompactIntegerColumns downcasting
+    // int64 columns to uint8/16/32 where the data fits.
+    if (file_size_ > 0 && data_load_state_ != DataLoadState::InMemory) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        UpdateRAMEstimate();
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f),
+                           "File size on disk: %.1f MB", estimated_ram_mb_);
+        ImGui::TextDisabled("   Actual RAM usage after load is usually smaller due to integer column compaction.");
     }
-    ImGui::TextDisabled("   Keep data cached in RAM for fast repeated access");
-    ImGui::Spacing();
-    if (ImGui::RadioButton("Write to temp file (low memory)", &policy, 1)) {
-        memory_policy_ = MemoryPolicy::WriteToDisc;
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("   Store data in temporary file, load chunks on demand");
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Streaming options
-    ImGui::Text("Streaming options (when using disk mode):");
-    ImGui::Spacing();
-
-    if (ImGui::Checkbox("Auto chunk size", &auto_chunk_size_)) {
-        has_changes_ = true;
-    }
-
-    if (!auto_chunk_size_) {
-        ImGui::Text("Chunk size:");
-        ImGui::SameLine(150);
-        ImGui::SetNextItemWidth(120);
-        if (ImGui::InputInt("##chunk", &chunk_size_kb_)) {
-            // Min 64 KB, max 4 GB. Default of 262144 (256 MB) already covers
-            // most ML datasets in a single Arrow chunk for fastest batching.
-            if (chunk_size_kb_ < 64) chunk_size_kb_ = 64;
-            if (chunk_size_kb_ > 4194304) chunk_size_kb_ = 4194304;
-            has_changes_ = true;
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled("KB (%d MB)", chunk_size_kb_ / 1024);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip(
-                "Arrow CSV reader block size.\n"
-                "Larger = faster training (single-chunk fast path).\n"
-                "Must be larger than the CSV file size for best performance.\n"
-                "Default 256 MB covers most ML datasets.");
-        }
-    }
-
-    ImGui::Text("LRU cache chunks:");
-    ImGui::SameLine(150);
-    ImGui::SetNextItemWidth(80);
-    if (ImGui::InputInt("##lru", &lru_chunks_)) {
-        if (lru_chunks_ < 1) lru_chunks_ = 1;
-        if (lru_chunks_ > 64) lru_chunks_ = 64;
-        has_changes_ = true;
-    }
-
-    if (ImGui::Checkbox("Enable prefetch", &prefetch_enabled_)) {
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(preload next chunk while processing current)");
-
-    // RAM estimate
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    UpdateRAMEstimate();
-    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Estimated RAM usage: %.1f MB", estimated_ram_mb_);
 }
 
 void DataInputDialog::RenderMLDatasetOptions() {
@@ -1764,12 +1696,14 @@ void DataInputDialog::LoadColumnList() {
 }
 
 void DataInputDialog::UpdateRAMEstimate() {
+    // Report the plain file size on disk in MB. The actual in-memory footprint
+    // after Arrow loads and CompactIntegerColumns runs is typically smaller,
+    // and is shown in the Current Status section of the Memory tab after load.
     if (file_size_ <= 0) {
         estimated_ram_mb_ = 0;
         return;
     }
-    double multiplier = (memory_policy_ == MemoryPolicy::CacheInMemory) ? 2.0 : 0.1;
-    estimated_ram_mb_ = static_cast<float>((file_size_ / (1024.0 * 1024.0)) * multiplier);
+    estimated_ram_mb_ = static_cast<float>(file_size_ / (1024.0 * 1024.0));
 }
 
 void DataInputDialog::BrowseFile() {

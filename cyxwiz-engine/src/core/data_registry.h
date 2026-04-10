@@ -301,14 +301,22 @@ public:
 
     // Arrow format-specific loaders (for DataInput node)
     //
-    // block_size_bytes: Arrow CSV reader block size. Larger values load the
-    // whole table as a single Arrow chunk, which is dramatically faster for
-    // training (single-chunk fast path in ArrowDatasetBatcher). Default 256 MB
-    // covers almost all ML datasets in one chunk. Pass 0 to use Arrow's default
-    // (1 MB, slow — only for memory-constrained environments).
+    // LoadCSVToArrow auto-detects the right Arrow CSV block_size from the
+    // file size so the whole table loads as a single Arrow chunk whenever
+    // possible. This means the ArrowDatasetBatcher hits its fast
+    // raw_values() direct-pointer path, and integer columns are then
+    // downcast to their natural width (e.g. MNIST pixels int64 -> uint8,
+    // an 8x memory saving). Users don't need to tune anything.
+    //
+    // max_rows: if > 0, keep only the first max_rows rows after load (via
+    // table->Slice). Useful for training on a subset of a large dataset.
+    // 0 means "load all rows". Note that this slices after the full parse,
+    // so load-time memory is still proportional to the full file size —
+    // for a true lazy load with memory cap, see the deferred Parquet+mmap
+    // design (not yet implemented).
     std::shared_ptr<class ArrowDataset> LoadCSVToArrow(const std::string& path, const std::string& name,
                                                         bool has_header = true, char delimiter = ',', int skip_rows = 0,
-                                                        int64_t block_size_bytes = 256 * 1024 * 1024);
+                                                        int64_t max_rows = 0);
     std::shared_ptr<class ArrowDataset> LoadParquetToArrow(const std::string& path, const std::string& name);
     std::shared_ptr<class ArrowDataset> LoadJSONToArrow(const std::string& path, const std::string& name, bool json_lines = false);
     std::shared_ptr<class ArrowDataset> LoadExcelToArrow(const std::string& path, const std::string& name, int sheet_idx = 0);

@@ -2,6 +2,7 @@
 #include "dataset_base.h"
 #include "arrow_dataset.h"
 #include <arrow/compute/api.h>  // for arrow::compute::Cast (integer column compaction)
+#include <limits>              // for std::numeric_limits (Arrow block_size cap)
 #include "annotation_manager.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -1315,7 +1316,7 @@ static std::shared_ptr<arrow::Table> CompactIntegerColumns(
 
 std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
     const std::string& path, const std::string& name,
-    bool has_header, char delimiter, int skip_rows, int64_t block_size_bytes) {
+    bool has_header, char delimiter, int skip_rows, int64_t max_rows) {
 
     std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
 
@@ -1324,17 +1325,30 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         auto read_options = arrow::csv::ReadOptions::Defaults();
         read_options.skip_rows = skip_rows;
 
-        // Set block_size — controls how Arrow chunks the CSV during parsing.
-        // Larger = fewer chunks = faster batching (single-chunk raw_values path).
-        // Zero means "use Arrow's default" (currently 1 MB), only for unusual
-        // memory-constrained cases.
-        if (block_size_bytes > 0) {
-            read_options.block_size = static_cast<int32_t>(
-                std::min<int64_t>(block_size_bytes, std::numeric_limits<int32_t>::max()));
+        // Auto-size block_size so the entire file loads as a single Arrow
+        // chunk whenever possible. Single-chunk columns hit the fast
+        // raw_values() direct-pointer path in ArrowDatasetBatcher; multi-
+        // chunk columns fall back to a slower per-row scan. Arrow's default
+        // is 1 MB, which splits anything non-trivial into many chunks.
+        //
+        // We pick block_size = max(file_size + 1 MB headroom, 64 MB), capped
+        // at INT32_MAX since Arrow's block_size is a signed 32-bit int.
+        // Files >2 GB simply fall back to multi-chunk (still correct).
+        int64_t file_size_bytes = 0;
+        try {
+            file_size_bytes = static_cast<int64_t>(fs::file_size(path));
+        } catch (...) {
+            // If we can't stat the file, fall through to a sensible default
+            file_size_bytes = 0;
         }
-        spdlog::info("LoadCSVToArrow: block_size={} MB ({} bytes)",
-                     read_options.block_size / (1024 * 1024),
-                     read_options.block_size);
+        constexpr int64_t kMinBlock = 64 * 1024 * 1024;         // 64 MB
+        constexpr int64_t kMaxBlock = std::numeric_limits<int32_t>::max();
+        int64_t target = std::max<int64_t>(file_size_bytes + (1 << 20), kMinBlock);
+        target = std::min<int64_t>(target, kMaxBlock);
+        read_options.block_size = static_cast<int32_t>(target);
+        spdlog::info("LoadCSVToArrow: file_size={} MB, block_size={} MB (auto)",
+                     file_size_bytes / (1024 * 1024),
+                     read_options.block_size / (1024 * 1024));
 
         auto parse_options = arrow::csv::ParseOptions::Defaults();
         parse_options.delimiter = delimiter;
@@ -1352,9 +1366,24 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
             return nullptr;
         }
 
+        // Apply row cap from Limit Rows tab. Slice is zero-copy (Arrow table
+        // buffers are shared) so this is cheap — but note that the full file
+        // was still parsed into RAM before the slice. For a true lazy row cap
+        // we'd need arrow::csv::StreamingReader; deferred.
+        if (max_rows > 0) {
+            auto table = dataset->GetArrowTable();
+            if (table && table->num_rows() > max_rows) {
+                auto sliced = table->Slice(0, max_rows);
+                spdlog::info("LoadCSVToArrow: max_rows={} applied, sliced from {} to {} rows",
+                             max_rows, table->num_rows(), sliced->num_rows());
+                dataset = std::make_shared<ArrowDataset>(sliced, unique_name);
+            }
+        }
+
         // Compact integer columns to the smallest fitting type. For a CSV like
         // mnist_784 where Arrow promotes uint8 pixels to int64, this reduces
-        // memory by 8x and makes per-batch reads 8x less data-bound.
+        // memory by 8x and makes per-batch reads 8x less data-bound. Runs
+        // after slicing so the min/max scan only looks at the kept rows.
         auto compacted = CompactIntegerColumns(dataset->GetArrowTable());
         if (compacted && compacted.get() != dataset->GetArrowTable().get()) {
             dataset = std::make_shared<ArrowDataset>(compacted, unique_name);
