@@ -58,14 +58,57 @@ TrainingConfiguration GraphCompiler::Compile(
     // Extract split ratios from DataSplit node if present
     for (const auto& node : nodes) {
         if (node.type == gui::NodeType::DataSplit) {
-            if (node.parameters.count("train_ratio"))
-                config.train_ratio = std::stof(node.parameters.at("train_ratio"));
-            if (node.parameters.count("val_ratio"))
-                config.val_ratio = std::stof(node.parameters.at("val_ratio"));
-            if (node.parameters.count("test_ratio"))
-                config.test_ratio = std::stof(node.parameters.at("test_ratio"));
+            config.has_data_split = true;
+            try {
+                if (node.parameters.count("train_ratio"))
+                    config.train_ratio = std::stof(node.parameters.at("train_ratio"));
+                if (node.parameters.count("val_ratio"))
+                    config.val_ratio = std::stof(node.parameters.at("val_ratio"));
+                if (node.parameters.count("test_ratio"))
+                    config.test_ratio = std::stof(node.parameters.at("test_ratio"));
+                if (node.parameters.count("seed"))
+                    config.split_seed = std::stoi(node.parameters.at("seed"));
+            } catch (const std::exception& e) {
+                spdlog::warn("GraphCompiler: DataSplit param parse error ({}) - using defaults", e.what());
+            }
             break;
         }
+    }
+    if (config.has_data_split) {
+        spdlog::info("GraphCompiler: DataSplit node found - train={:.2f}, val={:.2f}, test={:.2f}, seed={}",
+                     config.train_ratio, config.val_ratio, config.test_ratio, config.split_seed);
+    } else {
+        spdlog::info("GraphCompiler: No DataSplit node - using defaults (train=0.80, val=0.10, test=0.10)");
+    }
+
+    // Extract batching config from DataLoader node if present
+    for (const auto& node : nodes) {
+        if (node.type == gui::NodeType::DataLoader) {
+            config.has_data_loader = true;
+            try {
+                if (node.parameters.count("batch_size"))
+                    config.batch_size = std::stoi(node.parameters.at("batch_size"));
+                if (node.parameters.count("shuffle"))
+                    config.shuffle = (node.parameters.at("shuffle") == "true");
+                if (node.parameters.count("drop_last"))
+                    config.drop_last = (node.parameters.at("drop_last") == "true");
+                if (node.parameters.count("num_workers"))
+                    config.num_workers = std::stoi(node.parameters.at("num_workers"));
+            } catch (const std::exception& e) {
+                spdlog::warn("GraphCompiler: DataLoader param parse error ({}) - using defaults", e.what());
+            }
+            break;
+        }
+    }
+    if (config.has_data_loader) {
+        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, shuffle={}, drop_last={}, num_workers={}",
+                     config.batch_size, config.shuffle, config.drop_last, config.num_workers);
+        if (config.num_workers > 0) {
+            spdlog::warn("GraphCompiler: num_workers={} requested but not yet implemented - batching runs single-threaded",
+                         config.num_workers);
+        }
+    } else {
+        spdlog::info("GraphCompiler: No DataLoader node - using defaults (batch_size=32, shuffle=true, drop_last=false)");
     }
 
     // Get topologically sorted node IDs
@@ -313,7 +356,8 @@ std::vector<int> GraphCompiler::GetInputNodes(
 
 const gui::MLNode* GraphCompiler::FindDatasetInputNode(const std::vector<gui::MLNode>& nodes) const {
     for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::DatasetInput) {
+        // Both smart DataInput and legacy DatasetInput nodes are valid data sources
+        if (node.type == gui::NodeType::DataInput || node.type == gui::NodeType::DatasetInput) {
             return &node;
         }
     }

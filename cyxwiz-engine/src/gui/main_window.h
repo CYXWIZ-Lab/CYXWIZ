@@ -224,6 +224,15 @@ private:
     // Testing from node graph
     void StartTestingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
 
+    // Compile the current graph as a dry-run (no training) and show results in a popup
+    void CompileGraphAndReport();
+    void RenderCompileResultPopup();
+
+    // Compile popup state
+    bool show_compile_result_popup_ = false;
+    bool compile_result_success_ = false;
+    std::string compile_result_message_;
+
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;
     std::unique_ptr<Console> console_;

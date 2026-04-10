@@ -84,9 +84,20 @@ struct TrainingConfiguration {
 
     // Dataset configuration
     std::string dataset_name;           // Name of dataset in DataRegistry
+
+    // DataSplit configuration (from DataSplit node, or defaults if absent)
     float train_ratio = 0.8f;
     float val_ratio = 0.1f;
     float test_ratio = 0.1f;
+    int split_seed = 42;
+    bool has_data_split = false;        // true if a DataSplit node was found
+
+    // DataLoader configuration (from DataLoader node, or defaults if absent)
+    int batch_size = 32;
+    bool shuffle = true;
+    bool drop_last = false;
+    int num_workers = 0;                // not yet honored; warns if >0
+    bool has_data_loader = false;       // true if a DataLoader node was found
 
     // Preprocessing
     GraphPreprocessingConfig preprocessing;

@@ -113,7 +113,7 @@ NodeEditor::NodeEditor()
     ImNodes::SetNodeGridSpacePos(data_input.id, ImVec2(50.0f, 200.0f));
 
     // 2. Data Split - Split into train/val/test
-    MLNode data_split = CreateNode(NodeType::DataSplit, "Train/Test Split");
+    MLNode data_split = CreateNode(NodeType::DataSplit, "Train/Val/Test Split");
     data_split.parameters["train_ratio"] = "0.8";
     data_split.parameters["val_ratio"] = "0.1";
     data_split.parameters["test_ratio"] = "0.1";
@@ -833,6 +833,31 @@ void NodeEditor::ShowToolbar() {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
 
+    // Compile Graph - always at the very start so it's never clipped by narrow
+    // toolbars. Blue button, always enabled when the callback is wired.
+    if (compile_callback_) {
+        ImGui::PopStyleColor(2);  // temporarily drop base button colors
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.45f, 0.75f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.55f, 0.85f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.35f, 0.65f, 1.0f));
+        if (ImGui::Button(ICON_FA_CHECK_DOUBLE " Compile")) {
+            spdlog::info("NodeEditor: Compile Graph invoked from toolbar");
+            compile_callback_();
+        }
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Compile the graph (F7) - validates structure and reports config without training");
+        }
+        ImGui::SameLine();
+
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+        ImGui::SameLine();
+
+        // Restore base button colors
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
+    }
+
     // File operations with icons
     if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
         ShowSaveDialog();
@@ -992,6 +1017,7 @@ void NodeEditor::ShowToolbar() {
         ImGui::PopStyleColor(2);
     } else {
         // Train button - green when valid, disabled when invalid
+        // (Compile button is at the top of the toolbar — always visible regardless of window width)
         bool can_train = IsGraphValid() && train_callback_;
         if (!can_train) {
             ImGui::BeginDisabled();

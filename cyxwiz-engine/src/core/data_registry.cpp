@@ -1,6 +1,7 @@
 #include "data_registry.h"
 #include "dataset_base.h"
 #include "arrow_dataset.h"
+#include <arrow/compute/api.h>  // for arrow::compute::Cast (integer column compaction)
 #include "annotation_manager.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -1080,9 +1081,241 @@ void DataRegistry::TrimMemory(size_t target_bytes) {
 // Arrow Format-Specific Loaders (for DataInput node pipeline execution)
 // =============================================================================
 
+// -----------------------------------------------------------------------------
+// CompactIntegerColumns
+//
+// Arrow's CSV reader promotes every integer column it sees to int64 regardless
+// of the actual value range. For ML datasets like MNIST where pixel values fit
+// in [0, 255] this means an 8x memory waste (8 bytes per cell instead of 1)
+// AND 8x memory traffic per batch because the ArrowDatasetBatcher has to read
+// int64 and cast to float.
+//
+// This helper walks the table once after load, computes min/max per integer
+// column, and casts each column down to the smallest (unsigned preferred)
+// integer type that still holds the observed range. It uses arrow::compute::Cast
+// which is part of the Arrow core library we already link.
+//
+// Returns the downcast table (or the original if nothing could be compacted).
+// Logs total memory savings at info level.
+// -----------------------------------------------------------------------------
+static std::shared_ptr<arrow::Table> CompactIntegerColumns(
+    const std::shared_ptr<arrow::Table>& table) {
+    if (!table) return table;
+
+    size_t bytes_before = 0;
+    size_t bytes_after = 0;
+    int cols_compacted = 0;
+
+    std::vector<std::shared_ptr<arrow::ChunkedArray>> new_columns;
+    new_columns.reserve(table->num_columns());
+
+    for (int i = 0; i < table->num_columns(); ++i) {
+        auto col = table->column(i);
+        auto type_id = col->type()->id();
+
+        // Track original size for logging
+        for (int c = 0; c < col->num_chunks(); ++c) {
+            auto chunk = col->chunk(c);
+            for (const auto& buf : chunk->data()->buffers) {
+                if (buf) bytes_before += buf->size();
+            }
+        }
+
+        // Only compact signed integer columns that Arrow CSV reader produces.
+        // int8/int16/int32 are rare but handled; we skip already-unsigned types
+        // (they're presumably intentional) and float/string/etc.
+        bool is_signed_int = (type_id == arrow::Type::INT64 ||
+                              type_id == arrow::Type::INT32 ||
+                              type_id == arrow::Type::INT16 ||
+                              type_id == arrow::Type::INT8);
+        if (!is_signed_int) {
+            new_columns.push_back(col);
+            // Still count final size
+            for (int c = 0; c < col->num_chunks(); ++c) {
+                auto chunk = col->chunk(c);
+                for (const auto& buf : chunk->data()->buffers) {
+                    if (buf) bytes_after += buf->size();
+                }
+            }
+            continue;
+        }
+
+        // Find min/max across all chunks by iterating raw values.
+        // (arrow::compute::MinMax would also work but iterating is fine and
+        // keeps us independent of the Arrow compute registry initialization.)
+        int64_t min_val = std::numeric_limits<int64_t>::max();
+        int64_t max_val = std::numeric_limits<int64_t>::min();
+        bool all_nonnull = (col->null_count() == 0);
+        bool have_data = false;
+
+        auto observe = [&](int64_t v) {
+            if (v < min_val) min_val = v;
+            if (v > max_val) max_val = v;
+            have_data = true;
+        };
+
+        for (int c = 0; c < col->num_chunks(); ++c) {
+            auto chunk = col->chunk(c);
+            int64_t n = chunk->length();
+            if (n == 0) continue;
+
+            switch (type_id) {
+                case arrow::Type::INT64: {
+                    auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
+                    const int64_t* data = arr->raw_values();
+                    if (all_nonnull) {
+                        for (int64_t r = 0; r < n; ++r) observe(data[r]);
+                    } else {
+                        for (int64_t r = 0; r < n; ++r)
+                            if (!arr->IsNull(r)) observe(data[r]);
+                    }
+                    break;
+                }
+                case arrow::Type::INT32: {
+                    auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
+                    const int32_t* data = arr->raw_values();
+                    if (all_nonnull) {
+                        for (int64_t r = 0; r < n; ++r) observe(data[r]);
+                    } else {
+                        for (int64_t r = 0; r < n; ++r)
+                            if (!arr->IsNull(r)) observe(data[r]);
+                    }
+                    break;
+                }
+                case arrow::Type::INT16: {
+                    auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
+                    const int16_t* data = arr->raw_values();
+                    if (all_nonnull) {
+                        for (int64_t r = 0; r < n; ++r) observe(data[r]);
+                    } else {
+                        for (int64_t r = 0; r < n; ++r)
+                            if (!arr->IsNull(r)) observe(data[r]);
+                    }
+                    break;
+                }
+                case arrow::Type::INT8: {
+                    auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
+                    const int8_t* data = arr->raw_values();
+                    if (all_nonnull) {
+                        for (int64_t r = 0; r < n; ++r) observe(data[r]);
+                    } else {
+                        for (int64_t r = 0; r < n; ++r)
+                            if (!arr->IsNull(r)) observe(data[r]);
+                    }
+                    break;
+                }
+                default: break;
+            }
+        }
+
+        // Pick smallest fitting target type
+        std::shared_ptr<arrow::DataType> target_type;
+        if (!have_data) {
+            // Empty or all-null column — leave it alone
+            target_type = col->type();
+        } else if (min_val >= 0 && max_val <= 255) {
+            target_type = arrow::uint8();
+        } else if (min_val >= -128 && max_val <= 127) {
+            target_type = arrow::int8();
+        } else if (min_val >= 0 && max_val <= 65535) {
+            target_type = arrow::uint16();
+        } else if (min_val >= -32768 && max_val <= 32767) {
+            target_type = arrow::int16();
+        } else if (min_val >= 0 && max_val <= 4294967295LL) {
+            target_type = arrow::uint32();
+        } else if (min_val >= -2147483648LL && max_val <= 2147483647LL) {
+            target_type = arrow::int32();
+        } else {
+            target_type = col->type();  // already int64, can't shrink
+        }
+
+        // Skip if target type is the same as source
+        if (target_type->Equals(*col->type())) {
+            new_columns.push_back(col);
+            for (int c = 0; c < col->num_chunks(); ++c) {
+                auto chunk = col->chunk(c);
+                for (const auto& buf : chunk->data()->buffers) {
+                    if (buf) bytes_after += buf->size();
+                }
+            }
+            continue;
+        }
+
+        // Cast each chunk to the target type
+        arrow::compute::CastOptions cast_opts;
+        cast_opts.allow_int_overflow = false;
+        std::vector<std::shared_ptr<arrow::Array>> new_chunks;
+        new_chunks.reserve(col->num_chunks());
+        bool cast_failed = false;
+        for (int c = 0; c < col->num_chunks(); ++c) {
+            auto chunk = col->chunk(c);
+            auto cast_result = arrow::compute::Cast(*chunk, target_type, cast_opts);
+            if (!cast_result.ok()) {
+                spdlog::warn("CompactIntegerColumns: cast failed for column {} ({} -> {}): {}",
+                             table->field(i)->name(),
+                             col->type()->ToString(),
+                             target_type->ToString(),
+                             cast_result.status().ToString());
+                cast_failed = true;
+                break;
+            }
+            new_chunks.push_back(cast_result.ValueOrDie());
+        }
+
+        if (cast_failed) {
+            new_columns.push_back(col);
+            for (int c = 0; c < col->num_chunks(); ++c) {
+                auto chunk = col->chunk(c);
+                for (const auto& buf : chunk->data()->buffers) {
+                    if (buf) bytes_after += buf->size();
+                }
+            }
+        } else {
+            auto new_col = std::make_shared<arrow::ChunkedArray>(new_chunks, target_type);
+            new_columns.push_back(new_col);
+            cols_compacted++;
+            for (const auto& chunk : new_chunks) {
+                for (const auto& buf : chunk->data()->buffers) {
+                    if (buf) bytes_after += buf->size();
+                }
+            }
+        }
+    }
+
+    if (cols_compacted == 0) {
+        return table;
+    }
+
+    // Build new schema with updated field types
+    arrow::FieldVector new_fields;
+    new_fields.reserve(table->num_columns());
+    for (int i = 0; i < table->num_columns(); ++i) {
+        auto old_field = table->field(i);
+        new_fields.push_back(
+            std::make_shared<arrow::Field>(old_field->name(),
+                                            new_columns[i]->type(),
+                                            old_field->nullable()));
+    }
+    auto new_schema = std::make_shared<arrow::Schema>(new_fields, table->schema()->metadata());
+
+    auto new_table = arrow::Table::Make(new_schema, new_columns, table->num_rows());
+
+    double savings_mb = (static_cast<double>(bytes_before) - bytes_after) / (1024.0 * 1024.0);
+    double pct = bytes_before > 0 ? (100.0 * (bytes_before - bytes_after)) / bytes_before : 0.0;
+    spdlog::info("CompactIntegerColumns: compacted {} columns, {:.1f} MB -> {:.1f} MB "
+                 "(saved {:.1f} MB, {:.1f}%)",
+                 cols_compacted,
+                 bytes_before / (1024.0 * 1024.0),
+                 bytes_after / (1024.0 * 1024.0),
+                 savings_mb,
+                 pct);
+
+    return new_table;
+}
+
 std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
     const std::string& path, const std::string& name,
-    bool has_header, char delimiter, int skip_rows) {
+    bool has_header, char delimiter, int skip_rows, int64_t block_size_bytes) {
 
     std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
 
@@ -1090,6 +1323,18 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         // Configure CSV reading options
         auto read_options = arrow::csv::ReadOptions::Defaults();
         read_options.skip_rows = skip_rows;
+
+        // Set block_size — controls how Arrow chunks the CSV during parsing.
+        // Larger = fewer chunks = faster batching (single-chunk raw_values path).
+        // Zero means "use Arrow's default" (currently 1 MB), only for unusual
+        // memory-constrained cases.
+        if (block_size_bytes > 0) {
+            read_options.block_size = static_cast<int32_t>(
+                std::min<int64_t>(block_size_bytes, std::numeric_limits<int32_t>::max()));
+        }
+        spdlog::info("LoadCSVToArrow: block_size={} MB ({} bytes)",
+                     read_options.block_size / (1024 * 1024),
+                     read_options.block_size);
 
         auto parse_options = arrow::csv::ParseOptions::Defaults();
         parse_options.delimiter = delimiter;
@@ -1105,6 +1350,14 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         if (!dataset) {
             spdlog::error("LoadCSVToArrow: Failed to load {}", path);
             return nullptr;
+        }
+
+        // Compact integer columns to the smallest fitting type. For a CSV like
+        // mnist_784 where Arrow promotes uint8 pixels to int64, this reduces
+        // memory by 8x and makes per-batch reads 8x less data-bound.
+        auto compacted = CompactIntegerColumns(dataset->GetArrowTable());
+        if (compacted && compacted.get() != dataset->GetArrowTable().get()) {
+            dataset = std::make_shared<ArrowDataset>(compacted, unique_name);
         }
 
         std::lock_guard<std::mutex> lock(mutex_);

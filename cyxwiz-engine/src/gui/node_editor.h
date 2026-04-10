@@ -385,7 +385,7 @@ enum class NodeType {
     LabelEncoder,       // Encode categorical labels as integers
     OrdinalEncoder,     // Encode ordinal categories
     TargetEncoder,      // Target-based encoding
-    TrainTestSplit,     // Stratified train/test split
+    // (TrainTestSplit removed — use DataSplit, which supports 3-way train/val/test)
 
     // ===== Advanced Preprocessing Nodes (Phase 3 - UI Consolidation) =====
     OutlierDetector,    // Detect/remove outliers (IQR, Z-score, Isolation Forest)
@@ -797,6 +797,10 @@ public:
     using TrainCallback = std::function<void(const std::vector<MLNode>&, const std::vector<NodeLink>&)>;
     void SetTrainCallback(TrainCallback callback) { train_callback_ = callback; }
 
+    // Compile callback - set by MainWindow to dry-run the graph compilation (no training)
+    using CompileCallback = std::function<void()>;
+    void SetCompileCallback(CompileCallback callback) { compile_callback_ = callback; }
+
     // Check if graph is ready for training
     bool IsGraphValid() const;
 
@@ -1153,6 +1157,9 @@ private:
 
     // Training callback
     TrainCallback train_callback_;
+
+    // Compile callback (dry-run GraphCompiler::Compile and show result popup)
+    CompileCallback compile_callback_;
 
     // Training animation state
     bool is_training_ = false;

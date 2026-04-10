@@ -48,6 +48,7 @@ DataInputDialog::DataInputDialog(MLNode* node)
             strncpy(file_path_, node_->parameters["file_path"].c_str(), sizeof(file_path_) - 1);
             DetectFileType();
             DetectFileCategory();
+            LoadColumnList();  // Load columns to enable label selection
         }
         if (node_->parameters.count("folder_path")) {
             strncpy(folder_path_, node_->parameters["folder_path"].c_str(), sizeof(folder_path_) - 1);
@@ -58,6 +59,38 @@ DataInputDialog::DataInputDialog(MLNode* node)
         if (node_->parameters.count("memory_policy")) {
             memory_policy_ = (node_->parameters["memory_policy"] == "disc")
                 ? MemoryPolicy::WriteToDisc : MemoryPolicy::CacheInMemory;
+        }
+        // Restore label column selection
+        if (node_->parameters.count("label_column") && !node_->parameters["label_column"].empty()) {
+            std::string label_col = node_->parameters["label_column"];
+            for (int i = 0; i < static_cast<int>(available_columns_.size()); ++i) {
+                if (available_columns_[i] == label_col) {
+                    label_column_idx_ = i;
+                    break;
+                }
+            }
+        }
+
+        // Restore data load state from registry
+        // Note: Apply() saves as "dataset_name" parameter
+        if (node_->parameters.count("data_loaded") && node_->parameters["data_loaded"] == "true") {
+            if (node_->parameters.count("dataset_name") && !node_->parameters["dataset_name"].empty()) {
+                loaded_dataset_name_ = node_->parameters["dataset_name"];
+                auto& registry = cyxwiz::DataRegistry::Instance();
+                auto dataset = registry.GetArrowDataset(loaded_dataset_name_);
+                if (dataset) {
+                    // Dataset is still in memory
+                    loaded_rows_ = dataset->GetNumRows();
+                    loaded_cols_ = dataset->GetNumColumns();
+                    loaded_memory_bytes_ = dataset->GetMemoryUsage();
+                    data_load_state_ = DataLoadState::InMemory;
+                    apply_success_ = true;
+                    apply_status_message_ = "Loaded " + loaded_dataset_name_ + " (" +
+                        std::to_string(loaded_rows_) + " rows, " +
+                        std::to_string(loaded_cols_) + " cols, " +
+                        FormatBytes(loaded_memory_bytes_) + ")";
+                }
+            }
         }
     }
 }
@@ -115,10 +148,21 @@ void DataInputDialog::Apply() {
             node_->parameters["json_path"] = json_path_;
         }
 
+        // Label column for ML training
+        if (label_column_idx_ >= 0 && label_column_idx_ < static_cast<int>(available_columns_.size())) {
+            node_->parameters["label_column"] = available_columns_[label_column_idx_];
+        } else {
+            node_->parameters["label_column"] = "";
+        }
+
         // Auto-generate description
         if (strlen(file_path_) > 0) {
             fs::path p(file_path_);
-            node_->description = "Reading " + p.filename().string();
+            std::string desc = "Reading " + p.filename().string();
+            if (label_column_idx_ >= 0 && label_column_idx_ < static_cast<int>(available_columns_.size())) {
+                desc += " [label: " + available_columns_[label_column_idx_] + "]";
+            }
+            node_->description = desc;
         } else if (strlen(folder_path_) > 0) {
             fs::path p(folder_path_);
             node_->description = "Loading from " + p.filename().string();
@@ -178,7 +222,12 @@ void DataInputDialog::Apply() {
 
             if (file_type == "csv" || file_type == "tsv" || file_type == "txt" || file_type == "arff") {
                 char delim = (file_type == "tsv") ? '\t' : custom_delimiter_[0];
-                dataset = registry.LoadCSVToArrow(file_path_, loaded_dataset_name_, has_header_, delim, skip_rows_);
+                // Pass chunk_size_kb_ (KB) through as block_size (bytes) to the
+                // Arrow CSV reader. Larger = faster batching, bounded by RAM.
+                int64_t block_size_bytes = static_cast<int64_t>(chunk_size_kb_) * 1024;
+                dataset = registry.LoadCSVToArrow(file_path_, loaded_dataset_name_,
+                                                   has_header_, delim, skip_rows_,
+                                                   block_size_bytes);
             } else if (file_type == "parquet") {
                 dataset = registry.LoadParquetToArrow(file_path_, loaded_dataset_name_);
             } else if (file_type == "json") {
@@ -461,6 +510,7 @@ void DataInputDialog::RenderFileSource() {
         if (ImGui::InputText("##filepath", file_path_, sizeof(file_path_))) {
             DetectFileType();
             DetectFileCategory();
+            LoadColumnList();  // Load column names for label selection
             has_changes_ = true;
             preview_loaded_ = false;
         }
@@ -571,6 +621,76 @@ void DataInputDialog::RenderTabularOptions() {
             ImGui::SameLine();
             ImGui::TextDisabled("($.data.rows)");
         }
+    }
+
+    // Column Mapping - Label/Target column selection
+    if (ImGui::CollapsingHeader("Column Mapping", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
+            "For ML training, specify which column contains labels/targets");
+        ImGui::Spacing();
+
+        // Label column selector
+        ImGui::Text("Label Column:");
+        ImGui::SameLine(120);
+        ImGui::SetNextItemWidth(200);
+
+        // Build combo items from available columns
+        const char* preview = (label_column_idx_ >= 0 && label_column_idx_ < static_cast<int>(available_columns_.size()))
+            ? available_columns_[label_column_idx_].c_str()
+            : "(None - select label column)";
+
+        if (ImGui::BeginCombo("##labelcol", preview)) {
+            // Option for no label
+            if (ImGui::Selectable("(None)", label_column_idx_ == -1)) {
+                label_column_idx_ = -1;
+                has_changes_ = true;
+            }
+
+            // List available columns
+            for (int i = 0; i < static_cast<int>(available_columns_.size()); ++i) {
+                bool is_selected = (label_column_idx_ == i);
+                if (ImGui::Selectable(available_columns_[i].c_str(), is_selected)) {
+                    label_column_idx_ = i;
+                    has_changes_ = true;
+                }
+                if (is_selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        // Hint for common label column names
+        if (label_column_idx_ < 0 && !available_columns_.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "!");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Select the target column for training.\nCommon names: 'label', 'class', 'target', 'y'");
+            }
+        }
+
+        // Auto-detect common label column names
+        if (label_column_idx_ < 0 && !available_columns_.empty()) {
+            for (int i = 0; i < static_cast<int>(available_columns_.size()); ++i) {
+                std::string lower = available_columns_[i];
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                if (lower == "label" || lower == "labels" || lower == "class" || lower == "target" || lower == "y") {
+                    // Found a common label column - suggest it
+                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f),
+                        "Suggestion: '%s' looks like a label column", available_columns_[i].c_str());
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Use")) {
+                        label_column_idx_ = i;
+                        has_changes_ = true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
+            "Features: All other columns will be used as input features");
     }
 
 }
@@ -897,14 +1017,23 @@ void DataInputDialog::RenderMemoryTab() {
     if (!auto_chunk_size_) {
         ImGui::Text("Chunk size:");
         ImGui::SameLine(150);
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(120);
         if (ImGui::InputInt("##chunk", &chunk_size_kb_)) {
+            // Min 64 KB, max 4 GB. Default of 262144 (256 MB) already covers
+            // most ML datasets in a single Arrow chunk for fastest batching.
             if (chunk_size_kb_ < 64) chunk_size_kb_ = 64;
-            if (chunk_size_kb_ > 65536) chunk_size_kb_ = 65536;
+            if (chunk_size_kb_ > 4194304) chunk_size_kb_ = 4194304;
             has_changes_ = true;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("KB");
+        ImGui::TextDisabled("KB (%d MB)", chunk_size_kb_ / 1024);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Arrow CSV reader block size.\n"
+                "Larger = faster training (single-chunk fast path).\n"
+                "Must be larger than the CSV file size for best performance.\n"
+                "Default 256 MB covers most ML datasets.");
+        }
     }
 
     ImGui::Text("LRU cache chunks:");
@@ -1680,6 +1809,8 @@ void DataInputDialog::BrowseFile() {
         strncpy(file_path_, file, sizeof(file_path_) - 1);
         DetectFileType();
         DetectFileCategory();
+        LoadColumnList();  // Load column names for label selection
+        label_column_idx_ = -1;  // Reset label selection when file changes
         has_changes_ = true;
         preview_loaded_ = false;
     }
@@ -2222,6 +2353,237 @@ void DataOutputDialog::RenderAdvancedTab() {
     ImGui::SameLine(100);
     ImGui::SetNextItemWidth(120);
     ImGui::Combo("##outencoding", &out_encoding, encodings, 4);
+}
+
+// ==================== DataLoaderDialog ====================
+
+namespace {
+    void ReadIntParam(const std::map<std::string, std::string>& params,
+                      const char* key, int& out) {
+        auto it = params.find(key);
+        if (it != params.end() && !it->second.empty()) {
+            try { out = std::stoi(it->second); } catch (...) {}
+        }
+    }
+    void ReadFloatParam(const std::map<std::string, std::string>& params,
+                        const char* key, float& out) {
+        auto it = params.find(key);
+        if (it != params.end() && !it->second.empty()) {
+            try { out = std::stof(it->second); } catch (...) {}
+        }
+    }
+    void ReadBoolParam(const std::map<std::string, std::string>& params,
+                       const char* key, bool& out) {
+        auto it = params.find(key);
+        if (it != params.end()) out = (it->second == "true");
+    }
+}
+
+DataLoaderDialog::DataLoaderDialog(MLNode* node)
+    : NodeConfigDialog("Data Loader", node)
+{
+    if (node_) {
+        ReadIntParam(node_->parameters, "batch_size", batch_size_);
+        ReadBoolParam(node_->parameters, "shuffle", shuffle_);
+        ReadBoolParam(node_->parameters, "drop_last", drop_last_);
+        ReadIntParam(node_->parameters, "num_workers", num_workers_);
+    }
+}
+
+void DataLoaderDialog::Apply() {
+    if (!node_) return;
+    node_->parameters["batch_size"] = std::to_string(batch_size_);
+    node_->parameters["shuffle"] = shuffle_ ? "true" : "false";
+    node_->parameters["drop_last"] = drop_last_ ? "true" : "false";
+    node_->parameters["num_workers"] = std::to_string(num_workers_);
+    node_->description = "batch=" + std::to_string(batch_size_) +
+                          (shuffle_ ? ", shuffled" : ", ordered");
+    has_changes_ = false;
+}
+
+void DataLoaderDialog::Reset() {
+    if (!node_) return;
+    node_->parameters = original_params_;
+    // Re-initialize local UI state from the restored params so sliders match
+    batch_size_ = 32;
+    shuffle_ = true;
+    drop_last_ = false;
+    num_workers_ = 0;
+    ReadIntParam(original_params_, "batch_size", batch_size_);
+    ReadBoolParam(original_params_, "shuffle", shuffle_);
+    ReadBoolParam(original_params_, "drop_last", drop_last_);
+    ReadIntParam(original_params_, "num_workers", num_workers_);
+    has_changes_ = false;
+}
+
+void DataLoaderDialog::RenderContent() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Batching");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Batch size:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##batch_size", &batch_size_)) {
+        if (batch_size_ < 1) batch_size_ = 1;
+        if (batch_size_ > 100000) batch_size_ = 100000;
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(samples per gradient step)");
+
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Shuffle each epoch", &shuffle_)) has_changes_ = true;
+    ImGui::TextDisabled("  Reshuffles training samples at the start of every epoch.");
+
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Drop last incomplete batch", &drop_last_)) has_changes_ = true;
+    ImGui::TextDisabled("  Discard the final batch if it has fewer than batch_size samples.");
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Performance");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Worker threads:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##num_workers", &num_workers_)) {
+        if (num_workers_ < 0) num_workers_ = 0;
+        if (num_workers_ > 64) num_workers_ = 64;
+        has_changes_ = true;
+    }
+    if (num_workers_ > 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                           "  Not yet implemented - batching runs single-threaded.");
+    } else {
+        ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextDisabled(
+        "This node is the single source of truth for batching. If batch_size is\n"
+        "also set on the optimizer node, the DataLoader value wins and a warning\n"
+        "is logged at training start.");
+}
+
+// ==================== DataSplitDialog ====================
+
+DataSplitDialog::DataSplitDialog(MLNode* node)
+    : NodeConfigDialog("Data Split", node)
+{
+    if (node_) {
+        ReadFloatParam(node_->parameters, "train_ratio", train_ratio_);
+        ReadFloatParam(node_->parameters, "val_ratio", val_ratio_);
+        ReadFloatParam(node_->parameters, "test_ratio", test_ratio_);
+        ReadIntParam(node_->parameters, "seed", seed_);
+        ReadBoolParam(node_->parameters, "stratified", stratified_);
+    }
+}
+
+void DataSplitDialog::Apply() {
+    if (!node_) return;
+    // Guard against all-zero sliders, then normalize to 1.0 if the user drifted
+    float sum = train_ratio_ + val_ratio_ + test_ratio_;
+    if (sum <= 0.001f) {
+        train_ratio_ = 0.8f;
+        val_ratio_ = 0.1f;
+        test_ratio_ = 0.1f;
+    } else if (std::abs(sum - 1.0f) > 0.01f) {
+        train_ratio_ /= sum;
+        val_ratio_ /= sum;
+        test_ratio_ /= sum;
+    }
+    node_->parameters["train_ratio"] = std::to_string(train_ratio_);
+    node_->parameters["val_ratio"] = std::to_string(val_ratio_);
+    node_->parameters["test_ratio"] = std::to_string(test_ratio_);
+    node_->parameters["seed"] = std::to_string(seed_);
+    node_->parameters["stratified"] = stratified_ ? "true" : "false";
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%.0f/%.0f/%.0f",
+             train_ratio_ * 100.0f, val_ratio_ * 100.0f, test_ratio_ * 100.0f);
+    node_->description = buf;
+    has_changes_ = false;
+}
+
+void DataSplitDialog::Reset() {
+    if (!node_) return;
+    node_->parameters = original_params_;
+    // Re-initialize local UI state from the restored params so sliders match
+    train_ratio_ = 0.8f;
+    val_ratio_ = 0.1f;
+    test_ratio_ = 0.1f;
+    seed_ = 42;
+    stratified_ = true;
+    ReadFloatParam(original_params_, "train_ratio", train_ratio_);
+    ReadFloatParam(original_params_, "val_ratio", val_ratio_);
+    ReadFloatParam(original_params_, "test_ratio", test_ratio_);
+    ReadIntParam(original_params_, "seed", seed_);
+    ReadBoolParam(original_params_, "stratified", stratified_);
+    has_changes_ = false;
+}
+
+void DataSplitDialog::RenderContent() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Split Ratios");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    bool changed = false;
+    ImGui::Text("Train:");
+    ImGui::SameLine(80);
+    ImGui::SetNextItemWidth(180);
+    if (ImGui::SliderFloat("##train", &train_ratio_, 0.0f, 1.0f, "%.2f")) changed = true;
+
+    ImGui::Text("Validation:");
+    ImGui::SameLine(80);
+    ImGui::SetNextItemWidth(180);
+    if (ImGui::SliderFloat("##val", &val_ratio_, 0.0f, 1.0f, "%.2f")) changed = true;
+
+    ImGui::Text("Test:");
+    ImGui::SameLine(80);
+    ImGui::SetNextItemWidth(180);
+    if (ImGui::SliderFloat("##test", &test_ratio_, 0.0f, 1.0f, "%.2f")) changed = true;
+
+    if (changed) has_changes_ = true;
+
+    float sum = train_ratio_ + val_ratio_ + test_ratio_;
+    ImGui::Spacing();
+    if (std::abs(sum - 1.0f) > 0.01f) {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
+                           "Sum = %.2f (will be normalized to 1.00 on Apply)", sum);
+    } else {
+        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "Sum = %.2f", sum);
+    }
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Options");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Seed:");
+    ImGui::SameLine(80);
+    ImGui::SetNextItemWidth(180);
+    if (ImGui::InputInt("##seed", &seed_)) has_changes_ = true;
+    ImGui::TextDisabled("  Controls the shuffled order used when partitioning.");
+
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Stratified split", &stratified_)) has_changes_ = true;
+    ImGui::TextDisabled("  Preserve class distribution across splits (classification only).");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextDisabled(
+        "If no DataSplit node is in the graph, training uses defaults (80/10/10).\n"
+        "This node is the single source of truth for dataset partitioning.");
 }
 
 } // namespace gui

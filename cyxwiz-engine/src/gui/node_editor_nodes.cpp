@@ -2071,12 +2071,23 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::DataInput: {
             // Universal Data Input node - smart dialog auto-detects format
             // Supports: CSV, TSV, JSON, Parquet, Excel, HDF5, and more
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Data";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
+            // TWO outputs: Features (X) and Labels (Y) for ML training
+
+            // Output 1: Features (input data for model)
+            NodePin features_pin;
+            features_pin.id = next_pin_id_++;
+            features_pin.type = PinType::Tensor;
+            features_pin.name = "Features";
+            features_pin.is_input = false;
+            node.outputs.push_back(features_pin);
+
+            // Output 2: Labels (targets for loss function)
+            NodePin labels_pin;
+            labels_pin.id = next_pin_id_++;
+            labels_pin.type = PinType::Labels;
+            labels_pin.name = "Labels";
+            labels_pin.is_input = false;
+            node.outputs.push_back(labels_pin);
 
             // Core parameters (set by DataInputDialog)
             node.parameters["file_path"] = "";
@@ -2091,6 +2102,8 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
             // Column selection
             node.parameters["columns"] = "*";  // * = all, or comma-separated list
+            node.parameters["label_column"] = "";  // Target column name (e.g., "label", "class", "target")
+            node.parameters["feature_columns"] = "*";  // Feature columns (* = all except label)
 
             // Row filtering
             node.parameters["skip_rows"] = "0";
@@ -3382,54 +3395,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
-        case NodeType::TrainTestSplit: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin train_data;
-            train_data.id = next_pin_id_++;
-            train_data.type = PinType::Dataset;
-            train_data.name = "Train Data";
-            train_data.is_input = false;
-            node.outputs.push_back(train_data);
-
-            NodePin test_data;
-            test_data.id = next_pin_id_++;
-            test_data.type = PinType::Dataset;
-            test_data.name = "Test Data";
-            test_data.is_input = false;
-            node.outputs.push_back(test_data);
-
-            NodePin train_labels;
-            train_labels.id = next_pin_id_++;
-            train_labels.type = PinType::Labels;
-            train_labels.name = "Train Labels";
-            train_labels.is_input = false;
-            node.outputs.push_back(train_labels);
-
-            NodePin test_labels;
-            test_labels.id = next_pin_id_++;
-            test_labels.type = PinType::Labels;
-            test_labels.name = "Test Labels";
-            test_labels.is_input = false;
-            node.outputs.push_back(test_labels);
-
-            node.parameters["test_size"] = "0.2";
-            node.parameters["stratify"] = "true";
-            node.parameters["random_state"] = "42";
-            break;
-        }
+        // (TrainTestSplit case removed — use NodeType::DataSplit instead,
+        //  which supports 3-way train/val/test split and is the single source
+        //  of truth for dataset partitioning.)
 
         // ===== Phase 8: Advanced Preprocessing Nodes (UI Consolidation) =====
         case NodeType::OutlierDetector: {
@@ -4608,7 +4576,6 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::LabelEncoder:
         case NodeType::OrdinalEncoder:
         case NodeType::TargetEncoder:
-        case NodeType::TrainTestSplit:
             return IM_COL32(129, 199, 132, 255);
 
         // ===== Advanced Preprocessing Nodes - Amber =====

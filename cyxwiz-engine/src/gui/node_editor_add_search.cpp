@@ -113,7 +113,7 @@ void NodeEditor::InitializeSearchableNodes() {
     // Data Pipeline (DatasetInput consolidated into DataInput)
     addNode(NodeType::DataLoader, "DataLoader", "Data Pipeline", "batch iterator shuffle loader");
     addNode(NodeType::Augmentation, "Augmentation", "Data Pipeline", "transform augment preprocess");
-    addNode(NodeType::DataSplit, "DataSplit", "Data Pipeline", "train val test split partition");
+    addNode(NodeType::DataSplit, "Train/Val/Test Split", "Data Pipeline", "train val test split partition datasplit traintestsplit");
     addNode(NodeType::TensorReshape, "TensorReshape", "Data Pipeline", "reshape tensor dimensions");
     addNode(NodeType::Normalize, "Normalize", "Data Pipeline", "normalize mean std scale");
     addNode(NodeType::OneHotEncode, "OneHotEncode", "Data Pipeline", "one hot encoding labels categorical");

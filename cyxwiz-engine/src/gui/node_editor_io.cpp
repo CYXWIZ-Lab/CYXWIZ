@@ -19,10 +19,12 @@ namespace gui {
 // Helper: Convert string type name to NodeType enum
 static NodeType StringToNodeType(const std::string& type_str) {
     static const std::unordered_map<std::string, NodeType> type_map = {
-        // Data pipeline
-        {"Input", NodeType::DatasetInput},      // Pattern uses "Input" for data input
-        {"DataInput", NodeType::DatasetInput},
-        {"DatasetInput", NodeType::DatasetInput},
+        // Data pipeline - Smart I/O nodes
+        {"DataInput", NodeType::DataInput},           // Smart universal data input (2 outputs: Features, Labels)
+        {"DataOutput", NodeType::DataOutput},         // Smart universal data output
+        // Legacy data input nodes
+        {"Input", NodeType::DatasetInput},            // Pattern uses "Input" for legacy data input
+        {"DatasetInput", NodeType::DatasetInput},     // Legacy single-output data input
         {"Output", NodeType::Output},
 
         // Core layers

@@ -39,6 +39,22 @@ const std::vector<DataExplorerPanel::ExampleQuery> DataExplorerPanel::example_qu
 DataExplorerPanel::DataExplorerPanel()
     : Panel("Data Explorer", false) {
 
+    // NOTE: DuckDB initialization is deferred to first use (lazy init)
+    // This avoids blocking the UI thread for 60+ seconds during startup
+    // See EnsureDuckDBInitialized() for actual initialization
+
+    // Set default query
+    std::strcpy(query_buffer_, "SELECT * FROM 'file.csv' LIMIT 100");
+
+    // Get current directory
+    current_directory_ = std::filesystem::current_path().string();
+}
+
+void DataExplorerPanel::EnsureDuckDBInitialized() {
+    // Only attempt initialization once
+    if (duckdb_init_attempted_) return;
+    duckdb_init_attempted_ = true;
+
     // Check DuckDB availability
     duckdb_available_ = DataLoader::IsAvailable();
 
@@ -53,12 +69,6 @@ DataExplorerPanel::DataExplorerPanel()
     } else {
         spdlog::warn("DataExplorerPanel: DuckDB not available");
     }
-
-    // Set default query
-    std::strcpy(query_buffer_, "SELECT * FROM 'file.csv' LIMIT 100");
-
-    // Get current directory
-    current_directory_ = std::filesystem::current_path().string();
 }
 
 DataExplorerPanel::~DataExplorerPanel() {
@@ -74,6 +84,9 @@ DataExplorerPanel::~DataExplorerPanel() {
 
 void DataExplorerPanel::Render() {
     if (!visible_) return;
+
+    // Lazy initialize DuckDB on first render (avoids blocking startup)
+    EnsureDuckDBInitialized();
 
     // Handle pending recent file addition from async schema loading (main thread only)
     {

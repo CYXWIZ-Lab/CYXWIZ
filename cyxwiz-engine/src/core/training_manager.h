@@ -56,6 +56,19 @@ public:
     );
 
     /**
+     * Start training with Arrow dataset (modern API)
+     */
+    bool StartTrainingArrow(
+        TrainingConfiguration config,
+        std::shared_ptr<ArrowDataset> arrow_dataset,
+        const std::string& label_column,
+        int epochs,
+        int batch_size,
+        TrainingPlotPanel* plot_panel = nullptr,
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
+    /**
      * Stop the current training session
      */
     void StopTraining();

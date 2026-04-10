@@ -417,8 +417,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::OrdinalEncoder:
             case NodeType::TargetEncoder:
                 return ICON_TI_ABC;
-            case NodeType::TrainTestSplit:
-                return ICON_TI_CUT;
 
             // Advanced Preprocessing
             case NodeType::OutlierDetector:
@@ -746,7 +744,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::FillMissingValues:
                 return ICON_RI_SPARKLING;
             case NodeType::RemoveDuplicateRows:
-            case NodeType::TrainTestSplit:
                 return ICON_RI_CUT;
             case NodeType::RenameColumns:
             case NodeType::RowToColumnNames:
@@ -1076,8 +1073,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RenameColumns:
             case NodeType::RowToColumnNames:
                 return ICON_LU_EDIT;
-            case NodeType::TrainTestSplit:
-                return ICON_LU_SCISSORS;
 
             // ML Algorithms
             case NodeType::KMeansCluster:
@@ -1394,8 +1389,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RenameColumns:
             case NodeType::RowToColumnNames:
                 return ICON_IO_EDIT;
-            case NodeType::TrainTestSplit:
-                return ICON_IO_CUT;
 
             // ML Algorithms
             case NodeType::KMeansCluster:
@@ -1712,8 +1705,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RenameColumns:
             case NodeType::RowToColumnNames:
                 return ICON_PH_PENCIL;
-            case NodeType::TrainTestSplit:
-                return ICON_PH_SCISSORS;
 
             // ML Algorithms
             case NodeType::KMeansCluster:
@@ -2135,8 +2126,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::OrdinalEncoder:
         case NodeType::TargetEncoder:
             return ICON_FA_TAGS;
-        case NodeType::TrainTestSplit:
-            return ICON_FA_SCISSORS;
 
         // Advanced Preprocessing
         case NodeType::OutlierDetector:

@@ -25,6 +25,29 @@ Central Server (Rust) — Node registry, job scheduling, Solana payments
 
 **Key Principles**: Backend is shared DLL | Protocol-first (.proto) | Cross-platform | Reservation-based payment (pay for TIME)
 
+## Data Path Direction (v0.2.0 in-flight)
+
+**Arrow is THE tabular data path. The legacy `DatasetHandle / DatasetBatcher /
+StreamingDataset / LoadStreamingDataset / LRUCache` stack is being torn out —
+do not propose reconnecting it.** When you see dead UI (Memory Policy radio,
+LRU cache chunks, prefetch, Write-to-disc, etc.) those are remnants from the
+pre-Arrow lazy path. Remove them when you find them, don't try to revive.
+
+- Tabular data: `DataInputDialog` → `LoadCSVToArrow` → `ArrowDataset` →
+  `ArrowDatasetBatcher` → training. One path. No branching on memory_policy.
+- Speed and memory come from Arrow optimizations, not user knobs. Auto-detect
+  good defaults, bake them in, hide the controls.
+- `CompactIntegerColumns` (in `data_registry.cpp`) auto-downcasts int64 → uint8/16
+  when values fit, saving memory and batching time.
+- `block_size` for Arrow CSV reader is set to 256 MB by default in
+  `LoadCSVToArrow` so the table loads as one chunk and the batcher hits the
+  fast `raw_values()` path. Don't expose as a UI control unless explicitly asked.
+- Node editor follows **single-responsibility**: one concern per node. Separate
+  nodes for Normalize, Preprocess, DataSplit, DataLoader, etc. Do not couple
+  concerns into one node.
+- Users care about speed and memory, not configuration options. When adding
+  features, prefer smart defaults over knobs.
+
 ## Completed Features
 
 | Feature | Summary | Key Files |

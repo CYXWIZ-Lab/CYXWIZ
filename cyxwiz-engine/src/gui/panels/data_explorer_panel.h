@@ -188,9 +188,11 @@ private:
     bool sort_ascending_ = true;
     bool show_row_numbers_ = true;
 
-    // ===== DataLoader Instance =====
+    // ===== DataLoader Instance (Lazy Initialized) =====
     std::unique_ptr<DataLoader> data_loader_;
     bool duckdb_available_ = false;
+    bool duckdb_init_attempted_ = false;  // Lazy init flag
+    void EnsureDuckDBInitialized();       // Lazy init method
 
     // ===== Split Pane State =====
     float left_pane_width_ = 220.0f;

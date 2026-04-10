@@ -231,6 +231,20 @@ void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds) {
     total_training_time_ = total_time_seconds;
 }
 
+void TrainingPlotPanel::SetBatchProgress(int current_epoch, int current_batch,
+                                          int total_batches, float running_loss) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    // Advance epoch counter as soon as the first batch of that epoch fires,
+    // so the UI doesn't show "Epoch 0/N" while batch N of epoch 1 is running.
+    // Don't regress the counter (epoch_callback may have already set it higher).
+    if (current_epoch > current_epoch_) {
+        current_epoch_ = current_epoch;
+    }
+    current_batch_ = current_batch;
+    total_batches_ = total_batches;
+    current_batch_loss_ = running_loss;
+}
+
 void TrainingPlotPanel::ResetPlots() {
     Clear();
 }
@@ -476,6 +490,17 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         ImGui::Text("Epoch %d / %d", current_epoch_, total_epochs_);
         ImGui::SameLine(280);
         ImGui::ProgressBar(progress, ImVec2(200, 0));
+    }
+
+    // Batch-level progress within the current epoch (live feedback during training)
+    if (is_training_ && total_batches_ > 0) {
+        float batch_progress = static_cast<float>(current_batch_) /
+                                std::max(1, total_batches_);
+        ImGui::Text("Batch %d / %d", current_batch_, total_batches_);
+        ImGui::SameLine(280);
+        ImGui::ProgressBar(batch_progress, ImVec2(200, 0));
+        ImGui::SameLine();
+        ImGui::Text("running loss: %.4f", current_batch_loss_);
     }
 
     // Second row: timing info

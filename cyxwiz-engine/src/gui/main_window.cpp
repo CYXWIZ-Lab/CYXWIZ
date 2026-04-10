@@ -147,6 +147,7 @@
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <thread>
 
 #include "../core/file_dialogs.h"
@@ -393,6 +394,10 @@ MainWindow::MainWindow()
     query_console_->SetNodeEditor(node_editor_.get());
 
     // Set up training callback for Node Editor
+    node_editor_->SetCompileCallback([this]() {
+        this->CompileGraphAndReport();
+    });
+
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
         // Show Training Dashboard when training starts
@@ -472,6 +477,11 @@ MainWindow::MainWindow()
             data_explorer_panel_->SetVisible(true);
             spdlog::info("Opened Data Explorer panel for statistics");
         }
+    });
+
+    // Compile Graph - dry-run the graph compilation and show results in a popup
+    toolbar_->SetCompileGraphCallback([this]() {
+        CompileGraphAndReport();
     });
 
     // Start Training - compiles and runs training from node editor graph
@@ -2294,6 +2304,9 @@ void MainWindow::Render() {
         ImGui::ShowDemoWindow(&show_demo_window_);
     }
 
+    // Render the Compile Graph result popup (triggered from Train → Compile Graph menu)
+    RenderCompileResultPopup();
+
     // Render tutorial overlay (on top of all panels)
     cyxwiz::TutorialSystem::Instance().Render();
 
@@ -2730,11 +2743,12 @@ void MainWindow::SetDefaultPanelVisibility() {
 }
 
 void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-    spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
+    try {
+        spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
 
-    // Compile the graph
-    cyxwiz::GraphCompiler compiler;
-    cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
+        // Compile the graph
+        cyxwiz::GraphCompiler compiler;
+        cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
 
     if (!config.is_valid) {
         spdlog::error("Graph compilation failed: {}", config.error_message);
@@ -2744,16 +2758,275 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
                  config.layers.size(), config.input_size, config.output_size);
 
-    spdlog::warn("Local training from node graph is temporarily disabled.");
-    spdlog::info("To train your model:");
-    spdlog::info("  1. Use P2P Training panel for remote training on compute nodes");
-    spdlog::info("  2. Or use 'Generate Code' to export PyTorch/TensorFlow code");
-    spdlog::info("  3. Or set Execution Mode to 'DuckDB Pipeline' for data pipelines");
+    // Get dataset from DataRegistry (loaded by DataInput node)
+    auto& registry = cyxwiz::DataRegistry::Instance();
 
-    // Show P2P Training panel for user convenience
-    if (p2p_training_panel_) {
-        p2p_training_panel_->SetVisible(true);
-        spdlog::info("P2P Training panel opened - connect to a compute node to train");
+    // Find the dataset name from the DataInput node parameters
+    std::string dataset_name;
+    for (const auto& node : nodes) {
+        if (node.type == NodeType::DataInput || node.type == NodeType::DatasetInput) {
+            auto it = node.parameters.find("dataset_name");
+            if (it != node.parameters.end() && !it->second.empty()) {
+                dataset_name = it->second;
+                break;
+            }
+        }
+    }
+
+    if (dataset_name.empty()) {
+        spdlog::error("No dataset loaded. Please configure the Data Input node first.");
+        return;
+    }
+
+    // Get label column from DataInput node parameters
+    std::string label_column;
+    for (const auto& node : nodes) {
+        if (node.type == NodeType::DataInput) {
+            auto it = node.parameters.find("label_column");
+            if (it != node.parameters.end() && !it->second.empty()) {
+                label_column = it->second;
+            }
+            break;
+        }
+    }
+
+    // batch_size / shuffle / drop_last now live on the DataLoader node and are
+    // extracted by GraphCompiler into the TrainingConfiguration. If no DataLoader
+    // is present, config.batch_size already holds the default (32).
+    int batch_size = config.batch_size;
+
+    // epochs still lives on the optimizer node for this pass - it will move to a
+    // global Training Settings panel later (see Training Dashboard work).
+    int epochs = 10;
+    for (const auto& node : nodes) {
+        if (node.type == NodeType::Adam || node.type == NodeType::SGD ||
+            node.type == NodeType::AdamW || node.type == NodeType::RMSprop) {
+            auto it = node.parameters.find("epochs");
+            if (it != node.parameters.end() && !it->second.empty()) {
+                try { epochs = std::stoi(it->second); } catch (...) {}
+            }
+            // Legacy: batch_size on optimizer node is deprecated in favor of DataLoader.
+            // Honor it only if no DataLoader node is present, and log a warning.
+            auto bs_it = node.parameters.find("batch_size");
+            if (bs_it != node.parameters.end() && !bs_it->second.empty()) {
+                if (config.has_data_loader) {
+                    spdlog::warn("batch_size is set on the optimizer node AND a DataLoader node is "
+                                 "present - using DataLoader's value ({}). Remove batch_size from "
+                                 "the optimizer node to clear this warning.", batch_size);
+                } else {
+                    spdlog::warn("batch_size on the optimizer node is deprecated - move it to a "
+                                 "DataLoader node. Honoring legacy value for now.");
+                    try { batch_size = std::stoi(bs_it->second); } catch (...) {}
+                }
+            }
+            break;
+        }
+    }
+
+    // Start training using TrainingManager
+    auto& tm = cyxwiz::TrainingManager::Instance();
+
+    // Set up node editor callback to update training animation
+    auto node_editor_callback = [this](bool is_training) {
+        if (node_editor_) {
+            node_editor_->SetTrainingActive(is_training);
+        }
+    };
+
+    bool started = false;
+
+    // Check if Arrow dataset is available (modern Data Studio path)
+    if (registry.IsArrowDataset(dataset_name)) {
+        auto arrow_dataset = registry.GetArrowDataset(dataset_name);
+        if (arrow_dataset) {
+            spdlog::info("Starting Arrow-based training: dataset={}, epochs={}, batch_size={}, label={}",
+                         dataset_name, epochs, batch_size, label_column);
+
+            started = tm.StartTrainingArrow(
+                std::move(config),
+                arrow_dataset,
+                label_column,
+                epochs,
+                batch_size,
+                training_plot_panel_.get(),
+                node_editor_callback
+            );
+        } else {
+            spdlog::error("Arrow dataset '{}' is registered but could not be retrieved", dataset_name);
+        }
+    } else {
+        // Fall back to legacy DatasetHandle path
+        auto dataset = registry.GetDataset(dataset_name);
+        if (!dataset) {
+            spdlog::error("Dataset '{}' not found in registry. Load data first.", dataset_name);
+            return;
+        }
+
+        spdlog::info("Starting legacy training: dataset={}, epochs={}, batch_size={}",
+                     dataset_name, epochs, batch_size);
+
+        started = tm.StartTraining(
+            std::move(config),
+            dataset,
+            epochs,
+            batch_size,
+            training_plot_panel_.get(),
+            node_editor_callback
+        );
+    }
+
+    if (started) {
+        spdlog::info("Training started successfully");
+        if (training_plot_panel_) {
+            training_plot_panel_->SetVisible(true);
+        }
+    } else {
+        spdlog::error("Failed to start training - another training session may be active");
+    }
+
+    } catch (const std::exception& e) {
+        spdlog::error("StartTrainingFromGraph exception: {}", e.what());
+    } catch (...) {
+        spdlog::error("StartTrainingFromGraph unknown exception");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Compile Graph (dry-run) — validates and compiles the node graph without
+// starting training, then shows the result in a modal popup. Lets users catch
+// config errors before committing to a full training run.
+// ---------------------------------------------------------------------------
+
+void MainWindow::CompileGraphAndReport() {
+    if (!node_editor_) {
+        compile_result_success_ = false;
+        compile_result_message_ = "Node editor is not available.";
+        show_compile_result_popup_ = true;
+        return;
+    }
+
+    auto nodes = node_editor_->GetNodes();
+    auto links = node_editor_->GetLinks();
+
+    spdlog::info("CompileGraphAndReport: compiling {} nodes, {} links", nodes.size(), links.size());
+
+    try {
+        cyxwiz::GraphCompiler compiler;
+        cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
+
+        std::ostringstream out;
+        if (!config.is_valid) {
+            compile_result_success_ = false;
+            out << "Compilation failed:\n\n" << config.error_message;
+            spdlog::error("CompileGraphAndReport: {}", config.error_message);
+        } else {
+            compile_result_success_ = true;
+            out << "Compilation successful.\n\n";
+            out << "Layers:          " << config.layers.size() << "\n";
+            out << "Input size:      " << config.input_size;
+            if (!config.input_shape.empty()) {
+                out << "  (shape [";
+                for (size_t i = 0; i < config.input_shape.size(); ++i) {
+                    if (i) out << ", ";
+                    out << config.input_shape[i];
+                }
+                out << "])";
+            }
+            out << "\n";
+            out << "Output size:     " << config.output_size << "\n";
+            out << "\n";
+
+            out << "Dataset:         "
+                << (config.dataset_name.empty() ? "<not set in DataInput>" : config.dataset_name)
+                << "\n";
+
+            out << "Split ratios:    train=" << config.train_ratio
+                << ", val=" << config.val_ratio
+                << ", test=" << config.test_ratio
+                << (config.has_data_split ? " (from DataSplit node)" : " (default, no DataSplit node)")
+                << "\n";
+
+            out << "Batching:        batch_size=" << config.batch_size
+                << ", shuffle=" << (config.shuffle ? "true" : "false")
+                << ", drop_last=" << (config.drop_last ? "true" : "false")
+                << (config.has_data_loader ? " (from DataLoader node)" : " (default, no DataLoader node)")
+                << "\n";
+
+            if (config.num_workers > 0) {
+                out << "                 num_workers=" << config.num_workers
+                    << " (requested — not yet implemented)\n";
+            }
+
+            out << "\n";
+            out << "Loss:            " << config.GetLossName() << "\n";
+            out << "Optimizer:       " << config.GetOptimizerName()
+                << " (lr=" << config.learning_rate << ")\n";
+
+            if (config.preprocessing.has_normalization) {
+                out << "Preprocessing:   Normalize(mean=" << config.preprocessing.norm_mean
+                    << ", std=" << config.preprocessing.norm_std << ")\n";
+            }
+            if (config.preprocessing.has_onehot) {
+                out << "                 One-hot encoding ("
+                    << config.preprocessing.num_classes << " classes)\n";
+            }
+
+            spdlog::info("CompileGraphAndReport: success - {} layers, input={}, output={}, "
+                         "batch_size={}, shuffle={}, split={:.2f}/{:.2f}/{:.2f}",
+                         config.layers.size(), config.input_size, config.output_size,
+                         config.batch_size, config.shuffle,
+                         config.train_ratio, config.val_ratio, config.test_ratio);
+        }
+
+        compile_result_message_ = out.str();
+    } catch (const std::exception& e) {
+        compile_result_success_ = false;
+        compile_result_message_ = std::string("Compilation threw an exception:\n\n") + e.what();
+        spdlog::error("CompileGraphAndReport exception: {}", e.what());
+    } catch (...) {
+        compile_result_success_ = false;
+        compile_result_message_ = "Compilation threw an unknown exception.";
+        spdlog::error("CompileGraphAndReport unknown exception");
+    }
+
+    show_compile_result_popup_ = true;
+}
+
+void MainWindow::RenderCompileResultPopup() {
+    if (show_compile_result_popup_) {
+        ImGui::OpenPopup("Compile Graph Result");
+        show_compile_result_popup_ = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(620, 440), ImGuiCond_Appearing);
+
+    if (ImGui::BeginPopupModal("Compile Graph Result", nullptr, ImGuiWindowFlags_NoResize)) {
+        if (compile_result_success_) {
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "%s", "[OK]  Graph is valid and ready to train");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", "[FAIL]  Graph has errors — see below");
+        }
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::BeginChild("CompileResultText",
+                          ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 8),
+                          true);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(compile_result_message_.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+
+        ImGui::Spacing();
+        float button_width = 120.0f;
+        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - button_width) * 0.5f);
+        if (ImGui::Button("OK", ImVec2(button_width, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
     }
 }
 
@@ -2885,6 +3158,12 @@ void MainWindow::HandleGlobalShortcuts() {
             command_window_->SetVisible(true);
             spdlog::info("Opened Python Console via F12");
         }
+    }
+
+    // Compile Graph (F7) - dry-run the node graph without starting training
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F7)) {
+        CompileGraphAndReport();
+        spdlog::info("Compile Graph invoked via F7");
     }
 
     // Pattern Browser (Ctrl+Shift+P) - Always available

@@ -159,7 +159,7 @@ bool NodeEditor::Expects2DInput(NodeType type) const {
 
 bool NodeEditor::IsGraphValid() const {
     // Quick check for training readiness
-    // Need: DatasetInput node, at least one model layer, and a loss node
+    // Need: DataInput/DatasetInput node, at least one model layer, and a loss node
     if (nodes_.empty()) return false;
 
     bool has_dataset_input = false;
@@ -167,9 +167,24 @@ bool NodeEditor::IsGraphValid() const {
     bool has_model_layer = false;
 
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::DatasetInput) has_dataset_input = true;
-        if (node.type == NodeType::CrossEntropyLoss || node.type == NodeType::MSELoss) has_loss = true;
-        if (node.type == NodeType::Dense || node.type == NodeType::Conv2D) has_model_layer = true;
+        // Both smart DataInput and legacy DatasetInput nodes are valid data sources
+        if (node.type == NodeType::DataInput || node.type == NodeType::DatasetInput) {
+            has_dataset_input = true;
+        }
+        // All loss functions
+        if (node.type == NodeType::CrossEntropyLoss || node.type == NodeType::MSELoss ||
+            node.type == NodeType::BCELoss || node.type == NodeType::BCEWithLogits ||
+            node.type == NodeType::L1Loss || node.type == NodeType::SmoothL1Loss ||
+            node.type == NodeType::HuberLoss || node.type == NodeType::NLLLoss) {
+            has_loss = true;
+        }
+        // Model layers
+        if (node.type == NodeType::Dense || node.type == NodeType::Conv2D ||
+            node.type == NodeType::Conv1D || node.type == NodeType::Conv3D ||
+            node.type == NodeType::LSTM || node.type == NodeType::GRU ||
+            node.type == NodeType::RNN || node.type == NodeType::MultiHeadAttention) {
+            has_model_layer = true;
+        }
     }
 
     // For training we need: dataset input, model layers, and loss

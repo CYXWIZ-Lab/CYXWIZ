@@ -1,8 +1,9 @@
 #pragma once
 
 #include "graph_compiler.h"
-#include "dataset_batcher.h"
+#include "dataset_batcher.h"  // Includes ArrowDatasetBatcher
 #include "data_registry.h"
+#include "arrow_dataset.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
@@ -54,7 +55,8 @@ struct TrainingMetrics {
 /**
  * Callback types for training progress
  */
-using BatchCallback = std::function<void(int epoch, int batch, float loss, float accuracy)>;
+using BatchCallback = std::function<void(int epoch, int batch, int total_batches,
+                                           float loss, float accuracy)>;
 using EpochCallback = std::function<void(int epoch, float train_loss, float train_acc,
                                           float val_loss, float val_acc, float epoch_time)>;
 using TrainingCompleteCallback = std::function<void(const TrainingMetrics& final_metrics)>;
@@ -78,6 +80,16 @@ public:
      * @param dataset Dataset handle from DataRegistry
      */
     TrainingExecutor(TrainingConfiguration config, DatasetHandle dataset);
+
+    /**
+     * Create a training executor with Arrow dataset (modern API)
+     * @param config Compiled training configuration from GraphCompiler
+     * @param arrow_dataset Arrow dataset with features and labels
+     * @param label_column Name of the label column
+     */
+    TrainingExecutor(TrainingConfiguration config, 
+                     std::shared_ptr<ArrowDataset> arrow_dataset,
+                     const std::string& label_column);
 
     ~TrainingExecutor();
 
@@ -155,6 +167,9 @@ public:
 private:
     TrainingConfiguration config_;
     DatasetHandle dataset_;
+    std::shared_ptr<ArrowDataset> arrow_dataset_;
+    std::string label_column_;
+    bool use_arrow_ = false;
 
     // Thread safety
     std::atomic<bool> is_training_{false};
@@ -195,6 +210,20 @@ private:
      * Run validation
      */
     void RunValidation(DatasetBatcher& batcher);
+
+    /**
+     * Run a single training epoch with Arrow batcher
+     */
+    void RunTrainingEpochArrow(
+        ArrowDatasetBatcher& batcher,
+        int epoch,
+        BatchCallback batch_cb
+    );
+
+    /**
+     * Run validation with Arrow batcher
+     */
+    void RunValidationArrow(ArrowDatasetBatcher& batcher);
 
     /**
      * Forward pass through the model

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "data_registry.h"
+#include "arrow_dataset.h"
 #include <cyxwiz/tensor.h>
 #include <vector>
 #include <random>
@@ -254,6 +255,91 @@ private:
     std::unique_ptr<DatasetBatcher> train_batcher_;
     std::unique_ptr<DatasetBatcher> val_batcher_;
     std::unique_ptr<DatasetBatcher> test_batcher_;
+};
+
+/**
+ * ArrowDatasetBatcher - Batched iteration over Arrow datasets
+ *
+ * Similar to DatasetBatcher but works with ArrowDataset (columnar data)
+ * for Data Studio pipelines.
+ */
+class ArrowDatasetBatcher {
+public:
+    /**
+     * Create a batcher for Arrow dataset
+     * @param dataset ArrowDataset containing data
+     * @param label_column Name of the label column (empty for unsupervised)
+     * @param batch_size Number of samples per batch
+     * @param shuffle Whether to shuffle samples each epoch
+     * @param train_split Fraction of data for training (0.8 = 80% train)
+     * @param is_training Whether this is a training batcher (affects split)
+     */
+    ArrowDatasetBatcher(
+        std::shared_ptr<class ArrowDataset> dataset,
+        const std::string& label_column,
+        size_t batch_size,
+        bool shuffle = true,
+        float train_split = 0.8f,
+        bool is_training = true
+    );
+
+    /**
+     * Get the next batch
+     * @return Batch with data and labels tensors
+     */
+    Batch GetNextBatch();
+
+    /**
+     * Reset to beginning of epoch (re-shuffles if shuffle=true)
+     */
+    void Reset();
+
+    /**
+     * Check if current epoch is complete
+     */
+    bool IsEpochComplete() const;
+
+    /**
+     * Get total number of batches per epoch
+     */
+    size_t GetNumBatches() const;
+
+    /**
+     * Get total number of samples in this split
+     */
+    size_t GetNumSamples() const { return indices_.size(); }
+
+    // Preprocessing
+    void SetNormalization(float mean, float std);
+    void SetOneHotEncoding(size_t num_classes);
+    void SetFlatten(bool flatten) { flatten_ = flatten; }
+
+private:
+    std::shared_ptr<class ArrowDataset> dataset_;
+    std::string label_column_;
+    size_t batch_size_;
+    bool shuffle_;
+    bool is_training_;
+
+    std::vector<int64_t> indices_;   // Row indices for this split
+    size_t current_index_ = 0;
+    std::mt19937 rng_;
+
+    // Feature and label column indices
+    std::vector<int> feature_cols_;
+    int label_col_idx_ = -1;
+    size_t num_features_ = 0;
+
+    // Preprocessing
+    bool normalize_ = false;
+    float norm_mean_ = 0.0f;
+    float norm_std_ = 1.0f;
+    bool one_hot_ = false;
+    size_t num_classes_ = 10;  // Default for MNIST
+    bool flatten_ = true;
+
+    void ShuffleIndices();
+    void InitializeColumns();
 };
 
 } // namespace cyxwiz

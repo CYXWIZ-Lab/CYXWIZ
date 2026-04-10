@@ -300,8 +300,15 @@ public:
     bool IsArrowDataset(const std::string& name) const;
 
     // Arrow format-specific loaders (for DataInput node)
+    //
+    // block_size_bytes: Arrow CSV reader block size. Larger values load the
+    // whole table as a single Arrow chunk, which is dramatically faster for
+    // training (single-chunk fast path in ArrowDatasetBatcher). Default 256 MB
+    // covers almost all ML datasets in one chunk. Pass 0 to use Arrow's default
+    // (1 MB, slow — only for memory-constrained environments).
     std::shared_ptr<class ArrowDataset> LoadCSVToArrow(const std::string& path, const std::string& name,
-                                                        bool has_header = true, char delimiter = ',', int skip_rows = 0);
+                                                        bool has_header = true, char delimiter = ',', int skip_rows = 0,
+                                                        int64_t block_size_bytes = 256 * 1024 * 1024);
     std::shared_ptr<class ArrowDataset> LoadParquetToArrow(const std::string& path, const std::string& name);
     std::shared_ptr<class ArrowDataset> LoadJSONToArrow(const std::string& path, const std::string& name, bool json_lines = false);
     std::shared_ptr<class ArrowDataset> LoadExcelToArrow(const std::string& path, const std::string& name, int sheet_idx = 0);

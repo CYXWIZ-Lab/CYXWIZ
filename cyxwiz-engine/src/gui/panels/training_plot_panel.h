@@ -44,6 +44,14 @@ public:
                           float epoch_time_seconds, float samples_per_second);
     void SetTrainingComplete(float total_time_seconds);
 
+    // Per-batch progress updates (thread-safe). Called from TrainingManager's
+    // batch_cb so the dashboard shows live activity inside an epoch instead of
+    // freezing at "Epoch 0/N" for several minutes until the first epoch finishes.
+    // Also updates current_epoch_ so the epoch counter advances as soon as the
+    // first batch of that epoch runs (not at epoch end).
+    void SetBatchProgress(int current_epoch, int current_batch, int total_batches,
+                          float running_loss);
+
     // Getters for live metrics (thread-safe)
     bool HasData() const { return !train_loss_.values.empty(); }
     bool IsTraining() const { return is_training_; }
@@ -85,6 +93,9 @@ private:
     bool is_training_ = false;
     int current_epoch_ = 0;
     int total_epochs_ = 0;
+    int current_batch_ = 0;
+    int total_batches_ = 0;
+    float current_batch_loss_ = 0.0f;
     float last_epoch_time_ = 0.0f;
     float avg_epoch_time_ = 0.0f;
     float samples_per_second_ = 0.0f;

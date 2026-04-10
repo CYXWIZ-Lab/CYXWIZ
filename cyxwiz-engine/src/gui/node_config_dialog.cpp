@@ -919,6 +919,15 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
     RegisterDialog(NT::DataOutput, [](MLNode* node) {
         return std::make_unique<DataOutputDialog>(node);
     });
+
+    // Data pipeline nodes - single source of truth for batching and splitting
+    RegisterDialog(NT::DataLoader, [](MLNode* node) {
+        return std::make_unique<DataLoaderDialog>(node);
+    });
+
+    RegisterDialog(NT::DataSplit, [](MLNode* node) {
+        return std::make_unique<DataSplitDialog>(node);
+    });
 }
 
 void NodeConfigDialogFactory::RegisterDialog(NodeType type, DialogCreator creator) {
@@ -963,7 +972,9 @@ bool ShouldShowOpenDialogButton(NT type) {
         case NT::MathFormula:
         case NT::RuleEngine:
         case NT::WordEmbeddings:
-        case NT::TrainTestSplit:
+        // Data pipeline nodes
+        case NT::DataLoader:
+        case NT::DataSplit:
             return true;
         default:
             return false;

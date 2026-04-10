@@ -895,16 +895,9 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"feature_range_max", "float", "1.0", "Max value", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::TrainTestSplit, NodeCategory::Preprocessing, "Train/Test Split", ICON_FA_DIVIDE,
-        {"split", "train", "test"}, 0, false, "Stratified train/test split",
-        "Split data into training and test sets with optional stratification.", "",
-        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, false, "Labels (for stratification)"}},
-        {{"X_train", PinType::Dataset, true, "Train features"}, {"X_test", PinType::Dataset, true, "Test features"},
-         {"y_train", PinType::Labels, true, "Train labels"}, {"y_test", PinType::Labels, true, "Test labels"}},
-        {{"test_size", "float", "0.2", "Test set fraction", {}, "0.1-0.5"},
-         {"stratify", "bool", "true", "Stratified split", {}, ""},
-         {"random_state", "int", "42", "Random seed", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+    // (TrainTestSplit registration removed — use NodeType::DataSplit, which
+    //  supports 3-way train/val/test split and is the single source of truth
+    //  for dataset partitioning. See node_editor_add_search.cpp for its entry.)
 
     RegisterNode({NodeType::DataProfiler, NodeCategory::Analytics, "Data Profiler", ICON_FA_MAGNIFYING_GLASS_CHART,
         {"profiler", "eda", "exploration"}, 0, false, "Comprehensive data profiling",

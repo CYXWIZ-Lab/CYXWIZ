@@ -132,6 +132,14 @@ void ToolbarPanel::RenderNodesMenu() {
 
 void ToolbarPanel::RenderTrainMenu() {
     if (ImGui::BeginMenu("Train")) {
+        if (ImGui::MenuItem("Compile Graph", "F7")) {
+            if (compile_graph_callback_) {
+                compile_graph_callback_();
+            }
+        }
+
+        ImGui::Separator();
+
         if (ImGui::MenuItem("Start Training", "F5")) {
             if (start_training_callback_) {
                 start_training_callback_();

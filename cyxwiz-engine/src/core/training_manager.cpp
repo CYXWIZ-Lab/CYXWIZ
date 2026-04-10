@@ -107,6 +107,112 @@ bool TrainingManager::StartTraining(
     return true;
 }
 
+bool TrainingManager::StartTrainingArrow(
+    TrainingConfiguration config,
+    std::shared_ptr<ArrowDataset> arrow_dataset,
+    const std::string& label_column,
+    int epochs,
+    int batch_size,
+    TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback)
+{
+    // Check if already training
+    if (is_training_.load()) {
+        spdlog::warn("TrainingManager: Cannot start training - already training");
+        return false;
+    }
+
+    if (!arrow_dataset) {
+        spdlog::error("TrainingManager: Arrow dataset is null");
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Double-check after acquiring lock
+    if (is_training_.load()) {
+        return false;
+    }
+
+    // Update input size from actual data
+    size_t num_cols = arrow_dataset->GetNumColumns();
+    size_t num_rows = arrow_dataset->GetNumRows();
+
+    // Input size = all columns except label
+    // ArrowDatasetBatcher auto-detects label columns, so always reserve one column for label
+    // when dataset has multiple columns (typical ML dataset structure)
+    if (num_cols > 1) {
+        config.input_size = num_cols - 1;
+        spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, input_size={} (assuming 1 label column)",
+                     num_rows, num_cols, config.input_size);
+    } else {
+        config.input_size = num_cols;
+        spdlog::warn("TrainingManager: Arrow dataset has only {} column - no separate label column", num_cols);
+    }
+
+    // Create executor with Arrow dataset
+    auto executor = std::make_unique<TrainingExecutor>(std::move(config), arrow_dataset, label_column);
+
+    // Set state
+    is_training_.store(true);
+    stop_requested_.store(false);
+
+    // Activate node editor animation
+    if (node_editor_callback) {
+        node_editor_callback(true);
+    }
+
+    // Clear plot panel and set initial training state
+    if (plot_panel) {
+        plot_panel->Clear();
+        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
+        plot_panel->SetVisible(true);
+    }
+
+    // Create async task for visibility in Tasks panel
+    std::string task_name = "Training Model (Arrow)";
+    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [](LambdaTask& task) {
+            while (!task.ShouldStop()) {
+                auto& mgr = TrainingManager::Instance();
+                if (!mgr.IsTrainingActive()) {
+                    break;
+                }
+                auto metrics = mgr.GetCurrentMetrics();
+                float progress = static_cast<float>(metrics.current_epoch) / std::max(1, metrics.total_epochs);
+                task.ReportProgress(progress,
+                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
+                    std::to_string(metrics.total_epochs) +
+                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            task.MarkCompleted();
+        },
+        nullptr,
+        nullptr
+    ));
+
+    // Notify start callback
+    if (on_training_start_) {
+        on_training_start_("Training from Arrow Dataset");
+    }
+
+    // Wait for previous thread if any
+    if (training_thread_ && training_thread_->joinable()) {
+        training_thread_->join();
+    }
+
+    // Start training thread
+    training_thread_ = std::make_unique<std::thread>(
+        &TrainingManager::TrainingThreadFunc, this,
+        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
+    );
+
+    spdlog::info("TrainingManager: Started Arrow training ({} epochs, batch_size={})", epochs, batch_size);
+    return true;
+}
+
 void TrainingManager::StopTraining() {
     if (!is_training_.load()) {
         return;
@@ -236,10 +342,28 @@ void TrainingManager::TrainingThreadFunc(
         }
 
         if (exec) {
+            // Per-batch callback — keeps the Training Dashboard responsive during
+            // the epoch. Without this, the dashboard stays on "Epoch 0/N" for the
+            // full duration of the first epoch because epoch_callback only fires
+            // at epoch boundaries.
+            auto batch_callback = [this, plot_panel](int epoch, int batch, int total_batches,
+                                                      float batch_loss, float /*batch_acc*/) {
+                {
+                    std::lock_guard<std::mutex> lock(metrics_mutex_);
+                    cached_metrics_.current_epoch = epoch;
+                    cached_metrics_.current_batch = batch;
+                    cached_metrics_.total_batches = total_batches;
+                    cached_metrics_.train_loss = batch_loss;  // running estimate, overwritten each batch
+                }
+                if (plot_panel) {
+                    plot_panel->SetBatchProgress(epoch, batch, total_batches, batch_loss);
+                }
+            };
+
             exec->Train(
                 epochs,
                 batch_size,
-                nullptr,  // batch callback
+                batch_callback,
                 epoch_callback,
                 [this, &final_metrics](const TrainingMetrics& metrics) {
                     final_metrics = metrics;

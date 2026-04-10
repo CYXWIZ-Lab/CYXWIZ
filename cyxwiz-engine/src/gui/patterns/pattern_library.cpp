@@ -438,6 +438,10 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"Constant", NodeType::Constant},
         {"Parameter", NodeType::Parameter},
 
+        // Smart I/O (primary)
+        {"DataInput", NodeType::DataInput},
+        {"DataOutput", NodeType::DataOutput},
+
         // Data Pipeline
         {"DatasetInput", NodeType::DatasetInput},
         {"DataLoader", NodeType::DataLoader},

@@ -17,8 +17,25 @@ namespace cyxwiz {
 TrainingExecutor::TrainingExecutor(TrainingConfiguration config, DatasetHandle dataset)
     : config_(std::move(config))
     , dataset_(dataset)
+    , use_arrow_(false)
 {
     spdlog::info("TrainingExecutor: Created with {} layers, input_size={}, output_size={}",
+                 config_.layers.size(), config_.input_size, config_.output_size);
+}
+
+TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
+                                   std::shared_ptr<ArrowDataset> arrow_dataset,
+                                   const std::string& label_column)
+    : config_(std::move(config))
+    , arrow_dataset_(arrow_dataset)
+    , label_column_(label_column)
+    , use_arrow_(true)
+{
+    spdlog::info("TrainingExecutor: Created with Arrow dataset ({} rows, {} cols), label='{}'",
+                 arrow_dataset_ ? arrow_dataset_->GetNumRows() : 0,
+                 arrow_dataset_ ? arrow_dataset_->GetNumColumns() : 0,
+                 label_column_);
+    spdlog::info("TrainingExecutor: Model has {} layers, input_size={}, output_size={}",
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
 
@@ -271,93 +288,135 @@ void TrainingExecutor::Train(
         m.val_accuracy_history.clear();
     });
 
-    // Create batchers
-    DatasetBatcher train_batcher(dataset_, batch_size, DatasetSplit::Train, true, false);
-    DatasetBatcher val_batcher(dataset_, batch_size, DatasetSplit::Validation, false, false);
+    // Create batchers - either Arrow or legacy
+    std::unique_ptr<ArrowDatasetBatcher> arrow_train_batcher;
+    std::unique_ptr<ArrowDatasetBatcher> arrow_val_batcher;
+    std::unique_ptr<DatasetBatcher> legacy_train_batcher;
+    std::unique_ptr<DatasetBatcher> legacy_val_batcher;
 
-    // Apply NEW preprocessing pipeline (if configured)
-    std::string dataset_name = dataset_.GetName();
-    DataRegistry& registry = DataRegistry::Instance();
+    size_t num_train_samples = 0;
 
-    if (registry.HasPreprocessingConfig(dataset_name)) {
-        spdlog::info("TrainingExecutor: Found preprocessing config for dataset '{}'", dataset_name);
+    if (use_arrow_) {
+        // Arrow-based batching (Data Studio)
+        spdlog::info("TrainingExecutor: Using Arrow dataset for training "
+                     "(batch_size={}, shuffle={}, train_ratio={:.2f})",
+                     batch_size, config_.shuffle, config_.train_ratio);
 
-        PreprocessingConfig preprocessing_config = registry.GetPreprocessingConfig(dataset_name);
+        // Honor DataLoader/DataSplit node config (or defaults if no such nodes)
+        // Validation batcher never shuffles regardless of config.
+        arrow_train_batcher = std::make_unique<ArrowDatasetBatcher>(
+            arrow_dataset_, label_column_, batch_size,
+            config_.shuffle, config_.train_ratio, true);
+        arrow_val_batcher = std::make_unique<ArrowDatasetBatcher>(
+            arrow_dataset_, label_column_, batch_size,
+            false, config_.train_ratio, false);
 
-        if (preprocessing_config.enabled) {
-            // Set config on batchers
-            train_batcher.SetPreprocessingConfig(preprocessing_config);
-            val_batcher.SetPreprocessingConfig(preprocessing_config);
+        if (config_.drop_last) {
+            spdlog::warn("TrainingExecutor: drop_last=true requested but ArrowDatasetBatcher "
+                         "does not yet support it - last partial batch will be kept");
+        }
+        if (config_.has_data_split && config_.test_ratio > 0.01f) {
+            spdlog::warn("TrainingExecutor: test_ratio={:.2f} configured on DataSplit but "
+                         "ArrowDatasetBatcher has no held-out test split - the test portion "
+                         "will be merged into validation. train={:.2f}, val+test={:.2f}",
+                         config_.test_ratio, config_.train_ratio, 1.0f - config_.train_ratio);
+        }
 
-            // Compute statistics (with progress callback)
-            spdlog::info("TrainingExecutor: Computing dataset statistics...");
-            DatasetStatistics stats = StatisticsCalculator::Compute(
-                dataset_name,
-                &registry,
-                [](float progress) {
-                    // Optional: Update progress UI
-                    spdlog::debug("Statistics computation: {:.1f}%", progress * 100.0f);
+        // Apply preprocessing from config
+        if (config_.preprocessing.has_normalization) {
+            arrow_train_batcher->SetNormalization(config_.preprocessing.norm_mean,
+                                                   config_.preprocessing.norm_std);
+            arrow_val_batcher->SetNormalization(config_.preprocessing.norm_mean,
+                                                 config_.preprocessing.norm_std);
+        }
+
+        // One-hot encoding for classification
+        if (config_.preprocessing.has_onehot) {
+            arrow_train_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
+            arrow_val_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
+        } else {
+            // Default to output_size for classification
+            arrow_train_batcher->SetOneHotEncoding(config_.output_size);
+            arrow_val_batcher->SetOneHotEncoding(config_.output_size);
+        }
+
+        num_train_samples = arrow_train_batcher->GetNumSamples();
+    } else {
+        // Legacy DatasetHandle batching
+        spdlog::info("TrainingExecutor: Using legacy dataset for training "
+                     "(batch_size={}, shuffle={}, drop_last={})",
+                     batch_size, config_.shuffle, config_.drop_last);
+
+        // Honor DataLoader node config (or defaults if no such node).
+        // Validation batcher never shuffles and never drops the last batch.
+        legacy_train_batcher = std::make_unique<DatasetBatcher>(
+            dataset_, batch_size, DatasetSplit::Train,
+            config_.shuffle, config_.drop_last);
+        legacy_val_batcher = std::make_unique<DatasetBatcher>(
+            dataset_, batch_size, DatasetSplit::Validation, false, false);
+
+        // Apply NEW preprocessing pipeline (if configured)
+        std::string dataset_name = dataset_.GetName();
+        DataRegistry& registry = DataRegistry::Instance();
+
+        if (registry.HasPreprocessingConfig(dataset_name)) {
+            spdlog::info("TrainingExecutor: Found preprocessing config for dataset '{}'", dataset_name);
+
+            PreprocessingConfig preprocessing_config = registry.GetPreprocessingConfig(dataset_name);
+
+            if (preprocessing_config.enabled) {
+                legacy_train_batcher->SetPreprocessingConfig(preprocessing_config);
+                legacy_val_batcher->SetPreprocessingConfig(preprocessing_config);
+
+                spdlog::info("TrainingExecutor: Computing dataset statistics...");
+                DatasetStatistics stats = StatisticsCalculator::Compute(
+                    dataset_name, &registry,
+                    [](float progress) {
+                        spdlog::debug("Statistics computation: {:.1f}%", progress * 100.0f);
+                    }
+                );
+
+                if (stats.is_valid) {
+                    legacy_train_batcher->InitializePreprocessing(stats);
+                    legacy_val_batcher->InitializePreprocessing(stats);
+                    spdlog::info("TrainingExecutor: Preprocessing pipeline initialized");
                 }
-            );
-
-            if (stats.is_valid) {
-                // Initialize preprocessing pipeline with statistics
-                train_batcher.InitializePreprocessing(stats);
-                val_batcher.InitializePreprocessing(stats);
-                spdlog::info("TrainingExecutor: Preprocessing pipeline initialized successfully");
-            } else {
-                spdlog::error("TrainingExecutor: Failed to compute statistics, preprocessing disabled");
             }
-        } else {
-            spdlog::info("TrainingExecutor: Preprocessing config exists but is disabled");
         }
-    } else {
-        spdlog::info("TrainingExecutor: No preprocessing config found for dataset '{}'", dataset_name);
-    }
 
-    // Load augmentation pipeline (NEW - applied BEFORE preprocessing, only on training split)
-    if (registry.HasAugmentationPipeline(dataset_name)) {
-        auto aug_pipeline = registry.GetAugmentationPipeline(dataset_name);
-
-        if (aug_pipeline) {
-            train_batcher.SetAugmentationPipeline(aug_pipeline);
-            train_batcher.SetApplyAugmentationOnTrain(true);
-
-            // Don't apply augmentation to validation - we want clean metrics
-            // val_batcher does NOT get augmentation
-
-            spdlog::info("TrainingExecutor: Augmentation pipeline enabled for training split");
-        } else {
-            spdlog::warn("TrainingExecutor: Augmentation pipeline registered but is null");
+        // Load augmentation pipeline
+        std::string dataset_name_aug = dataset_.GetName();
+        if (registry.HasAugmentationPipeline(dataset_name_aug)) {
+            auto aug_pipeline = registry.GetAugmentationPipeline(dataset_name_aug);
+            if (aug_pipeline) {
+                legacy_train_batcher->SetAugmentationPipeline(aug_pipeline);
+                legacy_train_batcher->SetApplyAugmentationOnTrain(true);
+            }
         }
-    } else {
-        spdlog::debug("TrainingExecutor: No augmentation pipeline found for dataset '{}'", dataset_name);
+
+        // Apply OLD preprocessing settings
+        if (config_.preprocessing.has_normalization) {
+            legacy_train_batcher->SetNormalization(config_.preprocessing.norm_mean,
+                                                    config_.preprocessing.norm_std);
+            legacy_val_batcher->SetNormalization(config_.preprocessing.norm_mean,
+                                                  config_.preprocessing.norm_std);
+        }
+
+        if (config_.preprocessing.has_onehot) {
+            legacy_train_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
+            legacy_val_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
+        }
+
+        legacy_train_batcher->SetFlatten(true);
+        legacy_val_batcher->SetFlatten(true);
+
+        num_train_samples = legacy_train_batcher->GetNumSamples();
     }
 
-    // Apply OLD preprocessing settings (DEPRECATED - for backward compatibility)
-    if (config_.preprocessing.has_normalization) {
-        spdlog::info("TrainingExecutor: Applying normalization (mean={}, std={})",
-                     config_.preprocessing.norm_mean, config_.preprocessing.norm_std);
-        train_batcher.SetNormalization(config_.preprocessing.norm_mean,
-                                        config_.preprocessing.norm_std);
-        val_batcher.SetNormalization(config_.preprocessing.norm_mean,
-                                      config_.preprocessing.norm_std);
-    } else {
-        spdlog::info("TrainingExecutor: No normalization configured");
-    }
+    spdlog::info("TrainingExecutor: Starting training for {} epochs, batch_size={}, samples={}",
+                 epochs, batch_size, num_train_samples);
 
-    if (config_.preprocessing.has_onehot) {
-        train_batcher.SetOneHotEncoding(config_.preprocessing.num_classes);
-        val_batcher.SetOneHotEncoding(config_.preprocessing.num_classes);
-    }
-
-    // Flatten input for MLP
-    train_batcher.SetFlatten(true);
-    val_batcher.SetFlatten(true);
-
-    spdlog::info("TrainingExecutor: Starting training for {} epochs, batch_size={}",
-                 epochs, batch_size);
-
+    spdlog::debug("TrainingExecutor: Step 1 - Notifying plugin hooks");
     // Notify plugin hooks: training start
     {
         cyxwiz::plugin::TrainingContext ctx;
@@ -366,11 +425,14 @@ void TrainingExecutor::Train(
         cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyTrainingStart(ctx);
     }
 
+    spdlog::debug("TrainingExecutor: Step 2 - Setting model to training mode");
     // Set model to training mode
     model_->SetTraining(true);
 
+    spdlog::debug("TrainingExecutor: Step 3 - Entering training loop");
     // Training loop
     for (int epoch = 1; epoch <= epochs; ++epoch) {
+        spdlog::debug("TrainingExecutor: Epoch {} starting", epoch);
         if (ShouldStop()) break;
         // Check plugin early stopping
         {
@@ -401,14 +463,23 @@ void TrainingExecutor::Train(
             cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyEpochStart(ctx);
         }
 
-        // Run training epoch
-        RunTrainingEpoch(train_batcher, epoch, batch_cb);
+        spdlog::debug("TrainingExecutor: About to call RunTrainingEpochArrow");
+        // Run training epoch - use appropriate batcher type
+        if (use_arrow_) {
+            RunTrainingEpochArrow(*arrow_train_batcher, epoch, batch_cb);
+        } else {
+            RunTrainingEpoch(*legacy_train_batcher, epoch, batch_cb);
+        }
 
         if (ShouldStop()) break;
 
         // Run validation (eval mode)
         model_->SetTraining(false);
-        RunValidation(val_batcher);
+        if (use_arrow_) {
+            RunValidationArrow(*arrow_val_batcher);
+        } else {
+            RunValidation(*legacy_val_batcher);
+        }
         model_->SetTraining(true);
 
         auto epoch_end = std::chrono::steady_clock::now();
@@ -418,7 +489,7 @@ void TrainingExecutor::Train(
         TrainingMetrics current = GetMetrics();
 
         // Compute samples per second
-        float samples_per_sec = train_batcher.GetNumSamples() / epoch_time;
+        float samples_per_sec = static_cast<float>(num_train_samples) / epoch_time;
 
         // Update history
         UpdateMetrics([&](TrainingMetrics& m) {
@@ -454,8 +525,13 @@ void TrainingExecutor::Train(
         }
 
         // Reset batchers for next epoch
-        train_batcher.Reset();
-        val_batcher.Reset();
+        if (use_arrow_) {
+            arrow_train_batcher->Reset();
+            arrow_val_batcher->Reset();
+        } else {
+            legacy_train_batcher->Reset();
+            legacy_val_batcher->Reset();
+        }
     }
 
     // Notify plugin hooks: training end
@@ -605,7 +681,7 @@ void TrainingExecutor::RunTrainingEpoch(
 
         // Batch callback
         if (batch_cb) {
-            batch_cb(epoch, batch_num, batch_loss, current_acc);
+            batch_cb(epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
         }
     }
 
@@ -787,6 +863,207 @@ void TrainingExecutor::WaitWhilePaused() {
 
 void TrainingExecutor::PreprocessBatch(Batch& /*batch*/) {
     // Preprocessing is handled by DatasetBatcher
+}
+
+// =============================================================================
+// Arrow-specific training methods
+// =============================================================================
+
+void TrainingExecutor::RunTrainingEpochArrow(
+    ArrowDatasetBatcher& batcher,
+    int epoch,
+    BatchCallback batch_cb)
+{
+    spdlog::debug("RunTrainingEpochArrow: Entered, epoch={}", epoch);
+
+    float epoch_loss = 0.0f;
+    int correct = 0;
+    int total = 0;
+    int batch_num = 0;
+
+    spdlog::debug("RunTrainingEpochArrow: Getting num batches");
+    size_t total_batches = batcher.GetNumBatches();
+    spdlog::debug("RunTrainingEpochArrow: total_batches={}", total_batches);
+
+    UpdateMetrics([total_batches](TrainingMetrics& m) {
+        m.total_batches = static_cast<int>(total_batches);
+        m.current_batch = 0;
+    });
+
+    spdlog::debug("RunTrainingEpochArrow: Entering batch loop");
+    while (!batcher.IsEpochComplete()) {
+        if (ShouldStop()) break;
+        WaitWhilePaused();
+
+        spdlog::debug("RunTrainingEpochArrow: CHECKPOINT X1 - calling GetNextBatch");
+        spdlog::default_logger()->flush();
+        Batch batch = batcher.GetNextBatch();
+        spdlog::debug("RunTrainingEpochArrow: CHECKPOINT X2 - GetNextBatch returned, valid={}",
+                      batch.IsValid());
+        spdlog::default_logger()->flush();
+        if (!batch.IsValid()) break;
+
+        batch_num++;
+
+        spdlog::debug("RunTrainingEpochArrow: CHECKPOINT X3 - calling Forward pass "
+                      "(input shape [{}, {}], label shape dims={})",
+                      batch.data.Shape().empty() ? 0 : batch.data.Shape()[0],
+                      batch.data.Shape().size() < 2 ? 0 : batch.data.Shape()[1],
+                      batch.labels.Shape().size());
+        spdlog::default_logger()->flush();
+        // Forward pass through model
+        Tensor predictions = Forward(batch.data);
+        spdlog::debug("RunTrainingEpochArrow: CHECKPOINT X4 - Forward pass completed");
+        spdlog::default_logger()->flush();
+
+        // DEBUG: Log sample values for first batch of first epoch
+        if (epoch == 1 && batch_num == 1) {
+            const float* input_data = batch.data.Data<float>();
+            float min_input = input_data[0], max_input = input_data[0];
+            const auto& input_shape = batch.data.Shape();
+            if (input_shape.size() >= 2) {
+                size_t input_size = input_shape[0] * input_shape[1];
+                for (size_t i = 1; i < std::min(input_size, size_t(1000)); ++i) {
+                    min_input = std::min(min_input, input_data[i]);
+                    max_input = std::max(max_input, input_data[i]);
+                }
+                spdlog::info("DEBUG Arrow: Input data range: [{:.4f}, {:.4f}]", min_input, max_input);
+            }
+
+            // Debug labels
+            const auto& label_shape = batch.labels.Shape();
+            std::string shape_str;
+            for (auto d : label_shape) shape_str += std::to_string(d) + " ";
+            spdlog::info("DEBUG Arrow: Label shape: [{}], output_size={}", shape_str, config_.output_size);
+
+            const float* label_data = batch.labels.Data<float>();
+            if (label_data && !label_shape.empty()) {
+                spdlog::info("DEBUG Arrow: First label values: {:.1f}, {:.1f}, {:.1f}",
+                             label_data[0], label_data[1], label_data[2]);
+            } else {
+                spdlog::error("DEBUG Arrow: Labels tensor is empty or invalid!");
+            }
+
+            // Debug predictions
+            const auto& pred_shape = predictions.Shape();
+            std::string pred_shape_str;
+            for (auto d : pred_shape) pred_shape_str += std::to_string(d) + " ";
+            spdlog::info("DEBUG Arrow: Predictions shape: [{}]", pred_shape_str);
+        }
+
+        // Compute loss
+        float batch_loss = ComputeLoss(predictions, batch.labels);
+        epoch_loss += batch_loss;
+
+        // Compute accuracy
+        const float* pred_data = predictions.Data<float>();
+        const float* target_data = batch.labels.Data<float>();
+
+        for (size_t b = 0; b < batch.size; ++b) {
+            int pred_class = 0, true_class = 0;
+            float max_pred = pred_data[b * config_.output_size];
+            float max_target = target_data[b * config_.output_size];
+
+            for (size_t c = 0; c < config_.output_size; ++c) {
+                if (pred_data[b * config_.output_size + c] > max_pred) {
+                    max_pred = pred_data[b * config_.output_size + c];
+                    pred_class = static_cast<int>(c);
+                }
+                if (target_data[b * config_.output_size + c] > max_target) {
+                    max_target = target_data[b * config_.output_size + c];
+                    true_class = static_cast<int>(c);
+                }
+            }
+            if (pred_class == true_class) correct++;
+            total++;
+        }
+
+        // Backward pass
+        Backward(predictions, batch.labels);
+
+        // Update weights using optimizer
+        model_->UpdateParameters(optimizer_.get());
+
+        // Update metrics
+        float current_loss = epoch_loss / batch_num;
+        float current_acc = static_cast<float>(correct) / total;
+
+        UpdateMetrics([batch_num, current_loss, current_acc](TrainingMetrics& m) {
+            m.current_batch = batch_num;
+            m.train_loss = current_loss;
+            m.train_accuracy = current_acc;
+        });
+
+        // Batch callback
+        if (batch_cb) {
+            batch_cb(epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
+        }
+    }
+
+    // Final epoch metrics
+    float final_loss = batch_num > 0 ? epoch_loss / batch_num : 0.0f;
+    float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
+
+    UpdateMetrics([final_loss, final_acc](TrainingMetrics& m) {
+        m.train_loss = final_loss;
+        m.train_accuracy = final_acc;
+    });
+}
+
+void TrainingExecutor::RunValidationArrow(ArrowDatasetBatcher& batcher) {
+    float val_loss = 0.0f;
+    int correct = 0;
+    int total = 0;
+    int batch_num = 0;
+
+    batcher.Reset();
+
+    while (!batcher.IsEpochComplete()) {
+        if (ShouldStop()) break;
+
+        Batch batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+
+        batch_num++;
+
+        // Forward pass only (no backprop)
+        Tensor predictions = Forward(batch.data);
+
+        // Compute loss
+        float batch_loss = ComputeLoss(predictions, batch.labels);
+        val_loss += batch_loss;
+
+        // Compute accuracy
+        const float* pred_data = predictions.Data<float>();
+        const float* target_data = batch.labels.Data<float>();
+
+        for (size_t b = 0; b < batch.size; ++b) {
+            int pred_class = 0, true_class = 0;
+            float max_pred = pred_data[b * config_.output_size];
+            float max_target = target_data[b * config_.output_size];
+
+            for (size_t c = 0; c < config_.output_size; ++c) {
+                if (pred_data[b * config_.output_size + c] > max_pred) {
+                    max_pred = pred_data[b * config_.output_size + c];
+                    pred_class = static_cast<int>(c);
+                }
+                if (target_data[b * config_.output_size + c] > max_target) {
+                    max_target = target_data[b * config_.output_size + c];
+                    true_class = static_cast<int>(c);
+                }
+            }
+            if (pred_class == true_class) correct++;
+            total++;
+        }
+    }
+
+    float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
+    float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
+
+    UpdateMetrics([final_loss, final_acc](TrainingMetrics& m) {
+        m.val_loss = final_loss;
+        m.val_accuracy = final_acc;
+    });
 }
 
 } // namespace cyxwiz
