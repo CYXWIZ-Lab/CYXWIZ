@@ -318,55 +318,75 @@ single-responsibility nodes.**
 2. New `ImageTransformPipeline` type. Holds an ordered list of
    `ImageTransformStep` (Resize, Normalize, Flip, Crop, etc.). Provides
    `apply(cv::Mat) → cv::Mat`.
-3. **Wire existing preprocessing nodes for image domain:**
-   - `Resize` (add if missing, trivially — it's just target_h / target_w
-     params and an interpolation mode)
-   - `Normalize` (already exists for tabular, generalize with a domain
-     tag so images can use it too)
-   - `Augmentation` (already exists as a NodeType, currently unwired —
-     add extractor for flip / rotate / brightness / contrast params)
-   - `CenterCrop` / `RandomCrop` (add)
-   - `Flatten` (already exists, ensure it works for 3D→1D flattening
-     when an image feeds a Dense head)
-4. `ExtractImagePreprocessing(nodes, links, start_node) → ImageTransformPipeline`
+3. **Core image transforms (built-in nodes, added in Phase 1):**
+   - `Resize` — target_h / target_w / interpolation mode (nearest,
+     bilinear, bicubic, lanczos, area — already available from
+     `ImageUtils`)
+   - `CenterCrop`, `RandomCrop` — crop_h / crop_w
+   - `HorizontalFlip`, `VerticalFlip` — probability param
+   - `Rotate` — angle / probability params
+   - `Normalize` — **domain-aware per Decision 1.** The same
+     `Normalize` node already used for tabular. Dialog renders
+     image-mode controls (pixel scale, optional per-channel mean/std
+     with ImageNet preset) when upstream is an image DataInput.
+     Extractor dispatches on upstream category and produces an
+     `ImageNormalizeStep`.
+   - `Augmentation` — already exists as a NodeType, currently
+     unwired. Keep the name for back-compat but treat it as a
+     compound node that applies a probability-weighted mix of
+     flips/rotates/color-jitter. Add extractor.
+   - `ColorJitter`, `Brightness`, `Contrast`
+   - `GaussianBlur`, `Grayscale`
+   - `Flatten` — already exists, ensure 3D→1D works when an image
+     feeds a Dense head
+4. **Plugin image transforms (optional):** the existing
+   `plugins/examples/image_nodes/` stays as a plugin example. Mark
+   its `GaussianBlur` deprecated (superseded by the core node), keep
+   `EdgeDetect` as-is. Third-party plugins can register additional
+   transforms (Canny, Sobel, Albumentations wrappers) via the
+   existing plugin-node registry; they show up in the node editor
+   under "Plugin Transforms" once Phase 1 lands the core nodes.
+5. `ExtractImagePreprocessing(nodes, links, start_node) → ImageTransformPipeline`
    walks the graph forward from the DataInput node, collects every
    image-domain preprocessing node it encounters until it hits DataLoader
    or a model layer, in order, into a pipeline.
-5. `ImageFolderDataset` / `ImageCSVDataset` refactored to accept an
+6. `ImageFolderDataset` / `ImageCSVDataset` refactored to accept an
    `ImageTransformPipeline` in their constructor (or a setter), applied
    inside `GetItem`. The existing resize-in-loader logic becomes the
    `ResizeStep::apply` implementation — no behavioral change, just
    relocation.
-6. New `ImageDatasetBatcher` implementing `IBatcher`. Thin wrapper over
+7. New `ImageDatasetBatcher` implementing `IBatcher`. Thin wrapper over
    the existing dataset classes. Handles shuffling, batching, label
    one-hot. Uses the LRU cache the datasets already provide.
-7. New `DataRegistry::image_datasets_` map + `GetImageDataset` /
+8. New `DataRegistry::image_datasets_` map + `GetImageDataset` /
    `IsImageDataset` / `RegisterImage` / `LoadImageFolder` /
    `LoadImageCSV`. The load functions take **no transform params** —
    the pipeline is built from the graph at training start, not at
    load time.
-8. `MainWindow::StartTrainingFromGraph` learns a fourth dispatch
+9. `MainWindow::StartTrainingFromGraph` learns a fourth dispatch
    branch: `IsArrow → IsParquet → IsImage → legacy`.
-9. `TrainingManager::StartTrainingImage` mirrors the Arrow/Parquet
-   methods. Takes the graph nodes + links so it can build the
-   transform pipeline and pass it to the batcher.
-10. **Compile gate: image-specific checks.**
+10. `TrainingManager::StartTrainingImage` mirrors the Arrow/Parquet
+    methods. Takes the graph nodes + links so it can build the
+    transform pipeline and pass it to the batcher.
+11. **Compile gate: image-specific checks (errors unless noted).**
     - Image dataset + no `Resize` node upstream of DataLoader → error
       ("images need a Resize node to have a uniform batchable shape")
     - Image dataset + first model layer is Dense + no `Flatten` → error
     - Image dataset + first model layer is Conv2D → OK
     - Image dataset + Conv2D + input channel mismatch with image color
       mode → error (3 channels expected, dataset is grayscale)
-11. **DataInputDialog image branch: SHRINKS.** Removes target_width,
+    - `Normalize` before `Resize` → **warning** per Decision 2
+    - `Flatten` before `Augmentation` → **warning** per Decision 2
+12. **DataInputDialog image branch: SHRINKS.** Removes target_width,
     target_height, normalize, rgb, labels_csv. Only keeps: folder/file
     path, category=image. All the removed knobs become graph nodes.
-12. Properties panel: still resolves image shape from the graph's
+13. Properties panel: still resolves image shape from the graph's
     Resize node (not from the dialog). `GetInputShapeFromDataset`
     walks the preprocessing chain forward from DataInput looking for
     a Resize node to get the target shape.
-13. User guide: expand `data_pipeline.md` with an image section
+14. User guide: expand `data_pipeline.md` with an image section
     explaining the node-based pipeline.
-14. Example project: `examples/image_classification/mnist_folder.cyxgraph`
+15. Example project: `examples/image_classification/mnist_folder.cyxgraph`
     with a full node chain: DataInput → Resize(28,28) → Normalize →
     Flatten → Dense → Dense → CrossEntropyLoss + Adam.
 
@@ -586,47 +606,135 @@ approved:
    each), click Apply, click Compile, click Train. Verify training runs
    for 1-2 epochs without crash.
 
-## Open questions
+## Resolved decisions
 
-1. **Phase 0 scope:** do we ship v0.2.0 with image support restored via
-   the legacy path, or do we ship with images explicitly disabled (same
-   "not supported yet" modal as audio/video)? The former unblocks
-   existing workflows; the latter is simpler. Note: Phase 0 does NOT
-   try to do node-based preprocessing. The legacy path retains its
-   baked-in resize for the one-day fix. Phase 1 does the node-based
-   rewrite.
-2. **Phase 1 timing:** is image Phase 1 in the next sprint, or do we
-   want to ship v0.2.0 first and bring images back in v0.2.1? Depends
-   on how far v0.2.0 is from ship. Recommendation: Phase 0 ships with
-   v0.2.0; Phase 1 goes into v0.2.1.
-3. **Plugin image nodes:** `plugins/examples/image_nodes/` registers
-   GaussianBlur and EdgeDetect as plugin node types. Are these meant
-   to be the augmentation API, or are they purely examples? If they're
-   the API, Phase 1 should route through the plugin registry for
-   augmentation nodes. Otherwise we register our own image
-   augmentation nodes in core.
-4. **Text without labels** (language modeling vs classification):
+These were open in v2 and have been decided. Recording them here so
+the rationale survives into future sessions.
+
+### Decision 1: `Normalize` is a single domain-aware node
+
+Just as `DataInput` is one node that supports tabular / image / audio /
+text / time-series, `Normalize` is one node that dispatches by domain.
+There is no `NormalizeTabular` / `NormalizeImage` split.
+
+Implementation:
+
+- The `Normalize` node's dialog inspects the upstream `DataInput`'s
+  `file_category` and renders domain-specific controls:
+  - **Tabular:** per-column z-score (stored mean/std), or min/max
+  - **Image:** pixel scale ([0,1] or [-1,1]), optional per-channel
+    mean/std subtraction (ImageNet defaults as a preset)
+  - **Audio:** amplitude normalization (peak / RMS), or log-scale for
+    spectrograms
+  - **Text:** rarely useful, show "not applicable for text" hint
+  - **Time-series:** z-score per feature, or rolling normalization
+- `ExtractNormalize` in `graph_compiler_preprocessing.cpp` dispatches
+  on the same upstream category and produces a domain-specific
+  `NormalizeStep` inside the appropriate `TransformPipeline`.
+- The `Normalize` node's pin types adapt to the upstream data type.
+
+This is the same single-responsibility principle applied to
+preprocessing nodes: one node, one concern ("normalize my data"),
+implementation varies by data type.
+
+### Decision 2: Compile gate warns on bad pipeline ordering
+
+The compile gate emits Warning-level issues for pipeline ordering
+that's almost certainly a mistake. It does **not** block Train —
+users can ship what they want, they just see the flag.
+
+Initial warning rules (extensible as we discover more):
+
+- `Normalize` before `Resize` on an image → warn. Normalization stats
+  are scale-dependent, so resizing after normalization gives wrong
+  per-pixel values.
+- `Flatten` before `Augmentation` on an image → warn. Augmentation
+  needs spatial structure (rotate, flip, crop) that Flatten destroys.
+- `DataSplit` before any data-dependent transform (like `Normalize`
+  using dataset statistics) → warn if the transform uses statistics
+  computed over the training set. This is more subtle; skip for
+  phase 1 and revisit when we have domain-specific normalizers.
+- Image dataset + no `Resize` before `DataLoader` → **error** (this
+  one stays blocking because batching can't proceed without uniform
+  shape). Already in the Phase 1 compile-gate list.
+
+Each rule is a one-liner in the compile pass. Table-driven registration
+so adding new rules is trivial.
+
+### Decision 3: Core ships common transforms; plugins extend
+
+The core engine ships a curated set of image / audio / text transforms
+as built-in nodes. The plugin system is the extension point for more
+specialized or third-party transforms.
+
+**Core image transforms** (Phase 1 deliverable):
+- `Resize`, `CenterCrop`, `RandomCrop`
+- `HorizontalFlip`, `VerticalFlip`, `Rotate`
+- `Normalize` (domain-aware per Decision 1)
+- `ColorJitter`, `Brightness`, `Contrast`
+- `GaussianBlur`, `Grayscale`
+- `Flatten` (already exists)
+
+**Plugin image transforms** (existing + future):
+- `plugins/examples/image_nodes/` keeps `GaussianBlur` (marked
+  deprecated — the core node supersedes it) and `EdgeDetect` as
+  example plugins demonstrating how to register a new image
+  transform from a DLL.
+- Third-party plugins can add Canny / Sobel / Laplacian / advanced
+  OpenCV ops, PyTorch-style augmentation via bindings, Albumentations
+  wrappers, or user-specific transforms.
+- Plugin-registered transforms surface in the node editor under a
+  "Plugin Transforms" submenu, same way plugin ML nodes already do.
+
+**Core audio transforms** (Phase 2 deliverable):
+- `Resample`, `TrimSilence`, `NormalizeVolume`
+- `Spectrogram`, `MelSpectrogram`, `MFCC`
+- `AudioAugmentation` (compound node for TimeStretch / PitchShift /
+  AddNoise; or break into three nodes — to be decided in Phase 2
+  design)
+
+**Core text transforms** (Phase 3 deliverable):
+- `Lowercase`, `RemovePunctuation`
+- `Tokenizer` (Whitespace / Word / Character)
+- `Vocabulary`, `Padding`, `Truncation`
+- Stop word removal, stemming, etc. — via plugin
+
+### Decision 4: Phase 0 is the legacy-route hotfix
+
+Phase 0 does NOT try to do node-based preprocessing. It uses the
+legacy `LoadImageFolder` path with its baked-in resize. This is
+acceptable because:
+- It's a one-day hotfix to unblock a crash.
+- Phase 1 immediately replaces it with the proper node-based pipeline.
+- The legacy path is already written and tested; we're just routing
+  to it instead of the broken `LoadImageFolderToArrow`.
+
+Phase 0 ships with v0.2.0. Phase 1 lands in v0.2.1.
+
+## Remaining open questions
+
+1. **Text without labels** (language modeling vs classification):
    Phase 3 assumes classification. LM training needs a different
-   "label = next token" wiring. Probably a follow-up after Phase 3.
-5. **ML dataset shortcuts** (MNIST, CIFAR10 via `MLDatasetType` enum
+   "label = next token" wiring. Follow-up after Phase 3.
+2. **ML dataset shortcuts** (MNIST, CIFAR10 via `MLDatasetType` enum
    in the dialog): currently dead because `LoadMLDatasetToArrow`
-   returns null with a TODO. Fix as part of Phase 1 (call the existing
-   `MNISTDataset` / `CIFAR10Dataset` loaders, register under
-   `image_datasets_` map, same compile-gate treatment as image folder).
-6. **Normalize node — single or per-domain?** `Normalize` is used by
-   both tabular (z-score on numeric columns) and image (pixel value
-   scaling). Option: one `Normalize` node with a domain-inferred mode.
-   Alternative: `NormalizeTabular` + `NormalizeImage` as separate
-   nodes. First option wins for simplicity. Extractor dispatches by
-   inspecting the upstream DataInput's category.
-7. **Pipeline ordering validation:** if a user puts `Normalize` before
-   `Resize`, the math is wrong (normalizing at the wrong scale). Do
-   we enforce ordering in the compile gate, or trust the user? Lean:
-   warn on known-bad orders (Normalize-before-Resize, Flatten-before-
-   Augmentation) but don't block.
-8. **Transform fusion:** should the image `ResizeStep` and
-   `NormalizeStep` be fused into a single OpenCV call for performance?
-   Optimization, not correctness — defer until after phase 1 ships.
+   returns null with a TODO. Fix as part of Phase 1 — call the
+   existing `MNISTDataset` / `CIFAR10Dataset` loaders and register
+   under `image_datasets_`, same compile-gate treatment as a normal
+   image folder.
+3. **Transform fusion:** should `ResizeStep` and `NormalizeStep` be
+   fused into a single OpenCV call for performance? Optimization,
+   not correctness — defer until after Phase 1 ships and we have
+   benchmarks.
+4. **AudioAugmentation as one node or three:** Phase 2 design
+   question. Lean toward three separate nodes (`TimeStretch`,
+   `PitchShift`, `AddNoise`) for composability, but one compound
+   node is simpler to drop onto the canvas. Revisit when Phase 2
+   starts.
+5. **Pipeline cycle detection:** if a user wires preprocessing nodes
+   into a loop, what happens? Existing `HasCycle` check in
+   graph_compiler already catches this; verify it still fires for
+   preprocessing chains in Phase 1.
 
 ## Effort estimate
 
@@ -687,6 +795,16 @@ start in parallel without blocking anything.
 
 ## Changelog
 
+- **v2.1 (2026-04-11):** Resolved four open questions after feedback.
+  (1) `Normalize` is a single domain-aware node, mirroring how
+  `DataInput` handles multiple formats in one node. (2) Bad pipeline
+  ordering is a warning, not a block — users can ship what they want
+  but see the flag. (3) Core ships common transforms as built-in
+  nodes; the plugin system is the extension point for specialized
+  or third-party ops. GaussianBlur lives in core; the existing
+  plugin example is deprecated. (4) Phase 0 stays as the legacy-route
+  hotfix; node-based preprocessing lands in Phase 1. Added concrete
+  list of core image/audio/text transforms to ship.
 - **v2 (2026-04-11):** Revised after feedback. Removed "preprocessing
   on DataInput dialog" shortcut — contradicts single-responsibility
   principle. All preprocessing moves to dedicated graph nodes. Added
