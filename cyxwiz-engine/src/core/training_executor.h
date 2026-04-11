@@ -1,7 +1,9 @@
 #pragma once
 
 #include "graph_compiler.h"
-#include "dataset_batcher.h"  // Includes ArrowDatasetBatcher
+#include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
+#include "parquet_arrow_batcher.h"
+#include "parquet_backed_dataset.h"
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include <cyxwiz/tensor.h>
@@ -87,8 +89,17 @@ public:
      * @param arrow_dataset Arrow dataset with features and labels
      * @param label_column Name of the label column
      */
-    TrainingExecutor(TrainingConfiguration config, 
+    TrainingExecutor(TrainingConfiguration config,
                      std::shared_ptr<ArrowDataset> arrow_dataset,
+                     const std::string& label_column);
+
+    /**
+     * Create a training executor for a disk-backed Parquet dataset.
+     * Used when DataRegistry::LoadTabularCSV picked the disk-backed path
+     * because the CSV was too big to fit in RAM.
+     */
+    TrainingExecutor(TrainingConfiguration config,
+                     std::shared_ptr<ParquetBackedDataset> parquet_dataset,
                      const std::string& label_column);
 
     ~TrainingExecutor();
@@ -165,11 +176,22 @@ public:
     std::unique_ptr<Optimizer> ReleaseOptimizer() { return std::move(optimizer_); }
 
 private:
+    // Three possible dataset backings. Exactly one of dataset_ / arrow_dataset_ /
+    // parquet_dataset_ is populated at construction time, based on which
+    // constructor was called. mode_ is the tag the Train() function uses
+    // to pick the right batcher implementation.
+    enum class DatasetMode {
+        Legacy,   // DatasetHandle + legacy DatasetBatcher
+        Arrow,    // ArrowDataset + ArrowDatasetBatcher
+        Parquet   // ParquetBackedDataset + ParquetArrowBatcher (disk-backed)
+    };
+
     TrainingConfiguration config_;
     DatasetHandle dataset_;
     std::shared_ptr<ArrowDataset> arrow_dataset_;
+    std::shared_ptr<ParquetBackedDataset> parquet_dataset_;
     std::string label_column_;
-    bool use_arrow_ = false;
+    DatasetMode mode_ = DatasetMode::Legacy;
 
     // Thread safety
     std::atomic<bool> is_training_{false};
@@ -212,18 +234,22 @@ private:
     void RunValidation(DatasetBatcher& batcher);
 
     /**
-     * Run a single training epoch with Arrow batcher
+     * Run a single training epoch through any IBatcher implementation.
+     * Used for both ArrowDatasetBatcher (in-memory) and ParquetArrowBatcher
+     * (disk-backed) — polymorphism via IBatcher lets the same loop drive
+     * either one. Name kept as *Arrow for backwards compat with callers
+     * that haven't been renamed yet; the implementation is batcher-agnostic.
      */
     void RunTrainingEpochArrow(
-        ArrowDatasetBatcher& batcher,
+        IBatcher& batcher,
         int epoch,
         BatchCallback batch_cb
     );
 
     /**
-     * Run validation with Arrow batcher
+     * Run validation through any IBatcher implementation.
      */
-    void RunValidationArrow(ArrowDatasetBatcher& batcher);
+    void RunValidationArrow(IBatcher& batcher);
 
     /**
      * Forward pass through the model

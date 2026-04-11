@@ -51,6 +51,39 @@ struct AnnotatedBatch {
 };
 
 /**
+ * IBatcher - Abstract interface shared by every training batcher.
+ *
+ * Training code (TrainingExecutor::RunTrainingEpoch, RunValidation) holds
+ * IBatcher references instead of concrete batcher types, so it can drive
+ * either the in-memory Arrow path (ArrowDatasetBatcher) or the disk-backed
+ * Parquet path (ParquetArrowBatcher) without branching per batch.
+ *
+ * Implementations must be safe to call GetNextBatch repeatedly until it
+ * returns an invalid (size=0) Batch, at which point Reset starts a new
+ * epoch. IsEpochComplete should become true after the last batch has
+ * been consumed.
+ *
+ * Preprocessing setters (SetNormalization, SetOneHotEncoding, SetFlatten)
+ * are exposed via this interface so the training executor can configure
+ * any batcher uniformly. Subclasses that don't support a particular knob
+ * can leave it as a no-op.
+ */
+class IBatcher {
+public:
+    virtual ~IBatcher() = default;
+
+    virtual Batch GetNextBatch() = 0;
+    virtual void Reset() = 0;
+    virtual bool IsEpochComplete() const = 0;
+    virtual size_t GetNumBatches() const = 0;
+    virtual size_t GetNumSamples() const = 0;
+
+    virtual void SetNormalization(float mean, float std_dev) = 0;
+    virtual void SetOneHotEncoding(size_t num_classes) = 0;
+    virtual void SetFlatten(bool flatten) = 0;
+};
+
+/**
  * DatasetBatcher - Provides batched iteration over a dataset
  *
  * Fetches samples from DataRegistry and converts them to Tensors
@@ -263,7 +296,7 @@ private:
  * Similar to DatasetBatcher but works with ArrowDataset (columnar data)
  * for Data Studio pipelines.
  */
-class ArrowDatasetBatcher {
+class ArrowDatasetBatcher : public IBatcher {
 public:
     /**
      * Create a batcher for Arrow dataset
@@ -283,36 +316,17 @@ public:
         bool is_training = true
     );
 
-    /**
-     * Get the next batch
-     * @return Batch with data and labels tensors
-     */
-    Batch GetNextBatch();
+    // IBatcher interface
+    Batch GetNextBatch() override;
+    void Reset() override;
+    bool IsEpochComplete() const override;
+    size_t GetNumBatches() const override;
+    size_t GetNumSamples() const override { return indices_.size(); }
 
-    /**
-     * Reset to beginning of epoch (re-shuffles if shuffle=true)
-     */
-    void Reset();
-
-    /**
-     * Check if current epoch is complete
-     */
-    bool IsEpochComplete() const;
-
-    /**
-     * Get total number of batches per epoch
-     */
-    size_t GetNumBatches() const;
-
-    /**
-     * Get total number of samples in this split
-     */
-    size_t GetNumSamples() const { return indices_.size(); }
-
-    // Preprocessing
-    void SetNormalization(float mean, float std);
-    void SetOneHotEncoding(size_t num_classes);
-    void SetFlatten(bool flatten) { flatten_ = flatten; }
+    // Preprocessing (IBatcher)
+    void SetNormalization(float mean, float std) override;
+    void SetOneHotEncoding(size_t num_classes) override;
+    void SetFlatten(bool flatten) override { flatten_ = flatten; }
 
 private:
     std::shared_ptr<class ArrowDataset> dataset_;

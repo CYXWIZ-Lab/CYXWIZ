@@ -17,7 +17,7 @@ namespace cyxwiz {
 TrainingExecutor::TrainingExecutor(TrainingConfiguration config, DatasetHandle dataset)
     : config_(std::move(config))
     , dataset_(dataset)
-    , use_arrow_(false)
+    , mode_(DatasetMode::Legacy)
 {
     spdlog::info("TrainingExecutor: Created with {} layers, input_size={}, output_size={}",
                  config_.layers.size(), config_.input_size, config_.output_size);
@@ -29,11 +29,30 @@ TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
     : config_(std::move(config))
     , arrow_dataset_(arrow_dataset)
     , label_column_(label_column)
-    , use_arrow_(true)
+    , mode_(DatasetMode::Arrow)
 {
     spdlog::info("TrainingExecutor: Created with Arrow dataset ({} rows, {} cols), label='{}'",
                  arrow_dataset_ ? arrow_dataset_->GetNumRows() : 0,
                  arrow_dataset_ ? arrow_dataset_->GetNumColumns() : 0,
+                 label_column_);
+    spdlog::info("TrainingExecutor: Model has {} layers, input_size={}, output_size={}",
+                 config_.layers.size(), config_.input_size, config_.output_size);
+}
+
+TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
+                                   std::shared_ptr<ParquetBackedDataset> parquet_dataset,
+                                   const std::string& label_column)
+    : config_(std::move(config))
+    , parquet_dataset_(parquet_dataset)
+    , label_column_(label_column)
+    , mode_(DatasetMode::Parquet)
+{
+    spdlog::info("TrainingExecutor: Created with Parquet-backed dataset "
+                 "({} rows, {} cols, {} row groups, {:.1f} MB on disk), label='{}'",
+                 parquet_dataset_ ? parquet_dataset_->GetNumRows() : 0,
+                 parquet_dataset_ ? parquet_dataset_->GetNumColumns() : 0,
+                 parquet_dataset_ ? parquet_dataset_->GetNumRowGroups() : 0,
+                 parquet_dataset_ ? parquet_dataset_->GetFileSizeBytes() / (1024.0 * 1024.0) : 0.0,
                  label_column_);
     spdlog::info("TrainingExecutor: Model has {} layers, input_size={}, output_size={}",
                  config_.layers.size(), config_.input_size, config_.output_size);
@@ -288,15 +307,25 @@ void TrainingExecutor::Train(
         m.val_accuracy_history.clear();
     });
 
-    // Create batchers - either Arrow or legacy
+    // Create batchers - Arrow in-memory, Parquet disk-backed, or legacy.
+    // All three end up driving the training loop through IBatcher pointers.
     std::unique_ptr<ArrowDatasetBatcher> arrow_train_batcher;
     std::unique_ptr<ArrowDatasetBatcher> arrow_val_batcher;
+    std::unique_ptr<ParquetArrowBatcher> parquet_train_batcher;
+    std::unique_ptr<ParquetArrowBatcher> parquet_val_batcher;
     std::unique_ptr<DatasetBatcher> legacy_train_batcher;
     std::unique_ptr<DatasetBatcher> legacy_val_batcher;
 
+    // Non-owning IBatcher pointers — point at whichever concrete batcher
+    // the mode selected. The Arrow and Parquet paths both flow through the
+    // same IBatcher-aware training loops; the legacy path stays on the
+    // legacy-specific functions.
+    IBatcher* active_train_ibatcher = nullptr;
+    IBatcher* active_val_ibatcher = nullptr;
+
     size_t num_train_samples = 0;
 
-    if (use_arrow_) {
+    if (mode_ == DatasetMode::Arrow) {
         // Arrow-based batching (Data Studio)
         spdlog::info("TrainingExecutor: Using Arrow dataset for training "
                      "(batch_size={}, shuffle={}, train_ratio={:.2f})",
@@ -341,6 +370,53 @@ void TrainingExecutor::Train(
         }
 
         num_train_samples = arrow_train_batcher->GetNumSamples();
+        active_train_ibatcher = arrow_train_batcher.get();
+        active_val_ibatcher = arrow_val_batcher.get();
+    } else if (mode_ == DatasetMode::Parquet) {
+        // Disk-backed Parquet batching — rows are fetched lazily from the
+        // memory-mapped Parquet cache one row group at a time. Same output
+        // shape as the Arrow path, so training loops don't need to know.
+        spdlog::info("TrainingExecutor: Using Parquet-backed dataset for training "
+                     "(batch_size={}, shuffle={}, train_ratio={:.2f})",
+                     batch_size, config_.shuffle, config_.train_ratio);
+
+        parquet_train_batcher = std::make_unique<ParquetArrowBatcher>(
+            parquet_dataset_, label_column_, batch_size,
+            config_.shuffle, config_.train_ratio, true);
+        parquet_val_batcher = std::make_unique<ParquetArrowBatcher>(
+            parquet_dataset_, label_column_, batch_size,
+            false, config_.train_ratio, false);
+
+        if (config_.drop_last) {
+            spdlog::warn("TrainingExecutor: drop_last=true requested but ParquetArrowBatcher "
+                         "does not yet support it - last partial batch will be kept");
+        }
+        if (config_.has_data_split && config_.test_ratio > 0.01f) {
+            spdlog::warn("TrainingExecutor: test_ratio={:.2f} configured on DataSplit but "
+                         "ParquetArrowBatcher has no held-out test split - the test portion "
+                         "will be merged into validation. train={:.2f}, val+test={:.2f}",
+                         config_.test_ratio, config_.train_ratio, 1.0f - config_.train_ratio);
+        }
+
+        // Apply preprocessing from config (same as Arrow path).
+        if (config_.preprocessing.has_normalization) {
+            parquet_train_batcher->SetNormalization(config_.preprocessing.norm_mean,
+                                                     config_.preprocessing.norm_std);
+            parquet_val_batcher->SetNormalization(config_.preprocessing.norm_mean,
+                                                   config_.preprocessing.norm_std);
+        }
+
+        if (config_.preprocessing.has_onehot) {
+            parquet_train_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
+            parquet_val_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
+        } else {
+            parquet_train_batcher->SetOneHotEncoding(config_.output_size);
+            parquet_val_batcher->SetOneHotEncoding(config_.output_size);
+        }
+
+        num_train_samples = parquet_train_batcher->GetNumSamples();
+        active_train_ibatcher = parquet_train_batcher.get();
+        active_val_ibatcher = parquet_val_batcher.get();
     } else {
         // Legacy DatasetHandle batching
         spdlog::info("TrainingExecutor: Using legacy dataset for training "
@@ -463,22 +539,24 @@ void TrainingExecutor::Train(
             cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyEpochStart(ctx);
         }
 
-        spdlog::debug("TrainingExecutor: About to call RunTrainingEpochArrow");
-        // Run training epoch - use appropriate batcher type
-        if (use_arrow_) {
-            RunTrainingEpochArrow(*arrow_train_batcher, epoch, batch_cb);
-        } else {
+        spdlog::debug("TrainingExecutor: About to call RunTrainingEpoch");
+        // Run training epoch - dispatch by dataset mode. Arrow and Parquet
+        // batchers both flow through RunTrainingEpochArrow via their shared
+        // IBatcher base; legacy DatasetBatcher stays on its own path.
+        if (mode_ == DatasetMode::Legacy) {
             RunTrainingEpoch(*legacy_train_batcher, epoch, batch_cb);
+        } else {
+            RunTrainingEpochArrow(*active_train_ibatcher, epoch, batch_cb);
         }
 
         if (ShouldStop()) break;
 
         // Run validation (eval mode)
         model_->SetTraining(false);
-        if (use_arrow_) {
-            RunValidationArrow(*arrow_val_batcher);
-        } else {
+        if (mode_ == DatasetMode::Legacy) {
             RunValidation(*legacy_val_batcher);
+        } else {
+            RunValidationArrow(*active_val_ibatcher);
         }
         model_->SetTraining(true);
 
@@ -525,12 +603,12 @@ void TrainingExecutor::Train(
         }
 
         // Reset batchers for next epoch
-        if (use_arrow_) {
-            arrow_train_batcher->Reset();
-            arrow_val_batcher->Reset();
-        } else {
+        if (mode_ == DatasetMode::Legacy) {
             legacy_train_batcher->Reset();
             legacy_val_batcher->Reset();
+        } else {
+            active_train_ibatcher->Reset();
+            active_val_ibatcher->Reset();
         }
     }
 
@@ -870,7 +948,7 @@ void TrainingExecutor::PreprocessBatch(Batch& /*batch*/) {
 // =============================================================================
 
 void TrainingExecutor::RunTrainingEpochArrow(
-    ArrowDatasetBatcher& batcher,
+    IBatcher& batcher,
     int epoch,
     BatchCallback batch_cb)
 {
@@ -1010,7 +1088,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
     });
 }
 
-void TrainingExecutor::RunValidationArrow(ArrowDatasetBatcher& batcher) {
+void TrainingExecutor::RunValidationArrow(IBatcher& batcher) {
     float val_loss = 0.0f;
     int correct = 0;
     int total = 0;
