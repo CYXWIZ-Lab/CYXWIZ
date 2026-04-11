@@ -33,20 +33,108 @@ do not propose reconnecting it.** When you see dead UI (Memory Policy radio,
 LRU cache chunks, prefetch, Write-to-disc, etc.) those are remnants from the
 pre-Arrow lazy path. Remove them when you find them, don't try to revive.
 
-- Tabular data: `DataInputDialog` → `LoadCSVToArrow` → `ArrowDataset` →
-  `ArrowDatasetBatcher` → training. One path. No branching on memory_policy.
-- Speed and memory come from Arrow optimizations, not user knobs. Auto-detect
-  good defaults, bake them in, hide the controls.
-- `CompactIntegerColumns` (in `data_registry.cpp`) auto-downcasts int64 → uint8/16
-  when values fit, saving memory and batching time.
-- `block_size` for Arrow CSV reader is set to 256 MB by default in
-  `LoadCSVToArrow` so the table loads as one chunk and the batcher hits the
-  fast `raw_values()` path. Don't expose as a UI control unless explicitly asked.
-- Node editor follows **single-responsibility**: one concern per node. Separate
-  nodes for Normalize, Preprocess, DataSplit, DataLoader, etc. Do not couple
-  concerns into one node.
-- Users care about speed and memory, not configuration options. When adding
-  features, prefer smart defaults over knobs.
+### Two backends, one entry point
+
+`DataInputDialog::Apply` calls `DataRegistry::LoadTabularCSV` which auto-
+detects which backend to use:
+
+- **In-memory Arrow (default fast path)** — file_size × 0.75 < available RAM.
+  `LoadCSVToArrow` reads the whole CSV as one chunk into an `ArrowDataset`,
+  then `CompactIntegerColumns` auto-downcasts int64 → uint8/16 where values
+  fit (typical 8x memory savings on pixel data). Used for the vast majority
+  of training datasets.
+- **Disk-backed Parquet (larger-than-RAM)** — file too big for the 75% RAM
+  threshold, OR user ticked Force disk-backed in the Memory tab Advanced
+  section. `ConvertCsvToParquet` streams the CSV through to a Snappy
+  Parquet cache in `<temp>/cyxwiz/cache/`, then `ParquetBackedDataset::Open`
+  memory-maps the file. Training reads pages lazily via `ParquetArrowBatcher`.
+  RAM use is bounded by the OS page cache, not the file size.
+
+Both backends register under the same name in `DataRegistry`. The dispatcher
+in `MainWindow::StartTrainingFromGraph` checks `IsArrowDataset` then
+`IsParquetBackedDataset` and routes to the appropriate `TrainingExecutor`
+constructor (`StartTrainingArrow` or `StartTrainingParquet`). Same model,
+same loss, same optimizer — only the batcher differs.
+
+### Async load + UX
+
+- CSV loads (sync `LoadCSVToArrow` AND the slow `ConvertCsvToParquet` step)
+  run on an `AsyncTaskManager` worker thread launched from
+  `DataInputDialog::Apply`. The dialog stays responsive: scroll preview,
+  switch tabs, even close it. OK and Apply buttons grey out via
+  `NodeConfigDialog::IsBusy()` while loading; Cancel stays enabled.
+- `AsyncLoadState` is a `shared_ptr` captured by the worker, so the dialog
+  being destroyed mid-load is safe (worker writes to memory it owns).
+  `PollAsyncLoadResult` runs at the top of `RenderContent` every frame and
+  drains the result via an `atomic<bool> done` publish barrier.
+- Constructor restores load state by **probing the registry directly**, not
+  by trusting `node->parameters["data_loaded"]`. The hint goes stale when
+  async Apply finishes after the dialog closes (PollAsyncLoadResult only
+  runs while the dialog is visible). Trusting the registry sidesteps that
+  race; the constructor also re-syncs the param hint with reality.
+
+### Registry orphan cleanup
+
+`DataRegistry::UnregisterTabularDataset(name)` and
+`ClearAllTabularDatasets()` are wired into every lifecycle event so
+datasets don't leak across sessions:
+
+- **Project close / new / open**: `MainWindow::OnProjectClosed` calls
+  `ClearAllTabularDatasets`. Since CreateProject and OpenProject both
+  invoke CloseProject first, this single hook covers all three.
+- **DataInput node delete**: `NodeEditor::DeleteNode` calls
+  `UnregisterNodeDatasetIfOwned` before erasing the node.
+- **Graph clear (Clear All button)**: `NodeEditor::ClearGraph` walks all
+  nodes and unregisters before `nodes_.clear()`.
+- **Re-Apply with a different file**: `DataInputDialog::Apply` captures
+  the OLD `dataset_name` and unregisters it before launching the new load.
+- **Re-Apply with the same file**: `LoadTabularCSV` calls
+  `UnregisterTabularDataset(name)` at entry to clear any stale entry in
+  the OTHER map (e.g. toggling Force disk-backed).
+
+### Parquet cache hygiene
+
+`ParquetBackedDataset::PruneCache(max_total_bytes=10GB, max_age_days=30)`:
+- Two-pass: mtime expiry first, then LRU-by-mtime if over the size cap.
+- Runs once at engine startup (`MainWindow` constructor) and after every
+  successful `ConvertCsvToParquet`.
+- `try_remove` swallows errors so Windows mmap-locked files (cache files
+  currently being trained on) are silently skipped — next prune retries.
+
+### Compile gate (validation tiers)
+
+`GraphCompiler::Compile` populates `TrainingConfiguration::issues` (a
+`vector<ValidationIssue>` with Error/Warning/Info levels) instead of
+stopping at the first error. `is_valid` is computed as "no Error-level
+issues"; warnings allow training but show in the popup.
+
+`MainWindow::StartTrainingFromGraph` runs `BuildCompileResult` as a
+pre-flight gate. If the result has any Error-level issues, it triggers
+the same popup as the Compile button (with a "Cannot Start Training"
+header) and refuses to launch training. No more silent log-and-return.
+
+Key checks added on top of the original structural validation:
+- DataInput's `data_loaded` parameter must be "true"
+- Dataset name must resolve in `DataRegistry` (Arrow or Parquet)
+- Label column should be set (warning if not)
+- DataSplit ratios sum to 1.0 ± 0.05
+- batch_size > 0 and ≤ train rows (error if too big, warning if > half)
+
+### General principles
+
+- Tabular data: `DataInputDialog` → `LoadTabularCSV` → in-memory Arrow OR
+  disk-backed Parquet → `ArrowDatasetBatcher` / `ParquetArrowBatcher` →
+  training. One entry point. Branch happens inside the registry, hidden
+  from the user.
+- Speed and memory come from Arrow optimizations, not user knobs.
+  Auto-detect good defaults, bake them in, hide the controls.
+- Node editor follows **single-responsibility**: one concern per node.
+  Separate nodes for Normalize, Preprocess, DataSplit, DataLoader, etc.
+  Do not couple concerns into one node.
+- Users care about speed and memory, not configuration options. When
+  adding features, prefer smart defaults over knobs. The Force disk-backed
+  checkbox is the lone exception — an escape hatch for benchmarking the
+  disk-backed code path on small files.
 
 ## Completed Features
 
