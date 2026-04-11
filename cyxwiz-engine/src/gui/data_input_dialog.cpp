@@ -16,6 +16,7 @@
 #include "node_editor.h"
 #include "../core/data_registry.h"
 #include "../core/arrow_dataset.h"
+#include "../core/parquet_backed_dataset.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -67,24 +68,68 @@ DataInputDialog::DataInputDialog(MLNode* node)
             }
         }
 
-        // Restore data load state from registry
-        // Note: Apply() saves as "dataset_name" parameter
+        // Restore the Force disk-backed cache checkbox from node params.
+        // Without this, the toggle state is lost every time the dialog is
+        // closed, and the user silently falls back to the default auto-
+        // detect path on the next Apply even though they intended to keep
+        // using disk-backed mode. Persistence via node_->parameters so it
+        // travels with the project file too.
+        if (node_->parameters.count("force_disk_backed") &&
+            node_->parameters["force_disk_backed"] == "true") {
+            force_disk_backed_ = true;
+        }
+
+        // Restore data load state from registry.
+        // Note: Apply() saves as "dataset_name" parameter. We have to check
+        // BOTH the Arrow map and the Parquet-backed map, because a previous
+        // Apply may have used either path. If only Arrow is checked, a
+        // dialog re-open after a disk-backed load silently loses the
+        // "Loaded" state and asks the user to re-apply.
         if (node_->parameters.count("data_loaded") && node_->parameters["data_loaded"] == "true") {
             if (node_->parameters.count("dataset_name") && !node_->parameters["dataset_name"].empty()) {
                 loaded_dataset_name_ = node_->parameters["dataset_name"];
                 auto& registry = cyxwiz::DataRegistry::Instance();
-                auto dataset = registry.GetArrowDataset(loaded_dataset_name_);
-                if (dataset) {
-                    // Dataset is still in memory
-                    loaded_rows_ = dataset->GetNumRows();
-                    loaded_cols_ = dataset->GetNumColumns();
-                    loaded_memory_bytes_ = dataset->GetMemoryUsage();
+
+                auto arrow_ds = registry.GetArrowDataset(loaded_dataset_name_);
+                auto parquet_ds = registry.GetParquetBackedDataset(loaded_dataset_name_);
+
+                if (arrow_ds) {
+                    // Dataset is still in memory as an Arrow table
+                    loaded_rows_ = arrow_ds->GetNumRows();
+                    loaded_cols_ = arrow_ds->GetNumColumns();
+                    loaded_memory_bytes_ = arrow_ds->GetMemoryUsage();
                     data_load_state_ = DataLoadState::InMemory;
+                    loaded_backend_ = 1;
                     apply_success_ = true;
                     apply_status_message_ = "Loaded " + loaded_dataset_name_ + " (" +
                         std::to_string(loaded_rows_) + " rows, " +
                         std::to_string(loaded_cols_) + " cols, " +
                         FormatBytes(loaded_memory_bytes_) + ")";
+                    spdlog::debug("DataInputDialog: restored in-memory Arrow state for '{}'",
+                                  loaded_dataset_name_);
+                } else if (parquet_ds) {
+                    // Dataset is still available via the Parquet disk cache.
+                    // Treat the state as loaded for UX purposes; the Memory
+                    // tab will show "Loaded via Parquet cache" thanks to
+                    // loaded_backend_ == 2.
+                    loaded_rows_ = parquet_ds->GetNumRows();
+                    loaded_cols_ = parquet_ds->GetNumColumns();
+                    loaded_memory_bytes_ = parquet_ds->GetMemoryUsage();  // on-disk size
+                    data_load_state_ = DataLoadState::InMemory;
+                    loaded_backend_ = 2;
+                    apply_success_ = true;
+                    apply_status_message_ = "Loaded " + loaded_dataset_name_ +
+                        " via Parquet cache (" +
+                        std::to_string(loaded_rows_) + " rows, " +
+                        std::to_string(loaded_cols_) + " cols, " +
+                        FormatBytes(loaded_memory_bytes_) + " on disk)";
+                    spdlog::debug("DataInputDialog: restored Parquet-backed state for '{}'",
+                                  loaded_dataset_name_);
+                } else {
+                    spdlog::debug("DataInputDialog: data_loaded=true but dataset '{}' not found "
+                                  "in registry (neither Arrow nor Parquet) - state lost across "
+                                  "restart or registry unload",
+                                  loaded_dataset_name_);
                 }
             }
         }
@@ -106,6 +151,11 @@ void DataInputDialog::Apply() {
     node_->parameters["file_path"] = file_path_;
     node_->parameters["folder_path"] = folder_path_;
     node_->parameters["configured"] = "true";
+    // Persist the Force disk-backed toggle so reopening the dialog (or
+    // reopening the project) keeps the user's choice. Without this, the
+    // checkbox silently resets to false and the next Apply falls back to
+    // auto-detect, surprising users who explicitly asked for disk-backed.
+    node_->parameters["force_disk_backed"] = force_disk_backed_ ? "true" : "false";
 
     // Source-specific parameters
     if (source_type_ == SourceType::File) {
@@ -219,8 +269,56 @@ void DataInputDialog::Apply() {
                 char delim = (file_type == "tsv") ? '\t' : custom_delimiter_[0];
                 // max_rows_ from the Limit Rows tab: 0 means "all rows".
                 int64_t cap = (max_rows_ > 0) ? static_cast<int64_t>(max_rows_) : 0;
-                dataset = registry.LoadCSVToArrow(file_path_, loaded_dataset_name_,
-                                                   has_header_, delim, skip_rows_, cap);
+
+                // LoadTabularCSV auto-detects whether the file fits in RAM
+                // and routes to either an in-memory Arrow table or a disk-
+                // backed Parquet cache. It registers the result in
+                // DataRegistry under loaded_dataset_name_ regardless of
+                // which path fired. We then fetch the right handle based
+                // on the backend tag.
+                auto backend = registry.LoadTabularCSV(
+                    file_path_, loaded_dataset_name_,
+                    has_header_, delim, skip_rows_, cap,
+                    force_disk_backed_);
+
+                if (backend == cyxwiz::DataRegistry::TabularLoadBackend::InMemory) {
+                    loaded_backend_ = 1;
+                    dataset = registry.GetArrowDataset(loaded_dataset_name_);
+                } else if (backend == cyxwiz::DataRegistry::TabularLoadBackend::DiskBacked) {
+                    loaded_backend_ = 2;
+                    // Populate loaded_* directly from the Parquet-backed
+                    // dataset. The local `dataset` shared_ptr stays null
+                    // because it's the Arrow-specific type; the success
+                    // branch below handles the Parquet case separately.
+                    auto pq = registry.GetParquetBackedDataset(loaded_dataset_name_);
+                    if (pq) {
+                        loaded_rows_ = pq->GetNumRows();
+                        loaded_cols_ = pq->GetNumColumns();
+                        loaded_memory_bytes_ = pq->GetMemoryUsage();  // file size on disk
+                        data_load_state_ = DataLoadState::InMemory;
+
+                        node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                        node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                        node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
+                        node_->parameters["dataset_name"] = loaded_dataset_name_;
+                        node_->parameters["data_loaded"] = "true";
+
+                        fs::path p(file_path_);
+                        node_->description = p.filename().string() + "\n" +
+                            std::to_string(loaded_rows_) + " rows, " +
+                            std::to_string(loaded_cols_) + " cols (disk-backed)";
+
+                        apply_status_message_ = "Loaded " + p.filename().string() +
+                            " via Parquet cache (" +
+                            std::to_string(loaded_rows_) + " rows, " +
+                            std::to_string(loaded_cols_) + " cols, " +
+                            FormatBytes(loaded_memory_bytes_) + " on disk)";
+                        apply_success_ = true;
+                        spdlog::info("DataInputDialog: {}", apply_status_message_);
+                    }
+                }
+                // If backend == Failed, `dataset` is null and the existing
+                // error-handling block below will catch it.
             } else if (file_type == "parquet") {
                 dataset = registry.LoadParquetToArrow(file_path_, loaded_dataset_name_);
             } else if (file_type == "json") {
@@ -259,7 +357,14 @@ void DataInputDialog::Apply() {
 
                 apply_success_ = true;
                 spdlog::info("DataInputDialog: {}", apply_status_message_);
-            } else {
+            } else if (!apply_success_) {
+                // Only treat a null Arrow `dataset` as a failure if no prior
+                // success path set apply_success_ already. The disk-backed
+                // Parquet branch returns without populating `dataset` (that
+                // variable is Arrow-typed), and previously that fall-through
+                // clobbered data_loaded back to "false", defeating the state
+                // restore on dialog reopen. This guard keeps the Parquet
+                // success state intact.
                 apply_status_message_ = "Failed to load data - check file format";
                 node_->parameters["data_loaded"] = "false";
             }
@@ -940,9 +1045,18 @@ void DataInputDialog::RenderMemoryTab() {
 
     switch (data_load_state_) {
         case DataLoadState::InMemory: {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "In Memory");
-            ImGui::SameLine();
-            ImGui::TextDisabled("- %s", FormatBytes(loaded_memory_bytes_).c_str());
+            // Green = in-memory Arrow, blue = disk-backed Parquet cache.
+            // Both are "loaded and ready to train" from the user's POV;
+            // the color signals where the data actually lives.
+            if (loaded_backend_ == 2) {
+                ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "Loaded via Parquet cache");
+                ImGui::SameLine();
+                ImGui::TextDisabled("- %s on disk", FormatBytes(loaded_memory_bytes_).c_str());
+            } else {
+                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "In Memory");
+                ImGui::SameLine();
+                ImGui::TextDisabled("- %s", FormatBytes(loaded_memory_bytes_).c_str());
+            }
 
             ImGui::Text("Rows:");
             ImGui::SameLine(120);
@@ -951,6 +1065,13 @@ void DataInputDialog::RenderMemoryTab() {
             ImGui::Text("Columns:");
             ImGui::SameLine(280);
             ImGui::Text("%lld", static_cast<long long>(loaded_cols_));
+
+            // Explain the backing for disk-backed loads so users understand
+            // they're not consuming RAM proportional to the file size.
+            if (loaded_backend_ == 2) {
+                ImGui::TextDisabled("  Training reads pages lazily via memory-mapped I/O. "
+                                    "RAM use bounded by the OS page cache, not the file size.");
+            }
 
             ImGui::Spacing();
 
@@ -989,6 +1110,28 @@ void DataInputDialog::RenderMemoryTab() {
                            "File size on disk: %.1f MB", estimated_ram_mb_);
         ImGui::TextDisabled("   Actual RAM usage after load is usually smaller due to integer column compaction.");
     }
+
+    // Advanced: force disk-backed cache (escape hatch for testing the
+    // Parquet path on datasets that would otherwise take the in-memory
+    // route). Default off — LoadTabularCSV picks in-memory vs disk-backed
+    // automatically based on file_size vs available RAM (75% threshold).
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Advanced");
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Force disk-backed cache", &force_disk_backed_)) {
+        has_changes_ = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Normally the engine loads small CSVs directly into RAM and spills\n"
+            "larger-than-RAM CSVs to a Parquet cache on disk. This checkbox\n"
+            "forces the disk-backed cache path even for small files — useful\n"
+            "for testing or benchmarking the lazy load code path. Takes effect\n"
+            "on the next Apply.");
+    }
+    ImGui::TextDisabled("   When on, the next Apply writes a Parquet cache in the system temp dir.");
 }
 
 void DataInputDialog::RenderMLDatasetOptions() {

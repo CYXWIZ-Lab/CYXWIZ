@@ -69,6 +69,23 @@ public:
     );
 
     /**
+     * Start training with a disk-backed Parquet dataset. Used when
+     * DataRegistry::LoadTabularCSV picked the disk-backed path because
+     * the CSV was larger than available RAM. Mirrors StartTrainingArrow
+     * exactly; differs only in the dataset type carried through to the
+     * TrainingExecutor, which picks its Parquet batcher accordingly.
+     */
+    bool StartTrainingParquet(
+        TrainingConfiguration config,
+        std::shared_ptr<class ParquetBackedDataset> parquet_dataset,
+        const std::string& label_column,
+        int epochs,
+        int batch_size,
+        TrainingPlotPanel* plot_panel = nullptr,
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
+    /**
      * Stop the current training session
      */
     void StopTraining();

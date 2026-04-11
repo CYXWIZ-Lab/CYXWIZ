@@ -213,6 +213,103 @@ bool TrainingManager::StartTrainingArrow(
     return true;
 }
 
+bool TrainingManager::StartTrainingParquet(
+    TrainingConfiguration config,
+    std::shared_ptr<ParquetBackedDataset> parquet_dataset,
+    const std::string& label_column,
+    int epochs,
+    int batch_size,
+    TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback)
+{
+    // Mirrors StartTrainingArrow; the only difference is the dataset type
+    // carried through to the TrainingExecutor, which picks its Parquet
+    // batcher based on that type.
+    if (is_training_.load()) {
+        spdlog::warn("TrainingManager: Cannot start training - already training");
+        return false;
+    }
+
+    if (!parquet_dataset) {
+        spdlog::error("TrainingManager: Parquet dataset is null");
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (is_training_.load()) {
+        return false;
+    }
+
+    // Update input size from actual data (same logic as StartTrainingArrow).
+    // Parquet column counts come from the dataset's cached schema, so this
+    // is a metadata lookup, not a disk read.
+    size_t num_cols = parquet_dataset->GetNumColumns();
+    size_t num_rows = parquet_dataset->GetNumRows();
+    if (num_cols > 1) {
+        config.input_size = num_cols - 1;
+        spdlog::info("TrainingManager: Parquet dataset has {} rows, {} cols, input_size={} (assuming 1 label column)",
+                     num_rows, num_cols, config.input_size);
+    } else {
+        config.input_size = num_cols;
+        spdlog::warn("TrainingManager: Parquet dataset has only {} column - no separate label column", num_cols);
+    }
+
+    auto executor = std::make_unique<TrainingExecutor>(std::move(config), parquet_dataset, label_column);
+
+    is_training_.store(true);
+    stop_requested_.store(false);
+
+    if (node_editor_callback) {
+        node_editor_callback(true);
+    }
+
+    if (plot_panel) {
+        plot_panel->Clear();
+        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
+        plot_panel->SetVisible(true);
+    }
+
+    std::string task_name = "Training Model (Parquet)";
+    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [](LambdaTask& task) {
+            while (!task.ShouldStop()) {
+                auto& mgr = TrainingManager::Instance();
+                if (!mgr.IsTrainingActive()) {
+                    break;
+                }
+                auto metrics = mgr.GetCurrentMetrics();
+                float progress = static_cast<float>(metrics.current_epoch) / std::max(1, metrics.total_epochs);
+                task.ReportProgress(progress,
+                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
+                    std::to_string(metrics.total_epochs) +
+                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            task.MarkCompleted();
+        },
+        nullptr,
+        nullptr
+    ));
+
+    if (on_training_start_) {
+        on_training_start_("Training from Parquet-backed Dataset");
+    }
+
+    if (training_thread_ && training_thread_->joinable()) {
+        training_thread_->join();
+    }
+
+    training_thread_ = std::make_unique<std::thread>(
+        &TrainingManager::TrainingThreadFunc, this,
+        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
+    );
+
+    spdlog::info("TrainingManager: Started Parquet training ({} epochs, batch_size={})", epochs, batch_size);
+    return true;
+}
+
 void TrainingManager::StopTraining() {
     if (!is_training_.load()) {
         return;

@@ -381,6 +381,29 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
             return false;
         }
 
+        // 4b) Release the writer and the underlying output stream before
+        //     attempting the rename. Windows won't rename a file that any
+        //     process still has a handle on, and Arrow's FileOutputStream
+        //     holds the OS handle open until it's explicitly Close()d OR
+        //     its last shared_ptr reference is dropped. writer->Close()
+        //     only closes the writer's own state, not the underlying sink.
+        //
+        //     Step one: drop the writer. It holds an internal reference
+        //     to pq_output; dropping it releases that reference.
+        writer.reset();
+
+        //     Step two: explicitly Close() the output stream and drop
+        //     its shared_ptr. Either of these alone might be enough on
+        //     some platforms, but doing both is defensive and matches
+        //     Arrow's documented lifecycle.
+        auto pq_close_status = pq_output->Close();
+        if (!pq_close_status.ok()) {
+            spdlog::warn("ConvertCsvToParquet: pq_output->Close() returned non-OK: {}",
+                         pq_close_status.ToString());
+            // Non-fatal — the handle is still dropped below.
+        }
+        pq_output.reset();
+
         // 5) Atomic rename .tmp -> final cache path. This is the point where
         //    the cache becomes visible to IsCacheFresh on subsequent loads.
         //    Any failure before this point leaves no cache file behind.

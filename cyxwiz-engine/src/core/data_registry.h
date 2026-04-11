@@ -309,6 +309,14 @@ public:
     void RegisterParquetBacked(const std::string& name,
                                std::shared_ptr<class ParquetBackedDataset> dataset);
 
+    // Remove a tabular dataset by name from both the Arrow and Parquet maps.
+    // Used by LoadTabularCSV when the user re-loads the same CSV to make
+    // sure stale entries don't linger in the other map and confuse dispatch
+    // (e.g., MainWindow::StartTrainingFromGraph checks IsArrowDataset first
+    // and would otherwise route to a stale Arrow entry from a previous load).
+    // No-op for names that don't exist in either map.
+    void UnregisterTabularDataset(const std::string& name);
+
     // Which backing store a successful LoadTabularCSV call ended up using.
     enum class TabularLoadBackend {
         Failed,      // load failed; nothing is registered

@@ -1524,6 +1524,13 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
                  force_disk_backed ? "true" : "false",
                  use_disk_backed ? "disk-backed" : "in-memory");
 
+    // Clear any stale entries under the same name in the OTHER map before
+    // (re-)registering. Without this, repeatedly re-Applying a dataset
+    // (especially when toggling the Force disk-backed flag) leaves orphan
+    // entries in both maps and MainWindow::StartTrainingFromGraph routes
+    // to whichever one it checks first, which is usually the stale one.
+    UnregisterTabularDataset(name);
+
     if (!use_disk_backed) {
         // Fast path: fits in RAM, use the existing in-memory loader.
         auto dataset = LoadCSVToArrow(path, name, has_header, delimiter, skip_rows, max_rows);

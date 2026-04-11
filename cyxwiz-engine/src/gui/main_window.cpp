@@ -134,6 +134,7 @@
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
 #include "../core/data_registry.h"
+#include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
@@ -2835,7 +2836,11 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
 
     bool started = false;
 
-    // Check if Arrow dataset is available (modern Data Studio path)
+    // Dispatch by dataset type. In-memory Arrow is the default fast path;
+    // disk-backed Parquet kicks in when LoadTabularCSV decided the CSV was
+    // too big to fit in RAM (see DataRegistry::LoadTabularCSV auto-detect).
+    // Legacy DatasetHandle is the pre-Arrow path, kept for back-compat
+    // until the Arrow migration is complete.
     if (registry.IsArrowDataset(dataset_name)) {
         auto arrow_dataset = registry.GetArrowDataset(dataset_name);
         if (arrow_dataset) {
@@ -2853,6 +2858,26 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             );
         } else {
             spdlog::error("Arrow dataset '{}' is registered but could not be retrieved", dataset_name);
+        }
+    } else if (registry.IsParquetBackedDataset(dataset_name)) {
+        auto parquet_dataset = registry.GetParquetBackedDataset(dataset_name);
+        if (parquet_dataset) {
+            spdlog::info("Starting Parquet-backed training: dataset={}, epochs={}, batch_size={}, "
+                         "label={}, {:.1f} MB cache on disk",
+                         dataset_name, epochs, batch_size, label_column,
+                         parquet_dataset->GetFileSizeBytes() / (1024.0 * 1024.0));
+
+            started = tm.StartTrainingParquet(
+                std::move(config),
+                parquet_dataset,
+                label_column,
+                epochs,
+                batch_size,
+                training_plot_panel_.get(),
+                node_editor_callback
+            );
+        } else {
+            spdlog::error("Parquet-backed dataset '{}' is registered but could not be retrieved", dataset_name);
         }
     } else {
         // Fall back to legacy DatasetHandle path
@@ -2936,9 +2961,51 @@ void MainWindow::CompileGraphAndReport() {
             out << "Output size:     " << config.output_size << "\n";
             out << "\n";
 
+            // Read dataset_name directly from the DataInput node parameters.
+            // GraphCompiler reads parameters["dataset"] (old key) while the
+            // DataInput dialog writes parameters["dataset_name"] (new key),
+            // so config.dataset_name is often empty. Mirror the same lookup
+            // that StartTrainingFromGraph uses — that path always works.
+            std::string dataset_name_from_graph;
+            for (const auto& node : nodes) {
+                if (node.type == NodeType::DataInput || node.type == NodeType::DatasetInput) {
+                    auto it = node.parameters.find("dataset_name");
+                    if (it != node.parameters.end() && !it->second.empty()) {
+                        dataset_name_from_graph = it->second;
+                        break;
+                    }
+                }
+            }
+
             out << "Dataset:         "
-                << (config.dataset_name.empty() ? "<not set in DataInput>" : config.dataset_name)
+                << (dataset_name_from_graph.empty() ? "<not set in DataInput>" : dataset_name_from_graph)
                 << "\n";
+
+            // Dataset backing — tell the user whether this dataset will
+            // train from an in-memory Arrow table or a disk-backed Parquet
+            // cache, and show the memory footprint so they know what to
+            // expect when they click Train.
+            if (!dataset_name_from_graph.empty()) {
+                auto& reg = cyxwiz::DataRegistry::Instance();
+                if (reg.IsArrowDataset(dataset_name_from_graph)) {
+                    auto arrow_ds = reg.GetArrowDataset(dataset_name_from_graph);
+                    if (arrow_ds) {
+                        out << "Backing:         In-memory Arrow ("
+                            << (arrow_ds->GetMemoryUsage() / (1024.0 * 1024.0))
+                            << " MB resident)\n";
+                    }
+                } else if (reg.IsParquetBackedDataset(dataset_name_from_graph)) {
+                    auto pq_ds = reg.GetParquetBackedDataset(dataset_name_from_graph);
+                    if (pq_ds) {
+                        out << "Backing:         Disk-backed Parquet ("
+                            << (pq_ds->GetFileSizeBytes() / (1024.0 * 1024.0))
+                            << " MB on disk, "
+                            << pq_ds->GetNumRowGroups() << " row groups)\n";
+                    }
+                } else {
+                    out << "Backing:         <not registered — Apply the DataInput node first>\n";
+                }
+            }
 
             out << "Split ratios:    train=" << config.train_ratio
                 << ", val=" << config.val_ratio

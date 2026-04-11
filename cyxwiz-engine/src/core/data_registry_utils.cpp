@@ -296,4 +296,27 @@ void DataRegistry::RegisterParquetBacked(
                  dataset->GetFileSizeBytes() / (1024.0 * 1024.0));
 }
 
+void DataRegistry::UnregisterTabularDataset(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    bool removed_arrow = false;
+    bool removed_parquet = false;
+
+    auto arrow_it = arrow_datasets_.find(name);
+    if (arrow_it != arrow_datasets_.end()) {
+        arrow_datasets_.erase(arrow_it);
+        removed_arrow = true;
+    }
+
+    auto parquet_it = parquet_backed_datasets_.find(name);
+    if (parquet_it != parquet_backed_datasets_.end()) {
+        parquet_backed_datasets_.erase(parquet_it);
+        removed_parquet = true;
+    }
+
+    if (removed_arrow || removed_parquet) {
+        spdlog::debug("UnregisterTabularDataset '{}': removed arrow={} parquet={}",
+                      name, removed_arrow, removed_parquet);
+    }
+}
+
 } // namespace cyxwiz
