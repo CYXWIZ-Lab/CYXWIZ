@@ -246,7 +246,11 @@ std::shared_ptr<ArrowDataset> DataRegistry::GetArrowDataset(const std::string& n
 
     auto it = arrow_datasets_.find(name);
     if (it == arrow_datasets_.end()) {
-        spdlog::warn("Arrow dataset '{}' not found in registry", name);
+        // Lookup-miss is a normal probe pattern (Properties panel and the
+        // compile gate both call this every frame). Caller is expected to
+        // handle the null and either fall through or surface its own
+        // user-facing error. Logging warn here was producing thousands of
+        // entries per second when no dataset was loaded.
         return nullptr;
     }
 

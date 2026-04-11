@@ -71,6 +71,28 @@ struct GraphPreprocessingConfig {
 };
 
 /**
+ * A single graph validation finding. Populated by GraphCompiler::Compile
+ * during a Compile pass and surfaced to the user via the Compile popup.
+ *
+ * Tiered so the user can see at a glance which issues will block Train
+ * and which are just hints. node_id is -1 for graph-level findings (e.g.
+ * "no DataInput node"), otherwise it points at the offending node so the
+ * UI can highlight it.
+ */
+enum class IssueLevel {
+    Error,    // blocks Train; the graph cannot run as-is
+    Warning,  // allowed to Train but the user should be aware
+    Info      // pure FYI
+};
+
+struct ValidationIssue {
+    IssueLevel level = IssueLevel::Error;
+    int node_id = -1;                  // -1 == graph-level
+    std::string node_name;             // empty for graph-level
+    std::string message;
+};
+
+/**
  * Complete training configuration extracted from graph
  */
 struct TrainingConfiguration {
@@ -117,6 +139,20 @@ struct TrainingConfiguration {
     // Validation
     bool is_valid = false;
     std::string error_message;
+
+    // Detailed validation findings collected during Compile. Includes errors
+    // (which set is_valid=false), warnings, and informational notes. The
+    // Compile popup renders all of these with severity icons; Train is
+    // blocked iff any Error-level issue is present.
+    std::vector<ValidationIssue> issues;
+
+    // Convenience: count issues by level. Used by UI gating logic.
+    size_t CountIssues(IssueLevel level) const {
+        size_t n = 0;
+        for (const auto& i : issues) if (i.level == level) ++n;
+        return n;
+    }
+    bool HasErrors() const { return CountIssues(IssueLevel::Error) > 0; }
 
     // Helper methods
     OptimizerType GetOptimizerType() const {

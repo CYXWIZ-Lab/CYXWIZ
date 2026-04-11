@@ -81,58 +81,65 @@ DataInputDialog::DataInputDialog(MLNode* node)
             force_disk_backed_ = true;
         }
 
-        // Restore data load state from registry.
-        // Note: Apply() saves as "dataset_name" parameter. We have to check
-        // BOTH the Arrow map and the Parquet-backed map, because a previous
-        // Apply may have used either path. If only Arrow is checked, a
-        // dialog re-open after a disk-backed load silently loses the
-        // "Loaded" state and asks the user to re-apply.
-        if (node_->parameters.count("data_loaded") && node_->parameters["data_loaded"] == "true") {
-            if (node_->parameters.count("dataset_name") && !node_->parameters["dataset_name"].empty()) {
-                loaded_dataset_name_ = node_->parameters["dataset_name"];
-                auto& registry = cyxwiz::DataRegistry::Instance();
+        // Restore data load state by probing the registry directly. The
+        // registry is the source of truth — the parameters["data_loaded"]
+        // hint goes stale when an async Apply finishes after the dialog
+        // has been closed (PollAsyncLoadResult only runs while the dialog
+        // is open, so the provisional "false" never gets flipped back).
+        // Trusting the registry sidesteps that race entirely and also
+        // re-syncs the param so the compile gate sees consistent state.
+        if (node_->parameters.count("dataset_name") && !node_->parameters["dataset_name"].empty()) {
+            loaded_dataset_name_ = node_->parameters["dataset_name"];
+            auto& registry = cyxwiz::DataRegistry::Instance();
 
-                auto arrow_ds = registry.GetArrowDataset(loaded_dataset_name_);
-                auto parquet_ds = registry.GetParquetBackedDataset(loaded_dataset_name_);
+            auto arrow_ds = registry.GetArrowDataset(loaded_dataset_name_);
+            auto parquet_ds = registry.GetParquetBackedDataset(loaded_dataset_name_);
 
-                if (arrow_ds) {
-                    // Dataset is still in memory as an Arrow table
-                    loaded_rows_ = arrow_ds->GetNumRows();
-                    loaded_cols_ = arrow_ds->GetNumColumns();
-                    loaded_memory_bytes_ = arrow_ds->GetMemoryUsage();
-                    data_load_state_ = DataLoadState::InMemory;
-                    loaded_backend_ = 1;
-                    apply_success_ = true;
-                    apply_status_message_ = "Loaded " + loaded_dataset_name_ + " (" +
-                        std::to_string(loaded_rows_) + " rows, " +
-                        std::to_string(loaded_cols_) + " cols, " +
-                        FormatBytes(loaded_memory_bytes_) + ")";
-                    spdlog::debug("DataInputDialog: restored in-memory Arrow state for '{}'",
-                                  loaded_dataset_name_);
-                } else if (parquet_ds) {
-                    // Dataset is still available via the Parquet disk cache.
-                    // Treat the state as loaded for UX purposes; the Memory
-                    // tab will show "Loaded via Parquet cache" thanks to
-                    // loaded_backend_ == 2.
-                    loaded_rows_ = parquet_ds->GetNumRows();
-                    loaded_cols_ = parquet_ds->GetNumColumns();
-                    loaded_memory_bytes_ = parquet_ds->GetMemoryUsage();  // on-disk size
-                    data_load_state_ = DataLoadState::InMemory;
-                    loaded_backend_ = 2;
-                    apply_success_ = true;
-                    apply_status_message_ = "Loaded " + loaded_dataset_name_ +
-                        " via Parquet cache (" +
-                        std::to_string(loaded_rows_) + " rows, " +
-                        std::to_string(loaded_cols_) + " cols, " +
-                        FormatBytes(loaded_memory_bytes_) + " on disk)";
-                    spdlog::debug("DataInputDialog: restored Parquet-backed state for '{}'",
-                                  loaded_dataset_name_);
-                } else {
-                    spdlog::debug("DataInputDialog: data_loaded=true but dataset '{}' not found "
-                                  "in registry (neither Arrow nor Parquet) - state lost across "
-                                  "restart or registry unload",
-                                  loaded_dataset_name_);
-                }
+            if (arrow_ds) {
+                loaded_rows_ = arrow_ds->GetNumRows();
+                loaded_cols_ = arrow_ds->GetNumColumns();
+                loaded_memory_bytes_ = arrow_ds->GetMemoryUsage();
+                data_load_state_ = DataLoadState::InMemory;
+                loaded_backend_ = 1;
+                apply_success_ = true;
+                apply_status_message_ = "Loaded " + loaded_dataset_name_ + " (" +
+                    std::to_string(loaded_rows_) + " rows, " +
+                    std::to_string(loaded_cols_) + " cols, " +
+                    FormatBytes(loaded_memory_bytes_) + ")";
+                // Re-sync the param hint with reality so anyone reading
+                // node_->parameters["data_loaded"] sees consistent state.
+                node_->parameters["data_loaded"] = "true";
+                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
+                spdlog::debug("DataInputDialog: restored in-memory Arrow state for '{}'",
+                              loaded_dataset_name_);
+            } else if (parquet_ds) {
+                loaded_rows_ = parquet_ds->GetNumRows();
+                loaded_cols_ = parquet_ds->GetNumColumns();
+                loaded_memory_bytes_ = parquet_ds->GetMemoryUsage();
+                data_load_state_ = DataLoadState::InMemory;
+                loaded_backend_ = 2;
+                apply_success_ = true;
+                apply_status_message_ = "Loaded " + loaded_dataset_name_ +
+                    " via Parquet cache (" +
+                    std::to_string(loaded_rows_) + " rows, " +
+                    std::to_string(loaded_cols_) + " cols, " +
+                    FormatBytes(loaded_memory_bytes_) + " on disk)";
+                node_->parameters["data_loaded"] = "true";
+                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
+                spdlog::debug("DataInputDialog: restored Parquet-backed state for '{}'",
+                              loaded_dataset_name_);
+            } else {
+                // Registry doesn't have it. Either the user never applied,
+                // or project close / graph clear unregistered. Reflect
+                // reality in the param hint and show "Not Loaded".
+                node_->parameters["data_loaded"] = "false";
+                spdlog::debug("DataInputDialog: dataset '{}' not in registry - "
+                              "showing as Not Loaded",
+                              loaded_dataset_name_);
             }
         }
     }

@@ -18,6 +18,8 @@
 #include "../core/node_metadata_registry.h"
 #include "node_editor.h"
 #include "../core/data_registry.h"
+#include "../core/arrow_dataset.h"
+#include "../core/parquet_backed_dataset.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include "node_config_dialog.h"
 #include <imgui.h>
@@ -109,68 +111,101 @@ std::string Properties::FormatShapeMatrix(const std::vector<size_t>& shape, size
 }
 
 std::vector<size_t> Properties::GetInputShapeFromDataset() {
-    // First, try to get the shape from the loaded dataset in DataRegistry
+    // Resolve the input shape from the actual loaded data, not from a
+    // hardcoded default. The previous implementation fell back to a
+    // hardcoded {28, 28, 1} (MNIST) which made the properties panel
+    // show wrong layer dimensions for any non-MNIST dataset.
+    //
+    // Resolution order:
+    //   1. Walk DataInput / DatasetInput nodes in the current graph.
+    //   2. For each, find its dataset_name parameter and look it up in
+    //      the Arrow registry, then the Parquet-backed registry, then
+    //      the legacy DatasetHandle registry.
+    //   3. For tabular Arrow/Parquet: shape = [cols - (label?1:0)].
+    //   4. For image dialog config: shape = [target_h, target_w, channels].
+    //   5. For legacy DatasetHandle: use info.shape directly.
+    //
+    // If nothing resolves, return an empty vector. RenderShapeInfo will
+    // then show "shape unknown" instead of inventing dimensions.
     auto& registry = cyxwiz::DataRegistry::Instance();
-    auto datasets = registry.ListDatasets();
 
-    if (!datasets.empty()) {
-        // Get the first loaded dataset's shape
-        const auto& info = datasets[0];
-        if (!info.shape.empty()) {
-            spdlog::debug("Properties: Got shape from loaded dataset '{}': {}",
-                          info.name, FormatShape(info.shape));
-            return info.shape;
+    if (!node_editor_) return {};
+    const auto& nodes = node_editor_->GetNodes();
+
+    for (const auto& node : nodes) {
+        if (node.type != NodeType::DataInput &&
+            node.type != NodeType::DatasetInput) {
+            continue;
         }
-    }
 
-    // If no dataset is loaded, check if there's a dataset node with shape parameter
-    if (node_editor_) {
-        const auto& nodes = node_editor_->GetNodes();
-        for (const auto& node : nodes) {
-            if (node.type == NodeType::DatasetInput) {
-                // Check for dataset name and try to get shape from registry
-                if (node.parameters.count("dataset_name")) {
-                    const std::string& name = node.parameters.at("dataset_name");
-                    if (registry.HasDataset(name)) {
-                        auto handle = registry.GetDataset(name);
-                        if (handle.IsValid()) {
-                            auto info = handle.GetInfo();
-                            if (!info.shape.empty()) {
-                                return info.shape;
-                            }
-                        }
-                    }
-                }
-
-                // Fallback: check for shape parameter in node
-                if (node.parameters.count("shape")) {
-                    std::string shape_str = node.parameters.at("shape");
-                    std::vector<size_t> shape;
-
-                    // Parse shape string like "[28, 28, 1]" or "28,28,1"
-                    shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
-                    shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
-                    shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ' '), shape_str.end());
-
-                    size_t pos = 0;
-                    while ((pos = shape_str.find(',')) != std::string::npos) {
-                        shape.push_back(std::stoul(shape_str.substr(0, pos)));
-                        shape_str.erase(0, pos + 1);
-                    }
-                    if (!shape_str.empty()) {
-                        shape.push_back(std::stoul(shape_str));
-                    }
-
-                    if (!shape.empty()) {
-                        return shape;
-                    }
-                }
+        // Image-category dialogs carry explicit target dimensions even
+        // before any data is loaded. Honor those when present.
+        auto cat_it = node.parameters.find("file_category");
+        if (cat_it != node.parameters.end() && cat_it->second == "image") {
+            auto th = node.parameters.find("target_height");
+            auto tw = node.parameters.find("target_width");
+            auto rgb = node.parameters.find("rgb");
+            if (th != node.parameters.end() && tw != node.parameters.end()) {
+                try {
+                    size_t h = std::stoul(th->second);
+                    size_t w = std::stoul(tw->second);
+                    size_t c = (rgb != node.parameters.end() &&
+                                 rgb->second == "true") ? 3 : 1;
+                    if (h > 0 && w > 0) return {h, w, c};
+                } catch (...) {}
             }
         }
+
+        // Tabular path: derive [features] from loaded_cols and label_column.
+        auto name_it = node.parameters.find("dataset_name");
+        if (name_it == node.parameters.end() || name_it->second.empty()) continue;
+        const std::string& name = name_it->second;
+
+        int64_t cols = 0;
+        if (auto arrow_ds = registry.GetArrowDataset(name)) {
+            cols = arrow_ds->GetNumColumns();
+        } else if (auto pq_ds = registry.GetParquetBackedDataset(name)) {
+            cols = pq_ds->GetNumColumns();
+        } else if (registry.HasDataset(name)) {
+            // Legacy DatasetHandle path — keep its declared shape.
+            auto handle = registry.GetDataset(name);
+            if (handle.IsValid()) {
+                auto info = handle.GetInfo();
+                if (!info.shape.empty()) return info.shape;
+            }
+        }
+
+        if (cols > 0) {
+            auto label_it = node.parameters.find("label_column");
+            int64_t features = (label_it != node.parameters.end() &&
+                                 !label_it->second.empty()) ? cols - 1 : cols;
+            if (features > 0) return {static_cast<size_t>(features)};
+        }
+
+        // Last-resort fallback for legacy DatasetInput nodes that store
+        // the shape directly in parameters["shape"] (e.g. "[28, 28, 1]").
+        auto shape_it = node.parameters.find("shape");
+        if (shape_it != node.parameters.end()) {
+            std::string shape_str = shape_it->second;
+            shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
+            shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
+            shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ' '), shape_str.end());
+            std::vector<size_t> shape;
+            size_t pos = 0;
+            while ((pos = shape_str.find(',')) != std::string::npos) {
+                try { shape.push_back(std::stoul(shape_str.substr(0, pos))); } catch (...) {}
+                shape_str.erase(0, pos + 1);
+            }
+            if (!shape_str.empty()) {
+                try { shape.push_back(std::stoul(shape_str)); } catch (...) {}
+            }
+            if (!shape.empty()) return shape;
+        }
     }
 
-    // Default MNIST shape as fallback
-    return {28, 28, 1};
+    // Nothing resolved. Return empty so the panel shows "shape unknown"
+    // rather than a hardcoded MNIST shape that's almost always wrong.
+    return {};
 }
 
 std::vector<size_t> Properties::InferOutputShape(
@@ -523,14 +558,13 @@ NodeShapeInfo Properties::ComputeNodeShape(int node_id) {
             }
         }
 
-        // If no predecessor, this is a source node (Dataset, Input)
+        // If no predecessor, this is a source node (Dataset, Input).
+        // GetInputShapeFromDataset returns empty when no DataInput node
+        // has loaded data yet — propagate the empty shape downstream so
+        // the panel can show "Apply the DataInput node first" instead of
+        // hallucinating a hardcoded MNIST shape.
         if (input_shape.empty()) {
-            if (node->type == NodeType::DatasetInput) {
-                input_shape = GetInputShapeFromDataset();
-            } else {
-                // Try to get from dataset anyway as fallback
-                input_shape = GetInputShapeFromDataset();
-            }
+            input_shape = GetInputShapeFromDataset();
         }
 
         // Compute output shape
@@ -552,7 +586,16 @@ NodeShapeInfo Properties::ComputeNodeShape(int node_id) {
             // Compute layer parameters (weights, biases)
             info.params = ComputeLayerParameters(node->type, input_shape, node->parameters);
 
-            info.is_valid = true;
+            // is_valid means the shapes are real, not invented. If we
+            // failed to resolve any input shape (no DataInput in graph,
+            // or DataInput not Applied yet), surface a clear message
+            // instead of showing inferred-from-nothing dimensions.
+            if (input_shape.empty()) {
+                info.is_valid = false;
+                info.error = "Input shape unknown - apply the DataInput node first";
+            } else {
+                info.is_valid = true;
+            }
         }
     }
 

@@ -2753,12 +2753,30 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     try {
         spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
 
-        // Compile the graph
+        // === Pre-flight compile gate ===
+        // Run the same Compile pass the explicit Compile button uses, and
+        // populate compile_result_* so the popup can render structured
+        // findings. If the graph has any Error-level issues, refuse to
+        // start training and trigger the popup with a "blocked" header
+        // instead of silently logging.
+        BuildCompileResult(nodes, links);
+        if (!compile_result_success_) {
+            compile_result_blocked_train_ = true;
+            show_compile_result_popup_ = true;
+            spdlog::error("StartTrainingFromGraph: blocked - graph has errors");
+            return;
+        }
+
+        // Compile a fresh config for the actual run. BuildCompileResult
+        // already validated the graph; this Compile call will succeed
+        // identically and produce the same TrainingConfiguration.
         cyxwiz::GraphCompiler compiler;
         cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
 
     if (!config.is_valid) {
-        spdlog::error("Graph compilation failed: {}", config.error_message);
+        // Defensive — should be unreachable because BuildCompileResult
+        // already validated. Keep as a safety net in case of races.
+        spdlog::error("Graph compilation failed (post-gate): {}", config.error_message);
         return;
     }
 
@@ -2931,48 +2949,61 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
 void MainWindow::CompileGraphAndReport() {
     if (!node_editor_) {
         compile_result_success_ = false;
+        compile_result_blocked_train_ = false;
         compile_result_message_ = "Node editor is not available.";
+        compile_result_summary_.clear();
+        compile_result_issues_.clear();
         show_compile_result_popup_ = true;
         return;
     }
 
     auto nodes = node_editor_->GetNodes();
     auto links = node_editor_->GetLinks();
+    compile_result_blocked_train_ = false;
+    BuildCompileResult(nodes, links);
+    show_compile_result_popup_ = true;
+}
 
-    spdlog::info("CompileGraphAndReport: compiling {} nodes, {} links", nodes.size(), links.size());
+void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
+                                     const std::vector<NodeLink>& links) {
+    spdlog::info("BuildCompileResult: compiling {} nodes, {} links", nodes.size(), links.size());
+
+    compile_result_issues_.clear();
+    compile_result_summary_.clear();
+    compile_result_message_.clear();
+    compile_result_success_ = false;
 
     try {
         cyxwiz::GraphCompiler compiler;
         cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
 
-        std::ostringstream out;
-        if (!config.is_valid) {
-            compile_result_success_ = false;
-            out << "Compilation failed:\n\n" << config.error_message;
-            spdlog::error("CompileGraphAndReport: {}", config.error_message);
-        } else {
-            compile_result_success_ = true;
-            out << "Compilation successful.\n\n";
-            out << "Layers:          " << config.layers.size() << "\n";
-            out << "Input size:      " << config.input_size;
-            if (!config.input_shape.empty()) {
-                out << "  (shape [";
-                for (size_t i = 0; i < config.input_shape.size(); ++i) {
-                    if (i) out << ", ";
-                    out << config.input_shape[i];
-                }
-                out << "])";
-            }
-            out << "\n";
-            out << "Output size:     " << config.output_size << "\n";
-            out << "\n";
+        compile_result_issues_ = config.issues;
+        compile_result_success_ = config.is_valid;
 
-            // Read dataset_name directly from the DataInput node parameters.
-            // GraphCompiler reads parameters["dataset"] (old key) while the
-            // DataInput dialog writes parameters["dataset_name"] (new key),
-            // so config.dataset_name is often empty. Mirror the same lookup
-            // that StartTrainingFromGraph uses — that path always works.
-            std::string dataset_name_from_graph;
+        // Build the architecture summary text. Even when the graph has
+        // errors, the partial summary is informative — it shows what the
+        // compiler managed to extract before hitting issues.
+        std::ostringstream out;
+        out << "Layers:          " << config.layers.size() << "\n";
+        out << "Input size:      " << config.input_size;
+        if (!config.input_shape.empty()) {
+            out << "  (shape [";
+            for (size_t i = 0; i < config.input_shape.size(); ++i) {
+                if (i) out << ", ";
+                out << config.input_shape[i];
+            }
+            out << "])";
+        }
+        out << "\n";
+        out << "Output size:     " << config.output_size << "\n";
+        out << "\n";
+
+        // Dataset name comes from the DataInput node directly so older
+        // project files (which used the now-fixed "dataset" key) still
+        // resolve. graph_compiler now reads "dataset_name" first, so
+        // config.dataset_name should be populated for new projects.
+        std::string dataset_name_from_graph = config.dataset_name;
+        if (dataset_name_from_graph.empty()) {
             for (const auto& node : nodes) {
                 if (node.type == NodeType::DataInput || node.type == NodeType::DatasetInput) {
                     auto it = node.parameters.find("dataset_name");
@@ -2982,120 +3013,196 @@ void MainWindow::CompileGraphAndReport() {
                     }
                 }
             }
-
-            out << "Dataset:         "
-                << (dataset_name_from_graph.empty() ? "<not set in DataInput>" : dataset_name_from_graph)
-                << "\n";
-
-            // Dataset backing — tell the user whether this dataset will
-            // train from an in-memory Arrow table or a disk-backed Parquet
-            // cache, and show the memory footprint so they know what to
-            // expect when they click Train.
-            if (!dataset_name_from_graph.empty()) {
-                auto& reg = cyxwiz::DataRegistry::Instance();
-                if (reg.IsArrowDataset(dataset_name_from_graph)) {
-                    auto arrow_ds = reg.GetArrowDataset(dataset_name_from_graph);
-                    if (arrow_ds) {
-                        out << "Backing:         In-memory Arrow ("
-                            << (arrow_ds->GetMemoryUsage() / (1024.0 * 1024.0))
-                            << " MB resident)\n";
-                    }
-                } else if (reg.IsParquetBackedDataset(dataset_name_from_graph)) {
-                    auto pq_ds = reg.GetParquetBackedDataset(dataset_name_from_graph);
-                    if (pq_ds) {
-                        out << "Backing:         Disk-backed Parquet ("
-                            << (pq_ds->GetFileSizeBytes() / (1024.0 * 1024.0))
-                            << " MB on disk, "
-                            << pq_ds->GetNumRowGroups() << " row groups)\n";
-                    }
-                } else {
-                    out << "Backing:         <not registered — Apply the DataInput node first>\n";
-                }
-            }
-
-            out << "Split ratios:    train=" << config.train_ratio
-                << ", val=" << config.val_ratio
-                << ", test=" << config.test_ratio
-                << (config.has_data_split ? " (from DataSplit node)" : " (default, no DataSplit node)")
-                << "\n";
-
-            out << "Batching:        batch_size=" << config.batch_size
-                << ", shuffle=" << (config.shuffle ? "true" : "false")
-                << ", drop_last=" << (config.drop_last ? "true" : "false")
-                << (config.has_data_loader ? " (from DataLoader node)" : " (default, no DataLoader node)")
-                << "\n";
-
-            if (config.num_workers > 0) {
-                out << "                 num_workers=" << config.num_workers
-                    << " (requested — not yet implemented)\n";
-            }
-
-            out << "\n";
-            out << "Loss:            " << config.GetLossName() << "\n";
-            out << "Optimizer:       " << config.GetOptimizerName()
-                << " (lr=" << config.learning_rate << ")\n";
-
-            if (config.preprocessing.has_normalization) {
-                out << "Preprocessing:   Normalize(mean=" << config.preprocessing.norm_mean
-                    << ", std=" << config.preprocessing.norm_std << ")\n";
-            }
-            if (config.preprocessing.has_onehot) {
-                out << "                 One-hot encoding ("
-                    << config.preprocessing.num_classes << " classes)\n";
-            }
-
-            spdlog::info("CompileGraphAndReport: success - {} layers, input={}, output={}, "
-                         "batch_size={}, shuffle={}, split={:.2f}/{:.2f}/{:.2f}",
-                         config.layers.size(), config.input_size, config.output_size,
-                         config.batch_size, config.shuffle,
-                         config.train_ratio, config.val_ratio, config.test_ratio);
         }
 
-        compile_result_message_ = out.str();
+        out << "Dataset:         "
+            << (dataset_name_from_graph.empty() ? "<not set in DataInput>" : dataset_name_from_graph)
+            << "\n";
+
+        if (!dataset_name_from_graph.empty()) {
+            auto& reg = cyxwiz::DataRegistry::Instance();
+            if (reg.IsArrowDataset(dataset_name_from_graph)) {
+                auto arrow_ds = reg.GetArrowDataset(dataset_name_from_graph);
+                if (arrow_ds) {
+                    out << "Backing:         In-memory Arrow ("
+                        << (arrow_ds->GetMemoryUsage() / (1024.0 * 1024.0))
+                        << " MB resident, " << arrow_ds->GetNumRows() << " rows)\n";
+                }
+            } else if (reg.IsParquetBackedDataset(dataset_name_from_graph)) {
+                auto pq_ds = reg.GetParquetBackedDataset(dataset_name_from_graph);
+                if (pq_ds) {
+                    out << "Backing:         Disk-backed Parquet ("
+                        << (pq_ds->GetFileSizeBytes() / (1024.0 * 1024.0))
+                        << " MB on disk, " << pq_ds->GetNumRows() << " rows, "
+                        << pq_ds->GetNumRowGroups() << " row groups)\n";
+                }
+            } else {
+                out << "Backing:         <not registered - Apply the DataInput node first>\n";
+            }
+        }
+
+        out << "Split ratios:    train=" << config.train_ratio
+            << ", val=" << config.val_ratio
+            << ", test=" << config.test_ratio
+            << (config.has_data_split ? " (from DataSplit node)" : " (default, no DataSplit node)")
+            << "\n";
+
+        out << "Batching:        batch_size=" << config.batch_size
+            << ", shuffle=" << (config.shuffle ? "true" : "false")
+            << ", drop_last=" << (config.drop_last ? "true" : "false")
+            << (config.has_data_loader ? " (from DataLoader node)" : " (default, no DataLoader node)")
+            << "\n";
+
+        if (config.num_workers > 0) {
+            out << "                 num_workers=" << config.num_workers
+                << " (requested - not yet implemented)\n";
+        }
+
+        out << "\n";
+        out << "Loss:            " << config.GetLossName() << "\n";
+        out << "Optimizer:       " << config.GetOptimizerName()
+            << " (lr=" << config.learning_rate << ")\n";
+
+        if (config.preprocessing.has_normalization) {
+            out << "Preprocessing:   Normalize(mean=" << config.preprocessing.norm_mean
+                << ", std=" << config.preprocessing.norm_std << ")\n";
+        }
+        if (config.preprocessing.has_onehot) {
+            out << "                 One-hot encoding ("
+                << config.preprocessing.num_classes << " classes)\n";
+        }
+
+        compile_result_summary_ = out.str();
+        compile_result_message_ = config.error_message;  // legacy
+
+        spdlog::info("BuildCompileResult: {} - {} layers, {} errors / {} warnings",
+                     config.is_valid ? "valid" : "INVALID",
+                     config.layers.size(),
+                     config.CountIssues(cyxwiz::IssueLevel::Error),
+                     config.CountIssues(cyxwiz::IssueLevel::Warning));
     } catch (const std::exception& e) {
         compile_result_success_ = false;
-        compile_result_message_ = std::string("Compilation threw an exception:\n\n") + e.what();
-        spdlog::error("CompileGraphAndReport exception: {}", e.what());
+        cyxwiz::ValidationIssue exc_issue;
+        exc_issue.level = cyxwiz::IssueLevel::Error;
+        exc_issue.message = std::string("Compilation threw an exception: ") + e.what();
+        compile_result_issues_.push_back(std::move(exc_issue));
+        spdlog::error("BuildCompileResult exception: {}", e.what());
     } catch (...) {
         compile_result_success_ = false;
-        compile_result_message_ = "Compilation threw an unknown exception.";
-        spdlog::error("CompileGraphAndReport unknown exception");
+        cyxwiz::ValidationIssue exc_issue;
+        exc_issue.level = cyxwiz::IssueLevel::Error;
+        exc_issue.message = "Compilation threw an unknown exception";
+        compile_result_issues_.push_back(std::move(exc_issue));
+        spdlog::error("BuildCompileResult unknown exception");
     }
-
-    show_compile_result_popup_ = true;
 }
 
 void MainWindow::RenderCompileResultPopup() {
+    // Window title differs based on whether the popup was triggered by an
+    // explicit Compile click (informational) or by Train trying to start
+    // on an invalid graph (blocking).
+    const char* popup_title = compile_result_blocked_train_
+        ? "Cannot Start Training"
+        : "Compile Graph Result";
+
     if (show_compile_result_popup_) {
-        ImGui::OpenPopup("Compile Graph Result");
+        ImGui::OpenPopup(popup_title);
         show_compile_result_popup_ = false;
     }
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(620, 440), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_Appearing);
 
-    if (ImGui::BeginPopupModal("Compile Graph Result", nullptr, ImGuiWindowFlags_NoResize)) {
-        if (compile_result_success_) {
-            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "%s", "[OK]  Graph is valid and ready to train");
+    if (ImGui::BeginPopupModal(popup_title, nullptr, ImGuiWindowFlags_NoResize)) {
+        // === Header line: overall status ===
+        size_t error_count = 0, warn_count = 0, info_count = 0;
+        for (const auto& issue : compile_result_issues_) {
+            switch (issue.level) {
+                case cyxwiz::IssueLevel::Error:   error_count++; break;
+                case cyxwiz::IssueLevel::Warning: warn_count++;  break;
+                case cyxwiz::IssueLevel::Info:    info_count++;  break;
+            }
+        }
+
+        if (compile_result_blocked_train_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "[BLOCKED]  Training cannot start - fix the errors below");
+        } else if (compile_result_success_ && warn_count == 0) {
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+                               "[OK]  Graph is valid and ready to train");
+        } else if (compile_result_success_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                               "[OK with warnings]  Graph is valid - %zu warning(s)", warn_count);
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", "[FAIL]  Graph has errors — see below");
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "[FAIL]  Graph has %zu error(s)", error_count);
         }
         ImGui::Separator();
         ImGui::Spacing();
 
-        ImGui::BeginChild("CompileResultText",
-                          ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 8),
-                          true);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(compile_result_message_.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndChild();
+        // === Issues list ===
+        if (!compile_result_issues_.empty()) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Findings:");
+            ImGui::Spacing();
+
+            // Bounded child so a long issue list scrolls instead of pushing
+            // the summary off-screen.
+            float issues_h = std::min(170.0f,
+                                       ImGui::GetTextLineHeightWithSpacing() *
+                                       (compile_result_issues_.size() + 1.5f));
+            ImGui::BeginChild("CompileIssuesList", ImVec2(0, issues_h), true);
+            for (const auto& issue : compile_result_issues_) {
+                ImVec4 color;
+                const char* tag;
+                switch (issue.level) {
+                    case cyxwiz::IssueLevel::Error:
+                        color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+                        tag = "[ERR]  ";
+                        break;
+                    case cyxwiz::IssueLevel::Warning:
+                        color = ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
+                        tag = "[WARN] ";
+                        break;
+                    case cyxwiz::IssueLevel::Info:
+                        color = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
+                        tag = "[INFO] ";
+                        break;
+                }
+                ImGui::PushStyleColor(ImGuiCol_Text, color);
+                ImGui::TextUnformatted(tag);
+                ImGui::PopStyleColor();
+                ImGui::SameLine(0, 0);
+                if (!issue.node_name.empty()) {
+                    ImGui::Text("[%s] %s", issue.node_name.c_str(), issue.message.c_str());
+                } else {
+                    ImGui::TextUnformatted(issue.message.c_str());
+                }
+            }
+            ImGui::EndChild();
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+
+        // === Architecture summary ===
+        if (!compile_result_summary_.empty()) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Configuration:");
+            ImGui::Spacing();
+            ImGui::BeginChild("CompileSummary",
+                              ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 8),
+                              true);
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(compile_result_summary_.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndChild();
+        }
 
         ImGui::Spacing();
         float button_width = 120.0f;
         ImGui::SetCursorPosX((ImGui::GetWindowSize().x - button_width) * 0.5f);
         if (ImGui::Button("OK", ImVec2(button_width, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            compile_result_blocked_train_ = false;  // reset for next popup
             ImGui::CloseCurrentPopup();
         }
 

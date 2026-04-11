@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
 
 namespace cyxwiz {
 class TaskProgressPanel;
@@ -228,10 +229,26 @@ private:
     void CompileGraphAndReport();
     void RenderCompileResultPopup();
 
-    // Compile popup state
+    // Shared compile pass used by both the explicit Compile button and
+    // the Train button's pre-flight gate. Populates compile_result_*
+    // members from a fresh GraphCompiler::Compile call.
+    void BuildCompileResult(const std::vector<MLNode>& nodes,
+                            const std::vector<NodeLink>& links);
+
+    // Compile popup state. compile_result_issues_ holds the structured
+    // findings (errors / warnings / info) from GraphCompiler::Compile so
+    // the popup can render them with severity icons. compile_result_summary_
+    // is the human-readable architecture summary (layers, dataset, batch,
+    // etc.) shown below the issue list. compile_result_blocked_train_ is
+    // set when StartTrainingFromGraph triggers the popup because the user
+    // clicked Train on a graph that has Error-level issues — the popup
+    // header changes to "Cannot start training" in that case.
     bool show_compile_result_popup_ = false;
     bool compile_result_success_ = false;
-    std::string compile_result_message_;
+    bool compile_result_blocked_train_ = false;
+    std::string compile_result_message_;     // legacy single-string fallback
+    std::string compile_result_summary_;
+    std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
 
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;

@@ -1,11 +1,58 @@
 #include "graph_compiler.h"
+#include "data_registry.h"
+#include "arrow_dataset.h"
+#include "parquet_backed_dataset.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 #include <queue>
 #include <set>
+#include <sstream>
 #include <stack>
 
 namespace cyxwiz {
+
+namespace {
+// Local helpers for issue collection. Kept in an anonymous namespace so
+// they don't pollute the cyxwiz public surface.
+
+void AddIssue(TrainingConfiguration& config, IssueLevel level,
+              const std::string& message, int node_id = -1,
+              const std::string& node_name = "") {
+    ValidationIssue issue;
+    issue.level = level;
+    issue.message = message;
+    issue.node_id = node_id;
+    issue.node_name = node_name;
+    config.issues.push_back(std::move(issue));
+}
+
+const char* IssueLevelLabel(IssueLevel level) {
+    switch (level) {
+        case IssueLevel::Error:   return "ERROR";
+        case IssueLevel::Warning: return "WARN";
+        case IssueLevel::Info:    return "INFO";
+    }
+    return "?";
+}
+
+// Build the legacy single-string error_message from the issues list so
+// existing callers that only look at error_message keep working.
+std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
+    std::ostringstream out;
+    bool first = true;
+    for (const auto& i : issues) {
+        if (i.level != IssueLevel::Error) continue;
+        if (!first) out << "; ";
+        first = false;
+        if (!i.node_name.empty()) {
+            out << "[" << i.node_name << "] ";
+        }
+        out << i.message;
+    }
+    return out.str();
+}
+} // anonymous namespace
 
 TrainingConfiguration GraphCompiler::Compile(
     const std::vector<gui::MLNode>& nodes,
@@ -13,21 +60,105 @@ TrainingConfiguration GraphCompiler::Compile(
 {
     TrainingConfiguration config;
 
-    // Validate graph first
-    if (!ValidateGraph(nodes, links, config.error_message)) {
-        config.is_valid = false;
-        return config;
-    }
-
-    // Find key nodes
+    // === Structural validation ===
+    // Collect all structural errors at once (the old ValidateGraph stopped
+    // at the first one). is_valid is determined at the end of Compile by
+    // checking whether config.issues contains any Error-level entries.
     const gui::MLNode* dataset_node = FindDatasetInputNode(nodes);
     const gui::MLNode* loss_node = FindLossNode(nodes);
     const gui::MLNode* optimizer_node = FindOptimizerNode(nodes);
 
+    if (nodes.empty()) {
+        AddIssue(config, IssueLevel::Error, "Graph is empty - add nodes to create a model");
+    } else {
+        if (!dataset_node) {
+            AddIssue(config, IssueLevel::Error,
+                     "Graph must have a DataInput or DatasetInput node");
+        }
+        if (!loss_node) {
+            AddIssue(config, IssueLevel::Error,
+                     "Graph must have a loss function (MSELoss, CrossEntropyLoss, etc.)");
+        }
+        if (!optimizer_node) {
+            AddIssue(config, IssueLevel::Error,
+                     "Graph must have an optimizer (SGD, Adam, or AdamW)");
+        }
+        bool has_model_layer = false;
+        for (const auto& node : nodes) {
+            if (IsModelLayer(node.type)) { has_model_layer = true; break; }
+        }
+        if (!has_model_layer) {
+            AddIssue(config, IssueLevel::Error,
+                     "Graph must have at least one model layer (Dense, Conv2D, etc.)");
+        }
+        if (HasCycle(nodes, links)) {
+            AddIssue(config, IssueLevel::Error,
+                     "Graph contains a cycle - remove circular connections");
+        }
+    }
+
     // Extract dataset configuration
     if (dataset_node) {
-        config.dataset_name = dataset_node->parameters.count("dataset")
-            ? dataset_node->parameters.at("dataset") : "";
+        // dataset_name parameter is what DataInputDialog::Apply writes when
+        // a dataset is loaded. The legacy "dataset" key was used by the
+        // older DatasetInput dialog and is now obsolete — fall back to it
+        // only if dataset_name is empty, so older project files still load.
+        if (dataset_node->parameters.count("dataset_name") &&
+            !dataset_node->parameters.at("dataset_name").empty()) {
+            config.dataset_name = dataset_node->parameters.at("dataset_name");
+        } else if (dataset_node->parameters.count("dataset")) {
+            config.dataset_name = dataset_node->parameters.at("dataset");
+        }
+
+        // === New error checks tied to the dataset node ===
+
+        // Check 1: data_loaded must be "true". DataInputDialog::Apply sets
+        // this when (and only when) the load actually succeeded. If false,
+        // the user has the node configured but never clicked Apply, or the
+        // load failed, or an async load is still running.
+        const std::string& loaded_param = dataset_node->parameters.count("data_loaded")
+            ? dataset_node->parameters.at("data_loaded")
+            : std::string("false");
+        if (loaded_param != "true") {
+            AddIssue(config, IssueLevel::Error,
+                     "Data is not loaded - open the node and click Apply",
+                     dataset_node->id, dataset_node->name);
+        }
+
+        // Check 2: dataset must be present in DataRegistry under that name.
+        // Catches the case where the user loaded data, deleted the
+        // dataset elsewhere, and never re-applied. Also catches stale
+        // project state where data_loaded=true but registry was wiped on
+        // project close.
+        if (!config.dataset_name.empty()) {
+            auto& reg = DataRegistry::Instance();
+            bool in_registry = reg.IsArrowDataset(config.dataset_name) ||
+                               reg.IsParquetBackedDataset(config.dataset_name);
+            if (!in_registry && loaded_param == "true") {
+                AddIssue(config, IssueLevel::Error,
+                         "Dataset '" + config.dataset_name +
+                         "' is marked loaded but missing from registry - "
+                         "re-apply the DataInput node",
+                         dataset_node->id, dataset_node->name);
+            }
+        } else if (loaded_param == "true") {
+            // data_loaded=true but no dataset_name. Inconsistent state.
+            AddIssue(config, IssueLevel::Error,
+                     "Data marked loaded but no dataset_name parameter set",
+                     dataset_node->id, dataset_node->name);
+        }
+
+        // Check 3: label column. Optional for some workflows but required
+        // for supervised training. Warn rather than block.
+        const std::string label_col = dataset_node->parameters.count("label_column")
+            ? dataset_node->parameters.at("label_column")
+            : std::string();
+        if (label_col.empty()) {
+            AddIssue(config, IssueLevel::Warning,
+                     "No label column selected - training will use the last "
+                     "column as label by default",
+                     dataset_node->id, dataset_node->name);
+        }
 
         // Extract input shape from dataset node
         if (dataset_node->parameters.count("shape")) {
@@ -220,9 +351,78 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
-    config.is_valid = true;
-    spdlog::info("GraphCompiler: Compiled {} layers, input_size={}, output_size={}",
-                 config.layers.size(), config.input_size, config.output_size);
+    // === Post-compile sanity checks ===
+    // These need the values populated by the layer-extraction passes
+    // above, so they live at the end of Compile().
+
+    // DataSplit ratios should sum to ~1.0. Drift > 0.05 is almost
+    // certainly a typo or stale state from the user adjusting one
+    // ratio without rebalancing the others.
+    if (config.has_data_split) {
+        float sum = config.train_ratio + config.val_ratio + config.test_ratio;
+        if (std::abs(sum - 1.0f) > 0.05f) {
+            std::ostringstream msg;
+            msg << "DataSplit ratios sum to " << sum
+                << " (expected 1.0) - train=" << config.train_ratio
+                << ", val=" << config.val_ratio
+                << ", test=" << config.test_ratio;
+            AddIssue(config, IssueLevel::Warning, msg.str());
+        }
+        if (config.val_ratio < 1e-6f) {
+            AddIssue(config, IssueLevel::Warning,
+                     "Validation split is 0 - training will run without validation metrics");
+        }
+    }
+
+    // batch_size must fit in the train set. We can only check the upper
+    // bound when the dataset is actually loaded — otherwise the row count
+    // is unknown and the existing data_loaded check above already fired.
+    if (config.batch_size <= 0) {
+        AddIssue(config, IssueLevel::Error,
+                 "batch_size must be positive (got " +
+                 std::to_string(config.batch_size) + ")");
+    } else if (dataset_node && !config.dataset_name.empty()) {
+        auto& reg = DataRegistry::Instance();
+        int64_t total_rows = 0;
+        if (auto arrow_ds = reg.GetArrowDataset(config.dataset_name)) {
+            total_rows = arrow_ds->GetNumRows();
+        } else if (auto pq_ds = reg.GetParquetBackedDataset(config.dataset_name)) {
+            total_rows = pq_ds->GetNumRows();
+        }
+        if (total_rows > 0) {
+            int64_t train_rows = static_cast<int64_t>(total_rows * config.train_ratio);
+            if (config.batch_size > train_rows) {
+                AddIssue(config, IssueLevel::Error,
+                         "batch_size (" + std::to_string(config.batch_size) +
+                         ") is larger than the train split (" +
+                         std::to_string(train_rows) + " rows)");
+            } else if (config.batch_size > train_rows / 2) {
+                AddIssue(config, IssueLevel::Warning,
+                         "batch_size (" + std::to_string(config.batch_size) +
+                         ") is more than half the train split (" +
+                         std::to_string(train_rows) + " rows) - few iterations per epoch");
+            }
+        }
+    }
+
+    // Final verdict: is_valid is the absence of any Error-level issue.
+    // Warnings and Info don't block training.
+    config.is_valid = !config.HasErrors();
+    config.error_message = JoinErrorMessages(config.issues);
+
+    spdlog::info("GraphCompiler: Compiled {} layers, input_size={}, output_size={}, "
+                 "issues: {} errors / {} warnings / {} info, valid={}",
+                 config.layers.size(), config.input_size, config.output_size,
+                 config.CountIssues(IssueLevel::Error),
+                 config.CountIssues(IssueLevel::Warning),
+                 config.CountIssues(IssueLevel::Info),
+                 config.is_valid);
+    for (const auto& issue : config.issues) {
+        spdlog::info("  [{}] {}{}",
+                     IssueLevelLabel(issue.level),
+                     issue.node_name.empty() ? "" : ("[" + issue.node_name + "] "),
+                     issue.message);
+    }
 
     return config;
 }
