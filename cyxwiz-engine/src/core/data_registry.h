@@ -317,6 +317,13 @@ public:
     // No-op for names that don't exist in either map.
     void UnregisterTabularDataset(const std::string& name);
 
+    // Wipe every tabular dataset (both in-memory Arrow and disk-backed
+    // Parquet maps). Used by project lifecycle events: close project,
+    // open project, new project. Without this, datasets loaded in one
+    // project linger in the registry forever and can collide with
+    // datasets in the next project under the same auto-generated name.
+    void ClearAllTabularDatasets();
+
     // Which backing store a successful LoadTabularCSV call ended up using.
     enum class TabularLoadBackend {
         Failed,      // load failed; nothing is registered

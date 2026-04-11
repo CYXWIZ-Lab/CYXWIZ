@@ -3515,6 +3515,13 @@ void MainWindow::OnProjectClosed(const std::string& project_root) {
         asset_browser_->Clear();
     }
 
+    // Drop every tabular dataset (Arrow + Parquet-backed) so the next
+    // project starts with an empty registry. Without this, datasets from
+    // the previous project linger and can collide with same-named entries
+    // (auto-generated from file stem) in the new project, leading to
+    // stale dispatch in StartTrainingFromGraph.
+    cyxwiz::DataRegistry::Instance().ClearAllTabularDatasets();
+
     // Reset the dock layout to default when project is closed
     // This gives a clean slate for the next project
     first_time_layout_ = true;  // This will trigger BuildInitialDockLayout on next render

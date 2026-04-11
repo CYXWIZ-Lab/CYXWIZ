@@ -87,19 +87,28 @@ bool NodeConfigDialog::Render() {
         float total_width = button_width * 3 + spacing * 2;
         ImGui::SetCursorPosX(avail.x - total_width);
 
+        // Grey out OK/Apply while a subclass reports it's busy (e.g. async
+        // data load in DataInputDialog). Cancel stays enabled so the user
+        // can always bail out.
+        bool busy = IsBusy();
+
+        ImGui::BeginDisabled(busy);
         if (ImGui::Button("OK", ImVec2(button_width, 0))) {
             Apply();
             should_close = true;
         }
+        ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
             Reset();
             should_close = true;
         }
         ImGui::SameLine();
+        ImGui::BeginDisabled(busy);
         if (ImGui::Button("Apply", ImVec2(button_width, 0))) {
             Apply();
         }
+        ImGui::EndDisabled();
     }
     ImGui::End();
 

@@ -1,6 +1,7 @@
 #include "node_editor.h"
 #include "properties.h"
 #include "../plugin/registries/plugin_node_registry.h"
+#include "../core/data_registry.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -4101,6 +4102,22 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
     return node;
 }
 
+// Helper: if this node owns a tabular dataset (DataInput / DatasetInput
+// with a non-empty dataset_name parameter), drop it from the registry so
+// the next graph rebuild doesn't see a stale entry under the same name.
+// Defined locally because it's only used by DeleteNode and ClearGraph.
+static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
+    if (node.type != NodeType::DataInput &&
+        node.type != NodeType::DatasetInput) {
+        return;
+    }
+    auto it = node.parameters.find("dataset_name");
+    if (it == node.parameters.end() || it->second.empty()) {
+        return;
+    }
+    cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(it->second);
+}
+
 void NodeEditor::DeleteNode(int node_id) {
     // Delete node
     auto node_it = std::find_if(nodes_.begin(), nodes_.end(),
@@ -4110,6 +4127,11 @@ void NodeEditor::DeleteNode(int node_id) {
 
     if (node_it != nodes_.end()) {
         spdlog::info("Deleting node: {} (ID: {})", node_it->name, node_id);
+
+        // If this is a data input node, drop its registered dataset before
+        // we erase the node — otherwise the registry entry leaks until app
+        // exit (the next graph won't have a node referencing it).
+        UnregisterNodeDatasetIfOwned(*node_it);
 
         // Delete all links connected to this node
         links_.erase(
@@ -4132,6 +4154,13 @@ void NodeEditor::ClearGraph() {
     // to the selected node which becomes invalid after nodes_.clear())
     if (properties_panel_) {
         properties_panel_->ClearSelection();
+    }
+
+    // Drop every data input node's registered dataset before we lose the
+    // references in nodes_. Without this, "Clear All" leaves the datasets
+    // orphaned in the registry.
+    for (const auto& node : nodes_) {
+        UnregisterNodeDatasetIfOwned(node);
     }
 
     nodes_.clear();

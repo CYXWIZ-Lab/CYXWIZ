@@ -319,4 +319,19 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
     }
 }
 
+void DataRegistry::ClearAllTabularDatasets() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    size_t arrow_count = arrow_datasets_.size();
+    size_t parquet_count = parquet_backed_datasets_.size();
+
+    arrow_datasets_.clear();
+    parquet_backed_datasets_.clear();
+
+    if (arrow_count > 0 || parquet_count > 0) {
+        spdlog::info("ClearAllTabularDatasets: removed {} Arrow + {} Parquet entries",
+                     arrow_count, parquet_count);
+    }
+}
+
 } // namespace cyxwiz
