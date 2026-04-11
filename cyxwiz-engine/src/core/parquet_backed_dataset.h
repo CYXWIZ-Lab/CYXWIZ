@@ -49,6 +49,29 @@ public:
     static std::string GetCacheFilePath(const std::string& csv_path);
 
     /**
+     * Return the cache directory path used by GetCacheFilePath. Exposed so
+     * cache hygiene code (PruneCache) and diagnostics can locate the dir
+     * without duplicating the layout logic.
+     */
+    static std::string GetCacheDir();
+
+    /**
+     * Walk the cache directory and remove cache files that:
+     *   - have mtime older than max_age_days (mtime-based expiry), OR
+     *   - exceed the total size cap (LRU eviction by mtime, oldest first).
+     *
+     * Files that fail to delete (e.g. Windows mmap-locked) are silently
+     * skipped — the next prune will retry. Safe to call from a worker
+     * thread; uses only filesystem operations.
+     *
+     * Defaults: 10 GB total cap, 30-day mtime expiry. The defaults are
+     * deliberately generous for ML datasets and conservative on age, so
+     * users don't get surprise cache wipes between sessions.
+     */
+    static void PruneCache(size_t max_total_bytes = 10ULL * 1024 * 1024 * 1024,
+                            int max_age_days = 30);
+
+    /**
      * Check whether an existing cache file is still valid for a given CSV
      * source. Returns true if the cache exists and its mtime is >= the
      * CSV's mtime. Returns false if the cache is missing or stale.

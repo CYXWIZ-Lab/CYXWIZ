@@ -9,8 +9,11 @@
 #include <arrow/io/memory.h>
 #include <arrow/record_batch.h>
 #include <spdlog/spdlog.h>
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <functional>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -160,11 +163,22 @@ int64_t ParquetBackedDataset::GetRowGroupSize(int row_group_idx) const {
 // Cache location helpers
 // -----------------------------------------------------------------------------
 
-std::string ParquetBackedDataset::GetCacheFilePath(const std::string& csv_path) {
+std::string ParquetBackedDataset::GetCacheDir() {
     // Use system temp as the cache root — works across platforms, survives
     // across sessions (user doesn't lose the cache when they close the
     // engine), and doesn't require the project to be saved to disk.
-    //
+    fs::path cache_dir = fs::temp_directory_path() / "cyxwiz" / "cache";
+    try {
+        fs::create_directories(cache_dir);
+    } catch (const std::exception& e) {
+        spdlog::warn("ParquetBackedDataset::GetCacheDir: could not create cache dir {}: {}",
+                     cache_dir.string(), e.what());
+        // Return the path anyway — the eventual write will fail loudly.
+    }
+    return cache_dir.string();
+}
+
+std::string ParquetBackedDataset::GetCacheFilePath(const std::string& csv_path) {
     // Layout:  <temp>/cyxwiz/cache/<basename>_<pathhash>.parquet
     //
     // Hashing the full absolute path means the same CSV at the same location
@@ -184,17 +198,109 @@ std::string ParquetBackedDataset::GetCacheFilePath(const std::string& csv_path) 
     char hash_hex[32];
     snprintf(hash_hex, sizeof(hash_hex), "%016zx", hash);
 
-    fs::path cache_dir = fs::temp_directory_path() / "cyxwiz" / "cache";
+    fs::path cache_file = fs::path(GetCacheDir()) / (stem + "_" + hash_hex + ".parquet");
+    return cache_file.string();
+}
+
+void ParquetBackedDataset::PruneCache(size_t max_total_bytes, int max_age_days) {
+    fs::path cache_dir = GetCacheDir();
+    if (!fs::exists(cache_dir)) return;
+
+    // Collect every .parquet file with its size and mtime. We don't touch
+    // anything else in the directory — only files matching our suffix and
+    // naming pattern. Anything else stays.
+    struct CacheEntry {
+        fs::path path;
+        uintmax_t size = 0;
+        fs::file_time_type mtime{};
+    };
+    std::vector<CacheEntry> entries;
+
     try {
-        fs::create_directories(cache_dir);
-    } catch (const std::exception& e) {
-        spdlog::warn("ParquetBackedDataset::GetCacheFilePath: could not create cache dir {}: {}",
-                     cache_dir.string(), e.what());
-        // Fall through — we still return the path; the eventual write will fail loudly.
+        for (const auto& dir_entry : fs::directory_iterator(cache_dir)) {
+            if (!dir_entry.is_regular_file()) continue;
+            const auto& p = dir_entry.path();
+            if (p.extension() != ".parquet") continue;
+            CacheEntry e;
+            e.path = p;
+            try { e.size = fs::file_size(p); } catch (...) { e.size = 0; }
+            try { e.mtime = fs::last_write_time(p); } catch (...) { continue; }
+            entries.push_back(std::move(e));
+        }
+    } catch (const std::exception& ex) {
+        spdlog::warn("ParquetBackedDataset::PruneCache: directory_iterator failed on {}: {}",
+                     cache_dir.string(), ex.what());
+        return;
     }
 
-    fs::path cache_file = cache_dir / (stem + "_" + hash_hex + ".parquet");
-    return cache_file.string();
+    if (entries.empty()) return;
+
+    // Helper: try to delete a file, swallow errors. Windows can't delete a
+    // file that another process (or our own mmap) has open — that's fine,
+    // the next prune will retry.
+    auto try_remove = [](const fs::path& p) -> bool {
+        try {
+            return fs::remove(p);
+        } catch (const std::exception& e) {
+            spdlog::debug("PruneCache: could not delete {}: {}", p.string(), e.what());
+            return false;
+        }
+    };
+
+    // Pass 1 — mtime expiry. Delete any cache file older than max_age_days.
+    // file_time_type uses an unspecified clock per spec, so we go via the
+    // system_clock cast available in C++20 (file_clock::to_sys) where
+    // available, falling back to a wall-clock approximation otherwise.
+    size_t expired_count = 0;
+    uintmax_t expired_bytes = 0;
+    {
+        const auto cutoff = std::chrono::hours(24) * max_age_days;
+        const auto now = fs::file_time_type::clock::now();
+        for (auto it = entries.begin(); it != entries.end(); ) {
+            if (now - it->mtime > cutoff) {
+                if (try_remove(it->path)) {
+                    expired_count++;
+                    expired_bytes += it->size;
+                }
+                it = entries.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // Pass 2 — size cap. If the surviving entries exceed max_total_bytes,
+    // delete oldest first (LRU by mtime) until we're under the cap.
+    uintmax_t total_size = 0;
+    for (const auto& e : entries) total_size += e.size;
+
+    size_t evicted_count = 0;
+    uintmax_t evicted_bytes = 0;
+    if (total_size > max_total_bytes) {
+        std::sort(entries.begin(), entries.end(),
+                  [](const CacheEntry& a, const CacheEntry& b) {
+                      return a.mtime < b.mtime;  // oldest first
+                  });
+        for (auto& e : entries) {
+            if (total_size <= max_total_bytes) break;
+            if (try_remove(e.path)) {
+                evicted_count++;
+                evicted_bytes += e.size;
+                total_size -= e.size;
+            }
+        }
+    }
+
+    if (expired_count > 0 || evicted_count > 0) {
+        spdlog::info("ParquetBackedDataset::PruneCache: expired {} files ({:.1f} MB), "
+                     "evicted {} files ({:.1f} MB), {:.1f} MB remaining",
+                     expired_count, expired_bytes / (1024.0 * 1024.0),
+                     evicted_count, evicted_bytes / (1024.0 * 1024.0),
+                     total_size / (1024.0 * 1024.0));
+    } else {
+        spdlog::debug("ParquetBackedDataset::PruneCache: nothing to prune ({} files, {:.1f} MB)",
+                      entries.size(), total_size / (1024.0 * 1024.0));
+    }
 }
 
 bool ParquetBackedDataset::IsCacheFresh(const std::string& csv_path,
@@ -438,6 +544,12 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
                      csv_size / (1024.0 * 1024.0),
                      parquet_size / (1024.0 * 1024.0),
                      ratio);
+
+        // Run cache hygiene right after a fresh write so the directory
+        // doesn't grow unbounded across many CSV-> Parquet conversions
+        // in a single session. The just-written file has the newest mtime
+        // so it's safe from both the age expiry and the LRU pass.
+        PruneCache();
         return true;
 
     } catch (const std::exception& e) {

@@ -158,6 +158,12 @@ namespace gui {
 MainWindow::MainWindow()
     : show_about_dialog_(false), show_demo_window_(false), first_time_layout_(true) {
 
+    // Run Parquet cache hygiene once at startup. Drops anything older than
+    // 30 days and trims the directory back under 10 GB if it grew over the
+    // cap during the previous session. Filesystem ops on a small directory,
+    // fast enough to do synchronously without measurable startup impact.
+    cyxwiz::ParquetBackedDataset::PruneCache();
+
     // Original panels
     node_editor_ = std::make_unique<NodeEditor>();
     console_ = std::make_unique<Console>();
