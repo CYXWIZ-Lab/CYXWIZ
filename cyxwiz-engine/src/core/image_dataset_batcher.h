@@ -37,7 +37,7 @@ private:
 
     int batch_size_;
     bool shuffle_;
-    bool flatten_ = true;   // output [batch, H*W*C] — pre-flattened for Dense layers
+    bool flatten_ = false;  // output [batch, H, W, C] — let graph's Flatten node handle it
 
     float norm_mean_ = 0.0f;
     float norm_std_ = 1.0f;

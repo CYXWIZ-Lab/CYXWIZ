@@ -970,11 +970,13 @@ Tensor FlattenLayer::Forward(const Tensor& input) {
     try {
         af::array x = TensorToAf(input);
 
-        // Flatten all dimensions except batch
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+        // Flatten all dimensions except batch. TensorToAf maps our
+        // row-major shape directly to AF dims, so batch is always
+        // dims(0) regardless of ndims. Output is [batch, flat_features].
+        dim_t batch_size = x.dims(0);
         dim_t flat_size = x.elements() / batch_size;
 
-        af::array output = af::moddims(x, af::dim4(flat_size, batch_size));
+        af::array output = af::moddims(x, af::dim4(batch_size, flat_size));
 
         return AfToTensor(output);
     } catch (const af::exception& e) {
