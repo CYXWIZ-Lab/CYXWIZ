@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <queue>
 #include <set>
 #include <sstream>
@@ -402,6 +403,149 @@ TrainingConfiguration GraphCompiler::Compile(
                          "batch_size (" + std::to_string(config.batch_size) +
                          ") is more than half the train split (" +
                          std::to_string(train_rows) + " rows) - few iterations per epoch");
+            }
+        }
+    }
+
+    // === Image-specific checks ===
+    // Detect the data domain from the DataInput node's file_category
+    // parameter. If it's an image dataset, enforce image-specific rules
+    // that prevent crashes at training time (OOM, shape mismatch).
+    if (dataset_node) {
+        auto cat_it = dataset_node->parameters.find("file_category");
+        bool is_image = (cat_it != dataset_node->parameters.end() &&
+                         cat_it->second == "image");
+
+        if (is_image) {
+            config.preprocessing_domain = PreprocessingDomain::Image;
+
+            // Check 1: Resize node required for image datasets.
+            // Without it, images load at their native (variable) size,
+            // which can't be batched AND can cause massive tensors that
+            // OOM the GPU. This is the most critical image check.
+            bool has_resize = false;
+            for (const auto& node : nodes) {
+                if (node.type == gui::NodeType::Resize) {
+                    has_resize = true;
+                    break;
+                }
+            }
+            if (!has_resize) {
+                AddIssue(config, IssueLevel::Error,
+                         "Image datasets require a Resize node to set target "
+                         "dimensions. Without it, images load at their native "
+                         "size which can exceed GPU memory. Add a Resize node "
+                         "between DataInput and the first layer (e.g. "
+                         "Resize 64x64 for fast training, 224x224 for accuracy).",
+                         dataset_node->id, dataset_node->name);
+            }
+
+            // Check 2: Flatten required before Dense layers for images.
+            // Images are 3D (H×W×C); Dense expects a 1D flat vector.
+            if (!config.layers.empty()) {
+                auto first_layer = config.layers[0];
+                if (first_layer.type == gui::NodeType::Dense) {
+                    bool has_flatten_before_dense = false;
+                    for (const auto& node : nodes) {
+                        if (node.type == gui::NodeType::Flatten) {
+                            has_flatten_before_dense = true;
+                            break;
+                        }
+                    }
+                    if (!has_flatten_before_dense) {
+                        AddIssue(config, IssueLevel::Error,
+                                 "First model layer is Dense but no Flatten node "
+                                 "found. Image data is 3D (H x W x C) and needs "
+                                 "Flatten before Dense layers.",
+                                 first_layer.node_id, first_layer.name);
+                    }
+                }
+            }
+
+            // Check 3: Memory estimation for image models.
+            // Estimate total model memory (weights + gradients + optimizer)
+            // and warn if it's likely to exceed reasonable GPU memory.
+            if (has_resize && config.image_preprocessing.target_width > 0) {
+                size_t img_features = static_cast<size_t>(
+                    config.image_preprocessing.target_width) *
+                    config.image_preprocessing.target_height * 3;
+                size_t total_params = 0;
+                size_t prev_size = img_features;
+                for (const auto& layer : config.layers) {
+                    if (layer.type == gui::NodeType::Dense) {
+                        total_params += prev_size * layer.units + layer.units;
+                        prev_size = layer.units;
+                    } else if (layer.type == gui::NodeType::Flatten) {
+                        // prev_size stays the same (just reshaped)
+                    }
+                }
+                // Memory = weights × 4 (weights + grads + adam_m + adam_v)
+                // + batch activations (batch_size × largest_layer)
+                size_t model_bytes = total_params * 4 * sizeof(float);
+                size_t batch_bytes = static_cast<size_t>(config.batch_size) *
+                    img_features * sizeof(float);
+                size_t total_est = model_bytes + batch_bytes;
+
+                double est_mb = total_est / (1024.0 * 1024.0);
+
+                std::ostringstream mem_msg;
+                mem_msg << "Estimated GPU memory: " << std::fixed
+                        << std::setprecision(0) << est_mb << " MB ("
+                        << total_params << " parameters, batch_size="
+                        << config.batch_size << ", input="
+                        << config.image_preprocessing.target_width << "x"
+                        << config.image_preprocessing.target_height << "x3)";
+
+                // Real GPU usage is ~3-5x the raw parameter estimate due to
+                // CUDA context (~300 MB), forward/backward activations,
+                // matmul temporaries, and optimizer state. Use a 4x
+                // multiplier for a realistic bound.
+                double realistic_mb = est_mb * 4.0;
+
+                if (realistic_mb > 3000) {
+                    // Suggest a smaller size that would fit
+                    int safe_features = 64 * 64 * 3;  // 12288
+                    mem_msg << ". WARNING: real GPU usage is ~"
+                            << std::setprecision(0) << realistic_mb
+                            << " MB (incl. activations + optimizer + CUDA "
+                            << "overhead). This will likely OOM on your GPU. "
+                            << "Set the Resize node to a smaller size "
+                            << "(e.g. 64x64 for " << safe_features
+                            << " features)";
+                    AddIssue(config, IssueLevel::Error, mem_msg.str());
+                } else if (realistic_mb > 2000) {
+                    mem_msg << ". This is close to typical GPU memory limits "
+                            << "— consider reducing Resize dimensions or "
+                            << "batch_size if training crashes";
+                    AddIssue(config, IssueLevel::Warning, mem_msg.str());
+                } else {
+                    AddIssue(config, IssueLevel::Info, mem_msg.str());
+                }
+            }
+
+            // Check 4: Pipeline ordering — Normalize before Resize is
+            // almost certainly wrong (normalization stats are scale-
+            // dependent). Walk the TOPOLOGICAL order (from links), not
+            // the raw node vector (creation order), so the check reflects
+            // the actual data flow.
+            {
+                std::vector<int> topo = TopologicalSort(nodes, links);
+                bool seen_normalize = false;
+                for (int nid : topo) {
+                    const gui::MLNode* n = FindNodeById(nid, nodes);
+                    if (!n) continue;
+                    if (n->type == gui::NodeType::Normalize) {
+                        seen_normalize = true;
+                    }
+                    if (n->type == gui::NodeType::Resize && seen_normalize) {
+                        AddIssue(config, IssueLevel::Warning,
+                                 "Normalize appears before Resize in the pipeline. "
+                                 "Normalization is scale-dependent — resizing after "
+                                 "normalization gives wrong per-pixel values. Move "
+                                 "Resize before Normalize.");
+                        break;
+                    }
+                }
             }
         }
     }

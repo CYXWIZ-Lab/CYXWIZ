@@ -3176,6 +3176,7 @@ void MainWindow::RenderCompileResultPopup() {
                                        ImGui::GetTextLineHeightWithSpacing() *
                                        (compile_result_issues_.size() + 1.5f));
             ImGui::BeginChild("CompileIssuesList", ImVec2(0, issues_h), true);
+            ImGui::PushTextWrapPos(0.0f);
             for (const auto& issue : compile_result_issues_) {
                 ImVec4 color;
                 const char* tag;
@@ -3198,11 +3199,13 @@ void MainWindow::RenderCompileResultPopup() {
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0, 0);
                 if (!issue.node_name.empty()) {
-                    ImGui::Text("[%s] %s", issue.node_name.c_str(), issue.message.c_str());
+                    ImGui::TextWrapped("[%s] %s", issue.node_name.c_str(), issue.message.c_str());
                 } else {
-                    ImGui::TextUnformatted(issue.message.c_str());
+                    ImGui::TextWrapped("%s", issue.message.c_str());
                 }
+                ImGui::Spacing();
             }
+            ImGui::PopTextWrapPos();
             ImGui::EndChild();
             ImGui::Spacing();
             ImGui::Separator();

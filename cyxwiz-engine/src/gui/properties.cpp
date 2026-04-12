@@ -1969,9 +1969,30 @@ void Properties::RenderNodeProperties(MLNode& node) {
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Use 'Open Dialog' to configure");
             break;
 
-        default:
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No editable parameters for this node type");
+        default: {
+            // Generic parameter editor for nodes that don't have a
+            // custom case above (e.g. the new Image Transform nodes).
+            // Renders each parameter as an editable text field. Nodes
+            // with no parameters at all show a "no parameters" hint.
+            if (node.parameters.empty()) {
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                                   "No editable parameters for this node type");
+            } else {
+                for (auto& [key, value] : node.parameters) {
+                    char buf[256] = {};
+                    strncpy(buf, value.c_str(), sizeof(buf) - 1);
+
+                    ImGui::Text("%s:", key.c_str());
+                    ImGui::SameLine(140);
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 10);
+                    std::string label = "##param_" + key;
+                    if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) {
+                        value = buf;
+                    }
+                }
+            }
             break;
+        }
     }
 }
 

@@ -141,8 +141,15 @@ Batch ImageDatasetBatcher::GetNextBatch() {
         }
     }
 
-    size_t feature_dim = flatten_ ? sample_dim : sample_dim;
-    batch.data = Tensor({actual_size, feature_dim}, batch_data.data(), DataType::Float32);
+    if (flatten_) {
+        batch.data = Tensor({actual_size, sample_dim}, batch_data.data(), DataType::Float32);
+    } else {
+        batch.data = Tensor({actual_size,
+                             static_cast<size_t>(target_height_),
+                             static_cast<size_t>(target_width_),
+                             static_cast<size_t>(channels_)},
+                            batch_data.data(), DataType::Float32);
+    }
 
     if (do_onehot_ && num_classes_ > 0) {
         batch.labels = Tensor({actual_size, num_classes_}, batch_labels.data(), DataType::Float32);

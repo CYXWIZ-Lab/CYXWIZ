@@ -157,8 +157,17 @@ bool TrainingExecutor::BuildModelFromConfig() {
             }
 
             case gui::NodeType::Flatten: {
-                model_->Add<FlattenModule>(1);
-                spdlog::info("  [{}] Flatten", i);
+                // In Image mode, the batcher already outputs [batch, H*W*C]
+                // (pre-flattened), so FlattenModule would be a no-op at best
+                // and a batch-dimension-collapse bug at worst (ArrayFire's
+                // FlattenLayer assumes 4D input). Skip it for Image mode;
+                // it's still conceptually correct in the graph.
+                if (mode_ == DatasetMode::Image) {
+                    spdlog::info("  [{}] Flatten (skipped — batcher pre-flattens in Image mode)", i);
+                } else {
+                    model_->Add<FlattenModule>(1);
+                    spdlog::info("  [{}] Flatten", i);
+                }
                 break;
             }
 
