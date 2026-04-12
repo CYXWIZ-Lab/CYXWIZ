@@ -965,48 +965,36 @@ void BatchNorm2DLayer::SetParameters(const std::map<std::string, Tensor>& params
 
 Tensor FlattenLayer::Forward(const Tensor& input) {
     input_shape_ = input.Shape();
+    const auto& shape = input.Shape();
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array x = TensorToAf(input);
-
-        // Flatten all dimensions except batch. TensorToAf maps our
-        // row-major shape directly to AF dims, so batch is always
-        // dims(0) regardless of ndims. Output is [batch, flat_features].
-        dim_t batch_size = x.dims(0);
-        dim_t flat_size = x.elements() / batch_size;
-
-        af::array output = af::moddims(x, af::dim4(batch_size, flat_size));
-
-        return AfToTensor(output);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire FlattenLayer::Forward failed: {}", e.what());
+    // Flatten is a pure reshape — no GPU computation needed. We just
+    // change the shape from [batch, d1, d2, ...] to [batch, d1*d2*...]
+    // and keep the data buffer in place (row-major layout stays correct
+    // for LinearLayer which expects row-major [batch, features]).
+    //
+    // Going through ArrayFire for this was wrong: the generic
+    // TensorToAf/AfToTensor round-trip scrambles the data layout
+    // (column-major vs row-major mismatch with LinearLayer's manual
+    // transpose in its Forward). Pure CPU reshape avoids the issue.
+    if (shape.size() <= 2) {
+        return input;  // already 1D or 2D, nothing to flatten
     }
-#endif
 
-    throw std::runtime_error("Flatten forward requires ArrayFire");
+    size_t batch = shape[0];
+    size_t flat = 1;
+    for (size_t i = 1; i < shape.size(); i++) {
+        flat *= shape[i];
+    }
+
+    const float* data = input.Data<float>();
+    return Tensor({batch, flat}, data, DataType::Float32);
 }
 
 Tensor FlattenLayer::Backward(const Tensor& grad_output) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array grad_out = TensorToAf(grad_output);
-
-        // Reshape back to original shape
-        af::dim4 dims(1, 1, 1, 1);
-        for (size_t i = 0; i < input_shape_.size() && i < 4; i++) {
-            dims[static_cast<unsigned int>(i)] = static_cast<dim_t>(input_shape_[i]);
-        }
-
-        af::array dx = af::moddims(grad_out, dims);
-
-        return AfToTensor(dx);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire FlattenLayer::Backward failed: {}", e.what());
-    }
-#endif
-
-    throw std::runtime_error("Flatten backward requires ArrayFire");
+    // Pure CPU reshape back to the original shape saved in Forward.
+    // Same reasoning as Forward: no GPU needed, just change the shape.
+    const float* data = grad_output.Data<float>();
+    return Tensor(input_shape_, data, DataType::Float32);
 }
 
 // ============================================================================

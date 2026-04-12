@@ -702,23 +702,21 @@ Tensor FlattenModule::Forward(const Tensor& input) {
         }
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation - use moddims for zero-copy reshape
-    af::array x = input.GetArray();
+    // Pure CPU reshape — just copy data with new shape. Flatten has no
+    // computation, and going through ArrayFire's moddims scrambles the
+    // row-major data layout (column-major AF produces transposed output
+    // that LinearLayer can't consume). This approach is both correct
+    // and faster than a GPU round-trip for a zero-compute operation.
+    {
+        const float* in_data = input.Data<float>();
+        return Tensor({batch_size, flat_size}, in_data, input.GetDataType());
+    }
 
-    // Reshape to [flat_size, batch_size] (ArrayFire is column-major)
-    // Then we return as [batch_size, flat_size] for row-major semantics
-    af::array flattened = af::moddims(x, flat_size, batch_size);
-
-    return Tensor(flattened);
-#else
-    // CPU fallback
+#if 0  // Disabled: AF moddims column-major layout mismatch with LinearLayer
     Tensor output({batch_size, flat_size}, input.GetDataType());
-
     const float* in_data = input.Data<float>();
     float* out_data = output.Data<float>();
     std::copy(in_data, in_data + input.NumElements(), out_data);
-
     return output;
 #endif
 }
