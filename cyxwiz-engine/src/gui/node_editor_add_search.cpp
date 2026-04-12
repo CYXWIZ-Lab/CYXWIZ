@@ -118,6 +118,17 @@ void NodeEditor::InitializeSearchableNodes() {
     addNode(NodeType::Normalize, "Normalize", "Data Pipeline", "normalize mean std scale");
     addNode(NodeType::OneHotEncode, "OneHotEncode", "Data Pipeline", "one hot encoding labels categorical");
 
+    // Image Transforms (Phase 1)
+    addNode(NodeType::Resize, "Resize", "Image Transforms", "resize scale image width height dimensions");
+    addNode(NodeType::CenterCrop, "CenterCrop", "Image Transforms", "crop center image");
+    addNode(NodeType::RandomCrop, "RandomCrop", "Image Transforms", "crop random augment image");
+    addNode(NodeType::HorizontalFlip, "HorizontalFlip", "Image Transforms", "flip horizontal mirror augment image");
+    addNode(NodeType::VerticalFlip, "VerticalFlip", "Image Transforms", "flip vertical augment image");
+    addNode(NodeType::ImageRotate, "Rotate", "Image Transforms", "rotate angle augment image");
+    addNode(NodeType::ColorJitter, "ColorJitter", "Image Transforms", "color brightness contrast saturation hue augment image");
+    addNode(NodeType::ImageGaussianBlur, "GaussianBlur", "Image Transforms", "blur gaussian smooth image");
+    addNode(NodeType::Grayscale, "Grayscale", "Image Transforms", "grayscale gray single channel image");
+
     // Text Processing
     addNode(NodeType::TextTokenizer, "TextTokenizer", "Text Processing", "tokenize text nlp word bpe encode");
     addNode(NodeType::TextVocabulary, "TextVocabulary", "Text Processing", "vocabulary word index mapping nlp");

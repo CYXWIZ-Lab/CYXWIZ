@@ -218,8 +218,22 @@ enum class NodeType {
     Augmentation,       // Transform pipeline for data augmentation
     DataSplit,          // Train/val/test splitter
     TensorReshape,      // Reshape tensor dimensions (legacy, use Reshape)
-    Normalize,          // Normalize values (mean/std)
+    Normalize,          // Normalize values (mean/std, domain-aware)
     OneHotEncode,       // Label encoding
+
+    // ===== Image Transform Nodes (Phase 1) =====
+    // Single-responsibility preprocessing nodes for image data. Each
+    // handles one transform. The graph compiler extracts them in order
+    // and builds an ImageTransformPipeline passed to the image batcher.
+    Resize,             // Resize image to target width/height
+    CenterCrop,         // Crop from center to target size
+    RandomCrop,         // Random crop (augmentation)
+    HorizontalFlip,     // Random horizontal flip (augmentation)
+    VerticalFlip,       // Random vertical flip (augmentation)
+    ImageRotate,        // Random rotation by angle (augmentation)
+    ColorJitter,        // Random brightness/contrast/saturation/hue
+    ImageGaussianBlur,  // Gaussian blur with kernel size + sigma
+    Grayscale,          // Convert to single-channel grayscale
 
     // ===== Composite Nodes =====
     Subgraph,           // Encapsulated subgraph (collapsible)

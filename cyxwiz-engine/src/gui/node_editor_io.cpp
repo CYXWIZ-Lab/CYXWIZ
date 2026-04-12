@@ -122,7 +122,18 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"DataLoader", NodeType::DataLoader},
         {"DataSplit", NodeType::DataSplit},
         {"Augmentation", NodeType::Augmentation},
-        {"TensorReshape", NodeType::TensorReshape}
+        {"TensorReshape", NodeType::TensorReshape},
+
+        // Image Transforms (Phase 1)
+        {"Resize", NodeType::Resize},
+        {"CenterCrop", NodeType::CenterCrop},
+        {"RandomCrop", NodeType::RandomCrop},
+        {"HorizontalFlip", NodeType::HorizontalFlip},
+        {"VerticalFlip", NodeType::VerticalFlip},
+        {"ImageRotate", NodeType::ImageRotate},
+        {"ColorJitter", NodeType::ColorJitter},
+        {"ImageGaussianBlur", NodeType::ImageGaussianBlur},
+        {"Grayscale", NodeType::Grayscale}
     };
 
     auto it = type_map.find(type_str);

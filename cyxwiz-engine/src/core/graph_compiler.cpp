@@ -696,9 +696,59 @@ static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config
         config.preprocessing.num_classes = std::stoul(node.parameters.at("num_classes"));
 }
 
-// --- Image extractors (Phase 1 — wired in task 8) ---
-// Placeholders registered so IsPreprocessing recognizes the types.
-// Extractors will be added when the ImageTransformPipeline is built.
+// --- Image extractors (Phase 1) ---
+
+static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.image_preprocessing.resize_mode = ResizeMode::Exact;
+    if (node.parameters.count("width"))
+        config.image_preprocessing.target_width = std::stoi(node.parameters.at("width"));
+    if (node.parameters.count("height"))
+        config.image_preprocessing.target_height = std::stoi(node.parameters.at("height"));
+    if (node.parameters.count("mode")) {
+        std::string mode = node.parameters.at("mode");
+        if (mode == "exact")       config.image_preprocessing.resize_mode = ResizeMode::Exact;
+        else if (mode == "fit")    config.image_preprocessing.resize_mode = ResizeMode::AspectFit;
+        else if (mode == "fill")   config.image_preprocessing.resize_mode = ResizeMode::AspectFill;
+        else if (mode == "center") config.image_preprocessing.resize_mode = ResizeMode::Center;
+    }
+    spdlog::info("GraphCompiler: Resize {}x{} mode={}",
+                 config.image_preprocessing.target_width,
+                 config.image_preprocessing.target_height,
+                 static_cast<int>(config.image_preprocessing.resize_mode));
+}
+
+static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
+    // Domain-aware Normalize: when upstream is image data, populate
+    // both the legacy GraphPreprocessingConfig (for backward-compat
+    // with the tabular training path) and the image-specific config.
+    // The image batcher reads image_preprocessing; the tabular batcher
+    // reads config.preprocessing. Both work.
+    if (config.preprocessing_domain == PreprocessingDomain::Image) {
+        config.image_preprocessing.enable_denoise = false;  // not related but clear the field
+        // Image normalize is handled by the ImageTransformPipeline;
+        // the legacy fields are also set so existing tabular code paths
+        // don't break if they run accidentally.
+    }
+    // Always populate the legacy tabular fields (backward-compat).
+    config.preprocessing.has_normalization = true;
+    if (node.parameters.count("mean"))
+        config.preprocessing.norm_mean = std::stof(node.parameters.at("mean"));
+    if (node.parameters.count("std"))
+        config.preprocessing.norm_std = std::stof(node.parameters.at("std"));
+}
+
+static void ExtractGrayscale(const gui::MLNode& /*node*/, TrainingConfiguration& config) {
+    config.image_preprocessing.convert_to_grayscale = true;
+}
+
+static void ExtractImageGaussianBlur(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.image_preprocessing.blur_config.enabled = true;
+    config.image_preprocessing.blur_config.type = BlurType::Gaussian;
+    if (node.parameters.count("kernel_size"))
+        config.image_preprocessing.blur_config.kernel_size = std::stoi(node.parameters.at("kernel_size"));
+    if (node.parameters.count("sigma"))
+        config.image_preprocessing.blur_config.sigma = std::stof(node.parameters.at("sigma"));
+}
 
 // --- Audio / Text / TimeSeries extractors (Phase 2-5 — deferred) ---
 
@@ -706,13 +756,22 @@ static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config
 
 static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     // Tabular (existing, migrated from switch)
-    {gui::NodeType::Normalize,          PreprocessingDomain::Tabular,     ExtractNormalize},
+    {gui::NodeType::Normalize,          PreprocessingDomain::Tabular,     ExtractImageNormalize},
     {gui::NodeType::TensorReshape,      PreprocessingDomain::Tabular,     ExtractReshape},
     {gui::NodeType::OneHotEncode,       PreprocessingDomain::Tabular,     ExtractOneHot},
     // General (domain-agnostic data pipeline nodes — no extraction needed)
     {gui::NodeType::DataSplit,          PreprocessingDomain::General,     nullptr},
     {gui::NodeType::DataLoader,         PreprocessingDomain::General,     nullptr},
     // Image (Phase 1)
+    {gui::NodeType::Resize,             PreprocessingDomain::Image,       ExtractImageResize},
+    {gui::NodeType::CenterCrop,         PreprocessingDomain::Image,       nullptr},
+    {gui::NodeType::RandomCrop,         PreprocessingDomain::Image,       nullptr},
+    {gui::NodeType::HorizontalFlip,     PreprocessingDomain::Image,       nullptr},
+    {gui::NodeType::VerticalFlip,       PreprocessingDomain::Image,       nullptr},
+    {gui::NodeType::ImageRotate,        PreprocessingDomain::Image,       nullptr},
+    {gui::NodeType::ColorJitter,        PreprocessingDomain::Image,       nullptr},
+    {gui::NodeType::ImageGaussianBlur,  PreprocessingDomain::Image,       ExtractImageGaussianBlur},
+    {gui::NodeType::Grayscale,          PreprocessingDomain::Image,       ExtractGrayscale},
     {gui::NodeType::Augmentation,       PreprocessingDomain::Image,       nullptr},
     // Audio (Phase 2)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},

@@ -196,6 +196,16 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::Augmentation:
         case NodeType::DataSplit:
         case NodeType::TensorReshape:
+        // Image Transform Nodes (Phase 1)
+        case NodeType::Resize:
+        case NodeType::CenterCrop:
+        case NodeType::RandomCrop:
+        case NodeType::HorizontalFlip:
+        case NodeType::VerticalFlip:
+        case NodeType::ImageRotate:
+        case NodeType::ColorJitter:
+        case NodeType::ImageGaussianBlur:
+        case NodeType::Grayscale:
         // Phase 6: Advanced Augmentation Nodes (UI Consolidation)
         case NodeType::AugmentationPreset:
         case NodeType::GeometricTransform:
@@ -607,6 +617,90 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["flip_prob"] = "0.5";
             node.parameters["normalize_mean"] = "0.0";
             node.parameters["normalize_std"] = "1.0";
+            break;
+        }
+
+        // ===== Image Transform Nodes (Phase 1) =====
+        // All share the same pin layout: one Tensor in, one Tensor out.
+        // Parameters vary per transform type.
+        case NodeType::Resize: {
+            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            node.parameters["width"] = "224";
+            node.parameters["height"] = "224";
+            node.parameters["mode"] = "exact";
+            break;
+        }
+        case NodeType::CenterCrop: {
+            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            node.parameters["width"] = "224";
+            node.parameters["height"] = "224";
+            break;
+        }
+        case NodeType::RandomCrop: {
+            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            node.parameters["width"] = "224";
+            node.parameters["height"] = "224";
+            break;
+        }
+        case NodeType::HorizontalFlip: {
+            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            node.parameters["probability"] = "0.5";
+            break;
+        }
+        case NodeType::VerticalFlip: {
+            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            node.parameters["probability"] = "0.5";
+            break;
+        }
+        case NodeType::ImageRotate: {
+            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            node.parameters["max_angle"] = "15.0";
+            node.parameters["probability"] = "0.5";
+            break;
+        }
+        case NodeType::ColorJitter: {
+            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            node.parameters["brightness"] = "0.2";
+            node.parameters["contrast"] = "0.2";
+            node.parameters["saturation"] = "0.2";
+            node.parameters["hue"] = "0.1";
+            break;
+        }
+        case NodeType::ImageGaussianBlur: {
+            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            node.parameters["kernel_size"] = "5";
+            node.parameters["sigma"] = "1.0";
+            break;
+        }
+        case NodeType::Grayscale: {
+            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
+            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
+            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
             break;
         }
 
