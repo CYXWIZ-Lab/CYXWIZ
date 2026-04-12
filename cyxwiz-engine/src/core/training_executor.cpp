@@ -1002,43 +1002,13 @@ void TrainingExecutor::RunTrainingEpochArrow(
         if (ShouldStop()) break;
         WaitWhilePaused();
 
-        spdlog::debug("RunTrainingEpochArrow: CHECKPOINT X1 - calling GetNextBatch");
-        spdlog::default_logger()->flush();
         Batch batch = batcher.GetNextBatch();
-        spdlog::debug("RunTrainingEpochArrow: CHECKPOINT X2 - GetNextBatch returned, valid={}",
-                      batch.IsValid());
-        spdlog::default_logger()->flush();
         if (!batch.IsValid()) break;
 
         batch_num++;
 
-        {
-            const auto& ds = batch.data.Shape();
-            std::string shape_str;
-            for (size_t si = 0; si < ds.size(); si++) {
-                if (si) shape_str += ", ";
-                shape_str += std::to_string(ds[si]);
-            }
-            spdlog::debug("RunTrainingEpochArrow: CHECKPOINT X3 - calling Forward pass "
-                          "(input shape [{}], label shape dims={})",
-                          shape_str, batch.labels.Shape().size());
-        }
-        spdlog::default_logger()->flush();
         // Forward pass through model
-        Tensor predictions;
-        try {
-            predictions = Forward(batch.data);
-        } catch (const std::exception& e) {
-            spdlog::error("RunTrainingEpochArrow: Forward pass EXCEPTION: {}", e.what());
-            spdlog::default_logger()->flush();
-            throw;
-        } catch (...) {
-            spdlog::error("RunTrainingEpochArrow: Forward pass UNKNOWN EXCEPTION");
-            spdlog::default_logger()->flush();
-            throw;
-        }
-        spdlog::debug("RunTrainingEpochArrow: CHECKPOINT X4 - Forward pass completed");
-        spdlog::default_logger()->flush();
+        Tensor predictions = Forward(batch.data);
 
         // DEBUG: Log sample values for first batch of first epoch
         if (epoch == 1 && batch_num == 1) {

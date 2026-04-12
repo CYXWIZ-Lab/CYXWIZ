@@ -220,6 +220,30 @@ node that loaded images leaves an orphan entry.
 
 ---
 
+## UX Enhancements
+
+### Pin color validation feedback
+
+**Severity:** Enhancement — improves the compile gate's visual feedback.
+
+**Idea:** Node pins are red by default. After a successful Compile,
+pins on validated nodes turn green. Pins on nodes with errors stay
+red. This gives the user instant at-a-glance feedback on which nodes
+are properly configured without reading the compile popup.
+
+**Implementation sketch:**
+- After `BuildCompileResult`, walk the issues list and mark nodes
+  by ID: error nodes stay red, valid nodes flip to green.
+- Store a `std::map<int, PinValidationState>` on the NodeEditor or
+  MainWindow, keyed by node ID.
+- In the node rendering pass, check the validation state and set
+  pin color accordingly (`ImNodes::PushColorStyle`).
+- Reset all pins to red on graph modification (any node add/delete/
+  link change) so stale green doesn't persist.
+
+**Scope:** Small UX task, ~0.5 day. Could pair with pin
+standardization work.
+
 ## Future Architecture
 
 ### Variable-shape Sample type (v3 consideration)
