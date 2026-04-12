@@ -324,6 +324,24 @@ public:
     // datasets in the next project under the same auto-generated name.
     void ClearAllTabularDatasets();
 
+    // --- Image dataset registry (Phase 1) ---
+    // Stores lightweight metadata about image dataset location + layout.
+    // The actual ImageFolderDataset / ImageCSVDataset is constructed at
+    // training start by ImageDatasetBatcher with the target size from the
+    // graph's Resize node. Separate from the tabular Arrow/Parquet maps.
+    struct ImageDatasetEntry {
+        std::string folder_path;
+        std::string labels_csv;
+        int layout = 0;                 // 0=ClassSubdirs, 1=FlatWithCSV
+        size_t num_images = 0;
+        size_t num_classes = 0;
+        std::vector<std::string> class_names;
+    };
+    void RegisterImageDataset(const std::string& name, const ImageDatasetEntry& entry);
+    bool IsImageDataset(const std::string& name) const;
+    const ImageDatasetEntry* GetImageDatasetEntry(const std::string& name) const;
+    void UnregisterImageDataset(const std::string& name);
+
     // Which backing store a successful LoadTabularCSV call ended up using.
     enum class TabularLoadBackend {
         Failed,      // load failed; nothing is registered
@@ -503,6 +521,11 @@ private:
     // is too large to fit comfortably in RAM. Lookups by name fall through
     // to this map when not found in arrow_datasets_.
     std::map<std::string, std::shared_ptr<class ParquetBackedDataset>> parquet_backed_datasets_;
+
+    // Image dataset entries (Phase 1) — lightweight metadata, not loaded
+    // datasets. The actual pixel-loading dataset is constructed at
+    // training start by ImageDatasetBatcher.
+    std::map<std::string, ImageDatasetEntry> image_dataset_entries_;
 
     mutable std::mutex mutex_;
 

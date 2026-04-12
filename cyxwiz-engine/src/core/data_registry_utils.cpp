@@ -323,18 +323,52 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
     }
 }
 
+// --- Image dataset registry (Phase 1) ---
+
+void DataRegistry::RegisterImageDataset(const std::string& name,
+                                          const ImageDatasetEntry& entry) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    image_dataset_entries_[name] = entry;
+    spdlog::info("RegisterImageDataset '{}': {} images, {} classes, layout={}",
+                 name, entry.num_images, entry.num_classes, entry.layout);
+}
+
+bool DataRegistry::IsImageDataset(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return image_dataset_entries_.find(name) != image_dataset_entries_.end();
+}
+
+const DataRegistry::ImageDatasetEntry*
+DataRegistry::GetImageDatasetEntry(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = image_dataset_entries_.find(name);
+    if (it == image_dataset_entries_.end()) return nullptr;
+    return &it->second;
+}
+
+void DataRegistry::UnregisterImageDataset(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = image_dataset_entries_.find(name);
+    if (it != image_dataset_entries_.end()) {
+        image_dataset_entries_.erase(it);
+        spdlog::debug("UnregisterImageDataset '{}'", name);
+    }
+}
+
 void DataRegistry::ClearAllTabularDatasets() {
     std::lock_guard<std::mutex> lock(mutex_);
 
     size_t arrow_count = arrow_datasets_.size();
     size_t parquet_count = parquet_backed_datasets_.size();
+    size_t image_count = image_dataset_entries_.size();
 
     arrow_datasets_.clear();
     parquet_backed_datasets_.clear();
+    image_dataset_entries_.clear();
 
-    if (arrow_count > 0 || parquet_count > 0) {
-        spdlog::info("ClearAllTabularDatasets: removed {} Arrow + {} Parquet entries",
-                     arrow_count, parquet_count);
+    if (arrow_count > 0 || parquet_count > 0 || image_count > 0) {
+        spdlog::info("ClearAllDatasets: removed {} Arrow + {} Parquet + {} Image entries",
+                     arrow_count, parquet_count, image_count);
     }
 }
 

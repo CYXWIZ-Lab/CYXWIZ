@@ -85,6 +85,15 @@ public:
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
+    bool StartTrainingImage(
+        TrainingConfiguration config,
+        const DataRegistry::ImageDatasetEntry& image_entry,
+        int epochs,
+        int batch_size,
+        TrainingPlotPanel* plot_panel = nullptr,
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
     /**
      * Stop the current training session
      */

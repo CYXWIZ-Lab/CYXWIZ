@@ -58,6 +58,17 @@ TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
 
+TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
+                                   std::unique_ptr<IBatcher> external_batcher)
+    : config_(std::move(config))
+    , external_batcher_(std::move(external_batcher))
+    , mode_(DatasetMode::Image)
+{
+    spdlog::info("TrainingExecutor: Created with external IBatcher (Image mode), "
+                 "{} layers, input_size={}, output_size={}",
+                 config_.layers.size(), config_.input_size, config_.output_size);
+}
+
 TrainingExecutor::~TrainingExecutor() {
     Stop();
 }
@@ -417,6 +428,24 @@ void TrainingExecutor::Train(
         num_train_samples = parquet_train_batcher->GetNumSamples();
         active_train_ibatcher = parquet_train_batcher.get();
         active_val_ibatcher = parquet_val_batcher.get();
+    } else if (mode_ == DatasetMode::Image) {
+        // Image mode: the batcher was constructed externally by
+        // StartTrainingImage with the correct target size and
+        // augmentation pipeline. We just point the training loop at it.
+        // Validation uses the same batcher reset for now — Phase 1.4
+        // can add a separate validation batcher without augmentation.
+        spdlog::info("TrainingExecutor: Using Image dataset for training "
+                     "(batch_size={}, {} samples)",
+                     batch_size, external_batcher_ ? external_batcher_->GetNumSamples() : 0);
+
+        if (!external_batcher_) {
+            spdlog::error("TrainingExecutor: Image mode but no external batcher");
+            return;
+        }
+
+        num_train_samples = external_batcher_->GetNumSamples();
+        active_train_ibatcher = external_batcher_.get();
+        active_val_ibatcher = external_batcher_.get();
     } else {
         // Legacy DatasetHandle batching
         spdlog::info("TrainingExecutor: Using legacy dataset for training "
@@ -545,7 +574,7 @@ void TrainingExecutor::Train(
         // IBatcher base; legacy DatasetBatcher stays on its own path.
         if (mode_ == DatasetMode::Legacy) {
             RunTrainingEpoch(*legacy_train_batcher, epoch, batch_cb);
-        } else {
+        } else if (active_train_ibatcher) {
             RunTrainingEpochArrow(*active_train_ibatcher, epoch, batch_cb);
         }
 
@@ -555,7 +584,7 @@ void TrainingExecutor::Train(
         model_->SetTraining(false);
         if (mode_ == DatasetMode::Legacy) {
             RunValidation(*legacy_val_batcher);
-        } else {
+        } else if (active_val_ibatcher) {
             RunValidationArrow(*active_val_ibatcher);
         }
         model_->SetTraining(true);

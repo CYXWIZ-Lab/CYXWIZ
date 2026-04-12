@@ -587,10 +587,8 @@ void DataInputDialog::Apply() {
                 auto info = handle.GetInfo();
                 loaded_dataset_name_ = info.name;  // may have been uniquified
                 loaded_rows_ = static_cast<int64_t>(info.num_samples);
-                // For image folders, "columns" isn't meaningful the way it
-                // is for tabular. Report 1 to keep the UI honest.
                 loaded_cols_ = 1;
-                loaded_memory_bytes_ = 0;  // lazy LRU-cached, no upfront RAM use
+                loaded_memory_bytes_ = 0;
                 data_load_state_ = DataLoadState::InMemory;
 
                 node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
@@ -598,13 +596,26 @@ void DataInputDialog::Apply() {
                 node_->parameters["dataset_name"] = loaded_dataset_name_;
                 node_->parameters["data_loaded"] = "true";
 
+                // Register in the new image_datasets_ map so the Phase 1
+                // training dispatch (IsImageDataset) finds it and routes
+                // to ImageDatasetBatcher instead of the legacy path.
+                cyxwiz::DataRegistry::ImageDatasetEntry img_entry;
+                img_entry.folder_path = folder_path_;
+                img_entry.labels_csv = labels_csv_;
+                img_entry.layout = static_cast<int>(image_layout_);
+                img_entry.num_images = info.num_samples;
+                img_entry.num_classes = info.num_classes;
+                img_entry.class_names = info.class_names;
+                registry.RegisterImageDataset(loaded_dataset_name_, img_entry);
+
                 fs::path p(folder_path_);
                 node_->description = p.filename().string() + "\n" +
-                    std::to_string(loaded_rows_) + " images";
+                    std::to_string(loaded_rows_) + " images, " +
+                    std::to_string(info.num_classes) + " classes";
 
                 apply_status_message_ = "Loaded " + std::to_string(loaded_rows_) +
-                    " images from " + p.filename().string() +
-                    " (lazy-loaded via LRU cache)";
+                    " images (" + std::to_string(info.num_classes) + " classes) from " +
+                    p.filename().string();
                 apply_success_ = true;
                 spdlog::info("DataInputDialog: {}", apply_status_message_);
             } else {

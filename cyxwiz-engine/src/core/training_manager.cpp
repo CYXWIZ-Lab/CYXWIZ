@@ -1,4 +1,5 @@
 #include "training_manager.h"
+#include "image_dataset_batcher.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
 
@@ -307,6 +308,108 @@ bool TrainingManager::StartTrainingParquet(
     );
 
     spdlog::info("TrainingManager: Started Parquet training ({} epochs, batch_size={})", epochs, batch_size);
+    return true;
+}
+
+bool TrainingManager::StartTrainingImage(
+    TrainingConfiguration config,
+    const DataRegistry::ImageDatasetEntry& image_entry,
+    int epochs,
+    int batch_size,
+    TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback)
+{
+    if (is_training_.load()) {
+        spdlog::warn("TrainingManager: Cannot start training - already training");
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_training_.load()) return false;
+
+    // Build the ImageDatasetBatcher with the image preprocessing config
+    // extracted from the graph's Resize / Normalize / Augmentation nodes.
+    auto batcher = std::make_unique<ImageDatasetBatcher>(
+        image_entry, config.image_preprocessing,
+        batch_size, config.train_ratio, config.shuffle);
+
+    if (batcher->GetNumSamples() == 0) {
+        spdlog::error("TrainingManager: Image dataset has 0 samples");
+        return false;
+    }
+
+    // Update input_size from the target dimensions. The batcher flattens
+    // images to [H*W*C] per sample by default.
+    int tw = config.image_preprocessing.target_width > 0
+        ? config.image_preprocessing.target_width : 224;
+    int th = config.image_preprocessing.target_height > 0
+        ? config.image_preprocessing.target_height : 224;
+    int ch = config.image_preprocessing.convert_to_grayscale ? 1 : 3;
+    config.input_size = static_cast<size_t>(tw * th * ch);
+
+    spdlog::info("TrainingManager: Image dataset {} samples, input_size={} ({}x{}x{})",
+                 batcher->GetNumSamples(), config.input_size, tw, th, ch);
+
+    // Set up normalization / one-hot from the compiled graph config
+    if (config.preprocessing.has_normalization) {
+        batcher->SetNormalization(config.preprocessing.norm_mean,
+                                  config.preprocessing.norm_std);
+    }
+    if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
+        batcher->SetOneHotEncoding(config.preprocessing.num_classes);
+    }
+
+    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
+
+    is_training_.store(true);
+    stop_requested_.store(false);
+
+    if (node_editor_callback) {
+        node_editor_callback(true);
+    }
+
+    if (plot_panel) {
+        plot_panel->Clear();
+        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
+        plot_panel->SetVisible(true);
+    }
+
+    std::string task_name = "Training Model (Image)";
+    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [](LambdaTask& task) {
+            while (!task.ShouldStop()) {
+                auto& mgr = TrainingManager::Instance();
+                if (!mgr.IsTrainingActive()) break;
+                auto metrics = mgr.GetCurrentMetrics();
+                float progress = static_cast<float>(metrics.current_epoch) /
+                    std::max(1, metrics.total_epochs);
+                task.ReportProgress(progress,
+                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
+                    std::to_string(metrics.total_epochs) +
+                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            task.MarkCompleted();
+        },
+        nullptr, nullptr
+    ));
+
+    if (on_training_start_) {
+        on_training_start_("Training from Image Dataset");
+    }
+
+    if (training_thread_ && training_thread_->joinable()) {
+        training_thread_->join();
+    }
+
+    training_thread_ = std::make_unique<std::thread>(
+        &TrainingManager::TrainingThreadFunc, this,
+        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
+    );
+
+    spdlog::info("TrainingManager: Started Image training ({} epochs, batch_size={})",
+                 epochs, batch_size);
     return true;
 }
 

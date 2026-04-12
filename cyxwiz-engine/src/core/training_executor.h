@@ -102,6 +102,9 @@ public:
                      std::shared_ptr<ParquetBackedDataset> parquet_dataset,
                      const std::string& label_column);
 
+    TrainingExecutor(TrainingConfiguration config,
+                     std::unique_ptr<IBatcher> external_batcher);
+
     ~TrainingExecutor();
 
     /**
@@ -183,6 +186,7 @@ private:
     enum class DatasetMode {
         Legacy,   // DatasetHandle + legacy DatasetBatcher
         Arrow,    // ArrowDataset + ArrowDatasetBatcher
+        Image,    // ImageDatasetBatcher (externally constructed)
         Parquet   // ParquetBackedDataset + ParquetArrowBatcher (disk-backed)
     };
 
@@ -192,6 +196,7 @@ private:
     std::shared_ptr<ParquetBackedDataset> parquet_dataset_;
     std::string label_column_;
     DatasetMode mode_ = DatasetMode::Legacy;
+    std::unique_ptr<IBatcher> external_batcher_;  // for Image mode
 
     // Thread safety
     std::atomic<bool> is_training_{false};

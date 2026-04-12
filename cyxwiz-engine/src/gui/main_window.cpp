@@ -2903,6 +2903,30 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         } else {
             spdlog::error("Parquet-backed dataset '{}' is registered but could not be retrieved", dataset_name);
         }
+    } else if (registry.IsImageDataset(dataset_name)) {
+        // Phase 1 image path: ImageDatasetBatcher constructs the dataset
+        // at training start with the target size from the graph's Resize
+        // node. The image_preprocessing config on TrainingConfiguration
+        // drives both the dataset's resize and the augmentation pipeline.
+        auto img_entry = registry.GetImageDatasetEntry(dataset_name);
+        if (img_entry) {
+            spdlog::info("Starting image training: dataset={}, epochs={}, batch_size={}, "
+                         "{} images, {} classes",
+                         dataset_name, epochs, batch_size,
+                         img_entry->num_images, img_entry->num_classes);
+
+            started = tm.StartTrainingImage(
+                std::move(config),
+                *img_entry,
+                epochs,
+                batch_size,
+                training_plot_panel_.get(),
+                node_editor_callback
+            );
+        } else {
+            spdlog::error("Image dataset '{}' is registered but entry could not be retrieved",
+                          dataset_name);
+        }
     } else {
         // Fall back to legacy DatasetHandle path
         auto dataset = registry.GetDataset(dataset_name);
