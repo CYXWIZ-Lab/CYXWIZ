@@ -133,7 +133,8 @@ TrainingConfiguration GraphCompiler::Compile(
         if (!config.dataset_name.empty()) {
             auto& reg = DataRegistry::Instance();
             bool in_registry = reg.IsArrowDataset(config.dataset_name) ||
-                               reg.IsParquetBackedDataset(config.dataset_name);
+                               reg.IsParquetBackedDataset(config.dataset_name) ||
+                               reg.IsImageDataset(config.dataset_name);
             if (!in_registry && loaded_param == "true") {
                 AddIssue(config, IssueLevel::Error,
                          "Dataset '" + config.dataset_name +

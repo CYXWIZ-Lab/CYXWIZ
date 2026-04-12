@@ -109,6 +109,8 @@ DataInputDialog::DataInputDialog(MLNode* node)
             auto arrow_ds = registry.GetArrowDataset(loaded_dataset_name_);
             auto parquet_ds = registry.GetParquetBackedDataset(loaded_dataset_name_);
 
+            auto img_entry = registry.GetImageDatasetEntry(loaded_dataset_name_);
+
             if (arrow_ds) {
                 loaded_rows_ = arrow_ds->GetNumRows();
                 loaded_cols_ = arrow_ds->GetNumColumns();
@@ -120,8 +122,6 @@ DataInputDialog::DataInputDialog(MLNode* node)
                     std::to_string(loaded_rows_) + " rows, " +
                     std::to_string(loaded_cols_) + " cols, " +
                     FormatBytes(loaded_memory_bytes_) + ")";
-                // Re-sync the param hint with reality so anyone reading
-                // node_->parameters["data_loaded"] sees consistent state.
                 node_->parameters["data_loaded"] = "true";
                 node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
                 node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
@@ -145,6 +145,21 @@ DataInputDialog::DataInputDialog(MLNode* node)
                 node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
                 node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
                 spdlog::debug("DataInputDialog: restored Parquet-backed state for '{}'",
+                              loaded_dataset_name_);
+            } else if (img_entry) {
+                loaded_rows_ = static_cast<int64_t>(img_entry->num_images);
+                loaded_cols_ = 1;
+                loaded_memory_bytes_ = 0;
+                data_load_state_ = DataLoadState::InMemory;
+                loaded_backend_ = 3;  // 3 = image
+                apply_success_ = true;
+                apply_status_message_ = "Loaded " + loaded_dataset_name_ +
+                    " (" + std::to_string(img_entry->num_images) + " images, " +
+                    std::to_string(img_entry->num_classes) + " classes)";
+                node_->parameters["data_loaded"] = "true";
+                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                spdlog::debug("DataInputDialog: restored image dataset state for '{}'",
                               loaded_dataset_name_);
             } else {
                 // Registry doesn't have it. Either the user never applied,

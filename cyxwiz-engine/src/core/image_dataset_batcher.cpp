@@ -21,6 +21,9 @@ ImageDatasetBatcher::ImageDatasetBatcher(
         target_width_ = preprocess_config.target_width;
         target_height_ = preprocess_config.target_height;
     }
+    // No else — if no Resize node is in the graph, the compile gate
+    // (Phase 1.4) should have caught it as an error. The member defaults
+    // (224x224) only apply as a last-resort fallback.
 
     channels_ = preprocess_config.convert_to_grayscale ? 1 : 3;
 
