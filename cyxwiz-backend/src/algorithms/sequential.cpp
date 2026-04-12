@@ -707,45 +707,14 @@ Tensor FlattenModule::Forward(const Tensor& input) {
     // row-major data layout (column-major AF produces transposed output
     // that LinearLayer can't consume). This approach is both correct
     // and faster than a GPU round-trip for a zero-compute operation.
-    {
-        const float* in_data = input.Data<float>();
-        return Tensor({batch_size, flat_size}, in_data, input.GetDataType());
-    }
-
-#if 0  // Disabled: AF moddims column-major layout mismatch with LinearLayer
-    Tensor output({batch_size, flat_size}, input.GetDataType());
     const float* in_data = input.Data<float>();
-    float* out_data = output.Data<float>();
-    std::copy(in_data, in_data + input.NumElements(), out_data);
-    return output;
-#endif
+    return Tensor({batch_size, flat_size}, in_data, input.GetDataType());
 }
 
 Tensor FlattenModule::Backward(const Tensor& grad_output) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation - reshape gradient back to original shape
-    af::array grad = grad_output.GetArray();
-
-    // Convert original_shape_ to af::dim4
-    af::dim4 dims(1, 1, 1, 1);
-    for (size_t i = 0; i < original_shape_.size() && i < 4; ++i) {
-        dims[i] = static_cast<dim_t>(original_shape_[i]);
-    }
-
-    // Reshape back to original dimensions
-    af::array grad_input = af::moddims(grad, dims);
-
-    return Tensor(grad_input);
-#else
-    // CPU fallback
-    Tensor grad_input(original_shape_, grad_output.GetDataType());
-
+    // Pure CPU reshape back to original shape (same as Forward).
     const float* grad_data = grad_output.Data<float>();
-    float* out_data = grad_input.Data<float>();
-    std::copy(grad_data, grad_data + grad_output.NumElements(), out_data);
-
-    return grad_input;
-#endif
+    return Tensor(original_shape_, grad_data, grad_output.GetDataType());
 }
 
 // ============================================================================

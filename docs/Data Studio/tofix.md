@@ -5,38 +5,42 @@ development. Each entry has a severity, root cause, and suggested fix.
 
 ## Backend Issues
 
-### FlattenModule batch-dimension bug (BLOCKS image training)
+### ~~Forward pass crash for image training~~ RESOLVED (22902ef9)
 
-**Severity:** Critical — image training crashes at Forward pass.
+**Severity:** ~~Critical~~ Fixed — image training now works end-to-end.
 
-**Root cause:** `FlattenLayer::Forward` in
-`cyxwiz-backend/src/algorithms/layer.cpp:966-986` uses
-`(x.numdims() > 3) ? x.dims(3) : 1` to detect batch size. This only
-works for 4D input where batch is the 4th ArrayFire dimension. For 2D
-input `[features, batch]` (AF column-major), `numdims()` returns 2,
-so `batch_size = 1`, and the entire tensor collapses into a single
-vector `[features*batch, 1]`.
+**Status:** FlattenLayer batch-dimension bug was fixed (d6e203fa) —
+batch is now correctly read from `x.dims(0)` since `TensorToAf` maps
+our row-major `[batch, ...]` shape directly to AF dims. Workarounds
+(pre-flatten in batcher, Flatten skip in executor) were reverted.
 
-**Current workaround:** `ImageDatasetBatcher` outputs pre-flattened
-`[batch, H*W*C]` tensors and `TrainingExecutor` skips FlattenModule
-in Image mode. Training reaches the Forward pass but crashes inside
-the matmul (confirmed via log checkpoint X3 → no X4).
+**Remaining issue:** Training still crashes at the Forward pass even
+after the Flatten fix. Tested with both 224x224 (OOM candidate) and
+34x34 (14 MB estimated, should fit). The crash happens inside the
+`Forward(batch.data)` call after the Flatten produces its output.
 
-**Suggested fix:** Make FlattenLayer detect batch from the last AF
-dimension regardless of ndims:
-```cpp
-// Replace:
-dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
-// With:
-dim_t batch_size = x.dims(x.numdims() - 1);
-dim_t flat_size = x.elements() / batch_size;
-```
-Or make it a no-op for 2D input (already flat). Then remove the Image
-mode skip in TrainingExecutor and the pre-flatten in the batcher.
+**Root cause (needs investigation):** Likely a tensor layout mismatch
+between `FlattenLayer::Forward` output and `LinearLayer::Forward`
+input. Questions to answer:
+1. What layout does `LinearLayer::Forward` expect? `[batch, features]`
+   or `[features, batch]`? Check the matmul in LinearLayer.
+2. What does `FlattenLayer::Forward` actually produce? After the fix,
+   output is `af::moddims(x, af::dim4(batch, flat_features))` =
+   AF dims `[batch, flat_features]`.
+3. Does the matmul convention match? If LinearLayer does
+   `af::matmul(weights_.T, x)` it expects `[features, batch]`. If
+   `af::matmul(x, weights_)` it expects `[batch, features]`.
+4. The tabular MNIST path works with 2D `[batch, 784]` tensors that
+   never go through FlattenLayer. So the issue is specific to the
+   Flatten→Linear transition with 4D→2D reshaping.
 
-**Files:** `cyxwiz-backend/src/algorithms/layer.cpp:966-986`,
-`cyxwiz-engine/src/core/training_executor.cpp` (Flatten skip),
-`cyxwiz-engine/src/core/image_dataset_batcher.cpp` (pre-flatten).
+**Debug plan:** Add spdlog::info after FlattenLayer::Forward logging
+the output AF dims. Add spdlog::info at LinearLayer::Forward entry
+logging input AF dims + weight dims. Compare with the working MNIST
+tabular path to find the layout mismatch.
+
+**Files:** `cyxwiz-backend/src/algorithms/layer.cpp` (FlattenLayer
++ LinearLayer Forward methods).
 
 ---
 
