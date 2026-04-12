@@ -1998,9 +1998,6 @@ void ToolbarPanel::Render() {
                         // TODO: Open Python settings panel
                         spdlog::info("Python settings panel not yet implemented in preferences");
                     }
-                    ImGui::TextDisabled("Leave empty to use system default");
-                    ImGui::Unindent(25.0f);
-                    ImGui::EndDisabled();
 
                     // Restart warning
                     if (python_settings_changed_) {
