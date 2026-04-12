@@ -377,6 +377,21 @@ public:
     std::shared_ptr<class ArrowDataset> LoadParquetToArrow(const std::string& path, const std::string& name);
     std::shared_ptr<class ArrowDataset> LoadJSONToArrow(const std::string& path, const std::string& name, bool json_lines = false);
     std::shared_ptr<class ArrowDataset> LoadExcelToArrow(const std::string& path, const std::string& name, int sheet_idx = 0);
+    // ALERT: Phase 0 of the multi-format data pipeline design doc marked
+    // this loader as "for Data Studio pipeline-executor use only, NOT for
+    // training". It produces an ArrowDataset with string image_path
+    // columns and int32 label_id, which is a metadata view of the folder —
+    // useful for Data Studio operations (filter, group, join on label) but
+    // unusable for training because the Arrow batcher skips string columns
+    // and the model ends up with 1 feature instead of H*W*C.
+    //
+    // Training uses LoadImageFolder (declared above, returns
+    // DatasetHandle with ImageFolderDataset that loads real pixels via an
+    // LRU cache). Phase 1 will replace both with a proper
+    // ImageDatasetBatcher + image_datasets_ registry map.
+    //
+    // Do not call this from the DataInput dialog. pipeline_executor.cpp is
+    // the only legitimate caller.
     std::shared_ptr<class ArrowDataset> LoadImageFolderToArrow(const std::string& path, const std::string& name);
     std::shared_ptr<class ArrowDataset> LoadMLDatasetToArrow(const std::string& ml_type, const std::string& name);
 

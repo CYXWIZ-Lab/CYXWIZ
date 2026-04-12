@@ -81,6 +81,20 @@ DataInputDialog::DataInputDialog(MLNode* node)
             force_disk_backed_ = true;
         }
 
+        // Restore the image layout strategy from node params.
+        if (node_->parameters.count("image_layout")) {
+            try {
+                int raw = std::stoi(node_->parameters["image_layout"]);
+                if (raw == static_cast<int>(ImageLayout::FlatWithCSV)) {
+                    image_layout_ = ImageLayout::FlatWithCSV;
+                } else {
+                    image_layout_ = ImageLayout::ClassSubdirs;
+                }
+            } catch (...) {
+                image_layout_ = ImageLayout::ClassSubdirs;
+            }
+        }
+
         // Restore data load state by probing the registry directly. The
         // registry is the source of truth — the parameters["data_loaded"]
         // hint goes stale when an async Apply finishes after the dialog
@@ -182,6 +196,7 @@ void DataInputDialog::Apply() {
             node_->parameters["normalize"] = normalize_images_ ? "true" : "false";
             node_->parameters["rgb"] = rgb_mode_ ? "true" : "false";
             node_->parameters["labels_csv"] = labels_csv_;
+            node_->parameters["image_layout"] = std::to_string(static_cast<int>(image_layout_));
         } else if (file_category_ == FileCategory::Audio) {
             node_->parameters["sample_rate"] = std::to_string(sample_rate_);
             node_->parameters["mono"] = mono_ ? "true" : "false";
@@ -261,6 +276,48 @@ void DataInputDialog::Apply() {
     apply_in_progress_ = true;
     apply_success_ = false;
     apply_status_message_.clear();
+
+    // Phase 0 gate: audio and video file categories are not yet wired to
+    // their loaders. Picking an audio or video file would previously fall
+    // through to LoadArrowTable which tries to parse an MP3 / MP4 as an
+    // Arrow IPC file and fails silently, leaving the user confused.
+    // Fail loudly with an explicit message until Phase 2 (audio) and
+    // Phase 5 (video) wire up proper loaders. See
+    // docs/Data Studio/multi_format_data_pipeline_design.md.
+    if (source_type_ == SourceType::File &&
+        (file_category_ == FileCategory::Audio ||
+         file_category_ == FileCategory::Video)) {
+        const char* domain = (file_category_ == FileCategory::Audio)
+            ? "Audio" : "Video";
+        apply_status_message_ = std::string(domain) +
+            " data is not yet supported. Coming in a future release - "
+            "use tabular or image data for now.";
+        apply_success_ = false;
+        apply_status_timer_ = 8.0f;  // long enough to read comfortably
+        node_->parameters["data_loaded"] = "false";
+        apply_in_progress_ = false;
+        has_changes_ = false;
+        spdlog::warn("DataInputDialog: {} category selected - not yet supported", domain);
+        return;
+    }
+
+    // Guard: Image category with a single file (not a folder) is not a
+    // valid training use case. The user probably used the top-level file
+    // picker instead of the Image Loading Options folder picker.
+    if (source_type_ == SourceType::File &&
+        file_category_ == FileCategory::Image &&
+        strlen(file_path_) > 0 && strlen(folder_path_) == 0) {
+        apply_status_message_ = "Image training requires a folder of images, "
+            "not a single file. Set the Folder path in the Image Loading "
+            "Options section above.";
+        apply_success_ = false;
+        apply_status_timer_ = 8.0f;
+        node_->parameters["data_loaded"] = "false";
+        apply_in_progress_ = false;
+        has_changes_ = false;
+        spdlog::warn("DataInputDialog: Image category with single file - need folder instead");
+        return;
+    }
 
     if (source_type_ == SourceType::File && strlen(file_path_) > 0) {
         auto& registry = cyxwiz::DataRegistry::Instance();
@@ -463,16 +520,77 @@ void DataInputDialog::Apply() {
             spdlog::error("DataInputDialog: {}", apply_status_message_);
         }
     } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0) {
-        // Image folder loading
+        // Image folder loading.
+        //
+        // Phase 0: routes through the LEGACY DatasetHandle path
+        // (LoadImageFolder) which uses ImageFolderDataset and loads real
+        // pixel data via an LRU cache. Training dispatch then falls through
+        // to StartTraining (legacy) for this dataset, since it's in
+        // datasets_ not arrow_datasets_ / parquet_backed_datasets_.
+        //
+        // We deliberately do NOT call LoadImageFolderToArrow here. That
+        // loader only stores metadata (file_path as string + label_id as
+        // int32), which caused a crash at training time because the Arrow
+        // batcher skipped string columns and the model got a tensor with 1
+        // feature instead of H*W*C. LoadImageFolderToArrow is still in the
+        // registry for Data Studio pipeline-executor use, which needs a
+        // tabular view of the folder metadata — that use case is fine.
+        //
+        // Phase 1 replaces this legacy route with a proper ImageDatasetBatcher
+        // + image_datasets_ registry map and a node-based preprocessing
+        // pipeline. See multi_format_data_pipeline_design.md.
         auto& registry = cyxwiz::DataRegistry::Instance();
         loaded_dataset_name_ = GenerateDatasetName();
 
+        // Clear any stale Arrow / Parquet entry under the same name so the
+        // training dispatch (which checks Arrow first) correctly falls
+        // through to the legacy path for this dataset.
+        registry.UnregisterTabularDataset(loaded_dataset_name_);
+
         try {
-            auto dataset = registry.LoadImageFolderToArrow(folder_path_, loaded_dataset_name_);
-            if (dataset) {
-                loaded_rows_ = dataset->GetNumRows();
-                loaded_cols_ = dataset->GetNumColumns();
-                loaded_memory_bytes_ = dataset->GetMemoryUsage();
+            // Dispatch to the loader matching the user's explicit layout
+            // choice from the ImageLayout combo in RenderImageOptions.
+            // No auto-detect — what the user picks is what we load.
+            // Adding a new layout is an entry in kImageLayoutOptions + a
+            // case in this switch.
+            //
+            // Note: LoadImageCSV bakes in a 224x224 target size for now.
+            // Phase 1 moves the target size to a dedicated Resize node
+            // so the user can pick any size declaratively.
+            cyxwiz::DatasetHandle handle;
+            switch (image_layout_) {
+                case ImageLayout::FlatWithCSV:
+                    if (strlen(labels_csv_) == 0) {
+                        apply_status_message_ = "Flat folder layout requires a Labels CSV - "
+                            "pick one or switch to 'Class subdirectories'";
+                        node_->parameters["data_loaded"] = "false";
+                        spdlog::error("DataInputDialog: FlatWithCSV selected but labels_csv is empty");
+                        apply_in_progress_ = false;
+                        apply_status_timer_ = 6.0f;
+                        has_changes_ = false;
+                        return;
+                    }
+                    handle = registry.LoadImageCSV(folder_path_, labels_csv_, loaded_dataset_name_);
+                    spdlog::info("DataInputDialog: layout=FlatWithCSV, folder='{}', csv='{}'",
+                                 folder_path_, labels_csv_);
+                    break;
+
+                case ImageLayout::ClassSubdirs:
+                default:
+                    handle = registry.LoadImageFolder(folder_path_, loaded_dataset_name_);
+                    spdlog::info("DataInputDialog: layout=ClassSubdirs, folder='{}'",
+                                 folder_path_);
+                    break;
+            }
+
+            if (handle.IsValid()) {
+                auto info = handle.GetInfo();
+                loaded_dataset_name_ = info.name;  // may have been uniquified
+                loaded_rows_ = static_cast<int64_t>(info.num_samples);
+                // For image folders, "columns" isn't meaningful the way it
+                // is for tabular. Report 1 to keep the UI honest.
+                loaded_cols_ = 1;
+                loaded_memory_bytes_ = 0;  // lazy LRU-cached, no upfront RAM use
                 data_load_state_ = DataLoadState::InMemory;
 
                 node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
@@ -485,11 +603,22 @@ void DataInputDialog::Apply() {
                     std::to_string(loaded_rows_) + " images";
 
                 apply_status_message_ = "Loaded " + std::to_string(loaded_rows_) +
-                    " images from " + p.filename().string();
+                    " images from " + p.filename().string() +
+                    " (lazy-loaded via LRU cache)";
                 apply_success_ = true;
+                spdlog::info("DataInputDialog: {}", apply_status_message_);
+            } else {
+                apply_status_message_ = "Failed to load image folder - "
+                    "expected either class subdirectories (cats/, dogs/, ...) "
+                    "OR a flat folder with a Labels CSV selected above";
+                node_->parameters["data_loaded"] = "false";
+                spdlog::error("DataInputDialog: image folder load returned invalid handle for '{}' "
+                              "(labels_csv='{}')",
+                              folder_path_, labels_csv_);
             }
         } catch (const std::exception& e) {
             apply_status_message_ = std::string("Error: ") + e.what();
+            node_->parameters["data_loaded"] = "false";
             spdlog::error("DataInputDialog: {}", apply_status_message_);
         }
     }
@@ -777,49 +906,55 @@ void DataInputDialog::RenderFileSource() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    // File/Folder path section
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, style.FrameRounding);
-    if (ImGui::BeginChild("FileSelection", ImVec2(0, 100), true)) {
-        ImGui::TextColored(accent, "Input File");
-        ImGui::Separator();
-        ImGui::Spacing();
+    // Single-file path section — only shown for Tabular. Image uses its
+    // own folder/CSV inputs in RenderImageOptions. Audio/Video are not
+    // yet supported and show their own messages. Hiding this for non-
+    // tabular prevents the user from picking a .jpg in a file dialog
+    // that's meant for CSVs.
+    if (file_category_ == FileCategory::Tabular) {
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, style.FrameRounding);
+        if (ImGui::BeginChild("FileSelection", ImVec2(0, 100), true)) {
+            ImGui::TextColored(accent, "Input File");
+            ImGui::Separator();
+            ImGui::Spacing();
 
-        // File path input
-        ImGui::Text("Path:");
-        ImGui::SameLine(60);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
-        if (ImGui::InputText("##filepath", file_path_, sizeof(file_path_))) {
-            DetectFileType();
-            DetectFileCategory();
-            LoadColumnList();  // Load column names for label selection
-            has_changes_ = true;
-            preview_loaded_ = false;
-        }
-        ImGui::PopStyleVar();
-        ImGui::SameLine();
-        if (ImGui::Button("Browse...", ImVec2(80, 0))) {
-            BrowseFile();
-        }
-
-        // File info
-        if (strlen(file_path_) > 0) {
-            ImGui::TextColored(info_color, "Type: %s", GetFileTypeName());
-            ImGui::SameLine(150);
-            if (file_size_ > 0) {
-                if (file_size_ >= 1024 * 1024)
-                    ImGui::TextColored(info_color, "Size: %.1f MB", file_size_ / (1024.0f * 1024.0f));
-                else if (file_size_ >= 1024)
-                    ImGui::TextColored(info_color, "Size: %.1f KB", file_size_ / 1024.0f);
-                else
-                    ImGui::TextColored(info_color, "Size: %zu B", file_size_);
+            // File path input
+            ImGui::Text("Path:");
+            ImGui::SameLine(60);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
+            if (ImGui::InputText("##filepath", file_path_, sizeof(file_path_))) {
+                DetectFileType();
+                DetectFileCategory();
+                LoadColumnList();
+                has_changes_ = true;
+                preview_loaded_ = false;
             }
-        } else {
-            ImGui::TextDisabled("No file selected - click Browse to select a data file");
+            ImGui::PopStyleVar();
+            ImGui::SameLine();
+            if (ImGui::Button("Browse...", ImVec2(80, 0))) {
+                BrowseFile();
+            }
+
+            // File info
+            if (strlen(file_path_) > 0) {
+                ImGui::TextColored(info_color, "Type: %s", GetFileTypeName());
+                ImGui::SameLine(150);
+                if (file_size_ > 0) {
+                    if (file_size_ >= 1024 * 1024)
+                        ImGui::TextColored(info_color, "Size: %.1f MB", file_size_ / (1024.0f * 1024.0f));
+                    else if (file_size_ >= 1024)
+                        ImGui::TextColored(info_color, "Size: %.1f KB", file_size_ / 1024.0f);
+                    else
+                        ImGui::TextColored(info_color, "Size: %zu B", file_size_);
+                }
+            } else {
+                ImGui::TextDisabled("No file selected - click Browse to select a data file");
+            }
         }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
     }
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
 
     ImGui::Spacing();
 
@@ -984,41 +1119,109 @@ void DataInputDialog::RenderImageOptions() {
     ImGui::TextColored(accent, "Image Loading Options");
     ImGui::Spacing();
 
-    // Option to use folder or file list
-    static int image_mode = 0;
-    ImGui::RadioButton("Image folder", &image_mode, 0);
-    ImGui::SameLine();
-    ImGui::RadioButton("File list (CSV)", &image_mode, 1);
+    // Image dataset layout options. Each entry describes a supported
+    // on-disk layout, the combo-box display name, a one-line description,
+    // and whether the user needs to pick a Labels CSV. Adding a new
+    // layout for Phase 1 means adding one entry here and one case in
+    // Apply's dispatch — nothing else in the dialog changes. Kept as a
+    // function-local static so we don't need to expose the private
+    // ImageLayout enum at file scope.
+    struct ImageLayoutOption {
+        ImageLayout value;
+        const char* display;
+        const char* description;
+        bool needs_labels_csv;
+    };
+    static const ImageLayoutOption kImageLayoutOptions[] = {
+        {ImageLayout::ClassSubdirs,
+         "Class subdirectories (ImageNet-style)",
+         "One subfolder per class; folder name becomes the label. "
+         "E.g. root/cat/*.jpg, root/dog/*.jpg",
+         false},
+        {ImageLayout::FlatWithCSV,
+         "Flat folder + CSV labels (Kaggle-style)",
+         "All images in one folder; a CSV file maps each filename to its label. "
+         "E.g. root/img1.jpg + labels.csv",
+         true},
+        // Phase 1 extends here: Unlabeled, COCO, YOLO, JSONLabels, HDF5Labels.
+    };
+    constexpr int kImageLayoutOptionsCount =
+        static_cast<int>(sizeof(kImageLayoutOptions) / sizeof(kImageLayoutOptions[0]));
+
+    // === Layout strategy combo ===
+    // The user explicitly picks how their image dataset is laid out on
+    // disk. No auto-detect magic — what they pick is what Apply dispatches
+    // to. Adding new layouts is a one-line entry in kImageLayoutOptions.
+    int current_idx = 0;
+    for (int i = 0; i < kImageLayoutOptionsCount; ++i) {
+        if (kImageLayoutOptions[i].value == image_layout_) {
+            current_idx = i;
+            break;
+        }
+    }
+
+    ImGui::Text("Dataset layout:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 10);
+    if (ImGui::BeginCombo("##imglayout", kImageLayoutOptions[current_idx].display)) {
+        for (int i = 0; i < kImageLayoutOptionsCount; ++i) {
+            bool selected = (i == current_idx);
+            if (ImGui::Selectable(kImageLayoutOptions[i].display, selected)) {
+                image_layout_ = kImageLayoutOptions[i].value;
+                has_changes_ = true;
+                preview_loaded_ = false;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+
+    // Description line below the combo explains what this layout means.
+    ImGui::TextDisabled("   %s", kImageLayoutOptions[current_idx].description);
 
     ImGui::Spacing();
 
-    if (image_mode == 0) {
-        // Image folder mode
-        ImGui::Text("Folder:");
-        ImGui::SameLine(70);
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
-        if (ImGui::InputText("##imgfolder", folder_path_, sizeof(folder_path_))) {
-            has_changes_ = true;
-            preview_loaded_ = false;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("...##imgbrowse", ImVec2(70, 0))) {
-            BrowseFolder();
-        }
-        ImGui::TextDisabled("Subfolders become class labels");
-    } else {
-        // CSV with image paths
+    // === Folder input (required for all layouts) ===
+    ImGui::Text("Folder:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
+    if (ImGui::InputText("##imgfolder", folder_path_, sizeof(folder_path_))) {
+        has_changes_ = true;
+        preview_loaded_ = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Browse##imgbrowse", ImVec2(80, 0))) {
+        BrowseFolder();
+    }
+
+    // === Labels CSV input (only shown for layouts that need it) ===
+    const bool needs_csv = kImageLayoutOptions[current_idx].needs_labels_csv;
+    if (needs_csv) {
         ImGui::Text("Labels CSV:");
-        ImGui::SameLine(80);
+        ImGui::SameLine(130);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
-        ImGui::InputText("##labelscsv", labels_csv_, sizeof(labels_csv_));
+        if (ImGui::InputText("##labelscsv", labels_csv_, sizeof(labels_csv_))) {
+            has_changes_ = true;
+        }
         ImGui::SameLine();
-        if (ImGui::Button("...##csvbrowse", ImVec2(70, 0))) {
-            std::string path;
-            if (FileSelector("Select Labels CSV:", path, "CSV Files\0*.csv\0All Files\0*.*\0")) {
-                strncpy(labels_csv_, path.c_str(), sizeof(labels_csv_) - 1);
+        if (ImGui::Button("Browse##csvbrowse", ImVec2(80, 0))) {
+#ifdef _WIN32
+            OPENFILENAMEA ofn = {};
+            char file[512] = {};
+            strncpy(file, labels_csv_, sizeof(file) - 1);
+            ofn.lStructSize = sizeof(ofn);
+            ofn.lpstrFilter = "CSV Files\0*.csv\0All Files\0*.*\0";
+            ofn.lpstrFile = file;
+            ofn.nMaxFile = sizeof(file);
+            ofn.lpstrTitle = "Select Labels CSV";
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+            if (GetOpenFileNameA(&ofn)) {
+                strncpy(labels_csv_, file, sizeof(labels_csv_) - 1);
                 has_changes_ = true;
             }
+#else
+            spdlog::warn("Labels CSV file browser not implemented for this platform");
+#endif
         }
     }
 
@@ -2082,22 +2285,41 @@ void DataInputDialog::BrowseFile() {
 
 void DataInputDialog::BrowseFolder() {
 #ifdef _WIN32
-    BROWSEINFOA bi = {};
-    bi.lpszTitle = "Select Folder";
-    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    // Use the modern IFileDialog in folder-pick mode (same look as the
+    // file picker the Labels CSV Browse button opens). The old
+    // SHBrowseForFolder shows a Win95-style tree that looks out of place
+    // in a modern app.
+    IFileDialog* pfd = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+                                  CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd));
+    if (SUCCEEDED(hr)) {
+        DWORD options = 0;
+        pfd->GetOptions(&options);
+        pfd->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        pfd->SetTitle(L"Select Image Folder");
 
-    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderA(&bi);
-    if (pidl) {
-        char path[MAX_PATH];
-        if (SHGetPathFromIDListA(pidl, path)) {
-            strncpy(folder_path_, path, sizeof(folder_path_) - 1);
-            has_changes_ = true;
-            preview_loaded_ = false;
+        hr = pfd->Show(nullptr);
+        if (SUCCEEDED(hr)) {
+            IShellItem* psi = nullptr;
+            hr = pfd->GetResult(&psi);
+            if (SUCCEEDED(hr)) {
+                PWSTR wide_path = nullptr;
+                hr = psi->GetDisplayName(SIGDN_FILESYSPATH, &wide_path);
+                if (SUCCEEDED(hr) && wide_path) {
+                    char narrow[512] = {};
+                    WideCharToMultiByte(CP_ACP, 0, wide_path, -1,
+                                        narrow, sizeof(narrow) - 1, nullptr, nullptr);
+                    strncpy(folder_path_, narrow, sizeof(folder_path_) - 1);
+                    has_changes_ = true;
+                    preview_loaded_ = false;
+                    CoTaskMemFree(wide_path);
+                }
+                psi->Release();
+            }
         }
-        CoTaskMemFree(pidl);
+        pfd->Release();
     }
 #else
-    // TODO: Implement for other platforms
     spdlog::warn("Folder browser not implemented for this platform");
 #endif
 }
