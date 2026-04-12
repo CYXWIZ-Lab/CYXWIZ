@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../gui/node_editor.h"
+#include "../preprocessing/preprocessing_config.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/layer.h>
 #include <cyxwiz/optimizer.h>
@@ -56,7 +57,23 @@ struct CompiledLayer {
 };
 
 /**
- * Preprocessing configuration extracted from graph
+ * Preprocessing domain — which kind of data the preprocessing graph is
+ * operating on. Determined by the DataInput node's file_category parameter
+ * and used to dispatch domain-specific preprocessing extractors.
+ */
+enum class PreprocessingDomain {
+    Tabular,     // CSV / Arrow / Parquet numeric data
+    Image,       // Image folders, CSV+images
+    Audio,       // Audio files with feature extraction
+    Text,        // Text corpora with tokenization
+    TimeSeries,  // Windowed time-series from CSV
+    General      // Domain-agnostic nodes (DataSplit, DataLoader)
+};
+
+/**
+ * Tabular preprocessing configuration (the original v0.1 struct, kept for
+ * backward compatibility). Extracted from Normalize / TensorReshape /
+ * OneHotEncode nodes.
  */
 struct GraphPreprocessingConfig {
     bool has_normalization = false;
@@ -69,6 +86,12 @@ struct GraphPreprocessingConfig {
     bool has_onehot = false;
     size_t num_classes = 0;
 };
+
+// ImagePreprocessingConfig lives in preprocessing/preprocessing_config.h
+// (already includes resize, CLAHE, denoising, sharpening, edge detection,
+// morphology, blur, perspective, and pyramid). We reuse it directly rather
+// than defining a second struct with the same name. The graph compiler's
+// domain-specific extractors populate fields on it.
 
 /**
  * A single graph validation finding. Populated by GraphCompiler::Compile
@@ -121,8 +144,18 @@ struct TrainingConfiguration {
     int num_workers = 0;                // not yet honored; warns if >0
     bool has_data_loader = false;       // true if a DataLoader node was found
 
-    // Preprocessing
+    // Preprocessing — tabular config (backward-compatible)
     GraphPreprocessingConfig preprocessing;
+
+    // Preprocessing — domain detection. Set by Compile based on the
+    // DataInput node's file_category. Drives dispatch to the right
+    // batcher and the right set of preprocessing extractors.
+    PreprocessingDomain preprocessing_domain = PreprocessingDomain::Tabular;
+
+    // Preprocessing — image-specific (Phase 1). Populated by image-
+    // domain extractors in the preprocessing table when
+    // preprocessing_domain == Image.
+    ImagePreprocessingConfig image_preprocessing;
 
     // Loss function
     gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;
@@ -262,10 +295,10 @@ private:
     // Extract layer parameters from node
     CompiledLayer ExtractLayerConfig(const gui::MLNode& node) const;
 
-    // Extract preprocessing config
+    // Extract preprocessing config (table-driven, domain-aware)
     void ExtractPreprocessing(
         const gui::MLNode& node,
-        GraphPreprocessingConfig& config
+        TrainingConfiguration& config
     ) const;
 
     // Shape inference

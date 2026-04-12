@@ -267,7 +267,7 @@ TrainingConfiguration GraphCompiler::Compile(
         // Handle preprocessing nodes
         if (IsPreprocessing(node->type)) {
             spdlog::info("GraphCompiler: Found preprocessing node '{}' (type={})", node->name, static_cast<int>(node->type));
-            ExtractPreprocessing(*node, config.preprocessing);
+            ExtractPreprocessing(*node, config);
             if (node->type == gui::NodeType::Normalize) {
                 spdlog::info("GraphCompiler: Normalization enabled - mean={}, std={}",
                              config.preprocessing.norm_mean, config.preprocessing.norm_std);
@@ -639,29 +639,104 @@ bool GraphCompiler::IsActivation(gui::NodeType type) const {
     }
 }
 
-bool GraphCompiler::IsPreprocessing(gui::NodeType type) const {
-    switch (type) {
-        case gui::NodeType::Normalize:
-        case gui::NodeType::TensorReshape:
-        case gui::NodeType::OneHotEncode:
-        case gui::NodeType::DataSplit:
-        case gui::NodeType::DataLoader:
-        case gui::NodeType::Augmentation:
-        case gui::NodeType::TextTokenizer:
-        case gui::NodeType::TextVocabulary:
-        case gui::NodeType::TextPadding:
-        case gui::NodeType::TimeSeriesWindow:
-        case gui::NodeType::TimeSeriesFeatures:
-        case gui::NodeType::TimeSeriesSplit:
-        case gui::NodeType::AudioInput:
-        case gui::NodeType::Spectrogram:
-        case gui::NodeType::MelSpectrogram:
-        case gui::NodeType::MFCC:
-        case gui::NodeType::AudioAugmentation:
-            return true;
-        default:
-            return false;
+// ---------------------------------------------------------------------------
+// Table-driven preprocessing registry
+//
+// Each entry maps a NodeType to a preprocessing domain and an optional
+// extraction function. IsPreprocessing and ExtractPreprocessing both
+// consult this table instead of maintaining separate switch statements.
+//
+// Adding a new preprocessing node for any domain is a single line here
+// plus a static extraction function. No switch cases to update in
+// multiple places.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using ExtractorFn = void(*)(const gui::MLNode&, TrainingConfiguration&);
+
+struct PreprocessingNodeSpec {
+    gui::NodeType type;
+    PreprocessingDomain domain;
+    ExtractorFn extractor;  // nullptr = recognized but not yet wired
+};
+
+// --- Tabular extractors (migrated from the old switch) ---
+
+static void ExtractNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.preprocessing.has_normalization = true;
+    if (node.parameters.count("mean"))
+        config.preprocessing.norm_mean = std::stof(node.parameters.at("mean"));
+    if (node.parameters.count("std"))
+        config.preprocessing.norm_std = std::stof(node.parameters.at("std"));
+}
+
+static void ExtractReshape(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.preprocessing.has_reshape = true;
+    if (node.parameters.count("shape")) {
+        std::string shape_str = node.parameters.at("shape");
+        shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
+        shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
+        shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ' '), shape_str.end());
+
+        size_t pos = 0;
+        while ((pos = shape_str.find(',')) != std::string::npos) {
+            config.preprocessing.reshape_dims.push_back(std::stoi(shape_str.substr(0, pos)));
+            shape_str.erase(0, pos + 1);
+        }
+        if (!shape_str.empty()) {
+            config.preprocessing.reshape_dims.push_back(std::stoi(shape_str));
+        }
     }
+}
+
+static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.preprocessing.has_onehot = true;
+    if (node.parameters.count("num_classes"))
+        config.preprocessing.num_classes = std::stoul(node.parameters.at("num_classes"));
+}
+
+// --- Image extractors (Phase 1 — wired in task 8) ---
+// Placeholders registered so IsPreprocessing recognizes the types.
+// Extractors will be added when the ImageTransformPipeline is built.
+
+// --- Audio / Text / TimeSeries extractors (Phase 2-5 — deferred) ---
+
+// --- The table ---
+
+static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
+    // Tabular (existing, migrated from switch)
+    {gui::NodeType::Normalize,          PreprocessingDomain::Tabular,     ExtractNormalize},
+    {gui::NodeType::TensorReshape,      PreprocessingDomain::Tabular,     ExtractReshape},
+    {gui::NodeType::OneHotEncode,       PreprocessingDomain::Tabular,     ExtractOneHot},
+    // General (domain-agnostic data pipeline nodes — no extraction needed)
+    {gui::NodeType::DataSplit,          PreprocessingDomain::General,     nullptr},
+    {gui::NodeType::DataLoader,         PreprocessingDomain::General,     nullptr},
+    // Image (Phase 1)
+    {gui::NodeType::Augmentation,       PreprocessingDomain::Image,       nullptr},
+    // Audio (Phase 2)
+    {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},
+    {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       nullptr},
+    {gui::NodeType::MelSpectrogram,     PreprocessingDomain::Audio,       nullptr},
+    {gui::NodeType::MFCC,               PreprocessingDomain::Audio,       nullptr},
+    {gui::NodeType::AudioAugmentation,  PreprocessingDomain::Audio,       nullptr},
+    // Text (Phase 3)
+    {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        nullptr},
+    // TimeSeries (Phase 4)
+    {gui::NodeType::TimeSeriesWindow,   PreprocessingDomain::TimeSeries,  nullptr},
+    {gui::NodeType::TimeSeriesFeatures, PreprocessingDomain::TimeSeries,  nullptr},
+    {gui::NodeType::TimeSeriesSplit,    PreprocessingDomain::TimeSeries,  nullptr},
+};
+
+} // anonymous namespace
+
+bool GraphCompiler::IsPreprocessing(gui::NodeType type) const {
+    for (const auto& spec : kPreprocessingSpecs) {
+        if (spec.type == type) return true;
+    }
+    return false;
 }
 
 CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
@@ -755,45 +830,15 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
 
 void GraphCompiler::ExtractPreprocessing(
     const gui::MLNode& node,
-    GraphPreprocessingConfig& config) const
+    TrainingConfiguration& config) const
 {
-    switch (node.type) {
-        case gui::NodeType::Normalize:
-            config.has_normalization = true;
-            if (node.parameters.count("mean"))
-                config.norm_mean = std::stof(node.parameters.at("mean"));
-            if (node.parameters.count("std"))
-                config.norm_std = std::stof(node.parameters.at("std"));
-            break;
-
-        case gui::NodeType::TensorReshape:
-            config.has_reshape = true;
-            // Parse reshape dimensions from parameter
-            if (node.parameters.count("shape")) {
-                std::string shape_str = node.parameters.at("shape");
-                shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
-                shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
-                shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ' '), shape_str.end());
-
-                size_t pos = 0;
-                while ((pos = shape_str.find(',')) != std::string::npos) {
-                    config.reshape_dims.push_back(std::stoi(shape_str.substr(0, pos)));
-                    shape_str.erase(0, pos + 1);
-                }
-                if (!shape_str.empty()) {
-                    config.reshape_dims.push_back(std::stoi(shape_str));
-                }
+    for (const auto& spec : kPreprocessingSpecs) {
+        if (spec.type == node.type) {
+            if (spec.extractor) {
+                spec.extractor(node, config);
             }
-            break;
-
-        case gui::NodeType::OneHotEncode:
-            config.has_onehot = true;
-            if (node.parameters.count("num_classes"))
-                config.num_classes = std::stoul(node.parameters.at("num_classes"));
-            break;
-
-        default:
-            break;
+            return;
+        }
     }
 }
 
