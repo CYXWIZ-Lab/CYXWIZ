@@ -1,5 +1,6 @@
 #include "training_manager.h"
 #include "image_dataset_batcher.h"
+#include "audio_dataset_batcher.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
 
@@ -413,6 +414,110 @@ bool TrainingManager::StartTrainingImage(
     return true;
 }
 
+bool TrainingManager::StartTrainingAudio(
+    TrainingConfiguration config,
+    const DataRegistry::AudioDatasetEntry& audio_entry,
+    int epochs,
+    int batch_size,
+    TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback)
+{
+    if (is_training_.load()) {
+        spdlog::warn("TrainingManager: Cannot start training - already training");
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_training_.load()) return false;
+
+    // Build the audio batcher. AudioDatasetBatcher constructs the
+    // underlying AudioDataset from the entry and probes a sample to
+    // discover the actual feature shape.
+    auto batcher = std::make_unique<AudioDatasetBatcher>(
+        audio_entry, batch_size, config.train_ratio, config.shuffle);
+
+    if (batcher->GetNumSamples() == 0) {
+        spdlog::error("TrainingManager: Audio dataset has 0 samples");
+        return false;
+    }
+
+    // input_size is feature_rows × feature_cols (the flattened feature map
+    // — Spectrogram or MelSpec or MFCC). The model's first Dense layer
+    // sees this many features.
+    config.input_size = static_cast<size_t>(batcher->GetFeatureRows()) *
+                        static_cast<size_t>(batcher->GetFeatureCols());
+    config.input_shape = {
+        static_cast<size_t>(batcher->GetFeatureRows()),
+        static_cast<size_t>(batcher->GetFeatureCols())
+    };
+
+    spdlog::info("TrainingManager: Audio dataset {} samples, input_size={} ({}x{})",
+                 batcher->GetNumSamples(), config.input_size,
+                 batcher->GetFeatureRows(), batcher->GetFeatureCols());
+
+    // Mirror image path: hand normalization / one-hot through to the batcher.
+    if (config.preprocessing.has_normalization) {
+        batcher->SetNormalization(config.preprocessing.norm_mean,
+                                  config.preprocessing.norm_std);
+    }
+    if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
+        batcher->SetOneHotEncoding(config.preprocessing.num_classes);
+    }
+
+    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
+
+    is_training_.store(true);
+    stop_requested_.store(false);
+
+    if (node_editor_callback) {
+        node_editor_callback(true);
+    }
+
+    if (plot_panel) {
+        plot_panel->Clear();
+        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
+        plot_panel->SetVisible(true);
+    }
+
+    std::string task_name = "Training Model (Audio)";
+    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [](LambdaTask& task) {
+            while (!task.ShouldStop()) {
+                auto& mgr = TrainingManager::Instance();
+                if (!mgr.IsTrainingActive()) break;
+                auto metrics = mgr.GetCurrentMetrics();
+                float progress = static_cast<float>(metrics.current_epoch) /
+                    std::max(1, metrics.total_epochs);
+                task.ReportProgress(progress,
+                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
+                    std::to_string(metrics.total_epochs) +
+                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            task.MarkCompleted();
+        },
+        nullptr, nullptr
+    ));
+
+    if (on_training_start_) {
+        on_training_start_("Training from Audio Dataset");
+    }
+
+    if (training_thread_ && training_thread_->joinable()) {
+        training_thread_->join();
+    }
+
+    training_thread_ = std::make_unique<std::thread>(
+        &TrainingManager::TrainingThreadFunc, this,
+        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
+    );
+
+    spdlog::info("TrainingManager: Started Audio training ({} epochs, batch_size={})",
+                 epochs, batch_size);
+    return true;
+}
+
 void TrainingManager::StopTraining() {
     if (!is_training_.load()) {
         return;
@@ -545,9 +650,12 @@ void TrainingManager::TrainingThreadFunc(
             // Per-batch callback — keeps the Training Dashboard responsive during
             // the epoch. Without this, the dashboard stays on "Epoch 0/N" for the
             // full duration of the first epoch because epoch_callback only fires
-            // at epoch boundaries.
+            // at epoch boundaries. Also pushes a loss point with a fractional
+            // epoch x-axis (epoch - 1 + batch/total) so the loss curve draws
+            // smoothly during long epochs (e.g. audio at 8 min/epoch) instead
+            // of staying empty until the first epoch finishes.
             auto batch_callback = [this, plot_panel](int epoch, int batch, int total_batches,
-                                                      float batch_loss, float /*batch_acc*/) {
+                                                      float batch_loss, float batch_acc) {
                 {
                     std::lock_guard<std::mutex> lock(metrics_mutex_);
                     cached_metrics_.current_epoch = epoch;
@@ -557,6 +665,22 @@ void TrainingManager::TrainingThreadFunc(
                 }
                 if (plot_panel) {
                     plot_panel->SetBatchProgress(epoch, batch, total_batches, batch_loss);
+
+                    // Progressive curve: x = (epoch - 1) + batch / total_batches
+                    // gives a smooth 0..N x-axis where each integer is an epoch
+                    // boundary. The epoch_callback later writes the official
+                    // x=epoch point with the averaged loss + val metrics.
+                    if (total_batches > 0) {
+                        double frac_epoch = static_cast<double>(epoch - 1) +
+                                            static_cast<double>(batch) /
+                                            static_cast<double>(total_batches);
+                        plot_panel->AddLossPoint(frac_epoch,
+                                                 static_cast<double>(batch_loss),
+                                                 -1.0);
+                        plot_panel->AddAccuracyPoint(frac_epoch,
+                                                     static_cast<double>(batch_acc) * 100.0,
+                                                     -1.0);
+                    }
                 }
             };
 

@@ -1,0 +1,103 @@
+{
+  "id": "call_center_sentiment",
+  "name": "Call Center Audio Sentiment Classifier",
+  "description": "Customer call sentiment analysis from raw audio segments. Classifies 5-second call recordings into Positive / Neutral / Negative sentiment without any text transcription — features come straight from Mel spectrograms of the speech waveform. Targets call-center analytics workloads where transcription is too slow / too expensive and emotional tone matters more than literal words. Comparable to Kaggle benchmarks on RAVDESS / CREMA-D emotion datasets — top public scores sit around 70-75% on 8-way emotion; collapsing to 3-way sentiment typically pushes accuracy past 80%. This pipeline uses a deep 5-layer MLP with heavy dropout (0.5) for regularization on noisy real-world calls, 22 kHz sample rate (preserves human voice formants up to ~11 kHz), and 50 epochs with a low learning rate (5e-4) for stable convergence on emotion-rich features. Configure the DataInput node to point at a folder with three subdirectories: positive/, neutral/, negative/ — each containing WAV/FLAC clips.",
+  "category": "Training Pipeline",
+  "tags": ["call-center", "sentiment", "emotion", "audio", "speech", "spectrogram", "kaggle", "training"],
+  "parameters": [
+    {
+      "name": "batch_size",
+      "type": "int",
+      "default_value": "16",
+      "description": "Training batch size (smaller for the longer 5s clips)",
+      "min_value": "1",
+      "max_value": "128"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.0005",
+      "description": "Adam learning rate — low for stable emotion convergence",
+      "min_value": "0.0001",
+      "max_value": "0.01"
+    },
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "50",
+      "description": "Number of training epochs (emotion needs longer training than command classification)",
+      "min_value": "1",
+      "max_value": "300"
+    },
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "3",
+      "description": "Sentiment classes (3 = positive/neutral/negative; bump to 8 for full emotion classification)",
+      "min_value": "2",
+      "max_value": "16"
+    },
+    {
+      "name": "dropout_rate",
+      "type": "float",
+      "default_value": "0.5",
+      "description": "Aggressive dropout for noisy real-world call audio",
+      "min_value": "0.0",
+      "max_value": "0.7"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 300], "params": {"file_category": "audio", "sample_rate": "22050", "max_duration": "5.0"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Train/Val Split", "pos": [250, 300], "params": {"train_ratio": "0.7", "val_ratio": "0.15", "test_ratio": "0.15", "stratified": "true"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [500, 300], "params": {"batch_size": "$batch_size", "epochs": "$epochs", "shuffle": "true", "seed": "1337", "validation_freq": "1"}},
+      {"id": "normalize", "type": "Normalize", "name": "Normalize", "pos": [750, 300], "params": {"mean": "0.0", "std": "1.0"}},
+
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [1000, 300]},
+
+      {"id": "fc1", "type": "Dense", "name": "Dense 1024", "pos": [1250, 300], "params": {"units": "1024"}},
+      {"id": "relu1", "type": "ReLU", "name": "ReLU", "pos": [1500, 300]},
+      {"id": "drop1", "type": "Dropout", "name": "Dropout", "pos": [1750, 300], "params": {"rate": "$dropout_rate"}},
+
+      {"id": "fc2", "type": "Dense", "name": "Dense 512", "pos": [2000, 300], "params": {"units": "512"}},
+      {"id": "relu2", "type": "ReLU", "name": "ReLU", "pos": [2250, 300]},
+      {"id": "drop2", "type": "Dropout", "name": "Dropout", "pos": [2500, 300], "params": {"rate": "$dropout_rate"}},
+
+      {"id": "fc3", "type": "Dense", "name": "Dense 256", "pos": [2750, 300], "params": {"units": "256"}},
+      {"id": "relu3", "type": "ReLU", "name": "ReLU", "pos": [3000, 300]},
+      {"id": "drop3", "type": "Dropout", "name": "Dropout", "pos": [3250, 300], "params": {"rate": "0.4"}},
+
+      {"id": "fc4", "type": "Dense", "name": "Dense 128", "pos": [3500, 300], "params": {"units": "128"}},
+      {"id": "relu4", "type": "ReLU", "name": "ReLU", "pos": [3750, 300]},
+      {"id": "drop4", "type": "Dropout", "name": "Dropout", "pos": [4000, 300], "params": {"rate": "0.3"}},
+
+      {"id": "fc5", "type": "Dense", "name": "Dense N", "pos": [4250, 300], "params": {"units": "$num_classes"}},
+
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [4500, 300]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [4750, 300], "params": {"learning_rate": "$learning_rate"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [5000, 300], "params": {"classes": "$num_classes"}}
+    ],
+    "links": [
+      {"from": "data_input", "to": "data_split"},
+      {"from": "data_split", "to": "data_loader"},
+      {"from": "data_loader", "to": "normalize"},
+      {"from": "normalize", "to": "flatten"},
+      {"from": "flatten", "to": "fc1"},
+      {"from": "fc1", "to": "relu1"},
+      {"from": "relu1", "to": "drop1"},
+      {"from": "drop1", "to": "fc2"},
+      {"from": "fc2", "to": "relu2"},
+      {"from": "relu2", "to": "drop2"},
+      {"from": "drop2", "to": "fc3"},
+      {"from": "fc3", "to": "relu3"},
+      {"from": "relu3", "to": "drop3"},
+      {"from": "drop3", "to": "fc4"},
+      {"from": "fc4", "to": "relu4"},
+      {"from": "relu4", "to": "drop4"},
+      {"from": "drop4", "to": "fc5"},
+      {"from": "fc5", "to": "loss"},
+      {"from": "loss", "to": "optimizer"},
+      {"from": "optimizer", "to": "output"}
+    ]
+  }
+}

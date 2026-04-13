@@ -355,20 +355,55 @@ void DataRegistry::UnregisterImageDataset(const std::string& name) {
     }
 }
 
+// --- Audio dataset registry (Phase 2) ---
+
+void DataRegistry::RegisterAudioDataset(const std::string& name,
+                                          const AudioDatasetEntry& entry) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    audio_dataset_entries_[name] = entry;
+    spdlog::info("RegisterAudioDataset '{}': {} samples, {} classes, feature_type={}, sr={}",
+                 name, entry.num_samples, entry.num_classes,
+                 entry.feature_type, entry.target_sr);
+}
+
+bool DataRegistry::IsAudioDataset(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return audio_dataset_entries_.find(name) != audio_dataset_entries_.end();
+}
+
+const DataRegistry::AudioDatasetEntry*
+DataRegistry::GetAudioDatasetEntry(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = audio_dataset_entries_.find(name);
+    if (it == audio_dataset_entries_.end()) return nullptr;
+    return &it->second;
+}
+
+void DataRegistry::UnregisterAudioDataset(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = audio_dataset_entries_.find(name);
+    if (it != audio_dataset_entries_.end()) {
+        audio_dataset_entries_.erase(it);
+        spdlog::debug("UnregisterAudioDataset '{}'", name);
+    }
+}
+
 void DataRegistry::ClearAllTabularDatasets() {
     std::lock_guard<std::mutex> lock(mutex_);
 
     size_t arrow_count = arrow_datasets_.size();
     size_t parquet_count = parquet_backed_datasets_.size();
     size_t image_count = image_dataset_entries_.size();
+    size_t audio_count = audio_dataset_entries_.size();
 
     arrow_datasets_.clear();
     parquet_backed_datasets_.clear();
     image_dataset_entries_.clear();
+    audio_dataset_entries_.clear();
 
-    if (arrow_count > 0 || parquet_count > 0 || image_count > 0) {
-        spdlog::info("ClearAllDatasets: removed {} Arrow + {} Parquet + {} Image entries",
-                     arrow_count, parquet_count, image_count);
+    if (arrow_count > 0 || parquet_count > 0 || image_count > 0 || audio_count > 0) {
+        spdlog::info("ClearAllDatasets: removed {} Arrow + {} Parquet + {} Image + {} Audio entries",
+                     arrow_count, parquet_count, image_count, audio_count);
     }
 }
 

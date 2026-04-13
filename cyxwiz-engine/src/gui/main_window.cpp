@@ -2939,6 +2939,33 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             spdlog::error("Image dataset '{}' is registered but entry could not be retrieved",
                           dataset_name);
         }
+    } else if (registry.IsAudioDataset(dataset_name)) {
+        // Phase 2 audio path: AudioDatasetBatcher constructs the
+        // AudioDataset on training start with the feature config baked
+        // into the registry entry (feature_type, sample rate, n_fft,
+        // n_mels, etc.). Spectrogram / MelSpec / MFCC nodes don't yet
+        // override these — that lands when the audio preprocessing
+        // extractors are wired (Phase 2.1).
+        auto audio_entry = registry.GetAudioDatasetEntry(dataset_name);
+        if (audio_entry) {
+            spdlog::info("Starting audio training: dataset={}, epochs={}, batch_size={}, "
+                         "{} samples, {} classes, feature_type={}",
+                         dataset_name, epochs, batch_size,
+                         audio_entry->num_samples, audio_entry->num_classes,
+                         audio_entry->feature_type);
+
+            started = tm.StartTrainingAudio(
+                std::move(config),
+                *audio_entry,
+                epochs,
+                batch_size,
+                training_plot_panel_.get(),
+                node_editor_callback
+            );
+        } else {
+            spdlog::error("Audio dataset '{}' is registered but entry could not be retrieved",
+                          dataset_name);
+        }
     } else {
         // Fall back to legacy DatasetHandle path
         auto dataset = registry.GetDataset(dataset_name);

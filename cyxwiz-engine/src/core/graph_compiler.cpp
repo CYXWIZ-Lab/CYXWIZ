@@ -135,7 +135,8 @@ TrainingConfiguration GraphCompiler::Compile(
             auto& reg = DataRegistry::Instance();
             bool in_registry = reg.IsArrowDataset(config.dataset_name) ||
                                reg.IsParquetBackedDataset(config.dataset_name) ||
-                               reg.IsImageDataset(config.dataset_name);
+                               reg.IsImageDataset(config.dataset_name) ||
+                               reg.IsAudioDataset(config.dataset_name);
             if (!in_registry && loaded_param == "true") {
                 AddIssue(config, IssueLevel::Error,
                          "Dataset '" + config.dataset_name +
@@ -151,16 +152,19 @@ TrainingConfiguration GraphCompiler::Compile(
         }
 
         // Check 3: label column. Required for tabular supervised training,
-        // but image datasets get labels from folder structure or CSV mapping
+        // but image and audio datasets get labels from folder structure
         // automatically — don't emit a misleading warning for them.
         auto cat_it_lbl = dataset_node->parameters.find("file_category");
-        bool is_image_dataset = (cat_it_lbl != dataset_node->parameters.end() &&
-                                 cat_it_lbl->second == "image");
+        const std::string cat_str = (cat_it_lbl != dataset_node->parameters.end())
+            ? cat_it_lbl->second : std::string();
+        bool is_image_dataset = (cat_str == "image");
+        bool is_audio_dataset = (cat_str == "audio");
+        bool labels_from_structure = is_image_dataset || is_audio_dataset;
 
         const std::string label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
             : std::string();
-        if (label_col.empty() && !is_image_dataset) {
+        if (label_col.empty() && !labels_from_structure) {
             AddIssue(config, IssueLevel::Warning,
                      "No label column selected - training will use the last "
                      "column as label by default",
@@ -416,14 +420,25 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
-    // === Image-specific checks ===
-    // Detect the data domain from the DataInput node's file_category
-    // parameter. If it's an image dataset, enforce image-specific rules
-    // that prevent crashes at training time (OOM, shape mismatch).
+    // === Domain detection ===
+    // The DataInput node carries file_category (tabular / image / audio).
+    // Domain drives both the dispatch in StartTrainingFromGraph and the
+    // domain-specific checks below.
     if (dataset_node) {
         auto cat_it = dataset_node->parameters.find("file_category");
-        bool is_image = (cat_it != dataset_node->parameters.end() &&
-                         cat_it->second == "image");
+        const std::string cat = (cat_it != dataset_node->parameters.end())
+            ? cat_it->second : std::string();
+        bool is_image = (cat == "image");
+        bool is_audio = (cat == "audio");
+
+        if (is_audio) {
+            config.preprocessing_domain = PreprocessingDomain::Audio;
+            // Phase 2.0: feature extraction is baked into the AudioDataset
+            // config (set by DataInputDialog). The Spectrogram / MFCC node
+            // extractors will land in Phase 2.1 and override these defaults
+            // from the graph. No mandatory checks yet — the dialog enforces
+            // a valid folder layout at Apply time.
+        }
 
         if (is_image) {
             config.preprocessing_domain = PreprocessingDomain::Image;

@@ -94,6 +94,15 @@ public:
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
+    bool StartTrainingAudio(
+        TrainingConfiguration config,
+        const DataRegistry::AudioDatasetEntry& audio_entry,
+        int epochs,
+        int batch_size,
+        TrainingPlotPanel* plot_panel = nullptr,
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
     /**
      * Stop the current training session
      */

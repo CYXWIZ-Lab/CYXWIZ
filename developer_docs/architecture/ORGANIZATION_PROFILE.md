@@ -9,7 +9,7 @@
 
 **Democratizing AI/ML Through Decentralized Compute**
 
-[Website](#) • [Documentation](docs/) • [CyxWiz Engine](#cyxwiz-engine) • [Get Started](#getting-started) • [Support Us](#support-our-work)
+[Website](https://web-psi-drab.vercel.app/) • [Documentation](docs/) • [CyxWiz Engine](#cyxwiz-engine) • [Get Started](#getting-started) • [Support Us](#support-our-work)
 
 </div>
 
@@ -344,7 +344,7 @@ Star our repositories, share our work, and tell others about CyxWiz Lab. Communi
 
 | Resource | Link |
 |----------|------|
-| **Website** | [cyxwiz.io](#) |
+| **Website** | [web-psi-drab.vercel.app](https://web-psi-drab.vercel.app/) |
 | **Documentation** | [docs.cyxwiz.io](#) |
 | **API Reference** | [api.cyxwiz.io](#) |
 | **Model Hub** | [hub.cyxwiz.io](#) |

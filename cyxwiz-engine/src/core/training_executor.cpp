@@ -580,12 +580,23 @@ void TrainingExecutor::Train(
 
         if (ShouldStop()) break;
 
-        // Run validation (eval mode)
+        // Run validation (eval mode).
+        //
+        // For image/audio batchers, active_train_ibatcher and
+        // active_val_ibatcher point to the *same* instance — the batcher
+        // holds both train_indices_ and val_indices_ internally and switches
+        // between them via SetPhase. Without SetPhase(Val) the val pass
+        // would iterate the training indices, producing bogus "perfect val"
+        // metrics (this was the source of the suspicious 100% val acc).
+        // For Arrow/Parquet/legacy paths these are separate instances so
+        // SetPhase is a no-op on the default IBatcher impl.
         model_->SetTraining(false);
         if (mode_ == DatasetMode::Legacy) {
             RunValidation(*legacy_val_batcher);
         } else if (active_val_ibatcher) {
+            active_val_ibatcher->SetPhase(BatcherPhase::Val);
             RunValidationArrow(*active_val_ibatcher);
+            active_val_ibatcher->SetPhase(BatcherPhase::Train);
         }
         model_->SetTraining(true);
 

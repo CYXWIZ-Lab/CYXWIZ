@@ -68,6 +68,13 @@ struct AnnotatedBatch {
  * any batcher uniformly. Subclasses that don't support a particular knob
  * can leave it as a no-op.
  */
+// Which phase the batcher is currently iterating. Image/audio batchers
+// use a single instance for both train and val (same underlying dataset);
+// SetPhase flips between the two index sets without reconstructing.
+// Arrow/Parquet/legacy batchers ignore this since they already instantiate
+// separate train vs val batchers.
+enum class BatcherPhase { Train, Val };
+
 class IBatcher {
 public:
     virtual ~IBatcher() = default;
@@ -81,6 +88,12 @@ public:
     virtual void SetNormalization(float mean, float std_dev) = 0;
     virtual void SetOneHotEncoding(size_t num_classes) = 0;
     virtual void SetFlatten(bool flatten) = 0;
+
+    // Switch between train and val index sets. Default: no-op (batchers
+    // that already have a separate val instance don't need this). The
+    // caller should call Reset() afterwards to pick up the new phase's
+    // epoch order. Image/audio batchers override this.
+    virtual void SetPhase(BatcherPhase /*phase*/) {}
 };
 
 /**

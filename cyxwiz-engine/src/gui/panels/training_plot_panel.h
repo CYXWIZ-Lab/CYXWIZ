@@ -20,9 +20,13 @@ public:
 
     void Render() override;
 
-    // Training data updates (thread-safe)
-    void AddLossPoint(int epoch, double train_loss, double val_loss = -1.0);
-    void AddAccuracyPoint(int epoch, double train_acc, double val_acc = -1.0);
+    // Training data updates (thread-safe).
+    // epoch is a double so callers can pass fractional epochs from per-batch
+    // callbacks (epoch - 1 + batch/total_batches), making the loss curve draw
+    // smoothly during a long epoch instead of waiting for epoch boundaries.
+    // Integer values still work — callers passing int are implicitly promoted.
+    void AddLossPoint(double epoch, double train_loss, double val_loss = -1.0);
+    void AddAccuracyPoint(double epoch, double train_acc, double val_acc = -1.0);
     void AddCustomMetric(const std::string& metric_name, int epoch, double value);
 
     // Control

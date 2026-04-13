@@ -30,6 +30,9 @@ public:
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
     void SetFlatten(bool flatten) override;
+    void SetPhase(BatcherPhase phase) override;
+
+    size_t GetNumValSamples() const { return val_indices_.size(); }
 
 private:
     std::shared_ptr<Dataset> dataset_;
@@ -46,7 +49,11 @@ private:
     size_t num_classes_ = 0;
     bool do_onehot_ = false;
 
+    // Separate train/val index sets (shuffled split at construction).
     std::vector<size_t> train_indices_;
+    std::vector<size_t> val_indices_;
+    BatcherPhase current_phase_ = BatcherPhase::Train;
+
     std::vector<size_t> epoch_order_;
     size_t current_idx_ = 0;
 

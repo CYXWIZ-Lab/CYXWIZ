@@ -4235,7 +4235,13 @@ static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
     if (it == node.parameters.end() || it->second.empty()) {
         return;
     }
-    cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(it->second);
+    auto& reg = cyxwiz::DataRegistry::Instance();
+    // Try every registry the node could have populated. Each is a no-op
+    // for names that don't exist in that map, so it's safe to call them
+    // all without knowing which type the node actually loaded.
+    reg.UnregisterTabularDataset(it->second);
+    reg.UnregisterImageDataset(it->second);
+    reg.UnregisterAudioDataset(it->second);
 }
 
 void NodeEditor::DeleteNode(int node_id) {

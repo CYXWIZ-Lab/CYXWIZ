@@ -329,6 +329,113 @@ is straightforward once option (b) reorganizes the data flow.
 
 ---
 
+## Data Quality / Sanity Audits
+
+### Dataset sanity audit at Apply time (cross-domain)
+
+**Severity:** High — silently corrupt datasets produce fake training
+metrics and waste GPU hours before the user notices.
+
+**Origin:** Caught during Phase 2 audio testing on the Kaggle
+"Binary Drone Audio" dataset. 1089 / 11704 files (9.3%) were genuinely
+all-zero silent WAVs with valid headers — `wave.open()` reports 16347
+frames at 16kHz but every sample is literally 0. The mel spectrogram of
+silence is constant `log(1e-10) = -23.0259`, which looks identical to a
+backend bug. Paired with a separate data-leakage bug in the val pipeline,
+training reported a fake 100% val accuracy and nobody would have noticed
+the silent files without end-to-end testing on a real Kaggle dataset.
+
+The audio domain now has a fix (`AudioDataset::ExtractFeatures` detects
+all-zero samples and returns invalid, with rate-limited warnings in
+`GetItem`), but the **broader lesson is that every domain needs a
+quality audit that runs at Apply time**. Unit tests cannot catch this
+class of issue — only integration tests on real datasets can.
+
+**Concrete sanity checks to add:**
+
+- **Audio** (partially done)
+  - ✓ Silent file detection (all samples == 0)
+  - TODO: RMS energy threshold (files below -60 dBFS peak are likely corrupt)
+  - TODO: Report: "N/M files have silence, M/N ratio per class"
+  - TODO: If silent ratio > 20% in any class, refuse to Apply with an error
+- **Image**
+  - Decode a random sample of N files (N = min(100, total))
+  - Count: 1×1 corrupt thumbnails, 0-byte placeholders, fully-black
+    images (pixel sum == 0), fully-white images (pixel sum == 255*H*W*C)
+  - Report: "N/M images appear blank or corrupt"
+  - Refuse if > 20% bad in any class
+- **Tabular**
+  - Check label column: unique value count, class balance
+  - Warn if label has only 1 unique value (no signal)
+  - Check feature columns: 100% NaN, 100% constant, infinite values
+  - Warn for each degenerate column, refuse if > 50% of columns degenerate
+- **Text** (Phase 3)
+  - Count empty strings, single-character strings, non-UTF-8 files
+  - Vocabulary coverage check
+
+**Where it goes:** A new `DatasetAudit` helper in
+`cyxwiz-engine/src/core/dataset_audit.h/.cpp` with domain-specific
+static methods. Called from `DataInputDialog::Apply` after registration
+and before setting `data_loaded=true`. Results shown in a new "Audit"
+tab on the dialog with pass/warn/fail indicators and a list of
+problematic files.
+
+**Estimated scope:** ~1-2 days per domain. Audio is partially done
+(silent detection). Image is the next priority (same class of issue
+affects cats/dogs and similar).
+
+### Rate-limited sample loading warnings in AudioDataset
+
+**Status:** DONE — `AudioDataset::GetItem` uses an atomic counter and
+prints the first 10 bad files at full detail, then every 100th. Full
+warning-per-sample spam would flood the log on datasets with many
+silent files (1089 in the drone set we tested).
+
+---
+
+## Training UX
+
+### Sub-epoch validation (fractional validation_freq)
+
+**Severity:** Enhancement — smooths the val curve for long-epoch domains.
+
+**Issue:** Validation currently runs once per epoch — standard ML practice
+and correct for fast-epoch domains (tabular MNIST finishes an epoch in
+seconds). But for audio/image pipelines where an epoch can take 5-10
+minutes, you stare at an empty val line for the full duration of epoch 1
+and assume it's broken. Users who stop training before the first epoch
+completes never see any val feedback at all.
+
+**Current workaround:** Shrink max_duration to match the actual clip
+length (drone clips are ~1s; setting max_duration=1 instead of 5 cuts
+epoch time by ~5x because feature cols shrink from ~313 to ~63 and the
+Linear(input→512) first layer shrinks proportionally).
+
+**Suggested fix:** Reinterpret `validation_freq` on the DataLoader node
+as follows:
+- integer N ≥ 1 → run validation every N epochs (current behavior)
+- 0 < N < 1 → run validation every N × total_batches batches, on a
+  *random subsample* of the val split sized for ~2-3 seconds of
+  validation time
+- Default stays 1 (every epoch)
+
+This gives users a continuous val curve during long epochs. A value
+like `0.25` means "validate 4 times per epoch" — at batches 25%, 50%,
+75%, 100%. The subsample size should be `min(val_set_size, 256)` so
+validation cost stays bounded regardless of how big the val split is.
+
+**Files:** `cyxwiz-engine/src/core/graph_compiler.cpp` (parse float,
+store on TrainingConfiguration), `cyxwiz-engine/src/core/training_executor.cpp`
+(RunTrainingEpochArrow — insert validation calls at the configured
+fractional boundaries), `cyxwiz-engine/src/gui/properties.cpp`
+(DataLoader properties section — change validation_freq widget to
+float InputText with tooltip explaining integer vs fractional).
+
+**Scope:** ~0.5 day. Useful pairing with the option-(b) executor
+refactor since both touch the inner training loop.
+
+---
+
 ## Future Architecture
 
 ### Variable-shape Sample type (v3 consideration)

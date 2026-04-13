@@ -58,13 +58,20 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     aug_config.target_height = 0;
     transform_ = std::make_unique<ImageTransform>(aug_config);
 
-    // Split indices: first train_split fraction for training.
+    // Shuffled train/val split (see audio_dataset_batcher.cpp for the
+    // full rationale). Sequential split was leaking class-imbalanced
+    // val sets that made the reported val metrics meaningless.
     size_t total = dataset_->Size();
     size_t train_count = static_cast<size_t>(total * train_split);
     if (train_count == 0) train_count = total;
+    if (train_count > total) train_count = total;
 
-    train_indices_.resize(train_count);
-    std::iota(train_indices_.begin(), train_indices_.end(), 0);
+    std::vector<size_t> all_indices(total);
+    std::iota(all_indices.begin(), all_indices.end(), 0);
+    std::shuffle(all_indices.begin(), all_indices.end(), rng_);
+
+    train_indices_.assign(all_indices.begin(), all_indices.begin() + train_count);
+    val_indices_.assign(all_indices.begin() + train_count, all_indices.end());
 
     num_classes_ = entry.num_classes;
     if (num_classes_ == 0) {
@@ -73,8 +80,8 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     }
 
     Reset();
-    spdlog::info("ImageDatasetBatcher: {} train samples, {} classes, batch_size={}",
-                 train_indices_.size(), num_classes_, batch_size_);
+    spdlog::info("ImageDatasetBatcher: {} train / {} val samples, {} classes, batch_size={}",
+                 train_indices_.size(), val_indices_.size(), num_classes_, batch_size_);
 }
 
 Batch ImageDatasetBatcher::GetNextBatch() {
@@ -164,11 +171,22 @@ Batch ImageDatasetBatcher::GetNextBatch() {
 }
 
 void ImageDatasetBatcher::Reset() {
-    epoch_order_ = train_indices_;
-    if (shuffle_) {
-        std::shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
+    // Active index set depends on the current phase. Val never shuffles.
+    if (current_phase_ == BatcherPhase::Val) {
+        epoch_order_ = val_indices_;
+    } else {
+        epoch_order_ = train_indices_;
+        if (shuffle_) {
+            std::shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
+        }
     }
     current_idx_ = 0;
+}
+
+void ImageDatasetBatcher::SetPhase(BatcherPhase phase) {
+    current_phase_ = phase;
+    // Caller should Reset() afterwards; training_executor's
+    // RunValidationArrow does that via batcher.Reset().
 }
 
 bool ImageDatasetBatcher::IsEpochComplete() const {

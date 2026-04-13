@@ -342,6 +342,51 @@ public:
     const ImageDatasetEntry* GetImageDatasetEntry(const std::string& name) const;
     void UnregisterImageDataset(const std::string& name);
 
+    // --- Audio dataset registry (Phase 2) ---
+    // Same lightweight-metadata pattern as images. The actual AudioDataset
+    // is constructed at training start by AudioDatasetBatcher using the
+    // feature config from this entry. Audio files (wav/flac/ogg/aiff) are
+    // loaded lazily per GetItem() so we don't need to scan the whole
+    // dataset at registration time — we just record what's there.
+    struct AudioDatasetEntry {
+        std::string folder_path;
+        bool labeled_subdirs = true;     // false = flat directory, no labels
+
+        // FlatWithCSV mode: when csv_path is non-empty, the dataset reads
+        // labels from this CSV file instead of folder structure. The two
+        // column names are optional — empty strings trigger auto-detection
+        // by header name (filename/file/path/id and label/class/category).
+        std::string csv_path;
+        std::string filename_col;
+        std::string label_col;
+
+        // Feature extraction config — drives what AudioDataset produces
+        // for each sample. 0=Spectrogram, 1=MelSpectrogram, 2=MFCC.
+        int feature_type = 1;            // default MelSpectrogram
+        int target_sr = 16000;
+        int n_fft = 512;
+        int hop_length = 256;
+        int n_mels = 128;
+        float fmin = 0.0f;
+        float fmax = 0.0f;
+        int n_mfcc = 13;
+        float max_duration = 5.0f;       // seconds; pad/truncate to this length
+
+        // Populated by the dialog after a quick directory scan + probe
+        size_t num_samples = 0;
+        size_t num_classes = 0;
+        std::vector<std::string> class_names;
+        // Actual feature shape from a first-sample probe, so the Memory
+        // tab can compute "if fully cached" estimates without re-probing
+        // on every dialog reopen. Zero if probe hasn't happened yet.
+        int feature_rows = 0;
+        int feature_cols = 0;
+    };
+    void RegisterAudioDataset(const std::string& name, const AudioDatasetEntry& entry);
+    bool IsAudioDataset(const std::string& name) const;
+    const AudioDatasetEntry* GetAudioDatasetEntry(const std::string& name) const;
+    void UnregisterAudioDataset(const std::string& name);
+
     // Which backing store a successful LoadTabularCSV call ended up using.
     enum class TabularLoadBackend {
         Failed,      // load failed; nothing is registered
@@ -526,6 +571,11 @@ private:
     // datasets. The actual pixel-loading dataset is constructed at
     // training start by ImageDatasetBatcher.
     std::map<std::string, ImageDatasetEntry> image_dataset_entries_;
+
+    // Audio dataset entries (Phase 2) — same pattern as images.
+    // The actual feature-extracting AudioDataset is constructed at
+    // training start by AudioDatasetBatcher.
+    std::map<std::string, AudioDatasetEntry> audio_dataset_entries_;
 
     mutable std::mutex mutex_;
 

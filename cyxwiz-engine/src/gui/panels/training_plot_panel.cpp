@@ -123,7 +123,7 @@ void TrainingPlotPanel::Render() {
     ImGui::End();
 }
 
-void TrainingPlotPanel::AddLossPoint(int epoch, double train_loss, double val_loss) {
+void TrainingPlotPanel::AddLossPoint(double epoch, double train_loss, double val_loss) {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     train_loss_.epochs.push_back(epoch);
@@ -137,7 +137,7 @@ void TrainingPlotPanel::AddLossPoint(int epoch, double train_loss, double val_lo
     }
 }
 
-void TrainingPlotPanel::AddAccuracyPoint(int epoch, double train_acc, double val_acc) {
+void TrainingPlotPanel::AddAccuracyPoint(double epoch, double train_acc, double val_acc) {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     train_accuracy_.epochs.push_back(epoch);

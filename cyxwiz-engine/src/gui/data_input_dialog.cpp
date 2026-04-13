@@ -15,6 +15,7 @@
 #include "node_config_dialog.h"
 #include "node_editor.h"
 #include "../core/data_registry.h"
+#include "../core/formats/audio_dataset.h"
 #include "../core/arrow_dataset.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/async_task_manager.h"
@@ -95,6 +96,54 @@ DataInputDialog::DataInputDialog(MLNode* node)
             }
         }
 
+        // Restore the file category. Without this, the Apply path dispatches
+        // by whatever file_category_ was initialised to (Tabular) or by
+        // DetectFileCategory() which only runs if file_path_ is set — neither
+        // matches the actual persisted category for audio / image folders.
+        // So picking Audio, loading a folder, closing the dialog, and
+        // reopening would silently fall through to the image branch on the
+        // next Apply. Reading it back from params fixes the regression.
+        if (node_->parameters.count("file_category")) {
+            const std::string& cat = node_->parameters["file_category"];
+            if (cat == "tabular") file_category_ = FileCategory::Tabular;
+            else if (cat == "image") file_category_ = FileCategory::Image;
+            else if (cat == "audio") file_category_ = FileCategory::Audio;
+            else if (cat == "video") file_category_ = FileCategory::Video;
+        }
+
+        // Restore the audio layout strategy from node params (ClassSubdirs
+        // vs FlatWithCSV + label CSV + column overrides). Mirrors image_layout_.
+        if (node_->parameters.count("audio_layout")) {
+            try {
+                int raw = std::stoi(node_->parameters["audio_layout"]);
+                if (raw == static_cast<int>(AudioLayout::FlatWithCSV)) {
+                    audio_layout_ = AudioLayout::FlatWithCSV;
+                } else {
+                    audio_layout_ = AudioLayout::ClassSubdirs;
+                }
+            } catch (...) {
+                audio_layout_ = AudioLayout::ClassSubdirs;
+            }
+        }
+        if (node_->parameters.count("audio_labels_csv")) {
+            strncpy(audio_labels_csv_,
+                    node_->parameters["audio_labels_csv"].c_str(),
+                    sizeof(audio_labels_csv_) - 1);
+            audio_labels_csv_[sizeof(audio_labels_csv_) - 1] = '\0';
+        }
+        if (node_->parameters.count("audio_filename_col")) {
+            strncpy(audio_filename_col_,
+                    node_->parameters["audio_filename_col"].c_str(),
+                    sizeof(audio_filename_col_) - 1);
+            audio_filename_col_[sizeof(audio_filename_col_) - 1] = '\0';
+        }
+        if (node_->parameters.count("audio_label_col")) {
+            strncpy(audio_label_col_,
+                    node_->parameters["audio_label_col"].c_str(),
+                    sizeof(audio_label_col_) - 1);
+            audio_label_col_[sizeof(audio_label_col_) - 1] = '\0';
+        }
+
         // Restore data load state by probing the registry directly. The
         // registry is the source of truth — the parameters["data_loaded"]
         // hint goes stale when an async Apply finishes after the dialog
@@ -106,10 +155,16 @@ DataInputDialog::DataInputDialog(MLNode* node)
             loaded_dataset_name_ = node_->parameters["dataset_name"];
             auto& registry = cyxwiz::DataRegistry::Instance();
 
+            // Reset the estimate flag up front. Tabular Arrow/Parquet branches
+            // use actual memory; lazy-loaded image/audio branches will flip
+            // it back to true.
+            loaded_memory_is_estimate_ = false;
+
             auto arrow_ds = registry.GetArrowDataset(loaded_dataset_name_);
             auto parquet_ds = registry.GetParquetBackedDataset(loaded_dataset_name_);
 
             auto img_entry = registry.GetImageDatasetEntry(loaded_dataset_name_);
+            auto audio_entry_ptr = registry.GetAudioDatasetEntry(loaded_dataset_name_);
 
             if (arrow_ds) {
                 loaded_rows_ = arrow_ds->GetNumRows();
@@ -149,7 +204,12 @@ DataInputDialog::DataInputDialog(MLNode* node)
             } else if (img_entry) {
                 loaded_rows_ = static_cast<int64_t>(img_entry->num_images);
                 loaded_cols_ = 1;
-                loaded_memory_bytes_ = 0;
+                // Match the Apply path estimate: 224×224×3 float per image.
+                // Actual target size comes from the Resize node and isn't
+                // known here, so this is a conservative default estimate.
+                size_t per_image = 224ull * 224 * 3 * sizeof(float);
+                loaded_memory_bytes_ = img_entry->num_images * per_image;
+                loaded_memory_is_estimate_ = true;
                 data_load_state_ = DataLoadState::InMemory;
                 loaded_backend_ = 3;  // 3 = image
                 apply_success_ = true;
@@ -161,6 +221,32 @@ DataInputDialog::DataInputDialog(MLNode* node)
                 node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
                 spdlog::debug("DataInputDialog: restored image dataset state for '{}'",
                               loaded_dataset_name_);
+            } else if (audio_entry_ptr) {
+                // Audio restore: mirror image branch. Uses the probed
+                // feature_rows/feature_cols persisted on the entry so
+                // we don't have to re-probe on every dialog reopen.
+                loaded_rows_ = static_cast<int64_t>(audio_entry_ptr->num_samples);
+                loaded_cols_ = 1;
+                size_t per_sample = (audio_entry_ptr->feature_rows > 0 &&
+                                     audio_entry_ptr->feature_cols > 0)
+                    ? static_cast<size_t>(audio_entry_ptr->feature_rows) *
+                      static_cast<size_t>(audio_entry_ptr->feature_cols) * sizeof(float)
+                    : static_cast<size_t>(audio_entry_ptr->n_mels) * 313 * sizeof(float);
+                loaded_memory_bytes_ = audio_entry_ptr->num_samples * per_sample;
+                loaded_memory_is_estimate_ = true;
+                data_load_state_ = DataLoadState::InMemory;
+                loaded_backend_ = 4;  // 4 = audio
+                apply_success_ = true;
+                apply_status_message_ = "Loaded " + loaded_dataset_name_ +
+                    " (" + std::to_string(audio_entry_ptr->num_samples) + " audio files, " +
+                    std::to_string(audio_entry_ptr->num_classes) + " classes)";
+                node_->parameters["data_loaded"] = "true";
+                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                spdlog::debug("DataInputDialog: restored audio dataset state for '{}' "
+                              "({} samples, feature shape [{}x{}])",
+                              loaded_dataset_name_, audio_entry_ptr->num_samples,
+                              audio_entry_ptr->feature_rows, audio_entry_ptr->feature_cols);
             } else {
                 // Registry doesn't have it. Either the user never applied,
                 // or project close / graph clear unregistered. Reflect
@@ -194,6 +280,16 @@ void DataInputDialog::Apply() {
     // checkbox silently resets to false and the next Apply falls back to
     // auto-detect, surprising users who explicitly asked for disk-backed.
     node_->parameters["force_disk_backed"] = force_disk_backed_ ? "true" : "false";
+
+    // Persist audio layout + FlatWithCSV fields so reopen restores them.
+    // Without this, picking FlatWithCSV and a labels CSV, closing the dialog,
+    // and reopening would silently reset to ClassSubdirs and lose the CSV
+    // path, causing the next Apply to fail with "no class subdirectories".
+    node_->parameters["audio_layout"] =
+        std::to_string(static_cast<int>(audio_layout_));
+    node_->parameters["audio_labels_csv"] = audio_labels_csv_;
+    node_->parameters["audio_filename_col"] = audio_filename_col_;
+    node_->parameters["audio_label_col"] = audio_label_col_;
 
     // Source-specific parameters
     if (source_type_ == SourceType::File) {
@@ -292,27 +388,21 @@ void DataInputDialog::Apply() {
     apply_success_ = false;
     apply_status_message_.clear();
 
-    // Phase 0 gate: audio and video file categories are not yet wired to
-    // their loaders. Picking an audio or video file would previously fall
-    // through to LoadArrowTable which tries to parse an MP3 / MP4 as an
-    // Arrow IPC file and fails silently, leaving the user confused.
-    // Fail loudly with an explicit message until Phase 2 (audio) and
-    // Phase 5 (video) wire up proper loaders. See
+    // Phase 0 gate: video is still not wired (audio landed in Phase 2).
+    // Picking a video file would previously fall through to LoadArrowTable
+    // which tries to parse the MP4 as Arrow IPC. Fail loudly until
+    // Phase 5 (video) wires up proper loaders. See
     // docs/Data Studio/multi_format_data_pipeline_design.md.
     if (source_type_ == SourceType::File &&
-        (file_category_ == FileCategory::Audio ||
-         file_category_ == FileCategory::Video)) {
-        const char* domain = (file_category_ == FileCategory::Audio)
-            ? "Audio" : "Video";
-        apply_status_message_ = std::string(domain) +
-            " data is not yet supported. Coming in a future release - "
-            "use tabular or image data for now.";
+        file_category_ == FileCategory::Video) {
+        apply_status_message_ = "Video data is not yet supported. "
+            "Coming in a future release - use tabular, image, or audio for now.";
         apply_success_ = false;
-        apply_status_timer_ = 8.0f;  // long enough to read comfortably
+        apply_status_timer_ = 8.0f;
         node_->parameters["data_loaded"] = "false";
         apply_in_progress_ = false;
         has_changes_ = false;
-        spdlog::warn("DataInputDialog: {} category selected - not yet supported", domain);
+        spdlog::warn("DataInputDialog: Video category selected - not yet supported");
         return;
     }
 
@@ -534,6 +624,128 @@ void DataInputDialog::Apply() {
             node_->parameters["data_loaded"] = "false";
             spdlog::error("DataInputDialog: {}", apply_status_message_);
         }
+    } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0 &&
+               file_category_ == FileCategory::Audio) {
+        // Audio folder loading (Phase 2).
+        //
+        // Mirrors the image folder path: scan the folder via AudioDataset,
+        // populate an AudioDatasetEntry with feature config from the dialog,
+        // register it in DataRegistry. Training dispatch in
+        // StartTrainingFromGraph routes IsAudioDataset to StartTrainingAudio
+        // which builds an AudioDatasetBatcher around the entry.
+        //
+        // Two layouts are supported (mirroring images):
+        //   - ClassSubdirs: folder/<class>/*.wav (drone dataset)
+        //   - FlatWithCSV:  folder/*.flac + labels.csv (call center dataset)
+        // Layout is picked by the user via the audio_layout_ combo.
+        //
+        // Feature extraction happens lazily inside AudioDataset::GetItem at
+        // training time via libsndfile + FFTW3, NOT here. We just record
+        // metadata so the registry has a handle for the dispatch to find.
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        loaded_dataset_name_ = GenerateDatasetName();
+        registry.UnregisterTabularDataset(loaded_dataset_name_);
+        registry.UnregisterAudioDataset(loaded_dataset_name_);
+
+        try {
+            // FlatWithCSV requires an actual CSV path. Fail fast with a
+            // clear error rather than constructing AudioDataset and getting
+            // a confusing "no audio files" message.
+            if (audio_layout_ == AudioLayout::FlatWithCSV && strlen(audio_labels_csv_) == 0) {
+                apply_status_message_ = "Flat folder layout requires a Labels CSV - "
+                    "pick one or switch to 'Class subdirectories'";
+                node_->parameters["data_loaded"] = "false";
+                spdlog::error("DataInputDialog: audio FlatWithCSV selected but labels_csv is empty");
+                apply_in_progress_ = false;
+                apply_status_timer_ = 6.0f;
+                has_changes_ = false;
+                return;
+            }
+
+            // Build the entry from the dialog state. Defaults match what the
+            // RenderAudioOptions tab exposes; advanced fields (n_fft etc.)
+            // stay at sensible defaults until users ask for them.
+            cyxwiz::DataRegistry::AudioDatasetEntry audio_entry;
+            audio_entry.folder_path = folder_path_;
+            audio_entry.labeled_subdirs = (audio_layout_ == AudioLayout::ClassSubdirs);
+            if (audio_layout_ == AudioLayout::FlatWithCSV) {
+                audio_entry.csv_path = audio_labels_csv_;
+                audio_entry.filename_col = audio_filename_col_;  // "" = auto
+                audio_entry.label_col = audio_label_col_;        // "" = auto
+            }
+            audio_entry.feature_type = 1;          // MelSpectrogram default
+            audio_entry.target_sr = sample_rate_;
+            audio_entry.max_duration = (duration_sec_ > 0.0f) ? duration_sec_ : 5.0f;
+            audio_entry.n_fft = 512;
+            audio_entry.hop_length = 256;
+            audio_entry.n_mels = 128;
+            audio_entry.n_mfcc = 13;
+
+            // Probe the folder by constructing an AudioDataset once.
+            // This validates the folder structure and surfaces a clear
+            // error before training.
+            cyxwiz::AudioDatasetConfig probe_cfg;
+            probe_cfg.feature_type = cyxwiz::AudioDatasetConfig::FeatureType::MelSpectrogram;
+            probe_cfg.target_sr = audio_entry.target_sr;
+            probe_cfg.max_duration = audio_entry.max_duration;
+            probe_cfg.labeled_subdirs = audio_entry.labeled_subdirs;
+            probe_cfg.n_fft = audio_entry.n_fft;
+            probe_cfg.hop_length = audio_entry.hop_length;
+            probe_cfg.n_mels = audio_entry.n_mels;
+            probe_cfg.csv_path = audio_entry.csv_path;
+            probe_cfg.filename_col = audio_entry.filename_col;
+            probe_cfg.label_col = audio_entry.label_col;
+
+            cyxwiz::AudioDataset probe(folder_path_, probe_cfg);
+            auto info = probe.GetInfo();
+            audio_entry.num_samples = info.num_samples;
+            audio_entry.num_classes = info.num_classes;
+            audio_entry.class_names = probe.GetClassNames();
+            // Persist the actual probed feature shape so dialog reopen
+            // and Memory tab display don't have to re-probe.
+            if (info.shape.size() >= 2) {
+                audio_entry.feature_rows = static_cast<int>(info.shape[0]);
+                audio_entry.feature_cols = static_cast<int>(info.shape[1]);
+            }
+
+            registry.RegisterAudioDataset(loaded_dataset_name_, audio_entry);
+
+            loaded_rows_ = static_cast<int64_t>(info.num_samples);
+            loaded_cols_ = 1;
+            // Estimate the if-fully-cached size so the Memory tab shows
+            // a real number instead of 0 B. Audio is lazy-loaded per
+            // sample at training time, so this is upper-bound, not actual.
+            // Per sample: feature_rows × feature_cols × float (4 B).
+            size_t per_sample = (audio_entry.feature_rows > 0 && audio_entry.feature_cols > 0)
+                ? static_cast<size_t>(audio_entry.feature_rows) *
+                  static_cast<size_t>(audio_entry.feature_cols) * sizeof(float)
+                : static_cast<size_t>(audio_entry.n_mels) * 313 * sizeof(float);
+            loaded_memory_bytes_ = info.num_samples * per_sample;
+            loaded_memory_is_estimate_ = true;
+            loaded_backend_ = 4;  // 4 = audio
+            data_load_state_ = DataLoadState::InMemory;
+
+            node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+            node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+            node_->parameters["dataset_name"] = loaded_dataset_name_;
+            node_->parameters["data_loaded"] = "true";
+
+            fs::path p(folder_path_);
+            node_->description = p.filename().string() + "\n" +
+                std::to_string(loaded_rows_) + " audio files, " +
+                std::to_string(info.num_classes) + " classes";
+
+            apply_status_message_ = "Loaded " + std::to_string(loaded_rows_) +
+                " audio files (" + std::to_string(info.num_classes) +
+                " classes) from " + p.filename().string();
+            apply_success_ = true;
+            spdlog::info("DataInputDialog: {}", apply_status_message_);
+        } catch (const std::exception& e) {
+            apply_status_message_ = std::string("Error loading audio folder: ") + e.what();
+            node_->parameters["data_loaded"] = "false";
+            apply_success_ = false;
+            spdlog::error("DataInputDialog: {}", apply_status_message_);
+        }
     } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0) {
         // Image folder loading.
         //
@@ -603,7 +815,14 @@ void DataInputDialog::Apply() {
                 loaded_dataset_name_ = info.name;  // may have been uniquified
                 loaded_rows_ = static_cast<int64_t>(info.num_samples);
                 loaded_cols_ = 1;
-                loaded_memory_bytes_ = 0;
+                // Estimate if-fully-cached size so the Memory tab shows
+                // a useful number for this lazy-loaded image dataset.
+                // Default to 224x224x3 RGB float since the actual target
+                // size comes from the graph's Resize node and isn't known
+                // here. Marks as estimate so the UI labels it correctly.
+                size_t per_image = 224ull * 224 * 3 * sizeof(float);
+                loaded_memory_bytes_ = info.num_samples * per_image;
+                loaded_memory_is_estimate_ = true;
                 data_load_state_ = DataLoadState::InMemory;
 
                 node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
@@ -1294,19 +1513,159 @@ void DataInputDialog::RenderAudioOptions() {
     ImGui::TextColored(accent, "Audio Loading Options");
     ImGui::Spacing();
 
+    // Layout selector — ClassSubdirs vs FlatWithCSV. Mirrors the image dialog.
+    static const char* kAudioLayoutNames[] = {
+        "Class subdirectories (folder/<class>/*.wav)",
+        "Flat folder + Labels CSV"
+    };
+    int layout_idx = static_cast<int>(audio_layout_);
+    ImGui::Text("Layout:");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("##audiolayout", &layout_idx, kAudioLayoutNames, IM_ARRAYSIZE(kAudioLayoutNames))) {
+        audio_layout_ = static_cast<AudioLayout>(layout_idx);
+        has_changes_ = true;
+    }
+
+    ImGui::Spacing();
+
+    // Folder picker — same field as image folder. The Apply path
+    // dispatches by file_category so wires don't cross.
+    ImGui::Text("Folder:");
+    ImGui::SetNextItemWidth(-80.0f);
+    if (ImGui::InputText("##audiofolder", folder_path_, sizeof(folder_path_))) {
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Browse##audio")) {
+        BrowseFolder();
+    }
+
+    // FlatWithCSV: show the CSV picker + optional column overrides
+    if (audio_layout_ == AudioLayout::FlatWithCSV) {
+        ImGui::TextDisabled("Flat folder layout: all audio files in one directory, labels in CSV.");
+
+        ImGui::Spacing();
+        ImGui::Text("Labels CSV:");
+        ImGui::SetNextItemWidth(-80.0f);
+        if (ImGui::InputText("##audiocsv", audio_labels_csv_, sizeof(audio_labels_csv_))) {
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Browse##audiocsv")) {
+            // Reuse the same file browser as everything else
+            BrowseFile();
+            // BrowseFile writes to file_path_; copy it to the CSV field
+            if (strlen(file_path_) > 0) {
+                strncpy(audio_labels_csv_, file_path_,
+                        sizeof(audio_labels_csv_) - 1);
+                audio_labels_csv_[sizeof(audio_labels_csv_) - 1] = '\0';
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Column auto-detect: leave blank to use header names like "
+                            "filename / file / id / call_id and label / class / category. "
+                            "Override below if your CSV uses unusual column names.");
+
+        ImGui::Text("Filename col:");
+        ImGui::SameLine(120);
+        ImGui::SetNextItemWidth(180);
+        if (ImGui::InputText("##audiofnamecol", audio_filename_col_,
+                             sizeof(audio_filename_col_))) {
+            has_changes_ = true;
+        }
+
+        ImGui::Text("Label col:");
+        ImGui::SameLine(120);
+        ImGui::SetNextItemWidth(180);
+        if (ImGui::InputText("##audiolabelcol", audio_label_col_,
+                             sizeof(audio_label_col_))) {
+            has_changes_ = true;
+        }
+    } else {
+        ImGui::TextDisabled("Class subdirectories layout: folder/class_a/*.wav, folder/class_b/*.wav");
+    }
+
+    // Quick scan preview if folder exists
+    if (strlen(folder_path_) > 0 && fs::exists(folder_path_)) {
+        if (audio_layout_ == AudioLayout::ClassSubdirs) {
+            int subdir_count = 0;
+            int audio_file_count = 0;
+            try {
+                for (const auto& entry : fs::directory_iterator(folder_path_)) {
+                    if (entry.is_directory()) {
+                        subdir_count++;
+                        for (const auto& sub : fs::recursive_directory_iterator(entry.path())) {
+                            if (sub.is_regular_file()) {
+                                std::string ext = sub.path().extension().string();
+                                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                if (ext == ".wav" || ext == ".flac" || ext == ".ogg" ||
+                                    ext == ".aiff" || ext == ".aif" || ext == ".mp3") {
+                                    audio_file_count++;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (...) { /* permission error etc., ignore */ }
+            if (subdir_count > 0) {
+                ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f),
+                                   "Detected: %d classes, %d audio files",
+                                   subdir_count, audio_file_count);
+            } else {
+                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.4f, 1.0f),
+                                   "No class subdirectories found");
+            }
+        } else {
+            // Flat folder count
+            int flat_count = 0;
+            try {
+                for (const auto& entry : fs::recursive_directory_iterator(folder_path_)) {
+                    if (entry.is_regular_file()) {
+                        std::string ext = entry.path().extension().string();
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                        if (ext == ".wav" || ext == ".flac" || ext == ".ogg" ||
+                            ext == ".aiff" || ext == ".aif" || ext == ".mp3") {
+                            flat_count++;
+                        }
+                    }
+                }
+            } catch (...) { }
+            ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f),
+                               "Detected: %d audio files in folder tree", flat_count);
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
     ImGui::Text("Sample rate:");
-    ImGui::SameLine(100);
-    ImGui::SetNextItemWidth(80);
-    ImGui::InputInt("##samplerate", &sample_rate_);
+    ImGui::SameLine(140);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##samplerate", &sample_rate_)) {
+        has_changes_ = true;
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("Hz");
+
+    ImGui::Text("Max duration:");
+    ImGui::SameLine(140);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputFloat("##duration", &duration_sec_, 0.5f, 1.0f, "%.1f")) {
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("seconds (pad/truncate)");
 
     if (ImGui::Checkbox("Convert to mono", &mono_)) {
         has_changes_ = true;
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Supported: WAV, MP3, FLAC, OGG");
+    ImGui::TextDisabled("Feature extraction defaults to MelSpectrogram (n_mels=128, n_fft=512).");
+    ImGui::TextDisabled("Spectrogram / MFCC nodes will override this in a later phase.");
+    ImGui::TextDisabled("Supported: WAV, FLAC, OGG, AIFF");
 }
 
 void DataInputDialog::RenderVideoOptions() {
@@ -1461,10 +1820,18 @@ void DataInputDialog::RenderMemoryTab() {
             // Green = in-memory Arrow, blue = disk-backed Parquet cache.
             // Both are "loaded and ready to train" from the user's POV;
             // the color signals where the data actually lives.
+            // When the dataset is image/audio (lazy-loaded), the byte
+            // count is an if-fully-cached estimate, not actual RAM use —
+            // label it accordingly so users aren't misled.
             if (loaded_backend_ == 2) {
                 ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "Loaded via Parquet cache");
                 ImGui::SameLine();
                 ImGui::TextDisabled("- %s on disk", FormatBytes(loaded_memory_bytes_).c_str());
+            } else if (loaded_memory_is_estimate_) {
+                ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.4f, 1.0f), "Lazy-loaded");
+                ImGui::SameLine();
+                ImGui::TextDisabled("- ~%s if fully cached (estimated)",
+                                    FormatBytes(loaded_memory_bytes_).c_str());
             } else {
                 ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "In Memory");
                 ImGui::SameLine();
