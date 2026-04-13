@@ -277,6 +277,7 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
 void NodeEditor::AddNode(NodeType type, const std::string& name) {
     // Queue the node for deferred addition (after ImNodes::EndNodeEditor())
     pending_nodes_.push_back({type, name, context_menu_pos_});
+    ClearValidationState();  // Graph changed — stale compile results
     spdlog::info("Queued node for addition: type={}, name={} at position x={} y={}",
                  static_cast<int>(type), name, context_menu_pos_.x, context_menu_pos_.y);
 }
@@ -4213,6 +4214,8 @@ static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
 }
 
 void NodeEditor::DeleteNode(int node_id) {
+    ClearValidationState();  // Graph changed — stale compile results
+
     // Delete node
     auto node_it = std::find_if(nodes_.begin(), nodes_.end(),
         [node_id](const MLNode& node) {
@@ -4242,6 +4245,7 @@ void NodeEditor::DeleteNode(int node_id) {
 
 void NodeEditor::ClearGraph() {
     SaveUndoState();
+    ClearValidationState();  // Graph changed — stale compile results
 
     // IMPORTANT: Clear properties panel selection BEFORE clearing nodes
     // to prevent dangling pointer access (the properties panel holds a raw pointer

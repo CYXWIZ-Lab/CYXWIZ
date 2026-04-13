@@ -150,12 +150,17 @@ TrainingConfiguration GraphCompiler::Compile(
                      dataset_node->id, dataset_node->name);
         }
 
-        // Check 3: label column. Optional for some workflows but required
-        // for supervised training. Warn rather than block.
+        // Check 3: label column. Required for tabular supervised training,
+        // but image datasets get labels from folder structure or CSV mapping
+        // automatically — don't emit a misleading warning for them.
+        auto cat_it_lbl = dataset_node->parameters.find("file_category");
+        bool is_image_dataset = (cat_it_lbl != dataset_node->parameters.end() &&
+                                 cat_it_lbl->second == "image");
+
         const std::string label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
             : std::string();
-        if (label_col.empty()) {
+        if (label_col.empty() && !is_image_dataset) {
             AddIssue(config, IssueLevel::Warning,
                      "No label column selected - training will use the last "
                      "column as label by default",

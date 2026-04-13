@@ -537,6 +537,8 @@ void NodeEditor::FrameAll() {
 }
 
 void NodeEditor::CreateLink(int from_pin, int to_pin, int from_node, int to_node, LinkType type) {
+    ClearValidationState();  // Graph changed — stale compile results
+
     NodeLink link;
     link.id = next_link_id_++;
     link.from_pin = from_pin;

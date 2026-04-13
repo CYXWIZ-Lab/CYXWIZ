@@ -47,6 +47,28 @@ void NodeEditor::SetWorkflowDescription(const std::string& desc) {
     workflow_description_[sizeof(workflow_description_) - 1] = '\0';
 }
 
+// ===== Pin / Node State =====
+
+void NodeEditor::SetNodePinState(int node_id, NodePinState state) {
+    node_pin_state_[node_id] = state;
+}
+
+void NodeEditor::SetAllNodesPinState(NodePinState state) {
+    for (const auto& node : nodes_) {
+        node_pin_state_[node.id] = state;
+    }
+}
+
+void NodeEditor::ClearValidationState() {
+    node_pin_state_.clear();
+}
+
+NodeEditor::NodePinState NodeEditor::GetNodePinState(int node_id) const {
+    auto it = node_pin_state_.find(node_id);
+    if (it == node_pin_state_.end()) return NodePinState::Default;
+    return it->second;
+}
+
 void NodeEditor::AddAnnotation() {
     // Add annotation at center of visible area
     ImVec2 center_pos = ImVec2(400.0f, 300.0f);  // Default position
@@ -1738,12 +1760,40 @@ void NodeEditor::RenderNodes() {
                 float vert_offset = (ICON_BOX_SIZE - total_pin_height) * 0.5f;
                 if (vert_offset > 0) ImGui::Dummy(ImVec2(0, vert_offset));
                 for (const auto& pin : node.inputs) {
-                    bool is_connected = IsPinConnected(pin.id);
                     bool is_running = (exec_state == NodeExecutionState::Executing);
                     bool has_error = (exec_state == NodeExecutionState::Error);
-                    ImU32 pin_color = IM_COL32(220, 50, 50, 255);
-                    ImU32 pin_hover = IM_COL32(255, 80, 80, 255);
-                    ImNodesPinShape pin_shape = ImNodesPinShape_Circle;
+
+                    // Pin color is driven by the node's compile/train state.
+                    // Default = red hollow, CompileFailed = red solid,
+                    // CompilePassed = green hollow, Trained = green solid.
+                    ImU32 pin_color;
+                    ImU32 pin_hover;
+                    ImNodesPinShape pin_shape;
+                    switch (GetNodePinState(node.id)) {
+                        case NodePinState::CompileFailed:
+                            pin_color = IM_COL32(220, 50, 50, 255);
+                            pin_hover = IM_COL32(255, 80, 80, 255);
+                            pin_shape = ImNodesPinShape_CircleFilled;
+                            break;
+                        case NodePinState::CompilePassed:
+                            pin_color = IM_COL32(50, 200, 50, 255);
+                            pin_hover = IM_COL32(80, 230, 80, 255);
+                            pin_shape = ImNodesPinShape_Circle;
+                            break;
+                        case NodePinState::Trained:
+                            pin_color = IM_COL32(50, 200, 50, 255);
+                            pin_hover = IM_COL32(80, 230, 80, 255);
+                            pin_shape = ImNodesPinShape_CircleFilled;
+                            break;
+                        case NodePinState::Default:
+                        default:
+                            pin_color = IM_COL32(220, 50, 50, 255);
+                            pin_hover = IM_COL32(255, 80, 80, 255);
+                            pin_shape = ImNodesPinShape_Circle;
+                            break;
+                    }
+
+                    // Execution state takes highest priority
                     if (has_error) {
                         pin_color = IM_COL32(220, 180, 50, 255);
                         pin_hover = IM_COL32(240, 200, 80, 255);
@@ -1752,11 +1802,8 @@ void NodeEditor::RenderNodes() {
                         pin_color = IM_COL32(50, 200, 50, 255);
                         pin_hover = IM_COL32(80, 230, 80, 255);
                         pin_shape = ImNodesPinShape_CircleFilled;
-                    } else if (is_connected) {
-                        pin_color = IM_COL32(220, 50, 50, 255);
-                        pin_hover = IM_COL32(255, 80, 80, 255);
-                        pin_shape = ImNodesPinShape_CircleFilled;
                     }
+
                     ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
                     ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
                     ImNodes::BeginInputAttribute(pin.id, pin_shape);
@@ -1783,12 +1830,38 @@ void NodeEditor::RenderNodes() {
                 float vert_offset = (ICON_BOX_SIZE - total_pin_height) * 0.5f;
                 if (vert_offset > 0) ImGui::Dummy(ImVec2(0, vert_offset));
                 for (const auto& pin : node.outputs) {
-                    bool is_connected = IsPinConnected(pin.id);
                     bool is_running = (exec_state == NodeExecutionState::Executing);
                     bool has_error = (exec_state == NodeExecutionState::Error);
-                    ImU32 pin_color = IM_COL32(220, 50, 50, 255);
-                    ImU32 pin_hover = IM_COL32(255, 80, 80, 255);
-                    ImNodesPinShape pin_shape = ImNodesPinShape_Circle;
+
+                    // Pin color from node compile/train state (see input pin block above).
+                    ImU32 pin_color;
+                    ImU32 pin_hover;
+                    ImNodesPinShape pin_shape;
+                    switch (GetNodePinState(node.id)) {
+                        case NodePinState::CompileFailed:
+                            pin_color = IM_COL32(220, 50, 50, 255);
+                            pin_hover = IM_COL32(255, 80, 80, 255);
+                            pin_shape = ImNodesPinShape_CircleFilled;
+                            break;
+                        case NodePinState::CompilePassed:
+                            pin_color = IM_COL32(50, 200, 50, 255);
+                            pin_hover = IM_COL32(80, 230, 80, 255);
+                            pin_shape = ImNodesPinShape_Circle;
+                            break;
+                        case NodePinState::Trained:
+                            pin_color = IM_COL32(50, 200, 50, 255);
+                            pin_hover = IM_COL32(80, 230, 80, 255);
+                            pin_shape = ImNodesPinShape_CircleFilled;
+                            break;
+                        case NodePinState::Default:
+                        default:
+                            pin_color = IM_COL32(220, 50, 50, 255);
+                            pin_hover = IM_COL32(255, 80, 80, 255);
+                            pin_shape = ImNodesPinShape_Circle;
+                            break;
+                    }
+
+                    // Execution state takes highest priority
                     if (has_error) {
                         pin_color = IM_COL32(220, 180, 50, 255);
                         pin_hover = IM_COL32(240, 200, 80, 255);
@@ -1797,11 +1870,8 @@ void NodeEditor::RenderNodes() {
                         pin_color = IM_COL32(50, 200, 50, 255);
                         pin_hover = IM_COL32(80, 230, 80, 255);
                         pin_shape = ImNodesPinShape_CircleFilled;
-                    } else if (is_connected) {
-                        pin_color = IM_COL32(220, 50, 50, 255);
-                        pin_hover = IM_COL32(255, 80, 80, 255);
-                        pin_shape = ImNodesPinShape_CircleFilled;
                     }
+
                     ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
                     ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
                     ImNodes::BeginOutputAttribute(pin.id, pin_shape);
@@ -1911,10 +1981,40 @@ void NodeEditor::RenderNodes() {
 
             // Input pins
             for (const auto& pin : node.inputs) {
-                ImNodes::BeginInputAttribute(pin.id);
-                ImGui::TextUnformatted(pin.name.c_str());
+                ImU32 pin_color;
+                ImU32 pin_hover;
+                ImNodesPinShape pin_shape;
+                switch (GetNodePinState(node.id)) {
+                    case NodePinState::CompileFailed:
+                        pin_color = IM_COL32(220, 50, 50, 255);
+                        pin_hover = IM_COL32(255, 80, 80, 255);
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                        break;
+                    case NodePinState::CompilePassed:
+                        pin_color = IM_COL32(50, 200, 50, 255);
+                        pin_hover = IM_COL32(80, 230, 80, 255);
+                        pin_shape = ImNodesPinShape_Circle;
+                        break;
+                    case NodePinState::Trained:
+                        pin_color = IM_COL32(50, 200, 50, 255);
+                        pin_hover = IM_COL32(80, 230, 80, 255);
+                        pin_shape = ImNodesPinShape_CircleFilled;
+                        break;
+                    case NodePinState::Default:
+                    default:
+                        pin_color = IM_COL32(220, 50, 50, 255);
+                        pin_hover = IM_COL32(255, 80, 80, 255);
+                        pin_shape = ImNodesPinShape_Circle;
+                        break;
+                }
 
-            ImNodes::EndInputAttribute();
+                ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
+                ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
+                ImNodes::BeginInputAttribute(pin.id, pin_shape);
+                ImGui::TextUnformatted(pin.name.c_str());
+                ImNodes::EndInputAttribute();
+                ImNodes::PopColorStyle();
+                ImNodes::PopColorStyle();
         }
 
         // Display key parameter based on node type
@@ -2195,12 +2295,42 @@ void NodeEditor::RenderNodes() {
 
         // Output pins
         for (const auto& pin : node.outputs) {
-            ImNodes::BeginOutputAttribute(pin.id);
+            ImU32 pin_color;
+            ImU32 pin_hover;
+            ImNodesPinShape pin_shape;
+            switch (GetNodePinState(node.id)) {
+                case NodePinState::CompileFailed:
+                    pin_color = IM_COL32(220, 50, 50, 255);
+                    pin_hover = IM_COL32(255, 80, 80, 255);
+                    pin_shape = ImNodesPinShape_CircleFilled;
+                    break;
+                case NodePinState::CompilePassed:
+                    pin_color = IM_COL32(50, 200, 50, 255);
+                    pin_hover = IM_COL32(80, 230, 80, 255);
+                    pin_shape = ImNodesPinShape_Circle;
+                    break;
+                case NodePinState::Trained:
+                    pin_color = IM_COL32(50, 200, 50, 255);
+                    pin_hover = IM_COL32(80, 230, 80, 255);
+                    pin_shape = ImNodesPinShape_CircleFilled;
+                    break;
+                case NodePinState::Default:
+                default:
+                    pin_color = IM_COL32(220, 50, 50, 255);
+                    pin_hover = IM_COL32(255, 80, 80, 255);
+                    pin_shape = ImNodesPinShape_Circle;
+                    break;
+            }
+
+            ImNodes::PushColorStyle(ImNodesCol_Pin, pin_color);
+            ImNodes::PushColorStyle(ImNodesCol_PinHovered, pin_hover);
+            ImNodes::BeginOutputAttribute(pin.id, pin_shape);
             const float text_width = ImGui::CalcTextSize(pin.name.c_str()).x;
             ImGui::Indent(120.0f + ImGui::CalcTextSize(pin.name.c_str()).x - text_width);
             ImGui::TextUnformatted(pin.name.c_str());
-
             ImNodes::EndOutputAttribute();
+            ImNodes::PopColorStyle();
+            ImNodes::PopColorStyle();
         }
         // Pop standard node title bar styles
             ImNodes::PopColorStyle();  // TitleBarSelected
@@ -2517,9 +2647,34 @@ void NodeEditor::RenderNodes() {
             link_hovered = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 200);
             link_selected = IM_COL32(255, 255, 255, 255);
         } else {
-            // Use link type colors when not training
-            link_color = GetLinkColor(link.type);
-            link_hovered = GetLinkHoverColor(link.type);
+            // Standard data-flow links inherit the source node's compile/train state:
+            // red default, red filled if compile failed, green if passed, solid green if trained.
+            // Special link types (skip connections, attention) keep their own distinctive colors.
+            if (link.type == LinkType::TensorFlow) {
+                NodePinState src_state = GetNodePinState(link.from_node);
+                switch (src_state) {
+                    case NodePinState::CompileFailed:
+                        link_color   = IM_COL32(220, 50, 50, 255);
+                        link_hovered = IM_COL32(255, 80, 80, 255);
+                        break;
+                    case NodePinState::CompilePassed:
+                        link_color   = IM_COL32(80, 200, 80, 200);  // green, slightly translucent
+                        link_hovered = IM_COL32(120, 230, 120, 255);
+                        break;
+                    case NodePinState::Trained:
+                        link_color   = IM_COL32(50, 200, 50, 255);  // solid green
+                        link_hovered = IM_COL32(80, 230, 80, 255);
+                        break;
+                    case NodePinState::Default:
+                    default:
+                        link_color   = IM_COL32(220, 50, 50, 200);  // red, slightly translucent
+                        link_hovered = IM_COL32(255, 80, 80, 255);
+                        break;
+                }
+            } else {
+                link_color = GetLinkColor(link.type);
+                link_hovered = GetLinkHoverColor(link.type);
+            }
             link_selected = IM_COL32(255, 255, 255, 255);
         }
 
@@ -2580,6 +2735,7 @@ void NodeEditor::HandleInteractions() {
 
         if (it != links_.end()) {
             SaveUndoState();  // Save state before deleting link
+            ClearValidationState();  // Graph changed — stale compile results
             spdlog::info("Deleted link {}", deleted_link_id);
             links_.erase(it);
         }

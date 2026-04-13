@@ -2851,10 +2851,14 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     // Start training using TrainingManager
     auto& tm = cyxwiz::TrainingManager::Instance();
 
-    // Set up node editor callback to update training animation
+    // Set up node editor callback to update training animation and pin state.
+    // When training ends, flip all nodes' pin state to Trained so pins go
+    // solid green — the user's at-a-glance signal that the graph has been run.
     auto node_editor_callback = [this](bool is_training) {
-        if (node_editor_) {
-            node_editor_->SetTrainingActive(is_training);
+        if (!node_editor_) return;
+        node_editor_->SetTrainingActive(is_training);
+        if (!is_training) {
+            node_editor_->SetAllNodesPinState(NodeEditor::NodePinState::Trained);
         }
     };
 
@@ -3104,6 +3108,18 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
                      config.layers.size(),
                      config.CountIssues(cyxwiz::IssueLevel::Error),
                      config.CountIssues(cyxwiz::IssueLevel::Warning));
+
+        // Populate pin state on the node editor so pins turn green
+        // (compile passed) or red filled (compile failed) after compile.
+        if (node_editor_) {
+            node_editor_->SetAllNodesPinState(NodeEditor::NodePinState::CompilePassed);
+            for (const auto& issue : config.issues) {
+                if (issue.level == cyxwiz::IssueLevel::Error && issue.node_id >= 0) {
+                    node_editor_->SetNodePinState(
+                        issue.node_id, NodeEditor::NodePinState::CompileFailed);
+                }
+            }
+        }
     } catch (const std::exception& e) {
         compile_result_success_ = false;
         cyxwiz::ValidationIssue exc_issue;

@@ -956,6 +956,27 @@ public:
     std::string GetWorkflowDescription() const { return workflow_description_; }
     void SetWorkflowDescription(const std::string& desc);
 
+    // ===== Pin / Node State =====
+    // Drives pin colors in the node editor. The state machine is:
+    //   Default        → red hollow  (graph never compiled, or just edited)
+    //   CompileFailed  → red solid   (last Compile flagged this node)
+    //   CompilePassed  → green hollow (last Compile validated this node)
+    //   Trained        → green solid (training run completed successfully)
+    // Cleared on any graph modification so stale state is never shown.
+
+    enum class NodePinState {
+        Default,
+        CompileFailed,
+        CompilePassed,
+        Trained
+    };
+
+    void SetNodePinState(int node_id, NodePinState state);
+    void SetAllNodesPinState(NodePinState state);
+    void ClearValidationState();
+    NodePinState GetNodePinState(int node_id) const;
+    bool HasValidationState() const { return !node_pin_state_.empty(); }
+
 private:
     void ShowToolbar();
     void RenderNodes();
@@ -1140,6 +1161,9 @@ private:
 
     // Pin lookup optimization - O(1) pin ID -> (node*, pin*) mapping
     std::unordered_map<int, std::pair<MLNode*, NodePin*>> pin_lookup_;
+
+    // Pin state (node_id → NodePinState). Set by Compile/Train, cleared on graph change.
+    std::unordered_map<int, NodePinState> node_pin_state_;
 
     // UI state
     bool show_context_menu_;

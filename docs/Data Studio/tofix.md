@@ -139,22 +139,12 @@ info API or CUDA runtime. Use per-layer activation size calculation
 instead of a flat multiplier. Allow the user to set their GPU
 memory limit in engine settings.
 
-### Label column check is not domain-aware
+### ~~Label column check is not domain-aware~~ FIXED
 
-**Severity:** Medium — false warning for image datasets.
-
-**Issue:** The compile gate warns "No label column selected" for ALL
-datasets, including image datasets where labels come from folder
-structure (ClassSubdirs) or CSV mapping (FlatWithCSV), not from a
-column in the data table. The warning is misleading for image users.
-
-**Suggested fix:** Make the label check domain-aware:
-- `PreprocessingDomain::Tabular` → warn if no label column
-- `PreprocessingDomain::Image` → skip the check (labels are
-  implicit in the dataset layout)
-
-**File:** `cyxwiz-engine/src/core/graph_compiler.cpp`, around the
-label_column check in the Compile function.
+**Status:** The label column warning now checks `file_category` on the
+DataInput node. Image datasets (file_category="image") skip the
+warning — their labels come from folder structure or CSV mapping.
+See `graph_compiler.cpp` Check 3.
 
 ---
 
@@ -222,27 +212,20 @@ node that loaded images leaves an orphan entry.
 
 ## UX Enhancements
 
-### Pin color validation feedback
+### ~~Pin color validation feedback~~ IMPLEMENTED
 
-**Severity:** Enhancement — improves the compile gate's visual feedback.
+**Status:** Pins follow a state machine on the node:
+- Default (graph never compiled / just edited): red hollow
+- CompileFailed: red solid
+- CompilePassed: green hollow
+- Trained (training run finished): green solid
 
-**Idea:** Node pins are red by default. After a successful Compile,
-pins on validated nodes turn green. Pins on nodes with errors stay
-red. This gives the user instant at-a-glance feedback on which nodes
-are properly configured without reading the compile popup.
-
-**Implementation sketch:**
-- After `BuildCompileResult`, walk the issues list and mark nodes
-  by ID: error nodes stay red, valid nodes flip to green.
-- Store a `std::map<int, PinValidationState>` on the NodeEditor or
-  MainWindow, keyed by node ID.
-- In the node rendering pass, check the validation state and set
-  pin color accordingly (`ImNodes::PushColorStyle`).
-- Reset all pins to red on graph modification (any node add/delete/
-  link change) so stale green doesn't persist.
-
-**Scope:** Small UX task, ~0.5 day. Could pair with pin
-standardization work.
+After Compile, validated nodes' pins turn green, error nodes' pins
+turn red solid. After a training run finishes, all nodes flip to
+solid green. State auto-clears on any graph modification (add/delete
+node or link). Standard data-flow links inherit the source node's
+state color. See `NodeEditor::NodePinState` in `node_editor.h` and
+the pin rendering switch blocks in `node_editor.cpp`.
 
 ## Future Architecture
 
