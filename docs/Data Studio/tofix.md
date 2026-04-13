@@ -227,6 +227,108 @@ node or link). Standard data-flow links inherit the source node's
 state color. See `NodeEditor::NodePinState` in `node_editor.h` and
 the pin rendering switch blocks in `node_editor.cpp`.
 
+### TrainingExecutor should walk pin connections, not registry lookups
+
+**Severity:** High — the canvas is currently a "lie." Users see a
+visual graph of `DataInput → DataSplit → DataLoader → ... → Loss`
+with separate label and tensor streams, but the executor doesn't
+actually traverse pin connections. It reads `dataset_name` from the
+DataInput node parameters, fetches the dataset from `DataRegistry`
+by name, and runs training. The pin wires are decorative.
+
+**Symptoms users hit:**
+- Removing a wire between DataLoader and Loss has no effect — training
+  still works because labels come from the registry, not the pin.
+- DataSplit's Train/Val/Test outputs are visual fiction. The actual
+  split happens inside the batcher based on the DataSplit node's
+  ratio params, regardless of what the user wired downstream.
+- A graph that is structurally wrong (e.g. labels never reach loss)
+  trains anyway because the executor doesn't care about topology.
+
+**Why this is hard (~3-5 days):**
+1. `TrainingExecutor` currently takes a single `dataset` + `label_column`
+   and runs a hardcoded data → preprocess → model → loss → optimizer
+   loop. It needs to become topology-driven.
+2. Each pin-to-pin edge needs runtime semantics: a `Tensor` edge
+   carries a batch tensor, a `Labels` edge carries a label batch.
+3. Need a runtime "stream" abstraction: each pin holds the most-recent
+   value during a forward pass; nodes consume their input pins and
+   produce their output pins.
+4. DataSplit becomes a real node that *takes* the dataset stream and
+   *emits* train/val/test streams. The compiler/executor needs to know
+   which downstream subgraph belongs to which split.
+5. DataLoader becomes a real batching node sitting between DataSplit
+   and the model — currently DataLoader's batch_size is just a number
+   the executor reads, not something the graph actually does.
+6. Loss nodes need to consume both the model's prediction stream AND
+   the upstream label stream — currently the executor hands labels in
+   directly because there's no concept of "which pin gives me labels."
+7. Backwards-compat: the layered model (Dense → ReLU → Dense → ...) is
+   still a single chain; only the data/label plumbing around it changes.
+
+**Suggested approach (when we tackle it):**
+- Phase A: introduce a `RuntimeContext` with `std::map<int, Tensor>`
+  keyed by pin_id. Compile builds a topological execution plan over
+  the graph; each node's `Execute(RuntimeContext&)` reads input pins
+  and writes output pins. Layer chain stays inside the model — only
+  the data path becomes pin-driven.
+- Phase B: DataSplit, DataLoader, and Loss nodes implement the new
+  runtime interface. Existing layer nodes keep their current path
+  (compiled into a `Model` object, still called via `model.Forward`).
+- Phase C: remove `dataset_name` lookup from `StartTrainingFromGraph`
+  — the dataset stream comes from the `DataInput` node executing into
+  its output pins.
+
+**Files involved:**
+- `cyxwiz-engine/src/core/training_executor.h/.cpp`
+- `cyxwiz-engine/src/core/training_manager.cpp`
+- `cyxwiz-engine/src/gui/main_window.cpp` (StartTrainingFromGraph)
+- `cyxwiz-engine/src/core/graph_compiler.cpp` (build execution plan)
+- New file: `cyxwiz-engine/src/core/runtime_context.h/.cpp`
+
+**Workaround until then:** the pin layout fix (DataLoader 2-in/2-out,
+Targets pin → Labels type) makes the canvas at least *look* honest
+even though the executor still bypasses it. Users can wire the graph
+correctly and see green compile pins; the runtime just ignores the
+wiring details. This is the lesser of two lies.
+
+**DataLoader params that are currently UI-only (need executor wiring):**
+The Properties panel exposes a full set of training-loop knobs on
+the DataLoader node, but only `epochs`, `batch_size`, `shuffle`, and
+`drop_last` are actually honored at runtime today. The rest are
+stored on the node, saved to the project file, and read by the
+graph compiler into TrainingConfiguration, but the executor never
+acts on them. When option (b) lands, wire these through:
+
+- `grad_accum_steps` (default 1) — accumulate gradients over N
+  forward passes before stepping the optimizer. Effective batch
+  size = `batch_size × grad_accum_steps`. Lets users train with
+  large effective batches on a small GPU. Touches the training
+  inner loop in `training_executor.cpp` and the optimizer step.
+- `seed` (default 42) — RNG seed for shuffle order. Currently the
+  batcher seeds itself; should accept this from config so two runs
+  with the same seed produce the same epoch order.
+- `num_workers` (default 4) — already has a "not yet implemented"
+  warning. Needs a worker pool in the batcher for parallel sample
+  loading. Critical for image/audio pipelines where decode is the
+  bottleneck.
+- `prefetch_factor` (default 2) — batches to prefetch per worker.
+  Pairs with num_workers; meaningless without it.
+- `pin_memory` (default false) — allocate batches in pinned host
+  memory for faster H2D copy. CUDA-only optimization, ignored on
+  OpenCL/CPU. Touches the batcher's tensor allocation path.
+- `log_interval` (default 10) — currently the executor logs every
+  batch. Should respect this and only log every N batches.
+- `validation_freq` (default 1) — currently validation runs every
+  epoch. Should run only every N epochs.
+
+None of these are blocking — the existing pipeline trains correctly
+without them. They're quality-of-life knobs that match what users
+expect from PyTorch / Keras DataLoader. Adding them to the executor
+is straightforward once option (b) reorganizes the data flow.
+
+---
+
 ## Future Architecture
 
 ### Variable-shape Sample type (v3 consideration)

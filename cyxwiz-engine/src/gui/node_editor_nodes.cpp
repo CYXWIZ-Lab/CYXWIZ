@@ -562,36 +562,58 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::DataLoader: {
-            // DataLoader node - batch iterator
-            // Input: Dataset reference
-            NodePin dataset_pin;
-            dataset_pin.id = next_pin_id_++;
-            dataset_pin.type = PinType::Dataset;
-            dataset_pin.name = "Dataset";
-            dataset_pin.is_input = true;
-            node.inputs.push_back(dataset_pin);
+            // DataLoader node — training-loop hyperparameters AND batching.
+            // Sits between the data pipeline and the model: takes the raw
+            // (data, labels) pair from upstream (DataSplit or DataInput),
+            // batches them, and emits the batched (data, labels) pair to
+            // the model and the loss function respectively.
 
-            // Output: Batched data
-            NodePin batch_pin;
-            batch_pin.id = next_pin_id_++;
-            batch_pin.type = PinType::Tensor;
-            batch_pin.name = "Batch";
-            batch_pin.is_input = false;
-            node.outputs.push_back(batch_pin);
+            // Input 1: Data tensor stream (from DataSplit.TrainData or DataInput.Features)
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Tensor;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
 
-            // Output: Batched labels
-            NodePin labels_pin;
-            labels_pin.id = next_pin_id_++;
-            labels_pin.type = PinType::Labels;
-            labels_pin.name = "Labels";
-            labels_pin.is_input = false;
-            node.outputs.push_back(labels_pin);
+            // Input 2: Labels stream (from DataSplit.TrainLabels or DataInput.Labels)
+            NodePin labels_in;
+            labels_in.id = next_pin_id_++;
+            labels_in.type = PinType::Labels;
+            labels_in.name = "Labels";
+            labels_in.is_input = true;
+            node.inputs.push_back(labels_in);
 
-            // Parameters
+            // Output 1: Batched data tensor → first model layer
+            NodePin data_out;
+            data_out.id = next_pin_id_++;
+            data_out.type = PinType::Tensor;
+            data_out.name = "Data";
+            data_out.is_input = false;
+            node.outputs.push_back(data_out);
+
+            // Output 2: Batched labels → loss function's Targets pin
+            NodePin labels_out;
+            labels_out.id = next_pin_id_++;
+            labels_out.type = PinType::Labels;
+            labels_out.name = "Labels";
+            labels_out.is_input = false;
+            node.outputs.push_back(labels_out);
+
+            // Training-loop hyperparameters. DataLoader owns ALL the
+            // "how do I iterate training data" knobs (epochs included).
+            // Optimizer node owns gradient-update knobs (lr, momentum, betas).
+            node.parameters["epochs"] = "10";
             node.parameters["batch_size"] = "32";
+            node.parameters["grad_accum_steps"] = "1";  // simulate larger effective batch
             node.parameters["shuffle"] = "true";
             node.parameters["drop_last"] = "false";
+            node.parameters["seed"] = "42";             // reproducibility
             node.parameters["num_workers"] = "4";
+            node.parameters["prefetch_factor"] = "2";
+            node.parameters["pin_memory"] = "false";    // CUDA host→device speedup
+            node.parameters["log_interval"] = "10";     // log every N batches
+            node.parameters["validation_freq"] = "1";   // validate every N epochs
             break;
         }
 
@@ -854,10 +876,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             pred_pin.is_input = true;
             node.inputs.push_back(pred_pin);
 
-            // Input 2: Targets (ground truth labels)
+            // Input 2: Targets (ground truth labels). Typed as Labels so the
+            // green label-stream visibly terminates here. ValidateLink also
+            // accepts Tensor → Labels via the "Tensor is universal" rule, so
+            // older graphs wired with raw tensors still connect.
             NodePin target_pin;
             target_pin.id = next_pin_id_++;
-            target_pin.type = PinType::Tensor;
+            target_pin.type = PinType::Labels;
             target_pin.name = "Targets";
             target_pin.is_input = true;
             node.inputs.push_back(target_pin);

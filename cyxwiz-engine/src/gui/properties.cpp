@@ -1097,8 +1097,27 @@ void Properties::RenderNodeProperties(MLNode& node) {
 
         case NodeType::DataLoader: {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Data Loader Node");
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                               "Owns all training-loop hyperparameters");
             ImGui::Separator();
             ImGui::Spacing();
+
+            // ---- Training loop ----
+            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Training Loop");
+
+            // Epochs
+            std::string& epochs = node.parameters["epochs"];
+            if (epochs.empty()) epochs = "10";
+            char epochs_buffer[16];
+            strncpy(epochs_buffer, epochs.c_str(), sizeof(epochs_buffer) - 1);
+            epochs_buffer[sizeof(epochs_buffer) - 1] = '\0';
+            ImGui::Text("Epochs:");
+            ImGui::SameLine(140.0f);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputText("##epochs", epochs_buffer, sizeof(epochs_buffer),
+                                 ImGuiInputTextFlags_CharsDecimal)) {
+                epochs = epochs_buffer;
+            }
 
             // Batch size
             std::string& batch_size = node.parameters["batch_size"];
@@ -1106,46 +1125,157 @@ void Properties::RenderNodeProperties(MLNode& node) {
             char batch_buffer[16];
             strncpy(batch_buffer, batch_size.c_str(), sizeof(batch_buffer) - 1);
             batch_buffer[sizeof(batch_buffer) - 1] = '\0';
-
             ImGui::Text("Batch Size:");
-            ImGui::SameLine();
+            ImGui::SameLine(140.0f);
             ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##batch_size", batch_buffer, sizeof(batch_buffer), ImGuiInputTextFlags_CharsDecimal)) {
+            if (ImGui::InputText("##batch_size", batch_buffer, sizeof(batch_buffer),
+                                 ImGuiInputTextFlags_CharsDecimal)) {
                 batch_size = batch_buffer;
+            }
+
+            // Gradient accumulation steps (effective batch = batch_size × this)
+            std::string& grad_accum = node.parameters["grad_accum_steps"];
+            if (grad_accum.empty()) grad_accum = "1";
+            char grad_accum_buffer[16];
+            strncpy(grad_accum_buffer, grad_accum.c_str(), sizeof(grad_accum_buffer) - 1);
+            grad_accum_buffer[sizeof(grad_accum_buffer) - 1] = '\0';
+            ImGui::Text("Grad Accum:");
+            ImGui::SameLine(140.0f);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputText("##grad_accum", grad_accum_buffer, sizeof(grad_accum_buffer),
+                                 ImGuiInputTextFlags_CharsDecimal)) {
+                grad_accum = grad_accum_buffer;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Effective batch size = batch_size × grad_accum_steps.\n"
+                                  "Lets you simulate larger batches on small GPUs.");
             }
 
             ImGui::Spacing();
 
-            // Shuffle
+            // ---- Iteration order ----
+            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Iteration Order");
+
             std::string& shuffle = node.parameters["shuffle"];
             if (shuffle.empty()) shuffle = "true";
             bool shuffle_val = (shuffle == "true");
             if (ImGui::Checkbox("Shuffle", &shuffle_val)) {
                 shuffle = shuffle_val ? "true" : "false";
             }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Reshuffle samples at the start of every epoch.");
+            }
 
-            // Drop last
             std::string& drop_last = node.parameters["drop_last"];
             if (drop_last.empty()) drop_last = "false";
             bool drop_last_val = (drop_last == "true");
             if (ImGui::Checkbox("Drop Last Batch", &drop_last_val)) {
                 drop_last = drop_last_val ? "true" : "false";
             }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Skip the final batch if it has fewer than batch_size samples.");
+            }
+
+            // Seed for reproducibility
+            std::string& seed = node.parameters["seed"];
+            if (seed.empty()) seed = "42";
+            char seed_buffer[16];
+            strncpy(seed_buffer, seed.c_str(), sizeof(seed_buffer) - 1);
+            seed_buffer[sizeof(seed_buffer) - 1] = '\0';
+            ImGui::Text("Seed:");
+            ImGui::SameLine(140.0f);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputText("##seed", seed_buffer, sizeof(seed_buffer),
+                                 ImGuiInputTextFlags_CharsDecimal)) {
+                seed = seed_buffer;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Random seed for shuffle order. Same seed = same epoch order.");
+            }
 
             ImGui::Spacing();
 
-            // Num workers
+            // ---- Performance ----
+            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Performance");
+
             std::string& num_workers = node.parameters["num_workers"];
             if (num_workers.empty()) num_workers = "4";
             char workers_buffer[16];
             strncpy(workers_buffer, num_workers.c_str(), sizeof(workers_buffer) - 1);
             workers_buffer[sizeof(workers_buffer) - 1] = '\0';
-
             ImGui::Text("Num Workers:");
-            ImGui::SameLine();
+            ImGui::SameLine(140.0f);
             ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##num_workers", workers_buffer, sizeof(workers_buffer), ImGuiInputTextFlags_CharsDecimal)) {
+            if (ImGui::InputText("##num_workers", workers_buffer, sizeof(workers_buffer),
+                                 ImGuiInputTextFlags_CharsDecimal)) {
                 num_workers = workers_buffer;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Background threads for data loading. 0 = single-threaded.\n"
+                                  "(Currently not yet honored — runs single-threaded.)");
+            }
+
+            std::string& prefetch = node.parameters["prefetch_factor"];
+            if (prefetch.empty()) prefetch = "2";
+            char prefetch_buffer[16];
+            strncpy(prefetch_buffer, prefetch.c_str(), sizeof(prefetch_buffer) - 1);
+            prefetch_buffer[sizeof(prefetch_buffer) - 1] = '\0';
+            ImGui::Text("Prefetch:");
+            ImGui::SameLine(140.0f);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputText("##prefetch_factor", prefetch_buffer, sizeof(prefetch_buffer),
+                                 ImGuiInputTextFlags_CharsDecimal)) {
+                prefetch = prefetch_buffer;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Batches to prefetch per worker, hides I/O latency.");
+            }
+
+            std::string& pin_memory = node.parameters["pin_memory"];
+            if (pin_memory.empty()) pin_memory = "false";
+            bool pin_memory_val = (pin_memory == "true");
+            if (ImGui::Checkbox("Pin Memory (CUDA)", &pin_memory_val)) {
+                pin_memory = pin_memory_val ? "true" : "false";
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Allocate batches in pinned host memory for faster GPU transfer.");
+            }
+
+            ImGui::Spacing();
+
+            // ---- Logging ----
+            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Logging");
+
+            std::string& log_interval = node.parameters["log_interval"];
+            if (log_interval.empty()) log_interval = "10";
+            char log_buffer[16];
+            strncpy(log_buffer, log_interval.c_str(), sizeof(log_buffer) - 1);
+            log_buffer[sizeof(log_buffer) - 1] = '\0';
+            ImGui::Text("Log every N:");
+            ImGui::SameLine(140.0f);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputText("##log_interval", log_buffer, sizeof(log_buffer),
+                                 ImGuiInputTextFlags_CharsDecimal)) {
+                log_interval = log_buffer;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Print loss/metrics every N batches.");
+            }
+
+            std::string& val_freq = node.parameters["validation_freq"];
+            if (val_freq.empty()) val_freq = "1";
+            char val_freq_buffer[16];
+            strncpy(val_freq_buffer, val_freq.c_str(), sizeof(val_freq_buffer) - 1);
+            val_freq_buffer[sizeof(val_freq_buffer) - 1] = '\0';
+            ImGui::Text("Validate every:");
+            ImGui::SameLine(140.0f);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputText("##validation_freq", val_freq_buffer, sizeof(val_freq_buffer),
+                                 ImGuiInputTextFlags_CharsDecimal)) {
+                val_freq = val_freq_buffer;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Run validation pass every N epochs (1 = every epoch).");
             }
             break;
         }

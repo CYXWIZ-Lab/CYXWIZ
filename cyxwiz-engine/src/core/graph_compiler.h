@@ -137,8 +137,10 @@ struct TrainingConfiguration {
     int split_seed = 42;
     bool has_data_split = false;        // true if a DataSplit node was found
 
-    // DataLoader configuration (from DataLoader node, or defaults if absent)
+    // DataLoader configuration (from DataLoader node, or defaults if absent).
+    // epochs lives here too — DataLoader owns all training-loop hyperparams.
     int batch_size = 32;
+    int epochs = 10;
     bool shuffle = true;
     bool drop_last = false;
     int num_workers = 0;                // not yet honored; warns if >0

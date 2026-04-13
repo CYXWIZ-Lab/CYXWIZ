@@ -2815,23 +2815,31 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         }
     }
 
-    // batch_size / shuffle / drop_last now live on the DataLoader node and are
-    // extracted by GraphCompiler into the TrainingConfiguration. If no DataLoader
-    // is present, config.batch_size already holds the default (32).
+    // batch_size / epochs / shuffle / drop_last all live on the DataLoader
+    // node and are extracted by GraphCompiler into TrainingConfiguration.
+    // If no DataLoader is present, config holds the defaults (batch_size=32,
+    // epochs=10).
     int batch_size = config.batch_size;
+    int epochs = config.epochs;
 
-    // epochs still lives on the optimizer node for this pass - it will move to a
-    // global Training Settings panel later (see Training Dashboard work).
-    int epochs = 10;
+    // Legacy: older project files put epochs/batch_size on the optimizer node.
+    // Honor those values if DataLoader didn't override them, and warn so users
+    // can migrate. New projects should set everything on DataLoader.
     for (const auto& node : nodes) {
         if (node.type == NodeType::Adam || node.type == NodeType::SGD ||
             node.type == NodeType::AdamW || node.type == NodeType::RMSprop) {
-            auto it = node.parameters.find("epochs");
-            if (it != node.parameters.end() && !it->second.empty()) {
-                try { epochs = std::stoi(it->second); } catch (...) {}
+            auto ep_it = node.parameters.find("epochs");
+            if (ep_it != node.parameters.end() && !ep_it->second.empty()) {
+                if (config.has_data_loader) {
+                    spdlog::warn("epochs is set on the optimizer node AND a DataLoader node is "
+                                 "present - using DataLoader's value ({}). Remove epochs from "
+                                 "the optimizer node to clear this warning.", epochs);
+                } else {
+                    spdlog::warn("epochs on the optimizer node is deprecated - move it to a "
+                                 "DataLoader node. Honoring legacy value for now.");
+                    try { epochs = std::stoi(ep_it->second); } catch (...) {}
+                }
             }
-            // Legacy: batch_size on optimizer node is deprecated in favor of DataLoader.
-            // Honor it only if no DataLoader node is present, and log a warning.
             auto bs_it = node.parameters.find("batch_size");
             if (bs_it != node.parameters.end() && !bs_it->second.empty()) {
                 if (config.has_data_loader) {
@@ -3075,7 +3083,8 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
             << (config.has_data_split ? " (from DataSplit node)" : " (default, no DataSplit node)")
             << "\n";
 
-        out << "Batching:        batch_size=" << config.batch_size
+        out << "Training loop:   batch_size=" << config.batch_size
+            << ", epochs=" << config.epochs
             << ", shuffle=" << (config.shuffle ? "true" : "false")
             << ", drop_last=" << (config.drop_last ? "true" : "false")
             << (config.has_data_loader ? " (from DataLoader node)" : " (default, no DataLoader node)")

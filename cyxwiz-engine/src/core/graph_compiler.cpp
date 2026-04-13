@@ -219,13 +219,17 @@ TrainingConfiguration GraphCompiler::Compile(
         spdlog::info("GraphCompiler: No DataSplit node - using defaults (train=0.80, val=0.10, test=0.10)");
     }
 
-    // Extract batching config from DataLoader node if present
+    // Extract training-loop config from DataLoader node if present.
+    // DataLoader owns batch_size / epochs / shuffle / drop_last / num_workers —
+    // all the "how do I iterate training" hyperparameters.
     for (const auto& node : nodes) {
         if (node.type == gui::NodeType::DataLoader) {
             config.has_data_loader = true;
             try {
                 if (node.parameters.count("batch_size"))
                     config.batch_size = std::stoi(node.parameters.at("batch_size"));
+                if (node.parameters.count("epochs"))
+                    config.epochs = std::stoi(node.parameters.at("epochs"));
                 if (node.parameters.count("shuffle"))
                     config.shuffle = (node.parameters.at("shuffle") == "true");
                 if (node.parameters.count("drop_last"))
@@ -239,14 +243,14 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     if (config.has_data_loader) {
-        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, shuffle={}, drop_last={}, num_workers={}",
-                     config.batch_size, config.shuffle, config.drop_last, config.num_workers);
+        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}",
+                     config.batch_size, config.epochs, config.shuffle, config.drop_last, config.num_workers);
         if (config.num_workers > 0) {
             spdlog::warn("GraphCompiler: num_workers={} requested but not yet implemented - batching runs single-threaded",
                          config.num_workers);
         }
     } else {
-        spdlog::info("GraphCompiler: No DataLoader node - using defaults (batch_size=32, shuffle=true, drop_last=false)");
+        spdlog::info("GraphCompiler: No DataLoader node - using defaults (batch_size=32, epochs=10, shuffle=true, drop_last=false)");
     }
 
     // Get topologically sorted node IDs
