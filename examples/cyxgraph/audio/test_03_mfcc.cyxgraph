@@ -1,0 +1,54 @@
+{
+  "id": "audio_test_03_mfcc",
+  "name": "Audio Test 3 — MFCC node override",
+  "description": "Phase 2.1 audio test 3: Graph-driven MFCC feature extraction. Drops an MFCC node with n_mfcc=13 (the classic speech-processing default) into the pipeline. The graph compiler's ExtractMFCC extractor sets feature_type=3 on config.audio_preprocessing. AudioDatasetBatcher switches AudioDataset to compute MFCCs instead of mel spectrograms. Expected logs: 'GraphCompiler: MFCC n_mfcc=13, n_mels=128, n_fft=512' and 'audio feature extraction driven by graph node (type=3)'. Feature shape becomes [13 x 313] — dramatically smaller than mel spectrogram's [128 x 313], dropping input_size from 40064 to 4069 (~10x). This is why MFCC is the traditional choice for speech classification on limited compute: much smaller first Dense layer, ~5M fewer parameters, trains faster, and often generalizes better on small datasets. Use this pattern for speech command classification, speaker ID, and similar tasks.",
+  "category": "Training Pipeline",
+  "tags": ["audio", "test", "phase2", "mfcc", "feature-extraction", "speech", "training"],
+  "parameters": [
+    {"name": "batch_size", "type": "int", "default_value": "64", "description": "Training batch size", "min_value": "1", "max_value": "256"},
+    {"name": "learning_rate", "type": "float", "default_value": "0.0005", "description": "Adam learning rate", "min_value": "0.0001", "max_value": "0.01"},
+    {"name": "epochs", "type": "int", "default_value": "5", "description": "Number of training epochs", "min_value": "1", "max_value": "200"},
+    {"name": "n_mfcc", "type": "int", "default_value": "13", "description": "Number of MFCC coefficients (13 is classic speech default; 20-40 for music)", "min_value": "4", "max_value": "40"}
+  ],
+  "template": {
+    "nodes": [
+      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 300], "params": {"file_category": "audio", "sample_rate": "16000", "max_duration": "1.0"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Train/Val Split", "pos": [250, 300], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [500, 300], "params": {"batch_size": "$batch_size", "epochs": "$epochs", "shuffle": "true", "seed": "42"}},
+
+      {"id": "mfcc", "type": "MFCC", "name": "MFCC", "pos": [750, 300], "params": {"n_mfcc": "$n_mfcc", "n_fft": "512", "hop_length": "256", "n_mels": "128"}},
+
+      {"id": "normalize", "type": "Normalize", "name": "Normalize", "pos": [1000, 300], "params": {"mean": "0.0", "std": "1.0"}},
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [1250, 300]},
+
+      {"id": "fc1", "type": "Dense", "name": "Dense 256", "pos": [1500, 300], "params": {"units": "256"}},
+      {"id": "relu1", "type": "ReLU", "name": "ReLU", "pos": [1750, 300]},
+      {"id": "drop1", "type": "Dropout", "name": "Dropout 0.3", "pos": [2000, 300], "params": {"rate": "0.3"}},
+
+      {"id": "fc2", "type": "Dense", "name": "Dense 64", "pos": [2250, 300], "params": {"units": "64"}},
+      {"id": "relu2", "type": "ReLU", "name": "ReLU", "pos": [2500, 300]},
+
+      {"id": "fc3", "type": "Dense", "name": "Dense 2", "pos": [2750, 300], "params": {"units": "2"}},
+
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [3000, 300]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [3250, 300], "params": {"learning_rate": "$learning_rate"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [3500, 300], "params": {"classes": "2"}}
+    ],
+    "links": [
+      {"from": "data_input", "to": "data_split"},
+      {"from": "data_split", "to": "data_loader"},
+      {"from": "data_loader", "to": "mfcc"},
+      {"from": "mfcc", "to": "normalize"},
+      {"from": "normalize", "to": "flatten"},
+      {"from": "flatten", "to": "fc1"},
+      {"from": "fc1", "to": "relu1"},
+      {"from": "relu1", "to": "drop1"},
+      {"from": "drop1", "to": "fc2"},
+      {"from": "fc2", "to": "relu2"},
+      {"from": "relu2", "to": "fc3"},
+      {"from": "fc3", "to": "loss"},
+      {"from": "loss", "to": "optimizer"},
+      {"from": "optimizer", "to": "output"}
+    ]
+  }
+}

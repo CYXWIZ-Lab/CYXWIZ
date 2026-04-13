@@ -431,10 +431,14 @@ bool TrainingManager::StartTrainingAudio(
     if (is_training_.load()) return false;
 
     // Build the audio batcher. AudioDatasetBatcher constructs the
-    // underlying AudioDataset from the entry and probes a sample to
-    // discover the actual feature shape.
+    // underlying AudioDataset from the entry, applies any graph-driven
+    // preprocessing overrides from config.audio_preprocessing
+    // (Spectrogram/MelSpectrogram/MFCC/AudioAugmentation nodes), and
+    // probes a sample to discover the actual feature shape.
     auto batcher = std::make_unique<AudioDatasetBatcher>(
-        audio_entry, batch_size, config.train_ratio, config.shuffle);
+        audio_entry,
+        config.audio_preprocessing,
+        batch_size, config.train_ratio, config.shuffle);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Audio dataset has 0 samples");

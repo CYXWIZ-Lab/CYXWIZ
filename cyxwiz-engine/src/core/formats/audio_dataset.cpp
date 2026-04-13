@@ -4,6 +4,7 @@
 #include <map>
 #include <algorithm>
 #include <atomic>
+#include <random>
 #include <stdexcept>
 #include <spdlog/spdlog.h>
 
@@ -430,6 +431,30 @@ AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath) const {
         AudioFeatures silent;
         silent.error_message = "audio file contains only silence (all-zero samples)";
         return silent;
+    }
+
+    // Apply user-configured augmentation (noise / time stretch / pitch
+    // shift) BEFORE the pad/truncate step so that random stretch
+    // doesn't silently extend the audio past max_duration. Each
+    // augmentation call uses the existing backend helpers —
+    // AudioProcessing::AddNoise / TimeStretch / PitchShift — so we
+    // don't reimplement any DSP here.
+    //
+    // v1 uses hardcoded ranges for stretch (±10%) and pitch (±2
+    // semitones). When the GUI node grows float range params,
+    // replace the hardcoded values with the user-configured range.
+    if (config_.noise_level > 0.0f) {
+        audio = AudioProcessing::AddNoise(audio, config_.noise_level);
+    }
+    if (config_.time_stretch) {
+        static thread_local std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> dist(0.9f, 1.1f);
+        audio = AudioProcessing::TimeStretch(audio, dist(rng));
+    }
+    if (config_.pitch_shift) {
+        static thread_local std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> dist(-2.0f, 2.0f);
+        audio = AudioProcessing::PitchShift(audio, dist(rng));
     }
 
     // Pad or truncate to max_duration

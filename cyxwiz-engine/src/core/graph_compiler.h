@@ -94,6 +94,62 @@ struct GraphPreprocessingConfig {
 // domain-specific extractors populate fields on it.
 
 /**
+ * Audio feature-extraction type. Driven by whichever preprocessing node
+ * the user dropped on the canvas (Spectrogram / MelSpectrogram / MFCC).
+ * None means no feature node was found → fall back to dialog defaults
+ * from the AudioDatasetEntry.
+ */
+enum class AudioFeatureType {
+    None = 0,
+    Spectrogram = 1,
+    MelSpectrogram = 2,
+    MFCC = 3,
+};
+
+/**
+ * Audio preprocessing configuration (Phase 2.1).
+ *
+ * Populated by audio-domain extractors in the graph compiler when a
+ * Spectrogram / MelSpectrogram / MFCC / AudioAugmentation node is
+ * present in the graph. Otherwise stays at default and
+ * AudioDatasetBatcher falls back to the dialog-baked defaults on
+ * DataRegistry::AudioDatasetEntry.
+ *
+ * Shape matches what backend MelConfig / MFCCConfig accept — the
+ * batcher translates this into the AudioDatasetConfig fed into
+ * AudioDataset's feature extraction path.
+ */
+struct AudioPreprocessingConfig {
+    // True iff a Spectrogram/MelSpectrogram/MFCC node was found.
+    // When false, batcher uses dialog defaults (fallback mode).
+    bool has_feature_node = false;
+    AudioFeatureType feature_type = AudioFeatureType::None;
+
+    // Shared STFT params (all feature types use these)
+    int n_fft = 512;
+    int hop_length = 256;
+    bool log_scale = true;
+
+    // Mel-specific (used by MelSpectrogram and MFCC)
+    int n_mels = 128;
+    float fmin = 0.0f;
+    float fmax = 0.0f;  // 0 = Nyquist (sample_rate / 2)
+
+    // MFCC-specific
+    int n_mfcc = 13;
+
+    // AudioAugmentation — applied to the raw waveform before feature
+    // extraction. noise_level > 0 enables additive Gaussian noise.
+    // time_stretch / pitch_shift are boolean flags; v1 uses hardcoded
+    // random ranges (±10% stretch, ±2 semitones). v2 will expose the
+    // ranges as float parameters on the GUI node.
+    bool has_augmentation = false;
+    float noise_level = 0.0f;
+    bool time_stretch = false;
+    bool pitch_shift = false;
+};
+
+/**
  * A single graph validation finding. Populated by GraphCompiler::Compile
  * during a Compile pass and surfaced to the user via the Compile popup.
  *
@@ -158,6 +214,13 @@ struct TrainingConfiguration {
     // domain extractors in the preprocessing table when
     // preprocessing_domain == Image.
     ImagePreprocessingConfig image_preprocessing;
+
+    // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
+    // domain extractors in the preprocessing table when
+    // preprocessing_domain == Audio. When has_feature_node is false,
+    // AudioDatasetBatcher falls back to the dialog defaults from
+    // AudioDatasetEntry.
+    AudioPreprocessingConfig audio_preprocessing;
 
     // Loss function
     gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;

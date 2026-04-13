@@ -433,11 +433,12 @@ TrainingConfiguration GraphCompiler::Compile(
 
         if (is_audio) {
             config.preprocessing_domain = PreprocessingDomain::Audio;
-            // Phase 2.0: feature extraction is baked into the AudioDataset
-            // config (set by DataInputDialog). The Spectrogram / MFCC node
-            // extractors will land in Phase 2.1 and override these defaults
-            // from the graph. No mandatory checks yet — the dialog enforces
-            // a valid folder layout at Apply time.
+            // Audio feature extraction: either the graph has a
+            // Spectrogram/MelSpectrogram/MFCC node (extractors run later
+            // in the preprocessing pass and populate
+            // config.audio_preprocessing), or we fall back to the
+            // dialog-baked defaults on AudioDatasetEntry. Either mode is
+            // valid — we log which one won near the end of Compile().
         }
 
         if (is_image) {
@@ -571,6 +572,22 @@ TrainingConfiguration GraphCompiler::Compile(
                     }
                 }
             }
+        }
+    }
+
+    // Audio preprocessing mode summary — surface whether the graph's
+    // feature node overrode the dialog defaults, or whether we fell
+    // back. Useful for debugging "why isn't my MelSpectrogram n_mels=64
+    // taking effect" without having to grep through the logs for
+    // individual extractor calls.
+    if (config.preprocessing_domain == PreprocessingDomain::Audio) {
+        if (config.audio_preprocessing.has_feature_node) {
+            spdlog::info("GraphCompiler: audio feature extraction driven by graph "
+                         "node (type={})",
+                         static_cast<int>(config.audio_preprocessing.feature_type));
+        } else {
+            spdlog::info("GraphCompiler: audio feature extraction uses dialog defaults "
+                         "(no Spectrogram/MelSpectrogram/MFCC node in graph)");
         }
     }
 
@@ -919,7 +936,84 @@ static void ExtractImageGaussianBlur(const gui::MLNode& node, TrainingConfigurat
         config.image_preprocessing.blur_config.sigma = std::stof(node.parameters.at("sigma"));
 }
 
-// --- Audio / Text / TimeSeries extractors (Phase 2-5 — deferred) ---
+// --- Audio extractors (Phase 2.1) ---
+//
+// Each extractor sets has_feature_node=true (except AudioAugmentation,
+// which sets has_augmentation=true) and copies the GUI node's parameters
+// into config.audio_preprocessing. AudioDatasetBatcher later merges this
+// into its AudioDatasetConfig, overriding the dialog-baked defaults on
+// AudioDatasetEntry. If no audio feature node is found in the graph,
+// has_feature_node stays false and the batcher uses the dialog defaults
+// — "fallback mode", the standard UX.
+
+static void ExtractSpectrogram(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.audio_preprocessing.has_feature_node = true;
+    config.audio_preprocessing.feature_type = AudioFeatureType::Spectrogram;
+    if (node.parameters.count("n_fft"))
+        config.audio_preprocessing.n_fft = std::stoi(node.parameters.at("n_fft"));
+    if (node.parameters.count("hop_length"))
+        config.audio_preprocessing.hop_length = std::stoi(node.parameters.at("hop_length"));
+    if (node.parameters.count("log_scale"))
+        config.audio_preprocessing.log_scale = (node.parameters.at("log_scale") == "true");
+    spdlog::info("GraphCompiler: Spectrogram n_fft={}, hop={}, log={}",
+                 config.audio_preprocessing.n_fft,
+                 config.audio_preprocessing.hop_length,
+                 config.audio_preprocessing.log_scale);
+}
+
+static void ExtractMelSpectrogram(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.audio_preprocessing.has_feature_node = true;
+    config.audio_preprocessing.feature_type = AudioFeatureType::MelSpectrogram;
+    if (node.parameters.count("n_fft"))
+        config.audio_preprocessing.n_fft = std::stoi(node.parameters.at("n_fft"));
+    if (node.parameters.count("hop_length"))
+        config.audio_preprocessing.hop_length = std::stoi(node.parameters.at("hop_length"));
+    if (node.parameters.count("n_mels"))
+        config.audio_preprocessing.n_mels = std::stoi(node.parameters.at("n_mels"));
+    if (node.parameters.count("fmin"))
+        config.audio_preprocessing.fmin = std::stof(node.parameters.at("fmin"));
+    if (node.parameters.count("fmax"))
+        config.audio_preprocessing.fmax = std::stof(node.parameters.at("fmax"));
+    if (node.parameters.count("log_scale"))
+        config.audio_preprocessing.log_scale = (node.parameters.at("log_scale") == "true");
+    spdlog::info("GraphCompiler: MelSpectrogram n_mels={}, n_fft={}, hop={}",
+                 config.audio_preprocessing.n_mels,
+                 config.audio_preprocessing.n_fft,
+                 config.audio_preprocessing.hop_length);
+}
+
+static void ExtractMFCC(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.audio_preprocessing.has_feature_node = true;
+    config.audio_preprocessing.feature_type = AudioFeatureType::MFCC;
+    if (node.parameters.count("n_mfcc"))
+        config.audio_preprocessing.n_mfcc = std::stoi(node.parameters.at("n_mfcc"));
+    if (node.parameters.count("n_fft"))
+        config.audio_preprocessing.n_fft = std::stoi(node.parameters.at("n_fft"));
+    if (node.parameters.count("hop_length"))
+        config.audio_preprocessing.hop_length = std::stoi(node.parameters.at("hop_length"));
+    if (node.parameters.count("n_mels"))
+        config.audio_preprocessing.n_mels = std::stoi(node.parameters.at("n_mels"));
+    spdlog::info("GraphCompiler: MFCC n_mfcc={}, n_mels={}, n_fft={}",
+                 config.audio_preprocessing.n_mfcc,
+                 config.audio_preprocessing.n_mels,
+                 config.audio_preprocessing.n_fft);
+}
+
+static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.audio_preprocessing.has_augmentation = true;
+    if (node.parameters.count("noise_level"))
+        config.audio_preprocessing.noise_level = std::stof(node.parameters.at("noise_level"));
+    if (node.parameters.count("time_stretch"))
+        config.audio_preprocessing.time_stretch = (node.parameters.at("time_stretch") == "true");
+    if (node.parameters.count("pitch_shift"))
+        config.audio_preprocessing.pitch_shift = (node.parameters.at("pitch_shift") == "true");
+    spdlog::info("GraphCompiler: AudioAugmentation noise={}, time_stretch={}, pitch_shift={}",
+                 config.audio_preprocessing.noise_level,
+                 config.audio_preprocessing.time_stretch,
+                 config.audio_preprocessing.pitch_shift);
+}
+
+// --- Text / TimeSeries extractors (Phase 3-5 — deferred) ---
 
 // --- The table ---
 
@@ -942,12 +1036,12 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::ImageGaussianBlur,  PreprocessingDomain::Image,       ExtractImageGaussianBlur},
     {gui::NodeType::Grayscale,          PreprocessingDomain::Image,       ExtractGrayscale},
     {gui::NodeType::Augmentation,       PreprocessingDomain::Image,       nullptr},
-    // Audio (Phase 2)
+    // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},
-    {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       nullptr},
-    {gui::NodeType::MelSpectrogram,     PreprocessingDomain::Audio,       nullptr},
-    {gui::NodeType::MFCC,               PreprocessingDomain::Audio,       nullptr},
-    {gui::NodeType::AudioAugmentation,  PreprocessingDomain::Audio,       nullptr},
+    {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       ExtractSpectrogram},
+    {gui::NodeType::MelSpectrogram,     PreprocessingDomain::Audio,       ExtractMelSpectrogram},
+    {gui::NodeType::MFCC,               PreprocessingDomain::Audio,       ExtractMFCC},
+    {gui::NodeType::AudioAugmentation,  PreprocessingDomain::Audio,       ExtractAudioAugmentation},
     // Text (Phase 3)
     {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        nullptr},

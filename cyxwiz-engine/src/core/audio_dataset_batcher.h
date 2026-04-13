@@ -2,6 +2,7 @@
 
 #include "dataset_batcher.h"
 #include "data_registry.h"
+#include "graph_compiler.h"
 #include "formats/audio_dataset.h"
 #include <memory>
 #include <random>
@@ -30,7 +31,13 @@ namespace cyxwiz {
  */
 class AudioDatasetBatcher : public IBatcher {
 public:
+    // preprocess_config is populated by the audio-domain extractors in
+    // GraphCompiler (Spectrogram/MelSpectrogram/MFCC/AudioAugmentation
+    // nodes). When preprocess_config.has_feature_node is false, the
+    // batcher falls back to the dialog-baked feature config stored on
+    // the AudioDatasetEntry — the "no node required" UX.
     AudioDatasetBatcher(const DataRegistry::AudioDatasetEntry& entry,
+                        const AudioPreprocessingConfig& preprocess_config,
                         int batch_size,
                         float train_split = 0.8f,
                         bool shuffle = true);

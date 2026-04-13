@@ -8,14 +8,17 @@ namespace cyxwiz {
 
 AudioDatasetBatcher::AudioDatasetBatcher(
     const DataRegistry::AudioDatasetEntry& entry,
+    const AudioPreprocessingConfig& preprocess_config,
     int batch_size,
     float train_split,
     bool shuffle)
     : batch_size_(batch_size), shuffle_(shuffle), rng_(42)
 {
-    // Build the AudioDatasetConfig from the registry entry. The registry
-    // entry stores feature_type as int (0/1/2) so the dialog/JSON can
-    // round-trip without depending on the enum class — convert here.
+    // Build the AudioDatasetConfig. Start from the entry's dialog-baked
+    // defaults, then let graph preprocessing nodes override them. The
+    // registry entry stores feature_type as int (0/1/2) so the dialog
+    // and JSON serialization can round-trip without depending on the
+    // enum class — convert here.
     AudioDatasetConfig cfg;
     switch (entry.feature_type) {
         case 0: cfg.feature_type = AudioDatasetConfig::FeatureType::Spectrogram; break;
@@ -35,6 +38,47 @@ AudioDatasetBatcher::AudioDatasetBatcher(
     cfg.csv_path       = entry.csv_path;       // FlatWithCSV mode if non-empty
     cfg.filename_col   = entry.filename_col;
     cfg.label_col      = entry.label_col;
+
+    // Apply graph-node overrides (Phase 2.1). If the user dropped a
+    // Spectrogram / MelSpectrogram / MFCC node on the canvas, the
+    // graph compiler's extractors have already written to
+    // preprocess_config.has_feature_node and the params. Override
+    // the dialog defaults here. If no feature node was present,
+    // has_feature_node is false and we keep the entry's defaults.
+    if (preprocess_config.has_feature_node) {
+        switch (preprocess_config.feature_type) {
+            case AudioFeatureType::Spectrogram:
+                cfg.feature_type = AudioDatasetConfig::FeatureType::Spectrogram; break;
+            case AudioFeatureType::MelSpectrogram:
+                cfg.feature_type = AudioDatasetConfig::FeatureType::MelSpectrogram; break;
+            case AudioFeatureType::MFCC:
+                cfg.feature_type = AudioDatasetConfig::FeatureType::MFCC; break;
+            case AudioFeatureType::None:
+            default:
+                break;
+        }
+        cfg.n_fft      = preprocess_config.n_fft;
+        cfg.hop_length = preprocess_config.hop_length;
+        cfg.n_mels     = preprocess_config.n_mels;
+        cfg.fmin       = preprocess_config.fmin;
+        cfg.fmax       = preprocess_config.fmax;
+        cfg.n_mfcc     = preprocess_config.n_mfcc;
+        spdlog::info("AudioDatasetBatcher: graph feature config overrides dialog "
+                     "defaults (feature_type={}, n_fft={}, n_mels={}, n_mfcc={})",
+                     static_cast<int>(preprocess_config.feature_type),
+                     cfg.n_fft, cfg.n_mels, cfg.n_mfcc);
+    }
+
+    // Augmentation overrides (applied regardless of feature node mode
+    // — augmentation is orthogonal to feature type).
+    if (preprocess_config.has_augmentation) {
+        cfg.noise_level  = preprocess_config.noise_level;
+        cfg.time_stretch = preprocess_config.time_stretch;
+        cfg.pitch_shift  = preprocess_config.pitch_shift;
+        spdlog::info("AudioDatasetBatcher: graph augmentation enabled "
+                     "(noise_level={}, time_stretch={}, pitch_shift={})",
+                     cfg.noise_level, cfg.time_stretch, cfg.pitch_shift);
+    }
 
     try {
         dataset_ = std::make_shared<AudioDataset>(entry.folder_path, cfg);

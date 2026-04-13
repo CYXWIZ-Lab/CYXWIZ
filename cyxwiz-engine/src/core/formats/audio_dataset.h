@@ -47,6 +47,16 @@ struct AudioDatasetConfig {
     std::string csv_path;
     std::string filename_col;     // empty = auto-detect
     std::string label_col;        // empty = auto-detect
+
+    // Augmentation applied to the raw waveform before feature
+    // extraction. Populated by the AudioAugmentation graph node via
+    // AudioDatasetBatcher. Zero / false means "disabled".
+    //  - noise_level: amplitude of additive Gaussian noise (0 = off)
+    //  - time_stretch: enable random ±10% time stretch per sample (v1)
+    //  - pitch_shift:  enable random ±2 semitone pitch shift per sample (v1)
+    float noise_level = 0.0f;
+    bool time_stretch = false;
+    bool pitch_shift = false;
 };
 
 /**
