@@ -112,43 +112,70 @@ TrainingConfiguration GraphCompiler::Compile(
         }
 
         // === New error checks tied to the dataset node ===
-
-        // Check 1: data_loaded must be "true". DataInputDialog::Apply sets
-        // this when (and only when) the load actually succeeded. If false,
-        // the user has the node configured but never clicked Apply, or the
-        // load failed, or an async load is still running.
-        const std::string& loaded_param = dataset_node->parameters.count("data_loaded")
+        //
+        // Registry is the source of truth for "is data loaded", NOT the
+        // `data_loaded` param hint on the node. The hint is cached dialog
+        // state that can go stale when an async Apply completes after the
+        // dialog has already closed — PollAsyncLoadResult only runs while
+        // the dialog is visible, so the provisional "false" that Apply
+        // sets before launching the worker gets stuck. This mirrors the
+        // DataInputDialog constructor's design, which probes the registry
+        // directly instead of trusting the param hint (see CLAUDE.md under
+        // "Async load + UX").
+        //
+        // The decision matrix is:
+        //   in_registry=yes → data is loaded, proceed (ignore stale hint)
+        //   in_registry=no, dataset_name empty → never-applied, block
+        //   in_registry=no, dataset_name set, hint=true → registry wiped,
+        //     "re-apply" error
+        //   in_registry=no, dataset_name set, hint=false → never-applied
+        //     (or async still running at compile time), block
+        const std::string loaded_param = dataset_node->parameters.count("data_loaded")
             ? dataset_node->parameters.at("data_loaded")
             : std::string("false");
-        if (loaded_param != "true") {
-            AddIssue(config, IssueLevel::Error,
-                     "Data is not loaded - open the node and click Apply",
-                     dataset_node->id, dataset_node->name);
-        }
 
-        // Check 2: dataset must be present in DataRegistry under that name.
-        // Catches the case where the user loaded data, deleted the
-        // dataset elsewhere, and never re-applied. Also catches stale
-        // project state where data_loaded=true but registry was wiped on
-        // project close.
+        bool in_registry = false;
         if (!config.dataset_name.empty()) {
             auto& reg = DataRegistry::Instance();
-            bool in_registry = reg.IsArrowDataset(config.dataset_name) ||
-                               reg.IsParquetBackedDataset(config.dataset_name) ||
-                               reg.IsImageDataset(config.dataset_name) ||
-                               reg.IsAudioDataset(config.dataset_name);
-            if (!in_registry && loaded_param == "true") {
+            in_registry = reg.IsArrowDataset(config.dataset_name) ||
+                          reg.IsParquetBackedDataset(config.dataset_name) ||
+                          reg.IsImageDataset(config.dataset_name) ||
+                          reg.IsAudioDataset(config.dataset_name) ||
+                          reg.IsTextDataset(config.dataset_name);
+        }
+
+        if (in_registry) {
+            // Data IS loaded, regardless of the hint. Log when we had to
+            // override a stale hint so it's traceable at training time.
+            if (loaded_param != "true") {
+                spdlog::info("GraphCompiler: dataset '{}' found in registry "
+                             "despite data_loaded='{}' hint (stale from "
+                             "async Apply after dialog close) - proceeding",
+                             config.dataset_name, loaded_param);
+            }
+        } else if (config.dataset_name.empty()) {
+            if (loaded_param == "true") {
+                AddIssue(config, IssueLevel::Error,
+                         "Data marked loaded but no dataset_name parameter set",
+                         dataset_node->id, dataset_node->name);
+            } else {
+                AddIssue(config, IssueLevel::Error,
+                         "Data is not loaded - open the node and click Apply",
+                         dataset_node->id, dataset_node->name);
+            }
+        } else {
+            // dataset_name is set but registry has nothing under it.
+            if (loaded_param == "true") {
                 AddIssue(config, IssueLevel::Error,
                          "Dataset '" + config.dataset_name +
                          "' is marked loaded but missing from registry - "
                          "re-apply the DataInput node",
                          dataset_node->id, dataset_node->name);
+            } else {
+                AddIssue(config, IssueLevel::Error,
+                         "Data is not loaded - open the node and click Apply",
+                         dataset_node->id, dataset_node->name);
             }
-        } else if (loaded_param == "true") {
-            // data_loaded=true but no dataset_name. Inconsistent state.
-            AddIssue(config, IssueLevel::Error,
-                     "Data marked loaded but no dataset_name parameter set",
-                     dataset_node->id, dataset_node->name);
         }
 
         // Check 3: label column. Required for tabular supervised training,
