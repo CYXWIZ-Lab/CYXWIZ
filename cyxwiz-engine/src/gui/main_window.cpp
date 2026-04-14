@@ -2966,6 +2966,32 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             spdlog::error("Audio dataset '{}' is registered but entry could not be retrieved",
                           dataset_name);
         }
+    } else if (registry.IsTextDataset(dataset_name)) {
+        // Phase 3 text path: TextDatasetBatcher constructs the
+        // TextDataset at training start. The entry holds the dialog-
+        // baked tokenizer config; TextTokenizer / TextVocabulary /
+        // TextPadding graph nodes override specific sub-configs via
+        // config.text_preprocessing.
+        auto text_entry = registry.GetTextDatasetEntry(dataset_name);
+        if (text_entry) {
+            spdlog::info("Starting text training: dataset={}, epochs={}, batch_size={}, "
+                         "{} samples, {} classes, max_length={}, vocab_size={}",
+                         dataset_name, epochs, batch_size,
+                         text_entry->num_samples, text_entry->num_classes,
+                         text_entry->max_length, text_entry->vocab_size);
+
+            started = tm.StartTrainingText(
+                std::move(config),
+                *text_entry,
+                epochs,
+                batch_size,
+                training_plot_panel_.get(),
+                node_editor_callback
+            );
+        } else {
+            spdlog::error("Text dataset '{}' is registered but entry could not be retrieved",
+                          dataset_name);
+        }
     } else {
         // Fall back to legacy DatasetHandle path
         auto dataset = registry.GetDataset(dataset_name);

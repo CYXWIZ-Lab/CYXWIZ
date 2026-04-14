@@ -4242,6 +4242,7 @@ static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
     reg.UnregisterTabularDataset(it->second);
     reg.UnregisterImageDataset(it->second);
     reg.UnregisterAudioDataset(it->second);
+    reg.UnregisterTextDataset(it->second);
 }
 
 void NodeEditor::DeleteNode(int node_id) {

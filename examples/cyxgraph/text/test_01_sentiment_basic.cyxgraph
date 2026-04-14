@@ -1,0 +1,50 @@
+{
+  "id": "text_test_01_sentiment_basic",
+  "name": "Text Test 1 — Sentiment Classification (Fallback Mode)",
+  "description": "Phase 3 text pipeline smoke test. No TextTokenizer/TextVocabulary/TextPadding nodes in the graph — the pipeline falls back to the dialog-baked defaults on the TextDatasetEntry (Word tokenizer, max_length=128, lowercase=true, min_freq=2). Expected log: 'GraphCompiler: text preprocessing uses dialog defaults'. Target dataset: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv — 53,043 rows, 7 classes (Normal / Depression / Suicidal / Anxiety / Bipolar / Stress / Personality disorder), 'statement' as text column, 'status' as multi-class label. Configure the DataInput node to point at the CSV, set text_column=statement and text_label_column=status, then train. The graph is intentionally a flat MLP over padded token IDs (no Embedding layer) so it exercises the TextDatasetBatcher end-to-end without requiring Embedding layer compilation — this is the minimum-viable proof that text loading, batching, and training all work together. For the polished user-facing version, see mental_health_sentiment_classifier.cyxgraph at the top of the examples folder.",
+  "category": "Training Pipeline",
+  "tags": ["text", "sentiment", "test", "phase3", "fallback", "classification", "training"],
+  "parameters": [
+    {"name": "batch_size", "type": "int", "default_value": "64", "description": "Training batch size", "min_value": "1", "max_value": "512"},
+    {"name": "learning_rate", "type": "float", "default_value": "0.001", "description": "Adam learning rate", "min_value": "0.0001", "max_value": "0.01"},
+    {"name": "epochs", "type": "int", "default_value": "5", "description": "Number of training epochs", "min_value": "1", "max_value": "100"}
+  ],
+  "template": {
+    "nodes": [
+      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 300], "params": {"file_category": "text", "text_column": "statement", "text_label_column": "status", "text_tokenizer_type": "1", "text_max_length": "128", "text_lowercase": "true", "text_min_freq": "2"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Train/Val Split", "pos": [250, 300], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [500, 300], "params": {"batch_size": "$batch_size", "epochs": "$epochs", "shuffle": "true", "seed": "42"}},
+      {"id": "normalize", "type": "Normalize", "name": "Normalize", "pos": [750, 300], "params": {"mean": "0.0", "std": "1.0"}},
+
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [1000, 300]},
+
+      {"id": "fc1", "type": "Dense", "name": "Dense 256", "pos": [1250, 300], "params": {"units": "256"}},
+      {"id": "relu1", "type": "ReLU", "name": "ReLU", "pos": [1500, 300]},
+      {"id": "drop1", "type": "Dropout", "name": "Dropout 0.3", "pos": [1750, 300], "params": {"rate": "0.3"}},
+
+      {"id": "fc2", "type": "Dense", "name": "Dense 64", "pos": [2000, 300], "params": {"units": "64"}},
+      {"id": "relu2", "type": "ReLU", "name": "ReLU", "pos": [2250, 300]},
+
+      {"id": "fc3", "type": "Dense", "name": "Dense (classes)", "pos": [2500, 300], "params": {"units": "7"}},
+
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [2750, 300]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [3000, 300], "params": {"learning_rate": "$learning_rate"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [3250, 300], "params": {"classes": "7"}}
+    ],
+    "links": [
+      {"from": "data_input", "to": "data_split"},
+      {"from": "data_split", "to": "data_loader"},
+      {"from": "data_loader", "to": "normalize"},
+      {"from": "normalize", "to": "flatten"},
+      {"from": "flatten", "to": "fc1"},
+      {"from": "fc1", "to": "relu1"},
+      {"from": "relu1", "to": "drop1"},
+      {"from": "drop1", "to": "fc2"},
+      {"from": "fc2", "to": "relu2"},
+      {"from": "relu2", "to": "fc3"},
+      {"from": "fc3", "to": "loss"},
+      {"from": "loss", "to": "optimizer"},
+      {"from": "optimizer", "to": "output"}
+    ]
+  }
+}

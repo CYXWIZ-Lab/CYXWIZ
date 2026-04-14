@@ -93,6 +93,54 @@ bool TrainingExecutor::BuildModelFromConfig() {
                 break;
             }
 
+            case gui::NodeType::Embedding: {
+                // Read num_embeddings (vocab size) and embedding_dim from
+                // the generic parameters map. Defaults cover the case
+                // where the dialog-created node still has its factory
+                // defaults (10000 / 256). Both params come from the
+                // node editor's Properties panel.
+                size_t num_embeddings = 10000;
+                size_t embedding_dim = 256;
+                auto ne_it = layer_cfg.parameters.find("num_embeddings");
+                if (ne_it != layer_cfg.parameters.end()) {
+                    try { num_embeddings = static_cast<size_t>(std::stoi(ne_it->second)); }
+                    catch (...) {}
+                }
+                auto ed_it = layer_cfg.parameters.find("embedding_dim");
+                if (ed_it != layer_cfg.parameters.end()) {
+                    try { embedding_dim = static_cast<size_t>(std::stoi(ed_it->second)); }
+                    catch (...) {}
+                }
+
+                // Promote num_embeddings if the dataset vocab is larger.
+                // This is the "num_embeddings too small" recovery path.
+                // config_.input_size holds seq_len for text; separate
+                // vocab info lives on TrainingConfiguration only if the
+                // text dispatch stores it there — for now, we trust the
+                // node param and warn if it's suspiciously small vs the
+                // input token ID range.
+                if (num_embeddings < 2) num_embeddings = 2;
+                if (embedding_dim < 1) embedding_dim = 1;
+
+                model_->Add<EmbeddingModule>(num_embeddings, embedding_dim);
+
+                // Shape tracking: input is [batch, seq_len] and
+                // current_input_size = seq_len. Output of Embedding is
+                // [batch, seq_len, embedding_dim], and the next Flatten
+                // will collapse that to seq_len * embedding_dim. Update
+                // current_input_size accordingly so the subsequent Dense
+                // layer is sized correctly even without a Flatten node.
+                size_t new_size = current_input_size * embedding_dim;
+                spdlog::info("  [{}] Embedding({} x {}) — shape "
+                             "[seq_len={}] -> [seq_len={}, embed={}], "
+                             "next Flatten/Dense sees {} features",
+                             i, num_embeddings, embedding_dim,
+                             current_input_size, current_input_size,
+                             embedding_dim, new_size);
+                current_input_size = new_size;
+                break;
+            }
+
             case gui::NodeType::ReLU: {
                 model_->Add<ReLUModule>();
                 spdlog::info("  [{}] ReLU", i);

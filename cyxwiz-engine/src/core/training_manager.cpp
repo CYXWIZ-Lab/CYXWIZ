@@ -1,6 +1,7 @@
 #include "training_manager.h"
 #include "image_dataset_batcher.h"
 #include "audio_dataset_batcher.h"
+#include "text_dataset_batcher.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
 
@@ -518,6 +519,109 @@ bool TrainingManager::StartTrainingAudio(
     );
 
     spdlog::info("TrainingManager: Started Audio training ({} epochs, batch_size={})",
+                 epochs, batch_size);
+    return true;
+}
+
+bool TrainingManager::StartTrainingText(
+    TrainingConfiguration config,
+    const DataRegistry::TextDatasetEntry& text_entry,
+    int epochs,
+    int batch_size,
+    TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback)
+{
+    if (is_training_.load()) {
+        spdlog::warn("TrainingManager: Cannot start training - already training");
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_training_.load()) return false;
+
+    // Build the text batcher. TextDatasetBatcher owns a TextDataset
+    // internally which performs tokenization + vocab building on
+    // construction. Graph preprocessing nodes (Tokenizer / Vocabulary /
+    // Padding) override the dialog defaults stored on text_entry.
+    auto batcher = std::make_unique<TextDatasetBatcher>(
+        text_entry,
+        config.text_preprocessing,
+        batch_size, config.train_ratio, config.shuffle);
+
+    if (batcher->GetNumSamples() == 0) {
+        spdlog::error("TrainingManager: Text dataset has 0 samples");
+        return false;
+    }
+
+    // input_size is max_length (1D flat sequence of token IDs). The
+    // Embedding layer (if present as the first model layer) will
+    // project these to [batch, max_length, embed_dim]. Without an
+    // Embedding layer, the first Dense layer sees raw token IDs as
+    // features, which is unusual but allowed.
+    config.input_size = static_cast<size_t>(batcher->GetMaxLength());
+    config.input_shape = { static_cast<size_t>(batcher->GetMaxLength()) };
+
+    spdlog::info("TrainingManager: Text dataset {} samples, input_size={} "
+                 "(max_length), vocab_size={}",
+                 batcher->GetNumSamples(), config.input_size,
+                 batcher->GetVocabSize());
+
+    // Hand preprocessing / one-hot hints through to the batcher —
+    // same pattern as the image/audio paths.
+    if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
+        batcher->SetOneHotEncoding(config.preprocessing.num_classes);
+    }
+
+    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
+
+    is_training_.store(true);
+    stop_requested_.store(false);
+
+    if (node_editor_callback) {
+        node_editor_callback(true);
+    }
+
+    if (plot_panel) {
+        plot_panel->Clear();
+        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
+        plot_panel->SetVisible(true);
+    }
+
+    std::string task_name = "Training Model (Text)";
+    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [](LambdaTask& task) {
+            while (!task.ShouldStop()) {
+                auto& mgr = TrainingManager::Instance();
+                if (!mgr.IsTrainingActive()) break;
+                auto metrics = mgr.GetCurrentMetrics();
+                float progress = static_cast<float>(metrics.current_epoch) /
+                    std::max(1, metrics.total_epochs);
+                task.ReportProgress(progress,
+                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
+                    std::to_string(metrics.total_epochs) +
+                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            task.MarkCompleted();
+        },
+        nullptr, nullptr
+    ));
+
+    if (on_training_start_) {
+        on_training_start_("Training from Text Dataset");
+    }
+
+    if (training_thread_ && training_thread_->joinable()) {
+        training_thread_->join();
+    }
+
+    training_thread_ = std::make_unique<std::thread>(
+        &TrainingManager::TrainingThreadFunc, this,
+        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
+    );
+
+    spdlog::info("TrainingManager: Started Text training ({} epochs, batch_size={})",
                  epochs, batch_size);
     return true;
 }
