@@ -455,3 +455,151 @@ requires a ground-up rewrite of the tensor plumbing.
 Option C from the design doc: `DataInput` produces file references,
 a `Decode` node reads the bytes and produces the raw tensor. Maximum
 composability but adds a required node everyone will forget. Also v3.
+
+---
+
+## Phase 3 Text — Deferred Items (2026-04-14)
+
+Phase 3 text training is **functionally complete and live-verified**
+on sentiment_mental_health.csv (52681 samples, 7 classes). Six commits
+landed this session — async Apply, text registry, JSON loader
+TextTokenizer/TextVocabulary/TextPadding registration, compile gate
+registry-first probe, v2 regularized example graph, Embedding AF
+backward fix. What's still deferred:
+
+### Phase 3 engine-side wiring bundle not yet committed
+
+**Severity:** High — the entire Phase 3 text pipeline lives in the
+working tree but isn't in git. A stray `git stash` or `git checkout`
+loses ~14 files of working code.
+
+**Files still uncommitted at end of 2026-04-14 session:**
+- `cyxwiz-engine/src/core/training_executor.cpp` — text dispatch +
+  the `if (epoch == 1 && batch_num == 1)` DEBUG Arrow / DEBUG
+  CrossEntropy dumps (left over from embedding debugging, should
+  be gated by a config flag)
+- `cyxwiz-engine/src/core/training_manager.{cpp,h}` — `StartTrainingText`
+- `cyxwiz-engine/src/core/graph_compiler.{cpp,h}` — TextPreprocessingConfig
+  + 3 extractors (ExtractTextTokenizer / ExtractTextVocabulary /
+  ExtractTextPadding) + PreprocessingDomain::Text. The compile-gate
+  registry-first fix IS committed (603eb8e4) but the extractors are
+  not — they live in the same file and were sheared off via surgical
+  commit.
+- `cyxwiz-engine/src/core/formats/text_dataset.{cpp,h}`
+- `cyxwiz-engine/src/core/text_dataset_batcher.{cpp,h}` (untracked —
+  new files)
+- `cyxwiz-engine/src/core/node_executors/` (untracked — unfinished
+  KMeans executor scaffolding, unrelated to Phase 3)
+- `cyxwiz-engine/src/gui/main_window.cpp` — IsTextDataset dispatch
+- `cyxwiz-engine/src/gui/node_editor_nodes.cpp`
+- `cyxwiz-engine/src/gui/data_input_dialog.h`
+- `cyxwiz-engine/src/gui/panels/toolbar_profile_menu.cpp` (untracked)
+- `cyxwiz-engine/src/gui/IconsTabler.h` (untracked)
+- `cyxwiz-engine/resources/fonts/tabler-icons.ttf` (untracked)
+- `cyxwiz-engine/resources/node_icons/` (untracked)
+- `cyxwiz-engine/CMakeLists.txt` — text_dataset_batcher.{cpp,h} sources
+
+**Plan:** Split into 3-4 focused commits (next session):
+1. `feat: Phase 3 text graph compiler extractors + training dispatch`
+2. `feat: Phase 3 text dataset batcher + format loader`
+3. `feat: Toolbar profile menu + Tabler icons` (unrelated UI polish)
+4. `feat: KMeans node executor scaffolding` (separate pattern, unfinished)
+
+### num_workers=4 not implemented — DataLoader runs single-threaded
+
+**Severity:** Medium — slows training on multi-core hosts.
+
+**Issue:** Every compile logs
+`GraphCompiler: num_workers=4 requested but not yet implemented -
+batching runs single-threaded`. The node param is plumbed through
+to `TrainingConfiguration` but no batcher honors it.
+
+**Fix:** Implement a pool in the `IBatcher` base class or in
+`TextDatasetBatcher` / `ArrowDatasetBatcher` to prefetch N batches
+in parallel. Non-trivial because batcher state (shuffle, epoch
+progress) is currently single-threaded.
+
+**Files:** `cyxwiz-engine/src/core/text_dataset_batcher.cpp` (when
+committed), `cyxwiz-engine/src/core/graph_compiler.cpp:238` (warning
+emit site).
+
+### Training logs silent mid-epoch — no per-batch feedback
+
+**Severity:** Medium — UX gotcha, caused me to misdiagnose "hung"
+training in the 2026-04-14 session.
+
+**Issue:** During training, the log emits rich output up through the
+first batch of epoch 1 (model summary, `DEBUG Arrow`, `DEBUG
+CrossEntropy` sample dump), then goes completely silent for
+60-130 seconds until the epoch-end summary line. The per-batch debug
+prints are gated by `if (epoch == 1 && batch_num == 1)` in
+`training_executor.cpp:1073`.
+
+**Fix:** Add a periodic batch-progress log in `RunTrainingEpochArrow`
+— e.g. `Epoch 1 [100/659] loss=1.42 acc=0.51` every 50 batches or
+every 10% of an epoch, throttled to at most once per 5s so a fast
+epoch with many tiny batches doesn't spam. Also mirror in
+`RunTrainingEpoch` (non-Arrow path).
+
+**Files:** `cyxwiz-engine/src/core/training_executor.cpp:1060-1154`
+(and the mirror at ~730).
+
+### Only MLP head tested with text — LSTM / GRU / Transformer paths unverified
+
+**Severity:** Medium — Phase 3 is "done" for MLP over flattened
+embeddings only. The backend has LSTM/GRU/Transformer/Attention
+layers but they haven't been run on a text training graph end-to-end.
+
+**Risk:** The Embedding → Flatten → Dense head only exercises a
+small corner of the NLP-capable codepaths. LSTM over `[batch,
+seq_len, embed_dim]` without Flatten is the obvious next test;
+that'll expose any shape-handling bugs in the recurrent layers
+(same category as the Embedding AF backward bug we just fixed).
+
+**Fix:** Create a Phase 3.x example graph
+(`examples/cyxgraph/mental_health_sentiment_lstm.cyxgraph`) that
+uses Embedding → LSTM(hidden=128) → Dense(7), train it, fix whatever
+breaks.
+
+### Text preview doesn't show class distribution
+
+**Severity:** Low — nice-to-have.
+
+**Issue:** `RenderTextPreview` (added in 7b7bd34b) shows a CSV head
+table with mapped text/label columns highlighted green or red. It
+does NOT show a class-distribution bar chart or sample-per-class
+count — users can't see class imbalance until training starts.
+
+**Fix:** Parse the label column during `LoadColumnList` and
+compute a per-value count, then render a small horizontal bar
+chart above the CSV head table.
+
+**Files:** `cyxwiz-engine/src/gui/data_input_dialog.cpp` —
+`LoadColumnList()` + `RenderTextPreview()`.
+
+### `node_config_dialog.h` git-binary state pre-HEAD~3
+
+**Severity:** Low — historical, mostly a diff-tool annoyance.
+
+**Issue:** The header had 2 literal 0x00 bytes inside a Win32
+`OPENFILENAME` filter default arg (`"All Files\0*.*\0"`) that MSVC
+compiled fine but flipped the file to binary mode in git. Fixed in
+7b7bd34b for this branch forward, but the corruption is still in
+master / origin/master / HEAD~3 and earlier. Any cross-boundary diff
+(e.g. `git log -p` across the fix) still shows as binary.
+
+**Fix (low priority):** A history-rewriting filter-branch pass could
+fix past commits. Not worth the pain unless someone needs a clean
+historical diff.
+
+### v1 / v2 example graphs live in `examples/cyxgraph/` alongside pre-v2 content
+
+**Severity:** Low — organizational.
+
+**Issue:** v2 regularized variant was added as a sibling file rather
+than in a `v2/` subdirectory. As more variants land (LSTM, Transformer,
+etc.) the flat layout will get noisy.
+
+**Fix:** Move to `examples/cyxgraph/text/` subdirectory (which already
+exists as untracked directory from the prior session). Already
+planned for the Phase 3 engine-side bundle commit.

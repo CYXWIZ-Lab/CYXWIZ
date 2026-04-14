@@ -63,6 +63,12 @@ same loss, same optimizer — only the batcher differs.
   `DataInputDialog::Apply`. The dialog stays responsive: scroll preview,
   switch tabs, even close it. OK and Apply buttons grey out via
   `NodeConfigDialog::IsBusy()` while loading; Cancel stays enabled.
+- **Text loads follow the same pattern.** `TextDataset` construction
+  (tokenize + build vocab) takes 1.5-2s on a 52k-row CSV which is too
+  much for the UI thread, so the Apply path snapshots dialog state,
+  hands the probe + `RegisterTextDataset` to a worker, and drains the
+  result via `PollAsyncLoadResult` on the next UI frame. Backend code
+  is 5 in `AsyncLoadState`. Image / Audio follow the same contract.
 - `AsyncLoadState` is a `shared_ptr` captured by the worker, so the dialog
   being destroyed mid-load is safe (worker writes to memory it owns).
   `PollAsyncLoadResult` runs at the top of `RenderContent` every frame and
@@ -71,7 +77,9 @@ same loss, same optimizer — only the batcher differs.
   by trusting `node->parameters["data_loaded"]`. The hint goes stale when
   async Apply finishes after the dialog closes (PollAsyncLoadResult only
   runs while the dialog is visible). Trusting the registry sidesteps that
-  race; the constructor also re-syncs the param hint with reality.
+  race; the constructor also re-syncs the param hint with reality. The
+  **compile gate uses the same registry-first principle** — see the
+  compile gate section below.
 
 ### Registry orphan cleanup
 
@@ -115,7 +123,14 @@ header) and refuses to launch training. No more silent log-and-return.
 
 Key checks added on top of the original structural validation:
 - DataInput's `data_loaded` parameter must be "true"
-- Dataset name must resolve in `DataRegistry` (Arrow or Parquet)
+- Dataset name must resolve in `DataRegistry` (Arrow / Parquet / Image /
+  Audio / Text) — the gate probes the registry directly, NOT the
+  `node->parameters["data_loaded"]` hint. That hint is cached dialog
+  state and can go stale when an async Apply completes after the dialog
+  has already closed (PollAsyncLoadResult only runs while the dialog is
+  visible, so the provisional `data_loaded="false"` set at Apply launch
+  time gets stuck). Registry is the source of truth; when the gate
+  overrides a stale hint it logs an info line so it's traceable.
 - Label column should be set (warning if not)
 - DataSplit ratios sum to 1.0 ± 0.05
 - batch_size > 0 and ≤ train rows (error if too big, warning if > half)
@@ -126,6 +141,15 @@ Key checks added on top of the original structural validation:
   disk-backed Parquet → `ArrowDatasetBatcher` / `ParquetArrowBatcher` →
   training. One entry point. Branch happens inside the registry, hidden
   from the user.
+- Text data (Phase 3): `DataInputDialog` → async `TextDataset` probe +
+  `RegisterTextDataset` on an `AsyncTaskManager` worker →
+  `TextDatasetBatcher` → training. Same async contract as Arrow — OK /
+  Apply buttons grey via `IsBusy()` while loading, Cancel stays enabled,
+  result drains through `PollAsyncLoadResult`. Tokenizer / vocab /
+  padding are overridable by `TextTokenizer` / `TextVocabulary` /
+  `TextPadding` graph nodes; fallback is dialog defaults.
+- Image / Audio: similar async + registry pattern as above, dispatched
+  by `FileCategory` in `DataInputDialog::Apply`.
 - Speed and memory come from Arrow optimizations, not user knobs.
   Auto-detect good defaults, bake them in, hide the controls.
 - Node editor follows **single-responsibility**: one concern per node.
@@ -135,6 +159,16 @@ Key checks added on top of the original structural validation:
   adding features, prefer smart defaults over knobs. The Force disk-backed
   checkbox is the lone exception — an escape hatch for benchmarking the
   disk-backed code path on small files.
+- **Adding a new NodeType: update TWO `StringToNodeType` maps** —
+  `cyxwiz-engine/src/gui/node_editor_io.cpp:20` (used by File → Open)
+  AND `cyxwiz-engine/src/gui/patterns/pattern_library.cpp:331` (used by
+  the pattern library). Both are string-to-enum lookup tables for
+  cyxgraph JSON loading; forgetting either one falls through to
+  `NodeType::Dense` with a misleading warning and then crashes at
+  compile time with `invalid stoi argument` because the node params
+  don't match the Dense layout. (Lesson from the 2026-04-14 v2 text
+  graph incident — the Phase 3 nodes existed in the enum and the add
+  menu but were missing from both loader maps.)
 
 ## Completed Features
 
