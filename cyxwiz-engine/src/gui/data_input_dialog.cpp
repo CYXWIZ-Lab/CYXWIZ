@@ -16,6 +16,7 @@
 #include "node_editor.h"
 #include "../core/data_registry.h"
 #include "../core/formats/audio_dataset.h"
+#include "../core/formats/text_dataset.h"
 #include "../core/arrow_dataset.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/async_task_manager.h"
@@ -109,6 +110,55 @@ DataInputDialog::DataInputDialog(MLNode* node)
             else if (cat == "image") file_category_ = FileCategory::Image;
             else if (cat == "audio") file_category_ = FileCategory::Audio;
             else if (cat == "video") file_category_ = FileCategory::Video;
+            else if (cat == "text") file_category_ = FileCategory::Text;
+        }
+
+        // Restore text dialog state. Without this, picking Text, filling
+        // in text_column / tokenizer settings, closing the dialog, and
+        // reopening would reset the column names to the default "text"
+        // and lose the user's choice. Mirrors the audio restore block.
+        if (node_->parameters.count("text_layout")) {
+            try {
+                int raw = std::stoi(node_->parameters["text_layout"]);
+                if (raw == static_cast<int>(TextLayout::CorpusSubdirs)) {
+                    text_layout_ = TextLayout::CorpusSubdirs;
+                } else {
+                    text_layout_ = TextLayout::SingleFile;
+                }
+            } catch (...) {
+                text_layout_ = TextLayout::SingleFile;
+            }
+        }
+        if (node_->parameters.count("text_column")) {
+            strncpy(text_column_,
+                    node_->parameters["text_column"].c_str(),
+                    sizeof(text_column_) - 1);
+            text_column_[sizeof(text_column_) - 1] = '\0';
+        }
+        if (node_->parameters.count("text_label_column")) {
+            strncpy(text_label_column_,
+                    node_->parameters["text_label_column"].c_str(),
+                    sizeof(text_label_column_) - 1);
+            text_label_column_[sizeof(text_label_column_) - 1] = '\0';
+        }
+        if (node_->parameters.count("text_tokenizer_type")) {
+            try { text_tokenizer_type_ = std::stoi(node_->parameters["text_tokenizer_type"]); }
+            catch (...) { text_tokenizer_type_ = 1; }
+        }
+        if (node_->parameters.count("text_max_length")) {
+            try { text_max_length_ = std::stoi(node_->parameters["text_max_length"]); }
+            catch (...) { text_max_length_ = 512; }
+        }
+        if (node_->parameters.count("text_lowercase")) {
+            text_lowercase_ = (node_->parameters["text_lowercase"] == "true");
+        }
+        if (node_->parameters.count("text_min_freq")) {
+            try { text_min_freq_ = std::stoi(node_->parameters["text_min_freq"]); }
+            catch (...) { text_min_freq_ = 1; }
+        }
+        if (node_->parameters.count("text_max_vocab_size")) {
+            try { text_max_vocab_size_ = std::stoi(node_->parameters["text_max_vocab_size"]); }
+            catch (...) { text_max_vocab_size_ = -1; }
         }
 
         // Restore the audio layout strategy from node params (ClassSubdirs
@@ -165,6 +215,7 @@ DataInputDialog::DataInputDialog(MLNode* node)
 
             auto img_entry = registry.GetImageDatasetEntry(loaded_dataset_name_);
             auto audio_entry_ptr = registry.GetAudioDatasetEntry(loaded_dataset_name_);
+            auto text_entry_ptr = registry.GetTextDatasetEntry(loaded_dataset_name_);
 
             if (arrow_ds) {
                 loaded_rows_ = arrow_ds->GetNumRows();
@@ -247,6 +298,31 @@ DataInputDialog::DataInputDialog(MLNode* node)
                               "({} samples, feature shape [{}x{}])",
                               loaded_dataset_name_, audio_entry_ptr->num_samples,
                               audio_entry_ptr->feature_rows, audio_entry_ptr->feature_cols);
+            } else if (text_entry_ptr) {
+                // Text restore: mirror audio branch. Uses the vocab_size
+                // and num_samples persisted on the entry at Apply time.
+                loaded_rows_ = static_cast<int64_t>(text_entry_ptr->num_samples);
+                loaded_cols_ = 1;
+                // Estimate: max_length * sizeof(float) per sample. Actual
+                // memory during training is dominated by the tokenized
+                // in-RAM corpus, not the training tensor batches.
+                size_t per_sample = static_cast<size_t>(text_entry_ptr->max_length) * sizeof(float);
+                loaded_memory_bytes_ = text_entry_ptr->num_samples * per_sample;
+                loaded_memory_is_estimate_ = true;
+                data_load_state_ = DataLoadState::InMemory;
+                loaded_backend_ = 5;  // 5 = text
+                apply_success_ = true;
+                apply_status_message_ = "Loaded " + loaded_dataset_name_ +
+                    " (" + std::to_string(text_entry_ptr->num_samples) + " text samples, " +
+                    std::to_string(text_entry_ptr->num_classes) + " classes, vocab " +
+                    std::to_string(text_entry_ptr->vocab_size) + ")";
+                node_->parameters["data_loaded"] = "true";
+                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                spdlog::debug("DataInputDialog: restored text dataset state for '{}' "
+                              "({} samples, vocab {})",
+                              loaded_dataset_name_, text_entry_ptr->num_samples,
+                              text_entry_ptr->vocab_size);
             } else {
                 // Registry doesn't have it. Either the user never applied,
                 // or project close / graph clear unregistered. Reflect
@@ -268,7 +344,7 @@ void DataInputDialog::Apply() {
     node_->parameters["source_type"] = source_types[static_cast<int>(source_type_)];
 
     // File category
-    const char* categories[] = {"tabular", "image", "audio", "video"};
+    const char* categories[] = {"tabular", "image", "audio", "video", "text"};
     node_->parameters["file_category"] = categories[static_cast<int>(file_category_)];
 
     // Common parameters
@@ -311,6 +387,18 @@ void DataInputDialog::Apply() {
         } else if (file_category_ == FileCategory::Audio) {
             node_->parameters["sample_rate"] = std::to_string(sample_rate_);
             node_->parameters["mono"] = mono_ ? "true" : "false";
+        } else if (file_category_ == FileCategory::Text) {
+            // Persist text dialog state so reopening the dialog restores
+            // the layout choice, column mapping, and tokenizer defaults.
+            node_->parameters["text_layout"] =
+                std::to_string(static_cast<int>(text_layout_));
+            node_->parameters["text_column"] = text_column_;
+            node_->parameters["text_label_column"] = text_label_column_;
+            node_->parameters["text_tokenizer_type"] = std::to_string(text_tokenizer_type_);
+            node_->parameters["text_max_length"] = std::to_string(text_max_length_);
+            node_->parameters["text_lowercase"] = text_lowercase_ ? "true" : "false";
+            node_->parameters["text_min_freq"] = std::to_string(text_min_freq_);
+            node_->parameters["text_max_vocab_size"] = std::to_string(text_max_vocab_size_);
         }
 
         // Excel specific
@@ -424,7 +512,185 @@ void DataInputDialog::Apply() {
         return;
     }
 
-    if (source_type_ == SourceType::File && strlen(file_path_) > 0) {
+    // Text loading (Phase 3).
+    //
+    // Takes priority over the tabular CSV branch since both can trigger
+    // on a non-empty file_path_. We dispatch explicitly by file_category_
+    // to route the user's intent: Text now goes through the SAME async
+    // AsyncTaskManager worker pattern that Arrow/Parquet uses, because
+    // the original assumption ("text files are small, a sync probe is
+    // fine") was wrong — 52k-row CSVs with word tokenization take 1.5-2
+    // seconds of UI-thread freeze during TextDataset construction, and
+    // the user sees no feedback.
+    //
+    // Two sub-paths, picked by text_layout_:
+    //   - SingleFile:    uses file_path_, handles CSV/JSON/TXT
+    //   - CorpusSubdirs: uses folder_path_, handles folder/<class>/*.txt
+    //
+    // TextDataset's constructor auto-detects file vs directory from the
+    // path itself, so the only thing differing between the two paths is
+    // which field we pull the source from. The worker body runs the
+    // tokenizer + vocab build, then calls RegisterTextDataset under its
+    // own lock. PollAsyncLoadResult drains the result onto the UI thread
+    // on the next frame.
+    const bool text_single_ready =
+        file_category_ == FileCategory::Text &&
+        text_layout_ == TextLayout::SingleFile &&
+        strlen(file_path_) > 0;
+    const bool text_corpus_ready =
+        file_category_ == FileCategory::Text &&
+        text_layout_ == TextLayout::CorpusSubdirs &&
+        strlen(folder_path_) > 0;
+    if (source_type_ == SourceType::File &&
+        (text_single_ready || text_corpus_ready)) {
+        // Already loading — defensive against a double-click. Apply is
+        // also greyed out via IsBusy() while is_loading_async_ is true.
+        if (is_loading_async_) {
+            spdlog::warn("DataInputDialog: Text Apply ignored - load already in progress");
+            apply_in_progress_ = false;
+            return;
+        }
+
+        // Pick the source path — file for SingleFile mode, folder for
+        // corpus mode. TextDataset dispatches internally on is_directory.
+        const std::string text_source_path =
+            text_corpus_ready ? std::string(folder_path_)
+                              : std::string(file_path_);
+        auto& registry = cyxwiz::DataRegistry::Instance();
+
+        // Capture OLD dataset_name for cleanup on re-Apply with new file.
+        // We do this on the UI thread before launching the worker so the
+        // registry doesn't temporarily hold two entries under different
+        // names. UnregisterTextDataset/Tabular are fast (map erase), no
+        // reason to offload them.
+        std::string previous_dataset_name;
+        {
+            auto pit = node_->parameters.find("dataset_name");
+            if (pit != node_->parameters.end()) {
+                previous_dataset_name = pit->second;
+            }
+        }
+
+        loaded_dataset_name_ = GenerateDatasetName();
+        if (!previous_dataset_name.empty() &&
+            previous_dataset_name != loaded_dataset_name_) {
+            registry.UnregisterTextDataset(previous_dataset_name);
+        }
+        registry.UnregisterTabularDataset(loaded_dataset_name_);
+        registry.UnregisterTextDataset(loaded_dataset_name_);
+
+        // Snapshot every dialog field the worker needs, by value. Never
+        // capture references into the dialog — the dialog can be closed
+        // while the worker is still running.
+        std::string captured_source     = text_source_path;
+        std::string captured_name       = loaded_dataset_name_;
+        std::string captured_text_col   = text_column_;
+        std::string captured_label_col  = text_label_column_;
+        bool captured_has_labels        = text_corpus_ready ||
+                                          (strlen(text_label_column_) > 0);
+        int  captured_tok_type          = text_tokenizer_type_;
+        int  captured_max_length        = text_max_length_;
+        bool captured_lowercase         = text_lowercase_;
+        int  captured_min_freq          = text_min_freq_;
+        int  captured_max_vocab         = text_max_vocab_size_;
+
+        auto state = std::make_shared<AsyncLoadState>();
+        state->dataset_name = captured_name;
+        state->source_path  = captured_source;
+        async_load_state_   = state;
+        is_loading_async_   = true;
+
+        // Provisional node params: mark NOT loaded until the worker
+        // finishes. Same reasoning as the Arrow path — a Train click
+        // during load should be caught by the compile gate, not try to
+        // train on a missing dataset.
+        node_->parameters["dataset_name"] = captured_name;
+        node_->parameters["data_loaded"] = "false";
+
+        apply_status_message_ = std::string("Tokenizing ") +
+            fs::path(captured_source).filename().string() + "...";
+        apply_status_timer_ = 0.0f;  // hide stale status during load
+
+        auto& mgr = cyxwiz::AsyncTaskManager::Instance();
+        loading_task_id_ = mgr.RunAsync(
+            "Loading text " + captured_name,
+            [captured_source, captured_name, captured_text_col, captured_label_col,
+             captured_has_labels, captured_tok_type, captured_max_length,
+             captured_lowercase, captured_min_freq, captured_max_vocab, state]
+            (cyxwiz::LambdaTask& task) {
+                try {
+                    task.ReportProgress(0.1f, "Building tokenizer");
+
+                    cyxwiz::TextDatasetConfig probe_cfg;
+                    probe_cfg.text_column  = captured_text_col;
+                    probe_cfg.label_column = captured_label_col;
+                    probe_cfg.has_labels   = captured_has_labels;
+                    switch (captured_tok_type) {
+                        case 0: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Whitespace; break;
+                        case 2: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Character; break;
+                        default: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Word; break;
+                    }
+                    probe_cfg.max_length     = captured_max_length;
+                    probe_cfg.lowercase      = captured_lowercase;
+                    probe_cfg.do_padding     = true;
+                    probe_cfg.do_truncation  = true;
+                    probe_cfg.min_word_freq  = captured_min_freq;
+                    probe_cfg.max_vocab_size = captured_max_vocab;
+
+                    cyxwiz::TextDataset probe(captured_source, probe_cfg);
+                    auto info = probe.GetInfo();
+
+                    task.ReportProgress(0.9f, "Registering dataset");
+
+                    auto& reg = cyxwiz::DataRegistry::Instance();
+                    cyxwiz::DataRegistry::TextDatasetEntry text_entry;
+                    text_entry.source_path    = captured_source;
+                    text_entry.text_column    = captured_text_col;
+                    text_entry.label_column   = captured_label_col;
+                    text_entry.has_labels     = captured_has_labels;
+                    text_entry.tokenizer_type = captured_tok_type;
+                    text_entry.max_length     = captured_max_length;
+                    text_entry.lowercase      = captured_lowercase;
+                    text_entry.do_padding     = true;
+                    text_entry.do_truncation  = true;
+                    text_entry.min_word_freq  = captured_min_freq;
+                    text_entry.max_vocab_size = captured_max_vocab;
+                    text_entry.num_samples    = info.num_samples;
+                    text_entry.num_classes    = info.num_classes;
+                    text_entry.class_names    = info.class_names;
+                    text_entry.vocab_size     = probe.GetVocabSize();
+
+                    reg.RegisterTextDataset(captured_name, text_entry);
+
+                    state->success      = true;
+                    state->backend      = 5;  // 5 = text in-memory
+                    state->rows         = static_cast<int64_t>(info.num_samples);
+                    state->cols         = 1;
+                    size_t per_sample   = static_cast<size_t>(captured_max_length) * sizeof(float);
+                    state->bytes        = info.num_samples * per_sample;
+                    state->num_classes  = info.num_classes;
+                    state->vocab_size   = probe.GetVocabSize();
+                    state->message      = "Loaded " + std::to_string(info.num_samples) +
+                                          " text samples (" + std::to_string(info.num_classes) +
+                                          " classes, vocab " + std::to_string(probe.GetVocabSize()) + ")";
+                } catch (const std::exception& e) {
+                    state->success = false;
+                    state->message = std::string("Error loading text: ") + e.what();
+                    spdlog::error("DataInputDialog async text load: {}", state->message);
+                }
+                // Atomic done flag is the publish barrier — must be set
+                // last so PollAsyncLoadResult only reads fully initialized
+                // state.
+                state->done.store(true);
+            });
+
+        spdlog::info("DataInputDialog: queued async text load (task {}, name '{}')",
+                     loading_task_id_, captured_name);
+
+        apply_in_progress_ = false;
+        has_changes_ = false;
+        return;
+    } else if (source_type_ == SourceType::File && strlen(file_path_) > 0) {
         auto& registry = cyxwiz::DataRegistry::Instance();
 
         // Capture the OLD dataset_name (from the previous Apply, if any)
@@ -913,17 +1179,31 @@ void DataInputDialog::PollAsyncLoadResult() {
         node_->parameters["data_loaded"] = "true";
 
         fs::path p(state->source_path);
-        std::string backing_suffix = (loaded_backend_ == 2) ? " (disk-backed)" : "";
-        node_->description = p.filename().string() + "\n" +
-            std::to_string(loaded_rows_) + " rows, " +
-            std::to_string(loaded_cols_) + " cols" + backing_suffix;
+        if (state->backend == 5) {
+            // Text load: rows = num_samples, cols = 1, plus class /
+            // vocab metadata. Description format differs from tabular
+            // because the interesting knobs are different.
+            loaded_memory_is_estimate_ = true;
+            node_->description = p.filename().string() + "\n" +
+                std::to_string(loaded_rows_) + " samples, " +
+                std::to_string(state->num_classes) + " classes, vocab " +
+                std::to_string(state->vocab_size);
+            apply_status_message_ = state->message.empty()
+                ? std::string("Loaded text from ") + p.filename().string()
+                : state->message;
+        } else {
+            std::string backing_suffix = (loaded_backend_ == 2) ? " (disk-backed)" : "";
+            node_->description = p.filename().string() + "\n" +
+                std::to_string(loaded_rows_) + " rows, " +
+                std::to_string(loaded_cols_) + " cols" + backing_suffix;
 
-        std::string size_label = (loaded_backend_ == 2) ? " on disk" : "";
-        apply_status_message_ = "Loaded " + p.filename().string() +
-            (loaded_backend_ == 2 ? " via Parquet cache (" : " (") +
-            std::to_string(loaded_rows_) + " rows, " +
-            std::to_string(loaded_cols_) + " cols, " +
-            FormatBytes(loaded_memory_bytes_) + size_label + ")";
+            std::string size_label = (loaded_backend_ == 2) ? " on disk" : "";
+            apply_status_message_ = "Loaded " + p.filename().string() +
+                (loaded_backend_ == 2 ? " via Parquet cache (" : " (") +
+                std::to_string(loaded_rows_) + " rows, " +
+                std::to_string(loaded_cols_) + " cols, " +
+                FormatBytes(loaded_memory_bytes_) + size_label + ")";
+        }
 
         spdlog::info("DataInputDialog: async load complete - {}", apply_status_message_);
     } else {
@@ -1146,17 +1426,28 @@ void DataInputDialog::RenderFileSource() {
         file_category_ = FileCategory::Video;
         has_changes_ = true;
     }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Text", &cat_idx, 4)) {
+        file_category_ = FileCategory::Text;
+        has_changes_ = true;
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Single-file path section — only shown for Tabular. Image uses its
-    // own folder/CSV inputs in RenderImageOptions. Audio/Video are not
-    // yet supported and show their own messages. Hiding this for non-
-    // tabular prevents the user from picking a .jpg in a file dialog
-    // that's meant for CSVs.
-    if (file_category_ == FileCategory::Tabular) {
+    // Single-file path section — shown for Tabular and for Text in
+    // SingleFile layout mode. In CorpusSubdirs mode Text uses a folder
+    // picker inside RenderTextOptions instead (mirroring image/audio).
+    // Image uses its own folder/CSV inputs in RenderImageOptions.
+    // Audio/Video are not yet supported and show their own messages.
+    // Hiding this for other categories prevents the user from picking
+    // a .jpg in a file dialog that's meant for CSVs.
+    const bool show_file_picker =
+        (file_category_ == FileCategory::Tabular) ||
+        (file_category_ == FileCategory::Text &&
+         text_layout_ == TextLayout::SingleFile);
+    if (show_file_picker) {
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, style.FrameRounding);
         if (ImGui::BeginChild("FileSelection", ImVec2(0, 100), true)) {
             ImGui::TextColored(accent, "Input File");
@@ -1209,6 +1500,7 @@ void DataInputDialog::RenderFileSource() {
         case FileCategory::Image:   RenderImageOptions(); break;
         case FileCategory::Audio:   RenderAudioOptions(); break;
         case FileCategory::Video:   RenderVideoOptions(); break;
+        case FileCategory::Text:    RenderTextOptions(); break;
     }
 }
 
@@ -1696,6 +1988,198 @@ void DataInputDialog::RenderVideoOptions() {
 
     ImGui::Spacing();
     ImGui::TextDisabled("Supported: MP4, AVI, MOV, WebM");
+}
+
+void DataInputDialog::RenderTextOptions() {
+    // Phase 3 text options. Two layouts:
+    //   1. SingleFile    — CSV / JSON / TXT picked via shared file picker
+    //   2. CorpusSubdirs — folder/<class>/*.txt picked via folder picker
+    //                      shown inline here. Analogous to image
+    //                      ClassSubdirs / audio ClassSubdirs.
+    //
+    // Column mapping controls only make sense in SingleFile mode — a
+    // folder corpus gets its labels from subdirectory names, not CSV
+    // columns. We hide the column inputs when CorpusSubdirs is picked
+    // so the user can't fill in fields that get ignored at load time.
+    //
+    // Graph preprocessing nodes (TextTokenizer / TextVocabulary /
+    // TextPadding) override the tokenizer defaults at compile time if
+    // present, so these are just sensible fallbacks for the common
+    // case of "drop a DataInput, point at a CSV, run".
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+
+    ImGui::TextColored(accent, "Text Loading Options");
+    ImGui::Spacing();
+
+    // Layout selector — mirrors the image / audio combo at the top of
+    // their options panels. Switching between modes preserves whichever
+    // path (file vs folder) was previously filled in, so round-tripping
+    // doesn't destroy state.
+    static const char* kTextLayoutNames[] = {
+        "Single file (CSV / JSON / TXT)",
+        "Corpus subdirectories (folder/<class>/*.txt)"
+    };
+    int layout_idx = static_cast<int>(text_layout_);
+    ImGui::Text("Layout:");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("##textlayout", &layout_idx, kTextLayoutNames, IM_ARRAYSIZE(kTextLayoutNames))) {
+        text_layout_ = static_cast<TextLayout>(layout_idx);
+        has_changes_ = true;
+    }
+    ImGui::Spacing();
+
+    if (text_layout_ == TextLayout::SingleFile) {
+        ImGui::TextDisabled("Loads from CSV/TSV (text column + label column), "
+                            "JSON / JSONL (text field + label field), or plain "
+                            "TXT (one unlabeled sample per line).");
+    } else {
+        ImGui::TextDisabled("Loads text from folder/<class>/*.txt — each "
+                            "subdirectory is a class, each .txt file is one "
+                            "sample. Mirrors ImageFolder / audio ClassSubdirs.");
+    }
+    ImGui::Spacing();
+
+    // CorpusSubdirs: folder picker lives inline here (file picker at the
+    // top is hidden in this mode). Shows a quick scan of subdirs when
+    // the path exists — mirrors the image/audio folder feedback.
+    if (text_layout_ == TextLayout::CorpusSubdirs) {
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(accent, "Folder");
+        ImGui::Spacing();
+
+        ImGui::Text("Path:");
+        ImGui::SameLine(60);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
+        if (ImGui::InputText("##textfolder", folder_path_, sizeof(folder_path_))) {
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...##textfolder", ImVec2(80, 0))) {
+            BrowseFolder();
+        }
+
+        if (strlen(folder_path_) > 0 && fs::exists(folder_path_)) {
+            int subdir_count = 0;
+            int file_count = 0;
+            try {
+                for (const auto& entry : fs::directory_iterator(folder_path_)) {
+                    if (!entry.is_directory()) continue;
+                    subdir_count++;
+                    for (const auto& sub : fs::recursive_directory_iterator(entry.path())) {
+                        if (!sub.is_regular_file()) continue;
+                        std::string ext = sub.path().extension().string();
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                        if (ext == ".txt" || ext == ".text" || ext == ".md") {
+                            file_count++;
+                        }
+                    }
+                }
+            } catch (...) { /* permission errors etc., ignore */ }
+            if (subdir_count > 0) {
+                ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f),
+                                   "Detected: %d classes, %d text files",
+                                   subdir_count, file_count);
+            } else {
+                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.4f, 1.0f),
+                                   "No class subdirectories found — corpus "
+                                   "layout expects folder/<class>/*.txt");
+            }
+        }
+        ImGui::Spacing();
+    }
+
+    // Column mapping is only meaningful for SingleFile CSV/JSON mode.
+    // In corpus mode the label comes from the subdirectory name, so we
+    // hide these fields to avoid confusion.
+    if (text_layout_ == TextLayout::SingleFile) {
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(accent, "Column Mapping");
+        ImGui::Spacing();
+
+        ImGui::Text("Text col:");
+        ImGui::SameLine(140);
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::InputText("##textcol", text_column_, sizeof(text_column_))) {
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(CSV column / JSON field holding sentences)");
+
+        ImGui::Text("Label col:");
+        ImGui::SameLine(140);
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::InputText("##textlabelcol", text_label_column_, sizeof(text_label_column_))) {
+            has_changes_ = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(blank = unlabeled corpus / plain TXT)");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Tokenizer Defaults");
+    ImGui::Spacing();
+    ImGui::TextDisabled("Overridden by a TextTokenizer node in the graph, if present.");
+    ImGui::Spacing();
+
+    static const char* kTokenizerNames[] = {
+        "Whitespace (split on spaces)",
+        "Word (splits on punctuation too)",
+        "Character (one token per char)"
+    };
+    ImGui::Text("Tokenizer:");
+    ImGui::SameLine(140);
+    ImGui::SetNextItemWidth(260);
+    if (ImGui::Combo("##texttok", &text_tokenizer_type_, kTokenizerNames, IM_ARRAYSIZE(kTokenizerNames))) {
+        has_changes_ = true;
+    }
+
+    ImGui::Text("Max length:");
+    ImGui::SameLine(140);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##textmaxlen", &text_max_length_)) {
+        if (text_max_length_ < 1) text_max_length_ = 1;
+        if (text_max_length_ > 8192) text_max_length_ = 8192;
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("tokens (pad/truncate)");
+
+    if (ImGui::Checkbox("Lowercase text", &text_lowercase_)) {
+        has_changes_ = true;
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Vocabulary");
+    ImGui::Spacing();
+
+    ImGui::Text("Min freq:");
+    ImGui::SameLine(140);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##textminfreq", &text_min_freq_)) {
+        if (text_min_freq_ < 1) text_min_freq_ = 1;
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(drop words occurring fewer times)");
+
+    ImGui::Text("Max vocab:");
+    ImGui::SameLine(140);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##textmaxvocab", &text_max_vocab_size_)) {
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(-1 = unlimited)");
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Supported: CSV, TSV, JSON, TXT (one line per sample), folder of text files");
 }
 
 void DataInputDialog::RenderTransformationTab() {
@@ -2381,6 +2865,7 @@ void DataInputDialog::RenderPreviewPanel() {
                 case FileCategory::Tabular: RenderTabularPreview(); break;
                 case FileCategory::Image:   RenderImagePreview(); break;
                 case FileCategory::Audio:   RenderAudioPreview(); break;
+                case FileCategory::Text:    RenderTextPreview(); break;
                 default: RenderTabularPreview(); break;
             }
         } else {
@@ -2554,12 +3039,142 @@ void DataInputDialog::DetectFileCategory() {
     }
 }
 
+void DataInputDialog::RenderTextPreview() {
+    // Text preview reuses the CSV head read by LoadColumnList. We render
+    // a simple column table (identical to RenderTabularPreview) plus a
+    // small header showing which column the dialog has mapped to
+    // text/label — so the user can verify their mapping before Apply
+    // without reading the full tokenize+vocab round-trip error at train
+    // time. Corpus mode (folder/<class>/*.txt) has no CSV to preview;
+    // show the folder scan result instead.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+
+    if (text_layout_ == TextLayout::CorpusSubdirs) {
+        if (strlen(folder_path_) == 0) {
+            ImGui::TextDisabled("No folder selected");
+            return;
+        }
+        if (!fs::exists(folder_path_)) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "Folder does not exist");
+            return;
+        }
+        int subdir_count = 0, file_count = 0;
+        try {
+            for (const auto& entry : fs::directory_iterator(folder_path_)) {
+                if (!entry.is_directory()) continue;
+                subdir_count++;
+                for (const auto& sub : fs::recursive_directory_iterator(entry.path())) {
+                    if (!sub.is_regular_file()) continue;
+                    std::string ext = sub.path().extension().string();
+                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                    if (ext == ".txt" || ext == ".text" || ext == ".md") file_count++;
+                }
+            }
+        } catch (...) {}
+        ImGui::TextColored(accent, "Corpus scan");
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::Text("Folder:  %s", folder_path_);
+        ImGui::Text("Classes: %d subdirectories", subdir_count);
+        ImGui::Text("Samples: %d text files", file_count);
+        ImGui::Spacing();
+        ImGui::TextDisabled("Each subdirectory name becomes a class label. "
+                            "Apply to tokenize + build vocab (runs on a worker thread).");
+        return;
+    }
+
+    // SingleFile mode: show the CSV head via the existing preview_columns_
+    // / preview_data_ state populated by LoadColumnList.
+    if (preview_columns_.empty()) {
+        ImGui::TextDisabled("No data to preview — click Load Preview above.");
+        return;
+    }
+
+    // Header strip: which column is the text? which is the label? Use the
+    // dialog's mapped field names and verify they're actually in the CSV
+    // header row. Wrong/missing columns show in red so the user catches
+    // the typo before Apply.
+    auto col_exists = [&](const std::string& name) {
+        if (name.empty()) return false;
+        for (const auto& c : preview_columns_) if (c == name) return true;
+        return false;
+    };
+
+    ImGui::TextColored(accent, "Column mapping");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    std::string text_col_str = text_column_;
+    std::string label_col_str = text_label_column_;
+    ImVec4 ok_color  = ImVec4(0.6f, 0.9f, 0.6f, 1.0f);
+    ImVec4 err_color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+
+    ImGui::Text("Text:  ");
+    ImGui::SameLine();
+    if (text_col_str.empty()) {
+        ImGui::TextColored(err_color, "(not set)");
+    } else if (col_exists(text_col_str)) {
+        ImGui::TextColored(ok_color, "%s", text_col_str.c_str());
+    } else {
+        ImGui::TextColored(err_color, "%s (not in file)", text_col_str.c_str());
+    }
+
+    ImGui::Text("Label: ");
+    ImGui::SameLine();
+    if (label_col_str.empty()) {
+        ImGui::TextDisabled("(unlabeled)");
+    } else if (col_exists(label_col_str)) {
+        ImGui::TextColored(ok_color, "%s", label_col_str.c_str());
+    } else {
+        ImGui::TextColored(err_color, "%s (not in file)", label_col_str.c_str());
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("%zu columns, %zu rows shown", preview_columns_.size(), preview_data_.size());
+    ImGui::Spacing();
+
+    // Column table (same structure as RenderTabularPreview).
+    if (ImGui::BeginTable("TextPreview", static_cast<int>(preview_columns_.size()),
+        ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
+        ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit,
+        ImVec2(0, ImGui::GetContentRegionAvail().y - 30))) {
+
+        for (const auto& col : preview_columns_) {
+            ImGui::TableSetupColumn(col.c_str(), ImGuiTableColumnFlags_WidthFixed, 200.0f);
+        }
+        ImGui::TableHeadersRow();
+
+        int row_idx = 0;
+        for (const auto& row : preview_data_) {
+            if (row_idx >= 15) break;
+            ImGui::TableNextRow();
+            int col_idx = 0;
+            for (const auto& cell : row) {
+                if (col_idx < static_cast<int>(preview_columns_.size())) {
+                    ImGui::TableSetColumnIndex(col_idx);
+                    ImGui::TextUnformatted(cell.c_str());
+                }
+                col_idx++;
+            }
+            row_idx++;
+        }
+        ImGui::EndTable();
+    }
+}
+
 void DataInputDialog::LoadPreview() {
     preview_error_.clear();
     preview_columns_.clear();
     preview_data_.clear();
 
-    if (source_type_ == SourceType::File && file_category_ == FileCategory::Tabular) {
+    // Tabular and Text both read the first N rows of a CSV/TSV/JSON file
+    // through LoadColumnList. Text category uses the same column table for
+    // now; a dedicated renderer highlights the mapped text + label columns.
+    if (source_type_ == SourceType::File &&
+        (file_category_ == FileCategory::Tabular ||
+         file_category_ == FileCategory::Text)) {
         LoadColumnList();
     }
     // TODO: Add image, audio, database preview loading
@@ -2647,6 +3262,12 @@ void DataInputDialog::BrowseFile() {
             break;
         case FileCategory::Video:
             filter = "Video Files\0*.mp4;*.avi;*.mov;*.mkv;*.webm;*.wmv\0All Files\0*.*\0";
+            break;
+        case FileCategory::Text:
+            filter = "Text Data\0*.csv;*.tsv;*.json;*.jsonl;*.txt\0"
+                     "CSV\0*.csv\0TSV\0*.tsv\0"
+                     "JSON\0*.json;*.jsonl\0Plain Text\0*.txt\0"
+                     "All Files\0*.*\0";
             break;
     }
 
