@@ -102,6 +102,7 @@ set(ENGINE_SOURCES
     src/core/parquet_arrow_batcher.cpp
     src/core/image_dataset_batcher.cpp
     src/core/audio_dataset_batcher.cpp
+    src/core/text_dataset_batcher.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
