@@ -124,6 +124,17 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"Augmentation", NodeType::Augmentation},
         {"TensorReshape", NodeType::TensorReshape},
 
+        // Text Preprocessing (Phase 3) — the GraphCompiler treats these
+        // as config-only nodes: ExtractTextTokenizer / ExtractTextVocabulary
+        // / ExtractTextPadding read the node params into
+        // TrainingConfiguration.text_preprocessing. They do NOT contribute
+        // a layer to the model chain. Missing here previously → loader
+        // fell through to NodeType::Dense, compile crashed on a missing
+        // "units" param with "invalid stoi argument".
+        {"TextTokenizer", NodeType::TextTokenizer},
+        {"TextVocabulary", NodeType::TextVocabulary},
+        {"TextPadding", NodeType::TextPadding},
+
         // Image Transforms (Phase 1)
         {"Resize", NodeType::Resize},
         {"CenterCrop", NodeType::CenterCrop},

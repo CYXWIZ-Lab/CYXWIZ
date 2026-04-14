@@ -449,7 +449,13 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"DataSplit", NodeType::DataSplit},
         {"TensorReshape", NodeType::TensorReshape},
         {"Normalize", NodeType::Normalize},
-        {"OneHotEncode", NodeType::OneHotEncode}
+        {"OneHotEncode", NodeType::OneHotEncode},
+
+        // Text Preprocessing (Phase 3) — config-only nodes consumed by
+        // GraphCompiler's ExtractText* extractors; no layer contribution.
+        {"TextTokenizer", NodeType::TextTokenizer},
+        {"TextVocabulary", NodeType::TextVocabulary},
+        {"TextPadding", NodeType::TextPadding}
     };
 
     auto it = type_map.find(type_str);
