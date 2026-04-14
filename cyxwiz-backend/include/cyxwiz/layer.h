@@ -422,6 +422,15 @@ public:
     std::string GetName() const override { return "Embedding"; }
 
     /**
+     * Get parameter gradients for the optimizer. Returns {"weight": grad}
+     * matching the LinearLayer convention. Added for EmbeddingModule wiring;
+     * the older `GetParameters()` hack of returning "grad_weight" alongside
+     * "weight" is kept for binding compatibility but the optimizer should
+     * use this method.
+     */
+    std::map<std::string, Tensor> GetGradients();
+
+    /**
      * Get embedding for a specific index
      * @param index Token index
      * @return Embedding vector [embedding_dim]

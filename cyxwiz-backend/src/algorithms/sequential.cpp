@@ -58,6 +58,89 @@ std::string LinearModule::GetName() const {
 }
 
 // ============================================================================
+// EmbeddingModule Implementation
+// ============================================================================
+//
+// The backend's EmbeddingLayer reads indices as int32, but CyxWiz's
+// IBatcher / training pipeline ships every tensor as float32 (for
+// uniformity with Dense/Conv/etc.). We bridge the type gap here by
+// building an int32 Tensor on every forward pass whose values are the
+// rounded floats from the upstream batch. This is the cost of dropping
+// Embedding into an otherwise float-only graph — worth it, since the
+// alternative (dual-typing the whole batching layer) is much bigger.
+//
+// Shape contract:
+//   Forward input:  [batch, seq_len]                float, integer values
+//   Forward output: [batch, seq_len, embedding_dim] float
+//
+// A Flatten module after this produces [batch, seq_len * embedding_dim]
+// which is what a Dense layer head expects.
+
+EmbeddingModule::EmbeddingModule(size_t num_embeddings, size_t embedding_dim,
+                                 int padding_idx)
+    : num_embeddings_(num_embeddings)
+    , embedding_dim_(embedding_dim)
+    , padding_idx_(padding_idx)
+{
+    layer_ = std::make_unique<EmbeddingLayer>(
+        static_cast<int>(num_embeddings),
+        static_cast<int>(embedding_dim),
+        padding_idx);
+}
+
+Tensor EmbeddingModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+
+    // Convert [batch, seq_len] float → int32. IBatcher stores every
+    // feature as float, so even integer token IDs arrive as floats
+    // like 1234.0f. We static_cast to int32 here, clamping negatives
+    // to 0 as a defensive fallback against NaN rounding.
+    const auto& shape = input.Shape();
+    size_t total = 1;
+    for (auto d : shape) total *= d;
+
+    Tensor int_input(shape, DataType::Int32);
+    const float* src = input.Data<float>();
+    int32_t* dst = static_cast<int32_t*>(int_input.Data());
+    const int32_t vocab_max = static_cast<int32_t>(num_embeddings_) - 1;
+    for (size_t i = 0; i < total; ++i) {
+        int32_t idx = static_cast<int32_t>(src[i]);
+        // Clamp to valid range. Out-of-vocab IDs map to 0 (the [PAD]
+        // slot by convention — safe fallback).
+        if (idx < 0 || idx > vocab_max) idx = 0;
+        dst[i] = idx;
+    }
+
+    return layer_->Forward(int_input);
+}
+
+Tensor EmbeddingModule::Backward(const Tensor& grad_output) {
+    // EmbeddingLayer::Backward returns an empty tensor because you
+    // can't differentiate w.r.t. integer indices — but it DOES update
+    // its own weight gradients internally. Propagating "nothing"
+    // upstream is correct: Embedding is almost always the first
+    // trainable layer, so there's no upstream tensor gradient anyway.
+    return layer_->Backward(grad_output);
+}
+
+std::map<std::string, Tensor> EmbeddingModule::GetParameters() {
+    return layer_->GetParameters();
+}
+
+void EmbeddingModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    layer_->SetParameters(params);
+}
+
+std::map<std::string, Tensor> EmbeddingModule::GetGradients() {
+    return layer_->GetGradients();
+}
+
+std::string EmbeddingModule::GetName() const {
+    return "Embedding(" + std::to_string(num_embeddings_) + " x " +
+           std::to_string(embedding_dim_) + ")";
+}
+
+// ============================================================================
 // ReLUModule Implementation
 // ============================================================================
 

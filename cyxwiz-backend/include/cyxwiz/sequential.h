@@ -33,7 +33,8 @@ enum class ModuleType {
     ELU,
     GELU,
     Swish,
-    Mish
+    Mish,
+    Embedding
 };
 
 /**
@@ -138,6 +139,37 @@ private:
     std::unique_ptr<LinearLayer> layer_;
     size_t in_features_;
     size_t out_features_;
+};
+
+/**
+ * @brief Wrapper for EmbeddingLayer — token-ID lookup table.
+ *
+ * Translates [batch, seq_len] integer indices into
+ * [batch, seq_len, embedding_dim] dense float vectors. The underlying
+ * `cyxwiz::EmbeddingLayer` expects an int32 Tensor, but CyxWiz's training
+ * pipeline carries all tensors as float32 (IBatcher contract). This
+ * wrapper casts float → int32 on each forward pass so text pipelines can
+ * drop an Embedding node between DataLoader and the MLP head without
+ * changing the batcher type.
+ */
+class CYXWIZ_API EmbeddingModule : public Module {
+public:
+    EmbeddingModule(size_t num_embeddings, size_t embedding_dim,
+                    int padding_idx = -1);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<EmbeddingLayer> layer_;
+    size_t num_embeddings_;
+    size_t embedding_dim_;
+    int padding_idx_;
 };
 
 /**

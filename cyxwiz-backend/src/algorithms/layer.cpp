@@ -1120,23 +1120,21 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
     cached_indices_ = input.Clone();
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        // Apply max_norm if specified
+    // ArrayFire path is only used for the unbatched case (shape.size()==1).
+    // Batched input deliberately falls through to the CPU fallback below
+    // because AF's column-major scatter gives the wrong data layout for
+    // the next layer. The previous version did `try { throw } catch` per
+    // batch which spammed warnings 600+ times per epoch and burned CPU
+    // on the exception throw — this gate avoids both.
+    if (input.Shape().size() != 2) try {
+        // Apply max_norm if specified (single-sample path only)
         if (max_norm_ > 0.0f) {
             NormalizeEmbeddings();
         }
 
         const auto& shape = input.Shape();
-        bool is_batched = shape.size() == 2;
-
-        // For batched input (3D output), skip ArrayFire to avoid memory layout issues
-        if (is_batched) {
-            throw af::exception("Use CPU for batched embedding");
-        }
-
-        dim_t batch_size = is_batched ? shape[0] : 1;
-        dim_t seq_len = is_batched ? shape[1] : shape[0];
-        dim_t total_indices = batch_size * seq_len;
+        dim_t seq_len = shape[0];
+        dim_t total_indices = seq_len;
 
         // Get indices as int32
         const int32_t* indices_ptr = input.Data<int32_t>();
@@ -1144,16 +1142,8 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
         // Get weight matrix
         af::array w = TensorToAf(weight_);  // [num_embeddings, embedding_dim]
 
-        // Gather embeddings using advanced indexing
-        // Create index array
-        af::array indices_af(total_indices, indices_ptr);
-
-        // Use af::rows to select embeddings (vectorized lookup)
-        // This avoids explicit loops by using ArrayFire's indexing
-        af::array output_flat = af::constant(0.0f, af::dim4(total_indices, embedding_dim_));
-
         // Vectorized gather: for each index, get the corresponding row
-        // ArrayFire doesn't have direct gather, but we can use batch indexing
+        af::array output_flat = af::constant(0.0f, af::dim4(total_indices, embedding_dim_));
         for (dim_t i = 0; i < total_indices; i++) {
             int32_t idx = indices_ptr[i];
             if (idx >= 0 && idx < num_embeddings_) {
@@ -1162,14 +1152,8 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
             // If idx == padding_idx or out of bounds, leave as zero
         }
 
-        // Reshape to [batch, seq_len, embedding_dim] or [seq_len, embedding_dim]
-        af::array output;
-        if (is_batched) {
-            output = af::moddims(output_flat, af::dim4(batch_size, seq_len, embedding_dim_));
-        } else {
-            output = af::moddims(output_flat, af::dim4(seq_len, embedding_dim_));
-        }
-
+        // Reshape to [seq_len, embedding_dim]
+        af::array output = af::moddims(output_flat, af::dim4(seq_len, embedding_dim_));
         return AfToTensor(output);
     } catch (const af::exception& e) {
         spdlog::warn("ArrayFire EmbeddingLayer::Forward failed: {}", e.what());
@@ -1217,13 +1201,15 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    // Same gating as Forward: batched input goes to the CPU fallback
+    // because AF's column-major moddims silently scrambles the row
+    // ordering of [batch, seq_len, embed_dim] gradient tensors. Caught
+    // when wiring text training — the AF backward returned valid-shaped
+    // but content-wrong gradients, leading to slow / unstable learning.
+    if (cached_indices_.Shape().size() != 2) try {
         const auto& shape = cached_indices_.Shape();
-        bool is_batched = shape.size() == 2;
-
-        dim_t batch_size = is_batched ? shape[0] : 1;
-        dim_t seq_len = is_batched ? shape[1] : shape[0];
-        dim_t total_indices = batch_size * seq_len;
+        dim_t seq_len = shape[0];
+        dim_t total_indices = seq_len;
 
         const int32_t* indices_ptr = cached_indices_.Data<int32_t>();
 
@@ -1235,7 +1221,6 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
         grad = af::moddims(grad, af::dim4(total_indices, embedding_dim_));
 
         // Scatter-add gradients to the weight matrix
-        // For each position, add gradient to the corresponding embedding
         for (dim_t i = 0; i < total_indices; i++) {
             int32_t idx = indices_ptr[i];
             if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
@@ -1328,6 +1313,16 @@ std::map<std::string, Tensor> EmbeddingLayer::GetParameters() {
     params["weight"] = weight_;
     params["grad_weight"] = grad_weight_;
     return params;
+}
+
+std::map<std::string, Tensor> EmbeddingLayer::GetGradients() {
+    // Match LinearLayer convention: one entry per trainable parameter.
+    // Used by EmbeddingModule so the optimizer can update weights
+    // through the standard Module::GetGradients() path instead of the
+    // legacy GetParameters()/"grad_weight" hack.
+    std::map<std::string, Tensor> grads;
+    grads["weight"] = grad_weight_;
+    return grads;
 }
 
 void EmbeddingLayer::SetParameters(const std::map<std::string, Tensor>& params) {
