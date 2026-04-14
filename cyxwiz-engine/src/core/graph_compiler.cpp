@@ -179,14 +179,17 @@ TrainingConfiguration GraphCompiler::Compile(
         }
 
         // Check 3: label column. Required for tabular supervised training,
-        // but image and audio datasets get labels from folder structure
-        // automatically — don't emit a misleading warning for them.
+        // but image / audio / text datasets get labels from folder
+        // structure or an explicit dialog column, not from a flag on
+        // the DataInput node — don't emit a misleading warning for them.
         auto cat_it_lbl = dataset_node->parameters.find("file_category");
         const std::string cat_str = (cat_it_lbl != dataset_node->parameters.end())
             ? cat_it_lbl->second : std::string();
         bool is_image_dataset = (cat_str == "image");
         bool is_audio_dataset = (cat_str == "audio");
-        bool labels_from_structure = is_image_dataset || is_audio_dataset;
+        bool is_text_dataset = (cat_str == "text");
+        bool labels_from_structure =
+            is_image_dataset || is_audio_dataset || is_text_dataset;
 
         const std::string label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
@@ -448,7 +451,7 @@ TrainingConfiguration GraphCompiler::Compile(
     }
 
     // === Domain detection ===
-    // The DataInput node carries file_category (tabular / image / audio).
+    // The DataInput node carries file_category (tabular / image / audio / text).
     // Domain drives both the dispatch in StartTrainingFromGraph and the
     // domain-specific checks below.
     if (dataset_node) {
@@ -457,6 +460,7 @@ TrainingConfiguration GraphCompiler::Compile(
             ? cat_it->second : std::string();
         bool is_image = (cat == "image");
         bool is_audio = (cat == "audio");
+        bool is_text = (cat == "text");
 
         if (is_audio) {
             config.preprocessing_domain = PreprocessingDomain::Audio;
@@ -466,6 +470,15 @@ TrainingConfiguration GraphCompiler::Compile(
             // config.audio_preprocessing), or we fall back to the
             // dialog-baked defaults on AudioDatasetEntry. Either mode is
             // valid — we log which one won near the end of Compile().
+        }
+
+        if (is_text) {
+            config.preprocessing_domain = PreprocessingDomain::Text;
+            // Text preprocessing: either the graph has a TextTokenizer /
+            // TextVocabulary / TextPadding node (extractors run later),
+            // or we fall back to the dialog defaults on TextDatasetEntry.
+            // Summary log near the end of Compile() reports which mode
+            // drove the final config.
         }
 
         if (is_image) {
@@ -615,6 +628,29 @@ TrainingConfiguration GraphCompiler::Compile(
         } else {
             spdlog::info("GraphCompiler: audio feature extraction uses dialog defaults "
                          "(no Spectrogram/MelSpectrogram/MFCC node in graph)");
+        }
+    }
+
+    // Text preprocessing mode summary — analogous to the audio block.
+    // Each of the three text sub-configs (tokenizer / vocabulary /
+    // padding) can be independently overridden by a graph node, so the
+    // log calls out which ones came from the graph vs the dialog.
+    if (config.preprocessing_domain == PreprocessingDomain::Text) {
+        bool any_override = config.text_preprocessing.has_tokenizer_node ||
+                            config.text_preprocessing.has_vocabulary_node ||
+                            config.text_preprocessing.has_padding_node;
+        if (any_override) {
+            spdlog::info("GraphCompiler: text preprocessing driven by graph nodes "
+                         "(tokenizer={}, vocab={}, padding={}) — tokenizer_type={}, "
+                         "max_length={}",
+                         config.text_preprocessing.has_tokenizer_node,
+                         config.text_preprocessing.has_vocabulary_node,
+                         config.text_preprocessing.has_padding_node,
+                         config.text_preprocessing.tokenizer_type,
+                         config.text_preprocessing.max_length);
+        } else {
+            spdlog::info("GraphCompiler: text preprocessing uses dialog defaults "
+                         "(no TextTokenizer/TextVocabulary/TextPadding node in graph)");
         }
     }
 
@@ -829,6 +865,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::PixelShuffle:
         case gui::NodeType::PolicyNetwork:
         case gui::NodeType::ValueNetwork:
+        case gui::NodeType::Embedding:
             return true;
         default:
             return false;
@@ -1040,7 +1077,77 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
                  config.audio_preprocessing.pitch_shift);
 }
 
-// --- Text / TimeSeries extractors (Phase 3-5 — deferred) ---
+// --- Text extractors (Phase 3) ---
+//
+// The three text preprocessing nodes overlap in what they configure.
+// TextTokenizer is the "one-stop shop" carrying every tokenizer +
+// vocab + padding param. TextVocabulary lets the user override just
+// the vocabulary sub-config (e.g., load a pre-built vocab file).
+// TextPadding lets the user override just the padding params.
+// Presence flags on TextPreprocessingConfig track which sub-configs
+// came from the graph so TextDatasetBatcher knows which ones to
+// honor vs. fall back to the dialog defaults.
+
+static void ExtractTextTokenizer(const gui::MLNode& node, TrainingConfiguration& config) {
+    config.text_preprocessing.has_tokenizer_node = true;
+    // TextTokenizer carries ALL the tokenizer + vocab + padding params
+    // as a single unified node. TextVocabulary / TextPadding can
+    // override specific sub-configs on top if they're also present.
+    if (node.parameters.count("tokenizer_type"))
+        config.text_preprocessing.tokenizer_type = std::stoi(node.parameters.at("tokenizer_type"));
+    if (node.parameters.count("lowercase"))
+        config.text_preprocessing.lowercase = (node.parameters.at("lowercase") == "true");
+    if (node.parameters.count("padding"))
+        config.text_preprocessing.do_padding = (node.parameters.at("padding") == "true");
+    if (node.parameters.count("truncation"))
+        config.text_preprocessing.do_truncation = (node.parameters.at("truncation") == "true");
+    if (node.parameters.count("max_length"))
+        config.text_preprocessing.max_length = std::stoi(node.parameters.at("max_length"));
+    if (node.parameters.count("min_freq"))
+        config.text_preprocessing.min_word_freq = std::stoi(node.parameters.at("min_freq"));
+    if (node.parameters.count("max_vocab_size"))
+        config.text_preprocessing.max_vocab_size = std::stoi(node.parameters.at("max_vocab_size"));
+    spdlog::info("GraphCompiler: TextTokenizer type={}, max_length={}, "
+                 "lowercase={}, min_freq={}, max_vocab_size={}",
+                 config.text_preprocessing.tokenizer_type,
+                 config.text_preprocessing.max_length,
+                 config.text_preprocessing.lowercase,
+                 config.text_preprocessing.min_word_freq,
+                 config.text_preprocessing.max_vocab_size);
+}
+
+static void ExtractTextVocabulary(const gui::MLNode& node, TrainingConfiguration& config) {
+    // TextVocabulary overrides vocab sub-config only. If TextTokenizer
+    // also ran, its vocab params are now replaced. If not, the entry's
+    // dialog-baked defaults still provide the tokenizer_type etc.
+    config.text_preprocessing.has_vocabulary_node = true;
+    if (node.parameters.count("min_freq"))
+        config.text_preprocessing.min_word_freq = std::stoi(node.parameters.at("min_freq"));
+    if (node.parameters.count("max_vocab_size"))
+        config.text_preprocessing.max_vocab_size = std::stoi(node.parameters.at("max_vocab_size"));
+    if (node.parameters.count("vocab_file"))
+        config.text_preprocessing.vocab_file = node.parameters.at("vocab_file");
+    spdlog::info("GraphCompiler: TextVocabulary min_freq={}, max_vocab_size={}, "
+                 "vocab_file='{}'",
+                 config.text_preprocessing.min_word_freq,
+                 config.text_preprocessing.max_vocab_size,
+                 config.text_preprocessing.vocab_file);
+}
+
+static void ExtractTextPadding(const gui::MLNode& node, TrainingConfiguration& config) {
+    // TextPadding overrides padding sub-config only.
+    config.text_preprocessing.has_padding_node = true;
+    config.text_preprocessing.do_padding = true;
+    if (node.parameters.count("max_length"))
+        config.text_preprocessing.max_length = std::stoi(node.parameters.at("max_length"));
+    if (node.parameters.count("pad_value"))
+        config.text_preprocessing.pad_value = std::stoi(node.parameters.at("pad_value"));
+    spdlog::info("GraphCompiler: TextPadding max_length={}, pad_value={}",
+                 config.text_preprocessing.max_length,
+                 config.text_preprocessing.pad_value);
+}
+
+// --- TimeSeries extractors (Phase 4 — deferred) ---
 
 // --- The table ---
 
@@ -1070,9 +1177,9 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::MFCC,               PreprocessingDomain::Audio,       ExtractMFCC},
     {gui::NodeType::AudioAugmentation,  PreprocessingDomain::Audio,       ExtractAudioAugmentation},
     // Text (Phase 3)
-    {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        nullptr},
-    {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        nullptr},
-    {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        ExtractTextTokenizer},
+    {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        ExtractTextVocabulary},
+    {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        ExtractTextPadding},
     // TimeSeries (Phase 4)
     {gui::NodeType::TimeSeriesWindow,   PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::TimeSeriesFeatures, PreprocessingDomain::TimeSeries,  nullptr},
@@ -1100,6 +1207,13 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
         case gui::NodeType::Dense:
             if (node.parameters.count("units"))
                 layer.units = std::stoi(node.parameters.at("units"));
+            break;
+
+        case gui::NodeType::Embedding:
+            // Embedding params (num_embeddings, embedding_dim) stay in
+            // the generic `parameters` map and are read by the training
+            // executor. No dedicated fields on CompiledLayer to keep
+            // the struct slim; the raw parameter passthrough is enough.
             break;
 
         case gui::NodeType::Conv2D:
@@ -1202,6 +1316,25 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
             // Dense: [...] -> [units]
             output_shape = {static_cast<size_t>(layer.units)};
             break;
+
+        case gui::NodeType::Embedding: {
+            // Embedding: [seq_len] -> [seq_len, embedding_dim]
+            // Input shape is the sequence length (from text dataset
+            // max_length). Output adds the embedding_dim channel so a
+            // downstream Flatten produces seq_len * embedding_dim.
+            int embed_dim = 64;
+            auto it = layer.parameters.find("embedding_dim");
+            if (it != layer.parameters.end()) {
+                try { embed_dim = std::stoi(it->second); } catch (...) {}
+            }
+            if (!input_shape.empty()) {
+                output_shape = {input_shape[0],
+                                static_cast<size_t>(embed_dim)};
+            } else {
+                output_shape = {static_cast<size_t>(embed_dim)};
+            }
+            break;
+        }
 
         case gui::NodeType::Conv2D:
             // Conv2D: [H, W, C] -> [(H + 2*padding - kernel_size) / stride + 1, W', filters]

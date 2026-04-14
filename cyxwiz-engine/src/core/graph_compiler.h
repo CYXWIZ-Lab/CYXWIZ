@@ -150,6 +150,45 @@ struct AudioPreprocessingConfig {
 };
 
 /**
+ * Text preprocessing configuration (Phase 3).
+ *
+ * Populated by text-domain extractors in the graph compiler when a
+ * TextTokenizer / TextVocabulary / TextPadding node is present.
+ * Otherwise stays at default and TextDatasetBatcher falls back to
+ * the dialog-baked defaults on DataRegistry::TextDatasetEntry.
+ *
+ * The three text preprocessing nodes overlap in what they can set
+ * (TextTokenizer carries a complete config; TextVocabulary and
+ * TextPadding let the user override just their specific sub-config).
+ * Presence flags record which sub-configs were explicitly provided
+ * by the graph so the batcher knows what to override vs keep.
+ */
+struct TextPreprocessingConfig {
+    // Set true by ExtractTextTokenizer when a TextTokenizer node is
+    // found. When false and the sub-specific flags below are also
+    // false, the batcher uses the dialog-baked defaults entirely.
+    bool has_tokenizer_node = false;
+    // tokenizer_type: 0=Whitespace, 1=Word, 2=Character
+    int tokenizer_type = 1;
+    bool lowercase = true;
+    bool do_padding = true;
+    bool do_truncation = true;
+
+    // Vocabulary — set by ExtractTextTokenizer, overridden by
+    // ExtractTextVocabulary if a TextVocabulary node is also present.
+    bool has_vocabulary_node = false;
+    int min_word_freq = 1;
+    int max_vocab_size = -1;         // -1 = unlimited
+    std::string vocab_file;          // optional pre-built vocab path
+
+    // Padding — set by ExtractTextTokenizer, overridden by
+    // ExtractTextPadding if a TextPadding node is also present.
+    bool has_padding_node = false;
+    int max_length = 512;
+    int pad_value = 0;
+};
+
+/**
  * A single graph validation finding. Populated by GraphCompiler::Compile
  * during a Compile pass and surfaced to the user via the Compile popup.
  *
@@ -221,6 +260,13 @@ struct TrainingConfiguration {
     // AudioDatasetBatcher falls back to the dialog defaults from
     // AudioDatasetEntry.
     AudioPreprocessingConfig audio_preprocessing;
+
+    // Preprocessing — text-specific (Phase 3). Populated by text-
+    // domain extractors (TextTokenizer / TextVocabulary / TextPadding)
+    // when preprocessing_domain == Text. When none of the presence
+    // flags are true, TextDatasetBatcher falls back to the dialog
+    // defaults from TextDatasetEntry.
+    TextPreprocessingConfig text_preprocessing;
 
     // Loss function
     gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;
