@@ -387,6 +387,43 @@ public:
     const AudioDatasetEntry* GetAudioDatasetEntry(const std::string& name) const;
     void UnregisterAudioDataset(const std::string& name);
 
+    // --- Text dataset registry (Phase 3) ---
+    // Same lightweight-metadata pattern as images/audio. The actual
+    // TextDataset (which owns the tokenizer + vocabulary) is constructed
+    // at training start by TextDatasetBatcher using the tokenizer config
+    // from this entry. For sources that build a vocab from the corpus,
+    // the DataInputDialog's Apply path runs a probe TextDataset once so
+    // we can store num_samples / num_classes / vocab_size without having
+    // to re-tokenize on every dialog reopen.
+    struct TextDatasetEntry {
+        std::string source_path;         // CSV / JSON / TXT / folder
+        std::string text_column;         // CSV column holding the text
+        std::string label_column;        // CSV column holding the label (empty = no labels)
+        bool has_labels = true;
+
+        // Dialog-baked defaults — overridable by graph preprocessing
+        // nodes (TextTokenizer / TextVocabulary / TextPadding).
+        // tokenizer_type: 0=Whitespace, 1=Word, 2=Character
+        int tokenizer_type = 1;
+        int max_length = 512;
+        bool lowercase = true;
+        bool do_padding = true;
+        bool do_truncation = true;
+        int min_word_freq = 1;
+        int max_vocab_size = -1;         // -1 = unlimited
+        std::string vocab_file;          // optional pre-built vocab path
+
+        // Populated by a probe pass inside DataInputDialog::Apply
+        size_t num_samples = 0;
+        size_t num_classes = 0;
+        std::vector<std::string> class_names;
+        size_t vocab_size = 0;           // after building vocabulary from corpus
+    };
+    void RegisterTextDataset(const std::string& name, const TextDatasetEntry& entry);
+    bool IsTextDataset(const std::string& name) const;
+    const TextDatasetEntry* GetTextDatasetEntry(const std::string& name) const;
+    void UnregisterTextDataset(const std::string& name);
+
     // Which backing store a successful LoadTabularCSV call ended up using.
     enum class TabularLoadBackend {
         Failed,      // load failed; nothing is registered
@@ -576,6 +613,11 @@ private:
     // The actual feature-extracting AudioDataset is constructed at
     // training start by AudioDatasetBatcher.
     std::map<std::string, AudioDatasetEntry> audio_dataset_entries_;
+
+    // Text dataset entries (Phase 3) — same pattern as audio/images.
+    // The actual tokenizing TextDataset is constructed at training
+    // start by TextDatasetBatcher.
+    std::map<std::string, TextDatasetEntry> text_dataset_entries_;
 
     mutable std::mutex mutex_;
 
