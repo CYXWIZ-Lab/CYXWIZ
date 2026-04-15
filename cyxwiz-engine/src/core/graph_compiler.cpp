@@ -866,6 +866,16 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::PolicyNetwork:
         case gui::NodeType::ValueNetwork:
         case gui::NodeType::Embedding:
+        // Recurrent layers — required for text/time-series models.
+        // Omitting them here caused the LSTM smoke test to silently
+        // drop the LSTM node from `config_.layers`, leaving
+        // training_executor to feed [batch, seq, embed] straight into
+        // a Dense layer sized for [batch, seq*embed] — runtime shape
+        // mismatch and crash.
+        case gui::NodeType::LSTM:
+        case gui::NodeType::GRU:
+        case gui::NodeType::RNN:
+        case gui::NodeType::Bidirectional:
             return true;
         default:
             return false;
