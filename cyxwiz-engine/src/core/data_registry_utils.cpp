@@ -321,6 +321,37 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
         spdlog::debug("UnregisterTabularDataset '{}': removed arrow={} parquet={}",
                       name, removed_arrow, removed_parquet);
     }
+
+    // Cascade: also drop the PipelineMaterializer-produced "__materialized"
+    // variant of this dataset, if one exists. Without this, re-loading a CSV
+    // under a different name leaks the previous run's materialized variant
+    // into the registry until project close. The cascade is inlined under
+    // the same lock to avoid recursive lock acquisition. The suffix matches
+    // PipelineMaterializer::kMaterializedSuffix; keep them in sync.
+    static const std::string kMaterializedSuffix = "__materialized";
+    const bool already_materialized =
+        name.size() >= kMaterializedSuffix.size() &&
+        name.compare(name.size() - kMaterializedSuffix.size(),
+                     kMaterializedSuffix.size(),
+                     kMaterializedSuffix) == 0;
+    if (!already_materialized) {
+        const std::string mat_name = name + kMaterializedSuffix;
+        bool mat_arrow = false;
+        bool mat_parquet = false;
+        if (auto it = arrow_datasets_.find(mat_name); it != arrow_datasets_.end()) {
+            arrow_datasets_.erase(it);
+            mat_arrow = true;
+        }
+        if (auto it = parquet_backed_datasets_.find(mat_name);
+            it != parquet_backed_datasets_.end()) {
+            parquet_backed_datasets_.erase(it);
+            mat_parquet = true;
+        }
+        if (mat_arrow || mat_parquet) {
+            spdlog::debug("UnregisterTabularDataset '{}' cascade: dropped materialized variant '{}'",
+                          name, mat_name);
+        }
+    }
 }
 
 // --- Image dataset registry (Phase 1) ---

@@ -23,7 +23,7 @@ public:
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
 
     bool Configure(
-        const std::unordered_map<std::string, std::string>& /*params*/,
+        const std::map<std::string, std::string>& /*params*/,
         std::string& /*error*/) override {
         return true;
     }

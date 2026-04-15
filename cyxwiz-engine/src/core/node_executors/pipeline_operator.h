@@ -4,9 +4,9 @@
 #include <arrow/status.h>
 #include <arrow/table.h>
 #include <arrow/type_fwd.h>
+#include <map>
 #include <memory>
 #include <string>
-#include <unordered_map>
 
 namespace cyxwiz {
 
@@ -58,12 +58,12 @@ public:
 
     // === Configuration ===
     /**
-     * Read parameters from the node's param map (the same string-keyed map
-     * used by the node editor and JSON serialization). Populate `error` on
+     * Read parameters from the node's param map (the same std::map used by
+     * gui::MLNode::parameters and JSON serialization). Populate `error` on
      * failure and return false. Called once before Apply().
      */
     virtual bool Configure(
-        const std::unordered_map<std::string, std::string>& params,
+        const std::map<std::string, std::string>& params,
         std::string& error) = 0;
 
     // === Execution ===

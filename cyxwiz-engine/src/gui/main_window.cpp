@@ -136,6 +136,7 @@
 #include "../core/data_registry.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
+#include "../core/pipeline_materializer.h"
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
@@ -2869,6 +2870,30 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             node_editor_->SetAllNodesPinState(NodeEditor::NodePinState::Trained);
         }
     };
+
+    // Cat-1 IPipelineOperator pass — see docs/phase4_time_series_plan.md.
+    // Walks the graph from DataInput forward and applies any node that has a
+    // registered IPipelineOperator (e.g. LogTransform, TimeSeriesWindow). When
+    // at least one operator fires, the materializer registers the transformed
+    // table under "<source>__materialized" in DataRegistry; we swap dataset_name
+    // here so the dispatch below routes the batcher at the materialized variant.
+    // Pass-through is the universal default — graphs without Cat-1 operators
+    // and non-Arrow sources (Parquet/image/audio/text) see zero behavior change.
+    {
+        auto materialize_result = cyxwiz::PipelineMaterializer::Materialize(
+            nodes, links, registry, dataset_name);
+        if (!materialize_result.success) {
+            spdlog::error("StartTrainingFromGraph: materializer failed - {}",
+                          materialize_result.error_message);
+            return;
+        }
+        if (materialize_result.operators_applied > 0) {
+            spdlog::info("StartTrainingFromGraph: materialized '{}' -> '{}' ({} Cat-1 ops)",
+                         dataset_name, materialize_result.effective_dataset_name,
+                         materialize_result.operators_applied);
+            dataset_name = materialize_result.effective_dataset_name;
+        }
+    }
 
     bool started = false;
 

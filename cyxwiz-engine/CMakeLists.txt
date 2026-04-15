@@ -106,6 +106,7 @@ set(ENGINE_SOURCES
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/annotation_manager.cpp
     src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
     src/core/texture_manager.cpp
@@ -392,6 +393,7 @@ set(ENGINE_HEADERS
     src/core/node_executors/pipeline_operator.h
     src/core/node_executors/pipeline_operator_factory.h
     src/core/node_executors/identity_operator.h
+    src/core/pipeline_materializer.h
     src/core/test_manager.h
     src/core/checkpoint_manager.h
     src/core/model_format.h
