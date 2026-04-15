@@ -121,6 +121,7 @@ set(ENGINE_SOURCES
     src/core/test_executor.cpp
     # Node executors (shared logic for nodes and panels)
     src/core/node_executors/kmeans_executor.cpp
+    src/core/node_executors/pipeline_operator_factory.cpp
     # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
@@ -388,6 +389,9 @@ set(ENGINE_HEADERS
     src/core/node_executors/node_executor.h
     src/core/node_executors/kmeans_executor.h
     src/core/node_executors/node_executor_factory.h
+    src/core/node_executors/pipeline_operator.h
+    src/core/node_executors/pipeline_operator_factory.h
+    src/core/node_executors/identity_operator.h
     src/core/test_manager.h
     src/core/checkpoint_manager.h
     src/core/model_format.h
