@@ -603,3 +603,164 @@ etc.) the flat layout will get noisy.
 **Fix:** Move to `examples/cyxgraph/text/` subdirectory (which already
 exists as untracked directory from the prior session). Already
 planned for the Phase 3 engine-side bundle commit.
+
+---
+
+## LSTM Layer — Broken AF Forward + Missing CPU Backward (2026-04-15)
+
+**Severity:** High — LSTMLayer is currently a frozen random projection
+during training. Weights never update. Every model using LSTM will
+train the *downstream* layers only (Dense heads can still learn from
+the frozen features, so training doesn't crash — val_acc will climb
+but to a much lower ceiling than a working LSTM should reach).
+
+**Discovered:** 2026-04-15 LSTM smoke test
+(`examples/cyxgraph/text/test_02_sentiment_lstm.cyxgraph`) — the goal
+was to verify the Phase 3 text pipeline works with an LSTM head in
+place of the flat Dense head. Plumbing worked end-to-end
+(`LSTMModule`, `training_executor` LSTM case, `Embedding → LSTM`
+shape-tracking lookahead, `IsModelLayer` recurrent entries) but
+training produced per-batch warning spam from two distinct bugs.
+
+**Three stacked problems in `cyxwiz-backend/src/algorithms/layer.cpp`:**
+
+### 1. `LSTMLayer::Forward` ArrayFire path throws on `[batch, seq, features]` input
+
+**Location:** `layer.cpp:2038-2255` (AF try/catch block inside the
+`#ifdef CYXWIZ_HAS_ARRAYFIRE`).
+
+**Symptom on first batch:**
+```
+ArrayFire LSTMLayer::Forward failed: ArrayFire Exception (Invalid
+input argument:202)
+```
+
+**Symptom on subsequent batches:**
+```
+ArrayFire LSTMLayer::Forward failed: ArrayFire Exception (Invalid
+input size:203)
+```
+
+**Root cause (same bug family as the pre-fix EmbeddingLayer backward,
+commit 84ef7211):** the `af::reorder(x, 1, 0, 2)` and `af::moddims`
+calls assume row-major dim ordering, but ArrayFire is column-major.
+When `TensorToAf` converts a row-major `[batch=64, seq=128, feat=64]`
+tensor, it lands in AF with dims interpreted column-major, so:
+- `x.dims(0) = 64` is read as `batch_size` but is actually `feat`
+- `x.dims(1) = 128` is read as `seq_len` — correct by coincidence
+- `x.dims(2) = 64` is read as `input_dim` but is actually `batch`
+
+The values happen to be numerically right for this specific shape
+(batch == feat == 64), but the SEMANTICS are scrambled. The
+subsequent `af::reorder(1, 0, 2)` swap and `moddims` reshapes
+operate on the wrong axes and either the argument shapes don't
+match expected kernel args (ERR_ARG 202) or the internal state
+gets wedged and later calls trip ERR_SIZE 203.
+
+**Gated off** as of 2026-04-15: `LSTMLayer::Forward:2050` now has
+`constexpr bool kAfPathEnabled = false;` in front of the `try` so
+the AF block never runs. CPU fallback handles 3D input correctly.
+
+### 2. CPU `LSTMLayer::Forward` fallback doesn't populate the four AF-format caches
+
+**Location:** `layer.cpp:2257-2379` (CPU fallback path).
+
+**Issue:** The AF Forward path, when it worked, populated four caches
+with `AfToTensor` wrappers:
+- `cached_inputs_`
+- `cached_gates_`
+- `cached_hidden_states_`
+- `cached_cell_states_`
+
+The CPU fallback computes `h`, `c`, gates, and intermediates as
+`std::vector<float>` locals and never writes them into those caches.
+On exit, only the final `output` tensor is returned — the per-layer
+per-timestep state needed for BPTT is thrown away.
+
+**Fix:** add an `std::vector<float>` scratch buffer during the CPU
+forward pass that collects `gates` / `h_states` / `c_states` per
+layer, then wrap them as Tensors at the end and push into the cache
+vectors. Use row-major `[seq_len, batch, hidden]` layout to match
+what the AF backward code reads — OR rewrite the backward in CPU
+and drop AF format entirely (see next item).
+
+### 3. `LSTMLayer::Backward` has no CPU implementation
+
+**Location:** `layer.cpp:2381-2527` (single AF-only backward).
+
+**Issue:** `Backward` starts with a stub:
+
+```cpp
+if (cached_inputs_.empty() || cached_gates_.empty() ||
+    cached_hidden_states_.empty() || cached_cell_states_.empty()) {
+    // ... warn once, return Zeros(cached_input_.Shape())
+}
+```
+
+Fix #2 above will make this stub stop triggering, but then we still
+need a CPU code path for the case where AF backward itself fails
+(mirror of the Embedding CPU fallback we added yesterday).
+
+Currently the warning is one-shot via `std::atomic<bool> warned_once`
+at `layer.cpp:2394-2402` so at least the log isn't spammed — but the
+underlying reality is "LSTM weights don't update, ever".
+
+**The missing CPU backward is the real work:** ~80-100 lines of
+backpropagation-through-time math over the cached timesteps. For
+each timestep from seq_len-1 down to 0:
+- Compute gradients w.r.t. output gates (i, f, g, o)
+- Propagate through the tanh / sigmoid activations
+- Accumulate into dW_ih, dW_hh, db_ih, db_hh
+- Compute gradient w.r.t. previous hidden state (`dh_next`)
+- Compute gradient w.r.t. previous cell state (`dc_next`)
+- Compute gradient w.r.t. current input step (accumulate into `dx`)
+
+Same algorithm as the existing AF backward at `layer.cpp:2391-2527`,
+just expressed as explicit CPU loops instead of `af::matmul` /
+`af::tile` / `af::sigmoid` calls. A known-good reference
+implementation: karpathy's min-char-rnn.py, PyTorch's LSTM C++
+source, or the CPU path any other deep learning framework that
+supports backprop.
+
+### Recommended fix sequence (separate session)
+
+1. **Add CPU backward (biggest chunk).** Without this, any LSTM
+   gradient stays zero and the layer can't learn. Write it to read
+   from whatever caches Forward is willing to populate — row-major
+   CPU layout, not AF-format.
+2. **Populate caches in CPU Forward.** Gates, hidden states, cell
+   states per layer per timestep.
+3. **Delete the one-shot warn stub** — once Backward has real CPU
+   path, the "empty caches" state means something is wrong, and we
+   want a real error, not a silent zero return.
+4. **(Optional) Debug the AF path** for performance. The CPU path
+   will work correctly but be ~10x slower than a fixed GPU path
+   would be. Diminishing returns relative to the above.
+
+### Test after fix
+
+- Rerun `test_02_sentiment_lstm.cyxgraph` for 8 epochs.
+- Expected: val_acc climbs to at least match v2's 60.7% (frozen
+  embeddings + MLP head). A working LSTM over learnable embeddings
+  should plausibly beat it, not tie.
+- Regression check: v2 (`mental_health_sentiment_classifier_v2`)
+  should still train with identical numbers — we haven't touched
+  the Dense-head path.
+
+### Files touched during the 2026-04-15 smoke test that need revisiting
+
+- `cyxwiz-backend/include/cyxwiz/sequential.h` — `LSTMModule`
+  declaration (keep)
+- `cyxwiz-backend/src/algorithms/sequential.cpp` — `LSTMModule::Forward`
+  last-step slice + `Backward` re-expand (keep; last-step mode works
+  correctly once the underlying `LSTMLayer::Backward` produces real
+  gradients)
+- `cyxwiz-backend/src/algorithms/layer.cpp` — `LSTMLayer::Forward`
+  AF gate + `Backward` stub (remove/rewrite during the fix)
+- `cyxwiz-engine/src/core/training_executor.cpp` — Embedding `→`
+  recurrent lookahead + LSTM case (keep)
+- `cyxwiz-engine/src/core/graph_compiler.cpp` — `IsModelLayer`
+  recurrent entries (keep)
+- `examples/cyxgraph/text/test_02_sentiment_lstm.cyxgraph` — the
+  smoke test graph that surfaced all this (keep as a regression
+  fixture)
