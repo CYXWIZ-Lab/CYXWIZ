@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <cmath>
 #include <random>
+#include <atomic>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -2039,7 +2040,21 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
     cached_input_ = input;
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    // The ArrayFire path below is currently broken for [batch, seq,
+    // features] 3D input. On first call it throws ArrayFire Exception
+    // (Invalid input argument:202); on subsequent calls Invalid input
+    // size:203. Same bug family as the pre-fix EmbeddingLayer backward
+    // (84ef7211): the `af::reorder` / `moddims` math assumes row-major
+    // dim ordering but AF is column-major, so the dims read here
+    // (`batch_size = x.dims(0)` etc.) are interpreting the tensor
+    // incorrectly and every downstream shape check eventually trips.
+    //
+    // Gated off via the `kAfPathEnabled` constexpr below so the CPU
+    // fallback handles 3D input without spamming per-batch warnings.
+    // When the AF path is fixed, flip the constant. See tofix.md
+    // "LSTMLayer AF Forward + CPU Backward missing" for the full plan.
+    constexpr bool kAfPathEnabled = false;
+    if (kAfPathEnabled) try {
         af::array x = TensorToAf(input);
 
         // Handle batch_first format
@@ -2379,11 +2394,38 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
 }
 
 Tensor LSTMLayer::Backward(const Tensor& grad_output) {
-    // Check if caches are populated (Forward must have been called with ArrayFire success)
+    // Check if caches are populated. They're only filled by the AF
+    // path in Forward, which is currently disabled (kAfPathEnabled=
+    // false above) because of a column-major dim ordering bug. The
+    // CPU Forward fallback doesn't build these AF-shaped caches, and
+    // there is no CPU Backward implementation — so for now any call
+    // that hits this stub returns a correctly-shaped zero gradient
+    // and the LSTM effectively trains as a frozen random projection.
+    //
+    // Shape fix: return `Tensor::Zeros(cached_input_.Shape())`, NOT
+    // `Tensor::Zeros(grad_output.Shape())`. The caller's contract is
+    // dL/d(input), which has the INPUT tensor's shape. `grad_output`
+    // has the OUTPUT shape (e.g. [batch, seq, hidden]) which is wrong
+    // upstream — Embedding::Backward downstream would read from a
+    // wrong-sized zero tensor.
+    //
+    // Warning is one-shot via static atomic so multi-epoch runs don't
+    // spam the log. See tofix.md "LSTMLayer AF Forward + CPU Backward".
     if (cached_inputs_.empty() || cached_gates_.empty() ||
         cached_hidden_states_.empty() || cached_cell_states_.empty()) {
-        // CPU fallback Forward doesn't populate caches, so return zero gradients
-        spdlog::warn("LSTMLayer::Backward called without cached data from Forward, returning zero gradients");
+        static std::atomic<bool> warned_once{false};
+        if (!warned_once.exchange(true)) {
+            spdlog::warn("LSTMLayer::Backward: AF caches empty (CPU Forward "
+                         "path is active and CPU Backward is not implemented) "
+                         "— returning zero gradients. LSTM weights will not "
+                         "update during training. This warning fires once "
+                         "per process. See tofix.md for the full plan.");
+        }
+        // Use cached_input_ shape, not grad_output shape, so upstream
+        // layers get the right-sized dL/dx tensor (all zeros).
+        if (cached_input_.NumElements() > 0) {
+            return Tensor::Zeros(cached_input_.Shape());
+        }
         return Tensor::Zeros(grad_output.Shape());
     }
 
