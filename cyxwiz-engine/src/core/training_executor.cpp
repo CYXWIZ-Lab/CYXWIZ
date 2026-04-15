@@ -124,20 +124,102 @@ bool TrainingExecutor::BuildModelFromConfig() {
 
                 model_->Add<EmbeddingModule>(num_embeddings, embedding_dim);
 
-                // Shape tracking: input is [batch, seq_len] and
-                // current_input_size = seq_len. Output of Embedding is
-                // [batch, seq_len, embedding_dim], and the next Flatten
-                // will collapse that to seq_len * embedding_dim. Update
-                // current_input_size accordingly so the subsequent Dense
-                // layer is sized correctly even without a Flatten node.
-                size_t new_size = current_input_size * embedding_dim;
-                spdlog::info("  [{}] Embedding({} x {}) — shape "
-                             "[seq_len={}] -> [seq_len={}, embed={}], "
-                             "next Flatten/Dense sees {} features",
-                             i, num_embeddings, embedding_dim,
-                             current_input_size, current_input_size,
-                             embedding_dim, new_size);
-                current_input_size = new_size;
+                // Shape tracking: input is [batch, seq_len] with
+                // current_input_size = seq_len. Embedding output is
+                // [batch, seq_len, embedding_dim].
+                //
+                // Lookahead: if the next layer is a recurrent layer
+                // (LSTM / GRU / RNN), keep current_input_size =
+                // embedding_dim because the recurrent layer's
+                // `input_size` is the per-timestep feature count, not
+                // the flattened sequence length. Otherwise collapse
+                // to seq_len * embedding_dim so the downstream
+                // Flatten/Dense head gets the right feature count
+                // even if the user didn't drop a Flatten node.
+                const size_t seq_len = current_input_size;
+                bool next_is_recurrent = false;
+                if (i + 1 < config_.layers.size()) {
+                    const auto nt = config_.layers[i + 1].type;
+                    if (nt == gui::NodeType::LSTM ||
+                        nt == gui::NodeType::GRU  ||
+                        nt == gui::NodeType::RNN) {
+                        next_is_recurrent = true;
+                    }
+                }
+                if (next_is_recurrent) {
+                    spdlog::info("  [{}] Embedding({} x {}) — shape "
+                                 "[seq_len={}] -> [seq_len={}, embed={}], "
+                                 "next layer is recurrent: input_size={} "
+                                 "(per-timestep features)",
+                                 i, num_embeddings, embedding_dim,
+                                 seq_len, seq_len, embedding_dim,
+                                 embedding_dim);
+                    current_input_size = embedding_dim;
+                } else {
+                    const size_t new_size = seq_len * embedding_dim;
+                    spdlog::info("  [{}] Embedding({} x {}) — shape "
+                                 "[seq_len={}] -> [seq_len={}, embed={}], "
+                                 "next Flatten/Dense sees {} features",
+                                 i, num_embeddings, embedding_dim,
+                                 seq_len, seq_len, embedding_dim, new_size);
+                    current_input_size = new_size;
+                }
+                break;
+            }
+
+            case gui::NodeType::LSTM: {
+                // Read hidden_size / num_layers / bidirectional /
+                // return_sequences from the node parameters. Defaults
+                // mirror Keras's `LSTM(hidden_size)` shorthand for the
+                // common "one recurrent layer feeding a classifier" case.
+                size_t hidden_size = 128;
+                size_t num_layers  = 1;
+                bool bidirectional = false;
+                bool return_sequences = false;
+
+                auto hs_it = layer_cfg.parameters.find("hidden_size");
+                if (hs_it != layer_cfg.parameters.end()) {
+                    try { hidden_size = static_cast<size_t>(std::stoi(hs_it->second)); }
+                    catch (...) {}
+                }
+                auto nl_it = layer_cfg.parameters.find("num_layers");
+                if (nl_it != layer_cfg.parameters.end()) {
+                    try { num_layers = static_cast<size_t>(std::stoi(nl_it->second)); }
+                    catch (...) {}
+                }
+                auto bi_it = layer_cfg.parameters.find("bidirectional");
+                if (bi_it != layer_cfg.parameters.end()) {
+                    bidirectional = (bi_it->second == "true" ||
+                                     bi_it->second == "1");
+                }
+                auto rs_it = layer_cfg.parameters.find("return_sequences");
+                if (rs_it != layer_cfg.parameters.end()) {
+                    return_sequences = (rs_it->second == "true" ||
+                                        rs_it->second == "1");
+                }
+                if (hidden_size < 1) hidden_size = 1;
+                if (num_layers < 1) num_layers = 1;
+
+                // LSTM input_size = current_input_size, which should be
+                // the per-timestep feature count (e.g., embedding_dim
+                // if the previous layer is Embedding with our lookahead
+                // fix above). If the previous layer was a non-recurrent
+                // one that already flattened, this will be the flattened
+                // size and the user will get a shape mismatch at runtime
+                // — that's a graph-design error, not a compiler bug.
+                model_->Add<LSTMModule>(current_input_size, hidden_size,
+                                        num_layers, bidirectional,
+                                        return_sequences);
+
+                const size_t output_features = hidden_size *
+                                               (bidirectional ? 2 : 1);
+                spdlog::info("  [{}] LSTM(in={}, hidden={}, layers={}, "
+                             "bidir={}, return_seq={}) — output "
+                             "[batch, {}] ({} features)",
+                             i, current_input_size, hidden_size,
+                             num_layers, bidirectional, return_sequences,
+                             output_features, output_features);
+                current_input_size = output_features;
                 break;
             }
 
