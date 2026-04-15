@@ -576,8 +576,22 @@ void DataInputDialog::Apply() {
             previous_dataset_name != loaded_dataset_name_) {
             registry.UnregisterTextDataset(previous_dataset_name);
         }
+        // Cross-category cleanup: if the user toggled from Tabular to
+        // Text on the same file, clear the stale Tabular entry so
+        // IsTabularDataset(name) doesn't mislead downstream code.
+        // This is safe on the UI thread because it's touching a
+        // DIFFERENT registry map than the one the async worker will
+        // register into.
         registry.UnregisterTabularDataset(loaded_dataset_name_);
-        registry.UnregisterTextDataset(loaded_dataset_name_);
+        // NOTE: We intentionally do NOT pre-clear the same-category
+        // text entry here. `RegisterTextDataset` uses map[name]=entry
+        // which atomically replaces any existing entry under the
+        // same name, so a premature unregister just creates a window
+        // where the registry is empty for the duration of the async
+        // load — and if the user clicks Compile during that window,
+        // the compile gate correctly reports "Data is not loaded"
+        // (it's literally true at that moment). Let the worker do
+        // the replacement.
 
         // Snapshot every dialog field the worker needs, by value. Never
         // capture references into the dialog — the dialog can be closed
