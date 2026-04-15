@@ -141,6 +141,137 @@ std::string EmbeddingModule::GetName() const {
 }
 
 // ============================================================================
+// LSTMModule Implementation
+// ============================================================================
+//
+// Wraps cyxwiz::LSTMLayer with two classification-friendly behaviors:
+//   1. Keras-style `return_sequences=false` reduction — slices out the
+//      last timestep of the full LSTM output so a Dense head can sit
+//      directly after the LSTM without an intervening Flatten.
+//   2. Symmetric last-step gradient re-expansion in Backward, zeroing
+//      all non-terminal steps.
+//
+// When `return_sequences=true`, the wrapper is a pure passthrough to
+// LSTMLayer and output retains the `[batch, seq_len, hidden*dirs]`
+// shape — needed for stacked LSTMs and seq-to-seq heads.
+
+LSTMModule::LSTMModule(size_t input_size, size_t hidden_size,
+                       size_t num_layers, bool bidirectional,
+                       bool return_sequences)
+    : input_size_(input_size)
+    , hidden_size_(hidden_size)
+    , num_layers_(num_layers)
+    , bidirectional_(bidirectional)
+    , return_sequences_(return_sequences)
+{
+    layer_ = std::make_unique<LSTMLayer>(
+        static_cast<int>(input_size),
+        static_cast<int>(hidden_size),
+        static_cast<int>(num_layers),
+        /*batch_first=*/true,
+        bidirectional,
+        /*dropout=*/0.0f);
+}
+
+Tensor LSTMModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+
+    // LSTMLayer returns the full sequence output:
+    //   [batch, seq_len, hidden_size * num_directions]
+    Tensor full_output = layer_->Forward(input);
+    last_full_output_shape_ = full_output.Shape();
+
+    if (return_sequences_) {
+        return full_output;
+    }
+
+    // Defensive: if the output isn't 3D for some reason, bail out and
+    // pass through. Should never happen under normal use, but we'd
+    // rather forward a weird tensor than crash on the slice.
+    if (last_full_output_shape_.size() != 3) {
+        spdlog::warn("LSTMModule: expected 3D output [batch, seq, hidden_dirs] "
+                     "but got {}D — passing full output through",
+                     last_full_output_shape_.size());
+        return full_output;
+    }
+
+    const size_t batch = last_full_output_shape_[0];
+    const size_t seq_len = last_full_output_shape_[1];
+    const size_t hd = last_full_output_shape_[2];
+
+    // Slice out the last timestep: out[:, seq_len-1, :] → [batch, hd].
+    // Row-major layout means sample b's last step is at offset
+    //   b * seq_len * hd + (seq_len - 1) * hd
+    Tensor last({batch, hd}, DataType::Float32);
+    const float* src = full_output.Data<float>();
+    float* dst = static_cast<float*>(last.Data());
+    for (size_t b = 0; b < batch; ++b) {
+        const float* src_step = src + b * seq_len * hd + (seq_len - 1) * hd;
+        std::memcpy(dst + b * hd, src_step, hd * sizeof(float));
+    }
+    return last;
+}
+
+Tensor LSTMModule::Backward(const Tensor& grad_output) {
+    if (return_sequences_) {
+        // Full-sequence mode — grad_output already has shape
+        // [batch, seq_len, hidden*dirs]. Pass straight through.
+        return layer_->Backward(grad_output);
+    }
+
+    // Last-step mode: re-expand [batch, hidden] gradient to the full
+    // [batch, seq_len, hidden] shape with zeros everywhere except the
+    // terminal step. LSTMLayer::Backward expects the gradient of the
+    // whole sequence output; since only the last step fed into the
+    // loss, all earlier timesteps have zero contribution.
+    if (last_full_output_shape_.size() != 3) {
+        spdlog::warn("LSTMModule::Backward called without a 3D shape cache "
+                     "— falling back to direct grad passthrough");
+        return layer_->Backward(grad_output);
+    }
+
+    const size_t batch = last_full_output_shape_[0];
+    const size_t seq_len = last_full_output_shape_[1];
+    const size_t hd = last_full_output_shape_[2];
+
+    Tensor expanded = Tensor::Zeros({batch, seq_len, hd});
+    const float* src = grad_output.Data<float>();
+    float* dst = static_cast<float*>(expanded.Data());
+    for (size_t b = 0; b < batch; ++b) {
+        float* dst_step = dst + b * seq_len * hd + (seq_len - 1) * hd;
+        std::memcpy(dst_step, src + b * hd, hd * sizeof(float));
+    }
+    return layer_->Backward(expanded);
+}
+
+std::map<std::string, Tensor> LSTMModule::GetParameters() {
+    return layer_->GetParameters();
+}
+
+void LSTMModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    layer_->SetParameters(params);
+}
+
+std::map<std::string, Tensor> LSTMModule::GetGradients() {
+    // LSTMLayer doesn't expose GetGradients() yet — it writes gradients
+    // directly into the parameters map keyed as "grad_W_ih", "grad_W_hh",
+    // etc. (the same "grad_X"-named entries the legacy optimizer path
+    // looked up). The SequentialModel's training step uses GetParameters
+    // for both weights AND grads through this naming, so we can forward
+    // GetParameters() here. When LSTMLayer grows a dedicated
+    // GetGradients() (matching LinearLayer / EmbeddingLayer), this
+    // passthrough can become layer_->GetGradients().
+    return layer_->GetParameters();
+}
+
+std::string LSTMModule::GetName() const {
+    const int dirs = bidirectional_ ? 2 : 1;
+    return "LSTM(" + std::to_string(input_size_) + " -> " +
+           std::to_string(hidden_size_ * dirs) +
+           (return_sequences_ ? ", seq" : ", last") + ")";
+}
+
+// ============================================================================
 // ReLUModule Implementation
 // ============================================================================
 

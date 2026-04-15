@@ -173,6 +173,57 @@ private:
 };
 
 /**
+ * @brief Wrapper for LSTMLayer — recurrent sequence processor.
+ *
+ * Consumes `[batch, seq_len, input_size]` float tensors and produces
+ * either:
+ *   - `[batch, hidden_size * num_directions]` when `return_sequences`
+ *     is false (default — the "last timestep" reduction every
+ *     classification head expects), OR
+ *   - `[batch, seq_len, hidden_size * num_directions]` when
+ *     `return_sequences` is true (Keras / PyTorch convention; needed
+ *     for stacked LSTM / sequence-to-sequence heads).
+ *
+ * The underlying `cyxwiz::LSTMLayer` always returns the full sequence
+ * output; this wrapper slices out the last timestep per-sample when
+ * `return_sequences=false` so a Dense classification head can sit
+ * directly after the LSTM without an intervening Flatten.
+ *
+ * For `Backward` with `return_sequences=false`, the incoming
+ * `[batch, hidden]` gradient is re-expanded to
+ * `[batch, seq_len, hidden]` with zeros everywhere except the last
+ * timestep — which is the correct dL/d(full_output) because only the
+ * last timestep affected the downstream loss.
+ */
+class CYXWIZ_API LSTMModule : public Module {
+public:
+    LSTMModule(size_t input_size, size_t hidden_size,
+               size_t num_layers = 1,
+               bool bidirectional = false,
+               bool return_sequences = false);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<LSTMLayer> layer_;
+    size_t input_size_;
+    size_t hidden_size_;
+    size_t num_layers_;
+    bool bidirectional_;
+    bool return_sequences_;
+    // Cached full LSTM output shape [batch, seq_len, hidden*dirs] so
+    // Backward can re-expand the last-step gradient when
+    // return_sequences_ is false.
+    std::vector<size_t> last_full_output_shape_;
+};
+
+/**
  * @brief Wrapper for ReLU activation
  */
 class CYXWIZ_API ReLUModule : public Module {
