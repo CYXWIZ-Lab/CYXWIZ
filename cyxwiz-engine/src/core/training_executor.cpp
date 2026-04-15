@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
 #include <cmath>
+#include <chrono>
 #include <algorithm>
 
 namespace cyxwiz {
@@ -830,6 +831,11 @@ void TrainingExecutor::RunTrainingEpoch(
         m.current_batch = 0;
     });
 
+    // Epoch wall-clock start for the periodic progress log below —
+    // mirrors RunTrainingEpochArrow so both training paths have the
+    // same "training is alive" feedback loop.
+    const auto epoch_start_time = std::chrono::steady_clock::now();
+
     while (!batcher.IsEpochComplete()) {
         if (ShouldStop()) break;
         WaitWhilePaused();
@@ -926,6 +932,24 @@ void TrainingExecutor::RunTrainingEpoch(
             m.train_loss = current_loss;
             m.train_accuracy = current_acc;
         });
+
+        // Periodic progress log — mirror of RunTrainingEpochArrow's
+        // version so non-Arrow training paths (legacy DatasetBatcher)
+        // also get per-50-batch liveness signals.
+        if (batch_num == 1 || batch_num % 50 == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - epoch_start_time).count();
+            const float elapsed_s = elapsed_ms / 1000.0f;
+            const float rate = elapsed_ms > 0
+                ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
+                : 0.0f;
+            spdlog::info("Epoch {} [{}/{}] loss={:.4f} acc={:.2f}% "
+                         "({:.1f}s, {:.1f} batches/s)",
+                         epoch, batch_num, total_batches,
+                         current_loss, current_acc * 100.0f,
+                         elapsed_s, rate);
+        }
 
         // Batch callback
         if (batch_cb) {
@@ -1138,6 +1162,14 @@ void TrainingExecutor::RunTrainingEpochArrow(
         m.current_batch = 0;
     });
 
+    // Epoch wall-clock start for the periodic progress log below.
+    // Without per-batch logging the training run goes completely
+    // silent between the first-batch debug dump and the epoch-end
+    // summary, which can be 100+ seconds on a real dataset — making
+    // it impossible to tell "alive but slow" from "hung". This is
+    // the fix for the tofix.md entry "Training logs silent mid-epoch".
+    const auto epoch_start_time = std::chrono::steady_clock::now();
+
     spdlog::debug("RunTrainingEpochArrow: Entering batch loop");
     while (!batcher.IsEpochComplete()) {
         if (ShouldStop()) break;
@@ -1228,6 +1260,26 @@ void TrainingExecutor::RunTrainingEpochArrow(
             m.train_loss = current_loss;
             m.train_accuracy = current_acc;
         });
+
+        // Periodic progress log so the user knows training is alive.
+        // Fires on batch 1 (so they see immediate feedback that the
+        // loop entered) and every 50 batches after. Throughput is
+        // computed against epoch_start_time so the "batches/s" reading
+        // naturally warms up as the batcher + GPU pools stabilize.
+        if (batch_num == 1 || batch_num % 50 == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - epoch_start_time).count();
+            const float elapsed_s = elapsed_ms / 1000.0f;
+            const float rate = elapsed_ms > 0
+                ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
+                : 0.0f;
+            spdlog::info("Epoch {} [{}/{}] loss={:.4f} acc={:.2f}% "
+                         "({:.1f}s, {:.1f} batches/s)",
+                         epoch, batch_num, total_batches,
+                         current_loss, current_acc * 100.0f,
+                         elapsed_s, rate);
+        }
 
         // Batch callback
         if (batch_cb) {

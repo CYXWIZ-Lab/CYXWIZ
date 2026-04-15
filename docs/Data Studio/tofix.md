@@ -535,14 +535,18 @@ CrossEntropy` sample dump), then goes completely silent for
 prints are gated by `if (epoch == 1 && batch_num == 1)` in
 `training_executor.cpp:1073`.
 
-**Fix:** Add a periodic batch-progress log in `RunTrainingEpochArrow`
-— e.g. `Epoch 1 [100/659] loss=1.42 acc=0.51` every 50 batches or
-every 10% of an epoch, throttled to at most once per 5s so a fast
-epoch with many tiny batches doesn't spam. Also mirror in
-`RunTrainingEpoch` (non-Arrow path).
-
-**Files:** `cyxwiz-engine/src/core/training_executor.cpp:1060-1154`
-(and the mirror at ~730).
+**Status: RESOLVED 2026-04-15.** Periodic progress log added to both
+`RunTrainingEpochArrow` and `RunTrainingEpoch` (non-Arrow path).
+Fires on batch 1 of every epoch (so the user sees immediate feedback
+the loop entered) and every 50 batches thereafter. Format:
+```
+Epoch 1 [100/659] loss=1.2345 acc=52.30% (5.2s, 19.2 batches/s)
+```
+Elapsed time and throughput computed from `std::chrono::steady_clock`
+captured at the top of the batch loop. Rate warms up naturally as the
+batcher and GPU pools stabilize, so the "batches/s" reading is
+informative across the whole epoch. No per-invocation time throttle
+— 50 batches is long enough that a fast epoch won't spam.
 
 ### Only MLP head tested with text — LSTM / GRU / Transformer paths unverified
 
