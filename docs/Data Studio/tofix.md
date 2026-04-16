@@ -643,26 +643,29 @@ details.
   sentiment LSTM smoke test. Same monotonic loss-down /
   acc-up curve.
 
-**AF Backward — still pending (perf only):**
-- ~130-line AF backward under `#if 0` in `layer.cpp` is the next
-  perf upgrade. Currently unused — Backward goes through CPU
-  BPTT, which works correctly but pays a Tensor↔CPU round-trip
-  that AF Backward would skip. AF Forward now serves as the
-  oracle for AF Backward validation.
-- Needs the same 3D-helper / slice-moddims treatment on its cache
-  reads + dx output. Cache consistency is already solved: AF
-  Forward writes row-major caches via `AfToTensor3DRowMajor`,
-  AF Backward will need to read them back via
-  `TensorToAf3DRowMajor`.
-- A `last_forward_was_af_` flag on LSTMLayer would let Backward
-  dispatch between CPU BPTT and AF backward. Not strictly needed
-  if AF Backward also reads row-major caches.
+**AF Backward — DONE (2026-04-16):**
+- Reads row-major caches (populated by AF Forward via
+  `AfToTensor3DRowMajor`) back to AF column-major via
+  `TensorToAf3DRowMajor`. Uses the same slice-shape moddims
+  pattern as Forward for the `d_layer_input(t, span, span) = dx_t`
+  write. BPTT math identical to the legacy AF code; just rewired
+  for the 3D helpers.
+- `kAfBackwardEnabled = true` constant. On AF exception falls
+  through to CPU BPTT (existing path). Bidirectional Backward
+  not implemented — bidirectional graphs always take CPU.
+- Validated against AF Forward + CPU BPTT baseline — loss
+  numerically identical at the precision logged (4 decimal
+  places). Zero AF exceptions, zero CPU fallback warnings.
+- Legacy `#if 0` block deleted (149 lines removed from
+  `layer.cpp`). The new code is the single source of truth.
 
-Net win: LSTM training is correct AND uses GPU on the Forward
-pass. CPU Backward remains the gradient computation. End-to-end
-throughput should beat pure CPU on hidden_size >= 64 graphs
-where the Forward matmul dominates (the sentiment_lstm
-hidden=128 graph is the obvious follow-up benchmark).
+Net win: LSTM training is fully on GPU end-to-end (Forward AND
+Backward via AF). CPU BPTT remains as the dependable fallback.
+Throughput on the mini smoke graph dropped to ~5 batches/s
+(vs ~19 with CPU BPTT) because tiny hidden=32 means GPU kernel
+launch overhead exceeds compute. The hidden=128
+sentiment_lstm graph is where AF should dominate — that's
+the next benchmark.
 
 **Severity:** ~~High~~ Medium (after CPU BPTT landed) — LSTM weights
 update correctly on CPU. AF path is a perf-only follow-up. Original

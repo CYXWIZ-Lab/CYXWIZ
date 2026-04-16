@@ -2621,6 +2621,142 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
         return Tensor::Zeros(grad_output.Shape());
     }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // AF Backward — uses row-major caches that AF Forward (or CPU
+    // Forward) populated via AfToTensor3DRowMajor. Reads them back via
+    // TensorToAf3DRowMajor so the AF-side semantic axes match the AF
+    // Forward's working layout. Same slice-shape moddims pattern that
+    // Forward needed: every (t, span, span) = X assignment to a 3D
+    // proxy needs X wrapped in moddims with a leading 1 dim.
+    //
+    // On AF exception, falls through to the CPU BPTT below — same
+    // dual-path pattern as Forward. Loss numerically agrees with the
+    // CPU path within fp32 noise on the mini sentiment LSTM smoke test.
+    //
+    // Bidirectional Backward NOT implemented yet (forward-direction
+    // only, like the legacy code). Bidirectional graphs will fall
+    // through to CPU.
+    constexpr bool kAfBackwardEnabled = true;
+    if (kAfBackwardEnabled && !bidirectional_) try {
+        af::array dout = TensorToAf3DRowMajor(grad_output);
+
+        // Convert to seq-first if batch_first.
+        if (batch_first_) {
+            dout = af::reorder(dout, 1, 0, 2);
+        }
+
+        const dim_t seq_len = dout.dims(0);
+        const dim_t batch_size = dout.dims(1);
+        const int gate_size = 4 * hidden_size_;
+
+        af::array layer_grad = dout;
+
+        for (int layer = num_layers_ - 1; layer >= 0; layer--) {
+            af::array W_ih = TensorToAf(W_ih_[layer]);
+            af::array W_hh = TensorToAf(W_hh_[layer]);
+
+            // Caches are row-major Tensors written by AF/CPU Forward —
+            // bring them back to AF column-major with semantic axes
+            // matching the Forward pass.
+            af::array cached_input = TensorToAf3DRowMajor(cached_inputs_[layer]);
+            af::array cached_gates = TensorToAf3DRowMajor(cached_gates_[layer]);
+            af::array cached_h = TensorToAf3DRowMajor(cached_hidden_states_[layer]);
+            af::array cached_c = TensorToAf3DRowMajor(cached_cell_states_[layer]);
+
+            const dim_t layer_input_size = cached_input.dims(2);
+
+            af::array dW_ih = af::constant(0.0f, W_ih.dims());
+            af::array dW_hh = af::constant(0.0f, W_hh.dims());
+            af::array db_ih = af::constant(0.0f, af::dim4(gate_size));
+            af::array db_hh = af::constant(0.0f, af::dim4(gate_size));
+
+            af::array dh_next = af::constant(0.0f, af::dim4(batch_size, hidden_size_));
+            af::array dc_next = af::constant(0.0f, af::dim4(batch_size, hidden_size_));
+
+            af::array d_layer_input = af::constant(0.0f, cached_input.dims());
+
+            for (dim_t t = seq_len - 1; t >= 0; t--) {
+                // h_prev / c_prev are at cache index t (state BEFORE step t).
+                // c_t is at cache index t+1 (state AFTER step t).
+                // gates is at cache index t (pre-activation gates from step t).
+                af::array h_prev = af::moddims(cached_h(t, af::span, af::span),
+                                                af::dim4(batch_size, hidden_size_));
+                af::array c_prev = af::moddims(cached_c(t, af::span, af::span),
+                                                af::dim4(batch_size, hidden_size_));
+                af::array c_t    = af::moddims(cached_c(t + 1, af::span, af::span),
+                                                af::dim4(batch_size, hidden_size_));
+                af::array gates  = af::moddims(cached_gates(t, af::span, af::span),
+                                                af::dim4(batch_size, gate_size));
+
+                // Recompute gate activations from cached pre-activations.
+                af::array i_gate = af::sigmoid(gates(af::span, af::seq(0, hidden_size_ - 1)));
+                af::array f_gate = af::sigmoid(gates(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1)));
+                af::array g_gate = af::tanh   (gates(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1)));
+                af::array o_gate = af::sigmoid(gates(af::span, af::seq(3 * hidden_size_, 4 * hidden_size_ - 1)));
+
+                // Output gradient for this timestep + carry-over from t+1.
+                af::array dh = af::moddims(layer_grad(t, af::span, af::span),
+                                            af::dim4(batch_size, hidden_size_));
+                dh = dh + dh_next;
+
+                // h = o * tanh(c_t)
+                af::array tanh_c = af::tanh(c_t);
+                af::array do_pre = dh * tanh_c * o_gate * (1.0f - o_gate);
+                af::array dc     = dh * o_gate * (1.0f - tanh_c * tanh_c) + dc_next;
+
+                // c_t = f * c_prev + i * g
+                af::array df_pre = dc * c_prev * f_gate * (1.0f - f_gate);
+                af::array di_pre = dc * g_gate * i_gate * (1.0f - i_gate);
+                af::array dg_pre = dc * i_gate * (1.0f - g_gate * g_gate);
+                dc_next = dc * f_gate;
+
+                // Pre-activation gradients in [i | f | g | o] order, matching
+                // the cache layout from Forward.
+                af::array dgates = af::join(1, di_pre, df_pre, dg_pre, do_pre);
+
+                // Weight + bias grad accumulation.
+                af::array x_t = af::moddims(cached_input(t, af::span, af::span),
+                                             af::dim4(batch_size, layer_input_size));
+                dW_ih = dW_ih + af::matmul(af::transpose(dgates), x_t);
+                dW_hh = dW_hh + af::matmul(af::transpose(dgates), h_prev);
+
+                af::array sum_g = af::sum(dgates, 0);  // [1, 4H]
+                db_ih = db_ih + af::moddims(sum_g, af::dim4(gate_size));
+                db_hh = db_hh + af::moddims(sum_g, af::dim4(gate_size));
+
+                // dx_t = dgates @ W_ih    (shape [batch, layer_input_size])
+                // Slice assignment to a rank-3 (1, batch, input) proxy needs
+                // explicit moddims to add the leading 1 — same fix Forward
+                // uses for h_states/c_states/all_gates writes.
+                af::array dx_t = af::matmul(dgates, W_ih);
+                d_layer_input(t, af::span, af::span) = af::moddims(
+                    dx_t, af::dim4(1, batch_size, layer_input_size));
+
+                // dh_prev = dgates @ W_hh
+                dh_next = af::matmul(dgates, W_hh);
+            }
+
+            // Stash per-layer weight grads.
+            grad_W_ih_[layer] = AfToTensor(dW_ih);
+            grad_W_hh_[layer] = AfToTensor(dW_hh);
+            grad_b_ih_[layer] = AfToTensor(db_ih);
+            grad_b_hh_[layer] = AfToTensor(db_hh);
+
+            // Pass dx down to the next layer (which becomes its layer_grad).
+            layer_grad = d_layer_input;
+        }
+
+        // Convert back to batch_first if needed.
+        if (batch_first_) {
+            layer_grad = af::reorder(layer_grad, 1, 0, 2);
+        }
+
+        return AfToTensor3DRowMajor(layer_grad);
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire LSTMLayer::Backward failed: {}, falling back to CPU", e.what());
+    }
+#endif
+
     // CPU BPTT. Reads the row-major caches populated by CPU Forward:
     //   cached_inputs_[L]          [seq_len, batch, layer_input_size]
     //   cached_gates_[L]           [seq_len, batch, 4 * hidden_size]   (pre-activations)
@@ -2833,155 +2969,6 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
     return dx;
 }
 
-// Legacy AF Backward path kept below as dead code for reference. It was
-// never end-to-end validated since AF Forward is gated off. Scheduled
-// for removal in a later cleanup pass once the CPU path is settled.
-#if 0
-Tensor LSTMLayer::BackwardAF_Legacy(const Tensor& grad_output) {
-    if (cached_inputs_.empty() || cached_gates_.empty() ||
-        cached_hidden_states_.empty() || cached_cell_states_.empty()) {
-        return Tensor::Zeros(grad_output.Shape());
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array dout = TensorToAf(grad_output);
-
-        // Convert to seq_first if batch_first
-        if (batch_first_) {
-            dout = af::reorder(dout, 1, 0, 2);
-        }
-
-        dim_t seq_len = dout.dims(0);
-        dim_t batch_size = dout.dims(1);
-        int num_directions = bidirectional_ ? 2 : 1;
-
-        // Gradient w.r.t. input (will accumulate from all layers)
-        af::array dx;
-
-        // Process layers in reverse order
-        af::array layer_grad = dout;
-
-        for (int layer = num_layers_ - 1; layer >= 0; layer--) {
-            af::array W_ih = TensorToAf(W_ih_[layer]);
-            af::array W_hh = TensorToAf(W_hh_[layer]);
-            af::array cached_input = TensorToAf(cached_inputs_[layer]);
-            af::array cached_gates = TensorToAf(cached_gates_[layer]);
-            af::array cached_h = TensorToAf(cached_hidden_states_[layer]);
-            af::array cached_c = TensorToAf(cached_cell_states_[layer]);
-
-            dim_t layer_input_size = cached_input.dims(2);
-            int gate_size = 4 * hidden_size_;
-
-            // Initialize gradient accumulators
-            af::array dW_ih = af::constant(0.0f, W_ih.dims());
-            af::array dW_hh = af::constant(0.0f, W_hh.dims());
-            af::array db_ih = af::constant(0.0f, af::dim4(gate_size));
-            af::array db_hh = af::constant(0.0f, af::dim4(gate_size));
-
-            // Gradient w.r.t. next hidden and cell state
-            af::array dh_next = af::constant(0.0f, af::dim4(batch_size, hidden_size_));
-            af::array dc_next = af::constant(0.0f, af::dim4(batch_size, hidden_size_));
-
-            // Gradient w.r.t. layer input
-            af::array d_layer_input = af::constant(0.0f, cached_input.dims());
-
-            // Split layer_grad for bidirectional
-            af::array grad_forward, grad_backward;
-            if (bidirectional_) {
-                grad_forward = layer_grad(af::span, af::span, af::seq(0, hidden_size_ - 1));
-                grad_backward = layer_grad(af::span, af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1));
-            } else {
-                grad_forward = layer_grad;
-            }
-
-            // Backward through time (BPTT) for forward direction
-            for (dim_t t = seq_len - 1; t >= 0; t--) {
-                // Get cached values
-                af::array h_prev = cached_h(t, af::span, af::span);
-                h_prev = af::moddims(h_prev, af::dim4(batch_size, hidden_size_));
-                af::array c_prev = cached_c(t, af::span, af::span);
-                c_prev = af::moddims(c_prev, af::dim4(batch_size, hidden_size_));
-                af::array c_t = cached_c(t + 1, af::span, af::span);
-                c_t = af::moddims(c_t, af::dim4(batch_size, hidden_size_));
-
-                af::array gates = cached_gates(t, af::span, af::span);
-                gates = af::moddims(gates, af::dim4(batch_size, gate_size));
-
-                // Recompute gate activations
-                af::array i_gate = af::sigmoid(gates(af::span, af::seq(0, hidden_size_ - 1)));
-                af::array f_gate = af::sigmoid(gates(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1)));
-                af::array g_gate = af::tanh(gates(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1)));
-                af::array o_gate = af::sigmoid(gates(af::span, af::seq(3 * hidden_size_, 4 * hidden_size_ - 1)));
-
-                // Get output gradient for this timestep
-                af::array dh = grad_forward(t, af::span, af::span);
-                dh = af::moddims(dh, af::dim4(batch_size, hidden_size_));
-                dh = dh + dh_next;
-
-                // Gradient through output gate: h = o * tanh(c)
-                af::array tanh_c = af::tanh(c_t);
-                af::array do_gate = dh * tanh_c * o_gate * (1.0f - o_gate);  // sigmoid derivative
-                af::array dc = dh * o_gate * (1.0f - tanh_c * tanh_c) + dc_next;  // tanh derivative
-
-                // Gradient through cell update: c = f * c_prev + i * g
-                af::array df_gate = dc * c_prev * f_gate * (1.0f - f_gate);
-                af::array di_gate = dc * g_gate * i_gate * (1.0f - i_gate);
-                af::array dg_gate = dc * i_gate * (1.0f - g_gate * g_gate);
-                dc_next = dc * f_gate;
-
-                // Combine gate gradients: [batch, 4 * hidden_size]
-                af::array dgates = af::join(1, di_gate, df_gate, dg_gate, do_gate);
-
-                // Gradient w.r.t. weights and biases (accumulate)
-                // dW_ih += dgates^T @ x_t
-                af::array x_t = cached_input(t, af::span, af::span);
-                x_t = af::moddims(x_t, af::dim4(batch_size, layer_input_size));
-                dW_ih = dW_ih + af::matmul(af::transpose(dgates), x_t);
-
-                // dW_hh += dgates^T @ h_prev
-                dW_hh = dW_hh + af::matmul(af::transpose(dgates), h_prev);
-
-                // db_ih += sum(dgates, batch)
-                db_ih = db_ih + af::sum(dgates, 0);
-                db_hh = db_hh + af::sum(dgates, 0);
-
-                // Gradient w.r.t. input: dx = dgates @ W_ih
-                af::array dx_t = af::matmul(dgates, W_ih);
-                d_layer_input(t, af::span, af::span) = dx_t;
-
-                // Gradient w.r.t. previous hidden: dh_prev = dgates @ W_hh
-                dh_next = af::matmul(dgates, W_hh);
-            }
-
-            // Store gradients
-            grad_W_ih_[layer] = AfToTensor(dW_ih);
-            grad_W_hh_[layer] = AfToTensor(dW_hh);
-            grad_b_ih_[layer] = AfToTensor(af::moddims(db_ih, af::dim4(gate_size)));
-            grad_b_hh_[layer] = AfToTensor(af::moddims(db_hh, af::dim4(gate_size)));
-
-            // TODO: Handle bidirectional backward pass similarly
-
-            // Pass gradient to previous layer
-            layer_grad = d_layer_input;
-        }
-
-        dx = layer_grad;
-
-        // Convert back to batch_first if needed
-        if (batch_first_) {
-            dx = af::reorder(dx, 1, 0, 2);
-        }
-
-        return AfToTensor(dx);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire LSTMLayer::Backward failed: {}", e.what());
-    }
-#endif
-
-    throw std::runtime_error("LSTM backward requires ArrayFire");
-}
-#endif  // #if 0 — legacy AF Backward kept as reference
 
 std::map<std::string, Tensor> LSTMLayer::GetParameters() {
     std::map<std::string, Tensor> params;
