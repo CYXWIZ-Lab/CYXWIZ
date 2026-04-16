@@ -1697,13 +1697,29 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             out.name = "Token IDs";
             out.is_input = false;
             node.outputs.push_back(out);
+            // Fix B canonical params read by TextTokenizerOperator.
+            // text_col + label_col are required when this node runs as
+            // a real Cat-1 operator on an Arrow source. The legacy
+            // GraphCompiler config-extractor path reads
+            // tokenizer_type/max_length/lowercase/min_word_freq/
+            // max_vocab_size; both views coexist (extractor ignores
+            // text_col/label_col, operator ignores padding/truncation
+            // since it always pads + truncates).
+            node.parameters["text_col"] = "";
+            node.parameters["label_col"] = "";
             node.parameters["tokenizer_type"] = "1"; // 0=Whitespace, 1=Word, 2=Character
-            node.parameters["max_length"] = "512";
+            node.parameters["max_length"] = "256";
             node.parameters["lowercase"] = "true";
+            node.parameters["min_word_freq"] = "2";
+            node.parameters["max_vocab_size"] = "10000";
+            // Legacy fields for back-compat with the existing extractor.
+            // Operator implicitly sets both to true regardless.
             node.parameters["padding"] = "true";
             node.parameters["truncation"] = "true";
-            node.parameters["min_freq"] = "1";
-            node.parameters["max_vocab_size"] = "-1";
+            // Legacy alias — extractor reads `min_freq`, operator reads
+            // `min_word_freq`; keep both pointing at the same value
+            // until the extractor is deleted in a future commit.
+            node.parameters["min_freq"] = "2";
             break;
         }
 

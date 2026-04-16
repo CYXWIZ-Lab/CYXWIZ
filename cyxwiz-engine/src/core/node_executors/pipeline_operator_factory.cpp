@@ -2,6 +2,7 @@
 #include "differencing_operator.h"
 #include "identity_operator.h"
 #include "log_transform_operator.h"
+#include "text_tokenizer_operator.h"
 #include "time_series_features_operator.h"
 #include "time_series_split_operator.h"
 #include "time_series_window_operator.h"
@@ -36,6 +37,13 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::TimeSeriesFeatures, []() {
         return std::make_unique<TimeSeriesFeaturesOperator>();
+    });
+    // Fix B (Phase 3 cleanup): TextTokenizer as a real Cat-1 operator.
+    // Inert for legacy text graphs that go through RegisterTextDataset
+    // (PipelineMaterializer skips non-Arrow datasets); active when
+    // DataInput is wired to register text CSVs as Arrow tables.
+    RegisterCreator(gui::NodeType::TextTokenizer, []() {
+        return std::make_unique<TextTokenizerOperator>();
     });
 }
 

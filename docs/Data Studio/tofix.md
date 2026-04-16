@@ -1149,6 +1149,50 @@ anything with preview, validation, or multi-tab config.
 
 ## TextTokenizer is a config extractor, not a pipeline operation
 
+**Status update 2026-04-16:** Step 1 of Fix B landed — a real
+`TextTokenizerOperator` (Cat-1, Band 1, single op combining
+tokenize + vocab + padding) is in place at `cyxwiz-engine/src/
+core/node_executors/text_tokenizer_operator.{h,cpp}`. It's
+registered in `PipelineOperatorFactory` under
+`gui::NodeType::TextTokenizer` so dropping the node in an Arrow
+graph fires it through `PipelineMaterializer`. Output schema
+matches what `ArrowDatasetBatcher` already consumes (wide
+`tok_0..tok_{max-1}` float columns + `y` int column), so no
+batcher changes needed. CreateNode defaults gained `text_col` /
+`label_col` / `min_word_freq` / `max_vocab_size` while keeping
+the legacy `tokenizer_type` / `max_length` / `lowercase` /
+`min_freq` / `padding` / `truncation` aliases so the existing
+GraphCompiler config-extractor path keeps working unchanged for
+RegisterTextDataset graphs.
+
+**Still to do for full Fix B:**
+- DataInput text branch: register CSVs as Arrow tables (raw
+  string + label columns) instead of TextDatasetEntry, so the
+  materializer dispatch sees an Arrow source and the
+  TextTokenizer operator actually runs.
+- MainWindow dispatch: route `IsArrowDataset` after materializer
+  for text graphs (already happens — `__materialized` flows
+  through Arrow path).
+- GraphCompiler: delete the `ExtractTextTokenizer` /
+  `ExtractTextVocabulary` / `ExtractTextPadding` extractors and
+  the `text_preprocessing` config struct now that the operator
+  carries config inline.
+- TextDatasetBatcher: delete (no consumers after the dispatch
+  rewire). `formats/text_dataset.{h,cpp}` may also become dead
+  code — check usage first.
+- Optional: split TextTokenizer back into TextTokenizer +
+  TextVocabulary + TextPadding for graph addressability. v1 is
+  one combined node since TimeSeriesWindow set the precedent
+  for "combine tightly-coupled steps in one operator."
+- Update existing text smoke graphs (test_01, v1, v2,
+  test_02_lstm) to the new pipeline shape, and re-run as the
+  Fix B regression check.
+
+The new operator path is currently INERT for legacy text
+graphs (PipelineMaterializer skips non-Arrow datasets), so this
+landed without breaking existing tests. Step 2+ (DataInput
+rewire) is the next session's scope.
+
 **Severity:** HIGH (architectural) — blocks the "preprocess once,
 train many" workflow and makes the `TextTokenizer` / `TextVocabulary`
 / `TextPadding` nodes visually misleading (they have input/output
