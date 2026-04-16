@@ -63,6 +63,62 @@ static af::array TensorToAf(const Tensor& t) {
     return arr;
 }
 
+// 3D row-major → AF column-major with matching semantic axes.
+// Rationale: bare TensorToAf on 3D scrambles semantics — CyxWiz stores
+// [dim0, dim1, dim2] row-major (dim2 fastest-varying) but naive AF
+// assignment makes dim0 fastest-varying. Workaround: build AF with
+// REVERSED dims (so dim2 is the AF-fastest axis matching row-major
+// memory layout), write raw bytes, then af::reorder(2, 1, 0) to expose
+// the original semantic axis order.
+//
+// After this call, `arr.dims(0) == shape[0]`, `arr.dims(1) == shape[1]`,
+// `arr.dims(2) == shape[2]` and arr(i, j, k) semantically equals
+// t[i][j][k]. Use this for LSTM [batch, seq, features] input tensors
+// so the existing AF reorder/moddims math (which assumes semantic
+// axes) operates on the right data.
+static af::array TensorToAf3DRowMajor(const Tensor& t) {
+    const auto& shape = t.Shape();
+    if (shape.size() != 3) {
+        return TensorToAf(t);
+    }
+    af::dim4 reversed_dims(
+        static_cast<dim_t>(shape[2]),
+        static_cast<dim_t>(shape[1]),
+        static_cast<dim_t>(shape[0]),
+        1);
+    af::array arr(reversed_dims, ToAfType(t.GetDataType()));
+    arr.write(t.Data(), arr.bytes(), afHost);
+    return af::reorder(arr, 2, 1, 0);
+}
+
+// Inverse of TensorToAf3DRowMajor. Takes a column-major AF array with
+// semantic axes [dim0, dim1, dim2] and produces a row-major CyxWiz
+// Tensor with the same semantic axes. Internally: af::reorder(2, 1, 0)
+// puts dim2 in the fastest-varying slot (matching row-major memory
+// layout), then host-copy.
+static Tensor AfToTensor3DRowMajor(const af::array& arr) {
+    if (arr.numdims() > 3) {
+        // Fall back to existing path for 4D; caller owns correctness.
+        return AfToTensor(arr);
+    }
+    af::array reordered = af::reorder(arr, 2, 1, 0);
+    std::vector<size_t> shape = {
+        static_cast<size_t>(arr.dims(0)),
+        static_cast<size_t>(arr.dims(1)),
+        static_cast<size_t>(arr.dims(2))
+    };
+    DataType dtype = DataType::Float32;
+    switch (arr.type()) {
+        case af::dtype::f32: dtype = DataType::Float32; break;
+        case af::dtype::f64: dtype = DataType::Float64; break;
+        case af::dtype::s32: dtype = DataType::Int32; break;
+        default: dtype = DataType::Float32;
+    }
+    Tensor result(shape, dtype);
+    reordered.host(result.Data());
+    return result;
+}
+
 // Helper: Create Tensor from ArrayFire array
 // Note: Transpose 2D arrays back to row-major for CyxWiz Tensor
 static Tensor AfToTensor(const af::array& arr) {
@@ -2049,13 +2105,21 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
     // (`batch_size = x.dims(0)` etc.) are interpreting the tensor
     // incorrectly and every downstream shape check eventually trips.
     //
-    // Gated off via the `kAfPathEnabled` constexpr below so the CPU
-    // fallback handles 3D input without spamming per-batch warnings.
-    // When the AF path is fixed, flip the constant. See tofix.md
-    // "LSTMLayer AF Forward + CPU Backward missing" for the full plan.
+    // Gated off via the `kAfPathEnabled` constexpr below. As of 2026-04-16
+    // the 3D column-major bug at the TensorToAf boundary IS fixed via
+    // TensorToAf3DRowMajor (applied below), but enabling the AF path
+    // still requires three follow-up items verified against the working
+    // CPU BPTT: (1) AF Forward numerical output matches CPU, (2) AF-
+    // shaped cache writes are consistent for AF Backward to consume,
+    // (3) AF Backward under `#if 0` below gets the same 3D-axis audit.
+    // CPU BPTT is the reference; flip this constant only after a
+    // paired A/B test confirms AF matches CPU bit-for-bit (up to
+    // float noise).
     constexpr bool kAfPathEnabled = false;
     if (kAfPathEnabled) try {
-        af::array x = TensorToAf(input);
+        // Use the 3D-aware helper — bare TensorToAf on [batch, seq, feat]
+        // produces a column-major AF array with scrambled semantic axes.
+        af::array x = TensorToAf3DRowMajor(input);
 
         // Handle batch_first format
         // Input: [batch, seq_len, input_size] if batch_first
@@ -2263,7 +2327,11 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
             output = af::reorder(output, 1, 0, 2);
         }
 
-        return AfToTensor(output);
+        // Use the 3D-aware helper — bare AfToTensor on a semantic
+        // [batch, seq, hidden] AF array would produce a row-major
+        // Tensor with the axis order scrambled. Keep this in sync
+        // with the TensorToAf3DRowMajor at the entry.
+        return AfToTensor3DRowMajor(output);
     } catch (const af::exception& e) {
         spdlog::warn("ArrayFire LSTMLayer::Forward failed: {}, falling back to CPU", e.what());
     }

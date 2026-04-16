@@ -623,15 +623,30 @@ any future AF fix. See commit with CPU BPTT for implementation
 details.
 
 **AF path — still pending:**
-- AF Forward column-major reorder bug (items 1 below)
-- AF Backward end-to-end validation against the fixed AF Forward
-  (the existing ~130-line AF backward code at `layer.cpp` has never
-  been exercised because AF Forward was never producing valid caches)
+- ~~AF Forward column-major reorder bug~~ Root cause identified and
+  fix prepared (2026-04-16): `TensorToAf3DRowMajor` /
+  `AfToTensor3DRowMajor` helpers added in `layer.cpp` that handle
+  3D row-major ↔ AF column-major conversion correctly via
+  dim-reversal + `af::reorder(2, 1, 0)`. Applied at the LSTM AF
+  Forward entry/exit points. `kAfPathEnabled` still false pending
+  the validation pass below.
+- AF Forward numerical output validation against CPU Forward
+  (A/B test on mini smoke graph: enable AF for 1 epoch, diff
+  weights-after-first-batch against CPU-computed weights).
+- AF Backward end-to-end validation against CPU Backward. The
+  existing ~130-line AF backward code is currently under `#if 0`
+  in `layer.cpp` — needs the same 3D-helper treatment for its
+  cache reads + output `dx` before flipping on.
+- Cache consistency: AF Forward populates AF-shaped caches,
+  CPU Backward reads row-major CPU caches. Enabling AF requires
+  either populating both cache sets or routing to matching AF
+  Backward. A flag `last_forward_was_af_` on LSTMLayer is the
+  simplest dispatcher.
 
 Left as a perf follow-up, not blocking training correctness. With
 CPU BPTT live, LSTM training works but is slow (~seconds per batch
 on sentiment-scale data). AF would be 10-100x faster once the
-column-major bug is resolved.
+validation above is complete.
 
 **Severity:** ~~High~~ Medium (after CPU BPTT landed) — LSTM weights
 update correctly on CPU. AF path is a perf-only follow-up. Original
