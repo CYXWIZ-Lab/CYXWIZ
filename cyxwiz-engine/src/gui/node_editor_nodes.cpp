@@ -303,6 +303,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Input features. Expects shape [batch, in_features] — "
+                "if upstream produces a higher-rank tensor, drop a "
+                "Flatten before this node.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -310,6 +314,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Linear projection of shape [batch, units]. Feeds an "
+                "activation, the next Dense layer, or the Output node.";
             node.outputs.push_back(output_pin);
 
             // Extract units from name (e.g., "Dense (128)")
@@ -369,6 +376,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Logits / final activations from the model head — usually "
+                "the last Dense layer's output of shape [batch, classes] "
+                "(or [batch, 1] for regression).";
             node.inputs.push_back(input_pin);
 
             // Output: Predictions (goes to Loss function)
@@ -377,6 +388,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Predictions";
             output_pin.is_input = false;
+            output_pin.description =
+                "Model predictions for the current batch. Connect to the "
+                "loss node's Predictions pin so the loss can compare "
+                "against DataLoader.Labels.";
             node.outputs.push_back(output_pin);
 
             node.parameters["classes"] = "10";
@@ -393,6 +408,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Input feature map. Conv2D expects [batch, channels, "
+                "height, width]; Conv1D expects [batch, channels, "
+                "length]; Conv3D expects [batch, channels, depth, "
+                "height, width].";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -400,6 +420,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Convolved feature map with `filters` channels. Spatial "
+                "dimensions depend on kernel_size, stride, and padding "
+                "('same' preserves them, 'valid' shrinks).";
             node.outputs.push_back(output_pin);
 
             // Initialize default parameters
@@ -422,6 +446,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Feature map of shape [batch, channels, H, W]. Pooling "
+                "reduces the spatial dimensions while leaving channel "
+                "count unchanged.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -429,6 +457,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Spatially down-sampled feature map: each pool_size × "
+                "pool_size window collapses to one value (max or mean).";
             node.outputs.push_back(output_pin);
 
             // Initialize default parameters
@@ -469,6 +500,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Higher-rank tensor [batch, ...]. Typically the output "
+                "of the last Conv/Pool block before the Dense head.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -476,6 +510,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "2D tensor of shape [batch, prod(rest)] — all non-batch "
+                "axes collapsed into one. Feed straight into a Dense "
+                "layer.";
             node.outputs.push_back(output_pin);
             break;
         }
@@ -487,6 +525,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Any tensor. Dropout randomly zeros activations during "
+                "training only — eval/test passes are pass-through.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -494,6 +535,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Same shape as Input. During training, surviving "
+                "activations are scaled by 1/(1-rate) so the expected "
+                "magnitude matches eval-time behavior.";
             node.outputs.push_back(output_pin);
 
             // Initialize default parameters
@@ -511,6 +556,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Activations to normalize. BatchNorm normalizes across "
+                "the batch dimension (uses train-time running stats at "
+                "eval); LayerNorm/InstanceNorm/GroupNorm normalize "
+                "within each sample so train and eval behave the same.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -518,6 +568,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Same shape as Input, normalized to (approximately) "
+                "zero mean and unit variance, then affine-transformed "
+                "by learnable gamma/beta.";
             node.outputs.push_back(output_pin);
 
             // Initialize parameters based on norm type
@@ -976,6 +1030,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             loss_pin.type = PinType::Loss;
             loss_pin.name = "Loss";
             loss_pin.is_input = true;
+            loss_pin.description =
+                "Scalar loss tensor from a Loss node. Backprop runs "
+                "from this value through the model, then this optimizer "
+                "applies the update rule (SGD / Adam / AdamW / ...) to "
+                "every learnable parameter.";
             node.inputs.push_back(loss_pin);
 
             NodePin state_pin;
@@ -983,6 +1042,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             state_pin.type = PinType::Optimizer;
             state_pin.name = "State";
             state_pin.is_input = false;
+            state_pin.description =
+                "Optimizer-state handle. Connect to the Output / "
+                "training-control node to close the training loop.";
             node.outputs.push_back(state_pin);
 
             // Parameters based on optimizer type
@@ -1021,6 +1083,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "3D sequence tensor [batch, seq_len, features]. For "
+                "text models this is usually the Embedding output; "
+                "features must equal the recurrent layer's input_size "
+                "(per-timestep, NOT seq_len * embed_dim).";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -1028,6 +1095,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "If return_sequences=true: full sequence "
+                "[batch, seq_len, hidden * num_directions]. "
+                "Otherwise: last timestep [batch, hidden * "
+                "num_directions] — the common 'feed into a Dense "
+                "classifier' shape.";
             node.outputs.push_back(output_pin);
 
             NodePin hidden_pin;
@@ -1035,6 +1108,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             hidden_pin.type = PinType::Tensor;
             hidden_pin.name = "Hidden";
             hidden_pin.is_input = false;
+            hidden_pin.description =
+                "Final hidden state h_n of shape "
+                "[num_layers * num_directions, batch, hidden]. Useful "
+                "for stacking recurrent blocks or for seq2seq models; "
+                "leave disconnected if you only want the Output.";
             node.outputs.push_back(hidden_pin);
 
             node.parameters["input_size"] = "256";
@@ -1075,6 +1153,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Indices";
             input_pin.is_input = true;
+            input_pin.description =
+                "Integer token IDs of shape [batch, seq_len]. Each ID "
+                "must be < num_embeddings; padding_idx is treated as "
+                "a no-grad zero embedding.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -1082,6 +1164,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Embeddings";
             output_pin.is_input = false;
+            output_pin.description =
+                "Dense vectors of shape [batch, seq_len, embedding_dim]. "
+                "Feed into a recurrent layer (LSTM/GRU) for sequence "
+                "models, or Flatten + Dense for bag-of-embeddings.";
             node.outputs.push_back(output_pin);
 
             node.parameters["num_embeddings"] = "10000";
