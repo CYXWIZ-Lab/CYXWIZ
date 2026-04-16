@@ -1188,6 +1188,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             query_pin.name = "Query";
             query_pin.is_input = true;
             query_pin.is_required = true;
+            query_pin.description =
+                "Query tensor [batch, q_len, embed_dim]. For "
+                "SelfAttention wire the same upstream tensor into "
+                "Query, Key, and Value. For CrossAttention this is "
+                "the decoder's current state.";
             node.inputs.push_back(query_pin);
 
             NodePin key_pin;
@@ -1196,6 +1201,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             key_pin.name = "Key";
             key_pin.is_input = true;
             key_pin.is_required = true;
+            key_pin.description =
+                "Key tensor [batch, kv_len, embed_dim]. Determines "
+                "what positions Query attends over.";
             node.inputs.push_back(key_pin);
 
             NodePin value_pin;
@@ -1204,6 +1212,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             value_pin.name = "Value";
             value_pin.is_input = true;
             value_pin.is_required = true;
+            value_pin.description =
+                "Value tensor [batch, kv_len, embed_dim] — what gets "
+                "weighted-summed by the attention scores. Same kv_len "
+                "as Key.";
             node.inputs.push_back(value_pin);
 
             // Optional attention mask (for padding/causal masks)
@@ -1214,6 +1226,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             mask_pin.is_input = true;
             mask_pin.is_required = false;  // Optional
             mask_pin.is_variadic = false;
+            mask_pin.description =
+                "Optional. Boolean / additive mask blocking certain "
+                "positions — common uses: causal mask for autoregressive "
+                "decoding, padding mask to ignore PAD tokens.";
             node.inputs.push_back(mask_pin);
 
             // Output: Attended values
@@ -1222,6 +1238,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Attention output [batch, q_len, embed_dim]. Drop into "
+                "the next layer of a Transformer block.";
             node.outputs.push_back(output_pin);
 
             // Optional output: Attention weights for visualization/debugging
@@ -1230,6 +1249,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             attn_weights_pin.type = PinType::Tensor;
             attn_weights_pin.name = "Attn Weights";
             attn_weights_pin.is_input = false;
+            attn_weights_pin.description =
+                "Per-head attention weights [batch, num_heads, q_len, "
+                "kv_len]. Useful for visualization / interpretability "
+                "panels; leave disconnected if you don't need them.";
             node.outputs.push_back(attn_weights_pin);
 
             node.parameters["embed_dim"] = "512";
@@ -1297,6 +1320,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Sequence input [batch, seq_len, d_model]. Usually "
+                "the output of an Embedding + PositionalEncoding pair. "
+                "All `num_layers` encoder/decoder blocks run in series.";
             node.inputs.push_back(input_pin);
 
             if (node.type == NodeType::TransformerDecoder) {
@@ -1305,6 +1332,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
                 memory_pin.type = PinType::Tensor;
                 memory_pin.name = "Memory";
                 memory_pin.is_input = true;
+                memory_pin.description =
+                    "Encoder output [batch, src_len, d_model] used as "
+                    "the cross-attention key/value source. Required "
+                    "for seq2seq models.";
                 node.inputs.push_back(memory_pin);
             }
 
@@ -1313,6 +1344,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Same shape as Input. For classifier heads use only "
+                "the [CLS] token; for seq2seq feed into the decoder's "
+                "Memory pin (encoder) or into the projection head "
+                "(decoder).";
             node.outputs.push_back(output_pin);
 
             node.parameters["d_model"] = "512";
@@ -1498,6 +1534,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             pred_pin.type = PinType::Tensor;
             pred_pin.name = "Predictions";
             pred_pin.is_input = true;
+            pred_pin.description =
+                "Model output. BCE/BCEWithLogits expect a single sigmoid "
+                "logit/prob per sample; L1/SmoothL1/Huber expect a "
+                "regression value matching Targets shape; NLL expects "
+                "log-probabilities of shape [batch, classes].";
             node.inputs.push_back(pred_pin);
 
             NodePin target_pin;
@@ -1505,6 +1546,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             target_pin.type = PinType::Tensor;
             target_pin.name = "Targets";
             target_pin.is_input = true;
+            target_pin.description =
+                "Ground-truth values. BCE wants 0/1 floats; L1/Huber "
+                "want continuous floats matching Predictions shape; NLL "
+                "wants integer class indices.";
             node.inputs.push_back(target_pin);
 
             NodePin loss_pin;
@@ -1512,6 +1557,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             loss_pin.type = PinType::Loss;
             loss_pin.name = "Loss";
             loss_pin.is_input = false;
+            loss_pin.description =
+                "Scalar loss for the batch (reduced via mean/sum/none "
+                "per the reduction parameter). Connect to an Optimizer "
+                "node to drive backprop.";
             node.outputs.push_back(loss_pin);
 
             node.parameters["reduction"] = "mean";
