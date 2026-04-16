@@ -4113,7 +4113,16 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
-            node.parameters["max_features"] = "1000";
+            // Tool-to-Node canonical params read by CountVectorizerOperator.
+            // text_col + label_col are required when this node runs as a real
+            // Cat-1 operator on an Arrow source. Legacy ngram_range param
+            // kept for back-compat with the floating panel; operator ignores
+            // it in v1.
+            node.parameters["text_col"] = "";
+            node.parameters["label_col"] = "";
+            node.parameters["max_features"] = "2000";
+            node.parameters["norm"] = "l2";
+            // Legacy floating-panel param (operator ignores).
             node.parameters["ngram_range"] = "1,1";
             break;
         }

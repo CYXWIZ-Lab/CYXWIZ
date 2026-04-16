@@ -1,4 +1,5 @@
 #include "pipeline_operator_factory.h"
+#include "count_vectorizer_operator.h"
 #include "differencing_operator.h"
 #include "identity_operator.h"
 #include "log_transform_operator.h"
@@ -49,6 +50,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     // Tool-to-Node text analytics: TFIDFVectorizer.
     RegisterCreator(gui::NodeType::TFIDFVectorizer, []() {
         return std::make_unique<TFIDFVectorizerOperator>();
+    });
+    RegisterCreator(gui::NodeType::CountVectorizer, []() {
+        return std::make_unique<CountVectorizerOperator>();
     });
 }
 

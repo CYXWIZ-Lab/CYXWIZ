@@ -130,6 +130,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/time_series_features_operator.cpp  # Phase 4 Band 1
     src/core/node_executors/text_tokenizer_operator.cpp      # Fix B Band 1
     src/core/node_executors/tfidf_vectorizer_operator.cpp    # Tool-to-Node Band 1
+    src/core/node_executors/count_vectorizer_operator.cpp    # Tool-to-Node Band 1
     # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
@@ -407,6 +408,7 @@ set(ENGINE_HEADERS
     src/core/node_executors/time_series_features_operator.h
     src/core/node_executors/text_tokenizer_operator.h
     src/core/node_executors/tfidf_vectorizer_operator.h
+    src/core/node_executors/count_vectorizer_operator.h
     src/core/node_executors/text_column_utils.h
     src/core/node_executors/ts_column_utils.h
     src/core/pipeline_materializer.h
