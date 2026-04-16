@@ -21,8 +21,6 @@
 #include "../core/parquet_backed_dataset.h"
 #include "../core/async_task_manager.h"
 #include <spdlog/spdlog.h>
-#include <implot.h>
-#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -3170,64 +3168,6 @@ void DataInputDialog::RenderTextPreview() {
     ImGui::Text("%zu columns, %zu rows shown", preview_columns_.size(), preview_data_.size());
     ImGui::Spacing();
 
-    // Class distribution bar chart. Skipped in unlabeled mode or when
-    // the label column isn't in the file — nothing to count. Computes
-    // once per (file_path, label_column) pair via a cache key.
-    if (!label_col_str.empty() && col_exists(label_col_str)) {
-        ComputeTextLabelDistribution();
-
-        if (!preview_label_counts_.empty()) {
-            ImGui::TextColored(accent, "Class distribution");
-            ImGui::Separator();
-            ImGui::Text("%d rows scanned, %zu unique classes%s",
-                        preview_label_counts_total_rows_,
-                        preview_label_counts_.size(),
-                        preview_label_counts_truncated_ ? " (truncated)" : "");
-
-            // Flag imbalance: if max/min count ratio > 10x, say so. Users
-            // catch class-imbalance bugs before hitting a stuck loss.
-            if (preview_label_counts_.size() >= 2) {
-                int max_c = preview_label_counts_.front().second;
-                int min_c = preview_label_counts_.back().second;
-                if (min_c > 0 && max_c / min_c >= 10) {
-                    ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
-                                       "  imbalance %.1fx",
-                                       static_cast<float>(max_c) /
-                                       static_cast<float>(min_c));
-                }
-            }
-
-            // Horizontal bar chart via ImPlot. Height scales with class
-            // count (~18 px per class) so 2-class stays compact and 20-
-            // class stays readable. Capped at 360 px so it doesn't
-            // dominate the preview.
-            int n = static_cast<int>(preview_label_counts_.size());
-            std::vector<double> values;
-            std::vector<const char*> labels;
-            values.reserve(n);
-            labels.reserve(n);
-            for (const auto& kv : preview_label_counts_) {
-                values.push_back(static_cast<double>(kv.second));
-                labels.push_back(kv.first.c_str());
-            }
-            float plot_h = std::min(360.0f, 18.0f * n + 40.0f);
-            if (ImPlot::BeginPlot("##ClassDist", ImVec2(-1, plot_h),
-                ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText |
-                ImPlotFlags_NoLegend)) {
-                ImPlot::SetupAxes("count", nullptr,
-                                  ImPlotAxisFlags_AutoFit,
-                                  ImPlotAxisFlags_AutoFit);
-                ImPlot::SetupAxisTicks(ImAxis_Y1, 0, n - 1, n,
-                                       labels.data(), false);
-                ImPlot::PlotBars("##counts", values.data(), n, 0.7,
-                                 0.0, ImPlotBarsFlags_Horizontal);
-                ImPlot::EndPlot();
-            }
-            ImGui::Spacing();
-        }
-    }
-
     // Column table (same structure as RenderTabularPreview).
     if (ImGui::BeginTable("TextPreview", static_cast<int>(preview_columns_.size()),
         ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
@@ -3275,98 +3215,6 @@ void DataInputDialog::LoadPreview() {
 
     preview_loaded_ = true;
     UpdateRAMEstimate();
-}
-
-void DataInputDialog::ComputeTextLabelDistribution() {
-    // Cache key: if neither the file nor the label column has changed,
-    // return without touching the disk. Makes this safe to call every
-    // frame from RenderTextPreview.
-    std::string cache_key =
-        std::string(file_path_) + "|" + std::string(text_label_column_);
-    if (cache_key == preview_label_counts_cache_key_) {
-        return;
-    }
-
-    preview_label_counts_.clear();
-    preview_label_counts_total_rows_ = 0;
-    preview_label_counts_truncated_ = false;
-    preview_label_counts_cache_key_ = cache_key;
-
-    if (strlen(file_path_) == 0 || strlen(text_label_column_) == 0) {
-        return;
-    }
-
-    std::ifstream file(file_path_);
-    if (!file.is_open()) return;
-
-    char delim = custom_delimiter_[0];
-    if (delim == '\0') delim = ',';
-    if (detected_type_ == 2) delim = '\t';
-
-    // Find the label column index from the header row.
-    std::string line;
-    if (!std::getline(file, line)) return;
-    int label_idx = -1;
-    {
-        std::stringstream ss(line);
-        std::string cell;
-        int i = 0;
-        while (std::getline(ss, cell, delim)) {
-            size_t start = cell.find_first_not_of(" \t\r\n\"");
-            size_t end   = cell.find_last_not_of(" \t\r\n\"");
-            if (start != std::string::npos && end != std::string::npos) {
-                cell = cell.substr(start, end - start + 1);
-            }
-            if (cell == text_label_column_) { label_idx = i; break; }
-            i++;
-        }
-    }
-    if (label_idx < 0) return;
-
-    // Stream the full file, counting labels. Caps: stop after 1M rows or
-    // 100 unique labels so a free-text column doesn't blow up RAM.
-    constexpr int kMaxRows   = 1'000'000;
-    constexpr int kMaxUnique = 100;
-    std::map<std::string, int> counts;
-    int row = 0;
-    while (std::getline(file, line) && row < kMaxRows) {
-        std::stringstream ss(line);
-        std::string cell;
-        int col = 0;
-        std::string label_val;
-        while (std::getline(ss, cell, delim)) {
-            if (col == label_idx) {
-                size_t start = cell.find_first_not_of(" \t\r\n\"");
-                size_t end   = cell.find_last_not_of(" \t\r\n\"");
-                if (start != std::string::npos && end != std::string::npos) {
-                    label_val = cell.substr(start, end - start + 1);
-                } else {
-                    label_val = cell;
-                }
-                break;
-            }
-            col++;
-        }
-        if (label_val.empty()) { row++; continue; }
-        if (counts.size() >= kMaxUnique && counts.find(label_val) == counts.end()) {
-            preview_label_counts_truncated_ = true;
-            row++;
-            continue;
-        }
-        counts[label_val]++;
-        row++;
-    }
-    if (row >= kMaxRows) preview_label_counts_truncated_ = true;
-    preview_label_counts_total_rows_ = row;
-
-    // Flatten + sort by count descending so the bar chart reads top-down
-    // by frequency, and imbalance pops out at a glance.
-    preview_label_counts_.reserve(counts.size());
-    for (auto& kv : counts) {
-        preview_label_counts_.emplace_back(kv.first, kv.second);
-    }
-    std::sort(preview_label_counts_.begin(), preview_label_counts_.end(),
-              [](const auto& a, const auto& b) { return a.second > b.second; });
 }
 
 void DataInputDialog::LoadColumnList() {

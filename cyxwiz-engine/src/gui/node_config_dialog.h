@@ -237,13 +237,6 @@ private:
     void DetectFileCategory();
     void LoadPreview();
     void LoadColumnList();
-
-    // Scans the full label column of the current CSV and fills
-    // preview_label_counts_ (class → count). Streams the file so even
-    // multi-GB CSVs are safe; caps unique values at 100 so a mistakenly-
-    // selected free-text column doesn't explode the map. Safe to call
-    // every frame — cache key (file_path|label_col) skips repeat work.
-    void ComputeTextLabelDistribution();
     void UpdateRAMEstimate();
     void BrowseFile();
     void BrowseFolder();
@@ -423,16 +416,6 @@ private:
     std::vector<std::string> preview_image_labels_;
     bool preview_loaded_ = false;
     std::string preview_error_;
-
-    // STATE: Text class-distribution preview. Populated by
-    // ComputeTextLabelDistribution() when RenderTextPreview notices the
-    // label column / file has changed. Kept sorted by count descending
-    // for stable plotting order. cache_key encodes file_path|label_col
-    // so the compute is skipped when neither changed.
-    std::vector<std::pair<std::string, int>> preview_label_counts_;
-    std::string preview_label_counts_cache_key_;
-    int preview_label_counts_total_rows_ = 0;
-    bool preview_label_counts_truncated_ = false;
     std::string status_message_;
     float estimated_ram_mb_ = 0.0f;
     float download_progress_ = 0.0f;

@@ -787,15 +787,21 @@ Embedding → TransformerEncoder → Dense through to convergence.
 Transformer variants, run each to convergence, fix whatever breaks.
 Medium-size task — LSTM-style investigation + fixes could reoccur.
 
-### ~~Text preview doesn't show class distribution~~ LANDED 2026-04-17
+### Text preview doesn't show class distribution
 
-**Status:** Resolved. `DataInputDialog::ComputeTextLabelDistribution`
-streams the full CSV (capped at 1M rows / 100 unique classes) and
-caches results by `(file_path | label_column)` so it only rescans on
-change. `RenderTextPreview` draws an ImPlot horizontal bar chart
-above the CSV head table whenever a valid label column is set, plus
-an "imbalance Xx" warning if max/min count ratio ≥ 10. Same pattern
-that `tfidf_panel` uses for axis labels.
+**Severity:** Low — nice-to-have.
+
+**Issue:** `RenderTextPreview` (added in 7b7bd34b) shows a CSV head
+table with mapped text/label columns highlighted green or red. It
+does NOT show a class-distribution bar chart or sample-per-class
+count — users can't see class imbalance until training starts.
+
+**Fix:** Parse the label column during `LoadColumnList` and
+compute a per-value count, then render a small horizontal bar
+chart above the CSV head table.
+
+**Files:** `cyxwiz-engine/src/gui/data_input_dialog.cpp` —
+`LoadColumnList()` + `RenderTextPreview()`.
 
 ### `node_config_dialog.h` git-binary state pre-HEAD~3
 
