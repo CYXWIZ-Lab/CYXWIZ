@@ -2866,7 +2866,16 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by PCAOperator.
+            // feature_cols empty = auto-detect numeric columns (drop label
+            // and __-prefixed metadata). label_col is passed through to
+            // output as `y` int32. center/scale match sklearn's PCA defaults.
+            node.parameters["feature_cols"] = "";
+            node.parameters["label_col"] = "";
             node.parameters["n_components"] = "2";
+            node.parameters["center"] = "true";
+            node.parameters["scale"] = "false";
+            // Legacy floating-panel param (operator ignores in v1).
             node.parameters["whiten"] = "false";
             break;
         }

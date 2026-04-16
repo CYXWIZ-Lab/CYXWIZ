@@ -3,6 +3,7 @@
 #include "differencing_operator.h"
 #include "identity_operator.h"
 #include "log_transform_operator.h"
+#include "pca_operator.h"
 #include "text_tokenizer_operator.h"
 #include "tfidf_vectorizer_operator.h"
 #include "time_series_features_operator.h"
@@ -53,6 +54,12 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::CountVectorizer, []() {
         return std::make_unique<CountVectorizerOperator>();
+    });
+    // Tool-to-Node linear algebra: PCA (only Cat-1 fit from this block —
+    // SVD/QR/Cholesky/Eigen are multi-output decompositions better as
+    // Cat-2 introspection panels).
+    RegisterCreator(gui::NodeType::PCANode, []() {
+        return std::make_unique<PCAOperator>();
     });
 }
 
