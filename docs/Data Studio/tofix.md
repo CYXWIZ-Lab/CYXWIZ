@@ -46,33 +46,32 @@ tabular path to find the layout mismatch.
 
 ## Node Pin Design Inconsistencies
 
-### Status update 2026-04-17 — pin pass landed (4 commits)
+### Status update 2026-04-17 — pin pass + compile-gate enforcement landed (8 commits)
 
-The "stop fooling the user" pin sweep was done as a name-and-tooltip
-pass, NOT as the originally-proposed "collapse to single Dataset
-pin" pass. The dual Data + Labels stream is now the intentional
-design across the canvas (matches PyTorch's `(x, y)` DataLoader
-contract). Concrete changes:
+Two-layer "stop fooling the user" sweep. **Descriptions** make the
+canvas self-documenting; **compile-gate enforcement** makes it
+authoritative at compile time even though the runtime still ignores
+topology (see the TrainingExecutor entry below).
+
+Pin tooltip + name consistency pass (4 commits):
 
 1. **`9ded26e9` — pin tooltip framework + data chain.** Added
-   `NodePin.description` field; the existing pin-hover popup at
-   `node_editor.cpp:362` now renders the description below the
-   generic name/type/connection tooltip. Populated for DataInput,
-   DataSplit, DataLoader, MSELoss, CrossEntropyLoss. Renamed
-   DataInput's first output pin "Features" → "Data" so the chain
-   reads `Data + Labels` end-to-end. Backward compatible (links
-   restore by ordinal index, not name).
+   `NodePin.description` field; the pin-hover popup at
+   `node_editor.cpp:362` renders it below the generic tooltip.
+   Populated for DataInput, DataSplit, DataLoader, MSELoss,
+   CrossEntropyLoss. Renamed DataInput's first output pin
+   "Features" → "Data" so the chain reads `Data + Labels`
+   end-to-end. Backward compatible (links restore by ordinal
+   index, not name).
 2. **`27da03b7` — model + optimizer descriptions.** Dense, Conv1/2/3D,
    MaxPool/AvgPool, Flatten, Dropout, BatchNorm/LayerNorm/GroupNorm/
    InstanceNorm, Output, optimizers (SGD/Adam/AdamW/RMSprop/Adagrad/
-   NAdam), recurrent (RNN/LSTM/GRU), Embedding. Each describes its
-   shape contract or special semantics (e.g. LSTM/GRU's
-   return_sequences shape switch, Dropout's train-only scaling).
-3. **`2cc0672f` — losses + attention + transformer.** BCE / BCEWithLogits
-   / L1 / SmoothL1 / Huber / NLL losses; MultiHeadAttention /
-   SelfAttention / CrossAttention with Q/K/V/Mask explained;
-   TransformerEncoder/Decoder with Memory pin documented.
-4. **(commit pending — image transforms + time series + data ops)**
+   NAdam), recurrent (RNN/LSTM/GRU), Embedding.
+3. **`2cc0672f` — losses + attention + transformer.** BCE /
+   BCEWithLogits / L1 / SmoothL1 / Huber / NLL losses;
+   MultiHeadAttention / SelfAttention / CrossAttention with
+   Q/K/V/Mask explained; TransformerEncoder/Decoder with Memory pin.
+4. **`8d65a0c2` — image transforms + time series + data ops.**
    Augmentation, Normalize, OneHotEncode (notes the Labels→Tensor
    type change), Bidirectional/TimeDistributed wrappers,
    PositionalEncoding, TimeSeriesWindow / TimeSeriesSplit /
@@ -84,58 +83,76 @@ Pure activation nodes (ReLU/Sigmoid/Tanh/Softmax/etc.) intentionally
 left without descriptions — the node name says everything the user
 needs.
 
+Compile-gate pin-connectivity enforcement (4 commits). Five checks
+now fire as Error-level issues in `GraphCompiler::Compile`, blocking
+training on structurally-wrong graphs:
+
+5. **`8c468316` — required inputs + Loss.Targets reachability.**
+   `ValidateRequiredInputsConnected` flags any input pin with
+   `is_required=true` that has no incoming link.
+   `ValidateLossTargetsReachLabels` BFS'es upstream from each Loss
+   node's Targets pin and requires an ancestor output pin of
+   `PinType::Labels`.
+6. **`2e34d027` — Loss.Predictions reachability.**
+   `ValidateLossPredictionsReachModel` mirrors the Targets check
+   but requires an ancestor node of `IsModelLayer()` type or
+   `NodeType::Output`. Catches wiring Predictions to
+   DataInput.Data (no model in between) or to the Labels stream
+   (swapped pins).
+7. **`071c1dd5` — Optimizer.Loss reachability.**
+   `ValidateOptimizerReachesLoss` closes the `compile → loss →
+   optimizer` chain. The pin-type system's "Tensor is universal"
+   rule would otherwise let a Dense.Output be wired straight into
+   Optimizer.Loss.
+8. **`4beddfe4` — required outputs + optional markers.**
+   `ValidateRequiredOutputsConnected` flags dangling producers.
+   Legitimate optional outputs explicitly marked
+   `is_required=false`: LSTM/GRU/RNN.Hidden, all attention
+   AttnWeights, DataSplit.{Val*,Test*}, TimeSeriesSplit.
+   {Validation,Test}, Output.Predictions, Optimizer.State.
+   Pragmatically, **DataSplit.Train Labels** and
+   **DataLoader.Labels** are also marked optional as a
+   concession to the current registry-driven runtime — every
+   example graph (`mnist_mlp`, the sentiment classifiers, etc.)
+   routes labels direct from DataInput to Loss, bypassing the
+   split/loader. The optional markers are "flip to required
+   when the runtime walks pins" markers; comments in
+   `node_editor_nodes.cpp` flag the handoff.
+
+Four cyxgraph test fixtures under
+`examples/cyxgraph/test_pin_connectivity/` exercise each check
+(01_targets_disconnected, 02_targets_wrong_source,
+03_predictions_wrong_source, 04_optimizer_loss_wrong_source).
+
 What this fix does NOT address:
 - The architectural "TrainingExecutor walks pins, not registry"
-  issue (line 281) is unchanged. The canvas now LOOKS honest about
-  what pins carry, but the runtime still ignores topology and reads
-  `dataset_name` from the registry. The descriptions are accurate
-  about the *intent* of each pin; they just can't promise the
-  runtime acts on them yet.
+  issue (below). The canvas now LOOKS honest AND compile-time
+  refuses to launch broken graphs, but the runtime still ignores
+  topology. Training a compile-passing graph is safe; training
+  with topology-dependent behavior (e.g., shuffled labels via
+  DataLoader.Labels) won't actually honor the wiring until
+  the runtime fix lands.
 - The image-dialog Normalize foot-gun (Image-only) is unchanged —
   see the Normalize entry below.
 
-### DataInput node does too much
+### DataInput node does too much — RESOLVED except LabelSelect node
 
-**Severity:** Low (was Medium) — partially addressed by the 2026-04-17
-pin pass. Remaining concerns are non-pin.
+**Original four concerns** (dual pins, label column in dialog,
+normalize params, domain-unaware label warning) are all either
+addressed by the 2026-04-17 pin pass or predate it. Only remaining
+concern: **a dedicated `LabelSelect` / `ColumnSelect` node** would
+pull label-column choice off the DataInput dialog onto the canvas.
+Useful but not urgent — the dialog approach works fine for the
+current single-source-per-DataInput model.
 
-**Original issue list and current state:**
-1. ~~Has two output pins (Data + Label) — implies it separates features
-   from labels internally~~ — **decided to keep**. Dual pins are
-   the intentional design (mirror PyTorch's `(x, y)` contract);
-   hover tooltips now explain what each pin carries. The first
-   output is now "Data" not "Features" for cross-node consistency.
-2. Carries label column selection in its dialog — label awareness
-   should be a separate concern. **Still open.** The dialog still
-   owns `label_column`. A dedicated `LabelSelect` / `ColumnSelect`
-   node would let the canvas show this concern explicitly.
-3. ~~Still has Normalize params in its parameters~~ — **mostly
-   wrong, see Normalize entry below**. Tabular dialog has none;
-   only the Image dialog still owns pixel scaling, deferred until
-   an `ImageNormalize` graph node exists.
-4. The "No label column selected" compile warning fires for image
-   datasets where labels come from folder structure. **Marked FIXED**
-   per line 142 — the compile gate is now domain-aware.
+### DataLoader pin layout — RESOLVED
 
-**Remaining scope:** the LabelSelect/ColumnSelect node is the only
-material part still on the table. Useful but not urgent — the
-dialog approach works fine for the current single-source-per-
-DataInput model.
-
-### DataLoader pin layout
-
-**Severity:** Resolved (intentional design as of 2026-04-17).
-
-**Status:** Dual Data/Labels in/out is now the documented intent —
-matches DataInput.Data/Labels and DataSplit.{Train,Val,Test}{Data,Labels}
-so the canvas reads consistently. Hover descriptions on every pin
-explain the role.
-
-The earlier "switch to single Dataset stream" idea is dropped —
-it would have hidden the (X, y) split that ML practitioners
-expect to see, and would still depend on the unfixed
-TrainingExecutor pin-walking architecture to mean anything
-runtime-wise.
+Dual Data/Labels in/out is the intentional design as of 2026-04-17.
+Matches DataInput.Data/Labels and DataSplit.{Train,Val,Test}
+{Data,Labels} so the canvas reads consistently. Hover descriptions
+on every pin. The "switch to single Dataset stream" proposal was
+dropped — it would have hidden the `(X, y)` split ML practitioners
+expect.
 
 ### Normalize node in DataInput vs graph
 
@@ -408,11 +425,32 @@ by name, and runs training. The pin wires are decorative.
 - `cyxwiz-engine/src/core/graph_compiler.cpp` (build execution plan)
 - New file: `cyxwiz-engine/src/core/runtime_context.h/.cpp`
 
-**Workaround until then:** the pin layout fix (DataLoader 2-in/2-out,
-Targets pin → Labels type) makes the canvas at least *look* honest
-even though the executor still bypasses it. Users can wire the graph
-correctly and see green compile pins; the runtime just ignores the
-wiring details. This is the lesser of two lies.
+**Workaround state as of 2026-04-17 (8 pin commits):** the canvas is
+now self-documenting (hover descriptions on every meaningful pin)
+AND the compile gate enforces five structural invariants:
+required inputs connected, required outputs consumed (minus the
+explicitly-optional set), Loss.Targets BFS reaches a
+`PinType::Labels` source, Loss.Predictions BFS reaches a model
+layer / Output node, and Optimizer.Loss BFS reaches an actual
+Loss node. See the pin-section status block above for details and
+commit hashes.
+
+What the compile gate CAN'T enforce yet (runtime still needed):
+- DataSplit.Train Labels and DataLoader.Labels are marked optional
+  outputs so the existing example graphs (which bypass them
+  entirely) still compile. Once `TrainingExecutor` walks pins,
+  flip those is_required flags and the "labels must route through
+  the loader for shuffling alignment" rule becomes compile-time
+  enforced.
+- A graph with shuffled data but unshuffled labels silently trains
+  against misaligned pairs — the structure is valid, only the
+  runtime behavior is wrong.
+
+Net effect: the canvas is no longer "the lesser of two lies" — it's
+a contract at compile time, just not yet at runtime. Training a
+compile-passing graph is safe; the gap is topology-dependent
+behavior (like the shuffle-alignment concern above) that only the
+runtime fix can close.
 
 **DataLoader params that are currently UI-only (need executor wiring):**
 The Properties panel exposes a full set of training-loop knobs on
