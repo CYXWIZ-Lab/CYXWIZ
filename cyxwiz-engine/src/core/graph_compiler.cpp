@@ -105,6 +105,7 @@ TrainingConfiguration GraphCompiler::Compile(
         // anyway. These checks make the canvas the source of truth at
         // compile time so users can't ship a visually-broken graph.
         ValidateRequiredInputsConnected(nodes, links, config);
+        ValidateRequiredOutputsConnected(nodes, links, config);
         ValidateLossTargetsReachLabels(nodes, links, config);
         ValidateLossPredictionsReachModel(nodes, links, config);
         ValidateOptimizerReachesLoss(nodes, links, config);
@@ -1619,6 +1620,40 @@ void GraphCompiler::ValidateRequiredInputsConnected(
             msg << "Required input pin '" << pin.name
                 << "' on node '" << node.name
                 << "' has no incoming connection";
+            AddIssue(config, IssueLevel::Error, msg.str(),
+                     node.id, node.name);
+        }
+    }
+}
+
+void GraphCompiler::ValidateRequiredOutputsConnected(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    TrainingConfiguration& config) const
+{
+    // Output-side symmetry of ValidateRequiredInputsConnected. Catches
+    // "dangling" producers: a DataLoader whose Labels output goes
+    // nowhere, a Normalize whose Output isn't consumed, etc. Only
+    // outputs that were explicitly marked is_required=false (LSTM's
+    // Hidden, attention's Attn Weights, DataSplit's Val/Test,
+    // Output.Predictions, Optimizer.State) are skipped — everything
+    // else must have at least one downstream consumer.
+    std::unordered_set<int> connected_output_pins;
+    connected_output_pins.reserve(links.size());
+    for (const auto& link : links) {
+        connected_output_pins.insert(link.from_pin);
+    }
+
+    for (const auto& node : nodes) {
+        for (const auto& pin : node.outputs) {
+            if (!pin.is_required) continue;
+            if (connected_output_pins.count(pin.id) > 0) continue;
+
+            std::ostringstream msg;
+            msg << "Required output pin '" << pin.name
+                << "' on node '" << node.name
+                << "' has no outgoing connection - the produced data is "
+                   "never consumed";
             AddIssue(config, IssueLevel::Error, msg.str(),
                      node.id, node.name);
         }

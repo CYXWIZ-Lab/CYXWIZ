@@ -388,6 +388,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Predictions";
             output_pin.is_input = false;
+            output_pin.is_required = false;  // Output is typically terminal; Predictions rarely chained further.
             output_pin.description =
                 "Model predictions for the current batch. Connect to the "
                 "loss node's Predictions pin so the loss can compare "
@@ -663,11 +664,16 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.outputs.push_back(data_out);
 
             // Output 2: Batched labels → loss function's Targets pin
+            // Marked optional for the same reason as DataSplit.Train Labels:
+            // every example graph bypasses this pin and wires labels
+            // direct from DataInput to Loss. Tighten once the runtime
+            // walks pins.
             NodePin labels_out;
             labels_out.id = next_pin_id_++;
             labels_out.type = PinType::Labels;
             labels_out.name = "Labels";
             labels_out.is_input = false;
+            labels_out.is_required = false;
             labels_out.description =
                 "Batched label tensor of shape [batch_size, ...], "
                 "row-aligned with Data. Connect to the loss node's "
@@ -899,11 +905,19 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.outputs.push_back(train_data);
 
             // Output: Train Labels
+            // Marked optional because the existing convention (used by
+            // every example graph) routes labels directly DataInput →
+            // Loss.Targets, bypassing DataSplit/DataLoader. The runtime
+            // pin-walking fix (tofix.md) will make this path
+            // canonical; tighten is_required to true once labels are
+            // required to flow through the split/loader for shuffling
+            // alignment.
             NodePin train_labels;
             train_labels.id = next_pin_id_++;
             train_labels.type = PinType::Labels;
             train_labels.name = "Train Labels";
             train_labels.is_input = false;
+            train_labels.is_required = false;
             train_labels.description =
                 "Label subset for training, row-aligned with Train Data. "
                 "Pair with the matching DataLoader or wire straight to "
@@ -916,6 +930,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             val_data.type = PinType::Tensor;
             val_data.name = "Val Data";
             val_data.is_input = false;
+            val_data.is_required = false;  // Optional — common to skip validation during early dev.
             val_data.description =
                 "Feature subset for validation — val_ratio of the input "
                 "rows. Used by the eval pass between training epochs (no "
@@ -928,6 +943,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             val_labels.type = PinType::Labels;
             val_labels.name = "Val Labels";
             val_labels.is_input = false;
+            val_labels.is_required = false;
             val_labels.description =
                 "Label subset for validation, row-aligned with Val Data.";
             node.outputs.push_back(val_labels);
@@ -938,6 +954,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             test_data.type = PinType::Tensor;
             test_data.name = "Test Data";
             test_data.is_input = false;
+            test_data.is_required = false;  // Optional — held-out test is often skipped.
             test_data.description =
                 "Feature subset for the held-out test pass — test_ratio "
                 "of the input rows. Only touched after training completes.";
@@ -949,6 +966,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             test_labels.type = PinType::Labels;
             test_labels.name = "Test Labels";
             test_labels.is_input = false;
+            test_labels.is_required = false;
             test_labels.description =
                 "Label subset for the held-out test pass, row-aligned "
                 "with Test Data.";
@@ -1126,6 +1144,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             state_pin.type = PinType::Optimizer;
             state_pin.name = "State";
             state_pin.is_input = false;
+            state_pin.is_required = false;  // Optional — graphs without an Output node are fine.
             state_pin.description =
                 "Optimizer-state handle. Connect to the Output / "
                 "training-control node to close the training loop.";
@@ -1192,6 +1211,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             hidden_pin.type = PinType::Tensor;
             hidden_pin.name = "Hidden";
             hidden_pin.is_input = false;
+            hidden_pin.is_required = false;  // Optional — most users want Output only.
             hidden_pin.description =
                 "Final hidden state h_n of shape "
                 "[num_layers * num_directions, batch, hidden]. Useful "
@@ -1344,6 +1364,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             attn_weights_pin.type = PinType::Tensor;
             attn_weights_pin.name = "Attn Weights";
             attn_weights_pin.is_input = false;
+            attn_weights_pin.is_required = false;  // Optional — visualization only.
             attn_weights_pin.description =
                 "Per-head attention weights [batch, num_heads, q_len, "
                 "kv_len]. Useful for visualization / interpretability "
@@ -2235,6 +2256,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             val_out.type = PinType::Tensor;
             val_out.name = "Validation";
             val_out.is_input = false;
+            val_out.is_required = false;  // Optional — common to skip val.
             val_out.description =
                 "Middle `val_ratio` slice — used for hyperparameter "
                 "tuning and early stopping.";
@@ -2244,6 +2266,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             test_out.type = PinType::Tensor;
             test_out.name = "Test";
             test_out.is_input = false;
+            test_out.is_required = false;  // Optional — held-out test often skipped.
             test_out.description =
                 "Final `test_ratio` slice — the newest rows, held "
                 "out for the final evaluation.";
