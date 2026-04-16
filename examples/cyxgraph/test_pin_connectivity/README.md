@@ -42,6 +42,26 @@ against the wrong stream.
 
 This catches `ValidateLossTargetsReachLabels`.
 
+### `03_predictions_wrong_source.cyxgraph`
+
+`Loss.Predictions` IS wired — but to `DataInput.Labels` (the label
+stream) instead of the model's output. The required-input check
+passes; the reachability check fails because the upstream chain
+never touches a model layer or `Output` node.
+
+**Expected compile error:**
+```
+Loss node 'CrossEntropy' has its Predictions pin wired, but the
+upstream chain never passes through a model layer or Output node.
+The loss is being computed against a non-prediction tensor (often
+the Labels stream wired by mistake, or a raw DataInput tensor with
+no model in between).
+```
+
+This catches `ValidateLossPredictionsReachModel`. Note this fixture
+ALSO has the same Labels-→-Targets wire as a normal graph, so the
+Targets check passes — only Predictions is wrong.
+
 ## Why these matter
 
 Before the pin-connectivity compile-gate landed, both fixtures would

@@ -106,6 +106,7 @@ TrainingConfiguration GraphCompiler::Compile(
         // compile time so users can't ship a visually-broken graph.
         ValidateRequiredInputsConnected(nodes, links, config);
         ValidateLossTargetsReachLabels(nodes, links, config);
+        ValidateLossPredictionsReachModel(nodes, links, config);
     }
 
     // Extract dataset configuration
@@ -1756,6 +1757,137 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
                    "(DataInput.Labels, DataSplit.*Labels, or "
                    "DataLoader.Labels). The model is being trained "
                    "against the wrong stream.";
+            AddIssue(config, IssueLevel::Error, msg.str(),
+                     node.id, node.name);
+        }
+    }
+}
+
+void GraphCompiler::ValidateLossPredictionsReachModel(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    TrainingConfiguration& config) const
+{
+    // Symmetric to ValidateLossTargetsReachLabels: BFS upstream from
+    // each Loss node's Predictions pin, but the success criterion is
+    // "ancestor node is a model layer or Output node" instead of
+    // "ancestor pin is PinType::Labels". Catches the case where a user
+    // wires Predictions to DataInput.Data, a Normalize output, or
+    // (worst) the Labels stream — all of which would silently train
+    // garbage before the runtime fix lands.
+    std::unordered_map<int, int> pin_to_node;  // pin_id → owning node_id
+    for (const auto& node : nodes) {
+        for (const auto& pin : node.inputs)  pin_to_node[pin.id] = node.id;
+        for (const auto& pin : node.outputs) pin_to_node[pin.id] = node.id;
+    }
+
+    std::unordered_map<int, std::vector<int>> upstream_outputs;
+    upstream_outputs.reserve(links.size());
+    for (const auto& link : links) {
+        upstream_outputs[link.to_pin].push_back(link.from_pin);
+    }
+
+    std::unordered_map<int, std::vector<int>> node_input_pins;
+    node_input_pins.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        std::vector<int> ids;
+        ids.reserve(node.inputs.size());
+        for (const auto& pin : node.inputs) ids.push_back(pin.id);
+        node_input_pins[node.id] = std::move(ids);
+    }
+
+    auto is_loss_node = [](gui::NodeType t) {
+        return t == gui::NodeType::MSELoss ||
+               t == gui::NodeType::CrossEntropyLoss ||
+               t == gui::NodeType::BCELoss ||
+               t == gui::NodeType::BCEWithLogits ||
+               t == gui::NodeType::L1Loss ||
+               t == gui::NodeType::SmoothL1Loss ||
+               t == gui::NodeType::HuberLoss ||
+               t == gui::NodeType::NLLLoss;
+    };
+
+    // Build node_id → node* lookup so the BFS can check owning node
+    // type without a linear search per visited pin.
+    std::unordered_map<int, const gui::MLNode*> node_by_id;
+    node_by_id.reserve(nodes.size());
+    for (const auto& node : nodes) node_by_id[node.id] = &node;
+
+    for (const auto& node : nodes) {
+        if (!is_loss_node(node.type)) continue;
+
+        // Predictions is the FIRST input on every loss node above —
+        // it's PinType::Tensor. Match by name "Predictions" for older
+        // graphs that may not preserve ordering.
+        const gui::NodePin* predictions_pin = nullptr;
+        for (const auto& pin : node.inputs) {
+            if (pin.name == "Predictions") {
+                predictions_pin = &pin;
+                break;
+            }
+        }
+        if (!predictions_pin && !node.inputs.empty()) {
+            // Fall back to the first input pin — older loss nodes may
+            // not have set the name explicitly.
+            predictions_pin = &node.inputs[0];
+        }
+        if (!predictions_pin) continue;
+
+        // Already-flagged disconnect — skip to avoid duplicate errors.
+        if (upstream_outputs.find(predictions_pin->id) == upstream_outputs.end()) {
+            continue;
+        }
+
+        std::queue<int> queue;
+        std::unordered_set<int> visited_inputs;
+        queue.push(predictions_pin->id);
+        visited_inputs.insert(predictions_pin->id);
+
+        bool found_model_source = false;
+        while (!queue.empty() && !found_model_source) {
+            int input_pin_id = queue.front();
+            queue.pop();
+
+            auto it = upstream_outputs.find(input_pin_id);
+            if (it == upstream_outputs.end()) continue;
+
+            for (int upstream_out_pin_id : it->second) {
+                auto owner_it = pin_to_node.find(upstream_out_pin_id);
+                if (owner_it == pin_to_node.end()) continue;
+                auto node_it = node_by_id.find(owner_it->second);
+                if (node_it == node_by_id.end()) continue;
+
+                const gui::MLNode* upstream_node = node_it->second;
+                if (upstream_node->type == gui::NodeType::Output ||
+                    IsModelLayer(upstream_node->type)) {
+                    found_model_source = true;
+                    break;
+                }
+
+                // Activation nodes (ReLU/Sigmoid/etc.) are NOT in
+                // IsModelLayer but a chain ending Activation → Loss
+                // is legitimate (the Activation's own input traces
+                // back to a model layer). Keep walking upstream
+                // through this node's inputs.
+                auto inputs_it = node_input_pins.find(owner_it->second);
+                if (inputs_it == node_input_pins.end()) continue;
+                for (int upstream_in_pin_id : inputs_it->second) {
+                    if (visited_inputs.insert(upstream_in_pin_id).second) {
+                        queue.push(upstream_in_pin_id);
+                    }
+                }
+            }
+        }
+
+        if (!found_model_source) {
+            std::ostringstream msg;
+            msg << "Loss node '" << node.name
+                << "' has its Predictions pin wired, but the upstream "
+                   "chain never passes through a model layer or Output "
+                   "node. The loss is being computed against a "
+                   "non-prediction tensor (often the Labels stream "
+                   "wired by mistake, or a raw DataInput tensor with "
+                   "no model in between).";
             AddIssue(config, IssueLevel::Error, msg.str(),
                      node.id, node.name);
         }
