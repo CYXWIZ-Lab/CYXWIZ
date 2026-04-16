@@ -3224,6 +3224,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             pred_out.is_input = false;
             node.outputs.push_back(pred_out);
 
+            // Tool-to-Node canonical params read by LinearRegressionOperator.
+            // feature_cols is comma-sep predictor columns; target_col is the
+            // response. Output appends prediction + residual columns to the
+            // input table.
+            node.parameters["feature_cols"] = "";
+            node.parameters["target_col"] = "";
             node.parameters["fit_intercept"] = "true";
             break;
         }
@@ -3257,7 +3263,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             pred_out.is_input = false;
             node.outputs.push_back(pred_out);
 
+            // Tool-to-Node canonical params read by PolynomialRegressionOperator.
+            // Single predictor only (backend PolynomialRegression takes one x).
+            node.parameters["feature_col"] = "";
+            node.parameters["target_col"] = "";
             node.parameters["degree"] = "2";
+            // Legacy panel param (operator always includes intercept).
             node.parameters["fit_intercept"] = "true";
             break;
         }

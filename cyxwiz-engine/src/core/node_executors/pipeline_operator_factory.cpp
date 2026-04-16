@@ -5,6 +5,7 @@
 #include "identity_operator.h"
 #include "log_transform_operator.h"
 #include "pca_operator.h"
+#include "regression_operators.h"
 #include "sentiment_analyzer_operator.h"
 #include "signal_processing_operators.h"
 #include "text_tokenizer_operator.h"
@@ -95,6 +96,15 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::FilterDesigner, []() {
         return std::make_unique<FilterDesignerOperator>();
+    });
+    // Tool-to-Node classical regression (Linear + Polynomial only;
+    // tree/forest/SVM/KNN/NaiveBayes/Logistic deferred — no backend
+    // implementation or different API shape).
+    RegisterCreator(gui::NodeType::LinearRegressionNode, []() {
+        return std::make_unique<LinearRegressionOperator>();
+    });
+    RegisterCreator(gui::NodeType::PolynomialRegressionNode, []() {
+        return std::make_unique<PolynomialRegressionOperator>();
     });
 }
 

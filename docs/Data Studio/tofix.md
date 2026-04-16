@@ -892,9 +892,47 @@ time-series row in the inventory table can be struck through. Two
 NEW NodeTypes were added as part of this work (`LogTransform`,
 `Differencing`) — both also live operators. See
 `docs/phase4_time_series_plan.md` "What actually shipped" for the
-full breakdown. ~37 dead NodeTypes remain; migration framework
-(`node_executors/`, `PipelineMaterializer`, `IPipelineOperator`)
-is now proven and ready for text analytics / linear algebra / etc.
+full breakdown.
+
+**Status update 2026-04-16 — Tool-to-Node migration ROUND 2 closed.**
+In this session, 14 additional Cat-1 operators landed across five
+blocks, bringing the total from 5 → **19 live Cat-1 operators**:
+- **Text analytics** (4): `TextTokenizer`, `TFIDFVectorizer`,
+  `CountVectorizer`, `SentimentAnalyzer` (lexicon-based)
+- **Linear algebra** (1): `PCANode` (SVD-based)
+- **Clustering** (4): `KMeansCluster`, `DBSCANCluster`,
+  `HierarchicalCluster`, `GMMCluster` (all GPU-accelerated via AF)
+- **Signal processing** (3): `FFTNode`, `Convolution1D`,
+  `FilterDesigner` (combines design+apply)
+- **Classical regression** (2): `LinearRegressionNode` (multi-
+  predictor OLS), `PolynomialRegressionNode` (univariate)
+
+**Of the remaining ~18 dead NodeTypes, every single one is now
+deferred with explicit reasoning:**
+- **Cat-2 introspection (don't force into Cat-1)** — ACF/PACF,
+  StationarityTest, SeasonalityDetector, HypothesisTest,
+  DistributionFitter, ConfusionMatrix, ROC/PR curves,
+  LearningCurves, FeatureImportance, CrossValidation,
+  RegressionMetrics, GradCAM, SaliencyMap, WordFrequency,
+  GradientDescentViz, ConvexityAnalyzer, SVD/QR/Cholesky/Eigen.
+- **No backend implementation** — DecisionTree, RandomForest, GBM,
+  SVM, KNN, NaiveBayes, LogisticRegression.
+- **Cat-3 dev utility (stays panel)** — MatrixCalculator, LPSolver,
+  QPSolver, NumericalDiff, NumericalInt.
+- **Awkward Arrow schema** — IFFT (complex-pair input),
+  WaveletTransform (variable-length coeffs/level), ARIMA/ES
+  (forecast rows change row count), TSNE/UMAP (iterative +
+  interactive), WordEmbeddings (needs GloVe/Word2Vec file loader),
+  NamedEntityRecognizer (needs real ML model).
+- **Plumbing only** — TimeSeriesDecomposition (backend exists,
+  NodeType exists in enum, no CreateNode case yet; when wired it's
+  honestly Cat-1).
+
+The framework (`node_executors/`, `PipelineMaterializer`,
+`IPipelineOperator`, `feature_matrix_utils.h`,
+`text_column_utils.h`, `ts_column_utils.h`) is proven across six
+domains. Adding new Cat-1 operators is now ~1 hour of boilerplate
+per operator.
 
 **Discovered:** 2026-04-15, when the user asked why the graph has both
 an `Embedding` node and a separate standalone `Word Embeddings`
@@ -983,25 +1021,32 @@ graph today is a visual no-op.
 | `HierarchicalCluster` | `hierarchical_panel.h` | ~~dead~~ **LIVE** (Cat-1 agglomerative, 2026-04-16) |
 | `GMMCluster` | `gmm_panel.h` | ~~dead~~ **LIVE** (Cat-1 GMM w/ hard labels, 2026-04-16) |
 | `PCANode` | `dim_reduction_panel.h` | ~~dead~~ **LIVE** (Cat-1 SVD-based PCA, 2026-04-16) |
-| `TSNENode` / `UMAPNode` | `dim_reduction_panel.h` | dead (defer — iterative, Cat-2 introspection better fit) |
-| `DecisionTreeClassifier` | *(shares `regression_panel.h`?)* | dead |
-| `RandomForestClassifier` | *(none found)* | dead |
-| `GradientBoostingClassifier` | *(none found)* | dead |
-| `SVMClassifier` / `SVMRegressor` | *(none found)* | dead |
-| `KNNClassifier` | *(none found)* | dead |
-| `NaiveBayesClassifier` | *(none found)* | dead |
-| `LogisticRegressionNode` / `LinearRegressionNode` / `PolynomialRegressionNode` | `regression_panel.h` | dead |
+| `TSNENode` / `UMAPNode` | `dim_reduction_panel.h` | **DEFERRED** — iterative, Cat-2 introspection better fit |
+| `LinearRegressionNode` | `regression_panel.h` | ~~dead~~ **LIVE** (Cat-1 multi-predictor OLS, 2026-04-16) |
+| `PolynomialRegressionNode` | `regression_panel.h` | ~~dead~~ **LIVE** (Cat-1 univariate, 2026-04-16) |
+| `LogisticRegressionNode` | `regression_panel.h` | **DEFERRED** — no backend impl yet |
+| `DecisionTreeClassifier` | *(none found)* | **DEFERRED** — no backend impl |
+| `RandomForestClassifier` | *(none found)* | **DEFERRED** — no backend impl |
+| `GradientBoostingClassifier` | *(none found)* | **DEFERRED** — no backend impl |
+| `SVMClassifier` / `SVMRegressor` | *(none found)* | **DEFERRED** — no backend impl |
+| `KNNClassifier` | *(none found)* | **DEFERRED** — no backend impl |
+| `NaiveBayesClassifier` | *(none found)* | **DEFERRED** — no backend impl |
 
-**Model evaluation (Phase 4 block):**
+**Model evaluation (Phase 4 block) — ALL DEFERRED as Cat-2 introspection:**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `ConfusionMatrixNode` | `confusion_matrix_panel.h` | dead |
-| `ROCCurveNode` | `roc_auc_panel.h` | dead |
-| `PRCurveNode` | `pr_curve_panel.h` | dead |
-| `LearningCurvesNode` | `learning_curves_panel.h` | dead |
-| `FeatureImportanceNode` | `feature_importance_panel.h` | dead |
-| `CrossValidationNode` | `cross_validation_panel.h` | dead |
-| `RegressionMetricsNode` | *(shares `regression_panel.h`?)* | dead |
+| `ConfusionMatrixNode` | `confusion_matrix_panel.h` | **DEFERRED** — Cat-2 introspection |
+| `ROCCurveNode` | `roc_auc_panel.h` | **DEFERRED** — Cat-2 introspection |
+| `PRCurveNode` | `pr_curve_panel.h` | **DEFERRED** — Cat-2 introspection |
+| `LearningCurvesNode` | `learning_curves_panel.h` | **DEFERRED** — Cat-2 introspection |
+| `FeatureImportanceNode` | `feature_importance_panel.h` | **DEFERRED** — Cat-2 introspection |
+| `CrossValidationNode` | `cross_validation_panel.h` | **DEFERRED** — Cat-2 orchestration (not a transform) |
+| `RegressionMetricsNode` | `regression_panel.h` | **DEFERRED** — Cat-2 introspection |
+
+*Rationale:* model evaluation produces scalar metrics and interactive
+plots, not transformed data rows. They belong as Cat-2 panels that
+hook into any trained-model point and render on demand. See CLAUDE.md
+"Node vs Panel: Four Tool Categories".
 
 **Linear algebra (Phase 5 block):**
 | NodeType | Panel file | Status |
@@ -1013,14 +1058,22 @@ graph today is a visual no-op.
 | `EigenDecomposition` | `eigen_decomp_panel.h` | **DEFERRED** — Cat-2 introspection (multi-output decomposition) |
 | `MatrixCalculator` | `matrix_calculator_panel.h` | **DEFERRED** — Cat-3 dev utility (stays panel) |
 
-**Time series analysis (Phase 5 block):**
+**Time series analysis (Phase 5 block) — ALL DEFERRED:**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `TimeSeriesDecomposition` | `decomposition_panel.h` | dead |
-| `ACFNode` / `PACFNode` | `acf_pacf_panel.h` | dead |
-| `StationarityTest` | `stationarity_panel.h` | dead |
-| `SeasonalityDetector` | `seasonality_panel.h` | dead |
-| `ARIMAForecaster` / `ExponentialSmoothing` | `forecasting_panel.h` | dead |
+| `TimeSeriesDecomposition` | `decomposition_panel.h` | **DEFERRED** — no CreateNode case yet; Cat-1 transform when wired |
+| `ACFNode` / `PACFNode` | `acf_pacf_panel.h` | **DEFERRED** — Cat-2 introspection (correlation arrays don't align with rows) |
+| `StationarityTest` | `stationarity_panel.h` | **DEFERRED** — Cat-2 introspection (scalar test results) |
+| `SeasonalityDetector` | `seasonality_panel.h` | **DEFERRED** — Cat-2 introspection (periodogram + detected periods) |
+| `ARIMAForecaster` / `ExponentialSmoothing` | `forecasting_panel.h` | **DEFERRED** — forecast output changes row count (needs future-rows schema) |
+
+*Status:* `time_series.h` backend has `Decompose`/`ACF`/`PACF`/
+`TestStationarity`/`DetectSeasonality`/`ARIMA`/`SimpleES`/`HoltLinear`/
+`HoltWinters` all available. The NodeType plumbing (enum entry but
+no CreateNode case) is the blocker. When picked up, Decomposition is
+Cat-1 (add trend/seasonal/residual columns to the input); forecast
+operators need a "future rows" schema decision; ACF/PACF/Stationarity
+are Cat-2 introspection and should NOT be wired as Cat-1 transforms.
 
 **Signal processing (Phase 4 block):**
 | NodeType | Panel file | Status |
@@ -1031,27 +1084,35 @@ graph today is a visual no-op.
 | `Convolution1D` | `convolution_panel.h` | ~~dead~~ **LIVE** (Cat-1, kernel as param, 2026-04-16) |
 | `WaveletTransform` | `wavelet_panel.h` | **DEFERRED** — see entry below (variable-length coeffs per level) |
 
-**Statistics (Phase 5 block):**
+**Statistics (Phase 5 block) — ALL DEFERRED as Cat-2 introspection:**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `HypothesisTest` | `hypothesis_test_panel.h` | dead |
-| `DistributionFitter` | `distribution_fitter_panel.h` | dead |
+| `HypothesisTest` | `hypothesis_test_panel.h` | **DEFERRED** — Cat-2 introspection (scalar test result) |
+| `DistributionFitter` | `distribution_fitter_panel.h` | **DEFERRED** — Cat-2 introspection (fit parameters + goodness-of-fit) |
 
-**Deep learning interpretation (Phase 5 block):**
-| NodeType | Panel file | Status |
-|---|---|---|
-| `GradCAMNode` | `gradcam_panel.h` | dead |
-| `SaliencyMapNode` | *(in `visualization_panel.h`?)* | dead |
+*Rationale:* hypothesis tests produce a scalar test statistic +
+p-value + interpretation; distribution fitters produce fit parameters
+and Kolmogorov-Smirnov statistics. Neither transforms row-level data.
+The `DataAnalyzer::OneSampleTTest` / `TwoSampleTTest` / `PairedTTest` /
+`ChiSquareTest` + `FitNormal` / `FitExponential` backend methods
+exist; they should drive Cat-2 panels, NOT be forced into Cat-1
+schema.
 
-**Optimization (Phase 5 block):**
+**Deep learning interpretation (Phase 5 block) — ALL DEFERRED as Cat-2:**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `GradientDescentViz` | `gradient_descent_panel.h` | dead |
-| `ConvexityAnalyzer` | `convexity_panel.h` | dead |
-| `LPSolver` | `lp_panel.h` | dead |
-| `QPSolver` | `qp_panel.h` | dead |
-| `NumericalDifferentiation` | `differentiation_panel.h` | dead |
-| `NumericalIntegration` | `integration_panel.h` | dead |
+| `GradCAMNode` | `gradcam_panel.h` | **DEFERRED** — Cat-2 introspection (saliency heatmap on a trained model) |
+| `SaliencyMapNode` | `visualization_panel.h` | **DEFERRED** — Cat-2 introspection |
+
+**Optimization (Phase 5 block) — ALL DEFERRED:**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `GradientDescentViz` | `gradient_descent_panel.h` | **DEFERRED** — Cat-2 visualization |
+| `ConvexityAnalyzer` | `convexity_panel.h` | **DEFERRED** — Cat-2 scalar analysis |
+| `LPSolver` | `lp_panel.h` | **DEFERRED** — Cat-3 dev utility (stand-alone solver, not a pipeline transform) |
+| `QPSolver` | `qp_panel.h` | **DEFERRED** — Cat-3 dev utility |
+| `NumericalDifferentiation` | `differentiation_panel.h` | **DEFERRED** — Cat-3 dev utility |
+| `NumericalIntegration` | `integration_panel.h` | **DEFERRED** — Cat-3 dev utility |
 
 **Utility (Phase 4 block):**
 | NodeType | Panel file | Status |
