@@ -2,6 +2,7 @@
 #include "differencing_operator.h"
 #include "identity_operator.h"
 #include "log_transform_operator.h"
+#include "time_series_features_operator.h"
 #include "time_series_split_operator.h"
 #include "time_series_window_operator.h"
 
@@ -32,6 +33,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::Differencing, []() {
         return std::make_unique<DifferencingOperator>();
+    });
+    RegisterCreator(gui::NodeType::TimeSeriesFeatures, []() {
+        return std::make_unique<TimeSeriesFeaturesOperator>();
     });
 }
 

@@ -311,12 +311,29 @@ TrainingConfiguration GraphCompiler::Compile(
                 try { input_width = std::stoi(iw_it->second); }
                 catch (...) { /* fall back to default */ }
             }
-            if (input_width > 0) {
-                config.input_size = static_cast<size_t>(input_width);
-                config.input_shape = {static_cast<size_t>(input_width)};
+            // Multivariate: input_size = input_width * (1 + num_feature_cols).
+            // feature_cols is comma-separated; count non-empty tokens.
+            // Single-variate (empty feature_cols) keeps input_size = input_width.
+            int num_features = 1;
+            auto fc_it = node.parameters.find("feature_cols");
+            if (fc_it != node.parameters.end() && !fc_it->second.empty()) {
+                int extras = 0;
+                std::stringstream ss(fc_it->second);
+                std::string token;
+                while (std::getline(ss, token, ',')) {
+                    size_t start = token.find_first_not_of(" \t");
+                    if (start != std::string::npos) ++extras;
+                }
+                num_features = 1 + extras;
+            }
+            const int total_input = input_width * num_features;
+            if (total_input > 0) {
+                config.input_size = static_cast<size_t>(total_input);
+                config.input_shape = {static_cast<size_t>(total_input)};
             }
             spdlog::info("GraphCompiler: TimeSeriesWindow found - regression mode, "
-                         "input_size={} (from input_width)", config.input_size);
+                         "input_size={} (input_width={} x num_features={})",
+                         config.input_size, input_width, num_features);
             break;
         }
     }

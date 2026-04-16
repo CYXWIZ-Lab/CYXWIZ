@@ -1,0 +1,199 @@
+{
+  "id": "airline_passengers_dense_v3",
+  "name": "Airline Passengers — Dense v3 (Log + Diff + Features + Multivariate Window)",
+  "description": "Phase 4 v3 time-series smoke test. Full engineered-feature pipeline: LogTransform stabilizes exponential growth, Differencing(lag=12) removes yearly seasonality, TimeSeriesFeatures adds lag_1 + rolling_7_mean columns, then TimeSeriesWindow does MULTIVARIATE windowing across the value column + the 2 engineered features (3 features × input_width = 36 flat inputs to Dense). Row math: 144 → LogTransform(144) → Diff12(132) → Features(126, +2 cols) → Window(114 windows × 36 cols) → Split(91/11/12).",
+  "category": "Time Series",
+  "tags": ["timeseries", "forecasting", "regression", "airline", "multivariate", "lag", "rolling", "phase4"],
+  "parameters": [
+    {
+      "name": "input_width",
+      "type": "int",
+      "default_value": "12",
+      "description": "Months of history per window"
+    },
+    {
+      "name": "hidden_units",
+      "type": "int",
+      "default_value": "32",
+      "description": "Dense hidden layer width"
+    },
+    {
+      "name": "batch_size",
+      "type": "int",
+      "default_value": "16",
+      "description": "DataLoader batch size"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.001",
+      "description": "Adam learning rate"
+    },
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "50",
+      "description": "Number of training epochs"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {
+        "id": "data_input",
+        "type": "DataInput",
+        "name": "Airline Passengers CSV",
+        "pos": [0, 260],
+        "params": {
+          "file_category": "timeseries",
+          "file_type": "csv",
+          "has_header": "true",
+          "label_column": "Passengers"
+        }
+      },
+      {
+        "id": "log_transform",
+        "type": "LogTransform",
+        "name": "LogTransform",
+        "pos": [200, 260],
+        "params": {
+          "value_col": "Passengers"
+        }
+      },
+      {
+        "id": "differencing",
+        "type": "Differencing",
+        "name": "Diff(lag=12)",
+        "pos": [400, 260],
+        "params": {
+          "value_col": "Passengers",
+          "lag": "12",
+          "order": "1"
+        }
+      },
+      {
+        "id": "ts_features",
+        "type": "TimeSeriesFeatures",
+        "name": "Features (lag_1 + roll_7)",
+        "pos": [620, 260],
+        "params": {
+          "value_col": "Passengers",
+          "lag_values": "1",
+          "rolling_windows": "7"
+        }
+      },
+      {
+        "id": "ts_window",
+        "type": "TimeSeriesWindow",
+        "name": "MVar Window (12 -> 1)",
+        "pos": [860, 260],
+        "params": {
+          "value_col": "Passengers",
+          "feature_cols": "Passengers_lag_1,Passengers_roll_7_mean",
+          "input_width": "$input_width",
+          "label_width": "1",
+          "shift": "1"
+        }
+      },
+      {
+        "id": "ts_split",
+        "type": "TimeSeriesSplit",
+        "name": "Chronological Split",
+        "pos": [1120, 260],
+        "params": {
+          "train_ratio": "0.8",
+          "val_ratio": "0.1",
+          "test_ratio": "0.1"
+        }
+      },
+      {
+        "id": "data_loader",
+        "type": "DataLoader",
+        "name": "DataLoader",
+        "pos": [1360, 260],
+        "params": {
+          "batch_size": "$batch_size",
+          "epochs": "$epochs",
+          "shuffle": "true",
+          "drop_last": "false",
+          "num_workers": "0"
+        }
+      },
+      {
+        "id": "fc1",
+        "type": "Dense",
+        "name": "Dense",
+        "pos": [1600, 260],
+        "params": {
+          "units": "$hidden_units"
+        }
+      },
+      {
+        "id": "relu1",
+        "type": "ReLU",
+        "name": "ReLU",
+        "pos": [1780, 260]
+      },
+      {
+        "id": "dropout",
+        "type": "Dropout",
+        "name": "Dropout",
+        "pos": [1940, 260],
+        "params": {
+          "rate": "0.2"
+        }
+      },
+      {
+        "id": "fc2",
+        "type": "Dense",
+        "name": "Dense(1)",
+        "pos": [2120, 260],
+        "params": {
+          "units": "1"
+        }
+      },
+      {
+        "id": "loss",
+        "type": "MSELoss",
+        "name": "MSELoss",
+        "pos": [2320, 320]
+      },
+      {
+        "id": "optimizer",
+        "type": "Adam",
+        "name": "Adam",
+        "pos": [2520, 320],
+        "params": {
+          "learning_rate": "$learning_rate",
+          "beta1": "0.9",
+          "beta2": "0.999",
+          "epsilon": "1e-8"
+        }
+      },
+      {
+        "id": "output",
+        "type": "Output",
+        "name": "Forecast",
+        "pos": [2720, 320],
+        "params": {
+          "classes": "1"
+        }
+      }
+    ],
+    "links": [
+      {"from": "data_input", "to": "log_transform", "from_pin": 0, "to_pin": 0},
+      {"from": "log_transform", "to": "differencing", "from_pin": 0, "to_pin": 0},
+      {"from": "differencing", "to": "ts_features", "from_pin": 0, "to_pin": 0},
+      {"from": "ts_features", "to": "ts_window", "from_pin": 0, "to_pin": 0},
+      {"from": "ts_window", "to": "ts_split", "from_pin": 0, "to_pin": 0},
+      {"from": "ts_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "fc1", "from_pin": 0, "to_pin": 0},
+      {"from": "fc1", "to": "relu1", "from_pin": 0, "to_pin": 0},
+      {"from": "relu1", "to": "dropout", "from_pin": 0, "to_pin": 0},
+      {"from": "dropout", "to": "fc2", "from_pin": 0, "to_pin": 0},
+      {"from": "fc2", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "data_input", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
+    ]
+  }
+}

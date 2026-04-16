@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include <vector>
 
 namespace cyxwiz {
 
@@ -22,10 +23,16 @@ namespace cyxwiz {
  *   - label_width = 1 only (single-step forecasting). Multi-step output
  *     (y_0, y_1, ...) is deferred to Phase 4.x and will require a
  *     TimeSeriesBatcher that understands multi-output regression.
- *   - Univariate only. Multivariate (multiple value_cols) deferred.
  *   - Produces float32 columns regardless of input numeric type.
  *   - Preserves row order. Chronology of the source table is inherited
  *     by the windowed table — windows are emitted earliest-first.
+ *
+ * Multivariate extension (Phase 4 Session D): feature_cols is an optional
+ * comma-separated list of additional column names to include alongside
+ * value_col. Each extra feature contributes `input_width` more columns
+ * to the output, named `<feat>_x_0 .. <feat>_x_{input_width-1}`. The
+ * target `y` is always taken from value_col. Typical upstream source is
+ * TimeSeriesFeatures producing lag / rolling columns.
  *
  * The output column name `y` is chosen deliberately so ArrowDatasetBatcher's
  * common-label auto-detection picks it up without the user having to type a
@@ -52,6 +59,7 @@ public:
 
 private:
     std::string value_col_;
+    std::vector<std::string> feature_cols_;  // Optional multivariate extras
     int input_width_ = 12;
     int label_width_ = 1;
     int shift_ = 1;

@@ -1829,7 +1829,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // user must fill it in via Properties before training. Leaving
             // it empty here trips the operator's Configure error which
             // the compile gate surfaces before training launch.
+            // feature_cols is optional multivariate extension: comma-sep
+            // names of extra columns to window alongside value_col.
+            // Typically populated by upstream TimeSeriesFeatures lag /
+            // rolling columns.
             node.parameters["value_col"] = "";
+            node.parameters["feature_cols"] = "";
             node.parameters["input_width"] = "12";
             node.parameters["label_width"] = "1";
             node.parameters["shift"] = "1";
@@ -1849,9 +1854,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             out.name = "Enriched";
             out.is_input = false;
             node.outputs.push_back(out);
-            node.parameters["lag_values"] = "1,7,30";
-            node.parameters["rolling_windows"] = "7,30";
-            node.parameters["add_diff"] = "false";
+            // Phase 4 canonical params read by TimeSeriesFeaturesOperator.
+            // value_col is required and has no default — user must fill
+            // via Properties before training. Operator's Configure errors
+            // if empty; compile gate surfaces it.
+            node.parameters["value_col"] = "";
+            node.parameters["lag_values"] = "";      // e.g. "1,12"
+            node.parameters["rolling_windows"] = ""; // e.g. "7"
             break;
         }
 
