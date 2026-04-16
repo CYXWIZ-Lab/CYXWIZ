@@ -1,5 +1,7 @@
 #include "pipeline_operator_factory.h"
+#include "differencing_operator.h"
 #include "identity_operator.h"
+#include "log_transform_operator.h"
 #include "time_series_split_operator.h"
 #include "time_series_window_operator.h"
 
@@ -24,6 +26,12 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::TimeSeriesSplit, []() {
         return std::make_unique<TimeSeriesSplitOperator>();
+    });
+    RegisterCreator(gui::NodeType::LogTransform, []() {
+        return std::make_unique<LogTransformOperator>();
+    });
+    RegisterCreator(gui::NodeType::Differencing, []() {
+        return std::make_unique<DifferencingOperator>();
     });
 }
 

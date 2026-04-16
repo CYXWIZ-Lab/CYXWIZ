@@ -125,6 +125,8 @@ set(ENGINE_SOURCES
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/time_series_window_operator.cpp  # Phase 4 Band 1
     src/core/node_executors/time_series_split_operator.cpp   # Phase 4 Band 2
+    src/core/node_executors/log_transform_operator.cpp       # Phase 4 Band 1
+    src/core/node_executors/differencing_operator.cpp        # Phase 4 Band 1
     # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
@@ -397,6 +399,9 @@ set(ENGINE_HEADERS
     src/core/node_executors/identity_operator.h
     src/core/node_executors/time_series_window_operator.h
     src/core/node_executors/time_series_split_operator.h
+    src/core/node_executors/log_transform_operator.h
+    src/core/node_executors/differencing_operator.h
+    src/core/node_executors/ts_column_utils.h
     src/core/pipeline_materializer.h
     src/core/test_manager.h
     src/core/checkpoint_manager.h

@@ -146,6 +146,8 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"TimeSeriesFeatures", NodeType::TimeSeriesFeatures},
         {"TimeSeriesSplit", NodeType::TimeSeriesSplit},
         {"TimeSeriesCSV", NodeType::TimeSeriesCSV},
+        {"LogTransform", NodeType::LogTransform},
+        {"Differencing", NodeType::Differencing},
 
         // Image Transforms (Phase 1)
         {"Resize", NodeType::Resize},

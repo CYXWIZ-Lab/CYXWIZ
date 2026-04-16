@@ -461,7 +461,9 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"TimeSeriesWindow", NodeType::TimeSeriesWindow},
         {"TimeSeriesFeatures", NodeType::TimeSeriesFeatures},
         {"TimeSeriesSplit", NodeType::TimeSeriesSplit},
-        {"TimeSeriesCSV", NodeType::TimeSeriesCSV}
+        {"TimeSeriesCSV", NodeType::TimeSeriesCSV},
+        {"LogTransform", NodeType::LogTransform},
+        {"Differencing", NodeType::Differencing}
     };
 
     auto it = type_map.find(type_str);

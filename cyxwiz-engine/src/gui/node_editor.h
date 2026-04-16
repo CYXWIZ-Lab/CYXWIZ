@@ -272,6 +272,8 @@ enum class NodeType {
     TimeSeriesWindow,   // Sliding window for sequential data
     TimeSeriesFeatures, // Lag, rolling, differencing features
     TimeSeriesSplit,    // Chronological train/val/test split
+    LogTransform,       // log1p stabilization for exponential growth
+    Differencing,       // Subtract lagged values to remove trend/seasonality
 
     // ===== Audio Processing Nodes =====
     AudioInput,         // Load audio dataset

@@ -1239,6 +1239,8 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::TimeSeriesWindow,   PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::TimeSeriesFeatures, PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::TimeSeriesSplit,    PreprocessingDomain::TimeSeries,  nullptr},
+    {gui::NodeType::LogTransform,       PreprocessingDomain::TimeSeries,  nullptr},
+    {gui::NodeType::Differencing,       PreprocessingDomain::TimeSeries,  nullptr},
 };
 
 } // anonymous namespace

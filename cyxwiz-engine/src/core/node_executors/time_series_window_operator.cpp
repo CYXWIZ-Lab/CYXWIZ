@@ -1,132 +1,16 @@
 #include "time_series_window_operator.h"
+#include "ts_column_utils.h"
 
 #include <arrow/api.h>
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace cyxwiz {
-
-namespace {
-
-// Read an entire ChunkedArray column into a std::vector<float>, casting
-// supported numeric types to float32. Returns false on unsupported types
-// (caller surfaces as an Arrow error). Null values become NaN so they
-// propagate through windowing and surface as loss NaN rather than
-// silently defaulting to zero.
-bool ReadColumnAsFloat(
-    const std::shared_ptr<arrow::ChunkedArray>& column,
-    std::vector<float>& out,
-    std::string& error_type_name) {
-
-    out.clear();
-    out.reserve(static_cast<size_t>(column->length()));
-
-    for (int c = 0; c < column->num_chunks(); ++c) {
-        auto chunk = column->chunk(c);
-        const int64_t chunk_len = chunk->length();
-
-        auto read_null = [&](int64_t i) -> bool { return chunk->IsNull(i); };
-
-        switch (chunk->type_id()) {
-            case arrow::Type::DOUBLE: {
-                auto arr = std::static_pointer_cast<arrow::DoubleArray>(chunk);
-                const double* data = arr->raw_values();
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : static_cast<float>(data[i]));
-                }
-                break;
-            }
-            case arrow::Type::FLOAT: {
-                auto arr = std::static_pointer_cast<arrow::FloatArray>(chunk);
-                const float* data = arr->raw_values();
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : data[i]);
-                }
-                break;
-            }
-            case arrow::Type::INT64: {
-                auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : static_cast<float>(arr->Value(i)));
-                }
-                break;
-            }
-            case arrow::Type::INT32: {
-                auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : static_cast<float>(arr->Value(i)));
-                }
-                break;
-            }
-            case arrow::Type::INT16: {
-                auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : static_cast<float>(arr->Value(i)));
-                }
-                break;
-            }
-            case arrow::Type::INT8: {
-                auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : static_cast<float>(arr->Value(i)));
-                }
-                break;
-            }
-            case arrow::Type::UINT64: {
-                auto arr = std::static_pointer_cast<arrow::UInt64Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : static_cast<float>(arr->Value(i)));
-                }
-                break;
-            }
-            case arrow::Type::UINT32: {
-                auto arr = std::static_pointer_cast<arrow::UInt32Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : static_cast<float>(arr->Value(i)));
-                }
-                break;
-            }
-            case arrow::Type::UINT16: {
-                auto arr = std::static_pointer_cast<arrow::UInt16Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : static_cast<float>(arr->Value(i)));
-                }
-                break;
-            }
-            case arrow::Type::UINT8: {
-                auto arr = std::static_pointer_cast<arrow::UInt8Array>(chunk);
-                const uint8_t* data = arr->raw_values();
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    out.push_back(read_null(i) ? std::numeric_limits<float>::quiet_NaN()
-                                               : static_cast<float>(data[i]));
-                }
-                break;
-            }
-            default:
-                error_type_name = chunk->type()->ToString();
-                return false;
-        }
-    }
-
-    return true;
-}
-
-} // namespace
 
 bool TimeSeriesWindowOperator::Configure(
     const std::map<std::string, std::string>& params,

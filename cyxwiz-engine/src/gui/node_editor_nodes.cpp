@@ -247,6 +247,8 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::TimeSeriesWindow:
         case NodeType::TimeSeriesFeatures:
         case NodeType::TimeSeriesSplit:
+        case NodeType::LogTransform:
+        case NodeType::Differencing:
             return NodeCategory::TimeSeries;
 
         // Audio
@@ -1883,6 +1885,42 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["train_ratio"] = "0.8";
             node.parameters["val_ratio"] = "0.1";
             node.parameters["test_ratio"] = "0.1";
+            break;
+        }
+
+        case NodeType::LogTransform: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Transformed";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["value_col"] = "";
+            break;
+        }
+
+        case NodeType::Differencing: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Differenced";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["value_col"] = "";
+            node.parameters["lag"] = "1";
+            node.parameters["order"] = "1";
             break;
         }
 
@@ -4593,6 +4631,10 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(255, 179, 0, 255);
         case NodeType::TimeSeriesSplit:
             return IM_COL32(255, 196, 0, 255);
+        case NodeType::LogTransform:
+            return IM_COL32(255, 213, 0, 255);
+        case NodeType::Differencing:
+            return IM_COL32(255, 230, 0, 255);
 
         // ===== Audio - Deep Purple =====
         case NodeType::AudioInput:
