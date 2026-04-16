@@ -107,6 +107,7 @@ TrainingConfiguration GraphCompiler::Compile(
         ValidateRequiredInputsConnected(nodes, links, config);
         ValidateLossTargetsReachLabels(nodes, links, config);
         ValidateLossPredictionsReachModel(nodes, links, config);
+        ValidateOptimizerReachesLoss(nodes, links, config);
     }
 
     // Extract dataset configuration
@@ -1888,6 +1889,137 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
                    "non-prediction tensor (often the Labels stream "
                    "wired by mistake, or a raw DataInput tensor with "
                    "no model in between).";
+            AddIssue(config, IssueLevel::Error, msg.str(),
+                     node.id, node.name);
+        }
+    }
+}
+
+void GraphCompiler::ValidateOptimizerReachesLoss(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    TrainingConfiguration& config) const
+{
+    // Closes the last visible pin vector in the compile → loss → optimizer
+    // chain. The pin-type system's "Tensor is universal" rule means the
+    // user CAN wire a Dense.Output (Tensor) directly into Optimizer.Loss
+    // (Loss) — the ImNodes link validation won't block it. The required-
+    // input check then passes because the pin has SOME incoming wire.
+    // Without this BFS, a graph with Optimizer.Loss fed by a random
+    // tensor would train with nonsense gradients.
+    std::unordered_map<int, int> pin_to_node;
+    for (const auto& node : nodes) {
+        for (const auto& pin : node.inputs)  pin_to_node[pin.id] = node.id;
+        for (const auto& pin : node.outputs) pin_to_node[pin.id] = node.id;
+    }
+
+    std::unordered_map<int, std::vector<int>> upstream_outputs;
+    upstream_outputs.reserve(links.size());
+    for (const auto& link : links) {
+        upstream_outputs[link.to_pin].push_back(link.from_pin);
+    }
+
+    std::unordered_map<int, std::vector<int>> node_input_pins;
+    node_input_pins.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        std::vector<int> ids;
+        ids.reserve(node.inputs.size());
+        for (const auto& pin : node.inputs) ids.push_back(pin.id);
+        node_input_pins[node.id] = std::move(ids);
+    }
+
+    std::unordered_map<int, const gui::MLNode*> node_by_id;
+    node_by_id.reserve(nodes.size());
+    for (const auto& node : nodes) node_by_id[node.id] = &node;
+
+    auto is_optimizer = [](gui::NodeType t) {
+        return t == gui::NodeType::SGD ||
+               t == gui::NodeType::Adam ||
+               t == gui::NodeType::AdamW ||
+               t == gui::NodeType::RMSprop ||
+               t == gui::NodeType::Adagrad ||
+               t == gui::NodeType::NAdam;
+    };
+
+    auto is_loss_node = [](gui::NodeType t) {
+        return t == gui::NodeType::MSELoss ||
+               t == gui::NodeType::CrossEntropyLoss ||
+               t == gui::NodeType::BCELoss ||
+               t == gui::NodeType::BCEWithLogits ||
+               t == gui::NodeType::L1Loss ||
+               t == gui::NodeType::SmoothL1Loss ||
+               t == gui::NodeType::HuberLoss ||
+               t == gui::NodeType::NLLLoss;
+    };
+
+    for (const auto& node : nodes) {
+        if (!is_optimizer(node.type)) continue;
+
+        // Optimizer nodes have a single Loss-typed input pin. Match by
+        // PinType first (cleanest) with a name fallback for older graphs.
+        const gui::NodePin* loss_pin = nullptr;
+        for (const auto& pin : node.inputs) {
+            if (pin.type == gui::PinType::Loss) { loss_pin = &pin; break; }
+        }
+        if (!loss_pin) {
+            for (const auto& pin : node.inputs) {
+                if (pin.name == "Loss") { loss_pin = &pin; break; }
+            }
+        }
+        if (!loss_pin) continue;
+
+        // Disconnect is handled by the required-input check.
+        if (upstream_outputs.find(loss_pin->id) == upstream_outputs.end()) {
+            continue;
+        }
+
+        std::queue<int> queue;
+        std::unordered_set<int> visited_inputs;
+        queue.push(loss_pin->id);
+        visited_inputs.insert(loss_pin->id);
+
+        bool found_loss_node = false;
+        while (!queue.empty() && !found_loss_node) {
+            int input_pin_id = queue.front();
+            queue.pop();
+
+            auto it = upstream_outputs.find(input_pin_id);
+            if (it == upstream_outputs.end()) continue;
+
+            for (int upstream_out_pin_id : it->second) {
+                auto owner_it = pin_to_node.find(upstream_out_pin_id);
+                if (owner_it == pin_to_node.end()) continue;
+                auto node_it = node_by_id.find(owner_it->second);
+                if (node_it == node_by_id.end()) continue;
+
+                if (is_loss_node(node_it->second->type)) {
+                    found_loss_node = true;
+                    break;
+                }
+
+                // Not a loss node — keep walking. Unlikely to hit in
+                // practice (optimizer is normally one hop from a loss)
+                // but the walk stays general for the edge case where
+                // the user inserted something between loss and
+                // optimizer.
+                auto inputs_it = node_input_pins.find(owner_it->second);
+                if (inputs_it == node_input_pins.end()) continue;
+                for (int upstream_in_pin_id : inputs_it->second) {
+                    if (visited_inputs.insert(upstream_in_pin_id).second) {
+                        queue.push(upstream_in_pin_id);
+                    }
+                }
+            }
+        }
+
+        if (!found_loss_node) {
+            std::ostringstream msg;
+            msg << "Optimizer node '" << node.name
+                << "' has its Loss pin wired, but the upstream chain "
+                   "never passes through a loss function (MSELoss, "
+                   "CrossEntropyLoss, etc.). The optimizer will "
+                   "backprop from a non-loss tensor — training is "
+                   "meaningless.";
             AddIssue(config, IssueLevel::Error, msg.str(),
                      node.id, node.name);
         }

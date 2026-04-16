@@ -460,6 +460,12 @@ private:
         const std::vector<gui::NodeLink>& links,
         TrainingConfiguration& config
     ) const;
+
+    void ValidateOptimizerReachesLoss(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        TrainingConfiguration& config
+    ) const;
 };
 
 } // namespace cyxwiz

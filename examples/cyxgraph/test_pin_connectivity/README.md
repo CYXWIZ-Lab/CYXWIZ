@@ -62,6 +62,25 @@ This catches `ValidateLossPredictionsReachModel`. Note this fixture
 ALSO has the same Labels-→-Targets wire as a normal graph, so the
 Targets check passes — only Predictions is wrong.
 
+### `04_optimizer_loss_wrong_source.cyxgraph`
+
+`Optimizer.Loss` IS wired — but to `fc3.Output` (a model layer
+tensor) instead of `CrossEntropy.Loss`. The ImNodes link validation
+accepts Tensor→Loss via the "Tensor is universal" rule and the
+required-input check passes. The reachability check fails because
+the upstream chain never touches a loss-function node.
+
+**Expected compile error:**
+```
+Optimizer node 'Adam' has its Loss pin wired, but the upstream
+chain never passes through a loss function (MSELoss,
+CrossEntropyLoss, etc.). The optimizer will backprop from a
+non-loss tensor — training is meaningless.
+```
+
+This catches `ValidateOptimizerReachesLoss`. Closes the last
+pin-fooling-user vector in the compile → loss → optimizer chain.
+
 ## Why these matter
 
 Before the pin-connectivity compile-gate landed, both fixtures would
