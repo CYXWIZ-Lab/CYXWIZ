@@ -992,6 +992,9 @@ bool ShouldShowOpenDialogButton(NT type) {
         // Data pipeline nodes
         case NT::DataLoader:
         case NT::DataSplit:
+        // Visualization nodes — Cat 2 inspection opens the rich dialog
+        // with dataset/column picker + ImPlot chart on double-click.
+        case NT::BarChart:
             return true;
         default:
             return false;

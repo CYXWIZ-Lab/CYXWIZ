@@ -183,6 +183,7 @@ private:
     void InitializeInterpretationNodes();
     void InitializeOptimizationNodes();
     void InitializeAdditionalTextNodes();
+    void InitializeVisualizationNodes();  // BarChart / Histogram / LinePlot / ...
 
     // Check if a node matches search query
     bool MatchesQuery(const NodeMetadata& metadata, const std::string& query) const;

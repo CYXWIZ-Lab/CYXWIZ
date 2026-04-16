@@ -160,6 +160,7 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
     InitializeInterpretationNodes();
     InitializeOptimizationNodes();
     InitializeAdditionalTextNodes();
+    InitializeVisualizationNodes();
 
     InitializeKNIMENodes();
     InitializeUtilityNodes();
@@ -1635,6 +1636,35 @@ void NodeMetadataRegistry::InitializeInterpretationNodes() {
         {{"Saliency", PinType::Tensor, false, "Saliency"}},
         {{"method", "dropdown", "vanilla", "Method", {"vanilla", "smoothgrad", "integrated"}, ""}},
         NodeImplementationStatus::Template, 0});
+}
+
+// =============================================================================
+// Visualization Nodes — chart framework lives in
+// cyxwiz-engine/src/gui/visualization/. Register metadata here so nodes
+// show up in the Node Browser + search. BarChart is Cat 2 inspection
+// (no output pin, rich dialog on double-click). Histogram / LinePlot /
+// ScatterPlot / PieChart follow the same shape — add them as they get
+// implementations.
+// =============================================================================
+void NodeMetadataRegistry::InitializeVisualizationNodes() {
+    RegisterNode({NodeType::BarChart, NodeCategory::Visualization, "Bar Chart",
+        ICON_FA_CHART_COLUMN,
+        {"bar", "chart", "distribution", "histogram", "counts", "class"},
+        0, false,
+        "Count and plot a categorical column. Cat 2 inspection — "
+        "double-click to open the rendering dialog. Pick a dataset + "
+        "column, the chart counts distinct values and renders an "
+        "ImPlot bar chart sorted by frequency with an imbalance flag "
+        "when max/min >= 10x.",
+        "", "",
+        {{"Data", PinType::Tensor, true, "Tabular stream to chart"},
+         {"Labels", PinType::Labels, false, "Optional label stream"}},
+        {},
+        {{"chart_type", "dropdown", "bar", "Orient", {"bar", "horizontal_bar"}, ""},
+         {"column", "string", "", "Column", {}, ""},
+         {"title", "string", "Bar Chart", "Title", {}, ""},
+         {"max_bars", "int", "20", "Top-N cap", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================
