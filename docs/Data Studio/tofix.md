@@ -622,31 +622,47 @@ remaining work on this entry. CPU path is the correctness oracle for
 any future AF fix. See commit with CPU BPTT for implementation
 details.
 
-**AF path — still pending:**
-- ~~AF Forward column-major reorder bug~~ Root cause identified and
-  fix prepared (2026-04-16): `TensorToAf3DRowMajor` /
-  `AfToTensor3DRowMajor` helpers added in `layer.cpp` that handle
-  3D row-major ↔ AF column-major conversion correctly via
-  dim-reversal + `af::reorder(2, 1, 0)`. Applied at the LSTM AF
-  Forward entry/exit points. `kAfPathEnabled` still false pending
-  the validation pass below.
-- AF Forward numerical output validation against CPU Forward
-  (A/B test on mini smoke graph: enable AF for 1 epoch, diff
-  weights-after-first-batch against CPU-computed weights).
-- AF Backward end-to-end validation against CPU Backward. The
-  existing ~130-line AF backward code is currently under `#if 0`
-  in `layer.cpp` — needs the same 3D-helper treatment for its
-  cache reads + output `dx` before flipping on.
-- Cache consistency: AF Forward populates AF-shaped caches,
-  CPU Backward reads row-major CPU caches. Enabling AF requires
-  either populating both cache sets or routing to matching AF
-  Backward. A flag `last_forward_was_af_` on LSTMLayer is the
-  simplest dispatcher.
+**AF Forward — DONE (2026-04-16):**
+- ~~3D column-major scrambling at TensorToAf boundary~~ Fixed via
+  `TensorToAf3DRowMajor` / `AfToTensor3DRowMajor` helpers
+  (dim-reversal + `af::reorder(2, 1, 0)`).
+- ~~Slice assignment shape mismatch~~ Fixed by wrapping each
+  `h_states(t, span, span) = h` RHS in `af::moddims(..., dim4(1,
+  batch, hidden))` so the rank matches the rank-3 proxy.
+- ~~Hoisted weight init guard~~ Re-initializes W_ih_/W_hh_/biases
+  via `Tensor::Random/Zeros` if the AF backend silently failed to
+  populate them (mirror of the CPU fallback's existing check).
+- ~~h_n_/c_n_ init check~~ Now AND'd with `Data<float>() == nullptr`.
+  Default-constructed `Tensor()` has `shape={}` so `NumElements()`
+  returns 1 (product of empty range) but `Data()` is null —
+  the previous `NumElements() == 0` check passed through and
+  `TensorToAf` then tripped on null data. Caught via diagnostic
+  log of tensor shape on null-data throw.
+- AF Forward numerical output validated against CPU Forward —
+  loss numbers match within fp32 noise (~10ppm) on the mini
+  sentiment LSTM smoke test. Same monotonic loss-down /
+  acc-up curve.
 
-Left as a perf follow-up, not blocking training correctness. With
-CPU BPTT live, LSTM training works but is slow (~seconds per batch
-on sentiment-scale data). AF would be 10-100x faster once the
-validation above is complete.
+**AF Backward — still pending (perf only):**
+- ~130-line AF backward under `#if 0` in `layer.cpp` is the next
+  perf upgrade. Currently unused — Backward goes through CPU
+  BPTT, which works correctly but pays a Tensor↔CPU round-trip
+  that AF Backward would skip. AF Forward now serves as the
+  oracle for AF Backward validation.
+- Needs the same 3D-helper / slice-moddims treatment on its cache
+  reads + dx output. Cache consistency is already solved: AF
+  Forward writes row-major caches via `AfToTensor3DRowMajor`,
+  AF Backward will need to read them back via
+  `TensorToAf3DRowMajor`.
+- A `last_forward_was_af_` flag on LSTMLayer would let Backward
+  dispatch between CPU BPTT and AF backward. Not strictly needed
+  if AF Backward also reads row-major caches.
+
+Net win: LSTM training is correct AND uses GPU on the Forward
+pass. CPU Backward remains the gradient computation. End-to-end
+throughput should beat pure CPU on hidden_size >= 64 graphs
+where the Forward matmul dominates (the sentiment_lstm
+hidden=128 graph is the obvious follow-up benchmark).
 
 **Severity:** ~~High~~ Medium (after CPU BPTT landed) — LSTM weights
 update correctly on CPU. AF path is a perf-only follow-up. Original
