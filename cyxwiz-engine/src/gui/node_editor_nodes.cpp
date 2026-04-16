@@ -1880,6 +1880,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["value_col"] = "";
             node.parameters["lag_values"] = "";      // e.g. "1,12"
             node.parameters["rolling_windows"] = ""; // e.g. "7"
+            // Rolling aggregations (csv of mean/std/min/max/median).
+            // Empty defaults to "mean" so existing graphs don't change
+            // their column schema.
+            node.parameters["rolling_aggregations"] = "mean";
             break;
         }
 

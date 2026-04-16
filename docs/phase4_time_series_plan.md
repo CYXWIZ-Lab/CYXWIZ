@@ -250,9 +250,11 @@ registered via the `node_executors/` framework:
   keep as panels for now (Category 2 introspection). Users run them
   during data exploration, not during training. Panel form already
   works; node form is valuable but not blocking.
-- **Rolling aggregations beyond mean** (std / min / max / median) —
-  `TimeSeriesFeatures` v1 ships mean only. Adding std/min/max is a
-  few lines but blocked behind "is this the right shape".
+- ~~**Rolling aggregations beyond mean** (std / min / max / median) —
+  `TimeSeriesFeatures` v1 ships mean only.~~ **DONE (2026-04-16).**
+  Added `rolling_aggregations` param (csv of mean/std/min/max/median);
+  defaults to "mean" so existing graphs unchanged. Output columns
+  are `{col}_roll_{w}_{agg}` for each window × agg combination.
 - **TimeSeriesFeatures: differencing features** — the original
   NodeType description mentioned "lag / rolling / **differencing**
   features". Since we shipped `Differencing` as its own node, the
