@@ -88,18 +88,38 @@ one batched stream out.
 
 ### Normalize node in DataInput vs graph
 
-**Severity:** Medium — user confusion.
+**Severity:** Low (current state) / Medium (latent) — current code is
+not actually exposing the foot-gun, but the structural issue remains.
 
-**Issue:** DataInput's dialog has Normalize params (mean/std) AND the
-user can add a separate Normalize node on the canvas. If both are
-set, double-normalization occurs silently. Per the single-
-responsibility principle, normalization belongs exclusively on the
-Normalize graph node, never on the DataInput dialog.
+**State as of 2026-04-17 audit:**
+- Tabular dialog (`RenderTabularOptions`): NO Normalize controls.
+  Already clean. The earlier "needs removing" claim was incorrect.
+- Image dialog (`RenderImageOptions:1818-1825`): STILL has
+  `Normalize to [0, 1]` + `Convert to RGB` checkboxes, and `Apply`
+  writes `parameters["normalize"] / parameters["rgb"]` on the
+  DataInput node. The earlier "Phase 0 removed these" claim was
+  also incorrect.
+- The double-normalization risk is therefore Image-only, not the
+  cross-category foot-gun previously described.
 
-**Fix:** Remove Normalize params from DataInput's Apply and dialog UI.
-Already partially done for Image category (Phase 0 removed
-target_width/height/normalize/rgb from image dialog for Phase 1).
-Need to also remove for Tabular category's dialog.
+**Why the Image dialog still has it:** image pixel scaling currently
+happens at load time inside the image loader, not via a graph
+Normalize node. There's no image-specific graph node that owns
+[0,1] scaling + RGB conversion as of this audit. Removing the
+dialog toggles without first introducing an `ImageNormalize` graph
+node would break the image training path silently.
+
+**Fix sequence (revised):**
+1. Add an `ImageNormalize` (or extend the existing Normalize node
+   to handle image-shaped tensors) graph node that owns pixel-
+   scaling + channel-mode conversion.
+2. Remove the Image dialog's Normalize / RGB checkboxes and the
+   matching `parameters["normalize"] / parameters["rgb"]` writes
+   in `Apply`.
+3. Auto-insert the new node when migrating old image graphs (or
+   document the migration).
+
+Not started — deferred until the canvas-honest pin pass lands first.
 
 ---
 

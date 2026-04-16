@@ -573,12 +573,16 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // batches them, and emits the batched (data, labels) pair to
             // the model and the loss function respectively.
 
-            // Input 1: Data tensor stream (from DataSplit.TrainData or DataInput.Features)
+            // Input 1: Data tensor stream (from DataSplit.TrainData or DataInput.Data)
             NodePin data_in;
             data_in.id = next_pin_id_++;
             data_in.type = PinType::Tensor;
             data_in.name = "Data";
             data_in.is_input = true;
+            data_in.description =
+                "Unbatched feature stream. Usually wired from "
+                "DataSplit.Train Data, or directly from DataInput.Data "
+                "if you skip the split.";
             node.inputs.push_back(data_in);
 
             // Input 2: Labels stream (from DataSplit.TrainLabels or DataInput.Labels)
@@ -587,6 +591,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             labels_in.type = PinType::Labels;
             labels_in.name = "Labels";
             labels_in.is_input = true;
+            labels_in.description =
+                "Unbatched label stream, row-aligned with Data. Usually "
+                "wired from DataSplit.Train Labels.";
             node.inputs.push_back(labels_in);
 
             // Output 1: Batched data tensor → first model layer
@@ -595,6 +602,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             data_out.type = PinType::Tensor;
             data_out.name = "Data";
             data_out.is_input = false;
+            data_out.description =
+                "Batched feature tensor of shape [batch_size, ...]. "
+                "Connect to the model's first layer (Embedding, Conv2D, "
+                "Dense, ...). Reshuffled each epoch when shuffle=true.";
             node.outputs.push_back(data_out);
 
             // Output 2: Batched labels → loss function's Targets pin
@@ -603,6 +614,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             labels_out.type = PinType::Labels;
             labels_out.name = "Labels";
             labels_out.is_input = false;
+            labels_out.description =
+                "Batched label tensor of shape [batch_size, ...], "
+                "row-aligned with Data. Connect to the loss node's "
+                "Targets pin.";
             node.outputs.push_back(labels_out);
 
             // Training-loop hyperparameters. DataLoader owns ALL the
@@ -740,6 +755,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             data_in.type = PinType::Tensor;
             data_in.name = "Data";
             data_in.is_input = true;
+            data_in.description =
+                "Incoming feature stream (X) — usually wired from "
+                "DataInput.Data or a Normalize/Preprocess node. Will be "
+                "partitioned row-wise by the train/val/test ratios.";
             node.inputs.push_back(data_in);
 
             // Input: Labels tensor
@@ -748,6 +767,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             labels_in.type = PinType::Labels;
             labels_in.name = "Labels";
             labels_in.is_input = true;
+            labels_in.description =
+                "Incoming label stream (y) — usually wired from "
+                "DataInput.Labels. Partitioned with the same row indices "
+                "as Data so each split's (X, y) pairs stay aligned.";
             node.inputs.push_back(labels_in);
 
             // Output: Train Data
@@ -756,6 +779,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             train_data.type = PinType::Tensor;
             train_data.name = "Train Data";
             train_data.is_input = false;
+            train_data.description =
+                "Feature subset for training — train_ratio of the input "
+                "rows. Connect to a DataLoader (or directly to the model "
+                "for tiny in-memory datasets).";
             node.outputs.push_back(train_data);
 
             // Output: Train Labels
@@ -764,6 +791,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             train_labels.type = PinType::Labels;
             train_labels.name = "Train Labels";
             train_labels.is_input = false;
+            train_labels.description =
+                "Label subset for training, row-aligned with Train Data. "
+                "Pair with the matching DataLoader or wire straight to "
+                "the loss node's Targets pin.";
             node.outputs.push_back(train_labels);
 
             // Output: Val Data
@@ -772,6 +803,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             val_data.type = PinType::Tensor;
             val_data.name = "Val Data";
             val_data.is_input = false;
+            val_data.description =
+                "Feature subset for validation — val_ratio of the input "
+                "rows. Used by the eval pass between training epochs (no "
+                "weight updates).";
             node.outputs.push_back(val_data);
 
             // Output: Val Labels
@@ -780,6 +815,8 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             val_labels.type = PinType::Labels;
             val_labels.name = "Val Labels";
             val_labels.is_input = false;
+            val_labels.description =
+                "Label subset for validation, row-aligned with Val Data.";
             node.outputs.push_back(val_labels);
 
             // Output: Test Data
@@ -788,6 +825,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             test_data.type = PinType::Tensor;
             test_data.name = "Test Data";
             test_data.is_input = false;
+            test_data.description =
+                "Feature subset for the held-out test pass — test_ratio "
+                "of the input rows. Only touched after training completes.";
             node.outputs.push_back(test_data);
 
             // Output: Test Labels
@@ -796,6 +836,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             test_labels.type = PinType::Labels;
             test_labels.name = "Test Labels";
             test_labels.is_input = false;
+            test_labels.description =
+                "Label subset for the held-out test pass, row-aligned "
+                "with Test Data.";
             node.outputs.push_back(test_labels);
 
             // Parameters
@@ -879,6 +922,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             pred_pin.type = PinType::Tensor;
             pred_pin.name = "Predictions";
             pred_pin.is_input = true;
+            pred_pin.description =
+                "Model output for the current batch. Shape depends on the "
+                "model head — e.g. [batch, num_classes] for a classifier "
+                "or [batch, 1] for a regressor.";
             node.inputs.push_back(pred_pin);
 
             // Input 2: Targets (ground truth labels). Typed as Labels so the
@@ -890,6 +937,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             target_pin.type = PinType::Labels;
             target_pin.name = "Targets";
             target_pin.is_input = true;
+            target_pin.description =
+                "Ground-truth labels (y) for the current batch. Connect "
+                "from DataLoader.Labels — the label stream that traveled "
+                "the data path from DataInput. Row-aligned with "
+                "Predictions.";
             node.inputs.push_back(target_pin);
 
             // Output: Loss value
@@ -898,6 +950,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             loss_pin.type = PinType::Loss;
             loss_pin.name = "Loss";
             loss_pin.is_input = false;
+            loss_pin.description =
+                "Scalar loss value for the batch. Connect to an Optimizer "
+                "node — backprop runs from here.";
             node.outputs.push_back(loss_pin);
 
             // Parameters
@@ -2351,15 +2406,22 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::DataInput: {
             // Universal Data Input node - smart dialog auto-detects format
             // Supports: CSV, TSV, JSON, Parquet, Excel, HDF5, and more
-            // TWO outputs: Features (X) and Labels (Y) for ML training
+            // TWO outputs: Data (X) and Labels (y) — same naming the rest
+            // of the chain (DataSplit / DataLoader) uses, so the canvas
+            // reads as a single Data + Label flow end-to-end.
 
-            // Output 1: Features (input data for model)
-            NodePin features_pin;
-            features_pin.id = next_pin_id_++;
-            features_pin.type = PinType::Tensor;
-            features_pin.name = "Features";
-            features_pin.is_input = false;
-            node.outputs.push_back(features_pin);
+            // Output 1: Data (the X tensor that feeds the model)
+            NodePin data_pin;
+            data_pin.id = next_pin_id_++;
+            data_pin.type = PinType::Tensor;
+            data_pin.name = "Data";
+            data_pin.is_input = false;
+            data_pin.description =
+                "Feature stream (X). Carries every column from the loaded "
+                "dataset that is NOT marked as the label column. Connect to "
+                "the next node in the data pipeline (Normalize, DataSplit, "
+                "DataLoader, ...) — eventually feeds the model's first layer.";
+            node.outputs.push_back(data_pin);
 
             // Output 2: Labels (targets for loss function)
             NodePin labels_pin;
@@ -2367,6 +2429,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             labels_pin.type = PinType::Labels;
             labels_pin.name = "Labels";
             labels_pin.is_input = false;
+            labels_pin.description =
+                "Label stream (y). Carries the column selected as 'Label "
+                "Column' in the DataInput dialog. Travels alongside Data "
+                "through DataSplit and DataLoader and terminates at the "
+                "loss function's Targets pin.";
             node.outputs.push_back(labels_pin);
 
             // Core parameters (set by DataInputDialog)

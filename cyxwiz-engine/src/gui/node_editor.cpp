@@ -385,6 +385,12 @@ void NodeEditor::Render() {
                 } else {
                     ImGui::TextDisabled("Not connected");
                 }
+                if (!hovered_pin->description.empty()) {
+                    ImGui::Separator();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                    ImGui::TextUnformatted(hovered_pin->description.c_str());
+                    ImGui::PopTextWrapPos();
+                }
                 ImGui::EndTooltip();
             }
         }

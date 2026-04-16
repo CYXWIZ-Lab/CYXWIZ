@@ -544,6 +544,15 @@ struct NodePin {
     std::string name;
     bool is_input;  // true = input pin, false = output pin
 
+    // Hover tooltip text — what does this pin carry, where does it
+    // come from, what should connect to it. Empty string = no extra
+    // tooltip line (the generic name/type/connection-count tooltip
+    // still renders). Author this on the data-chain pins so users
+    // know "Labels here is the y in (X, y) ground truth, sourced
+    // from the DataInput's label_column setting" without having to
+    // read the source.
+    std::string description;
+
     // Variadic pin support - enables multiple connections to a single pin
     bool is_variadic = false;        // True for pins accepting multiple connections
     int min_connections = 0;         // Minimum required connections (0 = optional)
