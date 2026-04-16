@@ -463,7 +463,11 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"TimeSeriesSplit", NodeType::TimeSeriesSplit},
         {"TimeSeriesCSV", NodeType::TimeSeriesCSV},
         {"LogTransform", NodeType::LogTransform},
-        {"Differencing", NodeType::Differencing}
+        {"Differencing", NodeType::Differencing},
+        // Phase 5 time-series analysis (in-sample fit only).
+        {"TimeSeriesDecomposition", NodeType::TimeSeriesDecomposition},
+        {"ARIMAForecaster", NodeType::ARIMAForecaster},
+        {"ExponentialSmoothing", NodeType::ExponentialSmoothing}
     };
 
     auto it = type_map.find(type_str);

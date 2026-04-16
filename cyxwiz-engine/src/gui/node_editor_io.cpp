@@ -148,6 +148,10 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"TimeSeriesCSV", NodeType::TimeSeriesCSV},
         {"LogTransform", NodeType::LogTransform},
         {"Differencing", NodeType::Differencing},
+        // Phase 5 time-series analysis (in-sample fit only).
+        {"TimeSeriesDecomposition", NodeType::TimeSeriesDecomposition},
+        {"ARIMAForecaster", NodeType::ARIMAForecaster},
+        {"ExponentialSmoothing", NodeType::ExponentialSmoothing},
 
         // Image Transforms (Phase 1)
         {"Resize", NodeType::Resize},

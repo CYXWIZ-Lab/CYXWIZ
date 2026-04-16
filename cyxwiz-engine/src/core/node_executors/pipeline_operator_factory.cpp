@@ -11,6 +11,7 @@
 #include "signal_processing_operators.h"
 #include "text_tokenizer_operator.h"
 #include "tfidf_vectorizer_operator.h"
+#include "time_series_analysis_operators.h"
 #include "time_series_features_operator.h"
 #include "time_series_split_operator.h"
 #include "time_series_window_operator.h"
@@ -128,6 +129,17 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::OutlierDetector, []() {
         return std::make_unique<OutlierDetectorOperator>();
+    });
+    // Phase 5 time-series analysis block (in-sample fit only;
+    // future-rows forecasting deferred to tofix for schema reasons).
+    RegisterCreator(gui::NodeType::TimeSeriesDecomposition, []() {
+        return std::make_unique<TimeSeriesDecompositionOperator>();
+    });
+    RegisterCreator(gui::NodeType::ARIMAForecaster, []() {
+        return std::make_unique<ARIMAOperator>();
+    });
+    RegisterCreator(gui::NodeType::ExponentialSmoothing, []() {
+        return std::make_unique<ExponentialSmoothingOperator>();
     });
 }
 

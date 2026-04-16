@@ -895,8 +895,8 @@ NEW NodeTypes were added as part of this work (`LogTransform`,
 full breakdown.
 
 **Status update 2026-04-16 — Tool-to-Node migration ROUND 2 closed.**
-In this session, 21 additional Cat-1 operators landed across six
-blocks, bringing the total from 5 → **26 live Cat-1 operators**:
+In this session, 24 additional Cat-1 operators landed across seven
+blocks, bringing the total from 5 → **29 live Cat-1 operators**:
 - **Text analytics** (4): `TextTokenizer`, `TFIDFVectorizer`,
   `CountVectorizer`, `SentimentAnalyzer` (lexicon-based)
 - **Linear algebra** (1): `PCANode` (SVD-based)
@@ -909,6 +909,9 @@ blocks, bringing the total from 5 → **26 live Cat-1 operators**:
 - **Data preprocessing** (7): `StandardScaler`, `MinMaxScaler`,
   `RobustScaler`, `LabelEncoder`, `OrdinalEncoder`, `TargetEncoder`,
   `OutlierDetector` — closes the Phase 4 preprocessing block
+- **Phase 5 time-series analysis** (3): `TimeSeriesDecomposition`,
+  `ARIMAForecaster`, `ExponentialSmoothing` — in-sample fit only
+  (horizon=0 preserves row count; future-rows forecasting deferred)
 
 **Of the remaining ~18 dead NodeTypes, every single one is now
 deferred with explicit reasoning:**
@@ -1061,22 +1064,24 @@ hook into any trained-model point and render on demand. See CLAUDE.md
 | `EigenDecomposition` | `eigen_decomp_panel.h` | **DEFERRED** — Cat-2 introspection (multi-output decomposition) |
 | `MatrixCalculator` | `matrix_calculator_panel.h` | **DEFERRED** — Cat-3 dev utility (stays panel) |
 
-**Time series analysis (Phase 5 block) — ALL DEFERRED:**
+**Time series analysis (Phase 5 block):**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `TimeSeriesDecomposition` | `decomposition_panel.h` | **DEFERRED** — no CreateNode case yet; Cat-1 transform when wired |
+| `TimeSeriesDecomposition` | `decomposition_panel.h` | ~~dead~~ **LIVE** (Cat-1, classical+STL, 2026-04-16) |
+| `ARIMAForecaster` | `forecasting_panel.h` | ~~dead~~ **LIVE** (Cat-1, in-sample fit, 2026-04-16) |
+| `ExponentialSmoothing` | `forecasting_panel.h` | ~~dead~~ **LIVE** (Cat-1, simple/holt/holt_winters in-sample, 2026-04-16) |
 | `ACFNode` / `PACFNode` | `acf_pacf_panel.h` | **DEFERRED** — Cat-2 introspection (correlation arrays don't align with rows) |
 | `StationarityTest` | `stationarity_panel.h` | **DEFERRED** — Cat-2 introspection (scalar test results) |
 | `SeasonalityDetector` | `seasonality_panel.h` | **DEFERRED** — Cat-2 introspection (periodogram + detected periods) |
-| `ARIMAForecaster` / `ExponentialSmoothing` | `forecasting_panel.h` | **DEFERRED** — forecast output changes row count (needs future-rows schema) |
 
-*Status:* `time_series.h` backend has `Decompose`/`ACF`/`PACF`/
-`TestStationarity`/`DetectSeasonality`/`ARIMA`/`SimpleES`/`HoltLinear`/
-`HoltWinters` all available. The NodeType plumbing (enum entry but
-no CreateNode case) is the blocker. When picked up, Decomposition is
-Cat-1 (add trend/seasonal/residual columns to the input); forecast
-operators need a "future rows" schema decision; ACF/PACF/Stationarity
-are Cat-2 introspection and should NOT be wired as Cat-1 transforms.
+*Forecasting note:* ARIMAForecaster and ExponentialSmoothing are
+wired with `horizon=0` so only in-sample fitted values (+ residuals)
+are written to the table — row count preserved, no alignment break.
+True out-of-sample forecasting (horizon > 0) would append future
+rows to the table, which needs a dedicated "forecast-rows" operator
+or a Cat-2 visualization panel. Tracked separately as a future
+enhancement; the Phase 5 NodeTypes ship today in the in-sample
+semantic that matches residual-diagnostic workflows.
 
 **Signal processing (Phase 4 block):**
 | NodeType | Panel file | Status |

@@ -249,6 +249,9 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::TimeSeriesSplit:
         case NodeType::LogTransform:
         case NodeType::Differencing:
+        case NodeType::TimeSeriesDecomposition:
+        case NodeType::ARIMAForecaster:
+        case NodeType::ExponentialSmoothing:
             return NodeCategory::TimeSeries;
 
         // Audio
@@ -1946,6 +1949,81 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["value_col"] = "";
             node.parameters["lag"] = "1";
             node.parameters["order"] = "1";
+            break;
+        }
+
+        // Phase 5 time-series analysis: real Cat-1 operators that
+        // append analysis columns to the input. Forecast horizon is
+        // fixed to 0 — these are in-sample fit only, which preserves
+        // row count and downstream alignment.
+        case NodeType::TimeSeriesDecomposition: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Decomposed";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            // Canonical params read by TimeSeriesDecompositionOperator.
+            node.parameters["signal_col"] = "";
+            node.parameters["period"] = "12";
+            node.parameters["method"] = "additive";     // additive / multiplicative
+            node.parameters["algorithm"] = "classical"; // classical / stl
+            break;
+        }
+
+        case NodeType::ARIMAForecaster: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Fitted";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            // Canonical params read by ARIMAOperator. p/d/q = -1 lets
+            // the backend auto-select. Horizon is fixed to 0 — this is
+            // in-sample fit; true forecasting needs a row-count-changing
+            // operator deferred in tofix.
+            node.parameters["signal_col"] = "";
+            node.parameters["p"] = "-1";
+            node.parameters["d"] = "-1";
+            node.parameters["q"] = "-1";
+            break;
+        }
+
+        case NodeType::ExponentialSmoothing: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Fitted";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            // Canonical params read by ExponentialSmoothingOperator.
+            // method picks simple / holt / holt_winters. alpha/beta/gamma=-1
+            // lets the backend auto-tune. period is holt_winters only.
+            node.parameters["signal_col"] = "";
+            node.parameters["method"] = "simple";  // simple / holt / holt_winters
+            node.parameters["alpha"] = "-1";
+            node.parameters["beta"] = "-1";
+            node.parameters["gamma"] = "-1";
+            node.parameters["period"] = "-1";
+            node.parameters["damped"] = "false";
             break;
         }
 
