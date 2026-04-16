@@ -667,6 +667,53 @@ launch overhead exceeds compute. The hidden=128
 sentiment_lstm graph is where AF should dominate — that's
 the next benchmark.
 
+### LSTM AF perf optimizations (deferred follow-up)
+
+Identified 2026-04-16 after AF Backward landed. Current AF LSTM is
+correct end-to-end but has known per-batch overhead that dominates
+on small models (hidden < 64). For the hidden=128 sentiment_lstm
+benchmark these may not be needed, but for users with smaller LSTMs
+or tighter latency budgets they're worth landing.
+
+**1. Pre-compute activations + tanh(c) in bulk in AF Backward.**
+   Currently each timestep recomputes `sigmoid(gates(span, seq(...)))`
+   for i / f / o gates and `tanh(c_t)`. Hoist these to a single
+   pre-loop bulk computation — `af::sigmoid(cached_gates(span, span,
+   seq(0, H-1)))` etc. — then slice in the loop. Saves ~4 sigmoid/tanh
+   kernel launches per timestep. For seq=32, that's ~128 fewer
+   kernel launches per Backward call. Biggest win on small graphs
+   where launch overhead dominates.
+
+**2. Cache AF weight arrays as `af::array` member variables.**
+   Currently `af::array W_ih = TensorToAf(W_ih_[layer])` runs once
+   per Forward call (and again for AF Backward) — host→GPU copy of
+   the weight matrices. Add `std::vector<af::array> af_W_ih_,
+   af_W_hh_, af_b_ih_, af_b_hh_;` populated lazily, invalidated
+   in `SetParameters()` (called by Adam after each step). Saves
+   one copy per layer per Forward+Backward.
+
+**3. Skip the Tensor cache round-trip when AF runs end-to-end.**
+   Current architecture: AF Forward writes Tensor caches via
+   `AfToTensor3DRowMajor`, AF Backward reads them back via
+   `TensorToAf3DRowMajor`. That's 8 bulk Tensor↔AF transfers per
+   batch (4 per direction × Forward + Backward). Add parallel
+   `std::vector<af::array> af_cached_inputs_, af_cached_gates_,
+   af_cached_h_, af_cached_c_;` that AF Forward writes directly
+   and AF Backward reads directly. Tensor caches still populated
+   for CPU BPTT fallback. Saves 8 transfers per batch.
+
+**4. Benchmark the full `test_02_sentiment_lstm.cyxgraph`** before
+   deciding which of (1)-(3) actually matter. Mini graph hidden=32
+   exposes only kernel-launch overhead; real-world hidden=128 with
+   embed=64 and vocab=10k is ~16× more compute per matmul where AF
+   should already dominate. Measure first, optimize specific
+   bottlenecks second.
+
+**5. Bidirectional AF Backward.** Forward AND Backward currently
+   fall through to CPU for bidirectional graphs. Mirror the
+   forward-direction code with the reverse-direction weights and
+   reversed timestep loop. ~150 lines.
+
 **Severity:** ~~High~~ Medium (after CPU BPTT landed) — LSTM weights
 update correctly on CPU. AF path is a perf-only follow-up. Original
 severity kept below for historical context.
