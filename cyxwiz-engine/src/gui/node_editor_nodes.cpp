@@ -699,6 +699,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Image (or tabular) tensor stream to apply augmentations "
+                "to. Augmentation runs train-only — eval/test passes are "
+                "pass-through, so the model sees the unperturbed data "
+                "for fair metrics.";
             node.inputs.push_back(input_pin);
 
             // Output: Augmented data
@@ -707,6 +712,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Same shape as Input. The transforms parameter is a "
+                "csv pipeline (RandomFlip,Normalize,...) applied left "
+                "to right.";
             node.outputs.push_back(output_pin);
 
             // Parameters (transform pipeline)
@@ -719,12 +728,19 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
         // ===== Image Transform Nodes (Phase 1) =====
         // All share the same pin layout: one Tensor in, one Tensor out.
-        // Parameters vary per transform type.
+        // Parameters vary per transform type. Random* / *Flip / Rotate /
+        // Jitter / Blur are train-only (eval/test pass-through); Resize /
+        // CenterCrop / Grayscale always run.
         case NodeType::Resize: {
             NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            in.name = "Input"; in.is_input = true;
+            in.description = "Image tensor [batch, channels, H, W] (any size).";
+            node.inputs.push_back(in);
             NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            out.name = "Output"; out.is_input = false;
+            out.description = "Resized to [batch, channels, height, width]. "
+                              "Mode 'exact' stretches; other modes preserve aspect ratio.";
+            node.outputs.push_back(out);
             node.parameters["width"] = "224";
             node.parameters["height"] = "224";
             node.parameters["mode"] = "exact";
@@ -732,52 +748,85 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
         case NodeType::CenterCrop: {
             NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            in.name = "Input"; in.is_input = true;
+            in.description = "Image tensor [batch, channels, H, W]. Must be at "
+                             "least width × height in spatial size.";
+            node.inputs.push_back(in);
             NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            out.name = "Output"; out.is_input = false;
+            out.description = "Center crop of shape [batch, channels, height, width].";
+            node.outputs.push_back(out);
             node.parameters["width"] = "224";
             node.parameters["height"] = "224";
             break;
         }
         case NodeType::RandomCrop: {
             NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            in.name = "Input"; in.is_input = true;
+            in.description = "Image tensor [batch, channels, H, W]. Train-only — "
+                             "eval/test pass through unchanged.";
+            node.inputs.push_back(in);
             NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            out.name = "Output"; out.is_input = false;
+            out.description = "Random crop of shape [batch, channels, height, width]. "
+                              "Position is resampled per batch.";
+            node.outputs.push_back(out);
             node.parameters["width"] = "224";
             node.parameters["height"] = "224";
             break;
         }
         case NodeType::HorizontalFlip: {
             NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            in.name = "Input"; in.is_input = true;
+            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
+            node.inputs.push_back(in);
             NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            out.name = "Output"; out.is_input = false;
+            out.description = "Each sample independently flipped left↔right with "
+                              "the configured probability.";
+            node.outputs.push_back(out);
             node.parameters["probability"] = "0.5";
             break;
         }
         case NodeType::VerticalFlip: {
             NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            in.name = "Input"; in.is_input = true;
+            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
+            node.inputs.push_back(in);
             NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            out.name = "Output"; out.is_input = false;
+            out.description = "Each sample independently flipped top↔bottom with "
+                              "the configured probability. Avoid for natural "
+                              "imagery where 'up' is meaningful.";
+            node.outputs.push_back(out);
             node.parameters["probability"] = "0.5";
             break;
         }
         case NodeType::ImageRotate: {
             NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            in.name = "Input"; in.is_input = true;
+            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
+            node.inputs.push_back(in);
             NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            out.name = "Output"; out.is_input = false;
+            out.description = "Each sample rotated by an angle uniformly sampled "
+                              "in [-max_angle, +max_angle] degrees.";
+            node.outputs.push_back(out);
             node.parameters["max_angle"] = "15.0";
             node.parameters["probability"] = "0.5";
             break;
         }
         case NodeType::ColorJitter: {
             NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            in.name = "Input"; in.is_input = true;
+            in.description = "Color image tensor [batch, 3, H, W]. Train-only.";
+            node.inputs.push_back(in);
             NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            out.name = "Output"; out.is_input = false;
+            out.description = "Per-sample random adjustments to brightness, "
+                              "contrast, saturation, and hue within the "
+                              "configured ranges.";
+            node.outputs.push_back(out);
             node.parameters["brightness"] = "0.2";
             node.parameters["contrast"] = "0.2";
             node.parameters["saturation"] = "0.2";
@@ -786,18 +835,28 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
         case NodeType::ImageGaussianBlur: {
             NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            in.name = "Input"; in.is_input = true;
+            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
+            node.inputs.push_back(in);
             NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            out.name = "Output"; out.is_input = false;
+            out.description = "Gaussian-blurred image with the configured "
+                              "kernel_size and sigma. Same shape as Input.";
+            node.outputs.push_back(out);
             node.parameters["kernel_size"] = "5";
             node.parameters["sigma"] = "1.0";
             break;
         }
         case NodeType::Grayscale: {
             NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
+            in.name = "Input"; in.is_input = true;
+            in.description = "Color image tensor [batch, 3, H, W].";
+            node.inputs.push_back(in);
             NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false; node.outputs.push_back(out);
+            out.name = "Output"; out.is_input = false;
+            out.description = "Single-channel grayscale [batch, 1, H, W] using "
+                              "the standard luminosity weighting.";
+            node.outputs.push_back(out);
             break;
         }
 
@@ -911,6 +970,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Any tensor — total element count must match the target "
+                "shape (one -1 entry is auto-computed).";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -918,6 +980,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Reshaped to the comma-separated `shape` parameter — "
+                "e.g. '-1,28,28,1' to recover MNIST-shaped images from "
+                "a flattened tensor.";
             node.outputs.push_back(output_pin);
 
             node.parameters["shape"] = "-1,28,28,1";
@@ -931,6 +997,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Feature stream to normalize. The mean/std parameters "
+                "are applied as (x - mean) / std elementwise — pre-"
+                "computed stats, NOT learned. Place between DataInput "
+                "and DataSplit.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -938,6 +1009,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Same shape as Input, with each feature centered and "
+                "scaled by the configured mean/std.";
             node.outputs.push_back(output_pin);
 
             node.parameters["mean"] = "0.0";
@@ -952,6 +1026,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Labels;
             input_pin.name = "Labels";
             input_pin.is_input = true;
+            input_pin.description =
+                "Integer class indices [batch] in the range "
+                "[0, num_classes). Wire from DataInput.Labels (or "
+                "DataLoader.Labels) when your loss expects one-hot "
+                "instead of class indices.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -959,6 +1038,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "OneHot";
             output_pin.is_input = false;
+            output_pin.description =
+                "Float tensor [batch, num_classes] with a single 1 per "
+                "row at the index column. Note the type changes from "
+                "Labels (orange) to Tensor (blue) — feed into MSE/BCE "
+                "rather than CrossEntropy.";
             node.outputs.push_back(output_pin);
 
             node.parameters["num_classes"] = "10";
@@ -1131,6 +1215,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Sequence tensor [batch, seq_len, features]. "
+                "Bidirectional wraps a recurrent layer to run "
+                "forward+backward; TimeDistributed applies a layer "
+                "independently at each timestep.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -1138,6 +1227,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Bidirectional output is concatenated (or summed, per "
+                "merge_mode) across directions — feature dim doubles "
+                "with concat. TimeDistributed preserves [batch, "
+                "seq_len, ...] but the inner layer transforms the "
+                "feature dim.";
             node.outputs.push_back(output_pin);
 
             if (node.type == NodeType::Bidirectional) {
@@ -1365,6 +1460,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
+            input_pin.description =
+                "Embedded sequence [batch, seq_len, d_model] from an "
+                "Embedding layer. PositionalEncoding adds sinusoidal "
+                "position vectors so the Transformer can distinguish "
+                "token order.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -1372,6 +1472,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
+            output_pin.description =
+                "Same shape as Input, with positional vectors added in "
+                "and a small dropout applied. Feed straight into a "
+                "TransformerEncoder/Decoder.";
             node.outputs.push_back(output_pin);
 
             node.parameters["d_model"] = "512";
@@ -2020,18 +2124,34 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             in.type = PinType::Tensor;
             in.name = "Sequential Data";
             in.is_input = true;
+            in.description =
+                "Time-ordered tabular stream from DataInput (or "
+                "TimeSeriesFeatures). Must contain the value_col plus "
+                "any feature_cols you want windowed. Rows are assumed "
+                "to be in chronological order — TimeSeriesSplit "
+                "preserves that ordering.";
             node.inputs.push_back(in);
             NodePin out_x;
             out_x.id = next_pin_id_++;
             out_x.type = PinType::Tensor;
             out_x.name = "Windows";
             out_x.is_input = false;
+            out_x.description =
+                "Sliding-window inputs of shape [num_windows, "
+                "input_width, num_features]. Each row is one "
+                "input_width-step lookback window. Connect into a "
+                "DataLoader → recurrent / dense forecasting model.";
             node.outputs.push_back(out_x);
             NodePin out_y;
             out_y.id = next_pin_id_++;
             out_y.type = PinType::Labels;
             out_y.name = "Targets";
             out_y.is_input = false;
+            out_y.description =
+                "Forecast targets of shape [num_windows, label_width] "
+                "— the next label_width steps starting `shift` "
+                "positions after the window. Wire to a regression "
+                "loss (MSE/L1/Huber).";
             node.outputs.push_back(out_y);
             // Phase 4 canonical params read by TimeSeriesWindowOperator.
             // value_col is required and has no reasonable default — the
@@ -2061,12 +2181,20 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             in.type = PinType::Tensor;
             in.name = "Input";
             in.is_input = true;
+            in.description =
+                "Time-ordered tabular stream containing value_col. "
+                "Augments the table with lag and rolling-aggregation "
+                "columns derived from value_col.";
             node.inputs.push_back(in);
             NodePin out;
             out.id = next_pin_id_++;
             out.type = PinType::Tensor;
             out.name = "Enriched";
             out.is_input = false;
+            out.description =
+                "Same rows as Input plus lag_<n> and rolling_<agg>_<w> "
+                "columns. Feed into TimeSeriesWindow so feature_cols "
+                "can pick up the new columns alongside value_col.";
             node.outputs.push_back(out);
             // Phase 4 canonical params read by TimeSeriesFeaturesOperator.
             // value_col is required and has no default — user must fill
@@ -2088,24 +2216,37 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             in.type = PinType::Tensor;
             in.name = "Data";
             in.is_input = true;
+            in.description =
+                "Time-ordered tabular stream. Unlike DataSplit, rows "
+                "are NOT shuffled — the split is chronological so the "
+                "model never sees future data during training.";
             node.inputs.push_back(in);
             NodePin train_out;
             train_out.id = next_pin_id_++;
             train_out.type = PinType::Tensor;
             train_out.name = "Train";
             train_out.is_input = false;
+            train_out.description =
+                "First `train_ratio` slice of the input — the oldest "
+                "rows.";
             node.outputs.push_back(train_out);
             NodePin val_out;
             val_out.id = next_pin_id_++;
             val_out.type = PinType::Tensor;
             val_out.name = "Validation";
             val_out.is_input = false;
+            val_out.description =
+                "Middle `val_ratio` slice — used for hyperparameter "
+                "tuning and early stopping.";
             node.outputs.push_back(val_out);
             NodePin test_out;
             test_out.id = next_pin_id_++;
             test_out.type = PinType::Tensor;
             test_out.name = "Test";
             test_out.is_input = false;
+            test_out.description =
+                "Final `test_ratio` slice — the newest rows, held "
+                "out for the final evaluation.";
             node.outputs.push_back(test_out);
             // Phase 4 defaults: chronological 80/10/10 split. The operator
             // validates that ratios sum to 1.0 ± 0.01.

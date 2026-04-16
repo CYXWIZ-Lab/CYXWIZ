@@ -46,45 +46,96 @@ tabular path to find the layout mismatch.
 
 ## Node Pin Design Inconsistencies
 
+### Status update 2026-04-17 — pin pass landed (4 commits)
+
+The "stop fooling the user" pin sweep was done as a name-and-tooltip
+pass, NOT as the originally-proposed "collapse to single Dataset
+pin" pass. The dual Data + Labels stream is now the intentional
+design across the canvas (matches PyTorch's `(x, y)` DataLoader
+contract). Concrete changes:
+
+1. **`9ded26e9` — pin tooltip framework + data chain.** Added
+   `NodePin.description` field; the existing pin-hover popup at
+   `node_editor.cpp:362` now renders the description below the
+   generic name/type/connection tooltip. Populated for DataInput,
+   DataSplit, DataLoader, MSELoss, CrossEntropyLoss. Renamed
+   DataInput's first output pin "Features" → "Data" so the chain
+   reads `Data + Labels` end-to-end. Backward compatible (links
+   restore by ordinal index, not name).
+2. **`27da03b7` — model + optimizer descriptions.** Dense, Conv1/2/3D,
+   MaxPool/AvgPool, Flatten, Dropout, BatchNorm/LayerNorm/GroupNorm/
+   InstanceNorm, Output, optimizers (SGD/Adam/AdamW/RMSprop/Adagrad/
+   NAdam), recurrent (RNN/LSTM/GRU), Embedding. Each describes its
+   shape contract or special semantics (e.g. LSTM/GRU's
+   return_sequences shape switch, Dropout's train-only scaling).
+3. **`2cc0672f` — losses + attention + transformer.** BCE / BCEWithLogits
+   / L1 / SmoothL1 / Huber / NLL losses; MultiHeadAttention /
+   SelfAttention / CrossAttention with Q/K/V/Mask explained;
+   TransformerEncoder/Decoder with Memory pin documented.
+4. **(commit pending — image transforms + time series + data ops)**
+   Augmentation, Normalize, OneHotEncode (notes the Labels→Tensor
+   type change), Bidirectional/TimeDistributed wrappers,
+   PositionalEncoding, TimeSeriesWindow / TimeSeriesSplit /
+   TimeSeriesFeatures, TensorReshape, and all 9 image transforms
+   (Resize / CenterCrop / RandomCrop / Horizontal/VerticalFlip /
+   ImageRotate / ColorJitter / GaussianBlur / Grayscale).
+
+Pure activation nodes (ReLU/Sigmoid/Tanh/Softmax/etc.) intentionally
+left without descriptions — the node name says everything the user
+needs.
+
+What this fix does NOT address:
+- The architectural "TrainingExecutor walks pins, not registry"
+  issue (line 281) is unchanged. The canvas now LOOKS honest about
+  what pins carry, but the runtime still ignores topology and reads
+  `dataset_name` from the registry. The descriptions are accurate
+  about the *intent* of each pin; they just can't promise the
+  runtime acts on them yet.
+- The image-dialog Normalize foot-gun (Image-only) is unchanged —
+  see the Normalize entry below.
+
 ### DataInput node does too much
 
-**Severity:** Medium — causes confusion and compile warnings.
+**Severity:** Low (was Medium) — partially addressed by the 2026-04-17
+pin pass. Remaining concerns are non-pin.
 
-**Issue:** The DataInput node currently:
-1. Has two output pins (Data + Label) — implies it separates features
-   from labels internally
+**Original issue list and current state:**
+1. ~~Has two output pins (Data + Label) — implies it separates features
+   from labels internally~~ — **decided to keep**. Dual pins are
+   the intentional design (mirror PyTorch's `(x, y)` contract);
+   hover tooltips now explain what each pin carries. The first
+   output is now "Data" not "Features" for cross-node consistency.
 2. Carries label column selection in its dialog — label awareness
-   should be a separate concern
-3. Still has Normalize params in its parameters (from the legacy
-   dialog) — normalization should be the Normalize node's job
-4. The "No label column selected" compile warning fires because the
-   compile gate reads `label_column` from the DataInput node, but
-   for image datasets labels come from the folder structure, not a
-   column
+   should be a separate concern. **Still open.** The dialog still
+   owns `label_column`. A dedicated `LabelSelect` / `ColumnSelect`
+   node would let the canvas show this concern explicitly.
+3. ~~Still has Normalize params in its parameters~~ — **mostly
+   wrong, see Normalize entry below**. Tabular dialog has none;
+   only the Image dialog still owns pixel scaling, deferred until
+   an `ImageNormalize` graph node exists.
+4. The "No label column selected" compile warning fires for image
+   datasets where labels come from folder structure. **Marked FIXED**
+   per line 142 — the compile gate is now domain-aware.
 
-**Suggested fix (pin standardization pass):**
-- DataInput outputs a single "Dataset" pin (stream of sample+label
-  pairs). No separate Data/Label pins.
-- A dedicated "LabelSelect" or "ColumnSelect" node handles label
-  column choice for tabular data
-- Remove all Normalize params from DataInput's parameter list
-- Compile gate's label check should be domain-aware: tabular needs
-  an explicit label column, image gets labels from folder structure
-  or CSV automatically
-
-**Scope:** This is a "Phase 1.5: Pin layout standardization" task.
-Touches DataInput node creation, dialog, compile gate, Properties
-panel, and potentially StartTrainingFromGraph dispatch.
+**Remaining scope:** the LabelSelect/ColumnSelect node is the only
+material part still on the table. Useful but not urgent — the
+dialog approach works fine for the current single-source-per-
+DataInput model.
 
 ### DataLoader pin layout
 
-**Severity:** Low — functional but inconsistent.
+**Severity:** Resolved (intentional design as of 2026-04-17).
 
-**Issue:** DataLoader has one input and two outputs (Data + Labels).
-But if DataInput already separates them, and DataLoader also
-separates them, the semantics are duplicated. If we switch to a
-single Dataset stream, DataLoader takes one stream in and outputs
-one batched stream out.
+**Status:** Dual Data/Labels in/out is now the documented intent —
+matches DataInput.Data/Labels and DataSplit.{Train,Val,Test}{Data,Labels}
+so the canvas reads consistently. Hover descriptions on every pin
+explain the role.
+
+The earlier "switch to single Dataset stream" idea is dropped —
+it would have hidden the (X, y) split that ML practitioners
+expect to see, and would still depend on the unfixed
+TrainingExecutor pin-walking architecture to mean anything
+runtime-wise.
 
 ### Normalize node in DataInput vs graph
 
