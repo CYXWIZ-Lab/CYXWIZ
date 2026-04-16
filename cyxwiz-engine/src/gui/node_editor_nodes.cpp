@@ -1854,6 +1854,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // rolling columns.
             node.parameters["value_col"] = "";
             node.parameters["feature_cols"] = "";
+            // Optional numeric time column (unix epoch / day index).
+            // When set, TimeSeriesWindow emits a __window_start_time
+            // metadata column for forecast-plotting alignment. __-prefix
+            // hides it from feature auto-detect. Empty = off.
+            node.parameters["time_col"] = "";
             node.parameters["input_width"] = "12";
             node.parameters["label_width"] = "1";
             node.parameters["shift"] = "1";

@@ -47,6 +47,10 @@ bool TimeSeriesWindowOperator::Configure(
     const std::string fc_str = (fc_it != params.end()) ? fc_it->second : "";
     ParseColList(fc_str, feature_cols_);
 
+    // Optional time column for forecast-plotting alignment. Empty = off.
+    auto tc_it = params.find("time_col");
+    time_col_ = (tc_it != params.end()) ? tc_it->second : "";
+
     auto read_int = [&](const char* key, int default_value, int& out) -> bool {
         auto p = params.find(key);
         if (p == params.end() || p->second.empty()) {
@@ -105,6 +109,13 @@ TimeSeriesWindowOperator::InferOutputSchema(
         }
     }
     fields.push_back(arrow::field("y", arrow::float32()));
+    if (!time_col_.empty()) {
+        // __-prefix marks this as internal metadata — ArrowDatasetBatcher
+        // skips __-prefixed columns in feature auto-detect so training
+        // doesn't inhale the timestamp as an extra feature. Plotting /
+        // inspection code reads it by exact name.
+        fields.push_back(arrow::field("__window_start_time", arrow::float64()));
+    }
     return arrow::schema(fields);
 }
 
@@ -132,6 +143,29 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "TimeSeriesWindow: column '" + value_col_ +
             "' has unsupported Arrow type '" + bad_type +
             "' (need a numeric type)");
+    }
+
+    // Read optional time column (forecast-plot alignment). Numeric only
+    // in v1 — timestamp/string types are deferred. Stored as float64 in
+    // the output to preserve unix-epoch precision.
+    std::vector<float> time_values;
+    if (!time_col_.empty()) {
+        auto tcol = input->GetColumnByName(time_col_);
+        if (!tcol) {
+            return arrow::Status::KeyError(
+                "TimeSeriesWindow: time_col '" + time_col_ + "' not found");
+        }
+        std::string tbad;
+        if (!ReadColumnAsFloat(tcol, time_values, tbad)) {
+            return arrow::Status::TypeError(
+                "TimeSeriesWindow: time_col '" + time_col_ +
+                "' has unsupported type '" + tbad + "' — numeric only in v1");
+        }
+        if (static_cast<int64_t>(time_values.size()) != static_cast<int64_t>(values.size())) {
+            return arrow::Status::Invalid(
+                "TimeSeriesWindow: time_col '" + time_col_ + "' row count (" +
+                std::to_string(time_values.size()) + ") differs from value_col");
+        }
     }
 
     // Read each extra feature column into a parallel vector. They must
@@ -188,6 +222,11 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     arrow::FloatBuilder label_builder(pool);
     ARROW_RETURN_NOT_OK(label_builder.Reserve(num_windows));
 
+    arrow::DoubleBuilder time_builder(pool);
+    if (!time_col_.empty()) {
+        ARROW_RETURN_NOT_OK(time_builder.Reserve(num_windows));
+    }
+
     // Layout: value_col gets indices [0, input_width_), then feature_cols[0]
     // gets [input_width_, 2*input_width_), etc. Matches the schema's
     // per-feature column block ordering.
@@ -207,10 +246,16 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         // Target: value at step input_width + shift - 1 past window start.
         const int64_t target_idx = w + input_width_ + (shift_ - 1);
         ARROW_RETURN_NOT_OK(label_builder.Append(values[target_idx]));
+
+        // Metadata: time at the window's first input step (index w).
+        if (!time_col_.empty()) {
+            ARROW_RETURN_NOT_OK(
+                time_builder.Append(static_cast<double>(time_values[w])));
+        }
     }
 
     std::vector<std::shared_ptr<arrow::Array>> arrays;
-    arrays.reserve(total_x_cols + 1);
+    arrays.reserve(total_x_cols + 1 + (time_col_.empty() ? 0 : 1));
     for (size_t i = 0; i < total_x_cols; ++i) {
         std::shared_ptr<arrow::Array> arr;
         ARROW_RETURN_NOT_OK(builders[i]->Finish(&arr));
@@ -221,14 +266,21 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         ARROW_RETURN_NOT_OK(label_builder.Finish(&arr));
         arrays.push_back(std::move(arr));
     }
+    if (!time_col_.empty()) {
+        std::shared_ptr<arrow::Array> arr;
+        ARROW_RETURN_NOT_OK(time_builder.Finish(&arr));
+        arrays.push_back(std::move(arr));
+    }
 
     ARROW_ASSIGN_OR_RAISE(auto out_schema, InferOutputSchema(input->schema()));
     auto out_table = arrow::Table::Make(out_schema, arrays, num_windows);
 
     spdlog::info("TimeSeriesWindow: {} input values, {} feature_cols -> {} windows "
-                 "(input_width={}, label_width=1, shift={}, total_x_cols={})",
+                 "(input_width={}, label_width=1, shift={}, total_x_cols={}{})",
                  n, feature_cols_.size(), num_windows,
-                 input_width_, shift_, total_x_cols);
+                 input_width_, shift_, total_x_cols,
+                 time_col_.empty() ? std::string()
+                                   : ", time_col='" + time_col_ + "'");
     return out_table;
 }
 

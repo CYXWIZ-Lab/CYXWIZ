@@ -260,9 +260,14 @@ registered via the `node_executors/` framework:
   features". Since we shipped `Differencing` as its own node, the
   differencing-inside-Features capability is redundant and was
   dropped.
-- **Forecast plotting** — `window_start_time` metadata column on
-  windowed rows (Q3 answer) is not yet implemented. Needed when
-  `Output` node plots forecasts vs time.
+- ~~**Forecast plotting** — `window_start_time` metadata column on
+  windowed rows (Q3 answer) is not yet implemented.~~ **DONE
+  (2026-04-16).** Added optional `time_col` param to TimeSeriesWindow;
+  when set, emits `__window_start_time` float64 metadata column
+  (`__`-prefix hides it from feature auto-detect). Numeric time
+  columns only in v1 — arrow::TimestampType / string-formatted
+  dates deferred until a concrete use case forces the type
+  matrix.
 
 ## Execution order — as originally planned vs what happened
 

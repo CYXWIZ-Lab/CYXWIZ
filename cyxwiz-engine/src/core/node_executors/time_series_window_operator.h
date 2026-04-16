@@ -34,6 +34,16 @@ namespace cyxwiz {
  * target `y` is always taken from value_col. Typical upstream source is
  * TimeSeriesFeatures producing lag / rolling columns.
  *
+ * Forecast-plotting extension (Phase 4.x, 2026-04-16): `time_col` is an
+ * optional numeric column (unix epoch / day index / frame number) that,
+ * when set, produces a `__window_start_time` float64 metadata column in
+ * the output. It holds the time value at each window's first input step,
+ * so downstream plots can place forecast vs actual on a shared time
+ * axis. The __-prefix marks it as internal metadata, excluded from
+ * ArrowDatasetBatcher's feature auto-detection so training doesn't
+ * inhale it as an extra input. String / arrow::TimestampType support
+ * deferred — numeric only in v1.
+ *
  * The output column name `y` is chosen deliberately so ArrowDatasetBatcher's
  * common-label auto-detection picks it up without the user having to type a
  * label column name. See dataset_batcher.cpp::InitializeColumns.
@@ -60,6 +70,7 @@ public:
 private:
     std::string value_col_;
     std::vector<std::string> feature_cols_;  // Optional multivariate extras
+    std::string time_col_;                   // Optional numeric time column
     int input_width_ = 12;
     int label_width_ = 1;
     int shift_ = 1;
