@@ -5,6 +5,7 @@
 #include "identity_operator.h"
 #include "log_transform_operator.h"
 #include "pca_operator.h"
+#include "preprocessing_operators.h"
 #include "regression_operators.h"
 #include "sentiment_analyzer_operator.h"
 #include "signal_processing_operators.h"
@@ -105,6 +106,28 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::PolynomialRegressionNode, []() {
         return std::make_unique<PolynomialRegressionOperator>();
+    });
+    // Tool-to-Node data preprocessing block (closes Phase 4).
+    RegisterCreator(gui::NodeType::StandardScaler, []() {
+        return std::make_unique<StandardScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::MinMaxScaler, []() {
+        return std::make_unique<MinMaxScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::RobustScaler, []() {
+        return std::make_unique<RobustScalerOperator>();
+    });
+    RegisterCreator(gui::NodeType::LabelEncoder, []() {
+        return std::make_unique<LabelEncoderOperator>();
+    });
+    RegisterCreator(gui::NodeType::OrdinalEncoder, []() {
+        return std::make_unique<OrdinalEncoderOperator>();
+    });
+    RegisterCreator(gui::NodeType::TargetEncoder, []() {
+        return std::make_unique<TargetEncoderOperator>();
+    });
+    RegisterCreator(gui::NodeType::OutlierDetector, []() {
+        return std::make_unique<OutlierDetectorOperator>();
     });
 }
 

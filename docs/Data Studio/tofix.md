@@ -895,8 +895,8 @@ NEW NodeTypes were added as part of this work (`LogTransform`,
 full breakdown.
 
 **Status update 2026-04-16 — Tool-to-Node migration ROUND 2 closed.**
-In this session, 14 additional Cat-1 operators landed across five
-blocks, bringing the total from 5 → **19 live Cat-1 operators**:
+In this session, 21 additional Cat-1 operators landed across six
+blocks, bringing the total from 5 → **26 live Cat-1 operators**:
 - **Text analytics** (4): `TextTokenizer`, `TFIDFVectorizer`,
   `CountVectorizer`, `SentimentAnalyzer` (lexicon-based)
 - **Linear algebra** (1): `PCANode` (SVD-based)
@@ -906,6 +906,9 @@ blocks, bringing the total from 5 → **19 live Cat-1 operators**:
   `FilterDesigner` (combines design+apply)
 - **Classical regression** (2): `LinearRegressionNode` (multi-
   predictor OLS), `PolynomialRegressionNode` (univariate)
+- **Data preprocessing** (7): `StandardScaler`, `MinMaxScaler`,
+  `RobustScaler`, `LabelEncoder`, `OrdinalEncoder`, `TargetEncoder`,
+  `OutlierDetector` — closes the Phase 4 preprocessing block
 
 **Of the remaining ~18 dead NodeTypes, every single one is now
 deferred with explicit reasoning:**
@@ -1123,13 +1126,26 @@ schema.
 | `JSONPathExtractor` | `json_viewer_panel.h` | dead |
 | `DataProfiler` | `data_profiler_panel.h` | dead |
 
-**Data preprocessing (Phase 4 block):**
+**Data preprocessing (Phase 4 block) — ALL LIVE (2026-04-16):**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `StandardScaler` | `standardization_panel.h` | dead |
-| `MinMaxScaler` / `RobustScaler` | `feature_scaling_panel.h` | dead |
-| `OutlierDetector` | `outlier_detection_panel.h` | dead |
-| `LabelEncoder` / `OrdinalEncoder` / `TargetEncoder` | *(none found)* | dead |
+| `StandardScaler` | `standardization_panel.h` | ~~dead~~ **LIVE** (Cat-1, z-score, 2026-04-16) |
+| `MinMaxScaler` | `feature_scaling_panel.h` | ~~dead~~ **LIVE** (Cat-1, custom range, 2026-04-16) |
+| `RobustScaler` | `feature_scaling_panel.h` | ~~dead~~ **LIVE** (Cat-1, median/IQR, 2026-04-16) |
+| `OutlierDetector` | `outlier_detection_panel.h` | ~~dead~~ **LIVE** (Cat-1, IQR/Z-score flag, 2026-04-16) |
+| `LabelEncoder` | *(none found)* | ~~dead~~ **LIVE** (Cat-1, single col, 2026-04-16) |
+| `OrdinalEncoder` | *(none found)* | ~~dead~~ **LIVE** (Cat-1, multi col, auto-order, 2026-04-16) |
+| `TargetEncoder` | *(none found)* | ~~dead~~ **LIVE** (Cat-1, smoothed mean, 2026-04-16) |
+
+*Deferred sub-features:*
+- OutlierDetector `action=remove` (row deletion breaks downstream
+  alignment) and `action=clip` (reasonable but more complex) —
+  v1 only wires `action=flag`.
+- OutlierDetector `method=isolation_forest` and `method=lof` — no
+  backend impl yet; only IQR + Z-score supported in v1.
+- OrdinalEncoder custom per-column `categories` ordering — v1 only
+  supports `categories=auto` (alphabetical); custom ordering
+  needs a nested param schema.
 
 ### Why this matters
 

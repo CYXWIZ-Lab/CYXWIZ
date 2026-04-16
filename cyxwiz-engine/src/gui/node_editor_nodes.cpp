@@ -3520,6 +3520,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by StandardScalerOperator.
+            // columns empty = auto-detect numeric; label_col excluded from auto-detect.
+            node.parameters["columns"] = "";
+            node.parameters["label_col"] = "";
             node.parameters["with_mean"] = "true";
             node.parameters["with_std"] = "true";
             break;
@@ -3540,6 +3544,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by MinMaxScalerOperator.
+            node.parameters["columns"] = "";
+            node.parameters["label_col"] = "";
             node.parameters["min"] = "0";
             node.parameters["max"] = "1";
             break;
@@ -3560,6 +3567,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by RobustScalerOperator.
+            node.parameters["columns"] = "";
+            node.parameters["label_col"] = "";
             node.parameters["with_centering"] = "true";
             node.parameters["with_scaling"] = "true";
             node.parameters["quantile_min"] = "25";
@@ -3628,7 +3638,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by TargetEncoderOperator.
+            // columns = categorical cols to encode; target_col = numeric target.
             node.parameters["columns"] = "";
+            node.parameters["target_col"] = "";
             node.parameters["smoothing"] = "1.0";
             break;
         }
@@ -3667,10 +3680,15 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             mask_out.is_input = false;
             node.outputs.push_back(mask_out);
 
-            node.parameters["method"] = "iqr";           // iqr, zscore, isolation_forest, lof
+            // Tool-to-Node canonical params read by OutlierDetectorOperator.
+            // columns="all" or empty = auto-detect numeric. method: iqr|zscore.
+            // Only "flag" action is wired in v1 (adds is_outlier column);
+            // remove/clip/isolation_forest/lof deferred to tofix.
+            node.parameters["method"] = "iqr";           // iqr, zscore (isolation_forest/lof deferred)
             node.parameters["threshold"] = "1.5";        // IQR multiplier or Z-score threshold
-            node.parameters["columns"] = "all";          // Which columns to check
-            node.parameters["action"] = "remove";        // remove, clip, flag
+            node.parameters["columns"] = "all";          // "all" or csv list
+            node.parameters["label_col"] = "";
+            node.parameters["action"] = "flag";          // only "flag" is live; remove/clip deferred
             break;
         }
 

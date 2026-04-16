@@ -136,6 +136,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/clustering_operators.cpp         # Tool-to-Node Band 1
     src/core/node_executors/signal_processing_operators.cpp  # Tool-to-Node Band 1
     src/core/node_executors/regression_operators.cpp         # Tool-to-Node Band 1
+    src/core/node_executors/preprocessing_operators.cpp      # Tool-to-Node Band 1
     # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
@@ -419,6 +420,7 @@ set(ENGINE_HEADERS
     src/core/node_executors/clustering_operators.h
     src/core/node_executors/signal_processing_operators.h
     src/core/node_executors/regression_operators.h
+    src/core/node_executors/preprocessing_operators.h
     src/core/node_executors/feature_matrix_utils.h
     src/core/node_executors/text_column_utils.h
     src/core/node_executors/ts_column_utils.h
