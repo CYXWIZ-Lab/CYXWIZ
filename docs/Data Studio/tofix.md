@@ -987,6 +987,148 @@ supports backprop.
 
 ---
 
+## GRULayer — Broken AF Forward + Missing CPU Backward (2026-04-17)
+
+**Severity:** Medium — GRU node is now wired end-to-end (graph
+compiler → `GRUModule` → training_executor case), but the underlying
+`GRULayer` has the SAME three-bug pattern LSTM had pre-2026-04-16.
+Smoke test runs without crashing but loss stays flat — gradients are
+zero. `GRUModule` constructor logs a one-shot warning so users know
+upfront not to expect convergence.
+
+**Surface symptoms (from `test_04_sentiment_gru_mini.cyxgraph` smoke
+test, 2026-04-17):**
+
+```
+[warn] ArrayFire GRULayer::Forward failed: ArrayFire Exception
+       (Invalid input size:203): Size mismatch between input and output
+       In function af::array::array_proxy::operator =
+       In file src\api\cpp\array.cpp:578
+       falling back to CPU
+[warn] GRULayer::Backward called without cached data from Forward,
+       returning zero gradients
+```
+
+Repeats per batch. CPU Forward succeeds (output shape correct), CPU
+Backward returns `Tensor::Zeros(grad_output.Shape())`, weights never
+update, loss is flat across epochs.
+
+**Three stacked problems in `cyxwiz-backend/src/algorithms/layer.cpp`:**
+
+### 1. `GRULayer::Forward` ArrayFire path throws size-mismatch on assign
+
+**Location:** `layer.cpp:3098-3209` (AF try/catch block inside
+`#ifdef CYXWIZ_HAS_ARRAYFIRE`).
+
+**Symptom:** AF exception ERR_SIZE 203 inside `af::array_proxy::
+operator=`. Same family as the LSTM AF Forward bug — almost certainly
+a row-major / column-major mismatch at one of the 3D slice writes:
+- `h_states(0, af::span, af::span) = h;` (line 3156)
+- `h_states(t + 1, af::span, af::span) = h;` (line 3177)
+- `all_gates(t, af::span, af::span) = gates;` (line 3179)
+- `h_full(layer, af::span, af::span) = h;` (line 3192)
+
+The RHS shape (`[batch, hidden]` 2D) doesn't match the rank-3 proxy
+on the LHS.
+
+**Fix (mirror LSTM):** wrap each RHS in `af::moddims(rhs,
+af::dim4(1, batch, hidden))` so the rank matches. Likely also need
+the row-major 3D helpers (`TensorToAf3DRowMajor` /
+`AfToTensor3DRowMajor`) at the boundary if input dim interpretation
+is also scrambled. See `LSTMLayer::Forward` post-`38d0a250`/`f4ac9b57`
+for the reference fix.
+
+### 2. CPU `GRULayer::Forward` fallback doesn't populate the AF caches
+
+**Location:** `layer.cpp:3215-3344` (CPU fallback path).
+
+**Issue:** AF Forward (when it worked) populated:
+- `cached_inputs_`
+- `cached_gates_`
+- `cached_hidden_states_`
+
+CPU fallback computes everything as `std::vector<float>` locals and
+discards them on exit. Backward then sees empty caches.
+
+**Fix:** During the CPU pass, gather per-layer per-timestep gates
+(reset / update / new) and hidden states into row-major scratch
+buffers, then wrap as Tensors and push into the cache vectors before
+return. Same shape contract as the AF path: `[seq_len, batch,
+3*hidden]` for gates, `[seq_len + 1, batch, hidden]` for hidden
+states.
+
+### 3. `GRULayer::Backward` returns zero gradients on cache miss
+
+**Location:** `layer.cpp:3347-...` (start of Backward).
+
+**Issue:** Mirror of the LSTM stub:
+
+```cpp
+if (cached_inputs_.empty() || cached_gates_.empty() ||
+    cached_hidden_states_.empty()) {
+    spdlog::warn("GRULayer::Backward called without cached data from
+                  Forward, returning zero gradients");
+    return Tensor::Zeros(grad_output.Shape());
+}
+```
+
+Once #2 lands the warning stops, but the AF Backward path may also
+fail and need a CPU equivalent. ~60-80 lines of BPTT over the GRU
+gate equations (reset / update / new), per timestep:
+- d_h_t = grad_output[t] + dh_next
+- d_z = d_h_t * (h_prev - n_t) * z_t * (1 - z_t)
+- d_n = d_h_t * (1 - z_t) * (1 - n_t^2)
+- d_r = d_n * (h_proj_n) * r_t * (1 - r_t)
+- Accumulate into dW_ih, dW_hh, db_ih, db_hh
+- dh_next = d_h_t * z_t + (matmul terms through gates)
+
+Reference: PyTorch's GRU C++ source, or the equivalent of LSTM CPU
+BPTT we landed in `38d0a250`.
+
+### Recommended fix sequence (separate session)
+
+1. **Add CPU Backward (biggest chunk).** Without this, GRU can never
+   learn on CPU. Read from whatever caches Forward populates.
+2. **Populate caches in CPU Forward** so #1 has something to read.
+3. **Delete the zero-grad fallback in Backward** — once Backward has
+   a real CPU path, empty caches mean something's wrong; want a real
+   error, not silent zero.
+4. **(Optional) Fix AF Forward / Backward** for performance. CPU
+   path will work but be slower than a fixed GPU path.
+
+The AF Forward fix is where LSTM dragged on — the slice-shape
+moddims pattern needs to be applied at every 3D RHS write. Worth
+landing the CPU path first so the smoke test goes green, then
+revisit AF as a perf pass.
+
+### Test after fix
+
+- Rerun `test_04_sentiment_gru_mini.cyxgraph` for 3 epochs (same
+  config as the LSTM mini).
+- Expected: monotonic loss decrease, val_acc climbs above the 7-class
+  random baseline (~14%) into the 30-50% range like the LSTM mini.
+- Side-by-side: `test_03_sentiment_lstm_mini` and
+  `test_04_sentiment_gru_mini` should produce comparable convergence
+  curves (GRU slightly faster per-batch, similar final accuracy).
+
+### Files touched during the 2026-04-17 wiring pass that need revisiting
+
+- `cyxwiz-backend/include/cyxwiz/sequential.h` — `GRUModule`
+  declaration (keep)
+- `cyxwiz-backend/src/algorithms/sequential.cpp` — `GRUModule`
+  implementation + one-shot constructor warning (keep; remove the
+  warning once GRULayer is fixed)
+- `cyxwiz-engine/src/core/training_executor.cpp` — `GRU` case
+  branch (keep)
+- `examples/cyxgraph/text/test_04_sentiment_gru_mini.cyxgraph` —
+  the smoke test graph that surfaced all this (keep as a regression
+  fixture)
+- `cyxwiz-backend/src/algorithms/layer.cpp` — `GRULayer::Forward` AF
+  block + CPU fallback + `Backward` zero-grad stub (rewrite during
+  the fix)
+
+---
+
 ## Tool-to-Node Migration — ~40 NodeTypes with standalone panels but no graph integration
 
 **Severity:** HIGH (architectural) — this is the biggest consistency gap

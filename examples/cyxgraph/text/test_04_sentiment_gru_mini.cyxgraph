@@ -1,0 +1,79 @@
+{
+  "id": "mental_health_sentiment_gru_mini",
+  "name": "Sentiment GRU — Mini (smoke test, mirror of LSTM mini)",
+  "description": "GRU counterpart to test_03_sentiment_lstm_mini. Same dimensions (max_length 32, embedding_dim 16, hidden 32, vocab 2000, batch 32) so a side-by-side run isolates GRU-vs-LSTM behavior. Goal: 'does loss drop over a few batches / epoch'. If loss is flat the GRULayer CPU fallback / AF Backward path is broken — same risk profile as LSTM pre-fix (see tofix.md).",
+  "category": "Training Pipeline",
+  "tags": ["text", "sentiment", "gru", "smoke-test", "correctness"],
+  "parameters": [],
+  "template": {
+    "nodes": [
+      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 300],
+       "params": {"source_type": "file", "file_category": "text",
+                  "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+                  "text_column": "statement", "text_label_column": "status",
+                  "text_tokenizer_type": "1", "text_max_length": "32",
+                  "text_lowercase": "true", "text_min_freq": "2", "text_max_vocab_size": "2000"}},
+
+      {"id": "text_tokenizer", "type": "TextTokenizer", "name": "Tokenizer",
+       "pos": [250, 300],
+       "params": {"tokenizer_type": "1", "max_length": "32", "lowercase": "true",
+                  "min_freq": "5", "max_vocab_size": "2000"}},
+      {"id": "text_vocab", "type": "TextVocabulary", "name": "Vocab 2k",
+       "pos": [500, 300],
+       "params": {"min_freq": "5", "max_vocab_size": "2000"}},
+      {"id": "text_padding", "type": "TextPadding", "name": "Padding",
+       "pos": [750, 300],
+       "params": {"max_length": "32", "pad_value": "0"}},
+
+      {"id": "data_split", "type": "DataSplit", "name": "Split 80/10/10",
+       "pos": [1000, 300],
+       "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1",
+                  "stratified": "true", "seed": "42"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader",
+       "pos": [1250, 300],
+       "params": {"batch_size": "32", "epochs": "3", "shuffle": "true",
+                  "seed": "42", "validation_freq": "1"}},
+
+      {"id": "embedding", "type": "Embedding", "name": "Embedding 2k x 16",
+       "pos": [1500, 300],
+       "params": {"num_embeddings": "2000", "embedding_dim": "16", "padding_idx": "0"}},
+
+      {"id": "gru", "type": "GRU", "name": "GRU 32 (last)",
+       "pos": [1750, 300],
+       "params": {"hidden_size": "32", "num_layers": "1", "bidirectional": "false",
+                  "return_sequences": "false"}},
+
+      {"id": "fc1", "type": "Dense", "name": "Dense 32", "pos": [2000, 300],
+       "params": {"units": "32"}},
+      {"id": "relu1", "type": "ReLU", "name": "ReLU", "pos": [2250, 300]},
+      {"id": "drop1", "type": "Dropout", "name": "Dropout", "pos": [2500, 300],
+       "params": {"rate": "0.3"}},
+
+      {"id": "fc_out", "type": "Dense", "name": "Dense 7", "pos": [2750, 300],
+       "params": {"units": "7"}},
+
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy",
+       "pos": [3000, 300]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [3250, 300],
+       "params": {"learning_rate": "0.001"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [3500, 300],
+       "params": {"classes": "7"}}
+    ],
+    "links": [
+      {"from": "data_input", "to": "text_tokenizer"},
+      {"from": "text_tokenizer", "to": "text_vocab"},
+      {"from": "text_vocab", "to": "text_padding"},
+      {"from": "text_padding", "to": "data_split"},
+      {"from": "data_split", "to": "data_loader"},
+      {"from": "data_loader", "to": "embedding"},
+      {"from": "embedding", "to": "gru"},
+      {"from": "gru", "to": "fc1"},
+      {"from": "fc1", "to": "relu1"},
+      {"from": "relu1", "to": "drop1"},
+      {"from": "drop1", "to": "fc_out"},
+      {"from": "fc_out", "to": "loss"},
+      {"from": "loss", "to": "optimizer"},
+      {"from": "optimizer", "to": "output"}
+    ]
+  }
+}

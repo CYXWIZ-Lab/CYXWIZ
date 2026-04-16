@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <atomic>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -267,6 +268,124 @@ std::map<std::string, Tensor> LSTMModule::GetGradients() {
 std::string LSTMModule::GetName() const {
     const int dirs = bidirectional_ ? 2 : 1;
     return "LSTM(" + std::to_string(input_size_) + " -> " +
+           std::to_string(hidden_size_ * dirs) +
+           (return_sequences_ ? ", seq" : ", last") + ")";
+}
+
+// ============================================================================
+// GRUModule Implementation — direct mirror of LSTMModule. The slice and
+// re-expand logic for return_sequences=false is identical because
+// GRULayer matches LSTMLayer's [batch, seq, hidden*dirs] full-output
+// contract.
+// ============================================================================
+
+GRUModule::GRUModule(size_t input_size, size_t hidden_size,
+                     size_t num_layers, bool bidirectional,
+                     bool return_sequences)
+    : input_size_(input_size)
+    , hidden_size_(hidden_size)
+    , num_layers_(num_layers)
+    , bidirectional_(bidirectional)
+    , return_sequences_(return_sequences)
+{
+    // One-shot warning: GRULayer currently has the same three-bug pattern
+    // LSTMLayer had pre-2026-04-16 (AF Forward shape bug, CPU Forward
+    // doesn't populate AF caches, CPU Backward returns zeros). Smoke tests
+    // will run end-to-end but the loss will be flat — gradients are zero.
+    // Tracked in docs/Data Studio/tofix.md "GRULayer broken AF Forward +
+    // missing CPU Backward".
+    static std::atomic<bool> warned{false};
+    bool expected = false;
+    if (warned.compare_exchange_strong(expected, true)) {
+        spdlog::warn("[GRUModule] GRULayer is in a known-broken state — "
+                     "AF Forward will fail and the CPU fallback returns "
+                     "zero gradients in Backward. Training will run but "
+                     "weights will not update. See tofix.md.");
+    }
+
+    layer_ = std::make_unique<GRULayer>(
+        static_cast<int>(input_size),
+        static_cast<int>(hidden_size),
+        static_cast<int>(num_layers),
+        /*batch_first=*/true,
+        bidirectional,
+        /*dropout=*/0.0f);
+}
+
+Tensor GRUModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+
+    Tensor full_output = layer_->Forward(input);
+    last_full_output_shape_ = full_output.Shape();
+
+    if (return_sequences_) {
+        return full_output;
+    }
+
+    if (last_full_output_shape_.size() != 3) {
+        spdlog::warn("GRUModule: expected 3D output [batch, seq, hidden_dirs] "
+                     "but got {}D — passing full output through",
+                     last_full_output_shape_.size());
+        return full_output;
+    }
+
+    const size_t batch = last_full_output_shape_[0];
+    const size_t seq_len = last_full_output_shape_[1];
+    const size_t hd = last_full_output_shape_[2];
+
+    Tensor last({batch, hd}, DataType::Float32);
+    const float* src = full_output.Data<float>();
+    float* dst = static_cast<float*>(last.Data());
+    for (size_t b = 0; b < batch; ++b) {
+        const float* src_step = src + b * seq_len * hd + (seq_len - 1) * hd;
+        std::memcpy(dst + b * hd, src_step, hd * sizeof(float));
+    }
+    return last;
+}
+
+Tensor GRUModule::Backward(const Tensor& grad_output) {
+    if (return_sequences_) {
+        return layer_->Backward(grad_output);
+    }
+
+    if (last_full_output_shape_.size() != 3) {
+        spdlog::warn("GRUModule::Backward called without a 3D shape cache "
+                     "— falling back to direct grad passthrough");
+        return layer_->Backward(grad_output);
+    }
+
+    const size_t batch = last_full_output_shape_[0];
+    const size_t seq_len = last_full_output_shape_[1];
+    const size_t hd = last_full_output_shape_[2];
+
+    Tensor expanded = Tensor::Zeros({batch, seq_len, hd});
+    const float* src = grad_output.Data<float>();
+    float* dst = static_cast<float*>(expanded.Data());
+    for (size_t b = 0; b < batch; ++b) {
+        float* dst_step = dst + b * seq_len * hd + (seq_len - 1) * hd;
+        std::memcpy(dst_step, src + b * hd, hd * sizeof(float));
+    }
+    return layer_->Backward(expanded);
+}
+
+std::map<std::string, Tensor> GRUModule::GetParameters() {
+    return layer_->GetParameters();
+}
+
+void GRUModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    layer_->SetParameters(params);
+}
+
+std::map<std::string, Tensor> GRUModule::GetGradients() {
+    // Same convention as LSTMModule — GRULayer writes "grad_*" keys
+    // into its parameters map and the SequentialModel optimizer step
+    // reads them via GetParameters().
+    return layer_->GetParameters();
+}
+
+std::string GRUModule::GetName() const {
+    const int dirs = bidirectional_ ? 2 : 1;
+    return "GRU(" + std::to_string(input_size_) + " -> " +
            std::to_string(hidden_size_ * dirs) +
            (return_sequences_ ? ", seq" : ", last") + ")";
 }

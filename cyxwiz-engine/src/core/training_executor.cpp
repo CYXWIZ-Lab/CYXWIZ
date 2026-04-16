@@ -224,6 +224,56 @@ bool TrainingExecutor::BuildModelFromConfig() {
                 break;
             }
 
+            case gui::NodeType::GRU: {
+                // Mirror of the LSTM branch above. Same param surface
+                // (hidden_size / num_layers / bidirectional /
+                // return_sequences) and same shape contract — GRUModule
+                // wraps GRULayer and slices to the last timestep when
+                // return_sequences is false.
+                size_t hidden_size = 128;
+                size_t num_layers  = 1;
+                bool bidirectional = false;
+                bool return_sequences = false;
+
+                auto hs_it = layer_cfg.parameters.find("hidden_size");
+                if (hs_it != layer_cfg.parameters.end()) {
+                    try { hidden_size = static_cast<size_t>(std::stoi(hs_it->second)); }
+                    catch (...) {}
+                }
+                auto nl_it = layer_cfg.parameters.find("num_layers");
+                if (nl_it != layer_cfg.parameters.end()) {
+                    try { num_layers = static_cast<size_t>(std::stoi(nl_it->second)); }
+                    catch (...) {}
+                }
+                auto bi_it = layer_cfg.parameters.find("bidirectional");
+                if (bi_it != layer_cfg.parameters.end()) {
+                    bidirectional = (bi_it->second == "true" ||
+                                     bi_it->second == "1");
+                }
+                auto rs_it = layer_cfg.parameters.find("return_sequences");
+                if (rs_it != layer_cfg.parameters.end()) {
+                    return_sequences = (rs_it->second == "true" ||
+                                        rs_it->second == "1");
+                }
+                if (hidden_size < 1) hidden_size = 1;
+                if (num_layers < 1) num_layers = 1;
+
+                model_->Add<GRUModule>(current_input_size, hidden_size,
+                                       num_layers, bidirectional,
+                                       return_sequences);
+
+                const size_t output_features = hidden_size *
+                                               (bidirectional ? 2 : 1);
+                spdlog::info("  [{}] GRU(in={}, hidden={}, layers={}, "
+                             "bidir={}, return_seq={}) — output "
+                             "[batch, {}] ({} features)",
+                             i, current_input_size, hidden_size,
+                             num_layers, bidirectional, return_sequences,
+                             output_features, output_features);
+                current_input_size = output_features;
+                break;
+            }
+
             case gui::NodeType::ReLU: {
                 model_->Add<ReLUModule>();
                 spdlog::info("  [{}] ReLU", i);

@@ -224,6 +224,43 @@ private:
 };
 
 /**
+ * @brief Module wrapper around GRULayer.
+ *
+ * Mirrors LSTMModule: the underlying GRULayer always returns the full
+ * sequence output [batch, seq_len, hidden_size * num_directions]. When
+ * `return_sequences == false`, this wrapper slices out the final
+ * timestep so the Module yields [batch, hidden_size * num_directions]
+ * — the shape a downstream Dense classifier expects without an
+ * intervening Flatten. Backward re-expands the [batch, hidden] gradient
+ * back to the full [batch, seq_len, hidden] shape with zeros at every
+ * non-terminal step before delegating to GRULayer::Backward.
+ */
+class CYXWIZ_API GRUModule : public Module {
+public:
+    GRUModule(size_t input_size, size_t hidden_size,
+              size_t num_layers = 1,
+              bool bidirectional = false,
+              bool return_sequences = false);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<GRULayer> layer_;
+    size_t input_size_;
+    size_t hidden_size_;
+    size_t num_layers_;
+    bool bidirectional_;
+    bool return_sequences_;
+    std::vector<size_t> last_full_output_shape_;
+};
+
+/**
  * @brief Wrapper for ReLU activation
  */
 class CYXWIZ_API ReLUModule : public Module {
