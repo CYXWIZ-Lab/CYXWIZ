@@ -6,6 +6,7 @@
 #include "log_transform_operator.h"
 #include "pca_operator.h"
 #include "sentiment_analyzer_operator.h"
+#include "signal_processing_operators.h"
 #include "text_tokenizer_operator.h"
 #include "tfidf_vectorizer_operator.h"
 #include "time_series_features_operator.h"
@@ -82,6 +83,18 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::GMMCluster, []() {
         return std::make_unique<GMMOperator>();
+    });
+    // Tool-to-Node signal processing block. IFFT + WaveletTransform
+    // deferred to tofix (complex inputs / variable-length outputs
+    // don't fit Arrow column schema cleanly).
+    RegisterCreator(gui::NodeType::FFTNode, []() {
+        return std::make_unique<FFTOperator>();
+    });
+    RegisterCreator(gui::NodeType::Convolution1D, []() {
+        return std::make_unique<Convolve1DOperator>();
+    });
+    RegisterCreator(gui::NodeType::FilterDesigner, []() {
+        return std::make_unique<FilterDesignerOperator>();
     });
 }
 

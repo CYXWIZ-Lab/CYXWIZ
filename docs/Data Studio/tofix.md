@@ -1025,10 +1025,11 @@ graph today is a visual no-op.
 **Signal processing (Phase 4 block):**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `FFTNode` / `IFFTNode` | `fft_panel.h` | dead |
-| `FilterDesigner` | `filter_designer_panel.h` | dead |
-| `Convolution1D` | `convolution_panel.h` | dead |
-| `WaveletTransform` | `wavelet_panel.h` | dead |
+| `FFTNode` | `fft_panel.h` | ~~dead~~ **LIVE** (Cat-1 1D FFT, 2026-04-16) |
+| `IFFTNode` | `fft_panel.h` | **DEFERRED** — see entry below (needs complex-pair input schema) |
+| `FilterDesigner` | `filter_designer_panel.h` | ~~dead~~ **LIVE** (Cat-1 design+apply, 2026-04-16) |
+| `Convolution1D` | `convolution_panel.h` | ~~dead~~ **LIVE** (Cat-1, kernel as param, 2026-04-16) |
+| `WaveletTransform` | `wavelet_panel.h` | **DEFERRED** — see entry below (variable-length coeffs per level) |
 
 **Statistics (Phase 5 block):**
 | NodeType | Panel file | Status |
@@ -1186,6 +1187,31 @@ shipped `SentimentAnalyzer` wraps lexicon-based sentiment (simple /
 VADER / AFINN) which is zero-dependency and deterministic. Neural
 sentiment classifiers would need the same pretrained-weights
 distribution story as NER — deferred on identical grounds.
+
+### Deferred signal-processing items (2026-04-16)
+
+**`IFFTNode` — complex-pair column schema.** Inverse FFT needs
+complex-valued input (pairs of real + imaginary columns, or a
+single complex-typed column which Arrow doesn't natively support).
+The honest version either (a) reads paired `{prefix}_real` +
+`{prefix}_imag` columns and reconstructs complex input, or (b)
+chains against a produced-by-FFT table using a matching-schema
+contract. (a) is simpler but awkward; (b) requires FFT to emit
+the raw complex output alongside magnitude/phase. Neither is
+urgently needed — most ML pipelines consume frequency-domain
+features, not round-trip to time-domain. Deferred until a concrete
+use case forces the schema decision.
+
+**`WaveletTransform` — variable-length coefficients per level.** DWT
+produces a final approximation vector plus one detail vector per
+level, each ~half the length of the previous. Mapping to Arrow
+requires either (a) a long-format table with `level, index,
+coefficient_type, value` rows, (b) separate output tables per
+level, or (c) nested list-type columns. All three are awkward for
+downstream training/viz. Better served as a Cat-2 introspection
+panel that renders the multi-resolution decomposition
+interactively, which the existing `wavelet_panel.h` already
+supplies. Deferred indefinitely.
 
 ---
 

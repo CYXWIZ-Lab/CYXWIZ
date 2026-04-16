@@ -4007,6 +4007,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by FFTOperator.
+            // signal_col is required. sample_rate controls frequency-axis
+            // scaling (Hz). Output is a frequency-domain table (row count
+            // changes) with frequency/magnitude/phase columns.
+            node.parameters["signal_col"] = "";
+            node.parameters["sample_rate"] = "1.0";
+            // Legacy panel param (operator ignores).
             node.parameters["n_fft"] = "auto";
             break;
         }
@@ -4043,9 +4050,16 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by FilterDesignerOperator.
+            // The operator combines filter design + application: the signal
+            // column is filtered in-place (column retyped to float32).
+            // bandpass/bandstop require cutoff_high > cutoff.
+            node.parameters["signal_col"] = "";
             node.parameters["filter_type"] = "lowpass";
             node.parameters["cutoff"] = "0.5";
-            node.parameters["order"] = "5";
+            node.parameters["cutoff_high"] = "0";
+            node.parameters["sample_rate"] = "1.0";
+            node.parameters["order"] = "4";
             break;
         }
 
@@ -4071,6 +4085,14 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by Convolve1DOperator.
+            // kernel is a comma-separated list of taps (the Kernel input
+            // pin is visual-only — the materializer doesn't route
+            // Tensor-typed pins). "same" mode is forced by the operator
+            // to keep row count aligned with other input columns.
+            node.parameters["signal_col"] = "";
+            node.parameters["kernel"] = "0.25,0.5,0.25";
+            // Legacy panel param (operator forces "same").
             node.parameters["mode"] = "same";
             break;
         }
