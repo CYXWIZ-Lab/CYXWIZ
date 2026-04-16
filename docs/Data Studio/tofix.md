@@ -978,11 +978,12 @@ graph today is a visual no-op.
 **Machine learning algorithms (Phase 4 block):**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `KMeansCluster` | `kmeans_panel.h` | **scaffolded** — `kmeans_executor.{cpp,h}` exists untracked |
-| `DBSCANCluster` | `dbscan_panel.h` | dead |
-| `HierarchicalCluster` | `hierarchical_panel.h` | dead |
-| `GMMCluster` | `gmm_panel.h` | dead |
-| `PCANode` / `TSNENode` / `UMAPNode` | `dim_reduction_panel.h` | dead |
+| `KMeansCluster` | `kmeans_panel.h` | ~~dead~~ **LIVE** (Cat-1 GPU KMeans, 2026-04-16) |
+| `DBSCANCluster` | `dbscan_panel.h` | ~~dead~~ **LIVE** (Cat-1 GPU DBSCAN, 2026-04-16) |
+| `HierarchicalCluster` | `hierarchical_panel.h` | ~~dead~~ **LIVE** (Cat-1 agglomerative, 2026-04-16) |
+| `GMMCluster` | `gmm_panel.h` | ~~dead~~ **LIVE** (Cat-1 GMM w/ hard labels, 2026-04-16) |
+| `PCANode` | `dim_reduction_panel.h` | ~~dead~~ **LIVE** (Cat-1 SVD-based PCA, 2026-04-16) |
+| `TSNENode` / `UMAPNode` | `dim_reduction_panel.h` | dead (defer — iterative, Cat-2 introspection better fit) |
 | `DecisionTreeClassifier` | *(shares `regression_panel.h`?)* | dead |
 | `RandomForestClassifier` | *(none found)* | dead |
 | `GradientBoostingClassifier` | *(none found)* | dead |

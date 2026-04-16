@@ -1,4 +1,5 @@
 #include "pipeline_operator_factory.h"
+#include "clustering_operators.h"
 #include "count_vectorizer_operator.h"
 #include "differencing_operator.h"
 #include "identity_operator.h"
@@ -66,6 +67,21 @@ void PipelineOperatorFactory::RegisterDefaults() {
     // zero-dependency; pretrained BERT-style models deferred to tofix).
     RegisterCreator(gui::NodeType::SentimentAnalyzer, []() {
         return std::make_unique<SentimentAnalyzerOperator>();
+    });
+    // Tool-to-Node clustering block (all four algorithms). Each emits
+    // input + cluster_id(int32), so downstream viz/training sees the
+    // original columns plus the cluster annotation.
+    RegisterCreator(gui::NodeType::KMeansCluster, []() {
+        return std::make_unique<KMeansOperator>();
+    });
+    RegisterCreator(gui::NodeType::DBSCANCluster, []() {
+        return std::make_unique<DBSCANOperator>();
+    });
+    RegisterCreator(gui::NodeType::HierarchicalCluster, []() {
+        return std::make_unique<HierarchicalOperator>();
+    });
+    RegisterCreator(gui::NodeType::GMMCluster, []() {
+        return std::make_unique<GMMOperator>();
     });
 }
 

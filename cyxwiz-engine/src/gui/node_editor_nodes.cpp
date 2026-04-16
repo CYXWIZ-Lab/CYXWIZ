@@ -2784,8 +2784,19 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by KMeansOperator.
+            // feature_cols empty = auto-detect numeric columns (drops label
+            // and __-prefixed metadata). label_col is excluded from
+            // auto-detect but otherwise passed through untouched.
+            node.parameters["feature_cols"] = "";
+            node.parameters["label_col"] = "";
             node.parameters["n_clusters"] = "8";
             node.parameters["max_iter"] = "300";
+            node.parameters["init"] = "kmeans++";
+            node.parameters["n_init"] = "10";
+            node.parameters["tol"] = "0.0001";
+            node.parameters["seed"] = "0";
+            // Legacy float-panel param (operator ignores).
             node.parameters["random_state"] = "42";
             break;
         }
@@ -2805,8 +2816,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by DBSCANOperator.
+            node.parameters["feature_cols"] = "";
+            node.parameters["label_col"] = "";
             node.parameters["eps"] = "0.5";
             node.parameters["min_samples"] = "5";
+            node.parameters["metric"] = "euclidean";
             break;
         }
 
@@ -2825,8 +2840,14 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by HierarchicalOperator.
+            // linkage="ward" only works with metric="euclidean" (enforced
+            // by the operator).
+            node.parameters["feature_cols"] = "";
+            node.parameters["label_col"] = "";
             node.parameters["n_clusters"] = "3";
             node.parameters["linkage"] = "ward";
+            node.parameters["metric"] = "euclidean";
             break;
         }
 
@@ -2845,8 +2866,15 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by GMMOperator.
+            node.parameters["feature_cols"] = "";
+            node.parameters["label_col"] = "";
             node.parameters["n_components"] = "3";
             node.parameters["covariance_type"] = "full";
+            node.parameters["max_iter"] = "100";
+            node.parameters["tol"] = "0.001";
+            node.parameters["n_init"] = "1";
+            node.parameters["seed"] = "0";
             break;
         }
 
