@@ -780,6 +780,18 @@ NodeType in `node_editor.h`, but almost none of them are wired to
 the execution pipeline. The v1 "everything is a node" philosophy is
 only half-honored.
 
+**Status update 2026-04-16 — Phase 4 time-series block CLOSED.** The
+`TimeSeriesWindow`, `TimeSeriesFeatures`, and `TimeSeriesSplit`
+NodeTypes listed below as "dead" are now live Cat-1 operators with
+working executors (commits `aacbadcd`, `272dca2e`). The Phase 4
+time-series row in the inventory table can be struck through. Two
+NEW NodeTypes were added as part of this work (`LogTransform`,
+`Differencing`) — both also live operators. See
+`docs/phase4_time_series_plan.md` "What actually shipped" for the
+full breakdown. ~37 dead NodeTypes remain; migration framework
+(`node_executors/`, `PipelineMaterializer`, `IPipelineOperator`)
+is now proven and ready for text analytics / linear algebra / etc.
+
 **Discovered:** 2026-04-15, when the user asked why the graph has both
 an `Embedding` node and a separate standalone `Word Embeddings`
 floating panel. The answer — that the `WordEmbeddings` NodeType
@@ -798,9 +810,30 @@ Phase 4 and Phase 5 were explicitly declared as "turn the tool panels
 into graph nodes" work. The NodeType declarations landed; the wiring
 did not.
 
+### Framework status (as of Phase 4 close, 2026-04-16)
+
+`cyxwiz-engine/src/core/node_executors/` is now committed and proven
+via five working Cat-1 operators (LogTransform, Differencing,
+TimeSeriesFeatures, TimeSeriesWindow multivariate, TimeSeriesSplit).
+The pattern for adding a new Cat-1 pipeline op is:
+
+1. Subclass `IPipelineOperator` (see `pipeline_operator.h`)
+2. Implement `Configure(params, error)` reading string params
+3. Implement `Apply(input_table)` returning a transformed Arrow table
+4. Register via `PipelineOperatorFactory::RegisterCreator`
+5. Add `.cpp`/`.h` to CMakeLists, NodeType to both loader maps,
+   CreateNode defaults, GraphCompiler preprocessing specs
+
+Shared utilities in `ts_column_utils.h` (`ReadColumnAsFloat`,
+`ReplaceColumnWithFloat`) cover the column-read and column-replace
+boilerplate. `PipelineMaterializer` walks the graph and dispatches
+all registered ops automatically — no per-op integration needed in
+the dispatcher.
+
 ### What's already partially started
 
-`cyxwiz-engine/src/core/node_executors/` (currently untracked in git)
+`cyxwiz-engine/src/core/node_executors/` (originally untracked in git,
+now committed as of `52808745`)
 contains scaffolding for a per-node execution framework separate from
 `training_executor`:
 
@@ -952,11 +985,15 @@ graph today is a visual no-op.
 
 Not a single commit — this is phase-scale work. The right order:
 
-**Step 1 — Finish the `node_executors` framework.** Stage the
-existing scaffolding (`node_executor.h`, `node_executor_factory.h`,
-`kmeans_executor.{cpp,h}`) and wire it into `pipeline_executor` so
-at least one tool node executes end-to-end as a node (KMeans on
-Arrow table input → cluster labels output).
+**Step 1 — ~~Finish the `node_executors` framework.~~ DONE (2026-04-16).**
+Framework shipped in commit `52808745` with `IPipelineOperator` base
+class, `PipelineBand` enum, `PipelineOperatorFactory`, and the
+`PipelineMaterializer` dispatcher wired into training launch
+(`8b6055b0`). Five working Cat-1 operators ride on it
+(LogTransform, Differencing, TimeSeriesFeatures, TimeSeriesWindow
+multivariate, TimeSeriesSplit). KMeans executor (Cat-2 introspection
+variant) also committed as part of the framework landing. See
+`docs/phase4_time_series_plan.md` "What actually shipped" for details.
 
 **Step 2 — Establish the "rich dialog on double-click" convention
 for tool nodes.** The existing `DataInputDialog` and `TokenizerDialog`
@@ -975,8 +1012,8 @@ done. Suggested order:
 4. Signal processing (FFT / wavelet)
 5. Statistics
 6. Remaining ML algorithms
-7. Time series (overlaps with Phase 4 Time-series — do those
-   together)
+7. ~~Time series~~ DONE — Phase 4 shipped Window / Features / Split
+   as real operators (2026-04-16).
 8. Model evaluation + interpretation (runs AFTER training, different
    execution context)
 
