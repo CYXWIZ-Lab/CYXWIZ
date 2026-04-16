@@ -1822,9 +1822,15 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             out_y.name = "Targets";
             out_y.is_input = false;
             node.outputs.push_back(out_y);
-            node.parameters["window_size"] = "10";
-            node.parameters["forecast_horizon"] = "1";
-            node.parameters["stride"] = "1";
+            // Phase 4 canonical params read by TimeSeriesWindowOperator.
+            // value_col is required and has no reasonable default — the
+            // user must fill it in via Properties before training. Leaving
+            // it empty here trips the operator's Configure error which
+            // the compile gate surfaces before training launch.
+            node.parameters["value_col"] = "";
+            node.parameters["input_width"] = "12";
+            node.parameters["label_width"] = "1";
+            node.parameters["shift"] = "1";
             break;
         }
 
@@ -1872,8 +1878,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             test_out.name = "Test";
             test_out.is_input = false;
             node.outputs.push_back(test_out);
-            node.parameters["train_ratio"] = "0.7";
-            node.parameters["val_ratio"] = "0.15";
+            // Phase 4 defaults: chronological 80/10/10 split. The operator
+            // validates that ratios sum to 1.0 ± 0.01.
+            node.parameters["train_ratio"] = "0.8";
+            node.parameters["val_ratio"] = "0.1";
+            node.parameters["test_ratio"] = "0.1";
             break;
         }
 

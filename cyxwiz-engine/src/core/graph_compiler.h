@@ -268,6 +268,13 @@ struct TrainingConfiguration {
     // defaults from TextDatasetEntry.
     TextPreprocessingConfig text_preprocessing;
 
+    // Phase 4 Time-Series: set to true when Compile finds a TimeSeriesWindow
+    // node in the graph. Signals to the training dispatch that the batcher
+    // should read labels as float (regression via MSELoss), that the
+    // partition column must drive index selection instead of train_split
+    // slicing, and that the label column is the auto-emitted `y` column.
+    bool is_time_series = false;
+
     // Loss function
     gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;
     std::map<std::string, std::string> loss_params;

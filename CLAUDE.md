@@ -170,6 +170,160 @@ Key checks added on top of the original structural validation:
   graph incident — the Phase 3 nodes existed in the enum and the add
   menu but were missing from both loader maps.)
 
+## Pipeline Architecture: Four Bands (2026-04-16 architectural pass)
+
+Every training graph flows through four conceptual bands, in order.
+The band boundaries determine what's cacheable, what's phase-aware,
+and where bugs hide. Keep them clean.
+
+**Band 1 — Data preparation (stateless, cacheable)**
+  DataInput (all categories), TextTokenizer, TextVocabulary,
+  TextPadding, LogTransform, Differencing, TimeSeriesWindow, static
+  Resize, static format conversion, TFIDFVectorizer.
+  - Deterministic given inputs. Identical behavior train/val/test.
+  - **Can be pre-computed once and written to disk** — the
+    "preprocess once, train many" workflow lives here.
+  - Must not read any training state (no phase flag, no
+    train/val/test awareness).
+
+**Band 2 — Partitioning (deterministic, cacheable)**
+  DataSplit (random, stratified), TimeSeriesSplit (chronological).
+  - Assigns each row to a partition (train/val/test).
+  - Deterministic given seed.
+  - Still cacheable — partition assignments can be saved.
+  - No phase flag yet; rows know *which group* they belong to but
+    nothing has said "currently training vs validating".
+
+**Band 3 — Iteration + phase-aware preprocessing**
+  DataLoader (batching, shuffling, epoch control, `SetPhase`),
+  Augmentation, BatchNorm (train updates running stats, val uses
+  them), Input Dropout, MixUp, CutMix.
+  - Phase flag is live here. Nodes change behavior based on
+    train/val/test.
+  - **NOT cacheable** — must re-run every epoch with current phase.
+  - This is where "training mode" semantically begins.
+
+**Band 4 — Model + optimization**
+  Embedding, Dense, Conv2D, Flatten, LSTM, ReLU, Dropout, ...,
+  CrossEntropyLoss, MSELoss, Adam, AdamW, Output.
+  - Forward → loss → backward → optimizer update.
+  - This is where weights change.
+
+**Why this matters:**
+- The "preprocess once, train many" cache boundary is **between
+  Band 2 and Band 3**, not between DataSplit and DataLoader in
+  some arbitrary way.
+- Phase-aware nodes (Band 3) can NEVER be moved to Band 1 — they
+  require the train/val phase flag which only exists after
+  DataLoader.
+- Data leakage happens when Band 3 state bleeds into Band 1 (e.g.,
+  fitting a scaler on all data before splitting — scaler is
+  Band 1, but it read train+val+test, which is a Band 2 violation).
+
+### Nodes should be REAL operations, not config extractors
+
+**Important architectural rule (post-2026-04-16):** new nodes
+should transform data flowing through them, not act as
+configuration extractors that the graph compiler scans for.
+
+The Phase 3 text preprocessing nodes (`TextTokenizer` /
+`TextVocabulary` / `TextPadding`) were implemented as config
+extractors in `graph_compiler.cpp:1065-1121` as a shipping
+shortcut — they have input/output pins but no data flows through
+them. The compiler scans for their presence and pulls their params
+into `config.text_preprocessing`; actual tokenization runs inside
+`TextDatasetBatcher` on-the-fly during training. This blocks the
+"tokenize once, write to disk, reuse" workflow and makes the pins
+visually misleading.
+
+**Fix B** (tracked in tofix.md "TextTokenizer is a config extractor,
+not a pipeline operation") will rewrite these nodes as real
+operations that transform Arrow tables. **Phase 4 and later work
+MUST NOT repeat this shortcut.** New preprocessing nodes should
+execute via the `cyxwiz-engine/src/core/node_executors/` framework
+(scaffolded but unfinished) and transform their inputs in the
+data-processing pipeline, not just carry config metadata.
+
+## Node vs Panel: Four Tool Categories
+
+Three orthogonal axes answer "should this be a node or a panel?":
+- **Automated vs manual** — runs during training, or only when
+  user opens it?
+- **Pipeline data vs dev input** — operates on user's dataset, or
+  on arbitrary dev input?
+- **Transform vs inspect** — changes data, or just shows it?
+
+The resulting four categories:
+
+| Category | When | Data | Effect | Form |
+|---|---|---|---|---|
+| **1. Pipeline operations** | Automated | Pipeline | Transform | **Node** (rich dialog or Properties) |
+| **2. Introspection tools** | Manual | Pipeline | Inspect only | **Panel AND/OR node** (shared backend) |
+| **3. Dev utilities** | Manual | Dev input | Inspect or compute | **Panel** |
+| **4. Debug / monitoring** | Automated | Engine state | Inspect only | **Panel** |
+
+**Concrete examples per category:**
+- **Cat 1 (always nodes):** TextTokenizer, Normalize, DataSplit,
+  KMeans, Dense, Embedding, LSTM, FFT on a column, HypothesisTest
+  on a column, TFIDFVectorizer.
+- **Cat 2 (panels now, optional node form later):** Data Explorer,
+  Data Profiler, Variable Explorer, Table Viewer, Visualization
+  Panel, EmbeddingInspector (future). These hook into any pipeline
+  point and read data without transforming.
+- **Cat 3 (always panels):** Calculator, UUID generator, Hash
+  generator, Unit converter, Regex tester, JSON viewer
+  (paste-and-view), Random generator.
+- **Cat 4 (always panels):** Console, Memory monitor, Job status,
+  Profiling, Plugin manager, Python settings, Task progress,
+  Wallet, Theme editor, Training dashboard.
+
+**The refined v1 "everything is a node" rule:**
+- Every **pipeline concept** (Cat 1) is a node. Non-negotiable.
+- **Introspection** (Cat 2) is preferably a node (persistent in
+  saved graphs) but also fine as a panel (one-shot debugging).
+  Both forms should share backend rendering code.
+- **Dev utilities** (Cat 3) are panels. Calculator has no data
+  stream; it's a dev ergonomics tool.
+- **Debug / monitoring** (Cat 4) are panels. They read engine
+  internal state, not user pipeline data.
+
+### Introspection is orthogonal to the pipeline bands
+
+Inspection tools don't belong to any single band. They read from
+any band without participating in the flow:
+
+```
+Band 1 → Band 2 → Band 3 → Band 4
+   │       │       │       │
+   ▼       ▼       ▼       ▼
+ [Inspection tools can hook any point, read-only,
+  skipped during automated training, invoked by the
+  user when they need to understand "what does the
+  data look like HERE?"]
+```
+
+Introspection nodes (future) connect to a pipeline point via an
+input pin but have no transformed output pin — they sink data for
+display only. They are skipped during the automated training path
+and executed only when the user opens the node's dialog.
+
+### Dialog vs Properties panel
+
+The trigger for "rich dialog on double-click" is NOT "the node has
+more than 2 params" — it's **"the node needs preview, validation,
+or interactive inspection"**:
+
+- **Properties panel** (flat key-value): Dense(units), Dropout(rate),
+  ReLU, activations, BatchNorm, Conv2D kernel/stride — few
+  parameters, no preview needed.
+- **Rich dialog**: DataInput (async load, file picker, live preview,
+  multi-tab config), TokenizerDialog (method selector, vocab
+  preview), WordEmbeddings (file picker, dim validation, vocab
+  alignment report), Category 2 inspection tools (interactive
+  plots).
+
+Existing precedents: `DataInputDialog`, `TokenizerDialog`.
+
 ## Completed Features
 
 | Feature | Summary | Key Files |

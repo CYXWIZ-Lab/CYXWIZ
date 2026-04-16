@@ -135,6 +135,18 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"TextVocabulary", NodeType::TextVocabulary},
         {"TextPadding", NodeType::TextPadding},
 
+        // Time Series Preprocessing (Phase 4) — missing from the loader
+        // map previously caused cyxgraph loads to fall through to
+        // NodeType::Dense and crash at compile time on missing `units`.
+        // TimeSeriesWindow and TimeSeriesSplit are real Cat-1 pipeline
+        // operators (see node_executors/time_series_*_operator.{h,cpp})
+        // so dropping them in a graph triggers the materializer pass
+        // before training.
+        {"TimeSeriesWindow", NodeType::TimeSeriesWindow},
+        {"TimeSeriesFeatures", NodeType::TimeSeriesFeatures},
+        {"TimeSeriesSplit", NodeType::TimeSeriesSplit},
+        {"TimeSeriesCSV", NodeType::TimeSeriesCSV},
+
         // Image Transforms (Phase 1)
         {"Resize", NodeType::Resize},
         {"CenterCrop", NodeType::CenterCrop},

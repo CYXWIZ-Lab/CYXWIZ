@@ -455,7 +455,13 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         // GraphCompiler's ExtractText* extractors; no layer contribution.
         {"TextTokenizer", NodeType::TextTokenizer},
         {"TextVocabulary", NodeType::TextVocabulary},
-        {"TextPadding", NodeType::TextPadding}
+        {"TextPadding", NodeType::TextPadding},
+
+        // Time Series Preprocessing (Phase 4) — real Cat-1 operators.
+        {"TimeSeriesWindow", NodeType::TimeSeriesWindow},
+        {"TimeSeriesFeatures", NodeType::TimeSeriesFeatures},
+        {"TimeSeriesSplit", NodeType::TimeSeriesSplit},
+        {"TimeSeriesCSV", NodeType::TimeSeriesCSV}
     };
 
     auto it = type_map.find(type_str);

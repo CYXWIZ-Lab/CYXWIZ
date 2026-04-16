@@ -177,7 +177,7 @@ protected:
 private:
     // Data source types
     enum class SourceType { File, MLDataset, Database, Cloud };
-    enum class FileCategory { Tabular, Image, Audio, Video, Text };
+    enum class FileCategory { Tabular, Image, Audio, Video, Text, TimeSeries };
     enum class MLDatasetType { MNIST, CIFAR10, CIFAR100, FashionMNIST, ImageNet, ImageFolder, HuggingFace, Kaggle, Custom };
     enum class DatabaseType { SQLite, PostgreSQL, MySQL, DuckDB };
 

@@ -287,6 +287,40 @@ TrainingConfiguration GraphCompiler::Compile(
         spdlog::info("GraphCompiler: No DataLoader node - using defaults (batch_size=32, epochs=10, shuffle=true, drop_last=false)");
     }
 
+    // Phase 4 Time-Series detection. If the graph contains a
+    // TimeSeriesWindow node, mark the config so the training dispatch
+    // routes the Arrow batcher in regression mode (float labels, no
+    // one-hot) and drives index selection from the __partition__ column
+    // emitted by TimeSeriesSplitOperator. The downstream batcher is the
+    // same ArrowDatasetBatcher used by tabular classification — only
+    // the constructor args and SetRegressionMode switch differ.
+    //
+    // Also override config.input_size to match the operator's
+    // input_width. The raw CSV column count is meaningless once
+    // TimeSeriesWindow materializes the table — the first Dense layer
+    // receives `input_width` features (x_0..x_{input_width-1}), not
+    // the original per-row scalar. Without this override
+    // BuildModelFromConfig would construct Linear(1 -> hidden_units)
+    // and crash at the first forward pass with a dimension mismatch.
+    for (const auto& node : nodes) {
+        if (node.type == gui::NodeType::TimeSeriesWindow) {
+            config.is_time_series = true;
+            int input_width = 12;
+            auto iw_it = node.parameters.find("input_width");
+            if (iw_it != node.parameters.end() && !iw_it->second.empty()) {
+                try { input_width = std::stoi(iw_it->second); }
+                catch (...) { /* fall back to default */ }
+            }
+            if (input_width > 0) {
+                config.input_size = static_cast<size_t>(input_width);
+                config.input_shape = {static_cast<size_t>(input_width)};
+            }
+            spdlog::info("GraphCompiler: TimeSeriesWindow found - regression mode, "
+                         "input_size={} (from input_width)", config.input_size);
+            break;
+        }
+    }
+
     // Get topologically sorted node IDs
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
 
@@ -461,6 +495,17 @@ TrainingConfiguration GraphCompiler::Compile(
         bool is_image = (cat == "image");
         bool is_audio = (cat == "audio");
         bool is_text = (cat == "text");
+        bool is_timeseries = (cat == "timeseries");
+
+        if (is_timeseries) {
+            config.preprocessing_domain = PreprocessingDomain::TimeSeries;
+            // TimeSeries preprocessing: TimeSeriesWindow runs as a real
+            // Cat-1 IPipelineOperator in the materializer pass, NOT as a
+            // config extractor. The compile gate's checks below (label
+            // column, batch size vs row count) run on the pre-
+            // materialized CSV — so they validate the user's raw column
+            // pick, not the post-window x_0..x_n schema.
+        }
 
         if (is_audio) {
             config.preprocessing_domain = PreprocessingDomain::Audio;

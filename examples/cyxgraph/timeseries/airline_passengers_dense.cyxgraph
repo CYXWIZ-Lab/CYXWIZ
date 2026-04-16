@@ -1,0 +1,164 @@
+{
+  "id": "airline_passengers_dense",
+  "name": "Airline Passengers — Dense Forecaster",
+  "description": "Phase 4 v1 time-series smoke test. Loads the classic Box-Jenkins airline passengers CSV (144 monthly totals, 1949-1960), windows it (input_width=12 months of history -> 1 month forecast), chronologically splits 80/10/10, and trains a small Dense/ReLU regression model with MSE + Adam. Success bar is 'val MSE drops over 50 epochs', not SOTA. Point Data Input at examples/datasets/airline_passengers.csv and click Compile (F7) then Train (F5).",
+  "category": "Time Series",
+  "tags": ["timeseries", "forecasting", "regression", "airline", "box-jenkins", "phase4"],
+  "parameters": [
+    {
+      "name": "input_width",
+      "type": "int",
+      "default_value": "12",
+      "description": "Number of past months fed to the model as features (one year of context)"
+    },
+    {
+      "name": "hidden_units",
+      "type": "int",
+      "default_value": "32",
+      "description": "Dense hidden layer width"
+    },
+    {
+      "name": "batch_size",
+      "type": "int",
+      "default_value": "16",
+      "description": "DataLoader batch size"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.001",
+      "description": "Adam learning rate"
+    },
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "50",
+      "description": "Number of training epochs"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {
+        "id": "data_input",
+        "type": "DataInput",
+        "name": "Airline Passengers CSV",
+        "pos": [0, 260],
+        "params": {
+          "file_category": "timeseries",
+          "file_type": "csv",
+          "has_header": "true",
+          "label_column": "Passengers"
+        }
+      },
+      {
+        "id": "ts_window",
+        "type": "TimeSeriesWindow",
+        "name": "Window (12 -> 1)",
+        "pos": [280, 260],
+        "params": {
+          "value_col": "Passengers",
+          "input_width": "$input_width",
+          "label_width": "1",
+          "shift": "1"
+        }
+      },
+      {
+        "id": "ts_split",
+        "type": "TimeSeriesSplit",
+        "name": "Chronological Split",
+        "pos": [560, 260],
+        "params": {
+          "train_ratio": "0.8",
+          "val_ratio": "0.1",
+          "test_ratio": "0.1"
+        }
+      },
+      {
+        "id": "data_loader",
+        "type": "DataLoader",
+        "name": "DataLoader",
+        "pos": [840, 260],
+        "params": {
+          "batch_size": "$batch_size",
+          "epochs": "$epochs",
+          "shuffle": "true",
+          "drop_last": "false",
+          "num_workers": "0"
+        }
+      },
+      {
+        "id": "fc1",
+        "type": "Dense",
+        "name": "Dense",
+        "pos": [1120, 260],
+        "params": {
+          "units": "$hidden_units"
+        }
+      },
+      {
+        "id": "relu1",
+        "type": "ReLU",
+        "name": "ReLU",
+        "pos": [1320, 260]
+      },
+      {
+        "id": "dropout",
+        "type": "Dropout",
+        "name": "Dropout",
+        "pos": [1500, 260],
+        "params": {
+          "rate": "0.2"
+        }
+      },
+      {
+        "id": "fc2",
+        "type": "Dense",
+        "name": "Dense(1)",
+        "pos": [1700, 260],
+        "params": {
+          "units": "1"
+        }
+      },
+      {
+        "id": "loss",
+        "type": "MSELoss",
+        "name": "MSELoss",
+        "pos": [1900, 320]
+      },
+      {
+        "id": "optimizer",
+        "type": "Adam",
+        "name": "Adam",
+        "pos": [2100, 320],
+        "params": {
+          "learning_rate": "$learning_rate",
+          "beta1": "0.9",
+          "beta2": "0.999",
+          "epsilon": "1e-8"
+        }
+      },
+      {
+        "id": "output",
+        "type": "Output",
+        "name": "Forecast",
+        "pos": [2300, 320],
+        "params": {
+          "classes": "1"
+        }
+      }
+    ],
+    "links": [
+      {"from": "data_input", "to": "ts_window", "from_pin": 0, "to_pin": 0},
+      {"from": "ts_window", "to": "ts_split", "from_pin": 0, "to_pin": 0},
+      {"from": "ts_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "fc1", "from_pin": 0, "to_pin": 0},
+      {"from": "fc1", "to": "relu1", "from_pin": 0, "to_pin": 0},
+      {"from": "relu1", "to": "dropout", "from_pin": 0, "to_pin": 0},
+      {"from": "dropout", "to": "fc2", "from_pin": 0, "to_pin": 0},
+      {"from": "fc2", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "data_input", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
+    ]
+  }
+}

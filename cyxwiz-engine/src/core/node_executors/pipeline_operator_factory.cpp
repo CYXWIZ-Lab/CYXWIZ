@@ -1,5 +1,7 @@
 #include "pipeline_operator_factory.h"
 #include "identity_operator.h"
+#include "time_series_split_operator.h"
+#include "time_series_window_operator.h"
 
 namespace cyxwiz {
 
@@ -15,6 +17,13 @@ PipelineOperatorFactory::PipelineOperatorFactory() {
 void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::Identity, []() {
         return std::make_unique<IdentityOperator>();
+    });
+    // Phase 4 Time-Series operators.
+    RegisterCreator(gui::NodeType::TimeSeriesWindow, []() {
+        return std::make_unique<TimeSeriesWindowOperator>();
+    });
+    RegisterCreator(gui::NodeType::TimeSeriesSplit, []() {
+        return std::make_unique<TimeSeriesSplitOperator>();
     });
 }
 

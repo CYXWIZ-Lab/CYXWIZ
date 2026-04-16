@@ -470,23 +470,43 @@ void TrainingExecutor::Train(
     if (mode_ == DatasetMode::Arrow) {
         // Arrow-based batching (Data Studio)
         spdlog::info("TrainingExecutor: Using Arrow dataset for training "
-                     "(batch_size={}, shuffle={}, train_ratio={:.2f})",
-                     batch_size, config_.shuffle, config_.train_ratio);
+                     "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={})",
+                     batch_size, config_.shuffle, config_.train_ratio,
+                     config_.is_time_series);
+
+        // Phase 4 Time-Series dispatch. When GraphCompiler detected a
+        // TimeSeriesWindow node, the Arrow table handed to us has
+        // already been materialized by PipelineMaterializer — windowed
+        // rows and an `__partition__` int8 column. Build the train and
+        // val batchers by filtering rows on partition value instead of
+        // the legacy first-N% train_split slicing, and flip regression
+        // mode on so labels round-trip as float.
+        const std::string partition_col = config_.is_time_series
+            ? "__partition__" : "";
+        // For time-series the effective label column is always the
+        // `y` emitted by TimeSeriesWindowOperator. Override whatever
+        // the DataInput node recorded (which was a column from the
+        // pre-materialization source table, not the windowed one).
+        const std::string effective_label =
+            config_.is_time_series ? "y" : label_column_;
 
         // Honor DataLoader/DataSplit node config (or defaults if no such nodes)
         // Validation batcher never shuffles regardless of config.
         arrow_train_batcher = std::make_unique<ArrowDatasetBatcher>(
-            arrow_dataset_, label_column_, batch_size,
-            config_.shuffle, config_.train_ratio, true);
+            arrow_dataset_, effective_label, batch_size,
+            config_.shuffle, config_.train_ratio, true,
+            partition_col, /*partition_value=*/0);
         arrow_val_batcher = std::make_unique<ArrowDatasetBatcher>(
-            arrow_dataset_, label_column_, batch_size,
-            false, config_.train_ratio, false);
+            arrow_dataset_, effective_label, batch_size,
+            false, config_.train_ratio, false,
+            partition_col, /*partition_value=*/1);
 
         if (config_.drop_last) {
             spdlog::warn("TrainingExecutor: drop_last=true requested but ArrowDatasetBatcher "
                          "does not yet support it - last partial batch will be kept");
         }
-        if (config_.has_data_split && config_.test_ratio > 0.01f) {
+        if (!config_.is_time_series &&
+            config_.has_data_split && config_.test_ratio > 0.01f) {
             spdlog::warn("TrainingExecutor: test_ratio={:.2f} configured on DataSplit but "
                          "ArrowDatasetBatcher has no held-out test split - the test portion "
                          "will be merged into validation. train={:.2f}, val+test={:.2f}",
@@ -501,8 +521,12 @@ void TrainingExecutor::Train(
                                                  config_.preprocessing.norm_std);
         }
 
-        // One-hot encoding for classification
-        if (config_.preprocessing.has_onehot) {
+        if (config_.is_time_series) {
+            // Time-series regression: float labels [batch, 1], no one-hot.
+            arrow_train_batcher->SetRegressionMode(true);
+            arrow_val_batcher->SetRegressionMode(true);
+        } else if (config_.preprocessing.has_onehot) {
+            // One-hot encoding for classification
             arrow_train_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
             arrow_val_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
         } else {

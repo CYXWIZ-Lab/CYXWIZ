@@ -326,7 +326,15 @@ public:
         size_t batch_size,
         bool shuffle = true,
         float train_split = 0.8f,
-        bool is_training = true
+        bool is_training = true,
+        // Phase 4 Time-Series: if `partition_column` is non-empty, the
+        // batcher filters rows where that column (int8) equals
+        // `partition_value` and builds its index set from those rows
+        // only — bypassing the train_split first-N% slicing entirely.
+        // partition_value: 0=train, 1=val, 2=test. Legacy callers omit
+        // these args and keep chronological first-N% slicing unchanged.
+        const std::string& partition_column = "",
+        int partition_value = 0
     );
 
     // IBatcher interface
@@ -341,12 +349,23 @@ public:
     void SetOneHotEncoding(size_t num_classes) override;
     void SetFlatten(bool flatten) override { flatten_ = flatten; }
 
+    // Phase 4 Time-Series: opt into regression label handling. When true,
+    // labels are read as float (not int-cast), one-hot encoding is
+    // bypassed, and the label tensor is emitted as [batch_size, 1] float
+    // instead of [batch_size] int or [batch_size, num_classes] one-hot.
+    // The current feedforward MSELoss regression path consumes this shape
+    // directly. Legacy classification callers never set this and keep the
+    // existing behavior.
+    void SetRegressionMode(bool enable) { regression_mode_ = enable; }
+
 private:
     std::shared_ptr<class ArrowDataset> dataset_;
     std::string label_column_;
     size_t batch_size_;
     bool shuffle_;
     bool is_training_;
+    std::string partition_column_;   // Phase 4: time-series partition col name, "" = legacy slicing
+    int partition_value_ = 0;        // which partition this batcher iterates (0=train, 1=val, 2=test)
 
     std::vector<int64_t> indices_;   // Row indices for this split
     size_t current_index_ = 0;
@@ -364,6 +383,7 @@ private:
     bool one_hot_ = false;
     size_t num_classes_ = 10;  // Default for MNIST
     bool flatten_ = true;
+    bool regression_mode_ = false;  // Phase 4: float labels, no one-hot
 
     void ShuffleIndices();
     void InitializeColumns();

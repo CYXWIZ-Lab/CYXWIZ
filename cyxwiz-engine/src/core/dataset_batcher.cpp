@@ -561,12 +561,16 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     size_t batch_size,
     bool shuffle,
     float train_split,
-    bool is_training)
+    bool is_training,
+    const std::string& partition_column,
+    int partition_value)
     : dataset_(dataset)
     , label_column_(label_column)
     , batch_size_(batch_size)
     , shuffle_(shuffle)
     , is_training_(is_training)
+    , partition_column_(partition_column)
+    , partition_value_(partition_value)
     , rng_(std::random_device{}())
 {
     if (!dataset_) {
@@ -576,20 +580,71 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
 
     int64_t num_rows = dataset_->GetNumRows();
 
-    // Create train/val split
-    int64_t train_count = static_cast<int64_t>(num_rows * train_split);
-
-    if (is_training_) {
-        // Training: first train_count rows
-        indices_.reserve(train_count);
-        for (int64_t i = 0; i < train_count; ++i) {
-            indices_.push_back(i);
+    // Phase 4 Time-Series: if a partition column was specified, walk the
+    // column and collect row indices whose int8 partition value matches
+    // partition_value_. Bypasses the train_split first-N% slicing so
+    // each time-series batcher pulls from a disjoint, contiguous slice
+    // of the windowed table that was assigned by TimeSeriesSplitOperator.
+    bool partition_filtered = false;
+    if (!partition_column_.empty()) {
+        auto table = dataset_->GetArrowTable();
+        if (table) {
+            auto column = table->GetColumnByName(partition_column_);
+            if (!column || column->num_chunks() == 0) {
+                spdlog::warn("ArrowDatasetBatcher: partition_column '{}' not found in table - "
+                             "falling back to train_split slicing",
+                             partition_column_);
+            } else {
+                // Validate all chunks are int8 up front so we don't
+                // collect a partial index set and then throw it away on
+                // a mid-walk type mismatch.
+                bool all_int8 = true;
+                for (int c = 0; c < column->num_chunks(); ++c) {
+                    if (column->chunk(c)->type_id() != arrow::Type::INT8) {
+                        spdlog::warn("ArrowDatasetBatcher: partition_column '{}' chunk {} has type {} "
+                                     "(expected int8) - falling back to train_split slicing",
+                                     partition_column_, c,
+                                     column->chunk(c)->type()->ToString());
+                        all_int8 = false;
+                        break;
+                    }
+                }
+                if (all_int8) {
+                    int64_t offset = 0;
+                    for (int c = 0; c < column->num_chunks(); ++c) {
+                        auto chunk = column->chunk(c);
+                        const int64_t chunk_len = chunk->length();
+                        auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
+                        const int8_t* data = arr->raw_values();
+                        for (int64_t i = 0; i < chunk_len; ++i) {
+                            if (static_cast<int>(data[i]) == partition_value_) {
+                                indices_.push_back(offset + i);
+                            }
+                        }
+                        offset += chunk_len;
+                    }
+                    partition_filtered = true;
+                    spdlog::info("ArrowDatasetBatcher: partition '{}'={} selected {} / {} rows",
+                                 partition_column_, partition_value_, indices_.size(), num_rows);
+                }
+            }
         }
-    } else {
-        // Validation: remaining rows
-        indices_.reserve(num_rows - train_count);
-        for (int64_t i = train_count; i < num_rows; ++i) {
-            indices_.push_back(i);
+    }
+
+    if (!partition_filtered) {
+        // Legacy path: chronological first-N% slicing. train_split fraction
+        // for the training batcher, remainder for the validation batcher.
+        int64_t train_count = static_cast<int64_t>(num_rows * train_split);
+        if (is_training_) {
+            indices_.reserve(train_count);
+            for (int64_t i = 0; i < train_count; ++i) {
+                indices_.push_back(i);
+            }
+        } else {
+            indices_.reserve(num_rows - train_count);
+            for (int64_t i = train_count; i < num_rows; ++i) {
+                indices_.push_back(i);
+            }
         }
     }
 
@@ -646,6 +701,17 @@ void ArrowDatasetBatcher::InitializeColumns() {
         if (i == label_col_idx_) continue;  // Skip label column
 
         auto field = schema->field(i);
+        // Skip internal metadata columns (double-underscore prefix) and
+        // the partition column specifically. Phase 4's TimeSeriesSplit
+        // emits a `__partition__` int8 column which the constructor
+        // already uses to build indices_; it must not leak into the
+        // feature tensor or Dense layers crash on the dimension mismatch.
+        const std::string& fname = field->name();
+        if (fname.rfind("__", 0) == 0 ||
+            (!partition_column_.empty() && fname == partition_column_)) {
+            continue;
+        }
+
         auto type = field->type();
         if (type->id() == arrow::Type::DOUBLE ||
             type->id() == arrow::Type::FLOAT ||
@@ -715,7 +781,11 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
 
         // OPTIMIZED: Pre-allocate batch data as [batch_size, num_features] in row-major order
         std::vector<float> batch_data(actual_batch_size * num_features_, 0.0f);
+        // Classification: int labels; regression: float labels. Only one
+        // of the two is populated based on regression_mode_.
         std::vector<int> batch_labels(actual_batch_size, 0);
+        std::vector<float> batch_labels_float(
+            regression_mode_ ? actual_batch_size : 0, 0.0f);
 
         spdlog::debug("ArrowDatasetBatcher: Processing {} feature columns, batch_data.size()={}",
                       feature_cols_.size(), batch_data.size());
@@ -981,10 +1051,63 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                     }
                 }
 
+                // Phase 4 regression mode: separate float reader that
+                // preserves fractional targets (MSELoss needs real-valued
+                // labels). The int-cast path above loses precision on
+                // anything non-integer and is wrong for TimeSeriesWindow's
+                // `y` column.
+                auto read_label_float = [&](int64_t global_row_idx) -> float {
+                    int64_t offset = 0;
+                    for (int c = 0; c < column->num_chunks(); ++c) {
+                        auto chk = column->chunk(c);
+                        int64_t chk_len = chk->length();
+                        if (global_row_idx < offset + chk_len) {
+                            int64_t local_idx = global_row_idx - offset;
+                            if (chk->IsNull(local_idx)) return 0.0f;
+                            switch (chk->type_id()) {
+                                case arrow::Type::FLOAT:
+                                    return std::static_pointer_cast<arrow::FloatArray>(chk)->Value(local_idx);
+                                case arrow::Type::DOUBLE:
+                                    return static_cast<float>(
+                                        std::static_pointer_cast<arrow::DoubleArray>(chk)->Value(local_idx));
+                                case arrow::Type::INT64:
+                                    return static_cast<float>(
+                                        std::static_pointer_cast<arrow::Int64Array>(chk)->Value(local_idx));
+                                case arrow::Type::INT32:
+                                    return static_cast<float>(
+                                        std::static_pointer_cast<arrow::Int32Array>(chk)->Value(local_idx));
+                                case arrow::Type::INT16:
+                                    return static_cast<float>(
+                                        std::static_pointer_cast<arrow::Int16Array>(chk)->Value(local_idx));
+                                case arrow::Type::INT8:
+                                    return static_cast<float>(
+                                        std::static_pointer_cast<arrow::Int8Array>(chk)->Value(local_idx));
+                                case arrow::Type::UINT8:
+                                    return static_cast<float>(
+                                        std::static_pointer_cast<arrow::UInt8Array>(chk)->Value(local_idx));
+                                case arrow::Type::UINT16:
+                                    return static_cast<float>(
+                                        std::static_pointer_cast<arrow::UInt16Array>(chk)->Value(local_idx));
+                                case arrow::Type::UINT32:
+                                    return static_cast<float>(
+                                        std::static_pointer_cast<arrow::UInt32Array>(chk)->Value(local_idx));
+                                default:
+                                    return 0.0f;
+                            }
+                        }
+                        offset += chk_len;
+                    }
+                    return 0.0f;
+                };
+
                 for (size_t b = 0; b < actual_batch_size; ++b) {
                     int64_t row_idx = indices_[batch_start + b];
                     if (row_idx >= 0 && row_idx < num_rows) {
-                        batch_labels[b] = read_label(row_idx);
+                        if (regression_mode_) {
+                            batch_labels_float[b] = read_label_float(row_idx);
+                        } else {
+                            batch_labels[b] = read_label(row_idx);
+                        }
                     }
                 }
             }
@@ -1025,7 +1148,19 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         spdlog::default_logger()->flush();
 
         // Create labels tensor
-        if (one_hot_ && !batch_labels.empty()) {
+        // Phase 4 regression: float labels tensor [batch, 1]. Takes
+        // precedence over one_hot_ because SetOneHotEncoding is called
+        // unconditionally in TrainingExecutor::Train for classification
+        // compatibility; regression_mode_ is the explicit opt-in.
+        if (regression_mode_ && !batch_labels_float.empty()) {
+            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT F - creating float regression labels [{}, 1]",
+                          actual_batch_size);
+            spdlog::default_logger()->flush();
+            std::vector<size_t> label_shape = {actual_batch_size, 1};
+            batch.labels = Tensor(label_shape, batch_labels_float.data());
+            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT G - float labels tensor created");
+            spdlog::default_logger()->flush();
+        } else if (one_hot_ && !batch_labels.empty()) {
             spdlog::debug("ArrowDatasetBatcher: CHECKPOINT F - creating one-hot labels [{}, {}]",
                           actual_batch_size, num_classes_);
             spdlog::default_logger()->flush();

@@ -111,6 +111,7 @@ DataInputDialog::DataInputDialog(MLNode* node)
             else if (cat == "audio") file_category_ = FileCategory::Audio;
             else if (cat == "video") file_category_ = FileCategory::Video;
             else if (cat == "text") file_category_ = FileCategory::Text;
+            else if (cat == "timeseries") file_category_ = FileCategory::TimeSeries;
         }
 
         // Restore text dialog state. Without this, picking Text, filling
@@ -344,7 +345,7 @@ void DataInputDialog::Apply() {
     node_->parameters["source_type"] = source_types[static_cast<int>(source_type_)];
 
     // File category
-    const char* categories[] = {"tabular", "image", "audio", "video", "text"};
+    const char* categories[] = {"tabular", "image", "audio", "video", "text", "timeseries"};
     node_->parameters["file_category"] = categories[static_cast<int>(file_category_)];
 
     // Common parameters
@@ -1445,6 +1446,11 @@ void DataInputDialog::RenderFileSource() {
         file_category_ = FileCategory::Text;
         has_changes_ = true;
     }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Time Series", &cat_idx, 5)) {
+        file_category_ = FileCategory::TimeSeries;
+        has_changes_ = true;
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -1459,6 +1465,7 @@ void DataInputDialog::RenderFileSource() {
     // a .jpg in a file dialog that's meant for CSVs.
     const bool show_file_picker =
         (file_category_ == FileCategory::Tabular) ||
+        (file_category_ == FileCategory::TimeSeries) ||
         (file_category_ == FileCategory::Text &&
          text_layout_ == TextLayout::SingleFile);
     if (show_file_picker) {
@@ -1510,11 +1517,17 @@ void DataInputDialog::RenderFileSource() {
 
     // Category-specific options
     switch (file_category_) {
-        case FileCategory::Tabular: RenderTabularOptions(); break;
-        case FileCategory::Image:   RenderImageOptions(); break;
-        case FileCategory::Audio:   RenderAudioOptions(); break;
-        case FileCategory::Video:   RenderVideoOptions(); break;
-        case FileCategory::Text:    RenderTextOptions(); break;
+        case FileCategory::Tabular:    RenderTabularOptions(); break;
+        case FileCategory::Image:      RenderImageOptions(); break;
+        case FileCategory::Audio:      RenderAudioOptions(); break;
+        case FileCategory::Video:      RenderVideoOptions(); break;
+        case FileCategory::Text:       RenderTextOptions(); break;
+        // Phase 4: Time Series shares the Tabular loader entirely — the
+        // only semantic difference is the file_category="timeseries" stamp
+        // on the DataInput node, which the downstream TimeSeriesWindow
+        // operator uses as a sanity hint. All format/delimiter/column
+        // config is identical to Tabular.
+        case FileCategory::TimeSeries: RenderTabularOptions(); break;
     }
 }
 
@@ -3047,9 +3060,15 @@ void DataInputDialog::DetectFileCategory() {
              ext == "webm" || ext == "wmv") {
         file_category_ = FileCategory::Video;
     }
-    // Default to tabular
+    // Default to tabular — but preserve Text and TimeSeries selections made
+    // by the user before picking the file. Both are built on top of the
+    // tabular loader; clobbering them back to Tabular after the user clicks
+    // Browse would silently lose an explicit category choice.
     else {
-        file_category_ = FileCategory::Tabular;
+        if (file_category_ != FileCategory::Text &&
+            file_category_ != FileCategory::TimeSeries) {
+            file_category_ = FileCategory::Tabular;
+        }
     }
 }
 
@@ -3188,7 +3207,8 @@ void DataInputDialog::LoadPreview() {
     // now; a dedicated renderer highlights the mapped text + label columns.
     if (source_type_ == SourceType::File &&
         (file_category_ == FileCategory::Tabular ||
-         file_category_ == FileCategory::Text)) {
+         file_category_ == FileCategory::Text ||
+         file_category_ == FileCategory::TimeSeries)) {
         LoadColumnList();
     }
     // TODO: Add image, audio, database preview loading
@@ -3281,6 +3301,12 @@ void DataInputDialog::BrowseFile() {
             filter = "Text Data\0*.csv;*.tsv;*.json;*.jsonl;*.txt\0"
                      "CSV\0*.csv\0TSV\0*.tsv\0"
                      "JSON\0*.json;*.jsonl\0Plain Text\0*.txt\0"
+                     "All Files\0*.*\0";
+            break;
+        case FileCategory::TimeSeries:
+            filter = "Time Series Data\0*.csv;*.tsv;*.parquet;*.feather;*.arrow\0"
+                     "CSV\0*.csv\0TSV\0*.tsv\0Parquet\0*.parquet\0"
+                     "Feather\0*.feather\0Arrow\0*.arrow;*.ipc\0"
                      "All Files\0*.*\0";
             break;
     }

@@ -768,3 +768,391 @@ supports backprop.
 - `examples/cyxgraph/text/test_02_sentiment_lstm.cyxgraph` — the
   smoke test graph that surfaced all this (keep as a regression
   fixture)
+
+---
+
+## Tool-to-Node Migration — ~40 NodeTypes with standalone panels but no graph integration
+
+**Severity:** HIGH (architectural) — this is the biggest consistency gap
+in the codebase. ~80 floating analytical panels live under
+`cyxwiz-engine/src/gui/panels/*.h` and most have a corresponding
+NodeType in `node_editor.h`, but almost none of them are wired to
+the execution pipeline. The v1 "everything is a node" philosophy is
+only half-honored.
+
+**Discovered:** 2026-04-15, when the user asked why the graph has both
+an `Embedding` node and a separate standalone `Word Embeddings`
+floating panel. The answer — that the `WordEmbeddings` NodeType
+exists in the catalogue but has zero backing — generalizes to most
+of the Phase 4 and Phase 5 Tool-to-Node groups in `node_editor.h`.
+The enum even self-documents the plan:
+
+```cpp
+// ===== Machine Learning Algorithms (Phase 4 - Tool-to-Node Migration) =====
+// ===== Linear Algebra Nodes (Phase 5 - Tool-to-Node Migration) =====
+// ===== Time Series Analysis Nodes (Phase 5) =====
+// ===== Additional Text Processing (Phase 5) =====
+```
+
+Phase 4 and Phase 5 were explicitly declared as "turn the tool panels
+into graph nodes" work. The NodeType declarations landed; the wiring
+did not.
+
+### What's already partially started
+
+`cyxwiz-engine/src/core/node_executors/` (currently untracked in git)
+contains scaffolding for a per-node execution framework separate from
+`training_executor`:
+
+- `node_executor.h` — `ExecutorState` (Idle/Configuring/Executing/
+  Completed/Error/Cancelled) + `CodeFramework` (Sklearn, PyCyxWiz,
+  PyTorch) + base executor interface.
+- `node_executor_factory.h` — factory to instantiate executors by
+  NodeType.
+- `kmeans_executor.{cpp,h}` — first concrete executor (KMeans
+  clustering), mirroring `KMeansPanel`'s functionality but as a
+  node-graph operation.
+
+**This is exactly the migration framework that was needed.** It was
+started and abandoned. The pattern is the right one — most tool
+nodes are NOT neural-network layers; they're classical ML / stats /
+signal processing operations that execute once and produce a result.
+They shouldn't be in `training_executor.cpp`'s layer-building
+switch. They belong in a per-node executor framework.
+
+### The full "dead NodeType + live panel" inventory
+
+Each row: `NodeType` exists in `node_editor.h` but has **no training_
+executor case, no executor**, while the matching floating panel
+already implements the actual computation. Dropping the node in a
+graph today is a visual no-op.
+
+**Text analytics (Phase 5 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `WordEmbeddings` | `embeddings_panel.h` | dead — see separate entry in this doc |
+| `TFIDFVectorizer` | `tfidf_panel.h` | dead |
+| `CountVectorizer` | *(none found)* | dead |
+| `SentimentAnalyzer` | `sentiment_panel.h` | dead |
+| `NamedEntityRecognizer` | *(none found)* | dead |
+| `WordFrequencyNode` | `word_frequency_panel.h` | dead |
+| (tokenization — see note) | `tokenization_panel.h` | partially covered by `TextTokenizer` Phase 3 node |
+
+**Machine learning algorithms (Phase 4 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `KMeansCluster` | `kmeans_panel.h` | **scaffolded** — `kmeans_executor.{cpp,h}` exists untracked |
+| `DBSCANCluster` | `dbscan_panel.h` | dead |
+| `HierarchicalCluster` | `hierarchical_panel.h` | dead |
+| `GMMCluster` | `gmm_panel.h` | dead |
+| `PCANode` / `TSNENode` / `UMAPNode` | `dim_reduction_panel.h` | dead |
+| `DecisionTreeClassifier` | *(shares `regression_panel.h`?)* | dead |
+| `RandomForestClassifier` | *(none found)* | dead |
+| `GradientBoostingClassifier` | *(none found)* | dead |
+| `SVMClassifier` / `SVMRegressor` | *(none found)* | dead |
+| `KNNClassifier` | *(none found)* | dead |
+| `NaiveBayesClassifier` | *(none found)* | dead |
+| `LogisticRegressionNode` / `LinearRegressionNode` / `PolynomialRegressionNode` | `regression_panel.h` | dead |
+
+**Model evaluation (Phase 4 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `ConfusionMatrixNode` | `confusion_matrix_panel.h` | dead |
+| `ROCCurveNode` | `roc_auc_panel.h` | dead |
+| `PRCurveNode` | `pr_curve_panel.h` | dead |
+| `LearningCurvesNode` | `learning_curves_panel.h` | dead |
+| `FeatureImportanceNode` | `feature_importance_panel.h` | dead |
+| `CrossValidationNode` | `cross_validation_panel.h` | dead |
+| `RegressionMetricsNode` | *(shares `regression_panel.h`?)* | dead |
+
+**Linear algebra (Phase 5 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `SVDNode` | `svd_panel.h` | dead |
+| `QRDecomposition` | `qr_panel.h` | dead |
+| `CholeskyDecomposition` | `cholesky_panel.h` | dead |
+| `EigenDecomposition` | `eigen_decomp_panel.h` | dead |
+| `MatrixCalculator` | `matrix_calculator_panel.h` | dead |
+
+**Time series analysis (Phase 5 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `TimeSeriesDecomposition` | `decomposition_panel.h` | dead |
+| `ACFNode` / `PACFNode` | `acf_pacf_panel.h` | dead |
+| `StationarityTest` | `stationarity_panel.h` | dead |
+| `SeasonalityDetector` | `seasonality_panel.h` | dead |
+| `ARIMAForecaster` / `ExponentialSmoothing` | `forecasting_panel.h` | dead |
+
+**Signal processing (Phase 4 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `FFTNode` / `IFFTNode` | `fft_panel.h` | dead |
+| `FilterDesigner` | `filter_designer_panel.h` | dead |
+| `Convolution1D` | `convolution_panel.h` | dead |
+| `WaveletTransform` | `wavelet_panel.h` | dead |
+
+**Statistics (Phase 5 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `HypothesisTest` | `hypothesis_test_panel.h` | dead |
+| `DistributionFitter` | `distribution_fitter_panel.h` | dead |
+
+**Deep learning interpretation (Phase 5 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `GradCAMNode` | `gradcam_panel.h` | dead |
+| `SaliencyMapNode` | *(in `visualization_panel.h`?)* | dead |
+
+**Optimization (Phase 5 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `GradientDescentViz` | `gradient_descent_panel.h` | dead |
+| `ConvexityAnalyzer` | `convexity_panel.h` | dead |
+| `LPSolver` | `lp_panel.h` | dead |
+| `QPSolver` | `qp_panel.h` | dead |
+| `NumericalDifferentiation` | `differentiation_panel.h` | dead |
+| `NumericalIntegration` | `integration_panel.h` | dead |
+
+**Utility (Phase 4 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `CalculatorNode` | `calculator_panel.h` | dead |
+| `UnitConverter` | `unit_converter_panel.h` | dead |
+| `RegexTester` | `regex_tester_panel.h` | dead |
+| `JSONPathExtractor` | `json_viewer_panel.h` | dead |
+| `DataProfiler` | `data_profiler_panel.h` | dead |
+
+**Data preprocessing (Phase 4 block):**
+| NodeType | Panel file | Status |
+|---|---|---|
+| `StandardScaler` | `standardization_panel.h` | dead |
+| `MinMaxScaler` / `RobustScaler` | `feature_scaling_panel.h` | dead |
+| `OutlierDetector` | `outlier_detection_panel.h` | dead |
+| `LabelEncoder` / `OrdinalEncoder` / `TargetEncoder` | *(none found)* | dead |
+
+### Why this matters
+
+- **User confusion.** Drop a `WordEmbeddings` or `KMeansCluster` node
+  on the canvas, nothing happens. Right-click doesn't open the
+  relevant panel. The panel is hiding in the toolbar menu. Two
+  unrelated surfaces for the same concept.
+- **Lost v1 promise.** The original CyxWiz Engine v1 pitch was
+  "everything is a node." The current hybrid state violates that —
+  some nodes are real, some are dead catalogue entries, and the
+  actual tools live outside the graph.
+- **Feature discovery.** 80+ analytical panels are buried in a
+  toolbar menu. If they were all connectable nodes with rich
+  configure dialogs, the node browser would surface them naturally.
+- **Graph reproducibility.** A panel session produces results that
+  vanish when the panel closes. A node-graph session produces a
+  persistent pipeline that can be saved, loaded, re-run, and
+  shared.
+
+### Recommended fix sequence (multi-session)
+
+Not a single commit — this is phase-scale work. The right order:
+
+**Step 1 — Finish the `node_executors` framework.** Stage the
+existing scaffolding (`node_executor.h`, `node_executor_factory.h`,
+`kmeans_executor.{cpp,h}`) and wire it into `pipeline_executor` so
+at least one tool node executes end-to-end as a node (KMeans on
+Arrow table input → cluster labels output).
+
+**Step 2 — Establish the "rich dialog on double-click" convention
+for tool nodes.** The existing `DataInputDialog` and `TokenizerDialog`
+are the model: a node-config-dialog dispatch in `node_config_dialog`
+that looks up the node's type and opens a custom dialog. Refactor
+`EmbeddingsPanel` / `KMeansPanel` / `SVDPanel` etc. to live inside
+a node-config dialog instead of as floating windows.
+
+**Step 3 — Batch-migrate by category.** Start with one category end
+to end before moving to the next, to avoid leaving everything half-
+done. Suggested order:
+1. Text analytics (user wants this, fewest executors, shares
+   infrastructure with the Phase 3 text path)
+2. Linear algebra (lowest complexity, pure math, easy validators)
+3. Clustering ML (KMeans already scaffolded)
+4. Signal processing (FFT / wavelet)
+5. Statistics
+6. Remaining ML algorithms
+7. Time series (overlaps with Phase 4 Time-series — do those
+   together)
+8. Model evaluation + interpretation (runs AFTER training, different
+   execution context)
+
+**Step 4 — Delete the standalone panels.** Once a tool has a rich
+node dialog, remove its toolbar-menu button and delete the `.h/.cpp`
+for the standalone panel. This is the signal that consolidation
+actually shipped.
+
+**Step 5 — Document the node-first convention in CLAUDE.md.** Add
+a "Nodes vs panels" section that says: (a) analytical tools MUST be
+graph nodes with rich dialogs, never standalone panels; (b)
+standalone panels are reserved for debug/monitoring (console,
+profiler, memory monitor, job status, etc.) that aren't part of the
+user's pipeline; (c) Properties panel is for simple key-value
+layer params (Dense units, Dropout rate, etc.), rich dialog is for
+anything with preview, validation, or multi-tab config.
+
+### Scope estimate
+
+- Per category: 1-3 sessions depending on node count and complexity
+- Full migration: ~6-10 sessions
+- Alternative: leave the dead NodeTypes deleted from the catalogue
+  entirely until they're ready, so users aren't misled. Cheap fix,
+  addresses the user-confusion problem without doing the real
+  consolidation. Would cut the enum by ~40 entries and the Add menu
+  by ~40 entries.
+
+---
+
+## TextTokenizer is a config extractor, not a pipeline operation
+
+**Severity:** HIGH (architectural) — blocks the "preprocess once,
+train many" workflow and makes the `TextTokenizer` / `TextVocabulary`
+/ `TextPadding` nodes visually misleading (they have input/output
+pins but no data flows through them).
+
+**Discovered:** 2026-04-16 while discussing node architecture. The
+user asked whether a user could build a graph like
+`ReadCorpus → TextTokenizer → WriteFile(tokenized.jsonl)` to
+pre-tokenize a corpus once and reuse the tokenized file across many
+training runs. Answer: no, not today.
+
+### Current state (the shortcut we took in Phase 3)
+
+The `TextTokenizer` / `TextVocabulary` / `TextPadding` nodes are
+implemented as **configuration extractors** in
+`cyxwiz-engine/src/core/graph_compiler.cpp:1065-1121`. When Compile
+runs:
+
+1. The compiler scans the graph for these node types via the
+   `kPreprocessingExtractors` table.
+2. For each one found, it reads the node's parameters into
+   `config.text_preprocessing` (tokenizer type, max_length,
+   min_word_freq, max_vocab_size, pad_value, etc.).
+3. At train time, `TextDatasetBatcher` consults
+   `config.text_preprocessing` and does the tokenization **inside
+   the batcher, on-the-fly, during training**.
+
+**No data ever flows through the TextTokenizer node.** Its pins are
+visual decoration. If you connected it to a hypothetical `WriteFile`
+node, nothing would happen — the compiler would pull its config and
+the "data stream" would be fiction. The same applies to
+`TextVocabulary` and `TextPadding`.
+
+This was the fastest path to shipping Phase 3 text training — it
+avoided rewriting `TextDatasetBatcher` to consume pre-tokenized input
+— but it violates the single-responsibility node principle and it
+blocks any workflow that wants to treat tokenization as a
+first-class step in a data pipeline.
+
+### The target state (Fix B, confirmed 2026-04-16)
+
+Make the text preprocessing nodes **real operations** that actually
+transform their inputs:
+
+```
+DataInput(Text) → TextTokenizer → TextPadding → DataSplit → DataLoader → Embedding → ...
+```
+
+Where each node produces an Arrow-compatible output with the
+post-transform representation. The schema would be something like:
+
+- DataInput(Text) output: `{text: str, label: int}` per row
+- TextTokenizer output: `{text: str, ids: list<int>, label: int}` per row
+- TextPadding output: `{ids: int[max_length], label: int}` per row
+- DataSplit output: same schema, partitioned into train/val/test
+- DataLoader yields: `{ids: int[batch, max_length], labels: int[batch]}`
+
+Critically, this also unlocks the user's use case:
+
+```
+DataInput(Text corpus) → TextTokenizer → WriteFile(tokenized.parquet)
+```
+
+And in a separate training session:
+
+```
+DataInput(tokenized.parquet) → DataSplit → DataLoader → Embedding → ...
+```
+
+Tokenize once, reuse the cached file across every model architecture
+experiment you run on that corpus. Matches the standard ML
+engineering workflow (sklearn `Pipeline.fit_transform()` + cache,
+Spark `DataFrame.cache()`, HuggingFace `datasets.Dataset.map()` +
+memory-mapped arrow).
+
+### What has to change
+
+**Backend / core:**
+- `TextDatasetBatcher` rewrites from "reads raw text + tokenizes
+  on-the-fly" to "reads pre-tokenized Arrow table + batches IDs".
+- New row format for tokenized data that can round-trip to/from
+  disk (likely Arrow `list<int32>` column for token IDs).
+- `TextTokenizer` node gets a real `Execute(ArrowTable in) -> ArrowTable out`
+  implementation, registered via the `node_executors/` framework
+  that someone already scaffolded (see the other tofix entry
+  "Tool-to-Node Migration").
+- Same for `TextVocabulary` (fit-and-apply) and `TextPadding`
+  (stateless pad/truncate).
+
+**Graph compiler:**
+- Delete the `ExtractTextTokenizer` / `ExtractTextVocabulary` /
+  `ExtractTextPadding` extractors from
+  `graph_compiler.cpp:1065-1121`.
+- Delete the `text_preprocessing` config shortcut from
+  `TrainingConfiguration` (it's no longer needed — the tokenized
+  IDs are already in the Arrow table flowing into DataLoader).
+- Text training graphs become indistinguishable from tabular
+  training graphs: the model sees `int[batch, seq_len]` token ID
+  tensors regardless of whether they were tokenized in the same
+  session or pre-tokenized and loaded from disk.
+
+**New nodes needed:**
+- `WriteFile` / `ExportParquet` (or extend existing `ExportParquet`)
+  to be usable after a tokenizer in a data-processing graph. The
+  `ExportParquet` NodeType already exists at `node_editor.h:342` —
+  may already do what we need, needs verification.
+- `DataInput` needs to accept a pre-tokenized file as a new
+  `FileCategory` (maybe `Text (pre-tokenized)` or just auto-detect
+  based on schema).
+
+**Migration & regression:**
+- v1 / v2 / LSTM example graphs stay valid because they use the
+  "tokenize inline" pattern. Under the new architecture, their
+  TextTokenizer/Vocabulary/Padding nodes do real work at graph
+  execute time, before the DataLoader — the graph is unchanged,
+  the execution semantics change. Both v1 and v2 should still
+  train to identical metrics as a regression check.
+
+### Scope estimate
+
+- 1-2 sessions for the backend rewrite (TextDatasetBatcher, node
+  executor framework, Arrow row format)
+- 1 session for graph compiler cleanup (delete extractors,
+  TextTokenizer becomes a real node)
+- 1 session for the new "read pre-tokenized file" DataInput
+  variant
+- Regression: v1 and v2 re-run, numbers match
+
+Total: ~3-4 sessions. Depends on `node_executors/` framework
+maturation (shares scope with the tool-to-node migration — both
+want the same plumbing).
+
+### Why this is the right fix even though it's a rewrite
+
+- Matches what every other ML framework does (HuggingFace
+  `datasets`, sklearn `Pipeline`, Spark ML, Beam, TFX)
+- Makes the node graph honest: input pins / output pins carry
+  actual data, not config metadata
+- Unlocks the "preprocess once, train many" workflow for all
+  text data, not just tokenization (normalization, feature
+  engineering, augmentation offline, etc.)
+- Unblocks Phase 4 Time-series: the same pattern applies to
+  `TimeSeriesWindow` (sliding window as a real operation) and
+  `TimeSeriesFeatures` (lag/rolling features as real transforms)
+- Removes the "extractor" shortcut that's structurally identical
+  to the dead Tool-to-Node NodeTypes — the extractor pattern was
+  a workaround for not having a `node_executors` framework; now
+  that scaffolding exists, we can do this right.
