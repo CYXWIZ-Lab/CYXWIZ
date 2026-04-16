@@ -4,6 +4,7 @@
 #include "identity_operator.h"
 #include "log_transform_operator.h"
 #include "pca_operator.h"
+#include "sentiment_analyzer_operator.h"
 #include "text_tokenizer_operator.h"
 #include "tfidf_vectorizer_operator.h"
 #include "time_series_features_operator.h"
@@ -60,6 +61,11 @@ void PipelineOperatorFactory::RegisterDefaults() {
     // Cat-2 introspection panels).
     RegisterCreator(gui::NodeType::PCANode, []() {
         return std::make_unique<PCAOperator>();
+    });
+    // Tool-to-Node text analytics: SentimentAnalyzer (lexicon-based,
+    // zero-dependency; pretrained BERT-style models deferred to tofix).
+    RegisterCreator(gui::NodeType::SentimentAnalyzer, []() {
+        return std::make_unique<SentimentAnalyzerOperator>();
     });
 }
 

@@ -4172,6 +4172,14 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
+            // Tool-to-Node canonical params read by SentimentAnalyzerOperator.
+            // text_col is required (no auto-detect — operator errors cleanly).
+            // label_col empty = no passthrough. method picks the built-in
+            // lexicon ("simple" / "vader" / "afinn").
+            node.parameters["text_col"] = "text";
+            node.parameters["label_col"] = "";
+            node.parameters["method"] = "vader";
+            // Legacy param kept for cyxgraph JSON back-compat (operator ignores).
             node.parameters["model"] = "vader";
             break;
         }

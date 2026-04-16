@@ -967,13 +967,13 @@ graph today is a visual no-op.
 **Text analytics (Phase 5 block):**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `WordEmbeddings` | `embeddings_panel.h` | dead — see separate entry in this doc |
-| `TFIDFVectorizer` | `tfidf_panel.h` | dead |
-| `CountVectorizer` | *(none found)* | dead |
-| `SentimentAnalyzer` | `sentiment_panel.h` | dead |
-| `NamedEntityRecognizer` | *(none found)* | dead |
-| `WordFrequencyNode` | `word_frequency_panel.h` | dead |
-| (tokenization — see note) | `tokenization_panel.h` | partially covered by `TextTokenizer` Phase 3 node |
+| `WordEmbeddings` | `embeddings_panel.h` | ~~dead~~ **DEFERRED** — see entry below |
+| `TFIDFVectorizer` | `tfidf_panel.h` | ~~dead~~ **LIVE** (Cat-1 operator, 2026-04-16) |
+| `CountVectorizer` | *(none found)* | ~~dead~~ **LIVE** (Cat-1 operator, 2026-04-16) |
+| `SentimentAnalyzer` | `sentiment_panel.h` | ~~dead~~ **LIVE** (Cat-1 lexicon-based, 2026-04-16) |
+| `NamedEntityRecognizer` | *(none found)* | **DEFERRED** — see entry below |
+| `WordFrequencyNode` | `word_frequency_panel.h` | **RECLASSIFIED** to Cat-2 panel, not Cat-1 node — see entry below |
+| (tokenization — see note) | `tokenization_panel.h` | covered by `TextTokenizer` Phase 3 node (live Cat-1 since 2026-04-16) |
 
 **Machine learning algorithms (Phase 4 block):**
 | NodeType | Panel file | Status |
@@ -1005,11 +1005,12 @@ graph today is a visual no-op.
 **Linear algebra (Phase 5 block):**
 | NodeType | Panel file | Status |
 |---|---|---|
-| `SVDNode` | `svd_panel.h` | dead |
-| `QRDecomposition` | `qr_panel.h` | dead |
-| `CholeskyDecomposition` | `cholesky_panel.h` | dead |
-| `EigenDecomposition` | `eigen_decomp_panel.h` | dead |
-| `MatrixCalculator` | `matrix_calculator_panel.h` | dead |
+| `PCANode` | `dim_reduction_panel.h` | ~~dead~~ **LIVE** (Cat-1 SVD-based PCA, 2026-04-16) |
+| `SVDNode` | `svd_panel.h` | **DEFERRED** — Cat-2 introspection (multi-output decomposition) |
+| `QRDecomposition` | `qr_panel.h` | **DEFERRED** — Cat-2 introspection (multi-output decomposition) |
+| `CholeskyDecomposition` | `cholesky_panel.h` | **DEFERRED** — Cat-2 introspection (multi-output decomposition) |
+| `EigenDecomposition` | `eigen_decomp_panel.h` | **DEFERRED** — Cat-2 introspection (multi-output decomposition) |
+| `MatrixCalculator` | `matrix_calculator_panel.h` | **DEFERRED** — Cat-3 dev utility (stays panel) |
 
 **Time series analysis (Phase 5 block):**
 | NodeType | Panel file | Status |
@@ -1144,6 +1145,46 @@ anything with preview, validation, or multi-tab config.
   addresses the user-confusion problem without doing the real
   consolidation. Would cut the enum by ~40 entries and the Add menu
   by ~40 entries.
+
+### Deferred text-analytics items (2026-04-16)
+
+The text-analytics block landed `TextTokenizer`, `TFIDFVectorizer`,
+`CountVectorizer`, and `SentimentAnalyzer` as live Cat-1 operators.
+These four were skipped deliberately and are parked here:
+
+**`WordEmbeddings` — needs pretrained file loader.** A Cat-1 operator
+that emits random embeddings is worse than not shipping one: Band 4
+already has a trainable `Embedding` layer that learns task-specific
+representations end-to-end, so random mean-pooled embeddings in
+Band 1 add noise without adding signal. The honest version needs a
+file picker dialog + GloVe / Word2Vec / FastText parser, token-to-
+vector lookup with OOV fallback, and vocabulary alignment against
+the input corpus. Estimated ~1 day. Until then the `WordEmbeddings`
+NodeType stays dead and users get directed to the Band 4
+`Embedding` layer.
+
+**`NamedEntityRecognizer` — needs a real ML model.** No honest
+rule-based shortcut. Real NER either wraps spaCy (Python dep,
+licensing, startup cost, crosses process boundary), embeds a small
+ONNX CRF model (need to pick one and ship weights), or runs a
+BiLSTM-CRF trained on CoNLL-2003 (training pipeline + checkpoint
+distribution). Each option is multi-day. Deferred indefinitely
+until a product need forces a choice.
+
+**`WordFrequencyNode` — reclassified as Cat-2 introspection panel.**
+Corpus-level word counts are a debugging/exploration view, not a
+transformation that feeds downstream nodes. It belongs in the
+"Introspection tools" category (panel that hooks any pipeline point
+read-only, rendered on-demand when the user opens it). Keeping the
+existing `word_frequency_panel.h` as-is and NOT wiring it as a
+Cat-1 NodeType is the correct call. If the NodeType still shows in
+the Add menu, it should be removed or routed to open the panel.
+
+**Pretrained Sentiment model variants (BERT/DistilBERT/etc.).** The
+shipped `SentimentAnalyzer` wraps lexicon-based sentiment (simple /
+VADER / AFINN) which is zero-dependency and deterministic. Neural
+sentiment classifiers would need the same pretrained-weights
+distribution story as NER — deferred on identical grounds.
 
 ---
 
