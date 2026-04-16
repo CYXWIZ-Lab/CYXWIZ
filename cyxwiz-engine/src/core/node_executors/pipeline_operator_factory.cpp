@@ -3,6 +3,7 @@
 #include "identity_operator.h"
 #include "log_transform_operator.h"
 #include "text_tokenizer_operator.h"
+#include "tfidf_vectorizer_operator.h"
 #include "time_series_features_operator.h"
 #include "time_series_split_operator.h"
 #include "time_series_window_operator.h"
@@ -44,6 +45,10 @@ void PipelineOperatorFactory::RegisterDefaults() {
     // DataInput is wired to register text CSVs as Arrow tables.
     RegisterCreator(gui::NodeType::TextTokenizer, []() {
         return std::make_unique<TextTokenizerOperator>();
+    });
+    // Tool-to-Node text analytics: TFIDFVectorizer.
+    RegisterCreator(gui::NodeType::TFIDFVectorizer, []() {
+        return std::make_unique<TFIDFVectorizerOperator>();
     });
 }
 

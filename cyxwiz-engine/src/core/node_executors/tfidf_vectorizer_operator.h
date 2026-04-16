@@ -1,0 +1,59 @@
+#pragma once
+
+#include "pipeline_operator.h"
+
+namespace cyxwiz {
+
+/**
+ * TFIDFVectorizerOperator — Cat-1 Band 1 pipeline operator.
+ *
+ * Transforms an Arrow table containing raw text + (optional) label
+ * columns into a wide TF-IDF feature table ready for classical ML
+ * downstream (Dense + softmax, logistic regression, etc.):
+ *   `tfidf_0, tfidf_1, ..., tfidf_{max_features-1}, y`
+ *
+ * Wraps the existing `cyxwiz::TextProcessing::ComputeTFIDF` math
+ * (smoothed IDF + l1/l2/none normalization) and adds vocabulary
+ * capping via `max_features` so the output column count stays
+ * bounded on large corpora. For a sentiment dataset with ~10k
+ * unique words and 50k docs, an unbounded TF-IDF matrix would be
+ * 2 GB of floats — `max_features=2000` keeps the top-N terms by
+ * IDF score (rarest = most-discriminating words first), matching
+ * sklearn's TfidfVectorizer(max_features=N) semantics.
+ *
+ * Schema parallels TextTokenizerOperator: `tok_*` becomes `tfidf_*`,
+ * label column is `y` int32. ArrowDatasetBatcher handles the wide
+ * output unchanged. Same caveats: this operator only fires when the
+ * source dataset is registered as an Arrow table; legacy
+ * `RegisterTextDataset` graphs skip it.
+ *
+ * Params:
+ *   text_col          (required)        — string column with raw text
+ *   label_col         (optional)        — column to use as label
+ *   max_features      (default 2000)    — top-N terms by IDF (>= 1)
+ *   use_idf           (default true)    — multiply TF by IDF
+ *   smooth_idf        (default true)    — add 1 to doc frequencies
+ *   norm              (default "l2")    — "l1" / "l2" / "none"
+ */
+class TFIDFVectorizerOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "TFIDFVectorizer"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+
+    bool Configure(
+        const std::map<std::string, std::string>& params,
+        std::string& error) override;
+
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
+        const std::shared_ptr<arrow::Table>& input) override;
+
+private:
+    std::string text_col_;
+    std::string label_col_;
+    int max_features_ = 2000;
+    bool use_idf_ = true;
+    bool smooth_idf_ = true;
+    std::string norm_ = "l2";
+};
+
+} // namespace cyxwiz

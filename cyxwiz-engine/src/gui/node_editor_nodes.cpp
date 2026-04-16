@@ -4081,7 +4081,18 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
-            node.parameters["max_features"] = "1000";
+            // Tool-to-Node canonical params read by TFIDFVectorizerOperator.
+            // text_col + label_col are required when this node runs as a real
+            // Cat-1 operator on an Arrow source. Legacy ngram_range / min_df
+            // params kept for back-compat with the floating panel; operator
+            // ignores them in v1.
+            node.parameters["text_col"] = "";
+            node.parameters["label_col"] = "";
+            node.parameters["max_features"] = "2000";
+            node.parameters["use_idf"] = "true";
+            node.parameters["smooth_idf"] = "true";
+            node.parameters["norm"] = "l2";
+            // Legacy floating-panel params (operator ignores).
             node.parameters["ngram_range"] = "1,1";
             node.parameters["min_df"] = "1";
             break;
