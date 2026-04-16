@@ -4,6 +4,7 @@
 #include "analyzer.h"
 #include "visualizer.h"
 #include <imgui.h>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -73,6 +74,15 @@ public:
      */
     bool* GetVisiblePtr() { return &visible_; }
 
+    /**
+     * Wire the toolbar "Open Node Editor" button. MainWindow supplies
+     * a closure that makes the NodeEditor panel visible and focused.
+     * Without this, the button renders disabled.
+     */
+    void SetOpenNodeEditorCallback(std::function<void()> cb) {
+        open_node_editor_callback_ = std::move(cb);
+    }
+
 private:
     // Component instances (Unified Canvas Phase 5: Removed pipeline_canvas_)
     std::unique_ptr<QueryEditor> query_editor_;
@@ -83,6 +93,10 @@ private:
     std::string active_dataset_;
     int selected_tab_;
     bool visible_;
+
+    // Cross-navigation: opens the Engine's NodeEditor panel. Set by
+    // MainWindow; null until wired so the button can disable itself.
+    std::function<void()> open_node_editor_callback_;
 
     // Tab indices (Unified Canvas Phase 5: Removed Pipeline tab)
     enum class Tab {

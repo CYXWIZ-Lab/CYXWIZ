@@ -346,6 +346,16 @@ MainWindow::MainWindow()
     // Data Studio panel (Phase 1 Week 1)
     data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();
 
+    // Cross-navigation: Data Studio's "Open Node Editor" button raises
+    // the CyxWiz Studio (NodeEditor) panel. Tracked in tofix.md as the
+    // "Open Node Editor from CyxWiz Studio" entry.
+    data_studio_panel_->SetOpenNodeEditorCallback([this]() {
+        if (node_editor_) {
+            node_editor_->Show();
+            spdlog::info("Opened Node Editor panel from Data Studio");
+        }
+    });
+
     // Set NAS panel callbacks for node editor integration
     nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
         if (node_editor_) {

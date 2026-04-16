@@ -50,14 +50,23 @@ void DataStudioPanel::RenderToolbar() {
         }
     }
 
-    // Unified Canvas Phase 5: Add note about Node Editor for pipelines
+    // Cross-navigation: one click opens the Engine's Node Editor
+    // panel. Replaces the old static text hint — the user no longer
+    // has to hunt through the Engine toolbar to get there.
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-    ImGui::TextDisabled("For visual pipelines, use CyxWiz Studio (Data Pipeline mode)");
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Visual data transformation pipelines have moved to CyxWiz Studio.\n"
-                         "Switch to 'Data Pipeline' execution mode in the Studio toolbar.");
+    if (open_node_editor_callback_) {
+        if (ImGui::Button("Open Node Editor")) {
+            open_node_editor_callback_();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open the CyxWiz Studio (Node Editor) panel. "
+                              "Switch to 'Data Pipeline' execution mode "
+                              "there to build visual transformation graphs.");
+        }
+    } else {
+        ImGui::TextDisabled("For visual pipelines, use CyxWiz Studio");
     }
 }
 

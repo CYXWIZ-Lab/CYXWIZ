@@ -625,19 +625,22 @@ currently live in separate panes with no cross-navigation. Users
 must hunt for the Node Editor in the Engine toolbar after doing
 exploratory work in Studio.
 
-### Open Node Editor from CyxWiz Studio
+### ~~Open Node Editor from CyxWiz Studio~~ LANDED 2026-04-17
 
-**Idea:** Add a button in CyxWiz Studio that opens (or focuses) the
-Engine's Node Editor panel. One click instead of toolbar hunting.
+**Status:** Resolved. `DataStudioPanel::RenderToolbar` now renders
+an "Open Node Editor" button that invokes a callback wired by
+`MainWindow` to `node_editor_->Show()`. Replaced the old static
+`TextDisabled` hint. Falls back to the hint text if the callback
+isn't wired (defensive).
 
-**Wiring sketch:**
-- Studio toolbar button (icon + tooltip: "Open Node Editor").
-- Click handler: same path as the Engine toolbar entry that opens
-  `NodeEditor` (look at where `main_window.cpp` raises the panel).
-- If the panel is already open, focus it (ImGui::SetWindowFocus).
-- If closed, toggle its visibility flag.
-- Same pattern works for other cross-pane buttons (Query Console
-  below, Training Dashboard, Dataset Manager).
+**Files touched:**
+- `cyxwiz-engine/src/gui/data_studio/data_studio_panel.h/.cpp` —
+  added `SetOpenNodeEditorCallback` + button rendering.
+- `cyxwiz-engine/src/gui/main_window.cpp:347` — wires the callback
+  alongside the existing NAS / training callbacks.
+
+Same callback pattern is ready to reuse for other cross-pane
+buttons (Training Dashboard, Dataset Manager) if/when needed.
 
 ### Query Console in CyxWiz Studio
 
