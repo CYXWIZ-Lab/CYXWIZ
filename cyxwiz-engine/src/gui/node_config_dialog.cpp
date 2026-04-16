@@ -17,6 +17,7 @@
 
 #include "node_config_dialog.h"
 #include "node_editor.h"
+#include "visualization/bar_chart_dialog.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -936,6 +937,13 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
 
     RegisterDialog(NT::DataSplit, [](MLNode* node) {
         return std::make_unique<DataSplitDialog>(node);
+    });
+
+    // Visualization framework — chart nodes live in their own TU
+    // under src/gui/visualization/. BarChart is the first; Histogram /
+    // LinePlot / ScatterPlot / PieChart follow the same shape.
+    RegisterDialog(NT::BarChart, [](MLNode* node) {
+        return std::make_unique<visualization::BarChartDialog>(node);
     });
 }
 

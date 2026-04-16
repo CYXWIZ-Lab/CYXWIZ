@@ -1,5 +1,6 @@
 #include "node_editor.h"
 #include "properties.h"
+#include "visualization/visualization_nodes.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include "../core/data_registry.h"
 #include <imgui.h>
@@ -4839,6 +4840,16 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
             node.parameters["include_correlations"] = "true";
             node.parameters["include_histograms"] = "true";
+            break;
+        }
+
+        // Visualization nodes are defined in their own translation unit
+        // (cyxwiz-engine/src/gui/visualization/) to keep this already-huge
+        // factory file from owning the chart framework too. New chart
+        // types register themselves by adding a case here that delegates
+        // to the corresponding Populate* function.
+        case NodeType::BarChart: {
+            visualization::PopulateBarChartNode(node, next_pin_id_);
             break;
         }
 
