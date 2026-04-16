@@ -102,7 +102,11 @@ inline bool ReadColumnAsFloat(
 }
 
 /// Build a float32 Arrow column from a std::vector<float> and replace
-/// a column in the table by index. Returns the new table.
+/// a column in the table by index. Returns the new table. The replaced
+/// field is retyped to float32 (preserving the column name) — callers
+/// that feed this an int64 `Passengers` column end up with a float32
+/// `Passengers` column in the output table, which is what downstream
+/// windowing + regression expect.
 inline arrow::Result<std::shared_ptr<arrow::Table>> ReplaceColumnWithFloat(
     const std::shared_ptr<arrow::Table>& table,
     int col_idx,
@@ -118,7 +122,12 @@ inline arrow::Result<std::shared_ptr<arrow::Table>> ReplaceColumnWithFloat(
     ARROW_RETURN_NOT_OK(builder.Finish(&new_array));
 
     auto new_chunked = std::make_shared<arrow::ChunkedArray>(new_array);
-    return table->SetColumn(col_idx, table->schema()->field(col_idx), new_chunked);
+    // New field with same name but float32 type; otherwise SetColumn
+    // throws "Field type did not match data type" when the original
+    // column was int / double.
+    const std::string col_name = table->schema()->field(col_idx)->name();
+    auto new_field = arrow::field(col_name, arrow::float32());
+    return table->SetColumn(col_idx, new_field, new_chunked);
 }
 
 } // namespace cyxwiz
