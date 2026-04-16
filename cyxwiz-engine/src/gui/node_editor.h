@@ -817,6 +817,10 @@ public:
     using CompileCallback = std::function<void()>;
     void SetCompileCallback(CompileCallback callback) { compile_callback_ = callback; }
 
+    // Open Custom Node Editor callback - opens the CustomNodeEditorPanel from the Studio toolbar
+    using OpenCustomNodeEditorCallback = std::function<void()>;
+    void SetOpenCustomNodeEditorCallback(OpenCustomNodeEditorCallback callback) { open_custom_node_editor_callback_ = callback; }
+
     // Check if graph is ready for training
     bool IsGraphValid() const;
 
@@ -1200,6 +1204,9 @@ private:
 
     // Compile callback (dry-run GraphCompiler::Compile and show result popup)
     CompileCallback compile_callback_;
+
+    // Open Custom Node Editor callback (opens CustomNodeEditorPanel)
+    OpenCustomNodeEditorCallback open_custom_node_editor_callback_;
 
     // Training animation state
     bool is_training_ = false;

@@ -414,6 +414,14 @@ MainWindow::MainWindow()
         }
     });
 
+    // Open the Custom Node Editor panel from the Studio toolbar
+    node_editor_->SetOpenCustomNodeEditorCallback([this]() {
+        if (custom_node_editor_) {
+            custom_node_editor_->Show();
+            spdlog::info("Opened Custom Node Editor panel from Studio toolbar");
+        }
+    });
+
     // Set up callbacks in the toolbar
     toolbar_->SetResetLayoutCallback([this]() {
         this->ResetDockLayout();
