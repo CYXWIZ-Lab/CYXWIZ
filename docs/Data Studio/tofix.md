@@ -595,43 +595,23 @@ TextTokenizer/TextVocabulary/TextPadding registration, compile gate
 registry-first probe, v2 regularized example graph, Embedding AF
 backward fix. What's still deferred:
 
-### Phase 3 engine-side wiring bundle not yet committed
+### ~~Phase 3 engine-side wiring bundle not yet committed~~ LANDED
 
-**Severity:** High — the entire Phase 3 text pipeline lives in the
-working tree but isn't in git. A stray `git stash` or `git checkout`
-loses ~14 files of working code.
+**Status update 2026-04-16:** All Phase 3 engine-side wiring is now
+committed to the `Nodes_Implementation` branch. Relevant commits:
+- `bce6b023` — text dataset registry
+- `f9ee4ec4` — Phase 3 text graph compiler extractors +
+  preprocessing domain
+- `7378b6d0` — Phase 3 text dataset batcher + CSV loader
+- `70360ef6` — Phase 3 text training manager + engine dispatch
+- `80789995` — Register Text* node types in cyxgraph JSON loaders
+- `7b7bd34b` — async Apply + preview panel + header null bytes fix
+- `52808745` — `node_executors/` framework with Cat-1 IPipelineOperator
+  base (the "unfinished scaffolding" is now the foundation for 29+
+  live Cat-1 operators across the whole Tool-to-Node migration)
 
-**Files still uncommitted at end of 2026-04-14 session:**
-- `cyxwiz-engine/src/core/training_executor.cpp` — text dispatch +
-  the `if (epoch == 1 && batch_num == 1)` DEBUG Arrow / DEBUG
-  CrossEntropy dumps (left over from embedding debugging, should
-  be gated by a config flag)
-- `cyxwiz-engine/src/core/training_manager.{cpp,h}` — `StartTrainingText`
-- `cyxwiz-engine/src/core/graph_compiler.{cpp,h}` — TextPreprocessingConfig
-  + 3 extractors (ExtractTextTokenizer / ExtractTextVocabulary /
-  ExtractTextPadding) + PreprocessingDomain::Text. The compile-gate
-  registry-first fix IS committed (603eb8e4) but the extractors are
-  not — they live in the same file and were sheared off via surgical
-  commit.
-- `cyxwiz-engine/src/core/formats/text_dataset.{cpp,h}`
-- `cyxwiz-engine/src/core/text_dataset_batcher.{cpp,h}` (untracked —
-  new files)
-- `cyxwiz-engine/src/core/node_executors/` (untracked — unfinished
-  KMeans executor scaffolding, unrelated to Phase 3)
-- `cyxwiz-engine/src/gui/main_window.cpp` — IsTextDataset dispatch
-- `cyxwiz-engine/src/gui/node_editor_nodes.cpp`
-- `cyxwiz-engine/src/gui/data_input_dialog.h`
-- `cyxwiz-engine/src/gui/panels/toolbar_profile_menu.cpp` (untracked)
-- `cyxwiz-engine/src/gui/IconsTabler.h` (untracked)
-- `cyxwiz-engine/resources/fonts/tabler-icons.ttf` (untracked)
-- `cyxwiz-engine/resources/node_icons/` (untracked)
-- `cyxwiz-engine/CMakeLists.txt` — text_dataset_batcher.{cpp,h} sources
-
-**Plan:** Split into 3-4 focused commits (next session):
-1. `feat: Phase 3 text graph compiler extractors + training dispatch`
-2. `feat: Phase 3 text dataset batcher + format loader`
-3. `feat: Toolbar profile menu + Tabler icons` (unrelated UI polish)
-4. `feat: KMeans node executor scaffolding` (separate pattern, unfinished)
+Kept in this tofix strictly as a landed-commit pointer so the
+history of how Phase 3 reached git is traceable.
 
 ### num_workers=4 not implemented — DataLoader runs single-threaded
 
@@ -676,22 +656,24 @@ batcher and GPU pools stabilize, so the "batches/s" reading is
 informative across the whole epoch. No per-invocation time throttle
 — 50 batches is long enough that a fast epoch won't spam.
 
-### Only MLP head tested with text — LSTM / GRU / Transformer paths unverified
+### LSTM verified with text; GRU / Transformer still unverified
 
-**Severity:** Medium — Phase 3 is "done" for MLP over flattened
-embeddings only. The backend has LSTM/GRU/Transformer/Attention
-layers but they haven't been run on a text training graph end-to-end.
+**Status update 2026-04-16:** LSTM text path is now verified
+end-to-end on the mental_health sentiment corpus. Smoke-test graph
+shipped in commit `4cdaf7ad`; full CPU BPTT + AF Forward + AF
+Backward all operational (`38d0a250`, `f4ac9b57`, `dc727ef6`).
+Weights update correctly on both CPU and GPU backends.
 
-**Risk:** The Embedding → Flatten → Dense head only exercises a
-small corner of the NLP-capable codepaths. LSTM over `[batch,
-seq_len, embed_dim]` without Flatten is the obvious next test;
-that'll expose any shape-handling bugs in the recurrent layers
-(same category as the Embedding AF backward bug we just fixed).
+**Still unverified:** GRU and Transformer text paths. The backend
+has both (`GRUModule`, `TransformerEncoderLayer`), but no
+end-to-end smoke test over text exists. Same risk profile as LSTM
+pre-fix — a shape-handling bug in the recurrent / attention layers
+won't surface until someone runs Embedding → GRU → Dense or
+Embedding → TransformerEncoder → Dense through to convergence.
 
-**Fix:** Create a Phase 3.x example graph
-(`examples/cyxgraph/mental_health_sentiment_lstm.cyxgraph`) that
-uses Embedding → LSTM(hidden=128) → Dense(7), train it, fix whatever
-breaks.
+**Fix:** Port `mental_health_sentiment_lstm.cyxgraph` to GRU and
+Transformer variants, run each to convergence, fix whatever breaks.
+Medium-size task — LSTM-style investigation + fixes could reoccur.
 
 ### Text preview doesn't show class distribution
 
@@ -738,17 +720,19 @@ planned for the Phase 3 engine-side bundle commit.
 
 ---
 
-## LSTM Layer — Broken AF Forward + Missing CPU Backward (2026-04-15)
+## ~~LSTM Layer — Broken AF Forward + Missing CPU Backward~~ RESOLVED (2026-04-16)
 
-**Status update 2026-04-16:** CPU Forward now populates row-major CPU
-caches and CPU Backward implements BPTT reading from those caches.
-LSTM weights now update during training on the CPU path. ArrayFire
-Forward + Backward remain gated off (`kAfPathEnabled = false`) —
-the column-major dim-ordering bug that prevents AF Forward from
-handling `[batch, seq, features]` input is still open and is the
-remaining work on this entry. CPU path is the correctness oracle for
-any future AF fix. See commit with CPU BPTT for implementation
-details.
+**Status update 2026-04-16 (final):** LSTM is now fully operational
+end-to-end on both backends. Three commits landed today:
+- `38d0a250` — CPU Forward populates row-major caches, CPU BPTT
+  reads from them, weights update correctly.
+- `f4ac9b57` — AF Forward operational (4 stacked bugs fixed via
+  row-major 3D helpers, weight init guard, h_n/c_n null-data check).
+- `dc727ef6` — AF Backward operational, full GPU LSTM end-to-end.
+
+CPU path remains as the correctness oracle; AF path validated
+against it numerically. Kept in tofix as a landed-commit pointer
+plus the perf-optimization subsection below (still open).
 
 **AF Forward — DONE (2026-04-16):**
 - ~~3D column-major scrambling at TensorToAf boundary~~ Fixed via
