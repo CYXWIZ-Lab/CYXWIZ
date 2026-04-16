@@ -612,11 +612,34 @@ planned for the Phase 3 engine-side bundle commit.
 
 ## LSTM Layer — Broken AF Forward + Missing CPU Backward (2026-04-15)
 
-**Severity:** High — LSTMLayer is currently a frozen random projection
-during training. Weights never update. Every model using LSTM will
-train the *downstream* layers only (Dense heads can still learn from
-the frozen features, so training doesn't crash — val_acc will climb
-but to a much lower ceiling than a working LSTM should reach).
+**Status update 2026-04-16:** CPU Forward now populates row-major CPU
+caches and CPU Backward implements BPTT reading from those caches.
+LSTM weights now update during training on the CPU path. ArrayFire
+Forward + Backward remain gated off (`kAfPathEnabled = false`) —
+the column-major dim-ordering bug that prevents AF Forward from
+handling `[batch, seq, features]` input is still open and is the
+remaining work on this entry. CPU path is the correctness oracle for
+any future AF fix. See commit with CPU BPTT for implementation
+details.
+
+**AF path — still pending:**
+- AF Forward column-major reorder bug (items 1 below)
+- AF Backward end-to-end validation against the fixed AF Forward
+  (the existing ~130-line AF backward code at `layer.cpp` has never
+  been exercised because AF Forward was never producing valid caches)
+
+Left as a perf follow-up, not blocking training correctness. With
+CPU BPTT live, LSTM training works but is slow (~seconds per batch
+on sentiment-scale data). AF would be 10-100x faster once the
+column-major bug is resolved.
+
+**Severity:** ~~High~~ Medium (after CPU BPTT landed) — LSTM weights
+update correctly on CPU. AF path is a perf-only follow-up. Original
+severity kept below for historical context.
+
+**Original severity (before 2026-04-16 fix):** High — LSTMLayer was
+a frozen random projection during training. Weights never updated.
+Every model using LSTM trained only the *downstream* layers.
 
 **Discovered:** 2026-04-15 LSTM smoke test
 (`examples/cyxgraph/text/test_02_sentiment_lstm.cyxgraph`) — the goal

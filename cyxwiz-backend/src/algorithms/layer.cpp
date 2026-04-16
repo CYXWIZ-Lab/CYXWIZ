@@ -2269,7 +2269,12 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
     }
 #endif
 
-    // CPU fallback implementation
+    // CPU fallback implementation. This path ALSO populates cached_inputs_,
+    // cached_gates_, cached_hidden_states_, cached_cell_states_ in row-major
+    // CPU-friendly layout so LSTMLayer::Backward (CPU BPTT below) can read
+    // them. These caches are distinct from the AF-shaped ones the disabled
+    // AF Forward would have written — CPU backward operates on row-major
+    // [seq_len, batch, ...] tensors throughout, no AF reshape involved.
     const auto& shape = input.Shape();
     size_t batch_size, seq_len, input_dim;
 
@@ -2319,6 +2324,18 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
     auto sigmoid = [](float x) { return 1.0f / (1.0f + std::exp(-x)); };
     auto tanh_f = [](float x) { return std::tanh(x); };
 
+    // Reset caches at the top of every forward pass so BPTT reads the
+    // current run's state, not a stale one. CPU backward below branches
+    // on emptiness to decide whether to run BPTT or fall through.
+    cached_inputs_.clear();
+    cached_gates_.clear();
+    cached_hidden_states_.clear();
+    cached_cell_states_.clear();
+    cached_inputs_.reserve(num_layers_);
+    cached_gates_.reserve(num_layers_);
+    cached_hidden_states_.reserve(num_layers_);
+    cached_cell_states_.reserve(num_layers_);
+
     Tensor layer_input = input;
     size_t layer_input_size = input_dim;
 
@@ -2332,6 +2349,34 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
         Tensor layer_output = Tensor::Zeros({seq_len, batch_size, static_cast<size_t>(hidden_size_)});
         float* layer_out = layer_output.Data<float>();
         const float* layer_in = layer_input.Data<float>();
+
+        // Per-layer caches. Row-major:
+        //   input  [seq_len, batch, layer_input_size]
+        //   gates  [seq_len, batch, 4 * hidden_size]        (pre-activations)
+        //   h      [seq_len + 1, batch, hidden_size]        (index 0 = h_0)
+        //   c      [seq_len + 1, batch, hidden_size]        (index 0 = c_0)
+        Tensor layer_input_cache = Tensor::Zeros(
+            {seq_len, batch_size, layer_input_size});
+        Tensor layer_gates_cache = Tensor::Zeros(
+            {seq_len, batch_size, static_cast<size_t>(gate_size)});
+        Tensor layer_h_cache = Tensor::Zeros(
+            {seq_len + 1, batch_size, static_cast<size_t>(hidden_size_)});
+        Tensor layer_c_cache = Tensor::Zeros(
+            {seq_len + 1, batch_size, static_cast<size_t>(hidden_size_)});
+        float* in_cache_data = layer_input_cache.Data<float>();
+        float* gate_cache_data = layer_gates_cache.Data<float>();
+        float* h_cache_data = layer_h_cache.Data<float>();
+        float* c_cache_data = layer_c_cache.Data<float>();
+
+        // Seed h_0 / c_0 at t=0 from h_n_ / c_n_ for all batches.
+        for (size_t b = 0; b < batch_size; b++) {
+            for (int i = 0; i < hidden_size_; i++) {
+                h_cache_data[0 * batch_size * hidden_size_ + b * hidden_size_ + i] =
+                    h_data[layer * batch_size * hidden_size_ + b * hidden_size_ + i];
+                c_cache_data[0 * batch_size * hidden_size_ + b * hidden_size_ + i] =
+                    c_data[layer * batch_size * hidden_size_ + b * hidden_size_ + i];
+            }
+        }
 
         for (size_t b = 0; b < batch_size; b++) {
             std::vector<float> h(hidden_size_), c(hidden_size_);
@@ -2358,6 +2403,17 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
                         gates[g] += W_hh[g * hidden_size_ + k] * h[k];
                 }
 
+                // Snapshot pre-activation gates + current input for BPTT.
+                // gates_cache_data shape [seq_len, batch, 4H], index by
+                // (t, b, g) = t*batch*4H + b*4H + g.
+                for (int g = 0; g < gate_size; g++) {
+                    gate_cache_data[t * batch_size * gate_size + b * gate_size + g] = gates[g];
+                }
+                for (size_t k = 0; k < layer_input_size; k++) {
+                    in_cache_data[t * batch_size * layer_input_size + b * layer_input_size + k]
+                        = x_ptr[k];
+                }
+
                 for (int i = 0; i < hidden_size_; i++) {
                     float i_gate = sigmoid(gates[i]);
                     float f_gate = sigmoid(gates[hidden_size_ + i]);
@@ -2369,6 +2425,12 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
 
                 for (int i = 0; i < hidden_size_; i++)
                     layer_out[t * batch_size * hidden_size_ + b * hidden_size_ + i] = h[i];
+
+                // Snapshot h_t, c_t (post-step state) at cache index t+1.
+                for (int i = 0; i < hidden_size_; i++) {
+                    h_cache_data[(t + 1) * batch_size * hidden_size_ + b * hidden_size_ + i] = h[i];
+                    c_cache_data[(t + 1) * batch_size * hidden_size_ + b * hidden_size_ + i] = c[i];
+                }
             }
 
             for (int i = 0; i < hidden_size_; i++) {
@@ -2376,6 +2438,12 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
                 c_data[layer * batch_size * hidden_size_ + b * hidden_size_ + i] = c[i];
             }
         }
+
+        cached_inputs_.push_back(std::move(layer_input_cache));
+        cached_gates_.push_back(std::move(layer_gates_cache));
+        cached_hidden_states_.push_back(std::move(layer_h_cache));
+        cached_cell_states_.push_back(std::move(layer_c_cache));
+
         layer_input = layer_output;
         layer_input_size = static_cast<size_t>(hidden_size_);
     }
@@ -2394,38 +2462,244 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
 }
 
 Tensor LSTMLayer::Backward(const Tensor& grad_output) {
-    // Check if caches are populated. They're only filled by the AF
-    // path in Forward, which is currently disabled (kAfPathEnabled=
-    // false above) because of a column-major dim ordering bug. The
-    // CPU Forward fallback doesn't build these AF-shaped caches, and
-    // there is no CPU Backward implementation — so for now any call
-    // that hits this stub returns a correctly-shaped zero gradient
-    // and the LSTM effectively trains as a frozen random projection.
-    //
-    // Shape fix: return `Tensor::Zeros(cached_input_.Shape())`, NOT
-    // `Tensor::Zeros(grad_output.Shape())`. The caller's contract is
-    // dL/d(input), which has the INPUT tensor's shape. `grad_output`
-    // has the OUTPUT shape (e.g. [batch, seq, hidden]) which is wrong
-    // upstream — Embedding::Backward downstream would read from a
-    // wrong-sized zero tensor.
-    //
-    // Warning is one-shot via static atomic so multi-epoch runs don't
-    // spam the log. See tofix.md "LSTMLayer AF Forward + CPU Backward".
+    // Guard: caches populated by the CPU Forward path above. The AF
+    // Forward path is still gated off (column-major reorder bug) so we
+    // never reach a state where caches exist but weren't built by CPU.
+    // Empty caches mean Forward was never called; return zeros sized
+    // by the input we saw (if any) so upstream grad flow is dimension-
+    // safe rather than throwing.
     if (cached_inputs_.empty() || cached_gates_.empty() ||
         cached_hidden_states_.empty() || cached_cell_states_.empty()) {
         static std::atomic<bool> warned_once{false};
         if (!warned_once.exchange(true)) {
-            spdlog::warn("LSTMLayer::Backward: AF caches empty (CPU Forward "
-                         "path is active and CPU Backward is not implemented) "
-                         "— returning zero gradients. LSTM weights will not "
-                         "update during training. This warning fires once "
-                         "per process. See tofix.md for the full plan.");
+            spdlog::warn("LSTMLayer::Backward: caches empty (Forward not run?) "
+                         "— returning zero gradients. This warning fires once.");
         }
-        // Use cached_input_ shape, not grad_output shape, so upstream
-        // layers get the right-sized dL/dx tensor (all zeros).
         if (cached_input_.NumElements() > 0) {
             return Tensor::Zeros(cached_input_.Shape());
         }
+        return Tensor::Zeros(grad_output.Shape());
+    }
+
+    // CPU BPTT. Reads the row-major caches populated by CPU Forward:
+    //   cached_inputs_[L]          [seq_len, batch, layer_input_size]
+    //   cached_gates_[L]           [seq_len, batch, 4 * hidden_size]   (pre-activations)
+    //   cached_hidden_states_[L]   [seq_len + 1, batch, hidden_size]   (idx 0 = h_0)
+    //   cached_cell_states_[L]     [seq_len + 1, batch, hidden_size]   (idx 0 = c_0)
+    //
+    // Walks layers in reverse (num_layers - 1 → 0), and within each
+    // layer walks timesteps in reverse (seq_len - 1 → 0). Accumulates
+    // dW_ih, dW_hh, db_ih, db_hh per layer and builds a dL/d(input)
+    // tensor that feeds upstream (Embedding in the typical text graph).
+    //
+    // Gate layout matches Forward: [i | f | g | o] in contiguous slices
+    // of 4*hidden_size.
+
+    const auto& input_shape = cached_input_.Shape();
+    size_t batch_size, seq_len, input_dim;
+    if (batch_first_) {
+        batch_size = input_shape[0];
+        seq_len    = input_shape[1];
+        input_dim  = input_shape[2];
+    } else {
+        seq_len    = input_shape[0];
+        batch_size = input_shape[1];
+        input_dim  = input_shape[2];
+    }
+
+    auto sigmoid = [](float x) { return 1.0f / (1.0f + std::exp(-x)); };
+    auto tanh_f  = [](float x) { return std::tanh(x); };
+
+    const int H = hidden_size_;
+    const int G = 4 * H;
+
+    // Ensure grad buffers exist and are sized correctly.
+    if (static_cast<int>(grad_W_ih_.size()) < num_layers_) grad_W_ih_.resize(num_layers_);
+    if (static_cast<int>(grad_W_hh_.size()) < num_layers_) grad_W_hh_.resize(num_layers_);
+    if (static_cast<int>(grad_b_ih_.size()) < num_layers_) grad_b_ih_.resize(num_layers_);
+    if (static_cast<int>(grad_b_hh_.size()) < num_layers_) grad_b_hh_.resize(num_layers_);
+
+    // Upstream gradient entering the top layer. Shape is the OUTPUT
+    // shape (batch_first convention matches the Forward output).
+    // Reshape conceptually to [seq_len, batch, H] row-major regardless
+    // of batch_first (we index with an explicit if inside the loop).
+    const float* dout = grad_output.Data<float>();
+
+    // `layer_grad` holds the gradient flowing into the CURRENT layer's
+    // output (i.e. dL/d(layer_output)). For the topmost LSTM layer
+    // it's dout; for inner layers it's the dx computed by the later
+    // layer. Row-major [seq_len, batch, hidden_size].
+    std::vector<float> layer_grad(seq_len * batch_size * H, 0.0f);
+    for (size_t t = 0; t < seq_len; ++t) {
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (int i = 0; i < H; ++i) {
+                float g = batch_first_
+                    ? dout[b * seq_len * H + t * H + i]
+                    : dout[t * batch_size * H + b * H + i];
+                layer_grad[t * batch_size * H + b * H + i] = g;
+            }
+        }
+    }
+
+    // dL/d(input to this layer). Sized per-layer since input_dim varies.
+    std::vector<float> d_layer_input;
+
+    for (int layer = num_layers_ - 1; layer >= 0; --layer) {
+        const size_t layer_input_size = (layer == 0)
+            ? input_dim : static_cast<size_t>(H);
+
+        const float* W_ih = W_ih_[layer].Data<float>();       // [4H, input_size]
+        const float* W_hh = W_hh_[layer].Data<float>();       // [4H, H]
+        const float* in_cache = cached_inputs_[layer].Data<float>();
+        const float* gate_cache = cached_gates_[layer].Data<float>();
+        const float* h_cache = cached_hidden_states_[layer].Data<float>();
+        const float* c_cache = cached_cell_states_[layer].Data<float>();
+
+        // Weight gradients for this layer, zero-initialized.
+        std::vector<float> dW_ih(G * layer_input_size, 0.0f);
+        std::vector<float> dW_hh(G * H, 0.0f);
+        std::vector<float> db_ih(G, 0.0f);
+        std::vector<float> db_hh(G, 0.0f);
+
+        d_layer_input.assign(seq_len * batch_size * layer_input_size, 0.0f);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            std::vector<float> dh_next(H, 0.0f);
+            std::vector<float> dc_next(H, 0.0f);
+
+            for (int64_t t = static_cast<int64_t>(seq_len) - 1; t >= 0; --t) {
+                const size_t gate_off = t * batch_size * G + b * G;
+                const size_t h_prev_off = t * batch_size * H + b * H;      // cache idx t
+                const size_t c_prev_off = t * batch_size * H + b * H;
+                const size_t c_t_off = (t + 1) * batch_size * H + b * H;   // cache idx t+1
+                const size_t in_off = t * batch_size * layer_input_size + b * layer_input_size;
+                const size_t lg_off = t * batch_size * H + b * H;
+
+                // dh combines upstream output gradient + carried-over
+                // gradient from the next timestep's hidden dependency.
+                std::vector<float> dh(H);
+                for (int i = 0; i < H; ++i) {
+                    dh[i] = layer_grad[lg_off + i] + dh_next[i];
+                }
+
+                // Recompute gate activations (cheaper than caching them).
+                std::vector<float> i_g(H), f_g(H), g_g(H), o_g(H);
+                for (int i = 0; i < H; ++i) {
+                    i_g[i] = sigmoid(gate_cache[gate_off + i]);
+                    f_g[i] = sigmoid(gate_cache[gate_off + H + i]);
+                    g_g[i] = tanh_f (gate_cache[gate_off + 2 * H + i]);
+                    o_g[i] = sigmoid(gate_cache[gate_off + 3 * H + i]);
+                }
+
+                // h = o * tanh(c_t)
+                // c_t = f * c_prev + i * g
+                std::vector<float> dgates(G, 0.0f);
+                for (int i = 0; i < H; ++i) {
+                    const float c_t = c_cache[c_t_off + i];
+                    const float c_prev = c_cache[c_prev_off + i];
+                    const float tanh_c = tanh_f(c_t);
+
+                    // dh = dh, do_pre = dh * tanh(c) * sigmoid'(o_gate_pre)
+                    const float do_pre = dh[i] * tanh_c * o_g[i] * (1.0f - o_g[i]);
+
+                    // dc accumulates from this step's output and carry-over.
+                    const float dc = dh[i] * o_g[i] * (1.0f - tanh_c * tanh_c)
+                                    + dc_next[i];
+
+                    const float df_pre = dc * c_prev * f_g[i] * (1.0f - f_g[i]);
+                    const float di_pre = dc * g_g[i] * i_g[i] * (1.0f - i_g[i]);
+                    const float dg_pre = dc * i_g[i] * (1.0f - g_g[i] * g_g[i]);
+
+                    dc_next[i] = dc * f_g[i];
+
+                    // Pre-activation gradients in [i | f | g | o] order.
+                    dgates[i]           = di_pre;
+                    dgates[H + i]       = df_pre;
+                    dgates[2 * H + i]   = dg_pre;
+                    dgates[3 * H + i]   = do_pre;
+                }
+
+                // Accumulate weight and bias grads.
+                // dW_ih [G, layer_input_size] += outer(dgates, x_t)
+                // dW_hh [G, H]                 += outer(dgates, h_prev)
+                // db_ih [G]                   += dgates  (same for db_hh)
+                for (int g = 0; g < G; ++g) {
+                    const float dg = dgates[g];
+                    db_ih[g] += dg;
+                    db_hh[g] += dg;
+                    for (size_t k = 0; k < layer_input_size; ++k) {
+                        dW_ih[g * layer_input_size + k]
+                            += dg * in_cache[in_off + k];
+                    }
+                    for (int k = 0; k < H; ++k) {
+                        dW_hh[g * H + k] += dg * h_cache[h_prev_off + k];
+                    }
+                }
+
+                // dx_t = dgates @ W_ih        (shape [layer_input_size])
+                // dh_prev = dgates @ W_hh     (shape [H])
+                for (size_t k = 0; k < layer_input_size; ++k) {
+                    float s = 0.0f;
+                    for (int g = 0; g < G; ++g) {
+                        s += dgates[g] * W_ih[g * layer_input_size + k];
+                    }
+                    d_layer_input[in_off + k] = s;
+                }
+                for (int k = 0; k < H; ++k) {
+                    float s = 0.0f;
+                    for (int g = 0; g < G; ++g) {
+                        s += dgates[g] * W_hh[g * H + k];
+                    }
+                    dh_next[k] = s;
+                }
+            }
+        }
+
+        // Stash per-layer weight grads.
+        grad_W_ih_[layer] = Tensor({static_cast<size_t>(G), layer_input_size},
+                                   dW_ih.data());
+        grad_W_hh_[layer] = Tensor({static_cast<size_t>(G), static_cast<size_t>(H)},
+                                   dW_hh.data());
+        grad_b_ih_[layer] = Tensor({static_cast<size_t>(G)}, db_ih.data());
+        grad_b_hh_[layer] = Tensor({static_cast<size_t>(G)}, db_hh.data());
+
+        // This layer's dL/d(input) becomes the next iteration's
+        // dL/d(output) for the layer below. Sizes must match: each
+        // inner LSTM layer has input_size = H, so copying into
+        // layer_grad is safe only when layer > 0. For layer == 0 we
+        // exit the loop with d_layer_input sized [seq_len, batch, input_dim]
+        // which we convert back to the user's layout below.
+        if (layer > 0) {
+            layer_grad = d_layer_input;  // size = seq_len * batch * H
+        }
+    }
+
+    // Convert d_layer_input from row-major [seq_len, batch, input_dim]
+    // to whatever batch_first says.
+    Tensor dx = Tensor::Zeros(cached_input_.Shape());
+    float* dx_data = dx.Data<float>();
+    for (size_t t = 0; t < seq_len; ++t) {
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t k = 0; k < input_dim; ++k) {
+                const float v = d_layer_input[t * batch_size * input_dim + b * input_dim + k];
+                if (batch_first_) {
+                    dx_data[b * seq_len * input_dim + t * input_dim + k] = v;
+                } else {
+                    dx_data[t * batch_size * input_dim + b * input_dim + k] = v;
+                }
+            }
+        }
+    }
+    return dx;
+}
+
+// Legacy AF Backward path kept below as dead code for reference. It was
+// never end-to-end validated since AF Forward is gated off. Scheduled
+// for removal in a later cleanup pass once the CPU path is settled.
+#if 0
+Tensor LSTMLayer::BackwardAF_Legacy(const Tensor& grad_output) {
+    if (cached_inputs_.empty() || cached_gates_.empty() ||
+        cached_hidden_states_.empty() || cached_cell_states_.empty()) {
         return Tensor::Zeros(grad_output.Shape());
     }
 
@@ -2567,6 +2841,7 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
 
     throw std::runtime_error("LSTM backward requires ArrayFire");
 }
+#endif  // #if 0 — legacy AF Backward kept as reference
 
 std::map<std::string, Tensor> LSTMLayer::GetParameters() {
     std::map<std::string, Tensor> params;
