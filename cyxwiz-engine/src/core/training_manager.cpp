@@ -143,8 +143,20 @@ bool TrainingManager::StartTrainingArrow(
 
     // Input size = all columns except label
     // ArrowDatasetBatcher auto-detects label columns, so always reserve one column for label
-    // when dataset has multiple columns (typical ML dataset structure)
-    if (num_cols > 1) {
+    // when dataset has multiple columns (typical ML dataset structure).
+    //
+    // Phase 4 Time-Series: trust the GraphCompiler's input_size override.
+    // For TS graphs GraphCompiler sets input_size from the TimeSeriesWindow
+    // operator's input_width param. The materialized Arrow table ALSO has
+    // an extra `__partition__` metadata column, so `num_cols - 1` would
+    // double-count it as a feature and build a Linear layer of the wrong
+    // size (crash at first forward pass due to dimension mismatch with the
+    // batch tensor, which correctly excludes both label AND __partition__).
+    if (config.is_time_series) {
+        spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, "
+                     "input_size={} (from GraphCompiler's TimeSeriesWindow override)",
+                     num_rows, num_cols, config.input_size);
+    } else if (num_cols > 1) {
         config.input_size = num_cols - 1;
         spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, input_size={} (assuming 1 label column)",
                      num_rows, num_cols, config.input_size);

@@ -1116,6 +1116,16 @@ void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets
     // Compute loss gradient
     Tensor grad = loss_->Backward(predictions, targets);
 
+    // AfToTensor can flatten trailing-1 dimensions (e.g. [16,1] → [16])
+    // when converting from column-major ArrayFire arrays back to row-major
+    // CyxWiz tensors. The model's backward pass expects the gradient to
+    // match the forward output shape exactly. Re-wrap the raw buffer with
+    // the correct shape if dimensions dropped.
+    if (grad.Shape() != predictions.Shape() &&
+        grad.NumElements() == predictions.NumElements()) {
+        grad = Tensor(predictions.Shape(), grad.Data<float>());
+    }
+
     // Backward through model
     model_->Backward(grad);
 }
