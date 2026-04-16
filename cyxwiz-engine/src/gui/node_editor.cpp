@@ -935,18 +935,18 @@ void NodeEditor::ShowToolbar() {
     ImGui::SameLine();
 
     // Custom Node Editor - opens the panel where users define their own node types
-    if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Node Editor")) {
-        if (open_custom_node_editor_callback_) {
+    if (open_custom_node_editor_callback_) {
+        if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Node Editor")) {
             open_custom_node_editor_callback_();
         }
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Open the Custom Node Editor to create/edit custom node types (pins, parameters, code templates)");
-    }
-    ImGui::SameLine();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open the Custom Node Editor to create/edit custom node types (pins, parameters, code templates)");
+        }
+        ImGui::SameLine();
 
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
+        ImGui::SameLine();
+    }
 
     // Minimap toggle
     if (ImGui::Button(show_minimap_ ? ICON_FA_SITEMAP " Minimap" : ICON_FA_SITEMAP)) {
