@@ -435,6 +435,25 @@ private:
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links
     ) const;
+
+    // Pin-connectivity checks added 2026-04-17 to make the canvas the
+    // source of truth at compile time. Until the architectural
+    // TrainingExecutor pin-walking fix lands (tofix.md), the runtime
+    // still ignores topology — but at least these checks prevent users
+    // from training a graph whose Loss has nothing wired into Targets,
+    // or whose Targets pin is wired to a tensor source that never
+    // touched a Labels output.
+    void ValidateRequiredInputsConnected(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        TrainingConfiguration& config
+    ) const;
+
+    void ValidateLossTargetsReachLabels(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        TrainingConfiguration& config
+    ) const;
 };
 
 } // namespace cyxwiz

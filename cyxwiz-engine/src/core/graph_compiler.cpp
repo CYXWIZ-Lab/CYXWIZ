@@ -10,6 +10,8 @@
 #include <set>
 #include <sstream>
 #include <stack>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace cyxwiz {
 
@@ -96,6 +98,14 @@ TrainingConfiguration GraphCompiler::Compile(
             AddIssue(config, IssueLevel::Error,
                      "Graph contains a cycle - remove circular connections");
         }
+
+        // Pin-connectivity checks. The runtime currently ignores pin
+        // topology (reads dataset_name from registry instead), so a
+        // graph with a disconnected Loss.Targets pin will train
+        // anyway. These checks make the canvas the source of truth at
+        // compile time so users can't ship a visually-broken graph.
+        ValidateRequiredInputsConnected(nodes, links, config);
+        ValidateLossTargetsReachLabels(nodes, links, config);
     }
 
     // Extract dataset configuration
@@ -1559,6 +1569,197 @@ bool GraphCompiler::IsFullyConnected(
     }
 
     return visited.size() == nodes.size();
+}
+
+// ---------------------------------------------------------------------------
+// Pin-connectivity validation
+//
+// The runtime path (TrainingExecutor) currently bypasses graph topology
+// and reads the dataset by name from DataRegistry, so a graph with a
+// disconnected Loss.Targets pin will train anyway and silently produce
+// nonsense gradients. The architectural fix is the multi-day "walk
+// pins, not registry" rewrite tracked in tofix.md. Until that lands,
+// these compile-time checks make the canvas the source of truth: the
+// user can't ship a graph whose required pins are unwired or whose
+// label stream never reaches the loss.
+//
+// The checks here are deliberately conservative — they only flag
+// situations that are unambiguously wrong. Anything that depends on
+// runtime semantics (e.g. "this Tensor pin produces a label-shaped
+// tensor in practice") is left alone to avoid false positives.
+// ---------------------------------------------------------------------------
+
+void GraphCompiler::ValidateRequiredInputsConnected(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    TrainingConfiguration& config) const
+{
+    // Build the set of input pin IDs that have at least one incoming link.
+    std::unordered_set<int> connected_input_pins;
+    connected_input_pins.reserve(links.size());
+    for (const auto& link : links) {
+        connected_input_pins.insert(link.to_pin);
+    }
+
+    // Walk every node's input pins and flag required ones with no incoming
+    // link. Output pins are skipped intentionally — the existing pin
+    // metadata defaults `is_required=true` on every output, which would
+    // generate false positives for legitimately-optional outputs (LSTM's
+    // Hidden, MultiHeadAttention's Attn Weights, DataSplit's Val/Test
+    // streams when the user only trains). When those get explicit
+    // `is_required=false` markers, output validation can join.
+    for (const auto& node : nodes) {
+        for (const auto& pin : node.inputs) {
+            if (!pin.is_required) continue;
+            if (connected_input_pins.count(pin.id) > 0) continue;
+
+            std::ostringstream msg;
+            msg << "Required input pin '" << pin.name
+                << "' on node '" << node.name
+                << "' has no incoming connection";
+            AddIssue(config, IssueLevel::Error, msg.str(),
+                     node.id, node.name);
+        }
+    }
+}
+
+void GraphCompiler::ValidateLossTargetsReachLabels(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    TrainingConfiguration& config) const
+{
+    // Build a quick (node_id, pin_id) → pin lookup so we can recover pin
+    // type during the BFS. NodePin IDs are unique across the graph, so a
+    // flat pin_id → pointer map is enough.
+    std::unordered_map<int, const gui::NodePin*> pin_by_id;
+    std::unordered_map<int, int> pin_to_node;  // pin_id → owning node_id
+    for (const auto& node : nodes) {
+        for (const auto& pin : node.inputs) {
+            pin_by_id[pin.id] = &pin;
+            pin_to_node[pin.id] = node.id;
+        }
+        for (const auto& pin : node.outputs) {
+            pin_by_id[pin.id] = &pin;
+            pin_to_node[pin.id] = node.id;
+        }
+    }
+
+    // Reverse adjacency: input pin ID → list of upstream output pin IDs
+    // feeding it. Lets us walk backwards from any input pin.
+    std::unordered_map<int, std::vector<int>> upstream_outputs;
+    upstream_outputs.reserve(links.size());
+    for (const auto& link : links) {
+        upstream_outputs[link.to_pin].push_back(link.from_pin);
+    }
+
+    // Node-id → vector<input pin id> so that when BFS arrives at a node
+    // (via an output pin), we can step into its inputs and continue the
+    // walk upstream through the node's own inputs.
+    std::unordered_map<int, std::vector<int>> node_input_pins;
+    node_input_pins.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        std::vector<int> ids;
+        ids.reserve(node.inputs.size());
+        for (const auto& pin : node.inputs) ids.push_back(pin.id);
+        node_input_pins[node.id] = std::move(ids);
+    }
+
+    auto is_loss_node = [](gui::NodeType t) {
+        return t == gui::NodeType::MSELoss ||
+               t == gui::NodeType::CrossEntropyLoss ||
+               t == gui::NodeType::BCELoss ||
+               t == gui::NodeType::BCEWithLogits ||
+               t == gui::NodeType::L1Loss ||
+               t == gui::NodeType::SmoothL1Loss ||
+               t == gui::NodeType::HuberLoss ||
+               t == gui::NodeType::NLLLoss;
+    };
+
+    // For each loss node, find its Targets input pin (the one tagged
+    // PinType::Labels) and BFS backwards. If no ancestor output pin is
+    // PinType::Labels, the targets stream isn't real labels — the user
+    // wired Targets to something else (a model layer's Tensor output,
+    // a random preprocessing tensor, etc.). That's the canonical "pin
+    // is fooling user" case.
+    for (const auto& node : nodes) {
+        if (!is_loss_node(node.type)) continue;
+
+        // Identify Targets pin. Every loss node above creates the
+        // Targets input as PinType::Labels (see node_editor_nodes.cpp);
+        // older graphs may have it as PinType::Tensor — fall back to
+        // matching by name.
+        const gui::NodePin* targets_pin = nullptr;
+        for (const auto& pin : node.inputs) {
+            if (pin.type == gui::PinType::Labels) {
+                targets_pin = &pin;
+                break;
+            }
+        }
+        if (!targets_pin) {
+            for (const auto& pin : node.inputs) {
+                if (pin.name == "Targets") {
+                    targets_pin = &pin;
+                    break;
+                }
+            }
+        }
+        if (!targets_pin) continue;  // Loss with no Targets input — can't check.
+
+        // If the Targets pin is unconnected, the required-input check
+        // will have already flagged it; skip to avoid duplicate errors.
+        if (upstream_outputs.find(targets_pin->id) == upstream_outputs.end()) {
+            continue;
+        }
+
+        // BFS backwards from targets_pin. State is the queue of input
+        // pin IDs to walk upstream from. visited tracks visited input
+        // pin IDs to bound the walk.
+        std::queue<int> queue;
+        std::unordered_set<int> visited_inputs;
+        queue.push(targets_pin->id);
+        visited_inputs.insert(targets_pin->id);
+
+        bool found_labels_source = false;
+        while (!queue.empty() && !found_labels_source) {
+            int input_pin_id = queue.front();
+            queue.pop();
+
+            auto it = upstream_outputs.find(input_pin_id);
+            if (it == upstream_outputs.end()) continue;
+
+            for (int upstream_out_pin_id : it->second) {
+                auto pin_it = pin_by_id.find(upstream_out_pin_id);
+                if (pin_it == pin_by_id.end()) continue;
+                if (pin_it->second->type == gui::PinType::Labels) {
+                    found_labels_source = true;
+                    break;
+                }
+                // Not a Labels source itself — keep walking upstream
+                // through this output pin's owning node's inputs.
+                auto owner_it = pin_to_node.find(upstream_out_pin_id);
+                if (owner_it == pin_to_node.end()) continue;
+                auto inputs_it = node_input_pins.find(owner_it->second);
+                if (inputs_it == node_input_pins.end()) continue;
+                for (int upstream_in_pin_id : inputs_it->second) {
+                    if (visited_inputs.insert(upstream_in_pin_id).second) {
+                        queue.push(upstream_in_pin_id);
+                    }
+                }
+            }
+        }
+
+        if (!found_labels_source) {
+            std::ostringstream msg;
+            msg << "Loss node '" << node.name
+                << "' has its Targets pin wired, but the upstream chain "
+                   "never passes through a Labels-typed pin "
+                   "(DataInput.Labels, DataSplit.*Labels, or "
+                   "DataLoader.Labels). The model is being trained "
+                   "against the wrong stream.";
+            AddIssue(config, IssueLevel::Error, msg.str(),
+                     node.id, node.name);
+        }
+    }
 }
 
 } // namespace cyxwiz
