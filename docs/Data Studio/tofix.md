@@ -146,6 +146,57 @@ DataInput node. Image datasets (file_category="image") skip the
 warning — their labels come from folder structure or CSV mapping.
 See `graph_compiler.cpp` Check 3.
 
+### Local Debug — pre-train validation with synthetic data (2026-04-16)
+
+**Severity:** Feature request — closes a real class of "discovered at
+train time, should have been caught earlier" errors.
+
+**Idea:** A third validation tier between the existing Compile button
+and the actual Train button. The flow becomes:
+
+```
+Compile         →  Local Debug       →  Train
+(structural)    (runtime, synthetic)   (runtime, real data)
+```
+
+**What Compile checks today:** graph structure, DataInput data_loaded,
+dataset registry presence, label column, DataSplit ratios, batch_size
+bounds. Static analysis only — doesn't actually run any tensors.
+
+**What Local Debug would add:**
+- Generate synthetic input tensors matching the compiled
+  `TrainingConfiguration::input_shape` (zeros / ones / random).
+- Run ONE forward pass through the built model with the stub data.
+- Assert per-layer output shapes against what the compiler predicted.
+- Compute the loss on stub targets to confirm the loss node accepts
+  the output shape.
+- Run ONE backward pass + optimizer step to confirm gradients flow
+  and no AF-backend crashes / dtype mismatches / weight init failures.
+- Report: "Forward OK, loss=X, backward OK, all shapes match" — or
+  surface the first mismatch (layer name, expected shape, actual
+  shape) in the same popup the Compile button uses.
+
+**Why it matters:** today the user clicks Train, the engine burns ~30s
+loading the dataset, THEN crashes at epoch 0 step 0 on a shape
+mismatch. Local Debug catches the same failure in ~200ms with zero
+dataset I/O. Same compiler output, same model builder, same optimizer
+— just a synthetic single-batch dry run.
+
+**Wiring sketch:**
+- New button in the toolbar next to Compile / Train.
+- Reuses `GraphCompiler::Compile` → `BuildCompileResult` → model
+  builder → `TrainingExecutor` but with an in-memory synthetic
+  `ArrowDatasetBatcher` yielding one deterministic batch.
+- Surfaces issues via the existing `TrainingConfiguration::issues`
+  vector, extended with a `LocalDebug` severity level if needed.
+- No network, no Central Server, no reservation — runs entirely
+  local like Compile does.
+
+**Why this is tofix not a direct implementation ask:** non-trivial
+(requires a synthetic-data batcher, hooking model forward/backward
+into a one-shot driver, surfacing per-layer shape trace in the UI).
+Tracked here so it's not forgotten.
+
 ---
 
 ## Generic Parameter Editor
@@ -455,6 +506,83 @@ requires a ground-up rewrite of the tensor plumbing.
 Option C from the design doc: `DataInput` produces file references,
 a `Decode` node reads the bytes and produces the raw tensor. Maximum
 composability but adds a required node everyone will forget. Also v3.
+
+---
+
+## Studio ⇄ Engine Integration (2026-04-16)
+
+**Severity:** Feature request — Studio and Engine's node editor
+currently live in separate panes with no cross-navigation. Users
+must hunt for the Node Editor in the Engine toolbar after doing
+exploratory work in Studio.
+
+### Open Node Editor from CyxWiz Studio
+
+**Idea:** Add a button in CyxWiz Studio that opens (or focuses) the
+Engine's Node Editor panel. One click instead of toolbar hunting.
+
+**Wiring sketch:**
+- Studio toolbar button (icon + tooltip: "Open Node Editor").
+- Click handler: same path as the Engine toolbar entry that opens
+  `NodeEditor` (look at where `main_window.cpp` raises the panel).
+- If the panel is already open, focus it (ImGui::SetWindowFocus).
+- If closed, toggle its visibility flag.
+- Same pattern works for other cross-pane buttons (Query Console
+  below, Training Dashboard, Dataset Manager).
+
+### Query Console in CyxWiz Studio
+
+**Idea:** A modal / docked console in Studio where the user can type
+SQL-like queries to inspect and update the current graph. Much
+faster than opening Properties and clicking through nodes one by
+one when bulk-editing.
+
+**Use cases:**
+```sql
+-- Inspect:
+SELECT id, type, name, parameters.learning_rate FROM nodes
+  WHERE type = 'Adam';
+
+SELECT id, name FROM nodes WHERE connected_to = 'DataInput';
+
+-- Bulk update:
+UPDATE nodes SET parameters.learning_rate = 0.01 WHERE type = 'Adam';
+UPDATE nodes SET parameters.batch_size = 64
+  WHERE type = 'DataLoader';
+
+-- Connection audit:
+SELECT start_pin, end_pin, start_node, end_node FROM links
+  WHERE start_node.type = 'Dense';
+```
+
+**Wiring sketch:**
+- New Studio panel (`QueryConsolePanel`) with ImGui text input +
+  result table.
+- Query grammar: subset of SQL — SELECT / UPDATE over the `nodes`
+  and `links` virtual tables. No joins in v1.
+- Backend: iterate the engine's `NodeEditor::GetNodes()` /
+  `GetLinks()`, apply the WHERE clause as an in-memory filter, then
+  project or mutate. Mutations dirty-flag the graph for re-save.
+- DuckDB could host the query engine if we want full SQL — there's
+  precedent in the Data Studio Phase 4 roadmap which integrated
+  DuckDB for the Query Editor. Reuse that dependency.
+- Output: ImGui table with selectable rows; double-click a row to
+  focus that node in the Node Editor (if open).
+
+### Why these two together
+
+The common thread is **Studio should be a dashboard, not a dead-end
+tab**. Today it shows data but can't reach across to the graph
+that processes the data. The two buttons (Node Editor open, Query
+Console) plus the existing Training Dashboard button would make
+Studio the natural hub for exploratory → pipeline-editing →
+training workflows.
+
+**Severity note:** Neither is a bug; both are UX / developer-
+productivity wins. Scope-wise, Open Node Editor is ~1 hour
+(button + existing panel-raise path). Query Console is a
+multi-session lift — grammar / parser / engine-NodeEditor bridge
+/ mutation safety / undo integration.
 
 ---
 
