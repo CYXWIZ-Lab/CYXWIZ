@@ -724,7 +724,17 @@ void DataInputDialog::Apply() {
         apply_in_progress_ = false;
         has_changes_ = false;
         return;
-    } else if (source_type_ == SourceType::File && strlen(file_path_) > 0) {
+    } else if (source_type_ == SourceType::File && strlen(file_path_) > 0 &&
+               (file_category_ == FileCategory::Tabular ||
+                file_category_ == FileCategory::TimeSeries)) {
+        // Category gate added 2026-04-17. Previously this branch caught
+        // any File source with a non-empty file_path_, which meant an
+        // Image / Audio / Text node with a stale file_path_ value from
+        // a previous session would fall through to LoadTabularCSV and
+        // fail with "cannot stat 'dataset.csv'". The category gate
+        // forces the dispatch to fall through to the category-specific
+        // branch below (Image / Audio folder loads) when the user has
+        // explicitly chosen a non-tabular category.
         auto& registry = cyxwiz::DataRegistry::Instance();
 
         // Capture the OLD dataset_name (from the previous Apply, if any)
