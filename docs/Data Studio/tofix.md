@@ -1257,6 +1257,104 @@ revisit AF as a perf pass.
 
 ---
 
+## DataInputDialog::Apply is a 700-line category switch (2026-04-17)
+
+**Severity:** High (architectural) — every new data type ends up
+pattern-copying the async contract from one of the others, drifts
+on some subtle per-category field, and the next category to land
+repeats the cycle. Surfaced today during the image + audio async
+work: turning image from sync to async required hand-duplicating
+~80% of the text-async code block, then audio required
+hand-duplicating ~80% of the image-async code block. Four nearly-
+identical async worker bodies now live in the file, each with
+subtle per-category differences that mask drift.
+
+**Current shape:**
+
+```cpp
+void DataInputDialog::Apply() {
+    // ~100 lines of tabular path
+    // ~150 lines of text async path
+    // ~150 lines of image async path
+    // ~150 lines of audio async path
+    // ~50 lines of ML dataset / database / cloud paths
+    // ... all as one flat if/else if chain with positional dispatch
+}
+
+void DataInputDialog::PollAsyncLoadResult() {
+    // switch on backend (1 tabular, 2 parquet, 3 image, 4 audio, 5 text)
+    // hand-coded per-backend description + status text
+}
+```
+
+Problems:
+- Dispatch order is fragile. The tabular branch had no
+  `file_category_` check until `d4d4fe02` added one, which is why
+  a stale `file_path_` routed image Applys to LoadTabularCSV.
+- `AsyncLoadState` has per-category fields (vocab_size, num_classes)
+  that only some backends populate, and PollAsyncLoadResult
+  switches on the backend tag to decide which are real.
+- Adding a video or cloud-image loader = another ~150 line block
+  that re-implements the same state snapshot + worker + result
+  drain pattern.
+
+**Correct shape (proposed):**
+
+```cpp
+class DataLoader {                         // abstract
+public:
+    virtual bool Validate(ApplyContext&, std::string& err) = 0;
+    virtual void LaunchAsync(ApplyContext&,
+                             std::shared_ptr<AsyncLoadState>) = 0;
+    virtual void OnResult(AsyncLoadState&, MLNode&) = 0;
+    virtual int  Backend() const = 0;       // the backend tag
+    virtual std::string Name() const = 0;   // for logs / status
+};
+
+class TabularLoader : public DataLoader { ... };
+class TextLoader    : public DataLoader { ... };
+class ImageLoader   : public DataLoader { ... };
+class AudioLoader   : public DataLoader { ... };
+// future: VideoLoader, CloudImageLoader, ... — one class each.
+```
+
+`DataInputDialog::Apply` collapses to:
+
+```cpp
+auto loader = GetLoaderForCategory(source_type_, file_category_);
+std::string err;
+if (!loader->Validate(ctx, err)) { ShowError(err); return; }
+auto state = std::make_shared<AsyncLoadState>();
+async_load_state_ = state;
+is_loading_async_ = true;
+loader->LaunchAsync(ctx, state);
+```
+
+`PollAsyncLoadResult` becomes a single `loader->OnResult(*state,
+*node_)` call.
+
+**Scope:** ~4-6h of careful extraction. The 80% duplicate code has
+real per-category differences (async vs sync, validation rules,
+state fields) that all need to survive. Needs a test pass per
+category before landing to catch regressions.
+
+**Related cleanups worth bundling:**
+- Move the `AsyncLoadState` per-backend fields into a union /
+  variant so only valid fields are reachable per backend.
+- `ApplyContext` struct as a single capture surface — eliminates
+  the "snapshot 14 individual variables for the lambda" pattern.
+- `loaded_backend_` integer tag can become a `DataLoader*`
+  directly once the classes exist.
+
+**How this came up:** After landing image-async (`4fccf5bb`) and
+audio-async (commit pending), the user pointed out we're just
+copy-pasting features without any design. They're right — every
+category path is a near-duplicate, and that's why "fix here
+breaks there" kept happening this session. The refactor is the
+root cleanup; do it before adding any more data types.
+
+---
+
 ## Node registration is split across three hand-maintained lists (2026-04-17)
 
 **Severity:** High (architectural) — violates DRY and is the direct
