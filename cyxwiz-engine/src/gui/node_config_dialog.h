@@ -46,6 +46,13 @@ public:
     // Cancel stays enabled regardless.
     virtual bool IsBusy() const { return false; }
 
+    // Optional graph context. Properties.cpp sets this right after
+    // constructing a dialog so visualization / inspection dialogs can
+    // walk upstream pins to auto-populate dataset hints. Most dialogs
+    // ignore it. Stored as a raw pointer — the NodeEditor outlives the
+    // Properties panel.
+    void SetNodeEditor(NodeEditor* editor) { node_editor_ = editor; }
+
 protected:
     virtual void RenderContent() = 0;
     void RenderSettingsTab();
@@ -56,6 +63,7 @@ protected:
 
     std::string title_;
     MLNode* node_;
+    NodeEditor* node_editor_ = nullptr;  // Optional, set by Properties.
     bool is_open_ = false;
     bool first_open_ = true;
     int current_tab_ = 0;

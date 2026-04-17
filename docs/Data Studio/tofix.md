@@ -1241,6 +1241,63 @@ revisit AF as a perf pass.
 
 ---
 
+## Node registration is split across three hand-maintained lists (2026-04-17)
+
+**Severity:** High (architectural) — violates DRY and is the direct
+cause of "added a node but the browser is empty / the search menu
+doesn't find it / the right-click menu can't add it" bugs. Surfaced
+today when the new BarChart node got registered in two of the three
+lists and the third silently wasn't updated.
+
+**The three sources of truth for "this NodeType exists":**
+
+| Consumer | Source file | Mechanism |
+|---|---|---|
+| Node Browser panel (cards, icons, descriptions, pin/param metadata) | `cyxwiz-engine/src/core/node_metadata_registry.cpp` — `InitializeDataSourceNodes()`, `InitializeLayerNodes()`, `InitializeVisualizationNodes()`, etc. Plus JSON templates under `resources/node_templates/` | Hand-coded `RegisterNode(...)` calls per category |
+| Search palette (Ctrl+Space / type-to-find overlay) | `cyxwiz-engine/src/gui/node_editor_add_search.cpp` — `BuildSearchableNodes()` | Hand-coded `addNode(type, name, category, keywords)` calls — ~300 lines of repetition |
+| Right-click context menu → Add submenu | `cyxwiz-engine/src/gui/node_editor_context_menu.cpp` — around line 447 | Hand-coded `{NodeType::X, "Display Name"}` entries grouped by category |
+
+Adding a new NodeType = **three manual edits**, each in a different
+format, each silently falling through to "not visible" if omitted.
+Two related bugs from this pattern are already tracked in tofix:
+- The `StringToNodeType` dual map (CLAUDE.md warning) — cyxgraph
+  loading needs entries in BOTH `node_editor_io.cpp:20` AND
+  `pattern_library.cpp:331`.
+- The Tool-to-Node migration entry below (~40 NodeTypes with
+  standalone panels) is partly the same class of drift.
+
+**Fix (clean architecture, ~1-2h):**
+
+Make `NodeMetadataRegistry` the single source of truth. Rewrite
+the other two consumers to iterate it:
+- `BuildSearchableNodes()` becomes a ~20-line loop over
+  `registry.GetAll()` extracting name/category/keywords into
+  `SearchableNode`.
+- The context-menu builder iterates `registry.GetByCategory(cat)`
+  for each menu sub-heading instead of the hand-coded list.
+
+Once that lands, adding a new NodeType = **one** `RegisterNode(...)`
+call + a creation case in `node_editor_nodes.cpp`. All three UIs
+pick it up automatically. The JSON template loader already exists
+alongside C++ registration so declarative additions keep working.
+
+**Related cleanups worth bundling:**
+- The `StringToNodeType` dual maps (cyxgraph load) could consume
+  the same registry instead of two separate switch tables.
+- `ShouldShowOpenDialogButton` (node_config_dialog.cpp:970) is a
+  fourth hand-maintained whitelist. Could derive from
+  "is this NodeType registered with a dialog factory?" instead.
+
+**How this came up:** Shipping BarChart today required manual edits
+to `node_metadata_registry.cpp` (browser), `node_editor_add_search.
+cpp` (search — was already there), and a dialog whitelist fourth
+place. One of them missed initially (browser), surfaced only when
+the user tested and saw the node wasn't in the panel. The fix is
+unglamorous plumbing but pays back every single time a new node
+type is added. Do this before the Tool-to-Node migration below.
+
+---
+
 ## Tool-to-Node Migration — ~40 NodeTypes with standalone panels but no graph integration
 
 **Severity:** HIGH (architectural) — this is the biggest consistency gap

@@ -2197,6 +2197,10 @@ void Properties::RenderOpenDialogButton(MLNode& node) {
         // Create and open the dialog for this node
         active_dialog_ = NodeConfigDialogFactory::Instance().CreateDialog(&node);
         if (active_dialog_) {
+            // Pass the graph context so visualization / inspection
+            // dialogs can walk upstream pins for auto-populating
+            // dataset hints. Most dialogs ignore this.
+            active_dialog_->SetNodeEditor(node_editor_);
             active_dialog_->Open();
             spdlog::info("Opened configuration dialog for node '{}'", node.name);
         }

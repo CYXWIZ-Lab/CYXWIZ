@@ -40,6 +40,12 @@ private:
     // key skips repeat work when neither dataset nor column changed.
     void ComputeDistribution();
 
+    // Walk upstream pins from this BarChart node to find a DataInput
+    // ancestor; if found, return its dataset_name parameter. Empty
+    // string if no upstream DataInput. Uses node_editor_ from the base
+    // class; no-op when the editor pointer is null.
+    std::string FindUpstreamDatasetName() const;
+
     // Dialog state (mirrors node params; written back on Apply).
     std::string dataset_name_;
     std::string column_;

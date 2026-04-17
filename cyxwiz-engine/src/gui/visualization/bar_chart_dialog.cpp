@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <map>
+#include <queue>
+#include <unordered_set>
 
 namespace gui::visualization {
 
@@ -85,6 +87,57 @@ BarChartDialog::BarChartDialog(MLNode* node)
     Reset();
 }
 
+std::string BarChartDialog::FindUpstreamDatasetName() const {
+    // BFS upstream from this BarChart node through the graph's link
+    // topology, following to_node → from_node edges. Stop at the first
+    // ancestor with NodeType::DataInput or DatasetInput and return its
+    // dataset_name parameter. Bounded by visited set so cycles (which
+    // the compile gate already rejects) can't infinite-loop.
+    if (!node_editor_ || !node_) return {};
+
+    const auto& nodes = node_editor_->GetNodes();
+    const auto& links = node_editor_->GetLinks();
+
+    // node_id → node* for O(1) lookup.
+    std::unordered_map<int, const MLNode*> node_by_id;
+    node_by_id.reserve(nodes.size());
+    for (const auto& n : nodes) node_by_id[n.id] = &n;
+
+    // Reverse adjacency: to_node → list of from_node IDs.
+    std::unordered_map<int, std::vector<int>> upstream;
+    for (const auto& link : links) {
+        upstream[link.to_node].push_back(link.from_node);
+    }
+
+    std::queue<int> queue;
+    std::unordered_set<int> visited;
+    queue.push(node_->id);
+    visited.insert(node_->id);
+
+    while (!queue.empty()) {
+        int id = queue.front();
+        queue.pop();
+
+        auto it = upstream.find(id);
+        if (it == upstream.end()) continue;
+        for (int up_id : it->second) {
+            if (!visited.insert(up_id).second) continue;
+            auto n_it = node_by_id.find(up_id);
+            if (n_it == node_by_id.end()) continue;
+            const MLNode* n = n_it->second;
+            if (n->type == NodeType::DataInput ||
+                n->type == NodeType::DatasetInput) {
+                auto p = n->parameters.find("dataset_name");
+                if (p != n->parameters.end() && !p->second.empty()) {
+                    return p->second;
+                }
+            }
+            queue.push(up_id);
+        }
+    }
+    return {};
+}
+
 void BarChartDialog::Apply() {
     if (!node_) return;
     node_->parameters["chart_type"] = chart_type_;
@@ -117,6 +170,23 @@ void BarChartDialog::Reset() {
 }
 
 void BarChartDialog::RenderContent() {
+    // First render after Open: if the node has no dataset hint but
+    // there's an upstream DataInput we can see, auto-populate. Users
+    // who explicitly wired DataInput → BarChart get the expected
+    // "dataset already selected" feel without needing to pick in the
+    // dropdown. first_open_ is cleared by the base Render() after
+    // the first pass.
+    if (first_open_ && dataset_name_.empty()) {
+        std::string upstream = FindUpstreamDatasetName();
+        if (!upstream.empty()) {
+            dataset_name_ = upstream;
+            cache_key_.clear();  // force recompute with new dataset
+            has_changes_ = true;
+            spdlog::info("[BarChartDialog] auto-populated dataset "
+                         "'{}' from upstream DataInput", upstream);
+        }
+    }
+
     RenderConfigPanel();
     ImGui::Separator();
     RenderChart();
