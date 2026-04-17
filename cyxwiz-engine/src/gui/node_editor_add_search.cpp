@@ -3,6 +3,8 @@
 
 #include "node_editor.h"
 #include "icons.h"
+#include "../core/node_metadata.h"
+#include "../core/node_metadata_registry.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -75,237 +77,56 @@ int NodeEditor::FuzzyMatch(const std::string& pattern, const std::string& str) {
     return score;
 }
 
-// Initialize the searchable nodes list with all available node types
+// Initialize the searchable nodes list with all available node types.
+//
+// As of 2026-04-17 this reads from `NodeMetadataRegistry` instead of a
+// hand-coded list of ~300 addNode() calls — the registry is now the
+// single source of truth for which nodes exist (see
+// docs/plans/node_registration_unification.md). The old hand-coded
+// list drifted from the browser (BarChart shipped but was invisible
+// in the Nodes panel) and was the direct cause of the "registered in
+// two of three places" bug class.
+//
+// Plugin-provided nodes stay on their existing runtime-registration
+// path — PluginNodeRegistry is a separate concern that doesn't flow
+// through NodeMetadataRegistry.
 void NodeEditor::InitializeSearchableNodes() {
     if (searchable_nodes_initialized_) return;
 
     all_searchable_nodes_.clear();
 
-    // Helper lambda to add an implemented node
-    auto addNode = [this](NodeType type, const std::string& name, const std::string& category, const std::string& keywords = "") {
-        SearchableNode node;
-        node.type = type;
-        node.name = name;
-        node.category = category;
-        node.keywords = keywords;
-        node.status = NodeImplementationStatus::Implemented;
-        all_searchable_nodes_.push_back(std::move(node));
+    auto join_keywords = [](const std::vector<std::string>& kws) {
+        std::string out;
+        for (size_t i = 0; i < kws.size(); ++i) {
+            if (i) out.push_back(' ');
+            out += kws[i];
+        }
+        return out;
     };
 
-    // Helper lambda to add a template/coming soon node
-    auto addTemplateNode = [this](const std::string& name, const std::string& category, const std::string& keywords, const std::string& description, const std::string& tooltip = "Planned for future release") {
-        SearchableNode node;
-        node.type = NodeType::Unknown;  // Template nodes use Unknown type
-        node.name = name;
-        node.category = category;
-        node.keywords = keywords;
-        node.status = NodeImplementationStatus::Template;
-        node.description = description;
-        node.tooltip = tooltip;
-        all_searchable_nodes_.push_back(std::move(node));
-    };
+    auto& reg = cyxwiz::NodeMetadataRegistry::Instance();
+    if (!reg.IsInitialized()) reg.Initialize();
 
-    // Smart I/O Nodes (Universal - DataInput handles both files and datasets)
-    addNode(NodeType::DataInput, "Data Input", "Input/Output", "csv excel json parquet hdf5 load import read file data source input dataset mnist cifar imagenet huggingface kaggle");
-    addNode(NodeType::DataOutput, "Data Output", "Input/Output", "csv excel json parquet hdf5 save export write file data output");
-    addNode(NodeType::Output, "Output", "Input/Output", "data out end result");
+    // Walk every registered node. include_templates=true so the JSON
+    // template entries under resources/node_templates/*.json show up
+    // with the "Coming Soon" status — the click handler at line 595
+    // short-circuits on status == Template so they display in the
+    // dropdown but can't actually be added to the graph.
+    for (const auto& cat : reg.GetCategories()) {
+        for (const auto* meta : reg.GetByCategory(cat, /*include_templates=*/true)) {
+            if (!meta) continue;
+            SearchableNode node;
+            node.type = meta->type;
+            node.name = meta->name;
+            node.category = cyxwiz::GetCategoryDisplayName(cat);
+            node.keywords = join_keywords(meta->keywords);
+            node.status = meta->status;
+            node.description = meta->brief_description;
+            node.tooltip = meta->help_text;
+            all_searchable_nodes_.push_back(std::move(node));
+        }
+    }
 
-    // Data Pipeline (DatasetInput consolidated into DataInput)
-    addNode(NodeType::DataLoader, "DataLoader", "Data Pipeline", "batch iterator shuffle loader");
-    addNode(NodeType::Augmentation, "Augmentation", "Data Pipeline", "transform augment preprocess");
-    addNode(NodeType::DataSplit, "Train/Val/Test Split", "Data Pipeline", "train val test split partition datasplit traintestsplit");
-    addNode(NodeType::TensorReshape, "TensorReshape", "Data Pipeline", "reshape tensor dimensions");
-    addNode(NodeType::Normalize, "Normalize", "Data Pipeline", "normalize mean std scale");
-    addNode(NodeType::OneHotEncode, "OneHotEncode", "Data Pipeline", "one hot encoding labels categorical");
-
-    // Image Transforms (Phase 1)
-    addNode(NodeType::Resize, "Resize", "Image Transforms", "resize scale image width height dimensions");
-    addNode(NodeType::CenterCrop, "CenterCrop", "Image Transforms", "crop center image");
-    addNode(NodeType::RandomCrop, "RandomCrop", "Image Transforms", "crop random augment image");
-    addNode(NodeType::HorizontalFlip, "HorizontalFlip", "Image Transforms", "flip horizontal mirror augment image");
-    addNode(NodeType::VerticalFlip, "VerticalFlip", "Image Transforms", "flip vertical augment image");
-    addNode(NodeType::ImageRotate, "Rotate", "Image Transforms", "rotate angle augment image");
-    addNode(NodeType::ColorJitter, "ColorJitter", "Image Transforms", "color brightness contrast saturation hue augment image");
-    addNode(NodeType::ImageGaussianBlur, "GaussianBlur", "Image Transforms", "blur gaussian smooth image");
-    addNode(NodeType::Grayscale, "Grayscale", "Image Transforms", "grayscale gray single channel image");
-
-    // Text Processing
-    addNode(NodeType::TextTokenizer, "TextTokenizer", "Text Processing", "tokenize text nlp word bpe encode");
-    addNode(NodeType::TextVocabulary, "TextVocabulary", "Text Processing", "vocabulary word index mapping nlp");
-    addNode(NodeType::TextPadding, "TextPadding", "Text Processing", "pad truncate sequence length nlp");
-
-    // Upsampling
-    addNode(NodeType::ConvTranspose2D, "ConvTranspose2D", "Layers > Upsampling", "deconvolution transposed upsample decoder");
-    addNode(NodeType::Upsample, "Upsample", "Layers > Upsampling", "nearest bilinear interpolation resize upscale");
-    addNode(NodeType::PixelShuffle, "PixelShuffle", "Layers > Upsampling", "sub pixel shuffle super resolution");
-
-    // Time-Series
-    addNode(NodeType::TimeSeriesWindow, "TimeSeriesWindow", "Time-Series", "sliding window lookback forecast sequential");
-    addNode(NodeType::TimeSeriesFeatures, "TimeSeriesFeatures", "Time-Series", "lag rolling diff feature engineering");
-    addNode(NodeType::TimeSeriesSplit, "TimeSeriesSplit", "Time-Series", "chronological train val test time split");
-
-    // Audio Processing
-    addNode(NodeType::AudioInput, "AudioInput", "Audio Processing", "audio wav mp3 load sound");
-    addNode(NodeType::Spectrogram, "Spectrogram", "Audio Processing", "fft frequency spectrum audio");
-    addNode(NodeType::MelSpectrogram, "MelSpectrogram", "Audio Processing", "mel frequency spectrogram audio");
-    addNode(NodeType::MFCC, "MFCC", "Audio Processing", "mfcc cepstral coefficients audio speech");
-    addNode(NodeType::AudioAugmentation, "AudioAugmentation", "Audio Processing", "noise pitch stretch augment audio");
-
-    // Reinforcement Learning
-    addNode(NodeType::GymEnvironment, "GymEnvironment", "Reinforcement Learning", "gym openai atari cartpole environment rl");
-    addNode(NodeType::ReplayBufferNode, "ReplayBuffer", "Reinforcement Learning", "experience replay buffer memory rl");
-    addNode(NodeType::PolicyNetwork, "PolicyNetwork", "Reinforcement Learning", "actor policy network rl agent");
-    addNode(NodeType::ValueNetwork, "ValueNetwork", "Reinforcement Learning", "critic value network rl baseline");
-    addNode(NodeType::RLTraining, "RLTraining", "Reinforcement Learning", "reinforcement learning training loop episode");
-
-    // Layers > Dense/Linear
-    addNode(NodeType::Dense, "Dense", "Layers > Dense/Linear", "fully connected linear fc nn");
-    addNode(NodeType::Embedding, "Embedding", "Layers > Dense/Linear", "word vector lookup nlp");
-
-    // Layers > Convolutional
-    addNode(NodeType::Conv1D, "Conv1D", "Layers > Convolution", "convolution 1d sequence temporal");
-    addNode(NodeType::Conv2D, "Conv2D", "Layers > Convolution", "convolution 2d image cnn filter");
-    addNode(NodeType::Conv3D, "Conv3D", "Layers > Convolution", "convolution 3d volume video");
-    addNode(NodeType::DepthwiseConv2D, "DepthwiseConv2D", "Layers > Convolution", "depthwise separable mobile");
-
-    // Layers > Pooling
-    addNode(NodeType::MaxPool2D, "MaxPool2D", "Layers > Pooling", "max pooling downsample");
-    addNode(NodeType::AvgPool2D, "AvgPool2D", "Layers > Pooling", "average pooling downsample mean");
-    addNode(NodeType::GlobalMaxPool, "GlobalMaxPool", "Layers > Pooling", "global max pooling");
-    addNode(NodeType::GlobalAvgPool, "GlobalAvgPool", "Layers > Pooling", "global average pooling gap");
-    addNode(NodeType::AdaptiveAvgPool, "AdaptiveAvgPool", "Layers > Pooling", "adaptive pooling output size");
-
-    // Layers > Normalization
-    addNode(NodeType::BatchNorm, "BatchNorm", "Layers > Normalization", "batch normalization bn");
-    addNode(NodeType::LayerNorm, "LayerNorm", "Layers > Normalization", "layer normalization ln transformer");
-    addNode(NodeType::GroupNorm, "GroupNorm", "Layers > Normalization", "group normalization gn");
-    addNode(NodeType::InstanceNorm, "InstanceNorm", "Layers > Normalization", "instance normalization style");
-
-    // Layers > Regularization & Reshape
-    addNode(NodeType::Dropout, "Dropout", "Layers > Regularization", "regularization prevent overfit");
-    addNode(NodeType::Flatten, "Flatten", "Layers > Reshape", "flatten reshape 1d vector");
-
-    // Shape Operations
-    addNode(NodeType::Reshape, "Reshape", "Shape Operations", "reshape view dimensions");
-    addNode(NodeType::Permute, "Permute", "Shape Operations", "permute transpose axes");
-    addNode(NodeType::Squeeze, "Squeeze", "Shape Operations", "squeeze remove dimension");
-    addNode(NodeType::Unsqueeze, "Unsqueeze", "Shape Operations", "unsqueeze add dimension expand");
-    addNode(NodeType::View, "View", "Shape Operations", "view reshape tensor");
-    addNode(NodeType::Split, "Split", "Shape Operations", "split divide chunk");
-
-    // Activations
-    addNode(NodeType::ReLU, "ReLU", "Activations", "relu rectified linear activation");
-    addNode(NodeType::LeakyReLU, "LeakyReLU", "Activations", "leaky relu activation negative slope");
-    addNode(NodeType::PReLU, "PReLU", "Activations", "prelu parametric relu learnable");
-    addNode(NodeType::ELU, "ELU", "Activations", "elu exponential linear activation");
-    addNode(NodeType::SELU, "SELU", "Activations", "selu scaled exponential linear");
-    addNode(NodeType::GELU, "GELU", "Activations", "gelu gaussian error linear bert gpt");
-    addNode(NodeType::Swish, "Swish", "Activations", "swish silu activation efficient");
-    addNode(NodeType::Mish, "Mish", "Activations", "mish activation smooth");
-    addNode(NodeType::Sigmoid, "Sigmoid", "Activations", "sigmoid logistic activation");
-    addNode(NodeType::Tanh, "Tanh", "Activations", "tanh hyperbolic tangent activation");
-    addNode(NodeType::Softmax, "Softmax", "Activations", "softmax probability distribution classification");
-
-    // Recurrent
-    addNode(NodeType::RNN, "RNN", "Recurrent", "rnn recurrent neural network vanilla");
-    addNode(NodeType::LSTM, "LSTM", "Recurrent", "lstm long short term memory rnn sequence");
-    addNode(NodeType::GRU, "GRU", "Recurrent", "gru gated recurrent unit rnn sequence");
-    addNode(NodeType::Bidirectional, "Bidirectional", "Recurrent", "bidirectional forward backward rnn");
-    addNode(NodeType::TimeDistributed, "TimeDistributed", "Recurrent", "time distributed wrapper sequence");
-
-    // Attention & Transformer
-    addNode(NodeType::MultiHeadAttention, "MultiHeadAttention", "Attention", "multi head attention transformer mha");
-    addNode(NodeType::SelfAttention, "SelfAttention", "Attention", "self attention query key value");
-    addNode(NodeType::CrossAttention, "CrossAttention", "Attention", "cross attention encoder decoder");
-    addNode(NodeType::LinearAttention, "LinearAttention", "Attention", "linear attention performer efficient");
-    addNode(NodeType::TransformerEncoder, "TransformerEncoder", "Transformer", "transformer encoder layer bert");
-    addNode(NodeType::TransformerDecoder, "TransformerDecoder", "Transformer", "transformer decoder layer gpt");
-    addNode(NodeType::PositionalEncoding, "PositionalEncoding", "Transformer", "positional encoding sinusoidal");
-
-    // Merge Operations
-    addNode(NodeType::Add, "Add", "Merge Operations", "add sum residual skip connection");
-    addNode(NodeType::Multiply, "Multiply", "Merge Operations", "multiply element wise product");
-    addNode(NodeType::Concatenate, "Concatenate", "Merge Operations", "concat join merge axis");
-    addNode(NodeType::Average, "Average", "Merge Operations", "average mean merge");
-
-    // Loss Functions
-    addNode(NodeType::MSELoss, "MSELoss", "Loss Functions", "mse mean squared error l2 regression");
-    addNode(NodeType::CrossEntropyLoss, "CrossEntropyLoss", "Loss Functions", "cross entropy classification softmax");
-    addNode(NodeType::BCELoss, "BCELoss", "Loss Functions", "bce binary cross entropy sigmoid");
-    addNode(NodeType::BCEWithLogits, "BCEWithLogits", "Loss Functions", "bce with logits binary classification");
-    addNode(NodeType::L1Loss, "L1Loss", "Loss Functions", "l1 mae mean absolute error");
-    addNode(NodeType::SmoothL1Loss, "SmoothL1Loss", "Loss Functions", "smooth l1 huber robust");
-    addNode(NodeType::HuberLoss, "HuberLoss", "Loss Functions", "huber loss robust regression");
-    addNode(NodeType::NLLLoss, "NLLLoss", "Loss Functions", "nll negative log likelihood");
-
-    // Optimizers
-    addNode(NodeType::SGD, "SGD", "Optimizers", "sgd stochastic gradient descent momentum");
-    addNode(NodeType::Adam, "Adam", "Optimizers", "adam adaptive moment estimation");
-    addNode(NodeType::AdamW, "AdamW", "Optimizers", "adamw weight decay decoupled");
-    addNode(NodeType::RMSprop, "RMSprop", "Optimizers", "rmsprop root mean square propagation");
-    addNode(NodeType::Adagrad, "Adagrad", "Optimizers", "adagrad adaptive gradient");
-    addNode(NodeType::NAdam, "NAdam", "Optimizers", "nadam nesterov adam");
-
-    // Schedulers
-    addNode(NodeType::StepLR, "StepLR", "Schedulers", "step lr learning rate decay");
-    addNode(NodeType::ExponentialLR, "ExponentialLR", "Schedulers", "exponential lr decay gamma");
-    addNode(NodeType::CosineAnnealing, "CosineAnnealing", "Schedulers", "cosine annealing warm restart");
-    addNode(NodeType::ReduceOnPlateau, "ReduceOnPlateau", "Schedulers", "reduce plateau patience factor");
-    addNode(NodeType::WarmupScheduler, "WarmupScheduler", "Schedulers", "warmup linear learning rate");
-
-    // Regularization Nodes
-    addNode(NodeType::L1Regularization, "L1Regularization", "Regularization", "l1 regularization lasso sparse");
-    addNode(NodeType::L2Regularization, "L2Regularization", "Regularization", "l2 regularization ridge weight decay");
-    addNode(NodeType::ElasticNet, "ElasticNet", "Regularization", "elastic net l1 l2 combined");
-
-    // Utilities
-    addNode(NodeType::Lambda, "Lambda", "Utilities", "lambda custom function apply");
-    addNode(NodeType::Identity, "Identity", "Utilities", "identity passthrough skip");
-    addNode(NodeType::Constant, "Constant", "Utilities", "constant fixed value");
-    addNode(NodeType::Parameter, "Parameter", "Utilities", "parameter learnable tensor");
-
-    // Signal / Control
-    addNode(NodeType::SignalSlider, "Slider", "Signal / Control", "slider interactive value knob");
-    addNode(NodeType::SineWave, "Sine Wave", "Signal / Control", "sine wave oscillator periodic signal");
-    addNode(NodeType::StepSignal, "Step", "Signal / Control", "step function signal heaviside");
-    addNode(NodeType::RampSignal, "Ramp", "Signal / Control", "ramp linear gradient signal");
-    addNode(NodeType::SignalScope, "Scope", "Signal / Control", "scope plot visualize signal chart");
-
-    // Composite
-    addNode(NodeType::Subgraph, "Subgraph", "Composite", "subgraph module encapsulate block");
-
-    // Visualization - Basic 2D Plots
-    addNode(NodeType::LinePlot, "Line Plot", "Visualization", "line plot chart graph xy");
-    addNode(NodeType::ScatterPlot, "Scatter Plot", "Visualization", "scatter plot points xy data");
-    addNode(NodeType::BarChart, "Bar Chart", "Visualization", "bar chart histogram category");
-    addNode(NodeType::Histogram, "Histogram", "Visualization", "histogram distribution frequency bins");
-    addNode(NodeType::PieChart, "Pie Chart", "Visualization", "pie chart percentage proportion");
-    addNode(NodeType::AreaPlot, "Area Plot", "Visualization", "area fill between stacked");
-
-    // Visualization - Advanced 2D Plots
-    addNode(NodeType::BoxPlot, "Box Plot", "Visualization", "box plot whisker quartile statistics");
-    addNode(NodeType::ViolinPlot, "Violin Plot", "Visualization", "violin plot distribution density");
-    addNode(NodeType::ErrorBarPlot, "Error Bar Plot", "Visualization", "error bar uncertainty confidence");
-    addNode(NodeType::StepPlot, "Step Plot", "Visualization", "step plot stairs discrete");
-    addNode(NodeType::HexbinPlot, "Hexbin Plot", "Visualization", "hexbin hexagonal binning density");
-
-    // Visualization - Heatmaps & Matrices
-    addNode(NodeType::Heatmap, "Heatmap", "Visualization", "heatmap matrix color intensity");
-    addNode(NodeType::ContourPlot, "Contour Plot", "Visualization", "contour level isolines topology");
-    addNode(NodeType::Imshow, "Image Display", "Visualization", "imshow image display matrix pixels");
-
-    // Visualization - 3D Plots
-    addNode(NodeType::Plot3D, "3D Line Plot", "Visualization", "3d line plot xyz trajectory");
-    addNode(NodeType::Scatter3D, "3D Scatter Plot", "Visualization", "3d scatter points cloud xyz");
-    addNode(NodeType::SurfacePlot, "Surface Plot", "Visualization", "surface plot 3d mesh terrain");
-    addNode(NodeType::WireframePlot, "Wireframe Plot", "Visualization", "wireframe 3d mesh grid");
-
-    // Visualization - Specialized Plots
-    addNode(NodeType::PolarPlot, "Polar Plot", "Visualization", "polar plot radial angle circular");
-    addNode(NodeType::QuiverPlot, "Vector Field", "Visualization", "quiver vector field arrows flow");
-    addNode(NodeType::StreamPlot, "Stream Plot", "Visualization", "streamplot streamlines flow field");
-    addNode(NodeType::SpectrogramPlot, "Spectrogram", "Visualization", "spectrogram frequency time audio");
-    addNode(NodeType::NetworkGraph, "Network Graph", "Visualization", "network graph nodes edges connections");
 
     // Plugin-provided nodes
     try {
@@ -324,98 +145,6 @@ void NodeEditor::InitializeSearchableNodes() {
     } catch (...) {
         spdlog::warn("Unknown error loading plugin nodes into search");
     }
-
-    // ===== TEMPLATE NODES (Coming Soon) =====
-
-    // Database Connectors
-    addTemplateNode("PostgreSQL Connector", "Database", "postgresql postgres sql database connect", "Connect to PostgreSQL database server", "Requires libpq - planned for Phase 2");
-    addTemplateNode("MySQL Connector", "Database", "mysql sql database connect", "Connect to MySQL database server", "Requires mysql-connector-c++");
-    addTemplateNode("SQLite Connector", "Database", "sqlite sql database local", "Connect to local SQLite database", "Planned for Phase 2");
-    addTemplateNode("MongoDB Connector", "Database", "mongodb nosql database document", "Connect to MongoDB database", "Requires mongocxx driver");
-    addTemplateNode("Oracle Connector", "Database", "oracle sql database enterprise", "Connect to Oracle database", "Requires Oracle client libraries");
-    addTemplateNode("MS SQL Connector", "Database", "mssql sqlserver microsoft database", "Connect to Microsoft SQL Server", "Requires ODBC driver");
-    addTemplateNode("Snowflake Connector", "Database", "snowflake cloud data warehouse", "Connect to Snowflake data warehouse", "Requires Snowflake SDK");
-    addTemplateNode("DB Query Executor", "Database", "sql query execute database", "Execute SQL queries on database connection", "Depends on connector nodes");
-    addTemplateNode("DB Table Writer", "Database", "sql write insert database table", "Write table data to database", "Depends on connector nodes");
-
-    // Cloud Storage
-    addTemplateNode("AWS S3 Reader", "Cloud Storage", "aws s3 amazon cloud read", "Read files from AWS S3 bucket", "Requires aws-sdk-cpp");
-    addTemplateNode("AWS S3 Writer", "Cloud Storage", "aws s3 amazon cloud write upload", "Write files to AWS S3 bucket", "Requires aws-sdk-cpp");
-    addTemplateNode("Azure Blob Reader", "Cloud Storage", "azure blob microsoft cloud read", "Read from Azure Blob Storage", "Requires azure-storage-cpp");
-    addTemplateNode("Azure Blob Writer", "Cloud Storage", "azure blob microsoft cloud write", "Write to Azure Blob Storage", "Requires azure-storage-cpp");
-    addTemplateNode("Google Cloud Storage", "Cloud Storage", "gcs google cloud storage", "Read/write Google Cloud Storage", "Requires google-cloud-cpp");
-    addTemplateNode("Google Drive Connector", "Cloud Storage", "google drive cloud files", "Access files from Google Drive", "Requires Google OAuth flow");
-    addTemplateNode("Google Sheets Connector", "Cloud Storage", "google sheets spreadsheet", "Read/write Google Sheets", "Requires Google OAuth flow");
-
-    // External ML Services
-    addTemplateNode("Google AutoML", "ML Services", "google automl vertex ai cloud", "Train models with Google Vertex AI", "Requires Vertex AI SDK");
-    addTemplateNode("Azure AutoML", "ML Services", "azure automl microsoft cloud", "Train models with Azure ML", "Requires Azure ML SDK");
-    addTemplateNode("AWS SageMaker", "ML Services", "aws sagemaker amazon cloud", "Train models with SageMaker", "Requires AWS SDK");
-    addTemplateNode("OpenAI Embeddings", "ML Services", "openai embeddings api gpt", "Generate embeddings via OpenAI API", "REST API integration");
-    addTemplateNode("HuggingFace Hub", "ML Services", "huggingface transformers models download", "Download models from HuggingFace Hub", "Requires huggingface_hub");
-    addTemplateNode("MLflow Tracker", "ML Services", "mlflow experiment tracking", "Log experiments to MLflow", "Requires MLflow SDK");
-    addTemplateNode("Weights & Biases", "ML Services", "wandb weights biases tracking", "Log experiments to W&B", "Requires wandb SDK");
-
-    // Workflow Control
-    addTemplateNode("Loop Start", "Workflow", "loop start iterate begin", "Begin a loop iteration block", "Requires state management");
-    addTemplateNode("Loop End", "Workflow", "loop end iterate finish", "End a loop iteration block", "Requires state management");
-    addTemplateNode("Counting Loop", "Workflow", "loop count iterate fixed", "Loop for fixed number of iterations", "Requires state management");
-    addTemplateNode("IF Switch", "Workflow", "if switch conditional branch", "Conditional branching node", "Planned for Phase 3");
-    addTemplateNode("CASE Switch", "Workflow", "case switch multi branch", "Multi-way conditional branching", "Planned for Phase 3");
-    addTemplateNode("Try/Catch", "Workflow", "try catch error handling exception", "Error handling wrapper", "Planned for Phase 3");
-    addTemplateNode("Breakpoint", "Workflow", "breakpoint debug pause", "Debug pause point", "Planned for Phase 3");
-
-    // Reporting
-    addTemplateNode("PDF Report Writer", "Reporting", "pdf report export document", "Export workflow to PDF report", "Requires libharu or PDFium");
-    addTemplateNode("HTML Report Writer", "Reporting", "html report export web", "Export workflow to HTML report", "Template engine");
-    addTemplateNode("PowerPoint Writer", "Reporting", "pptx powerpoint export slides", "Export to PowerPoint presentation", "Requires libpptx");
-    addTemplateNode("Word Document Writer", "Reporting", "docx word export document", "Export to Word document", "Requires libdocx");
-    addTemplateNode("Dashboard Creator", "Reporting", "dashboard interactive html", "Create interactive HTML dashboard", "HTML/JS generation");
-
-    // Widgets (Interactive Inputs)
-    addTemplateNode("String Widget", "Widgets", "string text input widget interactive", "Interactive text input widget", "Planned for Phase 2");
-    addTemplateNode("Integer Widget", "Widgets", "integer number input widget interactive", "Interactive number input widget", "Planned for Phase 2");
-    addTemplateNode("Selection Widget", "Widgets", "selection dropdown combo widget", "Interactive dropdown selection", "Planned for Phase 2");
-    addTemplateNode("File Upload Widget", "Widgets", "file upload picker widget", "Interactive file picker widget", "Planned for Phase 2");
-    addTemplateNode("Date/Time Widget", "Widgets", "date time picker widget calendar", "Interactive date/time picker", "Planned for Phase 3");
-    addTemplateNode("Slider Widget", "Widgets", "slider range widget interactive", "Interactive range slider", "Planned for Phase 2");
-    addTemplateNode("Credentials Widget", "Widgets", "credentials password secure widget", "Secure credentials input", "Planned for Phase 3");
-
-    // Advanced Visualization
-    addTemplateNode("Interactive Dashboard", "Visualization", "dashboard interactive web charts", "Web-based interactive charts", "Embedded WebView");
-    addTemplateNode("Geospatial Map", "Visualization", "map geo spatial location", "Map-based visualization", "Requires Mapbox or Leaflet");
-    addTemplateNode("Sankey Diagram", "Visualization", "sankey flow diagram", "Flow visualization diagram", "Custom renderer");
-    addTemplateNode("Treemap", "Visualization", "treemap hierarchical rectangles", "Hierarchical rectangle visualization", "Custom renderer");
-
-    // Big Data & Streaming
-    addTemplateNode("Apache Spark Connector", "Big Data", "spark distributed processing hadoop", "Connect to Apache Spark", "Enterprise feature");
-    addTemplateNode("Dask Connector", "Big Data", "dask python parallel distributed", "Connect to Dask for parallel processing", "Requires Dask");
-    addTemplateNode("Ray Connector", "Big Data", "ray distributed ml scaling", "Connect to Ray for distributed ML", "Requires Ray");
-    addTemplateNode("Kafka Consumer", "Big Data", "kafka streaming consumer message", "Read from Kafka stream", "Requires librdkafka");
-    addTemplateNode("Kafka Producer", "Big Data", "kafka streaming producer message", "Write to Kafka stream", "Requires librdkafka");
-
-    // Deep Learning Advanced
-    addTemplateNode("SHAP Explainer", "Explainability", "shap feature importance explain", "SHAP feature importance analysis", "Python bridge required");
-    addTemplateNode("LIME Explainer", "Explainability", "lime local interpretability explain", "LIME local interpretability", "Python bridge required");
-    addTemplateNode("Hyperband Tuner", "AutoML", "hyperband hyperparameter tuning", "Hyperband hyperparameter search", "Algorithm implementation");
-    addTemplateNode("Neural Architecture Search", "AutoML", "nas architecture search auto", "Automatic architecture search", "NAS framework required");
-    addTemplateNode("Federated Learning", "Privacy", "federated learning privacy distributed", "Privacy-preserving ML training", "FL framework required");
-    addTemplateNode("Model Quantizer", "Optimization", "quantize compress model int8", "Model quantization/compression", "TensorRT or ONNX Runtime");
-
-    // Model I/O
-    addTemplateNode("Model Reader", "Model I/O", "model load read import weights", "Load trained model from file", "Planned for Phase 2");
-    addTemplateNode("Model Writer", "Model I/O", "model save write export weights", "Save trained model to file", "Planned for Phase 2");
-    addTemplateNode("Checkpoint Saver", "Model I/O", "checkpoint save training resume", "Save training checkpoint", "Planned for Phase 2");
-    addTemplateNode("Checkpoint Loader", "Model I/O", "checkpoint load resume training", "Resume training from checkpoint", "Planned for Phase 2");
-
-    // JSON/XML Processing
-    addTemplateNode("JSON Path", "JSON/XML", "jsonpath extract query json", "Extract data using JSONPath", "JSON library integration");
-    addTemplateNode("JSON to Table", "JSON/XML", "json flatten table convert", "Flatten JSON to table format", "Planned for Phase 2");
-    addTemplateNode("Table to JSON", "JSON/XML", "table json convert serialize", "Convert table to JSON", "Planned for Phase 2");
-    addTemplateNode("XML Reader", "JSON/XML", "xml read parse file", "Read XML file", "Planned for Phase 2");
-    addTemplateNode("XPath", "JSON/XML", "xpath extract query xml", "Extract data using XPath", "XML library integration");
-    addTemplateNode("JSON Schema Validator", "JSON/XML", "json schema validate", "Validate JSON against schema", "Planned for Phase 2");
-
 
     searchable_nodes_initialized_ = true;
 }
