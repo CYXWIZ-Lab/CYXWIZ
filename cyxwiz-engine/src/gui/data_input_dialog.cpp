@@ -256,10 +256,29 @@ DataInputDialog::DataInputDialog(MLNode* node)
             } else if (img_entry) {
                 loaded_rows_ = static_cast<int64_t>(img_entry->num_images);
                 loaded_cols_ = 1;
-                // Match the Apply path estimate: 224×224×3 float per image.
-                // Actual target size comes from the Resize node and isn't
-                // known here, so this is a conservative default estimate.
-                size_t per_image = 224ull * 224 * 3 * sizeof(float);
+                // Mirror the Apply path: use the node's persisted
+                // target_width / target_height / rgb params so the
+                // restored Memory tab shows the same estimate the user
+                // saw on Apply. Falls back to 224×224×3 for nodes that
+                // predate those params.
+                int w = 224, h = 224, c = 3;
+                auto tw_it = node_->parameters.find("target_width");
+                auto th_it = node_->parameters.find("target_height");
+                auto rgb_it = node_->parameters.find("rgb");
+                if (tw_it != node_->parameters.end()) {
+                    try { int v = std::stoi(tw_it->second); if (v > 0) w = v; }
+                    catch (...) {}
+                }
+                if (th_it != node_->parameters.end()) {
+                    try { int v = std::stoi(th_it->second); if (v > 0) h = v; }
+                    catch (...) {}
+                }
+                if (rgb_it != node_->parameters.end()) {
+                    c = (rgb_it->second == "false" || rgb_it->second == "0") ? 1 : 3;
+                }
+                size_t per_image = static_cast<size_t>(w) *
+                                   static_cast<size_t>(h) *
+                                   static_cast<size_t>(c) * sizeof(float);
                 loaded_memory_bytes_ = img_entry->num_images * per_image;
                 loaded_memory_is_estimate_ = true;
                 data_load_state_ = DataLoadState::InMemory;
@@ -1098,12 +1117,21 @@ void DataInputDialog::Apply() {
                 loaded_cols_ = 1;
                 // Estimate if-fully-cached size so the Memory tab shows
                 // a useful number for this lazy-loaded image dataset.
-                // Default to 224x224x3 RGB float since the actual target
-                // size comes from the graph's Resize node and isn't known
-                // here. Marks as estimate so the UI labels it correctly.
-                size_t per_image = 224ull * 224 * 3 * sizeof(float);
+                // Uses the dialog's current target_width_ / target_height_
+                // and rgb_mode_ instead of a hardcoded 224×224×3 so the
+                // estimate tracks what the user actually configured. If
+                // the user hasn't touched these fields, defaults are
+                // still 224×224×3 from the header init. Marks as estimate
+                // so the UI labels it correctly.
+                int w = target_width_  > 0 ? target_width_  : 224;
+                int h = target_height_ > 0 ? target_height_ : 224;
+                int c = rgb_mode_ ? 3 : 1;
+                size_t per_image = static_cast<size_t>(w) *
+                                   static_cast<size_t>(h) *
+                                   static_cast<size_t>(c) * sizeof(float);
                 loaded_memory_bytes_ = info.num_samples * per_image;
                 loaded_memory_is_estimate_ = true;
+                loaded_backend_ = 3;  // 3 = image
                 data_load_state_ = DataLoadState::InMemory;
 
                 node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
