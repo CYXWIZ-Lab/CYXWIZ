@@ -395,14 +395,16 @@ private:
     struct AsyncLoadState {
         std::atomic<bool> done{false};   // worker -> UI
         bool success = false;            // valid once done==true
-        int backend = 0;                 // 1=Arrow in-mem, 2=Parquet disk-backed, 5=Text in-mem
+        int backend = 0;                 // 1=Arrow in-mem, 2=Parquet disk-backed, 3=Image folder, 5=Text in-mem
         int64_t rows = 0;
         int64_t cols = 0;
         size_t bytes = 0;
         std::string message;             // user-facing status (success or error)
         std::string dataset_name;        // registry key the worker registered under
-        std::string source_path;         // file_path that was loaded
-        // Text-only fields, zero for tabular loads.
+        std::string source_path;         // file_path OR folder_path that was loaded
+        // Text + image shared fields. num_classes is set for both; the
+        // dialog reads it for the backend-specific UI update in
+        // PollAsyncLoadResult.
         int num_classes = 0;
         int vocab_size = 0;
     };

@@ -193,20 +193,36 @@ Not started — deferred until the canvas-honest pin pass lands first.
 
 ## Memory Tab UX
 
-### Image dataset shows 0B in Memory tab
+### ~~Image dataset shows 0B in Memory tab~~ LANDED 2026-04-17
 
-**Severity:** Low — cosmetic.
+**Status:** Resolved across three commits today:
 
-**Issue:** After loading an image dataset, the Memory tab's "Current
-Status" shows "In Memory — 0 B" because `loaded_memory_bytes_ = 0`
-(images are lazy-loaded via LRU cache, no upfront RAM).
+- `2941e511` — Memory tab estimate now honors actual dialog
+  `target_width_` × `target_height_` × (rgb ? 3 : 1) instead of
+  a hardcoded 224×224×3. Both the fresh Apply and the project-
+  reopen restore paths read the same values, so a 28×28 grayscale
+  MNIST dataset reports ~20 MB instead of the nonsensical ~14 GB
+  it used to show.
+- `d4d4fe02` — Fixed a dispatch bug surfaced while testing this:
+  the tabular-CSV Apply branch had no `file_category_` check, so
+  an Image-category Apply with a stale `file_path_` value from a
+  previous session would route to `LoadTabularCSV` and fail with
+  "cannot stat 'dataset.csv'" instead of reaching the image folder
+  branch. Gated the branch on
+  `file_category_ == Tabular || TimeSeries`.
+- (commit pending) — Image folder load is now async via
+  `AsyncTaskManager`, mirroring the text path. Previously
+  synchronous, which froze the UI during folder scans on large
+  datasets (ImageNet-scale). `AsyncLoadState.backend == 3` feeds
+  back into `PollAsyncLoadResult` which emits the
+  `"N images, M classes"` description and an "Loaded images from
+  ..." status. Closes the drift between CLAUDE.md's claim that
+  "Image / Audio follow the same async contract" and the pre-fix
+  reality where only text was actually async.
 
-**Suggested fix:** Show estimated full-load size instead:
-`num_images × target_w × target_h × channels × sizeof(float)`
-with a "(estimated, lazy-loaded)" suffix so users have context.
-
-**File:** `cyxwiz-engine/src/gui/data_input_dialog.cpp` Apply folder
-branch, around `loaded_memory_bytes_ = 0`.
+Audio folder load is still synchronous (separate follow-up — same
+pattern, just needs mirroring into the async wrapper with
+`backend == 4`).
 
 ---
 
