@@ -6,6 +6,8 @@
 #include "node_editor.h"
 #include "icons.h"
 #include "properties.h"
+#include "../core/node_metadata.h"
+#include "../core/node_metadata_registry.h"
 #include "../core/project_manager.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <imgui.h>
@@ -372,104 +374,30 @@ const char* NodeEditor::GetCategoryName(NodeCategory category) {
 }
 
 void NodeEditor::ShowCategorizedNodeMenu() {
-    // Initialize nodes_by_category_ on first call
+    // Initialize nodes_by_category_ on first call. As of 2026-04-17 this
+    // is driven by NodeMetadataRegistry — the same source the Node
+    // Browser and the search palette use — so adding a new node type
+    // requires only one RegisterNode() call. Before this change, the
+    // context menu had its own ~100-line hand-maintained list that
+    // silently omitted most of the enum (Pooling, Normalization,
+    // Recurrent, Training, Attention, etc.) so users couldn't add those
+    // node types from the right-click menu at all.
+    //
+    // See docs/plans/node_registration_unification.md.
     if (!nodes_by_category_initialized_) {
-        // Group all node types by category
-        // Data I/O (Smart unified nodes)
-        nodes_by_category_[NodeCategory::DataSources] = {
-            {NodeType::DataInput, "Data Input"},
-            {NodeType::DataOutput, "Data Output"}
-        };
+        auto& reg = cyxwiz::NodeMetadataRegistry::Instance();
+        if (!reg.IsInitialized()) reg.Initialize();
 
-        // Data Transforms
-        nodes_by_category_[NodeCategory::DataTransform] = {
-            {NodeType::FilterRows, "Filter Rows"},
-            {NodeType::SelectColumns, "Select Columns"},
-            {NodeType::JoinTables, "Join Tables"},
-            {NodeType::GroupByAggregate, "Group By"},
-            {NodeType::SortRows, "Sort Rows"},
-            {NodeType::FillMissingValues, "Fill Missing"},
-            {NodeType::RemoveDuplicateRows, "Remove Duplicates"},
-            {NodeType::PivotTable, "Pivot Table"},
-            {NodeType::UnionTables, "Union Tables"},
-            {NodeType::RenameColumns, "Rename Columns"}
-        };
-
-        // Analytics (Clustering, Statistics, Visualization)
-        nodes_by_category_[NodeCategory::Analytics] = {
-            {NodeType::KMeansCluster, "K-Means Clustering"},
-            {NodeType::DescribeStats, "Describe Stats"},
-            {NodeType::VisualizeData, "Visualize Data"},
-            {NodeType::SampleRows, "Sample Rows"},
-            {NodeType::CorrelationMatrix, "Correlation Matrix"},
-            {NodeType::ValueCounts, "Value Counts"},
-            {NodeType::CrossTabulation, "Cross Tabulation"}
-        };
-
-        // Data Export (consolidated into DataOutput node above)
-        // Legacy export nodes removed - use DataOutput instead
-
-        // Layers (Dense, Conv, etc.)
-        nodes_by_category_[NodeCategory::Layers] = {
-            {NodeType::Dense, "Dense (128)"},
-            {NodeType::Conv1D, "Conv1D"},
-            {NodeType::Conv2D, "Conv2D"},
-            {NodeType::Conv3D, "Conv3D"},
-            {NodeType::DepthwiseConv2D, "DepthwiseConv2D"}
-        };
-
-        // Activation
-        nodes_by_category_[NodeCategory::Activation] = {
-            {NodeType::ReLU, "ReLU"},
-            {NodeType::LeakyReLU, "LeakyReLU"},
-            {NodeType::GELU, "GELU"},
-            {NodeType::Swish, "Swish"},
-            {NodeType::Sigmoid, "Sigmoid"},
-            {NodeType::Tanh, "Tanh"},
-            {NodeType::Softmax, "Softmax"}
-        };
-
-        // Preprocessing (Phase 8: UI Consolidation)
-        nodes_by_category_[NodeCategory::Preprocessing] = {
-            {NodeType::Normalize, "Normalize"},
-            {NodeType::OneHotEncode, "One-Hot Encode"},
-            {NodeType::OutlierDetector, "Outlier Detector"},
-            {NodeType::ImagePreprocessor, "Image Preprocessor"},
-            {NodeType::QualityAnalyzer, "Quality Analyzer"},
-            {NodeType::DataValidator, "Data Validator"}
-        };
-
-        // Visualization (Phase 8: Plot Types)
-        nodes_by_category_[NodeCategory::Visualization] = {
-            // Basic 2D Plots
-            {NodeType::LinePlot, "Line Plot"},
-            {NodeType::ScatterPlot, "Scatter Plot"},
-            {NodeType::BarChart, "Bar Chart"},
-            {NodeType::Histogram, "Histogram"},
-            {NodeType::PieChart, "Pie Chart"},
-            {NodeType::AreaPlot, "Area Plot"},
-            // Advanced 2D Plots
-            {NodeType::BoxPlot, "Box Plot"},
-            {NodeType::ViolinPlot, "Violin Plot"},
-            {NodeType::ErrorBarPlot, "Error Bar Plot"},
-            {NodeType::StepPlot, "Step Plot"},
-            {NodeType::HexbinPlot, "Hexbin Plot"},
-            // Heatmaps & Matrices
-            {NodeType::Heatmap, "Heatmap"},
-            {NodeType::ContourPlot, "Contour Plot"},
-            {NodeType::Imshow, "Image Display"},
-            // 3D Plots
-            {NodeType::Plot3D, "3D Line Plot"},
-            {NodeType::Scatter3D, "3D Scatter Plot"},
-            {NodeType::SurfacePlot, "Surface Plot"},
-            {NodeType::WireframePlot, "Wireframe Plot"},
-            // Specialized Plots
-            {NodeType::PolarPlot, "Polar Plot"},
-            {NodeType::QuiverPlot, "Vector Field"},
-            {NodeType::StreamPlot, "Stream Plot"},
-            {NodeType::SpectrogramPlot, "Spectrogram"},
-            {NodeType::NetworkGraph, "Network Graph"}
-        };
+        for (const auto& cat : reg.GetCategories()) {
+            auto entries = reg.GetByCategory(cat, /*include_templates=*/false);
+            if (entries.empty()) continue;
+            auto& bucket = nodes_by_category_[cat];
+            bucket.reserve(entries.size());
+            for (const auto* meta : entries) {
+                if (!meta) continue;
+                bucket.push_back({meta->type, meta->name});
+            }
+        }
 
         nodes_by_category_initialized_ = true;
     }
