@@ -159,16 +159,28 @@ Key checks added on top of the original structural validation:
   adding features, prefer smart defaults over knobs. The Force disk-backed
   checkbox is the lone exception — an escape hatch for benchmarking the
   disk-backed code path on small files.
-- **Adding a new NodeType: update TWO `StringToNodeType` maps** —
-  `cyxwiz-engine/src/gui/node_editor_io.cpp:20` (used by File → Open)
-  AND `cyxwiz-engine/src/gui/patterns/pattern_library.cpp:331` (used by
-  the pattern library). Both are string-to-enum lookup tables for
-  cyxgraph JSON loading; forgetting either one falls through to
-  `NodeType::Dense` with a misleading warning and then crashes at
-  compile time with `invalid stoi argument` because the node params
-  don't match the Dense layout. (Lesson from the 2026-04-14 v2 text
-  graph incident — the Phase 3 nodes existed in the enum and the add
-  menu but were missing from both loader maps.)
+- **Adding a new NodeType — single point of truth as of 2026-04-17.**
+  Registering a node in `NodeMetadataRegistry` (via an
+  `Initialize*Nodes()` function in
+  `cyxwiz-engine/src/core/node_metadata_registry.cpp`) makes it appear
+  in all three UIs automatically: the **Node Browser** panel, the
+  **search palette** (Ctrl+Space / type-to-find), and the
+  **right-click context menu**. The two consumers iterate the registry
+  at first use (`node_editor_add_search.cpp` +
+  `node_editor_context_menu.cpp`). Plus one creation case in
+  `node_editor_nodes.cpp` (`CreateNode` switch) to give it pins and
+  params on the canvas. Two things remain dual-maintained:
+  - `StringToNodeType` maps in `node_editor_io.cpp:20` AND
+    `patterns/pattern_library.cpp:331` — both are string-to-enum
+    lookup tables for cyxgraph JSON loading; forgetting either falls
+    through to `NodeType::Dense` with a misleading warning and
+    crashes at compile time with `invalid stoi argument`. (Lesson
+    from the 2026-04-14 v2 text-graph incident.)
+  - `ShouldShowOpenDialogButton` whitelist in
+    `node_config_dialog.cpp:970` — add the NodeType here if the node
+    should expose an "Open Dialog..." button in the Properties panel.
+  Both of the above are known remaining drift points, tracked for
+  future unification into the registry.
 
 ## Pipeline Architecture: Four Bands (2026-04-16 architectural pass)
 
