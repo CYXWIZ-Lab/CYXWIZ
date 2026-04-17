@@ -375,16 +375,38 @@ Existing precedents: `DataInputDialog`, `TokenizerDialog`.
 
 ## Build Commands
 
-```bash
-# Quick build
-cmake --preset windows-release && cmake --build build/windows-release --config Release
+**Preferred for incremental edit-compile-test (safe):**
 
-# Run
+```bash
+# Git Bash / WSL
+./scripts/rebuild.sh
+
+# Native Windows (cmd)
+scripts\rebuild.cmd
+```
+
+The wrappers capture the build log to `build/last-build.log`, check
+cmake's real exit code, verify the binary actually moved forward, and
+surface a unique warning summary. Use these in any scripted /
+AI-driven workflow.
+
+**Raw cmake (for manual one-offs only):**
+
+```bash
+cmake --preset windows-release && cmake --build build/windows-release --config Release
 ./build/windows-release/bin/cyxwiz-engine
 
 # Central Server (Rust)
 cd cyxwiz-central-server && cargo run --release
 ```
+
+**DO NOT** pipe `cmake --build` through `tail`/`head` and trust the
+exit code: bash pipelines return the LAST command's status, not
+cmake's. We lost ~1h on 2026-04-17 running a zombie binary because
+`cmake --build ... | tail -3` reported exit 0 while compile was
+actually failing; the old binary stayed on disk and manual testing
+showed the pre-refactor behavior. The wrappers above avoid the
+pipe entirely.
 
 ## Development Tasks
 
@@ -411,6 +433,55 @@ std::filesystem::path p = "data/models/model.h5";  // Good
 
 - **ArrayFire** (manual): Set `ArrayFire_DIR` env var
 - **vcpkg**: imgui, glfw3, grpc, spdlog, pybind11, catch2
+
+## Parallel sessions (multi-agent / multi-session workflow)
+
+The tofix list has grown beyond what fits in one session, and several
+items (DataLoader refactor, Local Debug, Tool-to-Node migration, etc.)
+are architecturally independent. Running them in **parallel sessions**
+— separate Claude Code instances or subagents — is supported, with
+two isolation levers:
+
+1. **Git worktrees** (recommended for large multi-commit work).
+   Each session gets its own checkout pointing at a separate branch
+   and its own `build/` directory, so compiles don't collide.
+
+   ```bash
+   # From repo root
+   git worktree add ../CyxWiz_dataloader -b feat/dataloader
+   git worktree add ../CyxWiz_localdebug  -b feat/local-debug
+   ```
+
+   Open Claude Code in each worktree directory. Each session sees
+   its own branch state; commits land on separate branches. Merge /
+   PR back to master when done.
+
+2. **Subagent worktree mode** (for one-shot delegated work).
+   When launching an Agent via the Agent tool, pass
+   `isolation: "worktree"` — the runtime creates a temporary
+   worktree for the agent's edits and returns the path + branch at
+   the end. Cleanup is automatic if no changes land. Use for
+   "please try this approach in isolation, report back with a diff"
+   patterns.
+
+**Coordination rules to avoid stepping on each other:**
+
+- Every parallel session picks up ONE plan from `docs/plans/`. Don't
+  let two sessions work the same plan — they'll produce conflicting
+  refactors of the same files.
+- The `tofix.md` and CLAUDE.md are merge-conflict hotspots. If you
+  touch them in a session, rebase frequently or coordinate writes to
+  a small section per session.
+- The four per-category data loaders
+  (`data_input_dialog.cpp::Apply`) are ONE file; the DataLoader
+  refactor must run in its own session and merge before anything else
+  touches that file.
+- Build dirs must be per-worktree. A shared `build/` dir across
+  sessions = mysterious "cmake reports success but wrong code ran"
+  bugs (same class as the 2026-04-17 pipeline-masking incident).
+- Protocol: the user's current session owns `master`. Worktree
+  sessions branch off master and PR back when their plan is
+  complete.
 
 ## TODOs
 
