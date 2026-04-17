@@ -104,6 +104,27 @@ void NodeEditor::InitializeSearchableNodes() {
         return out;
     };
 
+    // `cyxwiz::NodeImplementationStatus` (from node_metadata.h) and
+    // `gui::NodeImplementationStatus` (from node_editor.h's SearchableNode)
+    // are two parallel enums with overlapping values. Map across so the
+    // search UI's click-handler can short-circuit on Template.
+    auto to_gui_status = [](cyxwiz::NodeImplementationStatus s) {
+        switch (s) {
+            case cyxwiz::NodeImplementationStatus::Template:
+                return NodeImplementationStatus::Template;
+            case cyxwiz::NodeImplementationStatus::Deprecated:
+                return NodeImplementationStatus::Deprecated;
+            case cyxwiz::NodeImplementationStatus::External:
+                // External plugins don't have a gui:: equivalent — treat as
+                // Implemented so the click-handler doesn't block them. The
+                // search UI has no "External" badge yet.
+                return NodeImplementationStatus::Implemented;
+            case cyxwiz::NodeImplementationStatus::Implemented:
+            default:
+                return NodeImplementationStatus::Implemented;
+        }
+    };
+
     auto& reg = cyxwiz::NodeMetadataRegistry::Instance();
     if (!reg.IsInitialized()) reg.Initialize();
 
@@ -120,7 +141,7 @@ void NodeEditor::InitializeSearchableNodes() {
             node.name = meta->name;
             node.category = cyxwiz::GetCategoryDisplayName(cat);
             node.keywords = join_keywords(meta->keywords);
-            node.status = meta->status;
+            node.status = to_gui_status(meta->status);
             node.description = meta->brief_description;
             node.tooltip = meta->help_text;
             all_searchable_nodes_.push_back(std::move(node));

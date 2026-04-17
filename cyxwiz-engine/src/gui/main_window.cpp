@@ -3299,8 +3299,12 @@ void MainWindow::RenderCompileResultPopup() {
             ImGui::BeginChild("CompileIssuesList", ImVec2(0, issues_h), true);
             ImGui::PushTextWrapPos(0.0f);
             for (const auto& issue : compile_result_issues_) {
-                ImVec4 color;
-                const char* tag;
+                // Pre-initialize so an unknown IssueLevel value (future
+                // enum addition, or memory corruption) can't leave `tag`
+                // uninitialized — ImGui::TextUnformatted(nullptr) would
+                // read garbage or crash. C4701/C4703 warning was real.
+                ImVec4 color{0.8f, 0.8f, 0.8f, 1.0f};
+                const char* tag = "[?]    ";
                 switch (issue.level) {
                     case cyxwiz::IssueLevel::Error:
                         color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
