@@ -14,6 +14,7 @@
 
 #include "node_config_dialog.h"
 #include "node_editor.h"
+#include "loaders/audio_loader.h"
 #include "loaders/data_loader.h"
 #include "loaders/image_loader.h"
 #include "loaders/tabular_loader.h"
@@ -760,135 +761,84 @@ void DataInputDialog::Apply() {
         return;
     } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0 &&
                file_category_ == FileCategory::Audio) {
-        // === ASYNC AUDIO FOLDER LOAD ===
-        // Mirrors the image/text async pattern. AudioDataset construction
-        // scans the folder + optional labels CSV, which is O(files) and
-        // previously blocked the UI thread for seconds on real corpora.
-        // Wrapped here in an AsyncTaskManager worker with
-        // AsyncLoadState.backend == 4 so PollAsyncLoadResult finalizes
-        // on the next UI frame. Feature extraction still runs lazily
-        // inside AudioDataset::GetItem at training time — we only scan
-        // here to surface invalid folders early.
+        // Audio folder load — routes through AudioLoader. Feature
+        // extraction still runs lazily inside AudioDataset::GetItem
+        // at training time; the loader only scans to surface invalid
+        // folders early and stash num_samples / num_classes /
+        // feature shape in the registry.
         if (is_loading_async_) {
             spdlog::warn("DataInputDialog: Audio Apply ignored - load already in progress");
             apply_in_progress_ = false;
             return;
         }
 
-        // Fast-fail the layout/config check on the UI thread — no point
-        // spinning up a worker to fail immediately.
-        if (audio_layout_ == AudioLayout::FlatWithCSV && strlen(audio_labels_csv_) == 0) {
-            apply_status_message_ = "Flat folder layout requires a Labels CSV - "
-                "pick one or switch to 'Class subdirectories'";
-            node_->parameters["data_loaded"] = "false";
-            spdlog::error("DataInputDialog: audio FlatWithCSV selected but labels_csv is empty");
-            apply_in_progress_ = false;
+        auto* loader = cyxwiz::loaders::GetByCategory(
+            cyxwiz::loaders::FileCategory::Audio);
+        if (!loader) {
+            apply_status_message_ = "No loader registered for Audio";
+            apply_success_ = false;
             apply_status_timer_ = 6.0f;
+            apply_in_progress_ = false;
             has_changes_ = false;
+            spdlog::error("DataInputDialog: AudioLoader not registered");
             return;
         }
 
+        std::string previous_dataset_name;
+        if (auto pit = node_->parameters.find("dataset_name");
+            pit != node_->parameters.end()) {
+            previous_dataset_name = pit->second;
+        }
         loaded_dataset_name_ = GenerateDatasetName();
 
-        // Build the entry skeleton from dialog state. Per-worker snapshot
-        // (captured by value) keeps the worker isolated from the UI thread.
-        cyxwiz::DataRegistry::AudioDatasetEntry entry;
-        entry.folder_path = folder_path_;
-        entry.labeled_subdirs = (audio_layout_ == AudioLayout::ClassSubdirs);
-        if (audio_layout_ == AudioLayout::FlatWithCSV) {
-            entry.csv_path = audio_labels_csv_;
-            entry.filename_col = audio_filename_col_;
-            entry.label_col = audio_label_col_;
-        }
-        entry.feature_type = 1;  // MelSpectrogram default
-        entry.target_sr = sample_rate_;
-        entry.max_duration = (duration_sec_ > 0.0f) ? duration_sec_ : 5.0f;
-        entry.n_fft = 512;
-        entry.hop_length = 256;
-        entry.n_mels = 128;
-        entry.n_mfcc = 13;
+        cyxwiz::loaders::ApplyContext ctx;
+        ctx.dataset_name           = loaded_dataset_name_;
+        ctx.source_path            = folder_path_;
+        ctx.previous_dataset_name  = previous_dataset_name;
+        ctx.audio_labels_csv       = audio_labels_csv_;
+        ctx.audio_filename_col     = audio_filename_col_;
+        ctx.audio_label_col        = audio_label_col_;
+        ctx.audio_labeled_subdirs  = (audio_layout_ == AudioLayout::ClassSubdirs);
+        ctx.audio_target_sr        = sample_rate_;
+        ctx.audio_max_duration     = duration_sec_;
+        // Feature-extraction knobs are not yet exposed in the dialog
+        // UI; pass the same defaults the pre-refactor code baked in
+        // so existing training graphs see identical tensor shapes.
+        ctx.audio_n_fft            = 512;
+        ctx.audio_hop_length       = 256;
+        ctx.audio_n_mels           = 128;
+        ctx.audio_n_mfcc           = 13;
+        ctx.audio_feature_type     = 1;  // MelSpectrogram
 
-        std::string captured_folder = folder_path_;
-        std::string captured_name   = loaded_dataset_name_;
-        cyxwiz::DataRegistry::AudioDatasetEntry captured_entry = entry;
+        std::string err;
+        if (!loader->ValidateApplyContext(ctx, err)) {
+            apply_status_message_ = err;
+            node_->parameters["data_loaded"] = "false";
+            apply_success_ = false;
+            apply_status_timer_ = 6.0f;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: audio validate - {}", err);
+            return;
+        }
 
         auto state = std::make_shared<AsyncLoadState>();
-        state->dataset_name = captured_name;
-        state->source_path  = captured_folder;
+        state->dataset_name = loaded_dataset_name_;
+        state->source_path  = folder_path_;
         async_load_state_   = state;
         is_loading_async_   = true;
 
-        node_->parameters["dataset_name"] = captured_name;
-        node_->parameters["data_loaded"] = "false";
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"]  = "false";
 
         apply_status_message_ = std::string("Scanning ") +
-            fs::path(captured_folder).filename().string() + "...";
+            fs::path(folder_path_).filename().string() + "...";
         apply_status_timer_ = 0.0f;
 
-        auto& mgr = cyxwiz::AsyncTaskManager::Instance();
-        loading_task_id_ = mgr.RunAsync(
-            "Loading audio " + captured_name,
-            [captured_folder, captured_name, captured_entry, state]
-            (cyxwiz::LambdaTask& task) {
-                try {
-                    task.ReportProgress(0.1f, "Scanning folder");
-
-                    auto& reg = cyxwiz::DataRegistry::Instance();
-                    reg.UnregisterTabularDataset(captured_name);
-                    reg.UnregisterAudioDataset(captured_name);
-
-                    cyxwiz::AudioDatasetConfig probe_cfg;
-                    probe_cfg.feature_type = cyxwiz::AudioDatasetConfig::FeatureType::MelSpectrogram;
-                    probe_cfg.target_sr     = captured_entry.target_sr;
-                    probe_cfg.max_duration  = captured_entry.max_duration;
-                    probe_cfg.labeled_subdirs = captured_entry.labeled_subdirs;
-                    probe_cfg.n_fft         = captured_entry.n_fft;
-                    probe_cfg.hop_length    = captured_entry.hop_length;
-                    probe_cfg.n_mels        = captured_entry.n_mels;
-                    probe_cfg.csv_path      = captured_entry.csv_path;
-                    probe_cfg.filename_col  = captured_entry.filename_col;
-                    probe_cfg.label_col     = captured_entry.label_col;
-
-                    cyxwiz::AudioDataset probe(captured_folder, probe_cfg);
-                    auto info = probe.GetInfo();
-
-                    cyxwiz::DataRegistry::AudioDatasetEntry final_entry = captured_entry;
-                    final_entry.num_samples = info.num_samples;
-                    final_entry.num_classes = info.num_classes;
-                    final_entry.class_names = probe.GetClassNames();
-                    if (info.shape.size() >= 2) {
-                        final_entry.feature_rows = static_cast<int>(info.shape[0]);
-                        final_entry.feature_cols = static_cast<int>(info.shape[1]);
-                    }
-
-                    task.ReportProgress(0.9f, "Registering dataset");
-                    reg.RegisterAudioDataset(captured_name, final_entry);
-
-                    size_t per_sample = (final_entry.feature_rows > 0 && final_entry.feature_cols > 0)
-                        ? static_cast<size_t>(final_entry.feature_rows) *
-                          static_cast<size_t>(final_entry.feature_cols) * sizeof(float)
-                        : static_cast<size_t>(final_entry.n_mels) * 313 * sizeof(float);
-
-                    state->success      = true;
-                    state->backend      = 4;  // 4 = audio folder
-                    state->rows         = static_cast<int64_t>(info.num_samples);
-                    state->cols         = 1;
-                    state->bytes        = info.num_samples * per_sample;
-                    state->num_classes  = info.num_classes;
-                    state->message      = "Loaded " +
-                        std::to_string(info.num_samples) + " audio files (" +
-                        std::to_string(info.num_classes) + " classes) from " +
-                        fs::path(captured_folder).filename().string();
-                } catch (const std::exception& e) {
-                    state->success = false;
-                    state->message = std::string("Error loading audio: ") + e.what();
-                    spdlog::error("DataInputDialog async audio load: {}", state->message);
-                }
-                state->done.store(true);
-            });
+        loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
         spdlog::info("DataInputDialog: queued async audio load (task {}, name '{}')",
-                     loading_task_id_, captured_name);
+                     loading_task_id_, loaded_dataset_name_);
 
         apply_in_progress_ = false;
         has_changes_ = false;

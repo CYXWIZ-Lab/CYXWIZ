@@ -111,9 +111,25 @@ struct ApplyContext {
     int image_height = 224;
     int image_channels = 3;
 
-    // Audio fields will be added here in commit 4 as that loader
-    // migrates. Keeping them in one struct beats threading 5 different
-    // context types through the same Apply path.
+    // Audio-specific (commit 4) ------------------------------------
+    // audio_labeled_subdirs == true  → folder/<class>/*.wav layout.
+    // audio_labeled_subdirs == false → flat folder + audio_labels_csv
+    //   with audio_filename_col / audio_label_col (empty = auto-detect
+    //   by header name). Feature-extraction knobs (sr, max_duration,
+    //   n_fft, hop_length, n_mels, n_mfcc) are defaults pushed into
+    //   AudioDatasetEntry so training-time GetItem produces tensors
+    //   shaped the same way they were probed here.
+    std::string audio_labels_csv;
+    std::string audio_filename_col;
+    std::string audio_label_col;
+    bool audio_labeled_subdirs = true;
+    int audio_target_sr = 16000;
+    float audio_max_duration = 5.0f;
+    int audio_n_fft = 512;
+    int audio_hop_length = 256;
+    int audio_n_mels = 128;
+    int audio_n_mfcc = 13;
+    int audio_feature_type = 1;  // 1 = MelSpectrogram (default)
 };
 
 // Abstract base. Commit 1 wires up the Apply-time async surface; later

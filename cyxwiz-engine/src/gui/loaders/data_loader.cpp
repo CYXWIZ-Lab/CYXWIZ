@@ -1,4 +1,5 @@
 #include "data_loader.h"
+#include "audio_loader.h"
 #include "image_loader.h"
 #include "tabular_loader.h"
 #include "text_loader.h"
@@ -26,10 +27,14 @@ Registry& GetRegistry() {
         };
         // Order of registration is observable via All(); keep it stable.
         // Commit 1: TabularLoader. Commit 2: TextLoader.
-        // Commit 3: ImageLoader. Commit 4 will add Audio.
+        // Commit 3: ImageLoader. Commit 4: AudioLoader.
+        // Video remains deliberately unregistered — the guard at the
+        // top of DataInputDialog::Apply fails the load loudly long
+        // before reaching the dispatch.
         push(std::make_unique<TabularLoader>());
         push(std::make_unique<TextLoader>());
         push(std::make_unique<ImageLoader>());
+        push(std::make_unique<AudioLoader>());
         return tmp;
     }();
     return r;
