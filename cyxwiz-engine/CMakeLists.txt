@@ -196,7 +196,9 @@ set(ENGINE_SOURCES
     src/gui/properties.cpp
     src/gui/node_config_dialog.cpp
     src/gui/data_input_dialog.cpp
+    src/gui/loaders/audio_loader.cpp
     src/gui/loaders/data_loader.cpp
+    src/gui/loaders/image_loader.cpp
     src/gui/loaders/tabular_loader.cpp
     src/gui/loaders/text_loader.cpp
     src/gui/visualization/visualization_nodes.cpp

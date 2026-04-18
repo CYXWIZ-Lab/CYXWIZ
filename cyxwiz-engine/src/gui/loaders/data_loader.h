@@ -98,9 +98,38 @@ struct ApplyContext {
     int text_min_freq = 1;
     int text_max_vocab_size = -1;
 
-    // Image / Audio fields will be added here in commits 3-4 as their
-    // loaders migrate. Keeping them in one struct beats threading 5
-    // different context types through the same Apply path.
+    // Image-specific (commit 3) ------------------------------------
+    // image_layout mirrors DataInputDialog::ImageLayout as an int so
+    // the loader doesn't depend on the dialog's private enum:
+    //   0 = ClassSubdirs (folder/<class>/*.jpg — ImageNet style)
+    //   1 = FlatWithCSV  (folder/*.jpg + labels_csv mapping name→label)
+    // image_{w,h,c} are only used to estimate AsyncLoadState::bytes
+    // for the Memory tab; pixels are loaded lazily at training time.
+    std::string image_labels_csv;
+    int image_layout = 0;
+    int image_width = 224;
+    int image_height = 224;
+    int image_channels = 3;
+
+    // Audio-specific (commit 4) ------------------------------------
+    // audio_labeled_subdirs == true  → folder/<class>/*.wav layout.
+    // audio_labeled_subdirs == false → flat folder + audio_labels_csv
+    //   with audio_filename_col / audio_label_col (empty = auto-detect
+    //   by header name). Feature-extraction knobs (sr, max_duration,
+    //   n_fft, hop_length, n_mels, n_mfcc) are defaults pushed into
+    //   AudioDatasetEntry so training-time GetItem produces tensors
+    //   shaped the same way they were probed here.
+    std::string audio_labels_csv;
+    std::string audio_filename_col;
+    std::string audio_label_col;
+    bool audio_labeled_subdirs = true;
+    int audio_target_sr = 16000;
+    float audio_max_duration = 5.0f;
+    int audio_n_fft = 512;
+    int audio_hop_length = 256;
+    int audio_n_mels = 128;
+    int audio_n_mfcc = 13;
+    int audio_feature_type = 1;  // 1 = MelSpectrogram (default)
 };
 
 // Abstract base. Commit 1 wires up the Apply-time async surface; later

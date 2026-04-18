@@ -1,0 +1,30 @@
+#pragma once
+
+#include "data_loader.h"
+
+namespace cyxwiz::loaders {
+
+// Handles FileCategory::Audio. Two layouts picked by
+// ApplyContext::audio_labeled_subdirs:
+//   true  — folder/<class>/*.wav (ClassSubdirs in the dialog)
+//   false — folder/*.wav + CSV with filename + label columns
+// Feature extraction (MelSpectrogram by default) runs lazily inside
+// AudioDataset::GetItem at training time; this loader only scans
+// the folder + optional labels CSV to populate num_samples /
+// num_classes / feature_shape and surface invalid layouts.
+class AudioLoader : public DataLoader {
+public:
+    FileCategory Category() const override { return FileCategory::Audio; }
+    const char* CategoryName() const override { return "Audio"; }
+    int BackendTag() const override { return 4; }
+
+    bool ValidateApplyContext(const ApplyContext& ctx,
+                              std::string& err) const override;
+    uint64_t LaunchAsyncLoad(const ApplyContext& ctx,
+                             std::shared_ptr<AsyncLoadState> state) override;
+
+    bool IsRegistered(const std::string& name) const override;
+    void Unregister(const std::string& name) override;
+};
+
+}  // namespace cyxwiz::loaders
