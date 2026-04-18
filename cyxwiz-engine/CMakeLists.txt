@@ -118,6 +118,7 @@ set(ENGINE_SOURCES
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
     src/core/model_builder.cpp
+    src/core/synthetic_batch.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
@@ -404,6 +405,7 @@ set(ENGINE_HEADERS
     src/core/dataset_batcher.h
     src/core/model_builder.h
     src/core/debug_executor.h
+    src/core/synthetic_batch.h
     src/core/training_executor.h
     src/core/training_manager.h
     src/core/test_executor.h
