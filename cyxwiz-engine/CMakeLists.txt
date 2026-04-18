@@ -119,6 +119,7 @@ set(ENGINE_SOURCES
     src/core/image_utils.cpp
     src/core/model_builder.cpp
     src/core/synthetic_batch.cpp
+    src/core/debug_executor.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
@@ -976,6 +977,7 @@ add_executable(test_debug_executor
     tests/test_debug_executor.cpp
     src/core/model_builder.cpp
     src/core/synthetic_batch.cpp
+    src/core/debug_executor.cpp
 )
 
 target_include_directories(test_debug_executor PRIVATE

@@ -2,9 +2,13 @@
 
 #include "graph_compiler.h"
 #include "../gui/node_editor.h"
+#include <cyxwiz/loss.h>
+#include <cyxwiz/optimizer.h>
+#include <cyxwiz/sequential.h>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -69,6 +73,33 @@ struct DebugResult {
     std::vector<ValidationIssue> issues;
 
     std::chrono::steady_clock::time_point timestamp{};
+};
+
+// Runs one forward + one backward + one optimizer step on a synthetic
+// batch, producing a DebugResult. Does NOT touch DataRegistry — tensors
+// live on the stack of Run(). Does NOT trigger a reservation / Central
+// Server call. Synchronous (UI thread, ~200ms target).
+//
+// Hand over ownership of `config` — DebugExecutor keeps it alive so grad
+// norms can cross-reference config.layers when building trace names.
+class DebugExecutor {
+public:
+    explicit DebugExecutor(TrainingConfiguration config);
+    ~DebugExecutor();
+
+    DebugExecutor(const DebugExecutor&) = delete;
+    DebugExecutor& operator=(const DebugExecutor&) = delete;
+
+    // Execute the debug pass. Catches exceptions at every stage — a
+    // throw leaves `result.reached` at the stage where it failed and
+    // `result.failure_summary` set to the exception message.
+    DebugResult Run();
+
+private:
+    TrainingConfiguration config_;
+    std::unique_ptr<SequentialModel> model_;
+    std::unique_ptr<Loss> loss_;
+    std::unique_ptr<Optimizer> optimizer_;
 };
 
 } // namespace cyxwiz
