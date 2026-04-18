@@ -826,6 +826,13 @@ public:
     using CompileCallback = std::function<void()>;
     void SetCompileCallback(CompileCallback callback) { compile_callback_ = callback; }
 
+    // Local Debug callback - runs one forward + one backward pass on a
+    // synthetic batch to catch shape / NaN / dead-subgraph bugs before
+    // real training. Mirrors SetCompileCallback; triggered by the
+    // toolbar "Local Debug" button or the F6 shortcut.
+    using DebugCallback = std::function<void()>;
+    void SetDebugCallback(DebugCallback callback) { debug_callback_ = callback; }
+
     // Open Custom Node Editor callback - opens the CustomNodeEditorPanel from the Studio toolbar
     using OpenCustomNodeEditorCallback = std::function<void()>;
     void SetOpenCustomNodeEditorCallback(OpenCustomNodeEditorCallback callback) { open_custom_node_editor_callback_ = callback; }
@@ -1213,6 +1220,9 @@ private:
 
     // Compile callback (dry-run GraphCompiler::Compile and show result popup)
     CompileCallback compile_callback_;
+
+    // Local Debug callback (runs one forward + backward pass on synthetic data)
+    DebugCallback debug_callback_;
 
     // Open Custom Node Editor callback (opens CustomNodeEditorPanel)
     OpenCustomNodeEditorCallback open_custom_node_editor_callback_;

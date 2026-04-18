@@ -878,6 +878,32 @@ void NodeEditor::ShowToolbar() {
         }
         ImGui::SameLine();
 
+        // Local Debug - runs one forward + one backward pass on synthetic
+        // data to catch runtime shape / NaN / dead-grad bugs BEFORE
+        // training. Yellow-green distinguishes it from the blue Compile
+        // button. Only rendered when the debug callback has been wired
+        // (MainWindow sets this up alongside SetCompileCallback).
+        if (debug_callback_) {
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                                  ImVec4(0.55f, 0.70f, 0.20f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                  ImVec4(0.65f, 0.80f, 0.28f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                                  ImVec4(0.45f, 0.60f, 0.15f, 1.0f));
+            if (ImGui::Button(ICON_FA_BUG " Local Debug")) {
+                spdlog::info("NodeEditor: Local Debug invoked from toolbar");
+                debug_callback_();
+            }
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Local Debug (F6) - run one forward + "
+                                  "one backward pass on synthetic data. "
+                                  "Catches shape / NaN / dead-gradient "
+                                  "bugs before real training starts.");
+            }
+            ImGui::SameLine();
+        }
+
         ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
         ImGui::SameLine();
 
