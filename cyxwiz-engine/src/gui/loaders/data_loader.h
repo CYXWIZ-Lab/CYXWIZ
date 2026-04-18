@@ -37,6 +37,7 @@ namespace gui { struct MLNode; }
 namespace cyxwiz {
     struct TrainingConfiguration;
     class TrainingPlotPanel;
+    enum class PreprocessingDomain;  // defined in core/graph_compiler.h
 }
 
 namespace cyxwiz::loaders {
@@ -252,6 +253,20 @@ public:
         int batch_size,
         TrainingPlotPanel* plot_panel,
         std::function<void(bool)> node_editor_callback) = 0;
+
+    // === Compile-gate surface (commit 7) ===
+    // Returns the PreprocessingDomain this loader serves. Tabular maps
+    // to PreprocessingDomain::Tabular or TimeSeries depending on the
+    // file_category param on the DataInput node; the dispatcher in
+    // GraphCompiler passes that distinction in via `file_category`.
+    virtual cyxwiz::PreprocessingDomain Domain(
+        const std::string& file_category) const = 0;
+
+    // True when labels are encoded in dataset structure (e.g. subdir
+    // name for image/audio ClassSubdirs layout, parent folder for text
+    // corpus), so a missing `label_column` param shouldn't warn. False
+    // for tabular where labels come from a column pick.
+    virtual bool LabelsFromStructure() const = 0;
 };
 
 // === Factory ===
@@ -278,5 +293,14 @@ DataLoader* GetByBackendTag(int backend);
 
 // All registered loaders, in registration order.
 const std::vector<DataLoader*>& All();
+
+// Parse a file_category param value (persisted as lowercase strings:
+// "tabular", "image", "audio", "video", "text", "timeseries") back
+// into a FileCategory. Unknown strings return FileCategory::Tabular
+// as a safe default — the graph_compiler still treats them as
+// non-image/audio/text for label checks. Centralized here so the
+// dialog's ctor restore and the compile-gate probe share the same
+// mapping.
+FileCategory FileCategoryFromString(const std::string& s);
 
 }  // namespace cyxwiz::loaders

@@ -3,6 +3,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
 #include "../../core/formats/audio_dataset.h"
+#include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
@@ -187,6 +188,11 @@ CompletedLoadDescription AudioLoader::DescribeCompletedLoad(
     d.default_status_message = std::string("Loaded audio from ") +
         p.filename().string();
     return d;
+}
+
+cyxwiz::PreprocessingDomain AudioLoader::Domain(
+    const std::string& /*file_category*/) const {
+    return cyxwiz::PreprocessingDomain::Audio;
 }
 
 bool AudioLoader::LaunchTraining(

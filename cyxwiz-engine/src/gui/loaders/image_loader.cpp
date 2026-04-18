@@ -2,6 +2,7 @@
 
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/training_manager.h"
 #include "../node_editor.h"  // gui::MLNode for RestoreFromRegistry
 
@@ -197,6 +198,11 @@ CompletedLoadDescription ImageLoader::DescribeCompletedLoad(
     d.default_status_message = std::string("Loaded images from ") +
         p.filename().string();
     return d;
+}
+
+cyxwiz::PreprocessingDomain ImageLoader::Domain(
+    const std::string& /*file_category*/) const {
+    return cyxwiz::PreprocessingDomain::Image;
 }
 
 bool ImageLoader::LaunchTraining(

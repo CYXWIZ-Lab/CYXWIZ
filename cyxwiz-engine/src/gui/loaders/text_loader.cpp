@@ -3,6 +3,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
 #include "../../core/formats/text_dataset.h"
+#include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
@@ -188,6 +189,11 @@ CompletedLoadDescription TextLoader::DescribeCompletedLoad(
     d.default_status_message = std::string("Loaded text from ") +
         p.filename().string();
     return d;
+}
+
+cyxwiz::PreprocessingDomain TextLoader::Domain(
+    const std::string& /*file_category*/) const {
+    return cyxwiz::PreprocessingDomain::Text;
 }
 
 bool TextLoader::LaunchTraining(

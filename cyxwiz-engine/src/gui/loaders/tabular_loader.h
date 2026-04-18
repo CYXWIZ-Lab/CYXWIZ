@@ -38,6 +38,10 @@ public:
         int batch_size,
         TrainingPlotPanel* plot_panel,
         std::function<void(bool)> node_editor_callback) override;
+
+    cyxwiz::PreprocessingDomain Domain(
+        const std::string& file_category) const override;
+    bool LabelsFromStructure() const override { return false; }
 };
 
 }  // namespace cyxwiz::loaders

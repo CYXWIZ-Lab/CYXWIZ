@@ -3,6 +3,7 @@
 #include "../../core/arrow_dataset.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/parquet_backed_dataset.h"
 #include "../../core/training_manager.h"
 
@@ -231,6 +232,18 @@ CompletedLoadDescription TabularLoader::DescribeCompletedLoad(
         std::to_string(state.cols) + " cols, " +
         FormatBytes(state.bytes) + (disk_backed ? " on disk" : "") + ")";
     return d;
+}
+
+cyxwiz::PreprocessingDomain TabularLoader::Domain(
+    const std::string& file_category) const {
+    // TimeSeries nodes (file_category == "timeseries") share
+    // TabularLoader's load path but get their own PreprocessingDomain
+    // because the GraphCompiler's downstream checks (TimeSeriesWindow
+    // required, train/val split by chronology, etc.) differ.
+    if (file_category == "timeseries") {
+        return cyxwiz::PreprocessingDomain::TimeSeries;
+    }
+    return cyxwiz::PreprocessingDomain::Tabular;
 }
 
 bool TabularLoader::LaunchTraining(

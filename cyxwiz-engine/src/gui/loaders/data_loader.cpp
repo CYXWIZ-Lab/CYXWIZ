@@ -92,4 +92,13 @@ const std::vector<DataLoader*>& All() {
     return GetRegistry().list;
 }
 
+FileCategory FileCategoryFromString(const std::string& s) {
+    if (s == "image")      return FileCategory::Image;
+    if (s == "audio")      return FileCategory::Audio;
+    if (s == "video")      return FileCategory::Video;
+    if (s == "text")       return FileCategory::Text;
+    if (s == "timeseries") return FileCategory::TimeSeries;
+    return FileCategory::Tabular;  // "tabular" + unknown default
+}
+
 }  // namespace cyxwiz::loaders
