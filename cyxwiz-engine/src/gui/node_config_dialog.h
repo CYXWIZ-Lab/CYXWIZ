@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <imgui.h>
 #include "node_editor.h"
+#include "loaders/data_loader.h"
 
 namespace gui {
 
@@ -185,7 +186,13 @@ protected:
 private:
     // Data source types
     enum class SourceType { File, MLDataset, Database, Cloud };
-    enum class FileCategory { Tabular, Image, Audio, Video, Text, TimeSeries };
+
+    // FileCategory lives in cyxwiz::loaders now so the dialog and the
+    // loader module share a single definition. Aliased here so existing
+    // unqualified `FileCategory::Tabular` usages throughout the dialog
+    // .cpp keep compiling unchanged.
+    using FileCategory = cyxwiz::loaders::FileCategory;
+
     enum class MLDatasetType { MNIST, CIFAR10, CIFAR100, FashionMNIST, ImageNet, ImageFolder, HuggingFace, Kaggle, Custom };
     enum class DatabaseType { SQLite, PostgreSQL, MySQL, DuckDB };
 
@@ -382,32 +389,20 @@ private:
     // which path the engine picked for their data.
     int loaded_backend_ = 0;
 
-    // STATE: Async load state for the CSV path. The CSV/Parquet-convert
-    // step can take 10+ seconds on large files, so it runs on a worker
-    // thread via AsyncTaskManager. Result is written here under mutex by
-    // the worker, then PollAsyncLoadResult on the UI thread picks it up
-    // and applies it to the dialog/node state.
+    // STATE: Async load state for every category path. The CSV /
+    // Parquet-convert / image-scan / text-tokenize / audio-scan steps
+    // can each take multiple seconds on real datasets, so they run on
+    // AsyncTaskManager workers. The worker writes into AsyncLoadState
+    // and sets done.store(true) LAST; PollAsyncLoadResult drains it on
+    // the UI thread on the next frame.
     //
-    // The struct is owned by a shared_ptr so the worker can safely keep
-    // writing to it even if the dialog is destroyed mid-load — the
-    // shared_ptr in the lambda capture keeps the memory alive until the
-    // task finishes.
-    struct AsyncLoadState {
-        std::atomic<bool> done{false};   // worker -> UI
-        bool success = false;            // valid once done==true
-        int backend = 0;                 // 1=Arrow in-mem, 2=Parquet disk-backed, 3=Image folder, 5=Text in-mem
-        int64_t rows = 0;
-        int64_t cols = 0;
-        size_t bytes = 0;
-        std::string message;             // user-facing status (success or error)
-        std::string dataset_name;        // registry key the worker registered under
-        std::string source_path;         // file_path OR folder_path that was loaded
-        // Text + image shared fields. num_classes is set for both; the
-        // dialog reads it for the backend-specific UI update in
-        // PollAsyncLoadResult.
-        int num_classes = 0;
-        int vocab_size = 0;
-    };
+    // The struct lives in cyxwiz::loaders so the loader module and the
+    // dialog share one definition. Aliased locally to keep existing
+    // unqualified `AsyncLoadState` usages in the dialog .cpp working.
+    //
+    // shared_ptr ownership means the worker can outlive the dialog —
+    // its capture keeps the memory alive until the task finishes.
+    using AsyncLoadState = cyxwiz::loaders::AsyncLoadState;
     std::shared_ptr<AsyncLoadState> async_load_state_;
     bool is_loading_async_ = false;
     uint64_t loading_task_id_ = 0;

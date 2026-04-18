@@ -193,6 +193,8 @@ set(ENGINE_SOURCES
     src/gui/properties.cpp
     src/gui/node_config_dialog.cpp
     src/gui/data_input_dialog.cpp
+    src/gui/loaders/data_loader.cpp
+    src/gui/loaders/tabular_loader.cpp
     src/gui/visualization/visualization_nodes.cpp
     src/gui/visualization/bar_chart_dialog.cpp
     src/gui/panels/toolbar.cpp
