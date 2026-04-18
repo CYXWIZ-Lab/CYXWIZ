@@ -15,6 +15,7 @@
 #include "node_config_dialog.h"
 #include "node_editor.h"
 #include "loaders/data_loader.h"
+#include "loaders/image_loader.h"
 #include "loaders/tabular_loader.h"
 #include "loaders/text_loader.h"
 #include "../core/data_registry.h"
@@ -892,134 +893,82 @@ void DataInputDialog::Apply() {
         apply_in_progress_ = false;
         has_changes_ = false;
         return;
-    } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0) {
-        // === ASYNC IMAGE FOLDER LOAD ===
-        // Mirrors the text/tabular async pattern: snapshot dialog state,
-        // run the folder scan + RegisterImageDataset on an
-        // AsyncTaskManager worker, drain the result via
-        // PollAsyncLoadResult on the next UI frame. Previously this path
-        // was synchronous and froze the dialog while LoadImageFolder
-        // enumerated the folder (can take seconds on 10k+ image
-        // datasets like ImageNet).
+    } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0 &&
+               file_category_ == FileCategory::Image) {
+        // Image folder load — routes through ImageLoader. Previously
+        // this branch was unguarded (`strlen(folder_path_) > 0`) and
+        // relied on process-of-elimination after the earlier
+        // audio/text branches; the explicit category gate matches the
+        // other refactored branches and makes intent obvious.
         //
-        // Training still routes through ImageDatasetBatcher via
-        // IsImageDataset at dispatch time; only the load-time UX
-        // changed.
+        // Pixels are loaded lazily at training time by
+        // ImageDatasetBatcher — the loader only scans the folder to
+        // populate num_samples / num_classes and surface invalid
+        // layouts.
         if (is_loading_async_) {
             spdlog::warn("DataInputDialog: Image Apply ignored - load already in progress");
             apply_in_progress_ = false;
             return;
         }
 
-        // FlatWithCSV pre-validation stays on the UI thread — it's a
-        // cheap string-empty check and the error message should fire
-        // immediately, not after a worker round-trip.
-        if (image_layout_ == ImageLayout::FlatWithCSV && strlen(labels_csv_) == 0) {
-            apply_status_message_ = "Flat folder layout requires a Labels CSV - "
-                "pick one or switch to 'Class subdirectories'";
-            node_->parameters["data_loaded"] = "false";
-            spdlog::error("DataInputDialog: FlatWithCSV selected but labels_csv is empty");
-            apply_in_progress_ = false;
+        auto* loader = cyxwiz::loaders::GetByCategory(
+            cyxwiz::loaders::FileCategory::Image);
+        if (!loader) {
+            apply_status_message_ = "No loader registered for Image";
+            apply_success_ = false;
             apply_status_timer_ = 6.0f;
+            apply_in_progress_ = false;
             has_changes_ = false;
+            spdlog::error("DataInputDialog: ImageLoader not registered");
             return;
         }
 
+        std::string previous_dataset_name;
+        if (auto pit = node_->parameters.find("dataset_name");
+            pit != node_->parameters.end()) {
+            previous_dataset_name = pit->second;
+        }
         loaded_dataset_name_ = GenerateDatasetName();
 
-        // Snapshot all inputs by value so the worker isn't racing the
-        // UI thread on dialog state.
-        std::string captured_folder  = folder_path_;
-        std::string captured_csv     = labels_csv_;
-        std::string captured_name    = loaded_dataset_name_;
-        int         captured_layout  = static_cast<int>(image_layout_);
-        int         captured_w       = target_width_  > 0 ? target_width_  : 224;
-        int         captured_h       = target_height_ > 0 ? target_height_ : 224;
-        int         captured_c       = rgb_mode_ ? 3 : 1;
+        cyxwiz::loaders::ApplyContext ctx;
+        ctx.dataset_name          = loaded_dataset_name_;
+        ctx.source_path           = folder_path_;
+        ctx.previous_dataset_name = previous_dataset_name;
+        ctx.image_labels_csv      = labels_csv_;
+        ctx.image_layout          = static_cast<int>(image_layout_);
+        ctx.image_width           = target_width_;
+        ctx.image_height          = target_height_;
+        ctx.image_channels        = rgb_mode_ ? 3 : 1;
+
+        std::string err;
+        if (!loader->ValidateApplyContext(ctx, err)) {
+            apply_status_message_ = err;
+            node_->parameters["data_loaded"] = "false";
+            apply_success_ = false;
+            apply_status_timer_ = 6.0f;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: image validate - {}", err);
+            return;
+        }
 
         auto state = std::make_shared<AsyncLoadState>();
-        state->dataset_name = captured_name;
-        state->source_path  = captured_folder;
+        state->dataset_name = loaded_dataset_name_;
+        state->source_path  = folder_path_;
         async_load_state_   = state;
         is_loading_async_   = true;
 
-        node_->parameters["dataset_name"] = captured_name;
-        node_->parameters["data_loaded"] = "false";
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"]  = "false";
 
         apply_status_message_ = std::string("Scanning ") +
-            fs::path(captured_folder).filename().string() + "...";
+            fs::path(folder_path_).filename().string() + "...";
         apply_status_timer_ = 0.0f;
 
-        auto& mgr = cyxwiz::AsyncTaskManager::Instance();
-        loading_task_id_ = mgr.RunAsync(
-            "Loading images " + captured_name,
-            [captured_folder, captured_csv, captured_name,
-             captured_layout, captured_w, captured_h, captured_c, state]
-            (cyxwiz::LambdaTask& task) {
-                try {
-                    task.ReportProgress(0.1f, "Scanning folder");
-
-                    auto& reg = cyxwiz::DataRegistry::Instance();
-                    // Clear any stale Arrow / Parquet entry under the
-                    // same name so IsArrowDataset doesn't mis-route
-                    // training dispatch.
-                    reg.UnregisterTabularDataset(captured_name);
-
-                    cyxwiz::DatasetHandle handle;
-                    if (captured_layout == static_cast<int>(ImageLayout::FlatWithCSV)) {
-                        handle = reg.LoadImageCSV(captured_folder, captured_csv, captured_name);
-                    } else {
-                        handle = reg.LoadImageFolder(captured_folder, captured_name);
-                    }
-
-                    if (!handle.IsValid()) {
-                        state->success = false;
-                        state->message = "Failed to load image folder - "
-                            "expected either class subdirectories "
-                            "(cats/, dogs/, ...) OR a flat folder with "
-                            "a Labels CSV selected above";
-                        state->done.store(true);
-                        return;
-                    }
-
-                    task.ReportProgress(0.9f, "Registering dataset");
-
-                    auto info = handle.GetInfo();
-
-                    cyxwiz::DataRegistry::ImageDatasetEntry img_entry;
-                    img_entry.folder_path = captured_folder;
-                    img_entry.labels_csv  = captured_csv;
-                    img_entry.layout      = captured_layout;
-                    img_entry.num_images  = info.num_samples;
-                    img_entry.num_classes = info.num_classes;
-                    img_entry.class_names = info.class_names;
-                    reg.RegisterImageDataset(info.name, img_entry);
-
-                    size_t per_image = static_cast<size_t>(captured_w) *
-                                       static_cast<size_t>(captured_h) *
-                                       static_cast<size_t>(captured_c) * sizeof(float);
-
-                    state->success      = true;
-                    state->backend      = 3;  // 3 = image folder
-                    state->dataset_name = info.name;  // may have been uniquified
-                    state->rows         = static_cast<int64_t>(info.num_samples);
-                    state->cols         = 1;
-                    state->bytes        = info.num_samples * per_image;
-                    state->num_classes  = info.num_classes;
-                    state->message      = "Loaded " +
-                        std::to_string(info.num_samples) + " images (" +
-                        std::to_string(info.num_classes) + " classes) from " +
-                        fs::path(captured_folder).filename().string();
-                } catch (const std::exception& e) {
-                    state->success = false;
-                    state->message = std::string("Error loading images: ") + e.what();
-                    spdlog::error("DataInputDialog async image load: {}", state->message);
-                }
-                state->done.store(true);
-            });
+        loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
         spdlog::info("DataInputDialog: queued async image load (task {}, name '{}')",
-                     loading_task_id_, captured_name);
+                     loading_task_id_, loaded_dataset_name_);
 
         apply_in_progress_ = false;
         has_changes_ = false;

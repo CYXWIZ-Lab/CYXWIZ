@@ -98,9 +98,22 @@ struct ApplyContext {
     int text_min_freq = 1;
     int text_max_vocab_size = -1;
 
-    // Image / Audio fields will be added here in commits 3-4 as their
-    // loaders migrate. Keeping them in one struct beats threading 5
-    // different context types through the same Apply path.
+    // Image-specific (commit 3) ------------------------------------
+    // image_layout mirrors DataInputDialog::ImageLayout as an int so
+    // the loader doesn't depend on the dialog's private enum:
+    //   0 = ClassSubdirs (folder/<class>/*.jpg — ImageNet style)
+    //   1 = FlatWithCSV  (folder/*.jpg + labels_csv mapping name→label)
+    // image_{w,h,c} are only used to estimate AsyncLoadState::bytes
+    // for the Memory tab; pixels are loaded lazily at training time.
+    std::string image_labels_csv;
+    int image_layout = 0;
+    int image_width = 224;
+    int image_height = 224;
+    int image_channels = 3;
+
+    // Audio fields will be added here in commit 4 as that loader
+    // migrates. Keeping them in one struct beats threading 5 different
+    // context types through the same Apply path.
 };
 
 // Abstract base. Commit 1 wires up the Apply-time async surface; later

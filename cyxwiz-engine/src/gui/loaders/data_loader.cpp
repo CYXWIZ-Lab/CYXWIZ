@@ -1,4 +1,5 @@
 #include "data_loader.h"
+#include "image_loader.h"
 #include "tabular_loader.h"
 #include "text_loader.h"
 
@@ -25,9 +26,10 @@ Registry& GetRegistry() {
         };
         // Order of registration is observable via All(); keep it stable.
         // Commit 1: TabularLoader. Commit 2: TextLoader.
-        // Commits 3-4 will add Image / Audio.
+        // Commit 3: ImageLoader. Commit 4 will add Audio.
         push(std::make_unique<TabularLoader>());
         push(std::make_unique<TextLoader>());
+        push(std::make_unique<ImageLoader>());
         return tmp;
     }();
     return r;

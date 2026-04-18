@@ -1,0 +1,29 @@
+#pragma once
+
+#include "data_loader.h"
+
+namespace cyxwiz::loaders {
+
+// Handles FileCategory::Image. Two layouts, picked by
+// ApplyContext::image_layout:
+//   0 (ClassSubdirs)  — folder/<class>/*.jpg, ImageNet style
+//   1 (FlatWithCSV)   — folder/*.jpg + labels CSV mapping filename→label
+// Pixels are loaded lazily by ImageDatasetBatcher at training time;
+// this loader only scans the folder to populate num_samples /
+// num_classes and surface invalid-layout errors early.
+class ImageLoader : public DataLoader {
+public:
+    FileCategory Category() const override { return FileCategory::Image; }
+    const char* CategoryName() const override { return "Image"; }
+    int BackendTag() const override { return 3; }
+
+    bool ValidateApplyContext(const ApplyContext& ctx,
+                              std::string& err) const override;
+    uint64_t LaunchAsyncLoad(const ApplyContext& ctx,
+                             std::shared_ptr<AsyncLoadState> state) override;
+
+    bool IsRegistered(const std::string& name) const override;
+    void Unregister(const std::string& name) override;
+};
+
+}  // namespace cyxwiz::loaders
