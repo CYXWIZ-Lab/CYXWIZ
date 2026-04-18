@@ -403,6 +403,7 @@ set(ENGINE_HEADERS
     src/core/graph_compiler.h
     src/core/dataset_batcher.h
     src/core/model_builder.h
+    src/core/debug_executor.h
     src/core/training_executor.h
     src/core/training_manager.h
     src/core/test_executor.h
