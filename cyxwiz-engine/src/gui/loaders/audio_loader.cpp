@@ -218,4 +218,20 @@ bool AudioLoader::LaunchTraining(
         std::move(node_editor_callback));
 }
 
+std::vector<ParamSchema> AudioLoader::NodeParams() const {
+    return {
+        {"audio_layout",        "0",     "0=ClassSubdirs, 1=FlatWithCSV"},
+        {"audio_labels_csv",    "",      "Labels CSV path (FlatWithCSV)"},
+        {"audio_filename_col",  "",      "Filename column (auto-detect if empty)"},
+        {"audio_label_col",     "",      "Label column (auto-detect if empty)"},
+        {"sample_rate",         "16000", "Target sample rate (Hz)"},
+        {"mono",                "true",  "Mix to mono"},
+    };
+}
+
+SyntheticBatch AudioLoader::MakeSynthetic(
+    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
+    return SyntheticBatch{};
+}
+
 }  // namespace cyxwiz::loaders

@@ -263,6 +263,34 @@ void DataInputDialog::Apply() {
     const char* categories[] = {"tabular", "image", "audio", "video", "text", "timeseries"};
     node_->parameters["file_category"] = categories[static_cast<int>(file_category_)];
 
+    // Prune stale per-category params when the user switched category
+    // since the last Apply. Without this, switching Tabular → Image
+    // would leave `label_column`, `delimiter`, `has_header` etc. in
+    // node->parameters forever — they'd show up in saved .cyxgraph
+    // files and could mislead the compile gate on the next load.
+    //
+    // Algorithm: union all keys across all registered loaders (those
+    // are the "per-category" keys). Remove any such key that's not in
+    // the current loader's schema. Common params (dataset_name,
+    // file_path, source_type, etc.) are never in any loader's schema
+    // and thus never pruned.
+    if (auto* current_loader = cyxwiz::loaders::GetByCategory(file_category_)) {
+        std::unordered_set<std::string> all_known;
+        for (auto* l : cyxwiz::loaders::All()) {
+            for (const auto& p : l->NodeParams()) all_known.insert(p.name);
+        }
+        std::unordered_set<std::string> current_keys;
+        for (const auto& p : current_loader->NodeParams()) current_keys.insert(p.name);
+
+        for (auto it = node_->parameters.begin(); it != node_->parameters.end(); ) {
+            if (all_known.count(it->first) && !current_keys.count(it->first)) {
+                it = node_->parameters.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     // Common parameters
     node_->parameters["file_path"] = file_path_;
     node_->parameters["folder_path"] = folder_path_;

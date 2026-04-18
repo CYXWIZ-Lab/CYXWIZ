@@ -283,4 +283,31 @@ bool TabularLoader::LaunchTraining(
     return false;
 }
 
+std::vector<ParamSchema> TabularLoader::NodeParams() const {
+    // Per-category keys the Tabular branch of DataInputDialog::Apply
+    // writes to the node. Keys not in any loader's schema are
+    // considered "common" and never pruned.
+    return {
+        {"type",              "auto",   "Detected file type (csv/tsv/...)"},
+        {"has_header",        "true",   "First row contains column names"},
+        {"delimiter",         ",",      "Column separator"},
+        {"skip_rows",         "0",      "Rows to skip at file start"},
+        {"max_rows",          "0",      "Max rows to load (0 = all)"},
+        {"encoding",          "0",      "Text encoding index"},
+        {"label_column",      "",       "Column name used as training label"},
+        {"force_disk_backed", "false",  "Force Parquet disk-backed cache"},
+        {"sheet_idx",         "0",      "Excel sheet index"},
+        {"sheet_range",       "",       "Excel cell range"},
+        {"json_lines",        "false",  "JSON lines (NDJSON) mode"},
+        {"json_path",         "",       "JSONPath selector"},
+        {"hdf5_dataset",      "data",   "HDF5 dataset name"},
+    };
+}
+
+SyntheticBatch TabularLoader::MakeSynthetic(
+    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
+    // Stub — real synthetic tensor generation lands with Local Debug.
+    return SyntheticBatch{};
+}
+
 }  // namespace cyxwiz::loaders

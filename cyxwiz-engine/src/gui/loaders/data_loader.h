@@ -149,6 +149,32 @@ struct ApplyContext {
     int audio_feature_type = 1;  // 1 = MelSpectrogram (default)
 };
 
+// One entry in a loader's per-category param schema. `name` is the
+// key in MLNode::parameters; `default_value` is used when the dialog
+// creates a fresh node and the category-specific dialog hasn't yet
+// applied. `description` is a short hint for future tooltips — not
+// rendered yet.
+//
+// The schema is consulted by DataInputDialog::Apply at the top of the
+// method to prune per-category params that don't belong to the newly-
+// selected category (e.g. switching from Tabular to Image drops
+// `label_column`, `delimiter`, `has_header` which are meaningless for
+// image folders).
+struct ParamSchema {
+    std::string name;
+    std::string default_value;
+    std::string description;
+};
+
+// Placeholder return type for DataLoader::MakeSynthetic — powers the
+// Local Debug workflow (deferred feature, tracked in tofix.md). Kept
+// minimal (empty flag only) so the virtual method has a real type,
+// but no real tensor production happens yet; each loader returns an
+// empty batch. Filled out when Local Debug lands.
+struct SyntheticBatch {
+    bool is_empty = true;
+};
+
 // Populated by DataLoader::RestoreFromRegistry from registry metadata
 // when a dialog reopens on an already-loaded dataset. The dialog splats
 // these fields into its loaded_* members so the Memory tab + compile
@@ -267,6 +293,32 @@ public:
     // corpus), so a missing `label_column` param shouldn't warn. False
     // for tabular where labels come from a column pick.
     virtual bool LabelsFromStructure() const = 0;
+
+    // === Node-param schema (commit 8) ===
+    // Lists the per-category keys this loader cares about in
+    // MLNode::parameters. Used by DataInputDialog::Apply to prune
+    // stale params when the user toggles category — so switching from
+    // Tabular to Image drops `label_column` / `delimiter` / etc.
+    // instead of leaving them lingering in the save file.
+    //
+    // Not exhaustive: common keys shared across categories
+    // (dataset_name, data_loaded, file_category, file_path, folder_path,
+    // source_type, configured) are NOT in any loader's schema — they're
+    // not per-category. The pruning logic only considers keys that
+    // belong to at least one loader's schema.
+    virtual std::vector<ParamSchema> NodeParams() const = 0;
+
+    // === Synthetic data for Local Debug (commit 8, skeleton) ===
+    // Produces a small batch of synthetic data matching the loader's
+    // expected tensor shape. Powers the Local Debug workflow — the
+    // user picks "train with synthetic data" to smoke-test the graph
+    // without a real dataset. Current implementations all return an
+    // empty SyntheticBatch; the real generator lands with the Local
+    // Debug feature (tracked in tofix.md). Method exists now so Local
+    // Debug doesn't become yet another category switch when it's
+    // wired.
+    virtual SyntheticBatch MakeSynthetic(
+        const cyxwiz::TrainingConfiguration& config, uint32_t seed) const = 0;
 };
 
 // === Factory ===

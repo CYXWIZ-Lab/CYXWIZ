@@ -220,4 +220,22 @@ bool TextLoader::LaunchTraining(
         std::move(node_editor_callback));
 }
 
+std::vector<ParamSchema> TextLoader::NodeParams() const {
+    return {
+        {"text_layout",         "0",    "0=SingleFile, 1=CorpusSubdirs"},
+        {"text_column",         "text", "Column with text for tokenization"},
+        {"text_label_column",   "label","Label column (single-file mode)"},
+        {"text_tokenizer_type", "1",    "0=Whitespace, 1=Word, 2=Character"},
+        {"text_max_length",     "512",  "Max tokens per sample"},
+        {"text_lowercase",      "true", "Lowercase before tokenization"},
+        {"text_min_freq",       "1",    "Min word frequency for vocab"},
+        {"text_max_vocab_size", "-1",   "Vocab cap (-1 = unlimited)"},
+    };
+}
+
+SyntheticBatch TextLoader::MakeSynthetic(
+    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
+    return SyntheticBatch{};
+}
+
 }  // namespace cyxwiz::loaders

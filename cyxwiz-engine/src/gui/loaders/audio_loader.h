@@ -45,6 +45,11 @@ public:
     cyxwiz::PreprocessingDomain Domain(
         const std::string& file_category) const override;
     bool LabelsFromStructure() const override { return true; }
+
+    std::vector<ParamSchema> NodeParams() const override;
+    SyntheticBatch MakeSynthetic(
+        const cyxwiz::TrainingConfiguration& config,
+        uint32_t seed) const override;
 };
 
 }  // namespace cyxwiz::loaders

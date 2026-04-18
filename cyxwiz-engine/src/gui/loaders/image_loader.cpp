@@ -228,4 +228,20 @@ bool ImageLoader::LaunchTraining(
         std::move(node_editor_callback));
 }
 
+std::vector<ParamSchema> ImageLoader::NodeParams() const {
+    return {
+        {"image_layout",   "0",    "0=ClassSubdirs, 1=FlatWithCSV"},
+        {"labels_csv",     "",     "Labels CSV path (FlatWithCSV mode)"},
+        {"target_width",   "224",  "Resize target width"},
+        {"target_height",  "224",  "Resize target height"},
+        {"normalize",      "true", "Normalize to [0,1]"},
+        {"rgb",            "true", "RGB (true) vs grayscale (false)"},
+    };
+}
+
+SyntheticBatch ImageLoader::MakeSynthetic(
+    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
+    return SyntheticBatch{};
+}
+
 }  // namespace cyxwiz::loaders
