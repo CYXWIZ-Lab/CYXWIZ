@@ -29,6 +29,24 @@ public:
                              RestoreState& out) const override;
     CompletedLoadDescription DescribeCompletedLoad(
         const AsyncLoadState& state) const override;
+
+    bool LaunchTraining(
+        TrainingConfiguration config,
+        const std::string& dataset_name,
+        const std::string& label_column,
+        int epochs,
+        int batch_size,
+        TrainingPlotPanel* plot_panel,
+        std::function<void(bool)> node_editor_callback) override;
+
+    cyxwiz::PreprocessingDomain Domain(
+        const std::string& file_category) const override;
+    bool LabelsFromStructure() const override { return false; }
+
+    std::vector<ParamSchema> NodeParams() const override;
+    SyntheticBatch MakeSynthetic(
+        const cyxwiz::TrainingConfiguration& config,
+        uint32_t seed) const override;
 };
 
 }  // namespace cyxwiz::loaders

@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,6 +29,16 @@
 // target_width / target_height / rgb overrides) without dragging the
 // full node_editor.h into this header.
 namespace gui { struct MLNode; }
+
+// Forward declarations for LaunchTraining. The full types come from
+// core/graph_compiler.h + gui/panels/training_plot_panel.h; forward-
+// declaring them keeps this header from pulling in the whole training
+// toolchain for callers that only use the Apply-time surface.
+namespace cyxwiz {
+    struct TrainingConfiguration;
+    class TrainingPlotPanel;
+    enum class PreprocessingDomain;  // defined in core/graph_compiler.h
+}
 
 namespace cyxwiz::loaders {
 
@@ -138,6 +149,32 @@ struct ApplyContext {
     int audio_feature_type = 1;  // 1 = MelSpectrogram (default)
 };
 
+// One entry in a loader's per-category param schema. `name` is the
+// key in MLNode::parameters; `default_value` is used when the dialog
+// creates a fresh node and the category-specific dialog hasn't yet
+// applied. `description` is a short hint for future tooltips — not
+// rendered yet.
+//
+// The schema is consulted by DataInputDialog::Apply at the top of the
+// method to prune per-category params that don't belong to the newly-
+// selected category (e.g. switching from Tabular to Image drops
+// `label_column`, `delimiter`, `has_header` which are meaningless for
+// image folders).
+struct ParamSchema {
+    std::string name;
+    std::string default_value;
+    std::string description;
+};
+
+// Placeholder return type for DataLoader::MakeSynthetic — powers the
+// Local Debug workflow (deferred feature, tracked in tofix.md). Kept
+// minimal (empty flag only) so the virtual method has a real type,
+// but no real tensor production happens yet; each loader returns an
+// empty batch. Filled out when Local Debug lands.
+struct SyntheticBatch {
+    bool is_empty = true;
+};
+
 // Populated by DataLoader::RestoreFromRegistry from registry metadata
 // when a dialog reopens on an already-loaded dataset. The dialog splats
 // these fields into its loaded_* members so the Memory tab + compile
@@ -220,6 +257,68 @@ public:
     // successful AsyncLoadState.
     virtual CompletedLoadDescription DescribeCompletedLoad(
         const AsyncLoadState& state) const = 0;
+
+    // === Training dispatch (commit 6) ===
+    // Look up the registry entry for `dataset_name` and hand it to the
+    // right TrainingManager::StartTraining* method. Returns false if
+    // the registry entry is missing (registered but not retrievable,
+    // which would be a TOCTOU bug) or if TrainingManager declined to
+    // start (another session already running).
+    //
+    // Callers (MainWindow::StartTrainingFromGraph) used to fan out via
+    // a 5-way if/else-if on dataset type and a per-branch
+    // TrainingManager::StartTrainingX call. This method collapses that
+    // into a virtual dispatch — each loader owns the knowledge of
+    // which registry entry to fetch and which TrainingManager method
+    // to call.
+    virtual bool LaunchTraining(
+        TrainingConfiguration config,
+        const std::string& dataset_name,
+        const std::string& label_column,
+        int epochs,
+        int batch_size,
+        TrainingPlotPanel* plot_panel,
+        std::function<void(bool)> node_editor_callback) = 0;
+
+    // === Compile-gate surface (commit 7) ===
+    // Returns the PreprocessingDomain this loader serves. Tabular maps
+    // to PreprocessingDomain::Tabular or TimeSeries depending on the
+    // file_category param on the DataInput node; the dispatcher in
+    // GraphCompiler passes that distinction in via `file_category`.
+    virtual cyxwiz::PreprocessingDomain Domain(
+        const std::string& file_category) const = 0;
+
+    // True when labels are encoded in dataset structure (e.g. subdir
+    // name for image/audio ClassSubdirs layout, parent folder for text
+    // corpus), so a missing `label_column` param shouldn't warn. False
+    // for tabular where labels come from a column pick.
+    virtual bool LabelsFromStructure() const = 0;
+
+    // === Node-param schema (commit 8) ===
+    // Lists the per-category keys this loader cares about in
+    // MLNode::parameters. Used by DataInputDialog::Apply to prune
+    // stale params when the user toggles category — so switching from
+    // Tabular to Image drops `label_column` / `delimiter` / etc.
+    // instead of leaving them lingering in the save file.
+    //
+    // Not exhaustive: common keys shared across categories
+    // (dataset_name, data_loaded, file_category, file_path, folder_path,
+    // source_type, configured) are NOT in any loader's schema — they're
+    // not per-category. The pruning logic only considers keys that
+    // belong to at least one loader's schema.
+    virtual std::vector<ParamSchema> NodeParams() const = 0;
+
+    // === Synthetic data for Local Debug (commit 8, skeleton) ===
+    // Produces a small batch of synthetic data matching the loader's
+    // expected tensor shape. Powers the Local Debug workflow — the
+    // user picks "train with synthetic data" to smoke-test the graph
+    // without a real dataset. Current implementations all return an
+    // empty SyntheticBatch; the real generator lands with the Local
+    // Debug feature (tracked in tofix.md). Method exists now so Local
+    // Debug doesn't become yet another category switch when it's
+    // wired.
+    virtual SyntheticBatch MakeSynthetic(
+        const cyxwiz::TrainingConfiguration& config, uint32_t seed) const = 0;
 };
 
 // === Factory ===
@@ -246,5 +345,14 @@ DataLoader* GetByBackendTag(int backend);
 
 // All registered loaders, in registration order.
 const std::vector<DataLoader*>& All();
+
+// Parse a file_category param value (persisted as lowercase strings:
+// "tabular", "image", "audio", "video", "text", "timeseries") back
+// into a FileCategory. Unknown strings return FileCategory::Tabular
+// as a safe default — the graph_compiler still treats them as
+// non-image/audio/text for label checks. Centralized here so the
+// dialog's ctor restore and the compile-gate probe share the same
+// mapping.
+FileCategory FileCategoryFromString(const std::string& s);
 
 }  // namespace cyxwiz::loaders

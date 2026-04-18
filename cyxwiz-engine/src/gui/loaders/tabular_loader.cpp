@@ -3,7 +3,9 @@
 #include "../../core/arrow_dataset.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/parquet_backed_dataset.h"
+#include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
 
@@ -230,6 +232,82 @@ CompletedLoadDescription TabularLoader::DescribeCompletedLoad(
         std::to_string(state.cols) + " cols, " +
         FormatBytes(state.bytes) + (disk_backed ? " on disk" : "") + ")";
     return d;
+}
+
+cyxwiz::PreprocessingDomain TabularLoader::Domain(
+    const std::string& file_category) const {
+    // TimeSeries nodes (file_category == "timeseries") share
+    // TabularLoader's load path but get their own PreprocessingDomain
+    // because the GraphCompiler's downstream checks (TimeSeriesWindow
+    // required, train/val split by chronology, etc.) differ.
+    if (file_category == "timeseries") {
+        return cyxwiz::PreprocessingDomain::TimeSeries;
+    }
+    return cyxwiz::PreprocessingDomain::Tabular;
+}
+
+bool TabularLoader::LaunchTraining(
+    cyxwiz::TrainingConfiguration config,
+    const std::string& dataset_name,
+    const std::string& label_column,
+    int epochs,
+    int batch_size,
+    cyxwiz::TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback) {
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    auto& tm       = cyxwiz::TrainingManager::Instance();
+
+    // Tabular covers both backends: in-memory Arrow (the default fast
+    // path) and disk-backed Parquet (picked by LoadTabularCSV when the
+    // CSV was too big to fit in RAM). Check Arrow first since the
+    // Apply dispatch prefers it.
+    if (auto arrow_ds = registry.GetArrowDataset(dataset_name)) {
+        spdlog::info("TabularLoader: Starting Arrow training: dataset={}, epochs={}, "
+                     "batch_size={}, label={}",
+                     dataset_name, epochs, batch_size, label_column);
+        return tm.StartTrainingArrow(std::move(config), arrow_ds, label_column,
+                                     epochs, batch_size, plot_panel,
+                                     std::move(node_editor_callback));
+    }
+    if (auto pq_ds = registry.GetParquetBackedDataset(dataset_name)) {
+        spdlog::info("TabularLoader: Starting Parquet-backed training: dataset={}, "
+                     "epochs={}, batch_size={}, label={}, {:.1f} MB on disk",
+                     dataset_name, epochs, batch_size, label_column,
+                     pq_ds->GetFileSizeBytes() / (1024.0 * 1024.0));
+        return tm.StartTrainingParquet(std::move(config), pq_ds, label_column,
+                                       epochs, batch_size, plot_panel,
+                                       std::move(node_editor_callback));
+    }
+    spdlog::error("TabularLoader: '{}' is registered but neither Arrow nor Parquet "
+                  "dataset can be retrieved", dataset_name);
+    return false;
+}
+
+std::vector<ParamSchema> TabularLoader::NodeParams() const {
+    // Per-category keys the Tabular branch of DataInputDialog::Apply
+    // writes to the node. Keys not in any loader's schema are
+    // considered "common" and never pruned.
+    return {
+        {"type",              "auto",   "Detected file type (csv/tsv/...)"},
+        {"has_header",        "true",   "First row contains column names"},
+        {"delimiter",         ",",      "Column separator"},
+        {"skip_rows",         "0",      "Rows to skip at file start"},
+        {"max_rows",          "0",      "Max rows to load (0 = all)"},
+        {"encoding",          "0",      "Text encoding index"},
+        {"label_column",      "",       "Column name used as training label"},
+        {"force_disk_backed", "false",  "Force Parquet disk-backed cache"},
+        {"sheet_idx",         "0",      "Excel sheet index"},
+        {"sheet_range",       "",       "Excel cell range"},
+        {"json_lines",        "false",  "JSON lines (NDJSON) mode"},
+        {"json_path",         "",       "JSONPath selector"},
+        {"hdf5_dataset",      "data",   "HDF5 dataset name"},
+    };
+}
+
+SyntheticBatch TabularLoader::MakeSynthetic(
+    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
+    // Stub — real synthetic tensor generation lands with Local Debug.
+    return SyntheticBatch{};
 }
 
 }  // namespace cyxwiz::loaders

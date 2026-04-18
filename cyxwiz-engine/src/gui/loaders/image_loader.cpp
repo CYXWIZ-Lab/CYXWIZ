@@ -2,6 +2,8 @@
 
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/graph_compiler.h"  // PreprocessingDomain
+#include "../../core/training_manager.h"
 #include "../node_editor.h"  // gui::MLNode for RestoreFromRegistry
 
 #include <spdlog/spdlog.h>
@@ -196,6 +198,50 @@ CompletedLoadDescription ImageLoader::DescribeCompletedLoad(
     d.default_status_message = std::string("Loaded images from ") +
         p.filename().string();
     return d;
+}
+
+cyxwiz::PreprocessingDomain ImageLoader::Domain(
+    const std::string& /*file_category*/) const {
+    return cyxwiz::PreprocessingDomain::Image;
+}
+
+bool ImageLoader::LaunchTraining(
+    cyxwiz::TrainingConfiguration config,
+    const std::string& dataset_name,
+    const std::string& /*label_column*/,
+    int epochs,
+    int batch_size,
+    cyxwiz::TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback) {
+    auto* entry = cyxwiz::DataRegistry::Instance().GetImageDatasetEntry(dataset_name);
+    if (!entry) {
+        spdlog::error("ImageLoader: image dataset '{}' is registered but entry "
+                      "could not be retrieved", dataset_name);
+        return false;
+    }
+    spdlog::info("ImageLoader: Starting image training: dataset={}, epochs={}, "
+                 "batch_size={}, {} images, {} classes",
+                 dataset_name, epochs, batch_size,
+                 entry->num_images, entry->num_classes);
+    return cyxwiz::TrainingManager::Instance().StartTrainingImage(
+        std::move(config), *entry, epochs, batch_size, plot_panel,
+        std::move(node_editor_callback));
+}
+
+std::vector<ParamSchema> ImageLoader::NodeParams() const {
+    return {
+        {"image_layout",   "0",    "0=ClassSubdirs, 1=FlatWithCSV"},
+        {"labels_csv",     "",     "Labels CSV path (FlatWithCSV mode)"},
+        {"target_width",   "224",  "Resize target width"},
+        {"target_height",  "224",  "Resize target height"},
+        {"normalize",      "true", "Normalize to [0,1]"},
+        {"rgb",            "true", "RGB (true) vs grayscale (false)"},
+    };
+}
+
+SyntheticBatch ImageLoader::MakeSynthetic(
+    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
+    return SyntheticBatch{};
 }
 
 }  // namespace cyxwiz::loaders

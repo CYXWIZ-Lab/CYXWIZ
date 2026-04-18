@@ -2,6 +2,7 @@
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
+#include "../gui/loaders/data_loader.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -147,15 +148,13 @@ TrainingConfiguration GraphCompiler::Compile(
             ? dataset_node->parameters.at("data_loaded")
             : std::string("false");
 
-        bool in_registry = false;
-        if (!config.dataset_name.empty()) {
-            auto& reg = DataRegistry::Instance();
-            in_registry = reg.IsArrowDataset(config.dataset_name) ||
-                          reg.IsParquetBackedDataset(config.dataset_name) ||
-                          reg.IsImageDataset(config.dataset_name) ||
-                          reg.IsAudioDataset(config.dataset_name) ||
-                          reg.IsTextDataset(config.dataset_name);
-        }
+        // Registry probe via the loader factory. Each loader checks its
+        // own registry map (tabular: Arrow+Parquet, image/audio/text:
+        // their entries). GetByRegisteredDataset returns non-null iff
+        // ANY loader claims the name — same semantics as the 5-way OR
+        // this replaces.
+        const bool in_registry = !config.dataset_name.empty() &&
+            loaders::GetByRegisteredDataset(config.dataset_name) != nullptr;
 
         if (in_registry) {
             // Data IS loaded, regardless of the hint. Log when we had to
@@ -195,14 +194,16 @@ TrainingConfiguration GraphCompiler::Compile(
         // but image / audio / text datasets get labels from folder
         // structure or an explicit dialog column, not from a flag on
         // the DataInput node — don't emit a misleading warning for them.
+        // Each loader reports LabelsFromStructure() — Tabular returns
+        // false; Image/Audio/Text return true.
         auto cat_it_lbl = dataset_node->parameters.find("file_category");
         const std::string cat_str = (cat_it_lbl != dataset_node->parameters.end())
             ? cat_it_lbl->second : std::string();
-        bool is_image_dataset = (cat_str == "image");
-        bool is_audio_dataset = (cat_str == "audio");
-        bool is_text_dataset = (cat_str == "text");
-        bool labels_from_structure =
-            is_image_dataset || is_audio_dataset || is_text_dataset;
+        bool labels_from_structure = false;
+        if (auto* cat_loader = loaders::GetByCategory(
+                loaders::FileCategoryFromString(cat_str))) {
+            labels_from_structure = cat_loader->LabelsFromStructure();
+        }
 
         const std::string label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
@@ -515,49 +516,41 @@ TrainingConfiguration GraphCompiler::Compile(
     }
 
     // === Domain detection ===
-    // The DataInput node carries file_category (tabular / image / audio / text).
-    // Domain drives both the dispatch in StartTrainingFromGraph and the
-    // domain-specific checks below.
+    // The DataInput node carries file_category (tabular / image / audio /
+    // text / timeseries). The owning loader reports its PreprocessingDomain
+    // via Domain(file_category) — TabularLoader splits Tabular vs
+    // TimeSeries based on the category string; other loaders return a
+    // fixed value.
+    //
+    // Per-domain notes preserved from the pre-refactor code:
+    //   - TimeSeries: TimeSeriesWindow runs as a real Cat-1
+    //     IPipelineOperator in the materializer pass, NOT as a config
+    //     extractor. The compile gate's checks below (label column,
+    //     batch size vs row count) run on the pre-materialized CSV —
+    //     validating the user's raw column pick, not the post-window
+    //     x_0..x_n schema.
+    //   - Audio / Text: either the graph has extractor nodes (Spectrogram
+    //     / MelSpec / MFCC for audio, TextTokenizer / TextVocabulary /
+    //     TextPadding for text) that populate config.audio_preprocessing
+    //     / text_preprocessing later, or we fall back to the dialog-
+    //     baked defaults on the registry entry. The end-of-Compile()
+    //     log reports which mode won.
     if (dataset_node) {
         auto cat_it = dataset_node->parameters.find("file_category");
         const std::string cat = (cat_it != dataset_node->parameters.end())
             ? cat_it->second : std::string();
-        bool is_image = (cat == "image");
-        bool is_audio = (cat == "audio");
-        bool is_text = (cat == "text");
-        bool is_timeseries = (cat == "timeseries");
 
-        if (is_timeseries) {
-            config.preprocessing_domain = PreprocessingDomain::TimeSeries;
-            // TimeSeries preprocessing: TimeSeriesWindow runs as a real
-            // Cat-1 IPipelineOperator in the materializer pass, NOT as a
-            // config extractor. The compile gate's checks below (label
-            // column, batch size vs row count) run on the pre-
-            // materialized CSV — so they validate the user's raw column
-            // pick, not the post-window x_0..x_n schema.
+        if (auto* cat_loader = loaders::GetByCategory(
+                loaders::FileCategoryFromString(cat))) {
+            config.preprocessing_domain = cat_loader->Domain(cat);
         }
 
-        if (is_audio) {
-            config.preprocessing_domain = PreprocessingDomain::Audio;
-            // Audio feature extraction: either the graph has a
-            // Spectrogram/MelSpectrogram/MFCC node (extractors run later
-            // in the preprocessing pass and populate
-            // config.audio_preprocessing), or we fall back to the
-            // dialog-baked defaults on AudioDatasetEntry. Either mode is
-            // valid — we log which one won near the end of Compile().
-        }
-
-        if (is_text) {
-            config.preprocessing_domain = PreprocessingDomain::Text;
-            // Text preprocessing: either the graph has a TextTokenizer /
-            // TextVocabulary / TextPadding node (extractors run later),
-            // or we fall back to the dialog defaults on TextDatasetEntry.
-            // Summary log near the end of Compile() reports which mode
-            // drove the final config.
-        }
+        // is_image kept as a local for the image-specific checks below
+        // (Resize, Augmentation, etc.) — those stay domain-scoped and
+        // don't need to move into the loader yet.
+        const bool is_image = (cat == "image");
 
         if (is_image) {
-            config.preprocessing_domain = PreprocessingDomain::Image;
 
             // Check 1: Resize node required for image datasets.
             // Without it, images load at their native (variable) size,

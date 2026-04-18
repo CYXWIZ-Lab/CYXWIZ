@@ -24,6 +24,78 @@ TrainingMetrics TrainingManager::GetCurrentMetrics() const {
     return cached_metrics_;
 }
 
+bool TrainingManager::StartTrainingCommon(
+    std::unique_ptr<TrainingExecutor> executor,
+    int epochs,
+    int batch_size,
+    TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback,
+    const std::string& task_name,
+    const std::string& start_msg)
+{
+    // Caller has already verified !is_training_.load() and acquired
+    // mutex_. This helper carries the common plumbing that used to
+    // be duplicated across StartTraining{Legacy, Arrow, Parquet,
+    // Image, Audio, Text} verbatim.
+    is_training_.store(true);
+    stop_requested_.store(false);
+
+    if (node_editor_callback) {
+        node_editor_callback(true);
+    }
+
+    if (plot_panel) {
+        plot_panel->Clear();
+        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
+        plot_panel->SetVisible(true);
+    }
+
+    // Tasks-panel progress tracker. Poll loop reads TrainingManager
+    // state — the actual training work lives in TrainingThreadFunc.
+    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [](LambdaTask& task) {
+            while (!task.ShouldStop()) {
+                auto& mgr = TrainingManager::Instance();
+                if (!mgr.IsTrainingActive()) {
+                    break;
+                }
+                auto metrics = mgr.GetCurrentMetrics();
+                float progress = static_cast<float>(metrics.current_epoch) /
+                    std::max(1, metrics.total_epochs);
+                task.ReportProgress(progress,
+                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
+                    std::to_string(metrics.total_epochs) +
+                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            task.MarkCompleted();
+        },
+        nullptr,
+        nullptr
+    ));
+
+    if (on_training_start_) {
+        on_training_start_(start_msg);
+    }
+
+    // Join any still-running prior training thread before replacing
+    // it. Done here (inside the mutex) so two concurrent starts can't
+    // race over training_thread_.
+    if (training_thread_ && training_thread_->joinable()) {
+        training_thread_->join();
+    }
+
+    training_thread_ = std::make_unique<std::thread>(
+        &TrainingManager::TrainingThreadFunc, this,
+        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
+    );
+
+    spdlog::info("TrainingManager: Started {} ({} epochs, batch_size={})",
+                 task_name, epochs, batch_size);
+    return true;
+}
+
 bool TrainingManager::StartTraining(
     TrainingConfiguration config,
     DatasetHandle dataset,
@@ -45,69 +117,11 @@ bool TrainingManager::StartTraining(
         return false;
     }
 
-    // Create executor
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), dataset);
-
-    // Set state
-    is_training_.store(true);
-    stop_requested_.store(false);
-
-    // Activate node editor animation
-    if (node_editor_callback) {
-        node_editor_callback(true);
-    }
-
-    // Clear plot panel and set initial training state
-    if (plot_panel) {
-        plot_panel->Clear();
-        // Set initial training state so UI shows "TRAINING" immediately
-        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
-        plot_panel->SetVisible(true);
-    }
-
-    // Create async task for visibility in Tasks panel
-    std::string task_name = "Training Model";
-    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
-        task_name,
-        [](LambdaTask& task) {
-            // This task just tracks the training - actual work is in training thread
-            while (!task.ShouldStop()) {
-                auto& mgr = TrainingManager::Instance();
-                if (!mgr.IsTrainingActive()) {
-                    break;
-                }
-                auto metrics = mgr.GetCurrentMetrics();
-                float progress = static_cast<float>(metrics.current_epoch) / std::max(1, metrics.total_epochs);
-                task.ReportProgress(progress,
-                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
-                    std::to_string(metrics.total_epochs) +
-                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            task.MarkCompleted();
-        },
-        nullptr,  // progress callback
-        nullptr   // completion callback
-    ));
-
-    // Notify start callback
-    if (on_training_start_) {
-        on_training_start_("Training from Node Graph");
-    }
-
-    // Wait for previous thread if any
-    if (training_thread_ && training_thread_->joinable()) {
-        training_thread_->join();
-    }
-
-    // Start training thread
-    training_thread_ = std::make_unique<std::thread>(
-        &TrainingManager::TrainingThreadFunc, this,
-        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
-    );
-
-    spdlog::info("TrainingManager: Started training ({} epochs, batch_size={})", epochs, batch_size);
-    return true;
+    return StartTrainingCommon(
+        std::move(executor), epochs, batch_size, plot_panel,
+        std::move(node_editor_callback),
+        "Training Model", "Training from Node Graph");
 }
 
 bool TrainingManager::StartTrainingArrow(
@@ -165,67 +179,11 @@ bool TrainingManager::StartTrainingArrow(
         spdlog::warn("TrainingManager: Arrow dataset has only {} column - no separate label column", num_cols);
     }
 
-    // Create executor with Arrow dataset
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), arrow_dataset, label_column);
-
-    // Set state
-    is_training_.store(true);
-    stop_requested_.store(false);
-
-    // Activate node editor animation
-    if (node_editor_callback) {
-        node_editor_callback(true);
-    }
-
-    // Clear plot panel and set initial training state
-    if (plot_panel) {
-        plot_panel->Clear();
-        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
-        plot_panel->SetVisible(true);
-    }
-
-    // Create async task for visibility in Tasks panel
-    std::string task_name = "Training Model (Arrow)";
-    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
-        task_name,
-        [](LambdaTask& task) {
-            while (!task.ShouldStop()) {
-                auto& mgr = TrainingManager::Instance();
-                if (!mgr.IsTrainingActive()) {
-                    break;
-                }
-                auto metrics = mgr.GetCurrentMetrics();
-                float progress = static_cast<float>(metrics.current_epoch) / std::max(1, metrics.total_epochs);
-                task.ReportProgress(progress,
-                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
-                    std::to_string(metrics.total_epochs) +
-                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            task.MarkCompleted();
-        },
-        nullptr,
-        nullptr
-    ));
-
-    // Notify start callback
-    if (on_training_start_) {
-        on_training_start_("Training from Arrow Dataset");
-    }
-
-    // Wait for previous thread if any
-    if (training_thread_ && training_thread_->joinable()) {
-        training_thread_->join();
-    }
-
-    // Start training thread
-    training_thread_ = std::make_unique<std::thread>(
-        &TrainingManager::TrainingThreadFunc, this,
-        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
-    );
-
-    spdlog::info("TrainingManager: Started Arrow training ({} epochs, batch_size={})", epochs, batch_size);
-    return true;
+    return StartTrainingCommon(
+        std::move(executor), epochs, batch_size, plot_panel,
+        std::move(node_editor_callback),
+        "Training Model (Arrow)", "Training from Arrow Dataset");
 }
 
 bool TrainingManager::StartTrainingParquet(
@@ -271,58 +229,10 @@ bool TrainingManager::StartTrainingParquet(
     }
 
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), parquet_dataset, label_column);
-
-    is_training_.store(true);
-    stop_requested_.store(false);
-
-    if (node_editor_callback) {
-        node_editor_callback(true);
-    }
-
-    if (plot_panel) {
-        plot_panel->Clear();
-        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
-        plot_panel->SetVisible(true);
-    }
-
-    std::string task_name = "Training Model (Parquet)";
-    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
-        task_name,
-        [](LambdaTask& task) {
-            while (!task.ShouldStop()) {
-                auto& mgr = TrainingManager::Instance();
-                if (!mgr.IsTrainingActive()) {
-                    break;
-                }
-                auto metrics = mgr.GetCurrentMetrics();
-                float progress = static_cast<float>(metrics.current_epoch) / std::max(1, metrics.total_epochs);
-                task.ReportProgress(progress,
-                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
-                    std::to_string(metrics.total_epochs) +
-                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            task.MarkCompleted();
-        },
-        nullptr,
-        nullptr
-    ));
-
-    if (on_training_start_) {
-        on_training_start_("Training from Parquet-backed Dataset");
-    }
-
-    if (training_thread_ && training_thread_->joinable()) {
-        training_thread_->join();
-    }
-
-    training_thread_ = std::make_unique<std::thread>(
-        &TrainingManager::TrainingThreadFunc, this,
-        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
-    );
-
-    spdlog::info("TrainingManager: Started Parquet training ({} epochs, batch_size={})", epochs, batch_size);
-    return true;
+    return StartTrainingCommon(
+        std::move(executor), epochs, batch_size, plot_panel,
+        std::move(node_editor_callback),
+        "Training Model (Parquet)", "Training from Parquet-backed Dataset");
 }
 
 bool TrainingManager::StartTrainingImage(
@@ -374,57 +284,10 @@ bool TrainingManager::StartTrainingImage(
     }
 
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
-
-    is_training_.store(true);
-    stop_requested_.store(false);
-
-    if (node_editor_callback) {
-        node_editor_callback(true);
-    }
-
-    if (plot_panel) {
-        plot_panel->Clear();
-        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
-        plot_panel->SetVisible(true);
-    }
-
-    std::string task_name = "Training Model (Image)";
-    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
-        task_name,
-        [](LambdaTask& task) {
-            while (!task.ShouldStop()) {
-                auto& mgr = TrainingManager::Instance();
-                if (!mgr.IsTrainingActive()) break;
-                auto metrics = mgr.GetCurrentMetrics();
-                float progress = static_cast<float>(metrics.current_epoch) /
-                    std::max(1, metrics.total_epochs);
-                task.ReportProgress(progress,
-                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
-                    std::to_string(metrics.total_epochs) +
-                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            task.MarkCompleted();
-        },
-        nullptr, nullptr
-    ));
-
-    if (on_training_start_) {
-        on_training_start_("Training from Image Dataset");
-    }
-
-    if (training_thread_ && training_thread_->joinable()) {
-        training_thread_->join();
-    }
-
-    training_thread_ = std::make_unique<std::thread>(
-        &TrainingManager::TrainingThreadFunc, this,
-        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
-    );
-
-    spdlog::info("TrainingManager: Started Image training ({} epochs, batch_size={})",
-                 epochs, batch_size);
-    return true;
+    return StartTrainingCommon(
+        std::move(executor), epochs, batch_size, plot_panel,
+        std::move(node_editor_callback),
+        "Training Model (Image)", "Training from Image Dataset");
 }
 
 bool TrainingManager::StartTrainingAudio(
@@ -482,57 +345,10 @@ bool TrainingManager::StartTrainingAudio(
     }
 
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
-
-    is_training_.store(true);
-    stop_requested_.store(false);
-
-    if (node_editor_callback) {
-        node_editor_callback(true);
-    }
-
-    if (plot_panel) {
-        plot_panel->Clear();
-        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
-        plot_panel->SetVisible(true);
-    }
-
-    std::string task_name = "Training Model (Audio)";
-    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
-        task_name,
-        [](LambdaTask& task) {
-            while (!task.ShouldStop()) {
-                auto& mgr = TrainingManager::Instance();
-                if (!mgr.IsTrainingActive()) break;
-                auto metrics = mgr.GetCurrentMetrics();
-                float progress = static_cast<float>(metrics.current_epoch) /
-                    std::max(1, metrics.total_epochs);
-                task.ReportProgress(progress,
-                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
-                    std::to_string(metrics.total_epochs) +
-                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            task.MarkCompleted();
-        },
-        nullptr, nullptr
-    ));
-
-    if (on_training_start_) {
-        on_training_start_("Training from Audio Dataset");
-    }
-
-    if (training_thread_ && training_thread_->joinable()) {
-        training_thread_->join();
-    }
-
-    training_thread_ = std::make_unique<std::thread>(
-        &TrainingManager::TrainingThreadFunc, this,
-        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
-    );
-
-    spdlog::info("TrainingManager: Started Audio training ({} epochs, batch_size={})",
-                 epochs, batch_size);
-    return true;
+    return StartTrainingCommon(
+        std::move(executor), epochs, batch_size, plot_panel,
+        std::move(node_editor_callback),
+        "Training Model (Audio)", "Training from Audio Dataset");
 }
 
 bool TrainingManager::StartTrainingText(
@@ -585,57 +401,10 @@ bool TrainingManager::StartTrainingText(
     }
 
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
-
-    is_training_.store(true);
-    stop_requested_.store(false);
-
-    if (node_editor_callback) {
-        node_editor_callback(true);
-    }
-
-    if (plot_panel) {
-        plot_panel->Clear();
-        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
-        plot_panel->SetVisible(true);
-    }
-
-    std::string task_name = "Training Model (Text)";
-    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
-        task_name,
-        [](LambdaTask& task) {
-            while (!task.ShouldStop()) {
-                auto& mgr = TrainingManager::Instance();
-                if (!mgr.IsTrainingActive()) break;
-                auto metrics = mgr.GetCurrentMetrics();
-                float progress = static_cast<float>(metrics.current_epoch) /
-                    std::max(1, metrics.total_epochs);
-                task.ReportProgress(progress,
-                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
-                    std::to_string(metrics.total_epochs) +
-                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            task.MarkCompleted();
-        },
-        nullptr, nullptr
-    ));
-
-    if (on_training_start_) {
-        on_training_start_("Training from Text Dataset");
-    }
-
-    if (training_thread_ && training_thread_->joinable()) {
-        training_thread_->join();
-    }
-
-    training_thread_ = std::make_unique<std::thread>(
-        &TrainingManager::TrainingThreadFunc, this,
-        std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
-    );
-
-    spdlog::info("TrainingManager: Started Text training ({} epochs, batch_size={})",
-                 epochs, batch_size);
-    return true;
+    return StartTrainingCommon(
+        std::move(executor), epochs, batch_size, plot_panel,
+        std::move(node_editor_callback),
+        "Training Model (Text)", "Training from Text Dataset");
 }
 
 void TrainingManager::StopTraining() {

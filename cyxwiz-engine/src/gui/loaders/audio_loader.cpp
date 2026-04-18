@@ -3,6 +3,8 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
 #include "../../core/formats/audio_dataset.h"
+#include "../../core/graph_compiler.h"  // PreprocessingDomain
+#include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
 
@@ -186,6 +188,50 @@ CompletedLoadDescription AudioLoader::DescribeCompletedLoad(
     d.default_status_message = std::string("Loaded audio from ") +
         p.filename().string();
     return d;
+}
+
+cyxwiz::PreprocessingDomain AudioLoader::Domain(
+    const std::string& /*file_category*/) const {
+    return cyxwiz::PreprocessingDomain::Audio;
+}
+
+bool AudioLoader::LaunchTraining(
+    cyxwiz::TrainingConfiguration config,
+    const std::string& dataset_name,
+    const std::string& /*label_column*/,
+    int epochs,
+    int batch_size,
+    cyxwiz::TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback) {
+    auto* entry = cyxwiz::DataRegistry::Instance().GetAudioDatasetEntry(dataset_name);
+    if (!entry) {
+        spdlog::error("AudioLoader: audio dataset '{}' is registered but entry "
+                      "could not be retrieved", dataset_name);
+        return false;
+    }
+    spdlog::info("AudioLoader: Starting audio training: dataset={}, epochs={}, "
+                 "batch_size={}, {} samples, {} classes, feature_type={}",
+                 dataset_name, epochs, batch_size,
+                 entry->num_samples, entry->num_classes, entry->feature_type);
+    return cyxwiz::TrainingManager::Instance().StartTrainingAudio(
+        std::move(config), *entry, epochs, batch_size, plot_panel,
+        std::move(node_editor_callback));
+}
+
+std::vector<ParamSchema> AudioLoader::NodeParams() const {
+    return {
+        {"audio_layout",        "0",     "0=ClassSubdirs, 1=FlatWithCSV"},
+        {"audio_labels_csv",    "",      "Labels CSV path (FlatWithCSV)"},
+        {"audio_filename_col",  "",      "Filename column (auto-detect if empty)"},
+        {"audio_label_col",     "",      "Label column (auto-detect if empty)"},
+        {"sample_rate",         "16000", "Target sample rate (Hz)"},
+        {"mono",                "true",  "Mix to mono"},
+    };
+}
+
+SyntheticBatch AudioLoader::MakeSynthetic(
+    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
+    return SyntheticBatch{};
 }
 
 }  // namespace cyxwiz::loaders

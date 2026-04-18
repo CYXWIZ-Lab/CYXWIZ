@@ -3,6 +3,8 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
 #include "../../core/formats/text_dataset.h"
+#include "../../core/graph_compiler.h"  // PreprocessingDomain
+#include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
 
@@ -187,6 +189,53 @@ CompletedLoadDescription TextLoader::DescribeCompletedLoad(
     d.default_status_message = std::string("Loaded text from ") +
         p.filename().string();
     return d;
+}
+
+cyxwiz::PreprocessingDomain TextLoader::Domain(
+    const std::string& /*file_category*/) const {
+    return cyxwiz::PreprocessingDomain::Text;
+}
+
+bool TextLoader::LaunchTraining(
+    cyxwiz::TrainingConfiguration config,
+    const std::string& dataset_name,
+    const std::string& /*label_column*/,
+    int epochs,
+    int batch_size,
+    cyxwiz::TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback) {
+    auto* entry = cyxwiz::DataRegistry::Instance().GetTextDatasetEntry(dataset_name);
+    if (!entry) {
+        spdlog::error("TextLoader: text dataset '{}' is registered but entry "
+                      "could not be retrieved", dataset_name);
+        return false;
+    }
+    spdlog::info("TextLoader: Starting text training: dataset={}, epochs={}, "
+                 "batch_size={}, {} samples, {} classes, max_length={}, vocab_size={}",
+                 dataset_name, epochs, batch_size,
+                 entry->num_samples, entry->num_classes,
+                 entry->max_length, entry->vocab_size);
+    return cyxwiz::TrainingManager::Instance().StartTrainingText(
+        std::move(config), *entry, epochs, batch_size, plot_panel,
+        std::move(node_editor_callback));
+}
+
+std::vector<ParamSchema> TextLoader::NodeParams() const {
+    return {
+        {"text_layout",         "0",    "0=SingleFile, 1=CorpusSubdirs"},
+        {"text_column",         "text", "Column with text for tokenization"},
+        {"text_label_column",   "label","Label column (single-file mode)"},
+        {"text_tokenizer_type", "1",    "0=Whitespace, 1=Word, 2=Character"},
+        {"text_max_length",     "512",  "Max tokens per sample"},
+        {"text_lowercase",      "true", "Lowercase before tokenization"},
+        {"text_min_freq",       "1",    "Min word frequency for vocab"},
+        {"text_max_vocab_size", "-1",   "Vocab cap (-1 = unlimited)"},
+    };
+}
+
+SyntheticBatch TextLoader::MakeSynthetic(
+    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
+    return SyntheticBatch{};
 }
 
 }  // namespace cyxwiz::loaders
