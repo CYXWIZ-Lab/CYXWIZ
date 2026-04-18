@@ -410,11 +410,25 @@ pipe entirely.
 
 ## Development Tasks
 
+**Start any new feature or non-trivial task with `/engineer`** — it's
+the project's design-first skill (`.claude/skills/engineer/SKILL.md`).
+Runs a short Understand → Principles → Plan pass before you write code,
+so we don't repeat the DataInputDialog::Apply 700-line-switch disaster.
+Mandatory for new features, multi-file changes, or any code that'll
+grow past 200 lines. Skip only for trivial single-file edits.
+
+The skill's anti-pattern checklist catches the specific mistakes this
+codebase has repeatedly made (hand-maintained parallel lists, switches
+on type that should be polymorphism, duplicated async blocks across
+categories, whitelists that disagree with factories). Read it once
+even if you're not invoking it, so you recognize the shapes.
+
 | Task | Steps |
 |------|-------|
 | Add ML Algorithm | Header in `include/cyxwiz/` → Impl in `src/algorithms/` → Python bindings |
 | Add gRPC Service | Define in `proto/*.proto` → Rebuild → Impl server/client |
 | Add GUI Panel | Create in `src/gui/panels/` → Add to CMakeLists → Integrate in MainWindow |
+| Any of the above, or anything else | **Invoke `/engineer` first** — produces the design note you then execute against |
 
 ## Cross-Platform Notes
 
