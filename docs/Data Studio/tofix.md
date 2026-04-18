@@ -250,56 +250,53 @@ DataInput node. Image datasets (file_category="image") skip the
 warning — their labels come from folder structure or CSV mapping.
 See `graph_compiler.cpp` Check 3.
 
-### Local Debug — pre-train validation with synthetic data (2026-04-16)
+### ~~Local Debug — pre-train validation with synthetic data~~ LANDED 2026-04-18
 
-**Severity:** Feature request — closes a real class of "discovered at
-train time, should have been caught earlier" errors.
+**Status:** Shipped end-to-end across 4 worktree-session commits on
+`feat/local-debug` (now merged + branch retired). Plan doc at
+`docs/plans/local_debug_mode.md` was the execution guide.
 
-**Idea:** A third validation tier between the existing Compile button
-and the actual Train button. The flow becomes:
+Commits (merged into `Nodes_Implementation` via `--no-ff` merges):
+- `aac9308c` — extract `BuildSequentialFromConfig` into `model_builder`
+  (shared between `TrainingExecutor` and `DebugExecutor`; pure move).
+- `bbae175b` — `DebugResult` struct scaffolding (`LayerTrace`,
+  `GradNormEntry`, `DebugStage`, shared severity via `ValidationIssue`).
+- `d5388ad3` — `SyntheticBatch` helper. Domain-dispatched shape:
+  Tabular `[1, input_size]` float; Text `[1, seq_len]` int64 token
+  IDs clamped to the Embedding's `num_embeddings`. Image / TimeSeries
+  / Audio fall back to Tabular in v1.
+- `3a805e28` — unit test `test_debug_executor` exercising the builder
+  + synthetic batch on minimal Dense→ReLU→Dense.
+- `081976d9` — `DebugExecutor::Run`: builds model, one forward
+  (per-layer shape capture + NaN/Inf), loss, one backward, one
+  optimizer step, L2 grad norms per learnable param, flags dead
+  subgraphs (`params_missing_grad > 0` → Warning) and NaN grads →
+  Error.
+- `4388c30c` — UI wiring: F6 shortcut, toolbar button (yellow-green,
+  next to Compile), `MainWindow::LocalDebugGraph()` mirrors
+  `StartTrainingFromGraph`, extends the compile popup with
+  `compile_result_mode_ ∈ {Compile, Debug, BlockedTrain}`.
+- `8f6f7d3f` — optional strict mode + staleness tracking.
+  `engine_config.require_debug_before_train` flag plus a
+  `last_debug_graph_hash_` cache. Graph changed since last successful
+  Debug → Warning in compile popup ("Consider F6 before F5"). Strict
+  mode upgrades the warning to Error and blocks Train.
 
-```
-Compile         →  Local Debug       →  Train
-(structural)    (runtime, synthetic)   (runtime, real data)
-```
+**What you can do now:** press F6 on any compile-passing graph. You
+get per-layer shape trace, loss value + finiteness flag, grad norm
+table with NaN/zero detection, ~200ms. No dataset I/O, no network.
 
-**What Compile checks today:** graph structure, DataInput data_loaded,
-dataset registry presence, label column, DataSplit ratios, batch_size
-bounds. Static analysis only — doesn't actually run any tensors.
+**Registry isolation verified:** the synthetic batch is constructed
+on stack tensors; `DebugExecutor::Run` never touches
+`cyxwiz::DataRegistry`. Unit test asserts registry state unchanged
+after Run.
 
-**What Local Debug would add:**
-- Generate synthetic input tensors matching the compiled
-  `TrainingConfiguration::input_shape` (zeros / ones / random).
-- Run ONE forward pass through the built model with the stub data.
-- Assert per-layer output shapes against what the compiler predicted.
-- Compute the loss on stub targets to confirm the loss node accepts
-  the output shape.
-- Run ONE backward pass + optimizer step to confirm gradients flow
-  and no AF-backend crashes / dtype mismatches / weight init failures.
-- Report: "Forward OK, loss=X, backward OK, all shapes match" — or
-  surface the first mismatch (layer name, expected shape, actual
-  shape) in the same popup the Compile button uses.
-
-**Why it matters:** today the user clicks Train, the engine burns ~30s
-loading the dataset, THEN crashes at epoch 0 step 0 on a shape
-mismatch. Local Debug catches the same failure in ~200ms with zero
-dataset I/O. Same compiler output, same model builder, same optimizer
-— just a synthetic single-batch dry run.
-
-**Wiring sketch:**
-- New button in the toolbar next to Compile / Train.
-- Reuses `GraphCompiler::Compile` → `BuildCompileResult` → model
-  builder → `TrainingExecutor` but with an in-memory synthetic
-  `ArrowDatasetBatcher` yielding one deterministic batch.
-- Surfaces issues via the existing `TrainingConfiguration::issues`
-  vector, extended with a `LocalDebug` severity level if needed.
-- No network, no Central Server, no reservation — runs entirely
-  local like Compile does.
-
-**Why this is tofix not a direct implementation ask:** non-trivial
-(requires a synthetic-data batcher, hooking model forward/backward
-into a one-shot driver, surfacing per-layer shape trace in the UI).
-Tracked here so it's not forgotten.
+**Follow-up work not in scope of v1:** dedicated
+`DebugResultsPanel` (per-layer timeline, grad-norm histogram, NaN
+heatmap) — for now results render in the reused compile popup.
+Async execution (move `Run()` off the UI thread) — only needed for
+models where the one-shot forward+backward exceeds ~500ms, which
+the v1 test suite doesn't hit.
 
 ---
 
