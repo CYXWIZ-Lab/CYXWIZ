@@ -1,5 +1,6 @@
 #include "data_loader.h"
 #include "tabular_loader.h"
+#include "text_loader.h"
 
 #include <memory>
 
@@ -22,10 +23,11 @@ Registry& GetRegistry() {
             tmp.list.push_back(l.get());
             tmp.owners.push_back(std::move(l));
         };
-        // Commit 1: TabularLoader only. Commits 2-4 add Text / Image /
-        // Audio here. Order of registration is observable via All();
-        // keep it stable.
+        // Order of registration is observable via All(); keep it stable.
+        // Commit 1: TabularLoader. Commit 2: TextLoader.
+        // Commits 3-4 will add Image / Audio.
         push(std::make_unique<TabularLoader>());
+        push(std::make_unique<TextLoader>());
         return tmp;
     }();
     return r;

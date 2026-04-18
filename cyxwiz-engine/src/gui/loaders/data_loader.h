@@ -84,9 +84,23 @@ struct ApplyContext {
     bool json_lines = false;
     int excel_sheet_idx = 0;
 
-    // Image / Audio / Text fields will be added here in commits 2-4 as
-    // their loaders migrate. Keeping them in one struct beats threading
-    // 5 different context types through the same Apply path.
+    // Text-specific (commit 2) -------------------------------------
+    // text_has_labels is `true` when the corpus is class-subdir layout
+    // (folder/<class>/*.txt) or when the user picked a label column
+    // for a single-file corpus. text_tokenizer_type is the raw enum
+    // index from the dialog: 0=Whitespace, 1=Word, 2=Character.
+    std::string text_column;
+    std::string text_label_column;
+    bool text_has_labels = false;
+    int text_tokenizer_type = 1;
+    int text_max_length = 512;
+    bool text_lowercase = true;
+    int text_min_freq = 1;
+    int text_max_vocab_size = -1;
+
+    // Image / Audio fields will be added here in commits 3-4 as their
+    // loaders migrate. Keeping them in one struct beats threading 5
+    // different context types through the same Apply path.
 };
 
 // Abstract base. Commit 1 wires up the Apply-time async surface; later

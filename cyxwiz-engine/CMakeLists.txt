@@ -197,6 +197,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog.cpp
     src/gui/loaders/data_loader.cpp
     src/gui/loaders/tabular_loader.cpp
+    src/gui/loaders/text_loader.cpp
     src/gui/visualization/visualization_nodes.cpp
     src/gui/visualization/bar_chart_dialog.cpp
     src/gui/panels/toolbar.cpp
