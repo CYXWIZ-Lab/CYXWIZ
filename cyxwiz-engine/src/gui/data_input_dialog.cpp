@@ -16,6 +16,7 @@
 #include "node_editor.h"
 #include "loaders/data_loader.h"
 #include "loaders/tabular_loader.h"
+#include "loaders/text_loader.h"
 #include "../core/data_registry.h"
 #include "../core/formats/audio_dataset.h"
 #include "../core/formats/text_dataset.h"
@@ -565,163 +566,88 @@ void DataInputDialog::Apply() {
         strlen(folder_path_) > 0;
     if (source_type_ == SourceType::File &&
         (text_single_ready || text_corpus_ready)) {
-        // Already loading — defensive against a double-click. Apply is
-        // also greyed out via IsBusy() while is_loading_async_ is true.
+        // Text load — routes through TextLoader. Branch takes priority
+        // over the tabular branch below because a CSV file with Text
+        // category selected needs the tokenizer / vocab pipeline, not
+        // the plain Arrow path. TextDataset auto-detects file vs
+        // directory from the source path, so we just pick the right
+        // field (file_path_ for SingleFile, folder_path_ for
+        // CorpusSubdirs) and the loader forwards it.
         if (is_loading_async_) {
             spdlog::warn("DataInputDialog: Text Apply ignored - load already in progress");
             apply_in_progress_ = false;
             return;
         }
 
-        // Pick the source path — file for SingleFile mode, folder for
-        // corpus mode. TextDataset dispatches internally on is_directory.
+        auto* loader = cyxwiz::loaders::GetByCategory(
+            cyxwiz::loaders::FileCategory::Text);
+        if (!loader) {
+            apply_status_message_ = "No loader registered for Text";
+            apply_success_ = false;
+            apply_status_timer_ = 6.0f;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: TextLoader not registered");
+            return;
+        }
+
         const std::string text_source_path =
             text_corpus_ready ? std::string(folder_path_)
                               : std::string(file_path_);
-        auto& registry = cyxwiz::DataRegistry::Instance();
 
-        // Capture OLD dataset_name for cleanup on re-Apply with new file.
-        // We do this on the UI thread before launching the worker so the
-        // registry doesn't temporarily hold two entries under different
-        // names. UnregisterTextDataset/Tabular are fast (map erase), no
-        // reason to offload them.
         std::string previous_dataset_name;
-        {
-            auto pit = node_->parameters.find("dataset_name");
-            if (pit != node_->parameters.end()) {
-                previous_dataset_name = pit->second;
-            }
+        if (auto pit = node_->parameters.find("dataset_name");
+            pit != node_->parameters.end()) {
+            previous_dataset_name = pit->second;
         }
-
         loaded_dataset_name_ = GenerateDatasetName();
-        if (!previous_dataset_name.empty() &&
-            previous_dataset_name != loaded_dataset_name_) {
-            registry.UnregisterTextDataset(previous_dataset_name);
-        }
-        // Cross-category cleanup: if the user toggled from Tabular to
-        // Text on the same file, clear the stale Tabular entry so
-        // IsTabularDataset(name) doesn't mislead downstream code.
-        // This is safe on the UI thread because it's touching a
-        // DIFFERENT registry map than the one the async worker will
-        // register into.
-        registry.UnregisterTabularDataset(loaded_dataset_name_);
-        // NOTE: We intentionally do NOT pre-clear the same-category
-        // text entry here. `RegisterTextDataset` uses map[name]=entry
-        // which atomically replaces any existing entry under the
-        // same name, so a premature unregister just creates a window
-        // where the registry is empty for the duration of the async
-        // load — and if the user clicks Compile during that window,
-        // the compile gate correctly reports "Data is not loaded"
-        // (it's literally true at that moment). Let the worker do
-        // the replacement.
 
-        // Snapshot every dialog field the worker needs, by value. Never
-        // capture references into the dialog — the dialog can be closed
-        // while the worker is still running.
-        std::string captured_source     = text_source_path;
-        std::string captured_name       = loaded_dataset_name_;
-        std::string captured_text_col   = text_column_;
-        std::string captured_label_col  = text_label_column_;
-        bool captured_has_labels        = text_corpus_ready ||
-                                          (strlen(text_label_column_) > 0);
-        int  captured_tok_type          = text_tokenizer_type_;
-        int  captured_max_length        = text_max_length_;
-        bool captured_lowercase         = text_lowercase_;
-        int  captured_min_freq          = text_min_freq_;
-        int  captured_max_vocab         = text_max_vocab_size_;
+        cyxwiz::loaders::ApplyContext ctx;
+        ctx.dataset_name          = loaded_dataset_name_;
+        ctx.source_path           = text_source_path;
+        ctx.previous_dataset_name = previous_dataset_name;
+        ctx.text_column           = text_column_;
+        ctx.text_label_column     = text_label_column_;
+        // has_labels: always true for corpus-subdirs layout (label =
+        // parent folder name); for single-file layout, true only when
+        // the user picked a label column.
+        ctx.text_has_labels       = text_corpus_ready ||
+                                    (strlen(text_label_column_) > 0);
+        ctx.text_tokenizer_type   = text_tokenizer_type_;
+        ctx.text_max_length       = text_max_length_;
+        ctx.text_lowercase        = text_lowercase_;
+        ctx.text_min_freq         = text_min_freq_;
+        ctx.text_max_vocab_size   = text_max_vocab_size_;
+
+        std::string err;
+        if (!loader->ValidateApplyContext(ctx, err)) {
+            apply_status_message_ = err;
+            node_->parameters["data_loaded"] = "false";
+            apply_success_ = false;
+            apply_status_timer_ = 6.0f;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: text validate - {}", err);
+            return;
+        }
 
         auto state = std::make_shared<AsyncLoadState>();
-        state->dataset_name = captured_name;
-        state->source_path  = captured_source;
+        state->dataset_name = loaded_dataset_name_;
+        state->source_path  = text_source_path;
         async_load_state_   = state;
         is_loading_async_   = true;
 
-        // Provisional node params: mark NOT loaded until the worker
-        // finishes. Same reasoning as the Arrow path — a Train click
-        // during load should be caught by the compile gate, not try to
-        // train on a missing dataset.
-        node_->parameters["dataset_name"] = captured_name;
-        node_->parameters["data_loaded"] = "false";
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"]  = "false";
 
         apply_status_message_ = std::string("Tokenizing ") +
-            fs::path(captured_source).filename().string() + "...";
-        apply_status_timer_ = 0.0f;  // hide stale status during load
+            fs::path(text_source_path).filename().string() + "...";
+        apply_status_timer_ = 0.0f;
 
-        auto& mgr = cyxwiz::AsyncTaskManager::Instance();
-        loading_task_id_ = mgr.RunAsync(
-            "Loading text " + captured_name,
-            [captured_source, captured_name, captured_text_col, captured_label_col,
-             captured_has_labels, captured_tok_type, captured_max_length,
-             captured_lowercase, captured_min_freq, captured_max_vocab, state]
-            (cyxwiz::LambdaTask& task) {
-                try {
-                    task.ReportProgress(0.1f, "Building tokenizer");
-
-                    cyxwiz::TextDatasetConfig probe_cfg;
-                    probe_cfg.text_column  = captured_text_col;
-                    probe_cfg.label_column = captured_label_col;
-                    probe_cfg.has_labels   = captured_has_labels;
-                    switch (captured_tok_type) {
-                        case 0: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Whitespace; break;
-                        case 2: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Character; break;
-                        default: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Word; break;
-                    }
-                    probe_cfg.max_length     = captured_max_length;
-                    probe_cfg.lowercase      = captured_lowercase;
-                    probe_cfg.do_padding     = true;
-                    probe_cfg.do_truncation  = true;
-                    probe_cfg.min_word_freq  = captured_min_freq;
-                    probe_cfg.max_vocab_size = captured_max_vocab;
-
-                    cyxwiz::TextDataset probe(captured_source, probe_cfg);
-                    auto info = probe.GetInfo();
-
-                    task.ReportProgress(0.9f, "Registering dataset");
-
-                    auto& reg = cyxwiz::DataRegistry::Instance();
-                    cyxwiz::DataRegistry::TextDatasetEntry text_entry;
-                    text_entry.source_path    = captured_source;
-                    text_entry.text_column    = captured_text_col;
-                    text_entry.label_column   = captured_label_col;
-                    text_entry.has_labels     = captured_has_labels;
-                    text_entry.tokenizer_type = captured_tok_type;
-                    text_entry.max_length     = captured_max_length;
-                    text_entry.lowercase      = captured_lowercase;
-                    text_entry.do_padding     = true;
-                    text_entry.do_truncation  = true;
-                    text_entry.min_word_freq  = captured_min_freq;
-                    text_entry.max_vocab_size = captured_max_vocab;
-                    text_entry.num_samples    = info.num_samples;
-                    text_entry.num_classes    = info.num_classes;
-                    text_entry.class_names    = info.class_names;
-                    text_entry.vocab_size     = probe.GetVocabSize();
-
-                    reg.RegisterTextDataset(captured_name, text_entry);
-
-                    state->success      = true;
-                    state->backend      = 5;  // 5 = text in-memory
-                    state->rows         = static_cast<int64_t>(info.num_samples);
-                    state->cols         = 1;
-                    size_t per_sample   = static_cast<size_t>(captured_max_length) * sizeof(float);
-                    state->bytes        = info.num_samples * per_sample;
-                    state->num_classes  = info.num_classes;
-                    state->vocab_size   = probe.GetVocabSize();
-                    state->message      = "Loaded " + std::to_string(info.num_samples) +
-                                          " text samples (" + std::to_string(info.num_classes) +
-                                          " classes, vocab " + std::to_string(probe.GetVocabSize()) + ")";
-                } catch (const std::exception& e) {
-                    state->success = false;
-                    state->message = std::string("Error loading text: ") + e.what();
-                    spdlog::error("DataInputDialog async text load: {}", state->message);
-                }
-                // Atomic done flag is the publish barrier — must be set
-                // last so PollAsyncLoadResult only reads fully initialized
-                // state.
-                state->done.store(true);
-            });
+        loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
         spdlog::info("DataInputDialog: queued async text load (task {}, name '{}')",
-                     loading_task_id_, captured_name);
+                     loading_task_id_, loaded_dataset_name_);
 
         apply_in_progress_ = false;
         has_changes_ = false;
