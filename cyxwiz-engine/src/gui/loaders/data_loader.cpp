@@ -60,8 +60,30 @@ DataLoader* GetByCategory(FileCategory cat) {
 }
 
 DataLoader* GetByRegisteredDataset(const std::string& name) {
+    // Linear scan across 4 loaders, each checking a hashmap via
+    // IsRegistered — effectively O(1) for practical loader counts. A
+    // name → loader sidecar inside DataRegistry would shave one hash
+    // lookup but requires DataRegistry to know the FileCategory enum
+    // (currently owned by the loaders module); deferred as future work
+    // since the performance delta is negligible.
     for (auto* l : GetRegistry().list) {
         if (l->IsRegistered(name)) return l;
+    }
+    return nullptr;
+}
+
+DataLoader* GetByBackendTag(int backend) {
+    // Tabular covers backend 1 (Arrow in-mem) + backend 2 (Parquet
+    // disk-backed). Map 2 → Tabular explicitly since TabularLoader's
+    // BackendTag() is 1. Other loaders have unique tags.
+    if (backend == 2) {
+        for (auto* l : GetRegistry().list) {
+            if (l->Category() == FileCategory::Tabular) return l;
+        }
+        return nullptr;
+    }
+    for (auto* l : GetRegistry().list) {
+        if (l->BackendTag() == backend) return l;
     }
     return nullptr;
 }
