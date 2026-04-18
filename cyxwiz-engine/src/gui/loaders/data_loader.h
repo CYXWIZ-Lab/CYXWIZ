@@ -23,6 +23,12 @@
 #include <string>
 #include <vector>
 
+// Forward-declared MLNode: loader RestoreFromRegistry needs read-only
+// access to node->parameters to pull per-node hints (e.g. image
+// target_width / target_height / rgb overrides) without dragging the
+// full node_editor.h into this header.
+namespace gui { struct MLNode; }
+
 namespace cyxwiz::loaders {
 
 // Category of file/dataset this loader handles. Canonical definition
@@ -132,9 +138,34 @@ struct ApplyContext {
     int audio_feature_type = 1;  // 1 = MelSpectrogram (default)
 };
 
-// Abstract base. Commit 1 wires up the Apply-time async surface; later
-// commits extend this with restore / memory-tab / training-dispatch /
-// compile-gate methods as each feature migrates.
+// Populated by DataLoader::RestoreFromRegistry from registry metadata
+// when a dialog reopens on an already-loaded dataset. The dialog splats
+// these fields into its loaded_* members so the Memory tab + compile
+// gate see the same state they did right after Apply finished.
+struct RestoreState {
+    bool found = false;              // false → dataset not in registry
+    int64_t rows = 0;
+    int64_t cols = 0;
+    size_t bytes = 0;
+    int backend = 0;                 // BackendTag that was used (1..5)
+    bool memory_is_estimate = false; // true for image/audio/text (lazy)
+    std::string status_message;      // user-facing line for the Memory tab
+};
+
+// Returned by DataLoader::DescribeCompletedLoad once PollAsyncLoadResult
+// drains an AsyncLoadState. The dialog uses these strings to format
+// node->description + apply_status_message_. Keeps per-category format
+// rules (images → "N images, K classes", tabular → "N rows, M cols")
+// in the owning loader instead of an if/else-if chain in the dialog.
+struct CompletedLoadDescription {
+    std::string node_description_suffix;  // appended after "<filename>\n"
+    std::string default_status_message;   // fallback when state->message is empty
+    bool memory_is_estimate = false;      // true for lazy-loaded backends
+};
+
+// Abstract base. The interface grows commit-by-commit as each feature
+// migrates into the loader module (Apply/async → restore → memory tab
+// → training dispatch → compile gate).
 class DataLoader {
 public:
     virtual ~DataLoader() = default;
@@ -148,6 +179,14 @@ public:
     // (tabular — picked at load time, overrides the primary tag),
     // 3 = image folder, 4 = audio folder, 5 = text in-memory.
     virtual int BackendTag() const = 0;
+
+    // True when the loader's backend is lazy — AsyncLoadState::bytes
+    // is a "fully cached" estimate, not actual RAM use. Text / Image /
+    // Audio are lazy; Tabular (Arrow in-memory and Parquet disk-backed)
+    // is not — Arrow has real bytes, Parquet is disk-cached. The dialog
+    // uses this to label the Memory tab honestly and to drive
+    // loaded_memory_is_estimate_.
+    virtual bool IsLazyLoaded() const = 0;
 
     // === Apply-time async ===
     // Fast UI-thread precheck. Populate `err` with a user-facing message
@@ -164,22 +203,46 @@ public:
     // === Registry coordination ===
     virtual bool IsRegistered(const std::string& name) const = 0;
     virtual void Unregister(const std::string& name) = 0;
+
+    // === Restore on dialog reopen (commit 5) ===
+    // Populates `out` from the registry entry for `name`. Returns false
+    // if the dataset isn't in the registry (dialog treats this as
+    // "dataset was closed or cleared — show Not Loaded"). The `node`
+    // argument gives read-only access to per-node params like
+    // target_width/target_height/rgb for image memory estimates.
+    virtual bool RestoreFromRegistry(const std::string& name,
+                                     const gui::MLNode& node,
+                                     RestoreState& out) const = 0;
+
+    // === Async-completion description (commit 5) ===
+    // Formats the strings the dialog splats into node->description +
+    // apply_status_message_ after PollAsyncLoadResult drains a
+    // successful AsyncLoadState.
+    virtual CompletedLoadDescription DescribeCompletedLoad(
+        const AsyncLoadState& state) const = 0;
 };
 
 // === Factory ===
 //
-// Commit 1 registers only TabularLoader (also serving the TimeSeries
-// category — same load path, different params). Commits 2-4 add Text,
-// Image, Audio. GetByCategory returns nullptr for unregistered
-// categories; the Apply path falls back to its inline branch when that
-// happens.
+// TabularLoader (also serving the TimeSeries category — same load path,
+// different params) is registered first; TextLoader, ImageLoader, and
+// AudioLoader follow. Video is deliberately unregistered — the guard at
+// the top of DataInputDialog::Apply fails video loads loudly before
+// reaching the dispatch.
 DataLoader* GetByCategory(FileCategory cat);
 
-// Walk every registered loader and return the first one whose
-// IsRegistered matches. Used by restore / compile-gate paths (commits
-// 5+) to resolve a dataset name back to its loader without a type
-// switch.
+// Resolves a registered dataset name back to its loader. Uses
+// DataRegistry::ResolveCategory (the routing sidecar) for O(1) lookup;
+// falls back to a linear IsRegistered walk for legacy names that
+// predate the sidecar. Returns nullptr if the dataset isn't registered.
 DataLoader* GetByRegisteredDataset(const std::string& name);
+
+// Find the loader whose BackendTag equals `backend`. Tabular covers
+// both backend 1 (Arrow in-memory) and backend 2 (Parquet disk-backed)
+// — its BackendTag() returns 1, but this helper also maps 2 → Tabular
+// so the Memory tab / PollAsyncLoadResult can reach the owning loader
+// from a stored backend int. Returns nullptr for unknown backends.
+DataLoader* GetByBackendTag(int backend);
 
 // All registered loaders, in registration order.
 const std::vector<DataLoader*>& All();

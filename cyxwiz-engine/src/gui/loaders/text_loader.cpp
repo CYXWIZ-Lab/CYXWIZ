@@ -150,4 +150,43 @@ void TextLoader::Unregister(const std::string& name) {
     cyxwiz::DataRegistry::Instance().UnregisterTextDataset(name);
 }
 
+bool TextLoader::RestoreFromRegistry(const std::string& name,
+                                     const gui::MLNode& /*node*/,
+                                     RestoreState& out) const {
+    auto* entry = cyxwiz::DataRegistry::Instance().GetTextDatasetEntry(name);
+    if (!entry) return false;
+
+    out.found   = true;
+    out.rows    = static_cast<int64_t>(entry->num_samples);
+    out.cols    = 1;
+    // Estimate: max_length * sizeof(float) per sample. Actual memory
+    // during training is dominated by the tokenized in-RAM corpus,
+    // not the training tensor batches.
+    const size_t per_sample = static_cast<size_t>(entry->max_length) * sizeof(float);
+    out.bytes   = entry->num_samples * per_sample;
+    out.backend = 5;
+    out.memory_is_estimate = true;
+    out.status_message = "Loaded " + name + " (" +
+        std::to_string(entry->num_samples) + " text samples, " +
+        std::to_string(entry->num_classes) + " classes, vocab " +
+        std::to_string(entry->vocab_size) + ")";
+    return true;
+}
+
+CompletedLoadDescription TextLoader::DescribeCompletedLoad(
+    const AsyncLoadState& state) const {
+    CompletedLoadDescription d;
+    d.memory_is_estimate = true;
+
+    d.node_description_suffix =
+        std::to_string(state.rows) + " samples, " +
+        std::to_string(state.num_classes) + " classes, vocab " +
+        std::to_string(state.vocab_size);
+
+    fs::path p(state.source_path);
+    d.default_status_message = std::string("Loaded text from ") +
+        p.filename().string();
+    return d;
+}
+
 }  // namespace cyxwiz::loaders

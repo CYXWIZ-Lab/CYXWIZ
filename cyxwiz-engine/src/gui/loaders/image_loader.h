@@ -16,6 +16,7 @@ public:
     FileCategory Category() const override { return FileCategory::Image; }
     const char* CategoryName() const override { return "Image"; }
     int BackendTag() const override { return 3; }
+    bool IsLazyLoaded() const override { return true; }
 
     bool ValidateApplyContext(const ApplyContext& ctx,
                               std::string& err) const override;
@@ -24,6 +25,12 @@ public:
 
     bool IsRegistered(const std::string& name) const override;
     void Unregister(const std::string& name) override;
+
+    bool RestoreFromRegistry(const std::string& name,
+                             const gui::MLNode& node,
+                             RestoreState& out) const override;
+    CompletedLoadDescription DescribeCompletedLoad(
+        const AsyncLoadState& state) const override;
 };
 
 }  // namespace cyxwiz::loaders

@@ -147,4 +147,45 @@ void AudioLoader::Unregister(const std::string& name) {
     cyxwiz::DataRegistry::Instance().UnregisterAudioDataset(name);
 }
 
+bool AudioLoader::RestoreFromRegistry(const std::string& name,
+                                      const gui::MLNode& /*node*/,
+                                      RestoreState& out) const {
+    auto* entry = cyxwiz::DataRegistry::Instance().GetAudioDatasetEntry(name);
+    if (!entry) return false;
+
+    // Prefer the persisted feature shape (probed at Apply time) over
+    // re-probing on every reopen. Fall back to n_mels × 313 (the
+    // default MelSpectrogram frame count at 16kHz, 5s duration) when
+    // the shape wasn't stashed.
+    const size_t per_sample = (entry->feature_rows > 0 && entry->feature_cols > 0)
+        ? static_cast<size_t>(entry->feature_rows) *
+          static_cast<size_t>(entry->feature_cols) * sizeof(float)
+        : static_cast<size_t>(entry->n_mels) * 313 * sizeof(float);
+
+    out.found   = true;
+    out.rows    = static_cast<int64_t>(entry->num_samples);
+    out.cols    = 1;
+    out.bytes   = entry->num_samples * per_sample;
+    out.backend = 4;
+    out.memory_is_estimate = true;
+    out.status_message = "Loaded " + name + " (" +
+        std::to_string(entry->num_samples) + " audio files, " +
+        std::to_string(entry->num_classes) + " classes)";
+    return true;
+}
+
+CompletedLoadDescription AudioLoader::DescribeCompletedLoad(
+    const AsyncLoadState& state) const {
+    CompletedLoadDescription d;
+    d.memory_is_estimate = true;
+    d.node_description_suffix =
+        std::to_string(state.rows) + " audio files, " +
+        std::to_string(state.num_classes) + " classes";
+
+    fs::path p(state.source_path);
+    d.default_status_message = std::string("Loaded audio from ") +
+        p.filename().string();
+    return d;
+}
+
 }  // namespace cyxwiz::loaders

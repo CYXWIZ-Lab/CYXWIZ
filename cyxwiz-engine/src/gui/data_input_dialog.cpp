@@ -207,147 +207,38 @@ DataInputDialog::DataInputDialog(MLNode* node)
         // is open, so the provisional "false" never gets flipped back).
         // Trusting the registry sidesteps that race entirely and also
         // re-syncs the param so the compile gate sees consistent state.
+        //
+        // Dispatch by loader: GetByRegisteredDataset resolves the name
+        // to the loader that owns it, then RestoreFromRegistry reads
+        // the entry. This collapses the pre-refactor 5-branch inline
+        // probe into one dispatch.
         if (node_->parameters.count("dataset_name") && !node_->parameters["dataset_name"].empty()) {
             loaded_dataset_name_ = node_->parameters["dataset_name"];
-            auto& registry = cyxwiz::DataRegistry::Instance();
-
-            // Reset the estimate flag up front. Tabular Arrow/Parquet branches
-            // use actual memory; lazy-loaded image/audio branches will flip
-            // it back to true.
             loaded_memory_is_estimate_ = false;
 
-            auto arrow_ds = registry.GetArrowDataset(loaded_dataset_name_);
-            auto parquet_ds = registry.GetParquetBackedDataset(loaded_dataset_name_);
+            auto* loader = cyxwiz::loaders::GetByRegisteredDataset(loaded_dataset_name_);
+            cyxwiz::loaders::RestoreState rs;
+            if (loader && loader->RestoreFromRegistry(loaded_dataset_name_, *node_, rs) && rs.found) {
+                loaded_rows_ = rs.rows;
+                loaded_cols_ = rs.cols;
+                loaded_memory_bytes_ = rs.bytes;
+                loaded_backend_ = rs.backend;
+                loaded_memory_is_estimate_ = rs.memory_is_estimate;
+                data_load_state_ = DataLoadState::InMemory;
+                apply_success_ = true;
+                apply_status_message_ = rs.status_message;
 
-            auto img_entry = registry.GetImageDatasetEntry(loaded_dataset_name_);
-            auto audio_entry_ptr = registry.GetAudioDatasetEntry(loaded_dataset_name_);
-            auto text_entry_ptr = registry.GetTextDatasetEntry(loaded_dataset_name_);
-
-            if (arrow_ds) {
-                loaded_rows_ = arrow_ds->GetNumRows();
-                loaded_cols_ = arrow_ds->GetNumColumns();
-                loaded_memory_bytes_ = arrow_ds->GetMemoryUsage();
-                data_load_state_ = DataLoadState::InMemory;
-                loaded_backend_ = 1;
-                apply_success_ = true;
-                apply_status_message_ = "Loaded " + loaded_dataset_name_ + " (" +
-                    std::to_string(loaded_rows_) + " rows, " +
-                    std::to_string(loaded_cols_) + " cols, " +
-                    FormatBytes(loaded_memory_bytes_) + ")";
                 node_->parameters["data_loaded"] = "true";
                 node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
                 node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
-                node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
-                spdlog::debug("DataInputDialog: restored in-memory Arrow state for '{}'",
-                              loaded_dataset_name_);
-            } else if (parquet_ds) {
-                loaded_rows_ = parquet_ds->GetNumRows();
-                loaded_cols_ = parquet_ds->GetNumColumns();
-                loaded_memory_bytes_ = parquet_ds->GetMemoryUsage();
-                data_load_state_ = DataLoadState::InMemory;
-                loaded_backend_ = 2;
-                apply_success_ = true;
-                apply_status_message_ = "Loaded " + loaded_dataset_name_ +
-                    " via Parquet cache (" +
-                    std::to_string(loaded_rows_) + " rows, " +
-                    std::to_string(loaded_cols_) + " cols, " +
-                    FormatBytes(loaded_memory_bytes_) + " on disk)";
-                node_->parameters["data_loaded"] = "true";
-                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
-                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
-                node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
-                spdlog::debug("DataInputDialog: restored Parquet-backed state for '{}'",
-                              loaded_dataset_name_);
-            } else if (img_entry) {
-                loaded_rows_ = static_cast<int64_t>(img_entry->num_images);
-                loaded_cols_ = 1;
-                // Mirror the Apply path: use the node's persisted
-                // target_width / target_height / rgb params so the
-                // restored Memory tab shows the same estimate the user
-                // saw on Apply. Falls back to 224×224×3 for nodes that
-                // predate those params.
-                int w = 224, h = 224, c = 3;
-                auto tw_it = node_->parameters.find("target_width");
-                auto th_it = node_->parameters.find("target_height");
-                auto rgb_it = node_->parameters.find("rgb");
-                if (tw_it != node_->parameters.end()) {
-                    try { int v = std::stoi(tw_it->second); if (v > 0) w = v; }
-                    catch (...) {}
+                // memory_bytes is persisted for tabular only (matches
+                // pre-refactor behavior — image / audio / text never
+                // wrote this param because the bytes are an estimate).
+                if (rs.backend == 1 || rs.backend == 2) {
+                    node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
                 }
-                if (th_it != node_->parameters.end()) {
-                    try { int v = std::stoi(th_it->second); if (v > 0) h = v; }
-                    catch (...) {}
-                }
-                if (rgb_it != node_->parameters.end()) {
-                    c = (rgb_it->second == "false" || rgb_it->second == "0") ? 1 : 3;
-                }
-                size_t per_image = static_cast<size_t>(w) *
-                                   static_cast<size_t>(h) *
-                                   static_cast<size_t>(c) * sizeof(float);
-                loaded_memory_bytes_ = img_entry->num_images * per_image;
-                loaded_memory_is_estimate_ = true;
-                data_load_state_ = DataLoadState::InMemory;
-                loaded_backend_ = 3;  // 3 = image
-                apply_success_ = true;
-                apply_status_message_ = "Loaded " + loaded_dataset_name_ +
-                    " (" + std::to_string(img_entry->num_images) + " images, " +
-                    std::to_string(img_entry->num_classes) + " classes)";
-                node_->parameters["data_loaded"] = "true";
-                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
-                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
-                spdlog::debug("DataInputDialog: restored image dataset state for '{}'",
-                              loaded_dataset_name_);
-            } else if (audio_entry_ptr) {
-                // Audio restore: mirror image branch. Uses the probed
-                // feature_rows/feature_cols persisted on the entry so
-                // we don't have to re-probe on every dialog reopen.
-                loaded_rows_ = static_cast<int64_t>(audio_entry_ptr->num_samples);
-                loaded_cols_ = 1;
-                size_t per_sample = (audio_entry_ptr->feature_rows > 0 &&
-                                     audio_entry_ptr->feature_cols > 0)
-                    ? static_cast<size_t>(audio_entry_ptr->feature_rows) *
-                      static_cast<size_t>(audio_entry_ptr->feature_cols) * sizeof(float)
-                    : static_cast<size_t>(audio_entry_ptr->n_mels) * 313 * sizeof(float);
-                loaded_memory_bytes_ = audio_entry_ptr->num_samples * per_sample;
-                loaded_memory_is_estimate_ = true;
-                data_load_state_ = DataLoadState::InMemory;
-                loaded_backend_ = 4;  // 4 = audio
-                apply_success_ = true;
-                apply_status_message_ = "Loaded " + loaded_dataset_name_ +
-                    " (" + std::to_string(audio_entry_ptr->num_samples) + " audio files, " +
-                    std::to_string(audio_entry_ptr->num_classes) + " classes)";
-                node_->parameters["data_loaded"] = "true";
-                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
-                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
-                spdlog::debug("DataInputDialog: restored audio dataset state for '{}' "
-                              "({} samples, feature shape [{}x{}])",
-                              loaded_dataset_name_, audio_entry_ptr->num_samples,
-                              audio_entry_ptr->feature_rows, audio_entry_ptr->feature_cols);
-            } else if (text_entry_ptr) {
-                // Text restore: mirror audio branch. Uses the vocab_size
-                // and num_samples persisted on the entry at Apply time.
-                loaded_rows_ = static_cast<int64_t>(text_entry_ptr->num_samples);
-                loaded_cols_ = 1;
-                // Estimate: max_length * sizeof(float) per sample. Actual
-                // memory during training is dominated by the tokenized
-                // in-RAM corpus, not the training tensor batches.
-                size_t per_sample = static_cast<size_t>(text_entry_ptr->max_length) * sizeof(float);
-                loaded_memory_bytes_ = text_entry_ptr->num_samples * per_sample;
-                loaded_memory_is_estimate_ = true;
-                data_load_state_ = DataLoadState::InMemory;
-                loaded_backend_ = 5;  // 5 = text
-                apply_success_ = true;
-                apply_status_message_ = "Loaded " + loaded_dataset_name_ +
-                    " (" + std::to_string(text_entry_ptr->num_samples) + " text samples, " +
-                    std::to_string(text_entry_ptr->num_classes) + " classes, vocab " +
-                    std::to_string(text_entry_ptr->vocab_size) + ")";
-                node_->parameters["data_loaded"] = "true";
-                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
-                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
-                spdlog::debug("DataInputDialog: restored text dataset state for '{}' "
-                              "({} samples, vocab {})",
-                              loaded_dataset_name_, text_entry_ptr->num_samples,
-                              text_entry_ptr->vocab_size);
+                spdlog::debug("DataInputDialog: restored {} state for '{}' (backend {})",
+                              loader->CategoryName(), loaded_dataset_name_, rs.backend);
             } else {
                 // Registry doesn't have it. Either the user never applied,
                 // or project close / graph clear unregistered. Reflect
@@ -969,52 +860,31 @@ void DataInputDialog::PollAsyncLoadResult() {
         node_->parameters["dataset_name"] = loaded_dataset_name_;
         node_->parameters["data_loaded"] = "true";
 
+        // Per-backend description format lives in the owning loader
+        // via DescribeCompletedLoad. Tabular returns the "N rows, M
+        // cols" shape (with a "(disk-backed)" suffix for Parquet);
+        // Image / Audio / Text format class + vocab counts instead.
         fs::path p(state->source_path);
-        if (state->backend == 5) {
-            // Text load: rows = num_samples, cols = 1, plus class /
-            // vocab metadata. Description format differs from tabular
-            // because the interesting knobs are different.
-            loaded_memory_is_estimate_ = true;
-            node_->description = p.filename().string() + "\n" +
-                std::to_string(loaded_rows_) + " samples, " +
-                std::to_string(state->num_classes) + " classes, vocab " +
-                std::to_string(state->vocab_size);
+        auto* loader = cyxwiz::loaders::GetByBackendTag(state->backend);
+        if (loader) {
+            auto desc = loader->DescribeCompletedLoad(*state);
+            loaded_memory_is_estimate_ = desc.memory_is_estimate;
+            node_->description = p.filename().string() + "\n" + desc.node_description_suffix;
             apply_status_message_ = state->message.empty()
-                ? std::string("Loaded text from ") + p.filename().string()
-                : state->message;
-        } else if (state->backend == 3) {
-            // Image folder load: source_path is the folder, rows is
-            // the image count. Description mirrors the pre-async
-            // synchronous image branch so project files look the same.
-            loaded_memory_is_estimate_ = true;
-            node_->description = p.filename().string() + "\n" +
-                std::to_string(loaded_rows_) + " images, " +
-                std::to_string(state->num_classes) + " classes";
-            apply_status_message_ = state->message.empty()
-                ? std::string("Loaded images from ") + p.filename().string()
-                : state->message;
-        } else if (state->backend == 4) {
-            // Audio folder load. Same shape as image — source_path is
-            // the folder, rows is sample count.
-            loaded_memory_is_estimate_ = true;
-            node_->description = p.filename().string() + "\n" +
-                std::to_string(loaded_rows_) + " audio files, " +
-                std::to_string(state->num_classes) + " classes";
-            apply_status_message_ = state->message.empty()
-                ? std::string("Loaded audio from ") + p.filename().string()
+                ? desc.default_status_message
                 : state->message;
         } else {
-            std::string backing_suffix = (loaded_backend_ == 2) ? " (disk-backed)" : "";
-            node_->description = p.filename().string() + "\n" +
-                std::to_string(loaded_rows_) + " rows, " +
-                std::to_string(loaded_cols_) + " cols" + backing_suffix;
-
-            std::string size_label = (loaded_backend_ == 2) ? " on disk" : "";
-            apply_status_message_ = "Loaded " + p.filename().string() +
-                (loaded_backend_ == 2 ? " via Parquet cache (" : " (") +
-                std::to_string(loaded_rows_) + " rows, " +
-                std::to_string(loaded_cols_) + " cols, " +
-                FormatBytes(loaded_memory_bytes_) + size_label + ")";
+            // Defensive — every loader we register exposes a BackendTag
+            // that maps back here. If we ever hit this, the backend
+            // field in AsyncLoadState was set to a value no loader
+            // claims.
+            loaded_memory_is_estimate_ = false;
+            node_->description = p.filename().string();
+            apply_status_message_ = state->message.empty()
+                ? std::string("Loaded ") + p.filename().string()
+                : state->message;
+            spdlog::warn("DataInputDialog: no loader for backend tag {}",
+                         state->backend);
         }
 
         spdlog::info("DataInputDialog: async load complete - {}", apply_status_message_);
@@ -2125,13 +1995,23 @@ void DataInputDialog::RenderMemoryTab() {
 
     switch (data_load_state_) {
         case DataLoadState::InMemory: {
-            // Green = in-memory Arrow, blue = disk-backed Parquet cache.
-            // Both are "loaded and ready to train" from the user's POV;
-            // the color signals where the data actually lives.
-            // When the dataset is image/audio (lazy-loaded), the byte
-            // count is an if-fully-cached estimate, not actual RAM use —
-            // label it accordingly so users aren't misled.
-            if (loaded_backend_ == 2) {
+            // Three-way UX:
+            //   - Blue  ("Loaded via Parquet cache") for backend==2
+            //     (tabular disk-backed). Specific to TabularLoader; no
+            //     other loader sets backend 2.
+            //   - Green ("Lazy-loaded") for any loader that reports
+            //     IsLazyLoaded() — image / audio / text. The byte
+            //     count is an if-fully-cached estimate, not actual
+            //     RAM use.
+            //   - Default green ("In Memory") for tabular Arrow
+            //     (backend==1) where loaded_memory_bytes_ is the real
+            //     allocation.
+            // loaded_memory_is_estimate_ is populated by the loader
+            // (RestoreFromRegistry + DescribeCompletedLoad set it);
+            // keep the explicit condition here so the Memory tab
+            // reads cleanly without a backend-tag lookup.
+            const bool disk_backed = (loaded_backend_ == 2);
+            if (disk_backed) {
                 ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "Loaded via Parquet cache");
                 ImGui::SameLine();
                 ImGui::TextDisabled("- %s on disk", FormatBytes(loaded_memory_bytes_).c_str());
@@ -2156,7 +2036,7 @@ void DataInputDialog::RenderMemoryTab() {
 
             // Explain the backing for disk-backed loads so users understand
             // they're not consuming RAM proportional to the file size.
-            if (loaded_backend_ == 2) {
+            if (disk_backed) {
                 ImGui::TextDisabled("  Training reads pages lazily via memory-mapped I/O. "
                                     "RAM use bounded by the OS page cache, not the file size.");
             }

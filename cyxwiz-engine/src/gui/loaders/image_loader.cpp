@@ -2,6 +2,7 @@
 
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../node_editor.h"  // gui::MLNode for RestoreFromRegistry
 
 #include <spdlog/spdlog.h>
 
@@ -142,6 +143,59 @@ bool ImageLoader::IsRegistered(const std::string& name) const {
 
 void ImageLoader::Unregister(const std::string& name) {
     cyxwiz::DataRegistry::Instance().UnregisterImageDataset(name);
+}
+
+bool ImageLoader::RestoreFromRegistry(const std::string& name,
+                                      const gui::MLNode& node,
+                                      RestoreState& out) const {
+    auto* entry = cyxwiz::DataRegistry::Instance().GetImageDatasetEntry(name);
+    if (!entry) return false;
+
+    // Read the persisted target_width / target_height / rgb params off
+    // the node so the restored Memory tab shows the same byte estimate
+    // the user saw at Apply. Falls back to the 224×224×3 default for
+    // nodes that predate those params.
+    int w = 224, h = 224, c = 3;
+    auto tw_it  = node.parameters.find("target_width");
+    auto th_it  = node.parameters.find("target_height");
+    auto rgb_it = node.parameters.find("rgb");
+    if (tw_it != node.parameters.end()) {
+        try { int v = std::stoi(tw_it->second); if (v > 0) w = v; } catch (...) {}
+    }
+    if (th_it != node.parameters.end()) {
+        try { int v = std::stoi(th_it->second); if (v > 0) h = v; } catch (...) {}
+    }
+    if (rgb_it != node.parameters.end()) {
+        c = (rgb_it->second == "false" || rgb_it->second == "0") ? 1 : 3;
+    }
+    const size_t per_image = static_cast<size_t>(w) *
+                             static_cast<size_t>(h) *
+                             static_cast<size_t>(c) * sizeof(float);
+
+    out.found   = true;
+    out.rows    = static_cast<int64_t>(entry->num_images);
+    out.cols    = 1;
+    out.bytes   = entry->num_images * per_image;
+    out.backend = 3;
+    out.memory_is_estimate = true;
+    out.status_message = "Loaded " + name + " (" +
+        std::to_string(entry->num_images) + " images, " +
+        std::to_string(entry->num_classes) + " classes)";
+    return true;
+}
+
+CompletedLoadDescription ImageLoader::DescribeCompletedLoad(
+    const AsyncLoadState& state) const {
+    CompletedLoadDescription d;
+    d.memory_is_estimate = true;
+    d.node_description_suffix =
+        std::to_string(state.rows) + " images, " +
+        std::to_string(state.num_classes) + " classes";
+
+    fs::path p(state.source_path);
+    d.default_status_message = std::string("Loaded images from ") +
+        p.filename().string();
+    return d;
 }
 
 }  // namespace cyxwiz::loaders

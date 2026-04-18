@@ -7,11 +7,31 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cstdio>
 #include <filesystem>
 
 namespace fs = std::filesystem;
 
 namespace cyxwiz::loaders {
+
+namespace {
+// Local copy of DataInputDialog::FormatBytes so the loader module
+// doesn't depend on the dialog header. The format is identical — KB /
+// MB / GB / TB with one decimal above 1 KB, bare byte count below.
+std::string FormatBytes(size_t bytes) {
+    const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+    int unit_idx = 0;
+    double size = static_cast<double>(bytes);
+    while (size >= 1024.0 && unit_idx < 4) {
+        size /= 1024.0;
+        ++unit_idx;
+    }
+    char buf[32];
+    if (unit_idx == 0) std::snprintf(buf, sizeof(buf), "%zu %s", bytes, units[unit_idx]);
+    else               std::snprintf(buf, sizeof(buf), "%.1f %s", size, units[unit_idx]);
+    return std::string(buf);
+}
+}  // namespace
 
 bool TabularLoader::ValidateApplyContext(const ApplyContext& ctx,
                                          std::string& err) const {
@@ -156,6 +176,60 @@ bool TabularLoader::IsRegistered(const std::string& name) const {
 
 void TabularLoader::Unregister(const std::string& name) {
     cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(name);
+}
+
+bool TabularLoader::RestoreFromRegistry(const std::string& name,
+                                        const gui::MLNode& /*node*/,
+                                        RestoreState& out) const {
+    auto& reg = cyxwiz::DataRegistry::Instance();
+
+    if (auto ds = reg.GetArrowDataset(name)) {
+        out.found   = true;
+        out.rows    = ds->GetNumRows();
+        out.cols    = ds->GetNumColumns();
+        out.bytes   = ds->GetMemoryUsage();
+        out.backend = 1;
+        out.memory_is_estimate = false;
+        out.status_message = "Loaded " + name + " (" +
+            std::to_string(out.rows) + " rows, " +
+            std::to_string(out.cols) + " cols, " +
+            FormatBytes(out.bytes) + ")";
+        return true;
+    }
+    if (auto pq = reg.GetParquetBackedDataset(name)) {
+        out.found   = true;
+        out.rows    = pq->GetNumRows();
+        out.cols    = pq->GetNumColumns();
+        out.bytes   = pq->GetMemoryUsage();
+        out.backend = 2;
+        out.memory_is_estimate = false;
+        out.status_message = "Loaded " + name + " via Parquet cache (" +
+            std::to_string(out.rows) + " rows, " +
+            std::to_string(out.cols) + " cols, " +
+            FormatBytes(out.bytes) + " on disk)";
+        return true;
+    }
+    return false;
+}
+
+CompletedLoadDescription TabularLoader::DescribeCompletedLoad(
+    const AsyncLoadState& state) const {
+    CompletedLoadDescription d;
+    d.memory_is_estimate = false;
+
+    const bool disk_backed = (state.backend == 2);
+    const std::string backing_suffix = disk_backed ? " (disk-backed)" : "";
+    d.node_description_suffix =
+        std::to_string(state.rows) + " rows, " +
+        std::to_string(state.cols) + " cols" + backing_suffix;
+
+    fs::path p(state.source_path);
+    d.default_status_message = "Loaded " + p.filename().string() +
+        (disk_backed ? " via Parquet cache (" : " (") +
+        std::to_string(state.rows) + " rows, " +
+        std::to_string(state.cols) + " cols, " +
+        FormatBytes(state.bytes) + (disk_backed ? " on disk" : "") + ")";
+    return d;
 }
 
 }  // namespace cyxwiz::loaders
