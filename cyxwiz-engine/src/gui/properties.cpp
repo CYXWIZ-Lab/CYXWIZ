@@ -2647,11 +2647,17 @@ void Properties::SetupExecutorInputData(cyxwiz::INodeExecutor* executor, MLNode&
     // TODO: Get input data from connected upstream nodes
     // For now, check if there's a DatasetInput node connected
     // and load its data
-
+    //
     // This is a placeholder - in a real implementation:
     // 1. Find all nodes connected to this node's input pins
     // 2. Get their output data (Arrow tables or raw vectors)
     // 3. Pass to executor via SetInputData()
+    //
+    // Silence unused-parameter warnings until the real implementation
+    // lands — the signature is already part of the Properties API so
+    // changing names doesn't help.
+    (void)executor;
+    (void)node;
 
     // For demo/testing, we could generate sample data
     // if (executor->GetState() == cyxwiz::ExecutorState::Idle) {
