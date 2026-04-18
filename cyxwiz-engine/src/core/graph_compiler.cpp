@@ -313,7 +313,7 @@ TrainingConfiguration GraphCompiler::Compile(
     // TimeSeriesWindow materializes the table — the first Dense layer
     // receives `input_width` features (x_0..x_{input_width-1}), not
     // the original per-row scalar. Without this override
-    // BuildModelFromConfig would construct Linear(1 -> hidden_units)
+    // BuildSequentialFromConfig would construct Linear(1 -> hidden_units)
     // and crash at the first forward pass with a dimension mismatch.
     for (const auto& node : nodes) {
         if (node.type == gui::NodeType::TimeSeriesWindow) {
