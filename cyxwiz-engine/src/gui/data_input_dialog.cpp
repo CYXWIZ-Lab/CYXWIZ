@@ -14,6 +14,8 @@
 
 #include "node_config_dialog.h"
 #include "node_editor.h"
+#include "loaders/data_loader.h"
+#include "loaders/tabular_loader.h"
 #include "../core/data_registry.h"
 #include "../core/formats/audio_dataset.h"
 #include "../core/formats/text_dataset.h"
@@ -727,213 +729,108 @@ void DataInputDialog::Apply() {
     } else if (source_type_ == SourceType::File && strlen(file_path_) > 0 &&
                (file_category_ == FileCategory::Tabular ||
                 file_category_ == FileCategory::TimeSeries)) {
-        // Category gate added 2026-04-17. Previously this branch caught
-        // any File source with a non-empty file_path_, which meant an
-        // Image / Audio / Text node with a stale file_path_ value from
-        // a previous session would fall through to LoadTabularCSV and
-        // fail with "cannot stat 'dataset.csv'". The category gate
-        // forces the dispatch to fall through to the category-specific
-        // branch below (Image / Audio folder loads) when the user has
-        // explicitly chosen a non-tabular category.
-        auto& registry = cyxwiz::DataRegistry::Instance();
+        // Tabular / TimeSeries load. All sub-formats (CSV / TSV / TXT /
+        // ARFF, Parquet, JSON, Excel, auto-detect) route through
+        // TabularLoader, which runs the work on an AsyncTaskManager
+        // worker and writes the outcome into AsyncLoadState.
+        // PollAsyncLoadResult on the UI thread finalizes the node +
+        // status message on the next frame.
+        //
+        // Behavior change vs pre-refactor: Parquet / JSON / Excel used
+        // to run synchronously on the UI thread and would freeze the
+        // dialog on large files. They're now async too, matching the
+        // CSV path — consistent UX, one code path.
+        //
+        // The category gate (Tabular || TimeSeries) still lives here
+        // because Image / Audio / Text all have stale file_path_
+        // values from older sessions and we don't want to mis-dispatch
+        // them through the tabular loader.
+        if (is_loading_async_) {
+            spdlog::warn("DataInputDialog: Apply ignored - load already in progress");
+            apply_in_progress_ = false;
+            return;
+        }
 
-        // Capture the OLD dataset_name (from the previous Apply, if any)
-        // before we overwrite it. If the user re-Applies with a different
-        // file the new auto-generated name will differ (it's based on the
-        // file stem) and the old entry would otherwise leak in the
-        // registry. LoadTabularCSV unregisters the *new* name on entry
-        // but doesn't know about the old one.
+        auto* loader = cyxwiz::loaders::GetByCategory(file_category_);
+        if (!loader) {
+            // Defensive — TabularLoader is registered at startup and
+            // GetByCategory also routes TimeSeries back to Tabular, so
+            // this should never fire in practice.
+            apply_status_message_ = "No loader registered for this category";
+            apply_success_ = false;
+            apply_status_timer_ = 6.0f;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: no loader for tabular category");
+            return;
+        }
+
+        // Capture the OLD dataset_name before GenerateDatasetName
+        // overwrites it. The loader clears the old registry entry on
+        // re-Apply so a rename (e.g., user picks a different file)
+        // doesn't leak the prior dataset.
         std::string previous_dataset_name;
-        {
-            auto pit = node_->parameters.find("dataset_name");
-            if (pit != node_->parameters.end()) {
-                previous_dataset_name = pit->second;
-            }
+        if (auto pit = node_->parameters.find("dataset_name");
+            pit != node_->parameters.end()) {
+            previous_dataset_name = pit->second;
         }
-
         loaded_dataset_name_ = GenerateDatasetName();
-        if (!previous_dataset_name.empty() &&
-            previous_dataset_name != loaded_dataset_name_) {
-            registry.UnregisterTabularDataset(previous_dataset_name);
-        }
 
-        try {
-            std::shared_ptr<cyxwiz::ArrowDataset> dataset;
+        cyxwiz::loaders::ApplyContext ctx;
+        ctx.dataset_name          = loaded_dataset_name_;
+        ctx.source_path           = file_path_;
+        ctx.previous_dataset_name = previous_dataset_name;
 
-            // Load based on detected file type
-            const char* types[] = {"auto", "csv", "tsv", "json", "parquet", "excel", "hdf5", "feather", "arrow", "txt", "arff"};
-            int type_idx = (detected_type_ >= 0 && detected_type_ < 11) ? detected_type_ : 0;
-            std::string file_type = types[type_idx];
+        const char* types[] = {"auto", "csv", "tsv", "json", "parquet",
+                               "excel", "hdf5", "feather", "arrow",
+                               "txt", "arff"};
+        int type_idx = (detected_type_ >= 0 && detected_type_ < 11) ? detected_type_ : 0;
+        ctx.detected_file_type = types[type_idx];
+        ctx.has_header         = has_header_;
+        ctx.delimiter          = custom_delimiter_[0];
+        ctx.skip_rows          = skip_rows_;
+        ctx.max_rows           = (max_rows_ > 0) ? static_cast<int64_t>(max_rows_) : 0;
+        ctx.force_disk_backed  = force_disk_backed_;
+        ctx.json_lines         = json_lines_;
+        ctx.excel_sheet_idx    = sheet_idx_;
 
-            if (file_type == "csv" || file_type == "tsv" || file_type == "txt" || file_type == "arff") {
-                // === ASYNC CSV LOAD ===
-                // The CSV path can take 10+ seconds when force_disk_backed
-                // triggers a CSV->Parquet conversion, so it runs on a
-                // worker thread. Everything below is the launcher; the
-                // actual result is picked up later by PollAsyncLoadResult
-                // running on the UI thread.
-                if (is_loading_async_) {
-                    // Already loading — ignore the second click. The Apply
-                    // button is also greyed out via IsBusy(), so this is
-                    // mostly defensive.
-                    spdlog::warn("DataInputDialog: Apply ignored - load already in progress");
-                    apply_in_progress_ = false;
-                    return;
-                }
-
-                char delim = (file_type == "tsv") ? '\t' : custom_delimiter_[0];
-                // max_rows_ from the Limit Rows tab: 0 means "all rows".
-                int64_t cap = (max_rows_ > 0) ? static_cast<int64_t>(max_rows_) : 0;
-
-                // Snapshot all inputs by value so the worker isn't racing
-                // the UI thread on dialog state.
-                std::string captured_path = file_path_;
-                std::string captured_name = loaded_dataset_name_;
-                bool captured_header = has_header_;
-                int captured_skip = skip_rows_;
-                int64_t captured_cap = cap;
-                bool captured_force = force_disk_backed_;
-
-                auto state = std::make_shared<AsyncLoadState>();
-                state->dataset_name = captured_name;
-                state->source_path = captured_path;
-                async_load_state_ = state;
-                is_loading_async_ = true;
-
-                // Provisional node params: mark NOT loaded until the worker
-                // finishes. This is important — if the user clicks Train
-                // before the load completes, the compile gate sees
-                // data_loaded=false and refuses, instead of trying to
-                // train on a dataset that isn't there yet.
-                node_->parameters["dataset_name"] = captured_name;
-                node_->parameters["data_loaded"] = "false";
-
-                apply_status_message_ = std::string("Loading ") +
-                    fs::path(captured_path).filename().string() + "...";
-                apply_status_timer_ = 0.0f;  // hide stale status during load
-
-                auto& mgr = cyxwiz::AsyncTaskManager::Instance();
-                loading_task_id_ = mgr.RunAsync(
-                    "Loading " + captured_name,
-                    [captured_path, captured_name, captured_header, delim,
-                     captured_skip, captured_cap, captured_force, state]
-                    (cyxwiz::LambdaTask& task) {
-                        try {
-                            task.ReportProgress(0.1f, "Reading CSV");
-
-                            auto& reg = cyxwiz::DataRegistry::Instance();
-                            auto backend = reg.LoadTabularCSV(
-                                captured_path, captured_name,
-                                captured_header, delim,
-                                captured_skip, captured_cap,
-                                captured_force);
-
-                            task.ReportProgress(0.9f, "Finalizing");
-
-                            if (backend == cyxwiz::DataRegistry::TabularLoadBackend::InMemory) {
-                                auto ds = reg.GetArrowDataset(captured_name);
-                                if (ds) {
-                                    state->success = true;
-                                    state->backend = 1;
-                                    state->rows = ds->GetNumRows();
-                                    state->cols = ds->GetNumColumns();
-                                    state->bytes = ds->GetMemoryUsage();
-                                    state->message = "Loaded in memory";
-                                } else {
-                                    state->success = false;
-                                    state->message = "Load completed but dataset missing from registry";
-                                }
-                            } else if (backend == cyxwiz::DataRegistry::TabularLoadBackend::DiskBacked) {
-                                auto pq = reg.GetParquetBackedDataset(captured_name);
-                                if (pq) {
-                                    state->success = true;
-                                    state->backend = 2;
-                                    state->rows = pq->GetNumRows();
-                                    state->cols = pq->GetNumColumns();
-                                    state->bytes = pq->GetMemoryUsage();
-                                    state->message = "Loaded via Parquet cache";
-                                } else {
-                                    state->success = false;
-                                    state->message = "Disk-backed load completed but dataset missing";
-                                }
-                            } else {
-                                state->success = false;
-                                state->message = "Failed to load CSV - check file format";
-                            }
-                        } catch (const std::exception& e) {
-                            state->success = false;
-                            state->message = std::string("Error: ") + e.what();
-                            spdlog::error("DataInputDialog async load: {}", state->message);
-                        }
-                        // Atomic done flag is the publish barrier — must be
-                        // set last so PollAsyncLoadResult only reads fully
-                        // initialized state.
-                        state->done.store(true);
-                    });
-
-                spdlog::info("DataInputDialog: queued async CSV load (task {}, name '{}')",
-                             loading_task_id_, captured_name);
-
-                // Reset the sync apply flag — we're done with the
-                // synchronous metadata-write portion of Apply. The async
-                // result will arrive via PollAsyncLoadResult.
-                apply_in_progress_ = false;
-                has_changes_ = false;
-                return;
-            } else if (file_type == "parquet") {
-                dataset = registry.LoadParquetToArrow(file_path_, loaded_dataset_name_);
-            } else if (file_type == "json") {
-                dataset = registry.LoadJSONToArrow(file_path_, loaded_dataset_name_, json_lines_);
-            } else if (file_type == "excel") {
-                dataset = registry.LoadExcelToArrow(file_path_, loaded_dataset_name_, sheet_idx_);
-            } else {
-                // Auto-detect
-                dataset = registry.LoadArrowTable(file_path_, loaded_dataset_name_);
-            }
-
-            if (dataset) {
-                loaded_rows_ = dataset->GetNumRows();
-                loaded_cols_ = dataset->GetNumColumns();
-                loaded_memory_bytes_ = dataset->GetMemoryUsage();
-                data_load_state_ = DataLoadState::InMemory;
-
-                // Store in node parameters
-                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
-                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
-                node_->parameters["memory_bytes"] = std::to_string(loaded_memory_bytes_);
-                node_->parameters["dataset_name"] = loaded_dataset_name_;
-                node_->parameters["data_loaded"] = "true";
-
-                // Update node description with stats
-                fs::path p(file_path_);
-                node_->description = p.filename().string() + "\n" +
-                    std::to_string(loaded_rows_) + " rows, " +
-                    std::to_string(loaded_cols_) + " cols";
-
-                // Format status message
-                apply_status_message_ = "Loaded " + p.filename().string() +
-                    " (" + std::to_string(loaded_rows_) + " rows, " +
-                    std::to_string(loaded_cols_) + " cols, " +
-                    FormatBytes(loaded_memory_bytes_) + ")";
-
-                apply_success_ = true;
-                spdlog::info("DataInputDialog: {}", apply_status_message_);
-            } else if (!apply_success_) {
-                // Only treat a null Arrow `dataset` as a failure if no prior
-                // success path set apply_success_ already. The disk-backed
-                // Parquet branch returns without populating `dataset` (that
-                // variable is Arrow-typed), and previously that fall-through
-                // clobbered data_loaded back to "false", defeating the state
-                // restore on dialog reopen. This guard keeps the Parquet
-                // success state intact.
-                apply_status_message_ = "Failed to load data - check file format";
-                node_->parameters["data_loaded"] = "false";
-            }
-        } catch (const std::exception& e) {
-            apply_status_message_ = std::string("Error: ") + e.what();
+        std::string err;
+        if (!loader->ValidateApplyContext(ctx, err)) {
+            apply_status_message_ = err;
             node_->parameters["data_loaded"] = "false";
-            spdlog::error("DataInputDialog: {}", apply_status_message_);
+            apply_success_ = false;
+            apply_status_timer_ = 6.0f;
+            apply_in_progress_ = false;
+            has_changes_ = false;
+            spdlog::error("DataInputDialog: tabular validate - {}", err);
+            return;
         }
+
+        auto state = std::make_shared<AsyncLoadState>();
+        state->dataset_name = loaded_dataset_name_;
+        state->source_path  = file_path_;
+        async_load_state_   = state;
+        is_loading_async_   = true;
+
+        // Provisional node params: mark NOT loaded until the worker
+        // finishes. If the user clicks Train mid-load, the compile gate
+        // sees data_loaded=false and refuses, instead of trying to
+        // train on a dataset that isn't in the registry yet.
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"]  = "false";
+
+        apply_status_message_ = std::string("Loading ") +
+            fs::path(file_path_).filename().string() + "...";
+        apply_status_timer_ = 0.0f;
+
+        loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
+
+        spdlog::info("DataInputDialog: queued async tabular load (task {}, name '{}')",
+                     loading_task_id_, loaded_dataset_name_);
+
+        apply_in_progress_ = false;
+        has_changes_ = false;
+        return;
     } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0 &&
                file_category_ == FileCategory::Audio) {
         // === ASYNC AUDIO FOLDER LOAD ===
