@@ -968,37 +968,16 @@ std::unique_ptr<NodeConfigDialog> NodeConfigDialogFactory::CreateDialog(MLNode* 
 // ==================== Helper Functions ====================
 
 bool ShouldShowOpenDialogButton(NT type) {
-    // List of node types that should have "Open Dialog" button
-    // Use correct NodeType enum values from node_editor.h
-    switch (type) {
-        // Smart I/O Nodes (primary)
-        case NT::DataInput:
-        case NT::DataOutput:
-        // Legacy file nodes
-        case NT::CSVFile:
-        case NT::ExcelFile:
-        case NT::JSONFile:
-        case NT::ParquetFile:
-        case NT::TextTokenizer:
-        case NT::TFIDFVectorizer:
-        case NT::FilterRows:
-        case NT::SelectColumns:
-        case NT::JoinTables:
-        case NT::GroupByAggregate:
-        case NT::StringManipulation:
-        case NT::MathFormula:
-        case NT::RuleEngine:
-        case NT::WordEmbeddings:
-        // Data pipeline nodes
-        case NT::DataLoader:
-        case NT::DataSplit:
-        // Visualization nodes — Cat 2 inspection opens the rich dialog
-        // with dataset/column picker + ImPlot chart on double-click.
-        case NT::BarChart:
-            return true;
-        default:
-            return false;
-    }
+    // The button shows iff a dialog factory is actually registered for
+    // this NodeType. Previously this function maintained a hand-coded
+    // whitelist of 19 types that drifted from the real factory (9
+    // registrations), so clicking the button on ~10 node types did
+    // silently nothing (CreateDialog returned null). Deriving from
+    // NodeConfigDialogFactory::HasDialog eliminates the drift — adding
+    // a new dialog via RegisterDialog now also makes the button appear
+    // automatically, and the reverse drift (button shown but no
+    // factory) can't happen.
+    return NodeConfigDialogFactory::Instance().HasDialog(type);
 }
 
 } // namespace gui
