@@ -1254,101 +1254,65 @@ revisit AF as a perf pass.
 
 ---
 
-## DataInputDialog::Apply is a 700-line category switch (2026-04-17)
+## ~~DataInputDialog::Apply is a 700-line category switch~~ LANDED 2026-04-18
 
-**Severity:** High (architectural) — every new data type ends up
-pattern-copying the async contract from one of the others, drifts
-on some subtle per-category field, and the next category to land
-repeats the cycle. Surfaced today during the image + audio async
-work: turning image from sync to async required hand-duplicating
-~80% of the text-async code block, then audio required
-hand-duplicating ~80% of the image-async code block. Four nearly-
-identical async worker bodies now live in the file, each with
-subtle per-category differences that mask drift.
+**Status:** Fully refactored into a polymorphic `DataLoader` hierarchy
+across 8 plan commits on `feat/dataloader-refactor` (plus 4 merge
+commits into `Nodes_Implementation`). Plan doc at
+`docs/plans/dataloader_refactor.md` was the execution guide, expanded
+mid-plan per user feedback to cover every per-category concern (not
+just async).
 
-**Current shape:**
+Plan commits (all merged, branch + worktree retired):
+- `f0ae575c` — DataLoader interface + ApplyContext + AsyncLoadState
+  hoist + TabularLoader (commit 1/8)
+- `7000fb85` — TextLoader (commit 2/8)
+- `8ac3d1e7` — ImageLoader (commit 3/8)
+- `22574497` — AudioLoader (commit 4/8)
+- `798e48e0` — Loader-driven restore + poll description (commit 5/8).
+  Dialog-reopen restore and `PollAsyncLoadResult`'s backend switch
+  both route through loader methods.
+- `e4b91437` — Training dispatch via loader + `StartTrainingCommon`
+  (commit 6/8). `MainWindow::StartTrainingFromGraph` 140-line switch
+  → 15 lines. `TrainingManager::StartTrainingCommon` extracts shared
+  plumbing across the 5 `StartTraining*` methods.
+- `7f003b24` — Compile gate via loader (commit 7/8). 5-way
+  `IsXDataset` OR → `GetByRegisteredDataset != nullptr`.
+  `labels_from_structure` and `Domain()` both route through the
+  loader.
+- `83788a36` — Node-param schema + stale-param pruning + MakeSynthetic
+  stub (commit 8/8). `Apply` now prunes stale per-category params on
+  category switch; `MakeSynthetic` is a forward-looking surface for
+  Local Debug integration.
 
-```cpp
-void DataInputDialog::Apply() {
-    // ~100 lines of tabular path
-    // ~150 lines of text async path
-    // ~150 lines of image async path
-    // ~150 lines of audio async path
-    // ~50 lines of ML dataset / database / cloud paths
-    // ... all as one flat if/else if chain with positional dispatch
-}
+**Net effect:** The DataLoader interface owns every concern that
+used to switch on `file_category_` / `loaded_backend_` / `IsXDataset`:
+Apply launch, Poll finalization, dialog-reopen restore, memory tab
+render, training dispatch, compile-gate domain + labels-from-
+structure, node-param schema, MakeSynthetic stub. Adding a new data
+type is now one new `DataLoader` subclass + one `RegisterLoader` call;
+every UI and runtime path sees it automatically.
 
-void DataInputDialog::PollAsyncLoadResult() {
-    // switch on backend (1 tabular, 2 parquet, 3 image, 4 audio, 5 text)
-    // hand-coded per-backend description + status text
-}
-```
+**DataRegistry:** Option A (routing sidecar) shipped — `name_to_category_`
+map populated by each `Register*` method so `GetByRegisteredDataset`
+is a single lookup instead of 5 parallel `IsXDataset` calls. The 5
+underlying maps (Arrow / Parquet / Image / Audio / Text) stay intact;
+the 16 callsites across Data Studio / properties / visualizer keep
+working unchanged.
 
-Problems:
-- Dispatch order is fragile. The tabular branch had no
-  `file_category_` check until `d4d4fe02` added one, which is why
-  a stale `file_path_` routed image Applys to LoadTabularCSV.
-- `AsyncLoadState` has per-category fields (vocab_size, num_classes)
-  that only some backends populate, and PollAsyncLoadResult
-  switches on the backend tag to decide which are real.
-- Adding a video or cloud-image loader = another ~150 line block
-  that re-implements the same state snapshot + worker + result
-  drain pattern.
-
-**Correct shape (proposed):**
-
-```cpp
-class DataLoader {                         // abstract
-public:
-    virtual bool Validate(ApplyContext&, std::string& err) = 0;
-    virtual void LaunchAsync(ApplyContext&,
-                             std::shared_ptr<AsyncLoadState>) = 0;
-    virtual void OnResult(AsyncLoadState&, MLNode&) = 0;
-    virtual int  Backend() const = 0;       // the backend tag
-    virtual std::string Name() const = 0;   // for logs / status
-};
-
-class TabularLoader : public DataLoader { ... };
-class TextLoader    : public DataLoader { ... };
-class ImageLoader   : public DataLoader { ... };
-class AudioLoader   : public DataLoader { ... };
-// future: VideoLoader, CloudImageLoader, ... — one class each.
-```
-
-`DataInputDialog::Apply` collapses to:
-
-```cpp
-auto loader = GetLoaderForCategory(source_type_, file_category_);
-std::string err;
-if (!loader->Validate(ctx, err)) { ShowError(err); return; }
-auto state = std::make_shared<AsyncLoadState>();
-async_load_state_ = state;
-is_loading_async_ = true;
-loader->LaunchAsync(ctx, state);
-```
-
-`PollAsyncLoadResult` becomes a single `loader->OnResult(*state,
-*node_)` call.
-
-**Scope:** ~4-6h of careful extraction. The 80% duplicate code has
-real per-category differences (async vs sync, validation rules,
-state fields) that all need to survive. Needs a test pass per
-category before landing to catch regressions.
-
-**Related cleanups worth bundling:**
-- Move the `AsyncLoadState` per-backend fields into a union /
-  variant so only valid fields are reachable per backend.
-- `ApplyContext` struct as a single capture surface — eliminates
-  the "snapshot 14 individual variables for the lambda" pattern.
-- `loaded_backend_` integer tag can become a `DataLoader*`
-  directly once the classes exist.
-
-**How this came up:** After landing image-async (`4fccf5bb`) and
-audio-async (commit pending), the user pointed out we're just
-copy-pasting features without any design. They're right — every
-category path is a near-duplicate, and that's why "fix here
-breaks there" kept happening this session. The refactor is the
-root cleanup; do it before adding any more data types.
+**Follow-up work explicitly scoped out of v1** (for future sessions):
+- `AsyncLoadState` variant consolidation (per-backend extras like
+  `vocab_size` / `feature_rows,cols` live as flat fields today; could
+  move to a `std::variant<TabularExtra, TextExtra, ...>`). Cosmetic.
+- `IBatcher` + `TrainingExecutor` constructor consolidation. Today
+  `TrainingExecutor` has 4 constructors (Legacy, Arrow, Parquet,
+  IBatcher). `IBatcher` is already the shared base for image / audio
+  / text batchers; Arrow + Parquet could join it with moderate effort.
+- `MakeSynthetic` stubs need real implementations when Local Debug's
+  per-category dispatch lands.
+- Plugin data loaders (`PluginDataLoaderRegistry`) stay on their own
+  runtime registration path; integrating them with
+  `GetByRegisteredDataset` is deferred.
 
 ---
 
