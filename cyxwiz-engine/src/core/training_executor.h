@@ -219,12 +219,6 @@ private:
     bool Initialize(int batch_size);
 
     /**
-     * Build the model dynamically from TrainingConfiguration
-     * Reads config.layers and creates corresponding modules
-     */
-    bool BuildModelFromConfig();
-
-    /**
      * Run a single training epoch
      */
     void RunTrainingEpoch(

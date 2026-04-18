@@ -117,6 +117,7 @@ set(ENGINE_SOURCES
     src/core/rl_script_generator.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
+    src/core/model_builder.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
@@ -401,6 +402,7 @@ set(ENGINE_HEADERS
     src/core/async_task_manager.h
     src/core/graph_compiler.h
     src/core/dataset_batcher.h
+    src/core/model_builder.h
     src/core/training_executor.h
     src/core/training_manager.h
     src/core/test_executor.h
