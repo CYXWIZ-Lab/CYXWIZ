@@ -968,6 +968,39 @@ set_target_properties(test_arrow_integration PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Debug Executor (Local Debug Mode - Commit 1) =====
+# Smoke test for BuildSequentialFromConfig extraction and MakeSyntheticBatch.
+# Compiles the extracted files directly so the test does not depend on the
+# full engine executable being built.
+add_executable(test_debug_executor
+    tests/test_debug_executor.cpp
+    src/core/model_builder.cpp
+    src/core/synthetic_batch.cpp
+)
+
+target_include_directories(test_debug_executor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_debug_executor PRIVATE
+    imgui::imgui               # graph_compiler.h transitively pulls node_editor.h -> imgui.h
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_debug_executor PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_debug_executor PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== ASan Memory Test (standalone, no vcpkg deps) =====
 if(CYXWIZ_ENABLE_ASAN)
     add_executable(test_asan_memory
