@@ -3,6 +3,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
 #include "../../core/formats/audio_dataset.h"
+#include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
 
@@ -186,6 +187,29 @@ CompletedLoadDescription AudioLoader::DescribeCompletedLoad(
     d.default_status_message = std::string("Loaded audio from ") +
         p.filename().string();
     return d;
+}
+
+bool AudioLoader::LaunchTraining(
+    cyxwiz::TrainingConfiguration config,
+    const std::string& dataset_name,
+    const std::string& /*label_column*/,
+    int epochs,
+    int batch_size,
+    cyxwiz::TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback) {
+    auto* entry = cyxwiz::DataRegistry::Instance().GetAudioDatasetEntry(dataset_name);
+    if (!entry) {
+        spdlog::error("AudioLoader: audio dataset '{}' is registered but entry "
+                      "could not be retrieved", dataset_name);
+        return false;
+    }
+    spdlog::info("AudioLoader: Starting audio training: dataset={}, epochs={}, "
+                 "batch_size={}, {} samples, {} classes, feature_type={}",
+                 dataset_name, epochs, batch_size,
+                 entry->num_samples, entry->num_classes, entry->feature_type);
+    return cyxwiz::TrainingManager::Instance().StartTrainingAudio(
+        std::move(config), *entry, epochs, batch_size, plot_panel,
+        std::move(node_editor_callback));
 }
 
 }  // namespace cyxwiz::loaders

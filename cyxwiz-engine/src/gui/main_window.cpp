@@ -8,6 +8,7 @@
 #endif
 
 #include "main_window.h"
+#include "loaders/data_loader.h"
 #include "node_editor.h"
 #include "console.h"
 #include "viewport.h"
@@ -2915,145 +2916,34 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
 
     bool started = false;
 
-    // Dispatch by dataset type. In-memory Arrow is the default fast path;
-    // disk-backed Parquet kicks in when LoadTabularCSV decided the CSV was
-    // too big to fit in RAM (see DataRegistry::LoadTabularCSV auto-detect).
-    // Legacy DatasetHandle is the pre-Arrow path, kept for back-compat
-    // until the Arrow migration is complete.
-    if (registry.IsArrowDataset(dataset_name)) {
-        auto arrow_dataset = registry.GetArrowDataset(dataset_name);
-        if (arrow_dataset) {
-            spdlog::info("Starting Arrow-based training: dataset={}, epochs={}, batch_size={}, label={}",
-                         dataset_name, epochs, batch_size, label_column);
-
-            started = tm.StartTrainingArrow(
-                std::move(config),
-                arrow_dataset,
-                label_column,
-                epochs,
-                batch_size,
-                training_plot_panel_.get(),
-                node_editor_callback
-            );
-        } else {
-            spdlog::error("Arrow dataset '{}' is registered but could not be retrieved", dataset_name);
-        }
-    } else if (registry.IsParquetBackedDataset(dataset_name)) {
-        auto parquet_dataset = registry.GetParquetBackedDataset(dataset_name);
-        if (parquet_dataset) {
-            spdlog::info("Starting Parquet-backed training: dataset={}, epochs={}, batch_size={}, "
-                         "label={}, {:.1f} MB cache on disk",
-                         dataset_name, epochs, batch_size, label_column,
-                         parquet_dataset->GetFileSizeBytes() / (1024.0 * 1024.0));
-
-            started = tm.StartTrainingParquet(
-                std::move(config),
-                parquet_dataset,
-                label_column,
-                epochs,
-                batch_size,
-                training_plot_panel_.get(),
-                node_editor_callback
-            );
-        } else {
-            spdlog::error("Parquet-backed dataset '{}' is registered but could not be retrieved", dataset_name);
-        }
-    } else if (registry.IsImageDataset(dataset_name)) {
-        // Phase 1 image path: ImageDatasetBatcher constructs the dataset
-        // at training start with the target size from the graph's Resize
-        // node. The image_preprocessing config on TrainingConfiguration
-        // drives both the dataset's resize and the augmentation pipeline.
-        auto img_entry = registry.GetImageDatasetEntry(dataset_name);
-        if (img_entry) {
-            spdlog::info("Starting image training: dataset={}, epochs={}, batch_size={}, "
-                         "{} images, {} classes",
-                         dataset_name, epochs, batch_size,
-                         img_entry->num_images, img_entry->num_classes);
-
-            started = tm.StartTrainingImage(
-                std::move(config),
-                *img_entry,
-                epochs,
-                batch_size,
-                training_plot_panel_.get(),
-                node_editor_callback
-            );
-        } else {
-            spdlog::error("Image dataset '{}' is registered but entry could not be retrieved",
-                          dataset_name);
-        }
-    } else if (registry.IsAudioDataset(dataset_name)) {
-        // Phase 2 audio path: AudioDatasetBatcher constructs the
-        // AudioDataset on training start with the feature config baked
-        // into the registry entry (feature_type, sample rate, n_fft,
-        // n_mels, etc.). Spectrogram / MelSpec / MFCC nodes don't yet
-        // override these — that lands when the audio preprocessing
-        // extractors are wired (Phase 2.1).
-        auto audio_entry = registry.GetAudioDatasetEntry(dataset_name);
-        if (audio_entry) {
-            spdlog::info("Starting audio training: dataset={}, epochs={}, batch_size={}, "
-                         "{} samples, {} classes, feature_type={}",
-                         dataset_name, epochs, batch_size,
-                         audio_entry->num_samples, audio_entry->num_classes,
-                         audio_entry->feature_type);
-
-            started = tm.StartTrainingAudio(
-                std::move(config),
-                *audio_entry,
-                epochs,
-                batch_size,
-                training_plot_panel_.get(),
-                node_editor_callback
-            );
-        } else {
-            spdlog::error("Audio dataset '{}' is registered but entry could not be retrieved",
-                          dataset_name);
-        }
-    } else if (registry.IsTextDataset(dataset_name)) {
-        // Phase 3 text path: TextDatasetBatcher constructs the
-        // TextDataset at training start. The entry holds the dialog-
-        // baked tokenizer config; TextTokenizer / TextVocabulary /
-        // TextPadding graph nodes override specific sub-configs via
-        // config.text_preprocessing.
-        auto text_entry = registry.GetTextDatasetEntry(dataset_name);
-        if (text_entry) {
-            spdlog::info("Starting text training: dataset={}, epochs={}, batch_size={}, "
-                         "{} samples, {} classes, max_length={}, vocab_size={}",
-                         dataset_name, epochs, batch_size,
-                         text_entry->num_samples, text_entry->num_classes,
-                         text_entry->max_length, text_entry->vocab_size);
-
-            started = tm.StartTrainingText(
-                std::move(config),
-                *text_entry,
-                epochs,
-                batch_size,
-                training_plot_panel_.get(),
-                node_editor_callback
-            );
-        } else {
-            spdlog::error("Text dataset '{}' is registered but entry could not be retrieved",
-                          dataset_name);
-        }
+    // Dispatch via loader polymorphism. GetByRegisteredDataset walks
+    // the registered loaders (Tabular/Text/Image/Audio) and returns
+    // the first one that owns `dataset_name`. Each loader's
+    // LaunchTraining pulls the right registry entry and hands it to
+    // the matching TrainingManager::StartTraining* method, preserving
+    // the per-category logging + config.input_size handling.
+    //
+    // Tabular covers both Arrow in-memory (default fast path) and
+    // Parquet disk-backed (LoadTabularCSV auto-detect); the loader
+    // picks between them internally.
+    if (auto* loader = cyxwiz::loaders::GetByRegisteredDataset(dataset_name)) {
+        started = loader->LaunchTraining(
+            std::move(config), dataset_name, label_column,
+            epochs, batch_size,
+            training_plot_panel_.get(), node_editor_callback);
     } else {
-        // Fall back to legacy DatasetHandle path
+        // Fall back to legacy DatasetHandle path — the pre-Arrow route
+        // kept for back-compat. No loader claims this registry shape.
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {
             spdlog::error("Dataset '{}' not found in registry. Load data first.", dataset_name);
             return;
         }
-
         spdlog::info("Starting legacy training: dataset={}, epochs={}, batch_size={}",
                      dataset_name, epochs, batch_size);
-
         started = tm.StartTraining(
-            std::move(config),
-            dataset,
-            epochs,
-            batch_size,
-            training_plot_panel_.get(),
-            node_editor_callback
-        );
+            std::move(config), dataset, epochs, batch_size,
+            training_plot_panel_.get(), node_editor_callback);
     }
 
     if (started) {

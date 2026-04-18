@@ -4,6 +4,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
 #include "../../core/parquet_backed_dataset.h"
+#include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
 
@@ -230,6 +231,43 @@ CompletedLoadDescription TabularLoader::DescribeCompletedLoad(
         std::to_string(state.cols) + " cols, " +
         FormatBytes(state.bytes) + (disk_backed ? " on disk" : "") + ")";
     return d;
+}
+
+bool TabularLoader::LaunchTraining(
+    cyxwiz::TrainingConfiguration config,
+    const std::string& dataset_name,
+    const std::string& label_column,
+    int epochs,
+    int batch_size,
+    cyxwiz::TrainingPlotPanel* plot_panel,
+    std::function<void(bool)> node_editor_callback) {
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    auto& tm       = cyxwiz::TrainingManager::Instance();
+
+    // Tabular covers both backends: in-memory Arrow (the default fast
+    // path) and disk-backed Parquet (picked by LoadTabularCSV when the
+    // CSV was too big to fit in RAM). Check Arrow first since the
+    // Apply dispatch prefers it.
+    if (auto arrow_ds = registry.GetArrowDataset(dataset_name)) {
+        spdlog::info("TabularLoader: Starting Arrow training: dataset={}, epochs={}, "
+                     "batch_size={}, label={}",
+                     dataset_name, epochs, batch_size, label_column);
+        return tm.StartTrainingArrow(std::move(config), arrow_ds, label_column,
+                                     epochs, batch_size, plot_panel,
+                                     std::move(node_editor_callback));
+    }
+    if (auto pq_ds = registry.GetParquetBackedDataset(dataset_name)) {
+        spdlog::info("TabularLoader: Starting Parquet-backed training: dataset={}, "
+                     "epochs={}, batch_size={}, label={}, {:.1f} MB on disk",
+                     dataset_name, epochs, batch_size, label_column,
+                     pq_ds->GetFileSizeBytes() / (1024.0 * 1024.0));
+        return tm.StartTrainingParquet(std::move(config), pq_ds, label_column,
+                                       epochs, batch_size, plot_panel,
+                                       std::move(node_editor_callback));
+    }
+    spdlog::error("TabularLoader: '{}' is registered but neither Arrow nor Parquet "
+                  "dataset can be retrieved", dataset_name);
+    return false;
 }
 
 }  // namespace cyxwiz::loaders

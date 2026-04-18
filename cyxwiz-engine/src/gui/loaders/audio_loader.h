@@ -32,6 +32,15 @@ public:
                              RestoreState& out) const override;
     CompletedLoadDescription DescribeCompletedLoad(
         const AsyncLoadState& state) const override;
+
+    bool LaunchTraining(
+        TrainingConfiguration config,
+        const std::string& dataset_name,
+        const std::string& label_column,
+        int epochs,
+        int batch_size,
+        TrainingPlotPanel* plot_panel,
+        std::function<void(bool)> node_editor_callback) override;
 };
 
 }  // namespace cyxwiz::loaders

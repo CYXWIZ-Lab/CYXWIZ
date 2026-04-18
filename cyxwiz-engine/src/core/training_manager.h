@@ -193,6 +193,41 @@ private:
         std::function<void(bool)> node_editor_callback
     );
 
+    /**
+     * Shared tail of all StartTraining* methods. Takes a fully-built
+     * TrainingExecutor (the per-category methods handle dataset-specific
+     * setup: null-checks, config.input_size computation, batcher
+     * construction, zero-sample guards) and runs the common plumbing:
+     * is_training_ + stop_requested_ state, node-editor animation,
+     * plot-panel reset, async task registration (Tasks panel progress),
+     * on_training_start_ callback, and spawning the training thread.
+     *
+     * Caller contract:
+     *  - Must have already checked !is_training_.load() + acquired mutex_.
+     *    StartTrainingCommon assumes both are true.
+     *  - The `executor` carries the already-configured TrainingExecutor
+     *    with the right dataset / batcher under the hood. Uses the
+     *    existing 4 TrainingExecutor constructors — this commit does NOT
+     *    consolidate them; the per-category methods still choose which
+     *    constructor to call.
+     *  - `task_name` labels the AsyncTaskManager entry shown in the
+     *    Tasks panel (e.g. "Training Model (Arrow)").
+     *  - `start_msg` is the one-line string handed to on_training_start_.
+     *
+     * Returns true — the dispatched thread has been started. A false
+     * return requires rolling back is_training_; the per-category
+     * methods handle that before calling in.
+     */
+    bool StartTrainingCommon(
+        std::unique_ptr<TrainingExecutor> executor,
+        int epochs,
+        int batch_size,
+        TrainingPlotPanel* plot_panel,
+        std::function<void(bool)> node_editor_callback,
+        const std::string& task_name,
+        const std::string& start_msg
+    );
+
     std::atomic<bool> is_training_{false};
     std::atomic<bool> stop_requested_{false};
     std::atomic<uint64_t> current_task_id_{0};
