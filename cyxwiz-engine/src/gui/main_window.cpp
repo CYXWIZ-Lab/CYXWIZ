@@ -136,6 +136,7 @@
 #include "../core/data_registry.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
+#include "../core/debug_executor.h"
 #include "../core/pipeline_materializer.h"
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
@@ -414,6 +415,13 @@ MainWindow::MainWindow()
     // Set up training callback for Node Editor
     node_editor_->SetCompileCallback([this]() {
         this->CompileGraphAndReport();
+    });
+
+    // Local Debug: gated by Compile, then runs DebugExecutor on a synthetic
+    // batch. Result renders through the same compile popup infrastructure
+    // in CompileResultMode::Debug mode.
+    node_editor_->SetDebugCallback([this]() {
+        this->LocalDebugGraphAndReport();
     });
 
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
@@ -2780,7 +2788,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         // instead of silently logging.
         BuildCompileResult(nodes, links);
         if (!compile_result_success_) {
-            compile_result_blocked_train_ = true;
+            compile_result_mode_ = CompileResultMode::BlockedTrain;
             show_compile_result_popup_ = true;
             spdlog::error("StartTrainingFromGraph: blocked - graph has errors");
             return;
@@ -3081,7 +3089,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
 void MainWindow::CompileGraphAndReport() {
     if (!node_editor_) {
         compile_result_success_ = false;
-        compile_result_blocked_train_ = false;
+        compile_result_mode_ = CompileResultMode::Compile;
         compile_result_message_ = "Node editor is not available.";
         compile_result_summary_.clear();
         compile_result_issues_.clear();
@@ -3091,8 +3099,122 @@ void MainWindow::CompileGraphAndReport() {
 
     auto nodes = node_editor_->GetNodes();
     auto links = node_editor_->GetLinks();
-    compile_result_blocked_train_ = false;
+    compile_result_mode_ = CompileResultMode::Compile;
     BuildCompileResult(nodes, links);
+    show_compile_result_popup_ = true;
+}
+
+void MainWindow::LocalDebugGraphAndReport() {
+    if (!node_editor_) {
+        compile_result_success_ = false;
+        compile_result_mode_ = CompileResultMode::BlockedDebug;
+        compile_result_message_ = "Node editor is not available.";
+        compile_result_summary_.clear();
+        compile_result_issues_.clear();
+        show_compile_result_popup_ = true;
+        return;
+    }
+
+    auto nodes = node_editor_->GetNodes();
+    auto links = node_editor_->GetLinks();
+
+    // --- Gate on Compile --------------------------------------------------
+    // Reuses the same BuildCompileResult the Train button uses, so the same
+    // set of structural errors (missing dataset, bad DataSplit ratios, etc.)
+    // blocks both paths. Debug adds a runtime layer on top, not a relaxation.
+    spdlog::info("LocalDebugGraphAndReport: running compile gate "
+                 "({} nodes, {} links)", nodes.size(), links.size());
+    BuildCompileResult(nodes, links);
+    if (!compile_result_success_) {
+        compile_result_mode_ = CompileResultMode::BlockedDebug;
+        show_compile_result_popup_ = true;
+        spdlog::error("LocalDebugGraphAndReport: blocked by compile gate");
+        return;
+    }
+
+    // --- Compile passed: rebuild config and hand to DebugExecutor --------
+    // BuildCompileResult discards the TrainingConfiguration after populating
+    // the summary, so Compile again. The second call is cheap (ms-scale on
+    // typical graphs) and keeps DebugExecutor independent of the popup
+    // plumbing.
+    cyxwiz::TrainingConfiguration config;
+    try {
+        cyxwiz::GraphCompiler compiler;
+        config = compiler.Compile(nodes, links);
+    } catch (const std::exception& e) {
+        compile_result_issues_.push_back(
+            {cyxwiz::IssueLevel::Error, -1, "",
+             std::string("Recompile threw: ") + e.what()});
+        compile_result_success_ = false;
+        compile_result_mode_ = CompileResultMode::BlockedDebug;
+        show_compile_result_popup_ = true;
+        return;
+    }
+
+    spdlog::info("LocalDebugGraphAndReport: running DebugExecutor "
+                 "({} compiled layers, input_size={}, output_size={})",
+                 config.layers.size(), config.input_size, config.output_size);
+
+    cyxwiz::DebugExecutor exe(std::move(config));
+    cyxwiz::DebugResult result = exe.Run();
+
+    // --- Map DebugResult -> compile popup state --------------------------
+    // The popup already renders compile_result_issues_ with severity icons,
+    // so DebugResult::issues flows straight through. The per-layer trace
+    // and timings replace the compile summary text.
+    compile_result_issues_ = result.issues;
+    compile_result_success_ = result.success;
+    compile_result_mode_ = CompileResultMode::Debug;
+    compile_result_message_.clear();
+
+    std::ostringstream out;
+    const char* stage_name = "NotRun";
+    switch (result.reached) {
+        case cyxwiz::DebugStage::NotRun:        stage_name = "NotRun";        break;
+        case cyxwiz::DebugStage::BuildModel:    stage_name = "BuildModel";    break;
+        case cyxwiz::DebugStage::Forward:       stage_name = "Forward";       break;
+        case cyxwiz::DebugStage::Loss:          stage_name = "Loss";          break;
+        case cyxwiz::DebugStage::Backward:      stage_name = "Backward";      break;
+        case cyxwiz::DebugStage::OptimizerStep: stage_name = "OptimizerStep"; break;
+        case cyxwiz::DebugStage::Complete:      stage_name = "Complete";      break;
+    }
+    out << "Stage reached:     " << stage_name << "\n";
+    if (!result.failure_summary.empty()) {
+        out << "Failure:           " << result.failure_summary << "\n";
+    }
+    out << "Forward time:      " << result.forward_total_ms << " ms\n";
+    out << "Backward time:     " << result.backward_total_ms << " ms\n";
+    out << "Loss:              " << result.loss_value
+        << (result.loss_finite ? "" : "  (NON-FINITE)") << "\n";
+    out << "Params with grad:  " << result.params_with_grad << "\n";
+    out << "Params missing:    " << result.params_missing_grad << "\n";
+
+    if (!result.layer_traces.empty()) {
+        out << "\nLayer trace:\n";
+        for (const auto& t : result.layer_traces) {
+            out << "  " << t.name << "  shape=[";
+            for (size_t i = 0; i < t.actual_shape.size(); ++i) {
+                if (i) out << ",";
+                out << t.actual_shape[i];
+            }
+            out << "]  " << t.forward_ms << " ms";
+            if (t.has_nan) out << "  [NaN!]";
+            if (t.has_inf) out << "  [Inf!]";
+            out << "\n";
+        }
+    }
+
+    if (!result.grad_norms.empty()) {
+        out << "\nGradient L2 norms:\n";
+        for (const auto& g : result.grad_norms) {
+            out << "  " << g.param_name << "  ||g||=" << g.l2_norm;
+            if (g.is_nan)  out << "  [NaN!]";
+            if (g.is_zero) out << "  [zero]";
+            out << "\n";
+        }
+    }
+
+    compile_result_summary_ = out.str();
     show_compile_result_popup_ = true;
 }
 
@@ -3243,12 +3365,14 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
 }
 
 void MainWindow::RenderCompileResultPopup() {
-    // Window title differs based on whether the popup was triggered by an
-    // explicit Compile click (informational) or by Train trying to start
-    // on an invalid graph (blocking).
-    const char* popup_title = compile_result_blocked_train_
-        ? "Cannot Start Training"
-        : "Compile Graph Result";
+    // Window title differs based on which flow opened the popup.
+    const char* popup_title = "Compile Graph Result";
+    switch (compile_result_mode_) {
+        case CompileResultMode::Compile:      popup_title = "Compile Graph Result"; break;
+        case CompileResultMode::Debug:        popup_title = "Local Debug Result";   break;
+        case CompileResultMode::BlockedTrain: popup_title = "Cannot Start Training"; break;
+        case CompileResultMode::BlockedDebug: popup_title = "Cannot Run Local Debug"; break;
+    }
 
     if (show_compile_result_popup_) {
         ImGui::OpenPopup(popup_title);
@@ -3270,9 +3394,29 @@ void MainWindow::RenderCompileResultPopup() {
             }
         }
 
-        if (compile_result_blocked_train_) {
+        if (compile_result_mode_ == CompileResultMode::BlockedTrain) {
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
                                "[BLOCKED]  Training cannot start - fix the errors below");
+        } else if (compile_result_mode_ == CompileResultMode::BlockedDebug) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "[BLOCKED]  Local Debug cannot run - fix the errors below");
+        } else if (compile_result_mode_ == CompileResultMode::Debug) {
+            // The Local Debug subtitle mirrors the compile-mode header
+            // shape but makes it clear the tensors that produced these
+            // findings were synthetic, not the user's dataset.
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.75f, 1.0f),
+                               "1 forward + 1 backward pass, synthetic data");
+            ImGui::Spacing();
+            if (compile_result_success_ && warn_count == 0) {
+                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+                                   "[OK]  Debug pass succeeded");
+            } else if (compile_result_success_) {
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                                   "[OK with warnings]  Debug pass succeeded - %zu warning(s)", warn_count);
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                                   "[FAIL]  Debug pass hit %zu error(s)", error_count);
+            }
         } else if (compile_result_success_ && warn_count == 0) {
             ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
                                "[OK]  Graph is valid and ready to train");
@@ -3354,7 +3498,7 @@ void MainWindow::RenderCompileResultPopup() {
         float button_width = 120.0f;
         ImGui::SetCursorPosX((ImGui::GetWindowSize().x - button_width) * 0.5f);
         if (ImGui::Button("OK", ImVec2(button_width, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            compile_result_blocked_train_ = false;  // reset for next popup
+            compile_result_mode_ = CompileResultMode::Compile;  // reset for next popup
             ImGui::CloseCurrentPopup();
         }
 
@@ -3490,6 +3634,15 @@ void MainWindow::HandleGlobalShortcuts() {
             command_window_->SetVisible(true);
             spdlog::info("Opened Python Console via F12");
         }
+    }
+
+    // Local Debug (F6) - run one forward + one backward pass on synthetic
+    // data. Sits between F5 (Train) and F7 (Compile). Gated by Compile
+    // internally — errors in the graph short-circuit before DebugExecutor
+    // touches anything.
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F6)) {
+        LocalDebugGraphAndReport();
+        spdlog::info("Local Debug invoked via F6");
     }
 
     // Compile Graph (F7) - dry-run the node graph without starting training

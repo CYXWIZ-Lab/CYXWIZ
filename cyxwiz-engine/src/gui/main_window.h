@@ -229,23 +229,42 @@ private:
     void CompileGraphAndReport();
     void RenderCompileResultPopup();
 
+    // Run Local Debug: gate on Compile, then execute one forward +
+    // one backward pass on synthetic data via DebugExecutor. Feeds the
+    // result through the compile popup (in CompileResultMode::Debug mode).
+    void LocalDebugGraphAndReport();
+
     // Shared compile pass used by both the explicit Compile button and
     // the Train button's pre-flight gate. Populates compile_result_*
     // members from a fresh GraphCompiler::Compile call.
     void BuildCompileResult(const std::vector<MLNode>& nodes,
                             const std::vector<NodeLink>& links);
 
+    // Which flow opened the compile popup. Drives title + header text
+    // in RenderCompileResultPopup:
+    //   Compile       - explicit Compile button / F7 (informational)
+    //   Debug         - Local Debug run finished (success or warnings)
+    //   BlockedTrain  - Train button refused to start because of Error
+    //                   issues in the compiled graph
+    //   BlockedDebug  - Local Debug button refused to run because the
+    //                   compile gate found Error issues
+    enum class CompileResultMode {
+        Compile,
+        Debug,
+        BlockedTrain,
+        BlockedDebug,
+    };
+
     // Compile popup state. compile_result_issues_ holds the structured
-    // findings (errors / warnings / info) from GraphCompiler::Compile so
-    // the popup can render them with severity icons. compile_result_summary_
-    // is the human-readable architecture summary (layers, dataset, batch,
-    // etc.) shown below the issue list. compile_result_blocked_train_ is
-    // set when StartTrainingFromGraph triggers the popup because the user
-    // clicked Train on a graph that has Error-level issues — the popup
-    // header changes to "Cannot start training" in that case.
+    // findings (errors / warnings / info) from GraphCompiler::Compile or
+    // DebugExecutor::Run so the popup can render them with severity icons.
+    // compile_result_summary_ is the human-readable architecture summary
+    // (layers, dataset, batch, etc.) shown below the issue list —
+    // Local Debug runs replace it with a per-layer trace instead.
+    // compile_result_mode_ selects the header + title text.
     bool show_compile_result_popup_ = false;
     bool compile_result_success_ = false;
-    bool compile_result_blocked_train_ = false;
+    CompileResultMode compile_result_mode_ = CompileResultMode::Compile;
     std::string compile_result_message_;     // legacy single-string fallback
     std::string compile_result_summary_;
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
