@@ -269,6 +269,16 @@ private:
     std::string compile_result_summary_;
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
 
+    // Local Debug staleness cache. `last_debug_graph_hash_` is a stable
+    // fingerprint of the (nodes, links) tuple at the moment of the last
+    // *successful* Local Debug run. `have_last_debug_result_` gates the
+    // cache (0 is a valid hash and "no prior run" needs to be
+    // distinguishable). StartTrainingFromGraph checks these to warn the
+    // user if the graph has drifted since the last debug — or, under
+    // EngineConfig::RequireDebugBeforeTrain(), blocks training outright.
+    uint64_t last_debug_graph_hash_ = 0;
+    bool have_last_debug_result_ = false;
+
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;
     std::unique_ptr<Console> console_;

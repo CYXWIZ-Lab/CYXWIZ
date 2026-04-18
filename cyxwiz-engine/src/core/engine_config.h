@@ -103,6 +103,15 @@ public:
     std::vector<std::string> GetDefaultVenvPackages() const;
     void SetDefaultVenvPackages(const std::vector<std::string>& packages);
 
+    // ===== Local Debug =====
+
+    // Strict mode: if true, StartTrainingFromGraph refuses to start
+    // training unless the user ran a successful Local Debug (F6) pass on
+    // the current graph first. The default (false) still emits a warning
+    // in the compile popup but lets training proceed.
+    bool RequireDebugBeforeTrain() const;
+    void SetRequireDebugBeforeTrain(bool require);
+
     // ===== Recent Projects =====
 
     // Get list of recent projects (up to 10)
@@ -149,6 +158,9 @@ private:
     std::string system_python_path_;  // System Python interpreter path (auto-detected or user-configured)
     bool auto_create_venv_ = true;    // Auto-create venv for new projects
     std::vector<std::string> default_venv_packages_;  // Default packages to install in new venvs
+
+    // Local Debug settings
+    bool require_debug_before_train_ = false;
 
     // Recent projects
     std::vector<std::string> recent_projects_;  // Recent project paths (max 10)

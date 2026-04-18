@@ -157,6 +157,74 @@
 
 namespace gui {
 
+namespace {
+
+// FNV-1a 64-bit. Deterministic, dependency-free, and fine for detecting
+// "did the graph change" — this is not a cryptographic use.
+inline void HashFnvMix(uint64_t& h, const std::string& s) {
+    for (unsigned char c : s) {
+        h ^= c;
+        h *= 0x100000001b3ULL;
+    }
+}
+inline void HashFnvMix(uint64_t& h, int v) {
+    HashFnvMix(h, std::to_string(v));
+    HashFnvMix(h, std::string(1, '|'));
+}
+
+// Stable fingerprint of the graph's *trainable* structure: node ids, node
+// types, node parameter maps, link endpoints + types. Positions and
+// cosmetic fields are intentionally excluded so dragging a node around
+// the canvas doesn't invalidate the staleness cache. Hash is stable
+// across runs as long as the underlying identity of nodes / links is
+// preserved.
+uint64_t HashGraphStructure(const std::vector<MLNode>& nodes,
+                            const std::vector<NodeLink>& links) {
+    uint64_t h = 0xcbf29ce484222325ULL;  // FNV offset basis
+
+    // Sort-stable copies by id so reordering doesn't change the hash.
+    std::vector<const MLNode*> sorted_nodes;
+    sorted_nodes.reserve(nodes.size());
+    for (const auto& n : nodes) sorted_nodes.push_back(&n);
+    std::sort(sorted_nodes.begin(), sorted_nodes.end(),
+              [](const MLNode* a, const MLNode* b) { return a->id < b->id; });
+
+    for (const MLNode* np : sorted_nodes) {
+        HashFnvMix(h, np->id);
+        HashFnvMix(h, static_cast<int>(np->type));
+        HashFnvMix(h, np->name);
+        // Parameters: iterate in sorted key order (std::map already does).
+        for (const auto& [k, v] : np->parameters) {
+            HashFnvMix(h, k);
+            HashFnvMix(h, v);
+            HashFnvMix(h, std::string(1, ';'));
+        }
+        HashFnvMix(h, std::string(1, '#'));
+    }
+
+    std::vector<const NodeLink*> sorted_links;
+    sorted_links.reserve(links.size());
+    for (const auto& l : links) sorted_links.push_back(&l);
+    std::sort(sorted_links.begin(), sorted_links.end(),
+              [](const NodeLink* a, const NodeLink* b) {
+                  if (a->from_node != b->from_node) return a->from_node < b->from_node;
+                  if (a->from_pin  != b->from_pin)  return a->from_pin  < b->from_pin;
+                  if (a->to_node   != b->to_node)   return a->to_node   < b->to_node;
+                  return a->to_pin < b->to_pin;
+              });
+    for (const NodeLink* lp : sorted_links) {
+        HashFnvMix(h, lp->from_node);
+        HashFnvMix(h, lp->from_pin);
+        HashFnvMix(h, lp->to_node);
+        HashFnvMix(h, lp->to_pin);
+        HashFnvMix(h, static_cast<int>(lp->type));
+        HashFnvMix(h, std::string(1, '>'));
+    }
+    return h;
+}
+
+} // anonymous namespace
+
 MainWindow::MainWindow()
     : show_about_dialog_(false), show_demo_window_(false), first_time_layout_(true) {
 
@@ -2794,6 +2862,41 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             return;
         }
 
+        // === Local Debug staleness gate ===
+        // After the compile gate passes, check whether the user has run
+        // a successful Local Debug on the current graph. Three states:
+        //   - no prior successful debug      => warn (or error under strict mode)
+        //   - prior debug on DIFFERENT graph => warn (or error under strict mode)
+        //   - prior debug on same graph      => silent
+        // Under EngineConfig::RequireDebugBeforeTrain() the warning becomes
+        // an Error-level issue and training refuses to start.
+        const uint64_t current_graph_hash = HashGraphStructure(nodes, links);
+        const bool same_as_last_debug =
+            have_last_debug_result_ &&
+            current_graph_hash == last_debug_graph_hash_;
+        if (!same_as_last_debug) {
+            const bool strict = cyxwiz::core::EngineConfig::Instance()
+                                    .RequireDebugBeforeTrain();
+            const std::string msg = have_last_debug_result_
+                ? "Graph changed since last successful Local Debug run. "
+                  "Consider F6 before F5."
+                : "No Local Debug (F6) run on this graph yet. "
+                  "Consider running one before Train.";
+            const cyxwiz::IssueLevel lvl = strict
+                ? cyxwiz::IssueLevel::Error
+                : cyxwiz::IssueLevel::Warning;
+            compile_result_issues_.push_back({lvl, -1, "", msg});
+            if (strict) {
+                compile_result_success_ = false;
+                compile_result_mode_ = CompileResultMode::BlockedTrain;
+                show_compile_result_popup_ = true;
+                spdlog::error("StartTrainingFromGraph: blocked by "
+                              "require_debug_before_train (hash mismatch)");
+                return;
+            }
+            spdlog::warn("StartTrainingFromGraph: {}", msg);
+        }
+
         // Compile a fresh config for the actual run. BuildCompileResult
         // already validated the graph; this Compile call will succeed
         // identically and produce the same TrainingConfiguration.
@@ -3216,6 +3319,17 @@ void MainWindow::LocalDebugGraphAndReport() {
 
     compile_result_summary_ = out.str();
     show_compile_result_popup_ = true;
+
+    // Staleness cache: only record the hash when the debug run actually
+    // succeeded. A failed run leaves the previous cache in place, so the
+    // user can fix the graph, re-run F6, and have the staleness gate
+    // match correctly.
+    if (result.success) {
+        last_debug_graph_hash_ = HashGraphStructure(nodes, links);
+        have_last_debug_result_ = true;
+        spdlog::info("LocalDebugGraphAndReport: cached debug hash {:#018x}",
+                     last_debug_graph_hash_);
+    }
 }
 
 void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
