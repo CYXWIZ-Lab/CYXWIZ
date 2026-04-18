@@ -228,6 +228,9 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 {"auto_create_venv", auto_create_venv_},
                 {"default_venv_packages", default_venv_packages_}
             };
+            defaults["debug"] = {
+                {"require_debug_before_train", require_debug_before_train_}
+            };
             defaults["recent_projects"] = recent_projects_;
 
             json config = defaults;
@@ -287,6 +290,9 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                     {"system_python_path", system_python_path_},
                     {"auto_create_venv", auto_create_venv_},
                     {"default_venv_packages", default_venv_packages_}
+                };
+                template_config["debug"] = {
+                    {"require_debug_before_train", require_debug_before_train_}
                 };
                 template_config["recent_projects"] = recent_projects_;
 
@@ -370,6 +376,15 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        // Local Debug settings
+        if (config.contains("debug")) {
+            const auto& debug_cfg = config["debug"];
+            if (debug_cfg.contains("require_debug_before_train")) {
+                require_debug_before_train_ =
+                    debug_cfg["require_debug_before_train"].get<bool>();
+            }
+        }
+
         // Recent projects
         if (config.contains("recent_projects")) {
             recent_projects_ = config["recent_projects"].get<std::vector<std::string>>();
@@ -440,6 +455,11 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"system_python_path", system_python_path_},
             {"auto_create_venv", auto_create_venv_},
             {"default_venv_packages", default_venv_packages_}
+        };
+
+        // Local Debug settings
+        config["debug"] = {
+            {"require_debug_before_train", require_debug_before_train_}
         };
 
         // Recent projects
@@ -639,6 +659,19 @@ void EngineConfig::SetDefaultVenvPackages(const std::vector<std::string>& packag
     std::lock_guard<std::mutex> lock(mutex_);
     if (default_venv_packages_ != packages) {
         default_venv_packages_ = packages;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::RequireDebugBeforeTrain() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return require_debug_before_train_;
+}
+
+void EngineConfig::SetRequireDebugBeforeTrain(bool require) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (require_debug_before_train_ != require) {
+        require_debug_before_train_ = require;
         modified_ = true;
     }
 }
