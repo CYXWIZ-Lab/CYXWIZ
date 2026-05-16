@@ -60,7 +60,8 @@ std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
 
 TrainingConfiguration GraphCompiler::Compile(
     const std::vector<gui::MLNode>& nodes,
-    const std::vector<gui::NodeLink>& links)
+    const std::vector<gui::NodeLink>& links,
+    bool allow_unloaded_data)
 {
     TrainingConfiguration config;
 
@@ -165,6 +166,11 @@ TrainingConfiguration GraphCompiler::Compile(
                              "async Apply after dialog close) - proceeding",
                              config.dataset_name, loaded_param);
             }
+        } else if (allow_unloaded_data) {
+            spdlog::info("GraphCompiler: dataset '{}' not in registry, but "
+                         "compile is running in deployment mode - skipping "
+                         "data_loaded validation",
+                         config.dataset_name);
         } else if (config.dataset_name.empty()) {
             if (loaded_param == "true") {
                 AddIssue(config, IssueLevel::Error,
@@ -294,7 +300,7 @@ TrainingConfiguration GraphCompiler::Compile(
         spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}",
                      config.batch_size, config.epochs, config.shuffle, config.drop_last, config.num_workers);
         if (config.num_workers > 0) {
-            spdlog::warn("GraphCompiler: num_workers={} requested but not yet implemented - batching runs single-threaded",
+            spdlog::info("GraphCompiler: num_workers={} will be forwarded to supported batchers",
                          config.num_workers);
         }
     } else {

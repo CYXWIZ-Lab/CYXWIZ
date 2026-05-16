@@ -288,19 +288,15 @@ GRUModule::GRUModule(size_t input_size, size_t hidden_size,
     , bidirectional_(bidirectional)
     , return_sequences_(return_sequences)
 {
-    // One-shot warning: GRULayer currently has the same three-bug pattern
-    // LSTMLayer had pre-2026-04-16 (AF Forward shape bug, CPU Forward
-    // doesn't populate AF caches, CPU Backward returns zeros). Smoke tests
-    // will run end-to-end but the loss will be flat — gradients are zero.
-    // Tracked in docs/Data Studio/tofix.md "GRULayer broken AF Forward +
-    // missing CPU Backward".
+    // One-shot status note: the unidirectional GRU path now uses the
+    // ArrayFire implementation. Bidirectional GRU still falls back to the
+    // CPU path because that branch has not been audited against the GPU
+    // cache layout yet.
     static std::atomic<bool> warned{false};
     bool expected = false;
     if (warned.compare_exchange_strong(expected, true)) {
-        spdlog::warn("[GRUModule] GRULayer is in a known-broken state — "
-                     "AF Forward will fail and the CPU fallback returns "
-                     "zero gradients in Backward. Training will run but "
-                     "weights will not update. See tofix.md.");
+        spdlog::info("[GRUModule] Unidirectional GRU uses the ArrayFire "
+                     "path; bidirectional GRU remains on the CPU fallback.");
     }
 
     layer_ = std::make_unique<GRULayer>(

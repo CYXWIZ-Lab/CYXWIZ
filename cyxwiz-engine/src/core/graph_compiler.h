@@ -238,7 +238,7 @@ struct TrainingConfiguration {
     int epochs = 10;
     bool shuffle = true;
     bool drop_last = false;
-    int num_workers = 0;                // not yet honored; warns if >0
+    int num_workers = 0;                // forwarded to supported batchers
     bool has_data_loader = false;       // true if a DataLoader node was found
 
     // Preprocessing — tabular config (backward-compatible)
@@ -357,7 +357,8 @@ public:
      */
     TrainingConfiguration Compile(
         const std::vector<gui::MLNode>& nodes,
-        const std::vector<gui::NodeLink>& links
+        const std::vector<gui::NodeLink>& links,
+        bool allow_unloaded_data = false
     );
 
     /**

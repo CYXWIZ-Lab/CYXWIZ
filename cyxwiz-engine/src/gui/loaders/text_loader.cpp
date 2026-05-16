@@ -211,8 +211,9 @@ bool TextLoader::LaunchTraining(
         return false;
     }
     spdlog::info("TextLoader: Starting text training: dataset={}, epochs={}, "
-                 "batch_size={}, {} samples, {} classes, max_length={}, vocab_size={}",
-                 dataset_name, epochs, batch_size,
+                 "batch_size={}, num_workers={}, {} samples, {} classes, "
+                 "max_length={}, vocab_size={}",
+                 dataset_name, epochs, batch_size, config.num_workers,
                  entry->num_samples, entry->num_classes,
                  entry->max_length, entry->vocab_size);
     return cyxwiz::TrainingManager::Instance().StartTrainingText(

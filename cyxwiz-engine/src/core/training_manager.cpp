@@ -374,7 +374,7 @@ bool TrainingManager::StartTrainingText(
     auto batcher = std::make_unique<TextDatasetBatcher>(
         text_entry,
         config.text_preprocessing,
-        batch_size, config.train_ratio, config.shuffle);
+        batch_size, config.train_ratio, config.shuffle, config.num_workers);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Text dataset has 0 samples");
@@ -390,9 +390,9 @@ bool TrainingManager::StartTrainingText(
     config.input_shape = { static_cast<size_t>(batcher->GetMaxLength()) };
 
     spdlog::info("TrainingManager: Text dataset {} samples, input_size={} "
-                 "(max_length), vocab_size={}",
+                 "(max_length), vocab_size={}, num_workers={}",
                  batcher->GetNumSamples(), config.input_size,
-                 batcher->GetVocabSize());
+                 batcher->GetVocabSize(), config.num_workers);
 
     // Hand preprocessing / one-hot hints through to the batcher —
     // same pattern as the image/audio paths.

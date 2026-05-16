@@ -379,9 +379,27 @@ DataRegistry::GetImageDatasetEntry(const std::string& name) const {
 
 void DataRegistry::UnregisterImageDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
+    bool removed_any = false;
+
     auto it = image_dataset_entries_.find(name);
     if (it != image_dataset_entries_.end()) {
         image_dataset_entries_.erase(it);
+        removed_any = true;
+    }
+
+    // Image Apply currently probes via LoadImageFolder / LoadImageCSV,
+    // which also parks a concrete Dataset instance in datasets_ under
+    // the same name. If we only drop the lightweight image sidecar,
+    // GenerateUniqueName() still sees the old datasets_ entry and the
+    // next re-Apply on the same node drifts to "<name>_1", leaving the
+    // node's persisted dataset_name out of sync with the registry.
+    auto ds_it = datasets_.find(name);
+    if (ds_it != datasets_.end()) {
+        datasets_.erase(ds_it);
+        removed_any = true;
+    }
+
+    if (removed_any) {
         spdlog::debug("UnregisterImageDataset '{}'", name);
     }
 }

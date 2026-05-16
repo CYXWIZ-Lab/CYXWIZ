@@ -264,8 +264,9 @@ void TrainingExecutor::Train(
         // Validation uses the same batcher reset for now — Phase 1.4
         // can add a separate validation batcher without augmentation.
         spdlog::info("TrainingExecutor: Using Image dataset for training "
-                     "(batch_size={}, {} samples)",
-                     batch_size, external_batcher_ ? external_batcher_->GetNumSamples() : 0);
+                     "(batch_size={}, num_workers={}, {} samples)",
+                     batch_size, config_.num_workers,
+                     external_batcher_ ? external_batcher_->GetNumSamples() : 0);
 
         if (!external_batcher_) {
             spdlog::error("TrainingExecutor: Image mode but no external batcher");
@@ -278,8 +279,8 @@ void TrainingExecutor::Train(
     } else {
         // Legacy DatasetHandle batching
         spdlog::info("TrainingExecutor: Using legacy dataset for training "
-                     "(batch_size={}, shuffle={}, drop_last={})",
-                     batch_size, config_.shuffle, config_.drop_last);
+                     "(batch_size={}, shuffle={}, drop_last={}, num_workers={})",
+                     batch_size, config_.shuffle, config_.drop_last, config_.num_workers);
 
         // Honor DataLoader node config (or defaults if no such node).
         // Validation batcher never shuffles and never drops the last batch.

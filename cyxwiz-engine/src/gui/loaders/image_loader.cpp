@@ -47,11 +47,16 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                                       std::shared_ptr<AsyncLoadState> state) {
     if (!state) return 0;
 
-    // Cross-Apply cleanup: if the user re-Applied with a different
-    // folder, drop the prior image entry so the registry doesn't leak.
+    // Cross-Apply cleanup: drop the prior image registration owned by
+    // this node before probing again. Re-applying the same folder on
+    // the same node keeps the same base dataset_name ("cat_dog"), so
+    // only clearing when the name changes leaves the old datasets_
+    // entry alive and forces DataRegistry::GenerateUniqueName() to
+    // drift to "cat_dog_1". That in turn desynchronizes the node's
+    // persisted dataset_name from the registry if the dialog closes
+    // before the async completion callback updates the node params.
     auto& registry = cyxwiz::DataRegistry::Instance();
-    if (!ctx.previous_dataset_name.empty() &&
-        ctx.previous_dataset_name != ctx.dataset_name) {
+    if (!ctx.previous_dataset_name.empty()) {
         registry.UnregisterImageDataset(ctx.previous_dataset_name);
     }
 
@@ -101,6 +106,7 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 task.ReportProgress(0.9f, "Registering dataset");
 
                 auto info = handle.GetInfo();
+                const std::string canonical_name = handle.GetName();
 
                 cyxwiz::DataRegistry::ImageDatasetEntry img_entry;
                 img_entry.folder_path = folder;
@@ -109,10 +115,12 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 img_entry.num_images  = info.num_samples;
                 img_entry.num_classes = info.num_classes;
                 img_entry.class_names = info.class_names;
-                // LoadImageFolder / LoadImageCSV may uniquify the name
-                // if another handle is live; use info.name as the
-                // canonical registration key.
-                reg.RegisterImageDataset(info.name, img_entry);
+                // LoadImageFolder / LoadImageCSV may uniquify the
+                // registry key. Use the DatasetHandle name here, not
+                // DatasetInfo::name: for ImageCSVDataset the info name
+                // is a display label like "cat_dog (CSV)", which is not
+                // the actual key stored in DataRegistry::datasets_.
+                reg.RegisterImageDataset(canonical_name, img_entry);
 
                 size_t per_image = static_cast<size_t>(w) *
                                    static_cast<size_t>(h) *
@@ -120,7 +128,7 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
 
                 state->success      = true;
                 state->backend      = 3;
-                state->dataset_name = info.name;  // may have been uniquified
+                state->dataset_name = canonical_name;  // may have been uniquified
                 state->rows         = static_cast<int64_t>(info.num_samples);
                 state->cols         = 1;
                 state->bytes        = info.num_samples * per_image;

@@ -3098,121 +3098,165 @@ void GRULayer::SetHiddenState(const Tensor& h0) {
 Tensor GRULayer::Forward(const Tensor& input) {
     cached_input_ = input;
 
+    // Hoisted weight init guard — same pattern as LSTMLayer::Forward.
+    // GRULayer's constructor calls InitializeWeights() which uses the AF
+    // backend; if AF init silently failed the weight tensors carry null
+    // data. CPU path needs valid weights before computing anything.
+    {
+        const auto& shape = input.Shape();
+        size_t input_dim = shape.size() == 3
+            ? (batch_first_ ? shape[2] : shape[2]) : 0;
+        int num_directions = bidirectional_ ? 2 : 1;
+        if (W_ih_.empty() || W_ih_[0].Data<float>() == nullptr) {
+            for (int layer = 0; layer < num_layers_; layer++) {
+                size_t layer_input_size = (layer == 0) ? input_dim
+                    : static_cast<size_t>(hidden_size_ * num_directions);
+                size_t gate_size = static_cast<size_t>(3 * hidden_size_);
+                W_ih_[layer] = Tensor::Random({gate_size, layer_input_size});
+                W_hh_[layer] = Tensor::Random({gate_size, static_cast<size_t>(hidden_size_)});
+                b_ih_[layer] = Tensor::Zeros({gate_size});
+                b_hh_[layer] = Tensor::Zeros({gate_size});
+            }
+        }
+    }
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array x = TensorToAf(input);
-
-        dim_t batch_size, seq_len, input_dim;
-
+    if (!bidirectional_) try {
+        af::array x = TensorToAf3DRowMajor(input);
         if (batch_first_) {
-            batch_size = x.dims(0);
-            seq_len = x.dims(1);
-            input_dim = x.dims(2);
             x = af::reorder(x, 1, 0, 2);
-        } else {
-            seq_len = x.dims(0);
-            batch_size = x.dims(1);
-            input_dim = x.dims(2);
         }
 
-        int num_directions = bidirectional_ ? 2 : 1;
+        const dim_t batch_size = x.dims(1);
+        const dim_t seq_len = x.dims(0);
 
-        if (h_n_.NumElements() == 0) {
-            h_n_ = Tensor::Zeros({static_cast<size_t>(num_layers_ * num_directions),
-                                   static_cast<size_t>(batch_size),
-                                   static_cast<size_t>(hidden_size_)});
+        const auto h_shape = h_n_.Shape();
+        const bool h_needs_init = h_n_.NumElements() == 0 ||
+                                  h_n_.Data<float>() == nullptr ||
+                                  h_shape.size() != 3 ||
+                                  h_shape[0] != static_cast<size_t>(num_layers_) ||
+                                  h_shape[1] != static_cast<size_t>(batch_size) ||
+                                  h_shape[2] != static_cast<size_t>(hidden_size_);
+        if (h_needs_init) {
+            h_n_ = Tensor::Zeros({static_cast<size_t>(num_layers_),
+                                  static_cast<size_t>(batch_size),
+                                  static_cast<size_t>(hidden_size_)});
         }
 
         cached_inputs_.clear();
         cached_gates_.clear();
         cached_hidden_states_.clear();
+        cached_inputs_.reserve(num_layers_);
+        cached_gates_.reserve(num_layers_);
+        cached_hidden_states_.reserve(num_layers_);
 
-        af::array output = af::constant(0.0f, af::dim4(seq_len, batch_size, hidden_size_ * num_directions));
         af::array layer_input = x;
 
-        for (int layer = 0; layer < num_layers_; layer++) {
+        for (int layer = 0; layer < num_layers_; ++layer) {
             af::array W_ih = TensorToAf(W_ih_[layer]);
             af::array W_hh = TensorToAf(W_hh_[layer]);
             af::array b_ih = TensorToAf(b_ih_[layer]);
             af::array b_hh = TensorToAf(b_hh_[layer]);
 
-            af::array h_full = TensorToAf(h_n_);
-            af::array h = h_full(layer, af::span, af::span);
-            h = af::moddims(h, af::dim4(batch_size, hidden_size_));
-
-            dim_t layer_input_size = layer_input.dims(2);
-            af::array input_flat = af::moddims(layer_input, af::dim4(seq_len * batch_size, layer_input_size));
-
-            // Pre-compute all input projections
+            const dim_t layer_input_size = layer_input.dims(2);
+            af::array input_flat = af::moddims(layer_input,
+                                               af::dim4(seq_len * batch_size, layer_input_size));
             af::array input_proj = af::matmul(input_flat, af::transpose(W_ih));
-            input_proj = input_proj + af::tile(af::transpose(b_ih), static_cast<unsigned int>(seq_len * batch_size));
+            input_proj = input_proj + af::tile(af::transpose(b_ih),
+                                               static_cast<unsigned int>(seq_len * batch_size));
             input_proj = af::moddims(input_proj, af::dim4(seq_len, batch_size, 3 * hidden_size_));
 
-            cached_inputs_.push_back(AfToTensor(layer_input));
+            af::array h_full = TensorToAf3DRowMajor(h_n_);
+            af::array h = af::moddims(h_full(layer, af::span, af::span),
+                                      af::dim4(batch_size, hidden_size_));
 
-            af::array h_states = af::constant(0.0f, af::dim4(seq_len + 1, batch_size, hidden_size_));
-            af::array all_gates = af::constant(0.0f, af::dim4(seq_len, batch_size, 3 * hidden_size_));
+            af::array layer_output = af::constant(0.0f, af::dim4(seq_len, batch_size, hidden_size_));
+            af::array layer_gates = af::constant(0.0f, af::dim4(seq_len, batch_size, 4 * hidden_size_));
+            af::array layer_h_states = af::constant(0.0f, af::dim4(seq_len + 1, batch_size, hidden_size_));
+            layer_h_states(0, af::span, af::span) =
+                af::moddims(h, af::dim4(1, batch_size, hidden_size_));
 
-            h_states(0, af::span, af::span) = h;
-
-            // GRU forward pass - vectorized per timestep
-            for (dim_t t = 0; t < seq_len; t++) {
-                af::array x_t = input_proj(t, af::span, af::span);
-                x_t = af::moddims(x_t, af::dim4(batch_size, 3 * hidden_size_));
-
+            for (dim_t t = 0; t < seq_len; ++t) {
+                af::array x_t = af::moddims(input_proj(t, af::span, af::span),
+                                            af::dim4(batch_size, 3 * hidden_size_));
                 af::array h_proj = af::matmul(h, af::transpose(W_hh));
-                h_proj = h_proj + af::tile(af::transpose(b_hh), static_cast<unsigned int>(batch_size));
+                h_proj = h_proj + af::tile(af::transpose(b_hh),
+                                           static_cast<unsigned int>(batch_size));
 
-                // GRU gates: reset, update, new
-                af::array r_gate = af::sigmoid(x_t(af::span, af::seq(0, hidden_size_ - 1)) +
-                                                h_proj(af::span, af::seq(0, hidden_size_ - 1)));
-                af::array z_gate = af::sigmoid(x_t(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1)) +
-                                                h_proj(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1)));
-                af::array n_gate = af::tanh(x_t(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1)) +
-                                             r_gate * h_proj(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1)));
+                af::array x_r = x_t(af::span, af::seq(0, hidden_size_ - 1));
+                af::array x_z = x_t(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1));
+                af::array x_n = x_t(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1));
 
-                // Update hidden state: h = (1 - z) * n + z * h
-                h = (1.0f - z_gate) * n_gate + z_gate * h;
+                af::array h_r = h_proj(af::span, af::seq(0, hidden_size_ - 1));
+                af::array h_z = h_proj(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1));
+                af::array h_n = h_proj(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1));
 
-                h_states(t + 1, af::span, af::span) = h;
-                af::array gates = af::join(1, r_gate, z_gate, n_gate);
-                all_gates(t, af::span, af::span) = gates;
+                af::array r = af::sigmoid(x_r + h_r);
+                af::array z = af::sigmoid(x_z + h_z);
+                af::array n = af::tanh(x_n + r * h_n);
+                h = (1.0f - z) * n + z * h;
+
+                af::array gates_t = af::join(1, r, z, n, h_n);
+                layer_output(t, af::span, af::span) =
+                    af::moddims(h, af::dim4(1, batch_size, hidden_size_));
+                layer_gates(t, af::span, af::span) =
+                    af::moddims(gates_t, af::dim4(1, batch_size, 4 * hidden_size_));
+                layer_h_states(t + 1, af::span, af::span) =
+                    af::moddims(h, af::dim4(1, batch_size, hidden_size_));
             }
 
-            cached_gates_.push_back(AfToTensor(all_gates));
-            cached_hidden_states_.push_back(AfToTensor(h_states));
+            af::array h_full_out = TensorToAf3DRowMajor(h_n_);
+            h_full_out(layer, af::span, af::span) =
+                af::moddims(h, af::dim4(1, batch_size, hidden_size_));
+            h_n_ = AfToTensor3DRowMajor(h_full_out);
 
-            af::array layer_output = h_states(af::seq(1, static_cast<double>(seq_len)), af::span, af::span);
-
-            // Handle bidirectional (similar to LSTM)
-            if (bidirectional_) {
-                // ... reverse direction processing (similar to LSTM)
-            }
-
-            h_full(layer, af::span, af::span) = h;
-            h_n_ = AfToTensor(h_full);
-
-            if (layer < num_layers_ - 1 && dropout_ > 0.0f && training_) {
-                af::array mask = (af::randu(layer_output.dims()) > dropout_).as(af::dtype::f32);
-                layer_output = layer_output * mask / (1.0f - dropout_);
-            }
+            cached_inputs_.push_back(AfToTensor3DRowMajor(layer_input));
+            cached_gates_.push_back(AfToTensor3DRowMajor(layer_gates));
+            cached_hidden_states_.push_back(AfToTensor3DRowMajor(layer_h_states));
 
             layer_input = layer_output;
         }
 
-        output = layer_input;
-
         if (batch_first_) {
-            output = af::reorder(output, 1, 0, 2);
+            layer_input = af::reorder(layer_input, 1, 0, 2);
         }
 
-        return AfToTensor(output);
+        return AfToTensor3DRowMajor(layer_input);
     } catch (const af::exception& e) {
         spdlog::warn("ArrayFire GRULayer::Forward failed: {}, falling back to CPU", e.what());
     }
 #endif
 
-    // CPU fallback implementation
+#if 0
+    // ArrayFire GRU Forward — currently disabled. Has the same family of
+    // bugs LSTM AF Forward had pre-2026-04-16: 3D column-major scrambling
+    // at TensorToAf boundary, slice assignment shape mismatches at
+    // h_states(t,...) = h writes, and r_gate/z_gate slot ordering bugs
+    // that the buggy AF Backward also depended on. Fixing AF GRU is a
+    // perf follow-up — needs the same TensorToAf3DRowMajor +
+    // af::moddims(rhs, dim4(1,batch,hidden)) treatment LSTM got. The
+    // original AF code is preserved for reference once the perf fix is
+    // attempted.
+    try {
+        af::array x = TensorToAf(input);
+        dim_t batch_size, seq_len, input_dim;
+        if (batch_first_) {
+            batch_size = x.dims(0); seq_len = x.dims(1); input_dim = x.dims(2);
+            x = af::reorder(x, 1, 0, 2);
+        } else {
+            seq_len = x.dims(0); batch_size = x.dims(1); input_dim = x.dims(2);
+        }
+        // ... (legacy AF body removed for brevity — see git history at
+        //      0dc11e1a / pre-fix for the original implementation.)
+    } catch (const af::exception& e) {
+        spdlog::warn("ArrayFire GRULayer::Forward failed: {}, falling back to CPU", e.what());
+    }
+#endif
+
+    // CPU fallback implementation. Populates cached_inputs_, cached_gates_,
+    // cached_hidden_states_ in row-major [seq_len, batch, ...] layout so
+    // GRULayer::Backward (CPU BPTT below) can read them. Mirror of the
+    // LSTM CPU Forward + cache layout, adapted for GRU's 3-gate structure.
     const auto& shape = input.Shape();
     size_t batch_size, seq_len, input_dim;
 
@@ -3227,18 +3271,6 @@ Tensor GRULayer::Forward(const Tensor& input) {
     }
 
     int num_directions = bidirectional_ ? 2 : 1;
-
-    // Reinitialize weights with CPU if they have null data (ArrayFire init failed)
-    if (W_ih_.empty() || W_ih_[0].Data<float>() == nullptr) {
-        for (int layer = 0; layer < num_layers_; layer++) {
-            size_t layer_input_size = (layer == 0) ? input_dim : static_cast<size_t>(hidden_size_ * num_directions);
-            size_t gate_size = static_cast<size_t>(3 * hidden_size_);
-            W_ih_[layer] = Tensor::Random({gate_size, layer_input_size});
-            W_hh_[layer] = Tensor::Random({gate_size, static_cast<size_t>(hidden_size_)});
-            b_ih_[layer] = Tensor::Zeros({gate_size});
-            b_hh_[layer] = Tensor::Zeros({gate_size});
-        }
-    }
 
     if (h_n_.NumElements() == 0 || h_n_.Data<float>() == nullptr) {
         h_n_ = Tensor::Zeros({static_cast<size_t>(num_layers_ * num_directions),
@@ -3257,6 +3289,15 @@ Tensor GRULayer::Forward(const Tensor& input) {
     auto sigmoid = [](float x) { return 1.0f / (1.0f + std::exp(-x)); };
     auto tanh_f = [](float x) { return std::tanh(x); };
 
+    // Reset caches at the top of every forward pass so BPTT reads the
+    // current run's state, not a stale one.
+    cached_inputs_.clear();
+    cached_gates_.clear();
+    cached_hidden_states_.clear();
+    cached_inputs_.reserve(num_layers_);
+    cached_gates_.reserve(num_layers_);
+    cached_hidden_states_.reserve(num_layers_);
+
     Tensor layer_input = input;
     size_t layer_input_size = input_dim;
 
@@ -3265,20 +3306,53 @@ Tensor GRULayer::Forward(const Tensor& input) {
         const float* W_hh = W_hh_[layer].Data<float>();
         const float* b_ih = b_ih_[layer].Data<float>();
         const float* b_hh = b_hh_[layer].Data<float>();
-        int gate_size = 3 * hidden_size_;
+        const int H = hidden_size_;
+        const int G = 3 * H;
 
-        Tensor layer_output = Tensor::Zeros({seq_len, batch_size, static_cast<size_t>(hidden_size_)});
+        Tensor layer_output = Tensor::Zeros({seq_len, batch_size, static_cast<size_t>(H)});
         float* layer_out = layer_output.Data<float>();
         const float* layer_in = layer_input.Data<float>();
 
+        // Per-layer caches, row-major:
+        //   input  [seq_len, batch, layer_input_size]
+        //   gates  [seq_len, batch, 4 * H]   layout per (t,b):
+        //                [0..H)   r post-sigmoid
+        //                [H..2H)  z post-sigmoid
+        //                [2H..3H) n post-tanh
+        //                [3H..4H) hn_pre   = b_hh_n + W_hh_n @ h_prev
+        //                                    (the unmodulated h-side
+        //                                     projection feeding n; saved
+        //                                     because BPTT needs both r and
+        //                                     hn_pre to split d_n into
+        //                                     x-side and h-side parts)
+        //   h      [seq_len + 1, batch, H]   (idx 0 = h_0)
+        Tensor layer_input_cache = Tensor::Zeros(
+            {seq_len, batch_size, layer_input_size});
+        Tensor layer_gates_cache = Tensor::Zeros(
+            {seq_len, batch_size, static_cast<size_t>(4 * H)});
+        Tensor layer_h_cache = Tensor::Zeros(
+            {seq_len + 1, batch_size, static_cast<size_t>(H)});
+        float* in_cache_data = layer_input_cache.Data<float>();
+        float* gate_cache_data = layer_gates_cache.Data<float>();
+        float* h_cache_data = layer_h_cache.Data<float>();
+
+        // Seed h_0 at cache index 0 from h_n_ for all batches.
         for (size_t b = 0; b < batch_size; b++) {
-            std::vector<float> h(hidden_size_);
-            for (int i = 0; i < hidden_size_; i++) {
-                h[i] = h_data[layer * batch_size * hidden_size_ + b * hidden_size_ + i];
+            for (int i = 0; i < H; i++) {
+                h_cache_data[0 * batch_size * H + b * H + i] =
+                    h_data[layer * batch_size * H + b * H + i];
+            }
+        }
+
+        for (size_t b = 0; b < batch_size; b++) {
+            std::vector<float> h(H);
+            for (int i = 0; i < H; i++) {
+                h[i] = h_data[layer * batch_size * H + b * H + i];
             }
 
+            std::vector<float> x_proj(G), h_proj(G);
+
             for (size_t t = 0; t < seq_len; t++) {
-                std::vector<float> gates(gate_size, 0.0f);
                 const float* x_ptr;
                 if (layer == 0) {
                     if (batch_first_) x_ptr = input_data + b * seq_len * input_dim + t * input_dim;
@@ -3287,48 +3361,66 @@ Tensor GRULayer::Forward(const Tensor& input) {
                     x_ptr = layer_in + t * batch_size * layer_input_size + b * layer_input_size;
                 }
 
-                // Compute input projections
-                for (int g = 0; g < gate_size; g++) {
-                    gates[g] = b_ih[g];
+                // x_proj[g] = b_ih[g] + W_ih[g,:] · x
+                // h_proj[g] = b_hh[g] + W_hh[g,:] · h
+                for (int g = 0; g < G; g++) {
+                    float xs = b_ih[g];
                     for (size_t k = 0; k < layer_input_size; k++)
-                        gates[g] += W_ih[g * layer_input_size + k] * x_ptr[k];
+                        xs += W_ih[g * layer_input_size + k] * x_ptr[k];
+                    x_proj[g] = xs;
+
+                    float hs = b_hh[g];
+                    for (int k = 0; k < H; k++)
+                        hs += W_hh[g * H + k] * h[k];
+                    h_proj[g] = hs;
                 }
 
-                std::vector<float> r_gate(hidden_size_), z_gate(hidden_size_), n_gate(hidden_size_);
-                for (int i = 0; i < hidden_size_; i++) {
-                    float r_input = gates[i];
-                    float r_hidden = b_hh[i];
-                    for (int k = 0; k < hidden_size_; k++)
-                        r_hidden += W_hh[i * hidden_size_ + k] * h[k];
-                    r_gate[i] = sigmoid(r_input + r_hidden);
-
-                    float z_input = gates[hidden_size_ + i];
-                    float z_hidden = b_hh[hidden_size_ + i];
-                    for (int k = 0; k < hidden_size_; k++)
-                        z_hidden += W_hh[(hidden_size_ + i) * hidden_size_ + k] * h[k];
-                    z_gate[i] = sigmoid(z_input + z_hidden);
-
-                    float n_input = gates[2 * hidden_size_ + i];
-                    float n_hidden = b_hh[2 * hidden_size_ + i];
-                    for (int k = 0; k < hidden_size_; k++)
-                        n_hidden += W_hh[(2 * hidden_size_ + i) * hidden_size_ + k] * h[k];
-                    n_gate[i] = tanh_f(n_input + r_gate[i] * n_hidden);
+                // Snapshot input for BPTT.
+                for (size_t k = 0; k < layer_input_size; k++) {
+                    in_cache_data[t * batch_size * layer_input_size + b * layer_input_size + k]
+                        = x_ptr[k];
                 }
 
-                for (int i = 0; i < hidden_size_; i++) {
-                    h[i] = (1.0f - z_gate[i]) * n_gate[i] + z_gate[i] * h[i];
+                // Apply gate equations and snapshot post-activations.
+                //   r = sigmoid(x_proj_r + h_proj_r)
+                //   z = sigmoid(x_proj_z + h_proj_z)
+                //   n = tanh(x_proj_n + r * h_proj_n)
+                //   h_new = (1 - z) * n + z * h_prev
+                for (int i = 0; i < H; i++) {
+                    float r = sigmoid(x_proj[i] + h_proj[i]);
+                    float z = sigmoid(x_proj[H + i] + h_proj[H + i]);
+                    float hn_pre = h_proj[2 * H + i];           // unmodulated h-side
+                    float n = tanh_f(x_proj[2 * H + i] + r * hn_pre);
+
+                    const size_t off = t * batch_size * (4 * H) + b * (4 * H);
+                    gate_cache_data[off + i]           = r;
+                    gate_cache_data[off + H + i]       = z;
+                    gate_cache_data[off + 2 * H + i]   = n;
+                    gate_cache_data[off + 3 * H + i]   = hn_pre;
+
+                    h[i] = (1.0f - z) * n + z * h[i];
                 }
 
-                for (int i = 0; i < hidden_size_; i++)
-                    layer_out[t * batch_size * hidden_size_ + b * hidden_size_ + i] = h[i];
+                for (int i = 0; i < H; i++)
+                    layer_out[t * batch_size * H + b * H + i] = h[i];
+
+                // Snapshot h_t at cache index t+1.
+                for (int i = 0; i < H; i++) {
+                    h_cache_data[(t + 1) * batch_size * H + b * H + i] = h[i];
+                }
             }
 
-            for (int i = 0; i < hidden_size_; i++) {
-                h_data[layer * batch_size * hidden_size_ + b * hidden_size_ + i] = h[i];
+            for (int i = 0; i < H; i++) {
+                h_data[layer * batch_size * H + b * H + i] = h[i];
             }
         }
+
+        cached_inputs_.push_back(std::move(layer_input_cache));
+        cached_gates_.push_back(std::move(layer_gates_cache));
+        cached_hidden_states_.push_back(std::move(layer_h_cache));
+
         layer_input = layer_output;
-        layer_input_size = static_cast<size_t>(hidden_size_);
+        layer_input_size = static_cast<size_t>(H);
     }
 
     const float* final_out = layer_input.Data<float>();
@@ -3345,101 +3437,337 @@ Tensor GRULayer::Forward(const Tensor& input) {
 }
 
 Tensor GRULayer::Backward(const Tensor& grad_output) {
-    // Check if caches are populated (Forward must have been called with ArrayFire success)
-    if (cached_inputs_.empty() || cached_gates_.empty() || cached_hidden_states_.empty()) {
-        // CPU fallback Forward doesn't populate caches, so return zero gradients
-        spdlog::warn("GRULayer::Backward called without cached data from Forward, returning zero gradients");
+    // Empty caches mean Forward was never called; return zeros sized by
+    // the input we last saw so upstream grad flow is dimension-safe
+    // rather than throwing. Mirror of LSTMLayer::Backward's guard.
+    if (cached_inputs_.empty() || cached_gates_.empty() ||
+        cached_hidden_states_.empty()) {
+        static std::atomic<bool> warned_once{false};
+        if (!warned_once.exchange(true)) {
+            spdlog::warn("GRULayer::Backward: caches empty (Forward not run?) "
+                         "— returning zero gradients. This warning fires once.");
+        }
+        if (cached_input_.NumElements() > 0) {
+            return Tensor::Zeros(cached_input_.Shape());
+        }
         return Tensor::Zeros(grad_output.Shape());
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array dout = TensorToAf(grad_output);
-
+    if (!bidirectional_) try {
+        af::array upstream = TensorToAf3DRowMajor(grad_output);
         if (batch_first_) {
-            dout = af::reorder(dout, 1, 0, 2);
+            upstream = af::reorder(upstream, 1, 0, 2);
         }
 
-        dim_t seq_len = dout.dims(0);
-        dim_t batch_size = dout.dims(1);
+        const auto& input_shape = cached_input_.Shape();
+        size_t batch_size, seq_len, input_dim;
+        if (batch_first_) {
+            batch_size = input_shape[0];
+            seq_len = input_shape[1];
+            input_dim = input_shape[2];
+        } else {
+            seq_len = input_shape[0];
+            batch_size = input_shape[1];
+            input_dim = input_shape[2];
+        }
 
-        af::array dx;
-        af::array layer_grad = dout;
+        const int H = hidden_size_;
+        const int G = 3 * H;
 
-        for (int layer = num_layers_ - 1; layer >= 0; layer--) {
+        if (static_cast<int>(grad_W_ih_.size()) < num_layers_) grad_W_ih_.resize(num_layers_);
+        if (static_cast<int>(grad_W_hh_.size()) < num_layers_) grad_W_hh_.resize(num_layers_);
+        if (static_cast<int>(grad_b_ih_.size()) < num_layers_) grad_b_ih_.resize(num_layers_);
+        if (static_cast<int>(grad_b_hh_.size()) < num_layers_) grad_b_hh_.resize(num_layers_);
+
+        af::array layer_grad = upstream;
+
+        for (int layer = num_layers_ - 1; layer >= 0; --layer) {
+            const size_t layer_input_size = (layer == 0)
+                ? input_dim : static_cast<size_t>(H);
+
             af::array W_ih = TensorToAf(W_ih_[layer]);
             af::array W_hh = TensorToAf(W_hh_[layer]);
-            af::array cached_input = TensorToAf(cached_inputs_[layer]);
-            af::array cached_gates = TensorToAf(cached_gates_[layer]);
-            af::array cached_h = TensorToAf(cached_hidden_states_[layer]);
+            af::array input_cache = TensorToAf3DRowMajor(cached_inputs_[layer]);
+            af::array gate_cache = TensorToAf3DRowMajor(cached_gates_[layer]);
+            af::array h_cache = TensorToAf3DRowMajor(cached_hidden_states_[layer]);
 
-            dim_t layer_input_size = cached_input.dims(2);
-            int gate_size = 3 * hidden_size_;
+            af::array dW_ih = af::constant(0.0f, af::dim4(G, static_cast<dim_t>(layer_input_size)));
+            af::array dW_hh = af::constant(0.0f, af::dim4(G, static_cast<dim_t>(H)));
+            af::array db_ih = af::constant(0.0f, af::dim4(G));
+            af::array db_hh = af::constant(0.0f, af::dim4(G));
+            af::array d_layer_input = af::constant(
+                0.0f, af::dim4(seq_len, batch_size, static_cast<dim_t>(layer_input_size)));
+            af::array dh_next = af::constant(0.0f, af::dim4(batch_size, H));
+            af::array ones = af::constant(1.0f, af::dim4(batch_size, H));
 
-            af::array dW_ih = af::constant(0.0f, W_ih.dims());
-            af::array dW_hh = af::constant(0.0f, W_hh.dims());
-            af::array db_ih = af::constant(0.0f, af::dim4(gate_size));
-            af::array db_hh = af::constant(0.0f, af::dim4(gate_size));
-
-            af::array dh_next = af::constant(0.0f, af::dim4(batch_size, hidden_size_));
-            af::array d_layer_input = af::constant(0.0f, cached_input.dims());
-
-            // BPTT for GRU
-            for (dim_t t = seq_len - 1; t >= 0; t--) {
-                af::array h_prev = cached_h(t, af::span, af::span);
-                h_prev = af::moddims(h_prev, af::dim4(batch_size, hidden_size_));
-
-                af::array gates = cached_gates(t, af::span, af::span);
-                gates = af::moddims(gates, af::dim4(batch_size, gate_size));
-
-                af::array r_gate = gates(af::span, af::seq(0, hidden_size_ - 1));
-                af::array z_gate = gates(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1));
-                af::array n_gate = gates(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1));
-
-                af::array dh = layer_grad(t, af::span, af::span);
-                dh = af::moddims(dh, af::dim4(batch_size, hidden_size_));
+            for (int64_t t = static_cast<int64_t>(seq_len) - 1; t >= 0; --t) {
+                af::array x_t = af::moddims(input_cache(t, af::span, af::span),
+                                            af::dim4(batch_size, layer_input_size));
+                af::array gates_t = af::moddims(gate_cache(t, af::span, af::span),
+                                                af::dim4(batch_size, 4 * H));
+                af::array h_prev = af::moddims(h_cache(t, af::span, af::span),
+                                               af::dim4(batch_size, H));
+                af::array dh = af::moddims(layer_grad(t, af::span, af::span),
+                                           af::dim4(batch_size, H));
                 dh = dh + dh_next;
 
-                // GRU backward equations
-                af::array dn_gate = dh * (1.0f - z_gate) * (1.0f - n_gate * n_gate);
-                af::array dz_gate = dh * (h_prev - n_gate) * z_gate * (1.0f - z_gate);
-                dh_next = dh * z_gate;
+                af::array r = gates_t(af::span, af::seq(0, H - 1));
+                af::array z = gates_t(af::span, af::seq(H, 2 * H - 1));
+                af::array n = gates_t(af::span, af::seq(2 * H, 3 * H - 1));
+                af::array hn_pre = gates_t(af::span, af::seq(3 * H, 4 * H - 1));
 
-                af::array dgates = af::join(1, af::constant(0.0f, af::dim4(batch_size, hidden_size_)),
-                                             dz_gate, dn_gate);
+                af::array dn = dh * (ones - z);
+                af::array dz = dh * (h_prev - n);
+                af::array dh_prev_direct = dh * z;
 
-                af::array x_t = cached_input(t, af::span, af::span);
-                x_t = af::moddims(x_t, af::dim4(batch_size, layer_input_size));
+                af::array dn_pre = dn * (ones - n * n);
+                af::array dr = dn_pre * hn_pre;
+                af::array d_hn_pre = dn_pre * r;
 
-                dW_ih = dW_ih + af::matmul(af::transpose(dgates), x_t);
-                dW_hh = dW_hh + af::matmul(af::transpose(dgates), h_prev);
-                db_ih = db_ih + af::sum(dgates, 0);
+                af::array d_r_pre = dr * r * (ones - r);
+                af::array d_z_pre = dz * z * (ones - z);
 
-                af::array dx_t = af::matmul(dgates, W_ih);
-                d_layer_input(t, af::span, af::span) = dx_t;
+                af::array dgates_x = af::join(1, d_r_pre, d_z_pre, dn_pre);
+                af::array dgates_h = af::join(1, d_r_pre, d_z_pre, d_hn_pre);
+
+                dW_ih = dW_ih + af::matmul(af::transpose(dgates_x), x_t);
+                dW_hh = dW_hh + af::matmul(af::transpose(dgates_h), h_prev);
+                db_ih = db_ih + af::moddims(af::sum(dgates_x, 0), af::dim4(G));
+                db_hh = db_hh + af::moddims(af::sum(dgates_h, 0), af::dim4(G));
+
+                af::array dx_t = af::matmul(dgates_x, W_ih);
+                d_layer_input(t, af::span, af::span) =
+                    af::moddims(dx_t, af::dim4(1, batch_size, static_cast<dim_t>(layer_input_size)));
+
+                dh_next = dh_prev_direct + af::matmul(dgates_h, W_hh);
             }
 
             grad_W_ih_[layer] = AfToTensor(dW_ih);
             grad_W_hh_[layer] = AfToTensor(dW_hh);
-            grad_b_ih_[layer] = AfToTensor(af::moddims(db_ih, af::dim4(gate_size)));
-            grad_b_hh_[layer] = AfToTensor(af::moddims(db_hh, af::dim4(gate_size)));
+            grad_b_ih_[layer] = AfToTensor(db_ih);
+            grad_b_hh_[layer] = AfToTensor(db_hh);
 
             layer_grad = d_layer_input;
         }
 
-        dx = layer_grad;
-
         if (batch_first_) {
-            dx = af::reorder(dx, 1, 0, 2);
+            layer_grad = af::reorder(layer_grad, 1, 0, 2);
         }
 
-        return AfToTensor(dx);
+        return AfToTensor3DRowMajor(layer_grad);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire GRULayer::Backward failed: {}", e.what());
+        spdlog::warn("ArrayFire GRULayer::Backward failed: {}, falling back to CPU", e.what());
     }
 #endif
 
-    throw std::runtime_error("GRU backward requires ArrayFire");
+    // CPU BPTT for GRU. Reads the row-major caches populated by CPU Forward:
+    //   cached_inputs_[L]          [seq_len, batch, layer_input_size]
+    //   cached_gates_[L]           [seq_len, batch, 4 * H]
+    //                              layout per (t, b):
+    //                                [0..H)   r post-sigmoid
+    //                                [H..2H)  z post-sigmoid
+    //                                [2H..3H) n post-tanh
+    //                                [3H..4H) hn_pre   (= b_hh_n + W_hh_n @ h_prev)
+    //   cached_hidden_states_[L]   [seq_len + 1, batch, H]   (idx 0 = h_0)
+    //
+    // GRU forward equations:
+    //     r       = sigmoid(x_proj_r + h_proj_r)
+    //     z       = sigmoid(x_proj_z + h_proj_z)
+    //     n       = tanh(x_proj_n + r * hn_pre)        // hn_pre = h_proj_n
+    //     h_new   = (1 - z) * n + z * h_prev
+    //
+    // BPTT — per timestep, given dh_total = dL/dh_new + dh carry from t+1:
+    //     dn       = dh_total * (1 - z)
+    //     dz       = dh_total * (h_prev - n)
+    //     dh_prev_direct = dh_total * z
+    //
+    //     dn_pre   = dn * (1 - n*n)                    // tanh'
+    //     d_x_proj_n = dn_pre
+    //     dr       = dn_pre * hn_pre                   // through r * hn_pre
+    //     d_hn_pre = dn_pre * r                        // through r * hn_pre
+    //
+    //     d_r_pre  = dr * r * (1 - r)                  // sigmoid'
+    //     d_z_pre  = dz * z * (1 - z)
+    //
+    //     dgates_x = [d_r_pre | d_z_pre | d_x_proj_n]  // x-side projections
+    //     dgates_h = [d_r_pre | d_z_pre | d_hn_pre  ]  // h-side projections
+    //                                                  // (n-slot differs!)
+    //
+    //     dW_ih += outer(dgates_x, x);   db_ih += dgates_x
+    //     dW_hh += outer(dgates_h, h_prev); db_hh += dgates_h
+    //     dx     = dgates_x @ W_ih
+    //     dh_prev = dh_prev_direct + dgates_h @ W_hh
+    //
+    // Note: dgates_x and dgates_h DIFFER in the n-slot. The legacy AF
+    // backward used the same dgates for both sides which is wrong for GRU
+    // (and additionally zeroed the r-slot, so reset gate weights never
+    // updated). This implementation handles both correctly.
+
+    const auto& input_shape = cached_input_.Shape();
+    size_t batch_size, seq_len, input_dim;
+    if (batch_first_) {
+        batch_size = input_shape[0];
+        seq_len    = input_shape[1];
+        input_dim  = input_shape[2];
+    } else {
+        seq_len    = input_shape[0];
+        batch_size = input_shape[1];
+        input_dim  = input_shape[2];
+    }
+
+    const int H = hidden_size_;
+    const int G = 3 * H;
+
+    if (static_cast<int>(grad_W_ih_.size()) < num_layers_) grad_W_ih_.resize(num_layers_);
+    if (static_cast<int>(grad_W_hh_.size()) < num_layers_) grad_W_hh_.resize(num_layers_);
+    if (static_cast<int>(grad_b_ih_.size()) < num_layers_) grad_b_ih_.resize(num_layers_);
+    if (static_cast<int>(grad_b_hh_.size()) < num_layers_) grad_b_hh_.resize(num_layers_);
+
+    // Convert grad_output (in user's batch_first/seq_first layout) into a
+    // canonical [seq_len, batch, H] row-major scratch buffer for the
+    // top-layer gradient.
+    const float* dout = grad_output.Data<float>();
+    std::vector<float> layer_grad(seq_len * batch_size * H, 0.0f);
+    for (size_t t = 0; t < seq_len; ++t) {
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (int i = 0; i < H; ++i) {
+                float g = batch_first_
+                    ? dout[b * seq_len * H + t * H + i]
+                    : dout[t * batch_size * H + b * H + i];
+                layer_grad[t * batch_size * H + b * H + i] = g;
+            }
+        }
+    }
+
+    std::vector<float> d_layer_input;
+
+    for (int layer = num_layers_ - 1; layer >= 0; --layer) {
+        const size_t layer_input_size = (layer == 0)
+            ? input_dim : static_cast<size_t>(H);
+
+        const float* W_ih = W_ih_[layer].Data<float>();       // [3H, input_size]
+        const float* W_hh = W_hh_[layer].Data<float>();       // [3H, H]
+        const float* in_cache = cached_inputs_[layer].Data<float>();
+        const float* gate_cache = cached_gates_[layer].Data<float>();  // 4H per (t,b)
+        const float* h_cache = cached_hidden_states_[layer].Data<float>();
+
+        std::vector<float> dW_ih(G * layer_input_size, 0.0f);
+        std::vector<float> dW_hh(G * H, 0.0f);
+        std::vector<float> db_ih(G, 0.0f);
+        std::vector<float> db_hh(G, 0.0f);
+
+        d_layer_input.assign(seq_len * batch_size * layer_input_size, 0.0f);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            std::vector<float> dh_next(H, 0.0f);
+
+            for (int64_t t = static_cast<int64_t>(seq_len) - 1; t >= 0; --t) {
+                const size_t gate_off = t * batch_size * (4 * H) + b * (4 * H);
+                const size_t h_prev_off = t * batch_size * H + b * H;        // cache idx t
+                const size_t in_off = t * batch_size * layer_input_size + b * layer_input_size;
+                const size_t lg_off = t * batch_size * H + b * H;
+
+                std::vector<float> dgates_x(G, 0.0f);
+                std::vector<float> dgates_h(G, 0.0f);
+
+                for (int i = 0; i < H; ++i) {
+                    const float r       = gate_cache[gate_off + i];
+                    const float z       = gate_cache[gate_off + H + i];
+                    const float n       = gate_cache[gate_off + 2 * H + i];
+                    const float hn_pre  = gate_cache[gate_off + 3 * H + i];
+                    const float h_prev  = h_cache[h_prev_off + i];
+
+                    const float dh_total = layer_grad[lg_off + i] + dh_next[i];
+
+                    const float dn = dh_total * (1.0f - z);
+                    const float dz = dh_total * (h_prev - n);
+                    const float dh_prev_direct = dh_total * z;
+
+                    const float dn_pre = dn * (1.0f - n * n);
+                    const float d_x_proj_n = dn_pre;
+                    const float dr = dn_pre * hn_pre;
+                    const float d_hn_pre = dn_pre * r;
+
+                    const float d_r_pre = dr * r * (1.0f - r);
+                    const float d_z_pre = dz * z * (1.0f - z);
+
+                    dgates_x[i]            = d_r_pre;
+                    dgates_x[H + i]        = d_z_pre;
+                    dgates_x[2 * H + i]    = d_x_proj_n;
+
+                    dgates_h[i]            = d_r_pre;
+                    dgates_h[H + i]        = d_z_pre;
+                    dgates_h[2 * H + i]    = d_hn_pre;
+
+                    // Stash the direct (non-gate) carry; gate-side carry
+                    // gets added below from dgates_h @ W_hh.
+                    dh_next[i] = dh_prev_direct;
+                }
+
+                // Weight + bias accumulation.
+                //   dW_ih [G, layer_input_size] += outer(dgates_x, x_t)
+                //   dW_hh [G, H]                 += outer(dgates_h, h_prev)
+                for (int g = 0; g < G; ++g) {
+                    const float dgx = dgates_x[g];
+                    const float dgh = dgates_h[g];
+                    db_ih[g] += dgx;
+                    db_hh[g] += dgh;
+                    for (size_t k = 0; k < layer_input_size; ++k) {
+                        dW_ih[g * layer_input_size + k] += dgx * in_cache[in_off + k];
+                    }
+                    for (int k = 0; k < H; ++k) {
+                        dW_hh[g * H + k] += dgh * h_cache[h_prev_off + k];
+                    }
+                }
+
+                // dx_t = dgates_x @ W_ih   (shape [layer_input_size])
+                for (size_t k = 0; k < layer_input_size; ++k) {
+                    float s = 0.0f;
+                    for (int g = 0; g < G; ++g) {
+                        s += dgates_x[g] * W_ih[g * layer_input_size + k];
+                    }
+                    d_layer_input[in_off + k] = s;
+                }
+
+                // dh_prev (carries to t-1) = dh_prev_direct + dgates_h @ W_hh
+                for (int k = 0; k < H; ++k) {
+                    float s = 0.0f;
+                    for (int g = 0; g < G; ++g) {
+                        s += dgates_h[g] * W_hh[g * H + k];
+                    }
+                    dh_next[k] += s;
+                }
+            }
+        }
+
+        grad_W_ih_[layer] = Tensor({static_cast<size_t>(G), layer_input_size},
+                                   dW_ih.data());
+        grad_W_hh_[layer] = Tensor({static_cast<size_t>(G), static_cast<size_t>(H)},
+                                   dW_hh.data());
+        grad_b_ih_[layer] = Tensor({static_cast<size_t>(G)}, db_ih.data());
+        grad_b_hh_[layer] = Tensor({static_cast<size_t>(G)}, db_hh.data());
+
+        if (layer > 0) {
+            layer_grad = d_layer_input;
+        }
+    }
+
+    Tensor dx = Tensor::Zeros(cached_input_.Shape());
+    float* dx_data = dx.Data<float>();
+    for (size_t t = 0; t < seq_len; ++t) {
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t k = 0; k < input_dim; ++k) {
+                const float v = d_layer_input[t * batch_size * input_dim + b * input_dim + k];
+                if (batch_first_) {
+                    dx_data[b * seq_len * input_dim + t * input_dim + k] = v;
+                } else {
+                    dx_data[t * batch_size * input_dim + b * input_dim + k] = v;
+                }
+            }
+        }
+    }
+    return dx;
 }
 
 std::map<std::string, Tensor> GRULayer::GetParameters() {

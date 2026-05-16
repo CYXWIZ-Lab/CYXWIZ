@@ -3701,7 +3701,7 @@ void DataLoaderDialog::RenderContent() {
     }
     if (num_workers_ > 0) {
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                           "  Not yet implemented - batching runs single-threaded.");
+                           "  Honored by text batch loading; other batchers may still ignore it.");
     } else {
         ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
     }

@@ -13,6 +13,11 @@ namespace cyxwiz {
 // Forward declaration
 static bool IsCyxwBinaryFormat(const std::string& path);
 
+static bool IsTrainingOnlyParameter(const std::string& name) {
+    return name.find("grad_") != std::string::npos ||
+           name.find(".grad") != std::string::npos;
+}
+
 // Helper: Build model architecture from graph JSON
 static bool BuildModelFromGraph(
     const std::string& graph_json,
@@ -53,7 +58,7 @@ static bool BuildModelFromGraph(
 
         // Compile graph to get layer configuration
         GraphCompiler compiler;
-        TrainingConfiguration config = compiler.Compile(nodes, links);
+        TrainingConfiguration config = compiler.Compile(nodes, links, true);
 
         if (!config.is_valid) {
             error_message = "Graph compilation failed: " + config.error_message;
@@ -78,6 +83,70 @@ static bool BuildModelFromGraph(
                     model.Add<LinearModule>(current_input_size, out_features, true);
                     spdlog::debug("  [{}] Linear({} -> {})", i, current_input_size, out_features);
                     current_input_size = out_features;
+                    break;
+                }
+
+                case gui::NodeType::Embedding: {
+                    size_t num_embeddings = 10000;
+                    size_t embedding_dim = 256;
+                    if (layer_cfg.parameters.count("num_embeddings")) {
+                        try { num_embeddings = static_cast<size_t>(std::stoul(layer_cfg.parameters.at("num_embeddings"))); }
+                        catch (...) {}
+                    }
+                    if (layer_cfg.parameters.count("embedding_dim")) {
+                        try { embedding_dim = static_cast<size_t>(std::stoul(layer_cfg.parameters.at("embedding_dim"))); }
+                        catch (...) {}
+                    }
+                    if (num_embeddings < 2) num_embeddings = 2;
+                    if (embedding_dim < 1) embedding_dim = 1;
+
+                    model.Add<EmbeddingModule>(num_embeddings, embedding_dim);
+
+                    bool next_is_recurrent = false;
+                    if (i + 1 < config.layers.size()) {
+                        const auto nt = config.layers[i + 1].type;
+                        next_is_recurrent = (nt == gui::NodeType::LSTM ||
+                                             nt == gui::NodeType::GRU ||
+                                             nt == gui::NodeType::RNN);
+                    }
+                    current_input_size = next_is_recurrent ? embedding_dim
+                                                           : current_input_size * embedding_dim;
+                    spdlog::debug("  [{}] Embedding({} x {})", i, num_embeddings, embedding_dim);
+                    break;
+                }
+
+                case gui::NodeType::GRU: {
+                    size_t hidden_size = 128;
+                    size_t num_layers = 1;
+                    bool bidirectional = false;
+                    bool return_sequences = false;
+
+                    if (layer_cfg.parameters.count("hidden_size")) {
+                        try { hidden_size = static_cast<size_t>(std::stoul(layer_cfg.parameters.at("hidden_size"))); }
+                        catch (...) {}
+                    }
+                    if (layer_cfg.parameters.count("num_layers")) {
+                        try { num_layers = static_cast<size_t>(std::stoul(layer_cfg.parameters.at("num_layers"))); }
+                        catch (...) {}
+                    }
+                    if (layer_cfg.parameters.count("bidirectional")) {
+                        const auto& v = layer_cfg.parameters.at("bidirectional");
+                        bidirectional = (v == "true" || v == "1");
+                    }
+                    if (layer_cfg.parameters.count("return_sequences")) {
+                        const auto& v = layer_cfg.parameters.at("return_sequences");
+                        return_sequences = (v == "true" || v == "1");
+                    }
+                    if (hidden_size < 1) hidden_size = 1;
+                    if (num_layers < 1) num_layers = 1;
+
+                    model.Add<GRUModule>(current_input_size, hidden_size,
+                                         num_layers, bidirectional,
+                                         return_sequences);
+
+                    current_input_size = hidden_size * (bidirectional ? 2 : 1);
+                    spdlog::debug("  [{}] GRU(in={}, hidden={}, layers={}, bidir={}, return_seq={})",
+                                  i, current_input_size, hidden_size, num_layers, bidirectional, return_sequences);
                     break;
                 }
 
@@ -1013,6 +1082,9 @@ bool ModelImporter::PopulateModelWeights(
     std::map<std::string, Tensor> new_params;
 
     for (const auto& [name, data] : weights) {
+        if (IsTrainingOnlyParameter(name)) {
+            continue;
+        }
         auto shape_it = shapes.find(name);
         if (shape_it == shapes.end()) {
             last_error_ = "Missing shape for weight: " + name;
@@ -1087,6 +1159,9 @@ bool ModelImporter::ValidateModelArchitecture(
 
     // Check all weights have corresponding model parameters
     for (const auto& [name, shape] : weight_shapes) {
+        if (IsTrainingOnlyParameter(name)) {
+            continue;
+        }
         if (model_params.find(name) == model_params.end()) {
             error_message = "Model missing parameter: " + name;
             return false;
@@ -1095,6 +1170,9 @@ bool ModelImporter::ValidateModelArchitecture(
 
     // Check all model parameters have corresponding weights
     for (const auto& [name, tensor] : model_params) {
+        if (IsTrainingOnlyParameter(name)) {
+            continue;
+        }
         if (weight_shapes.find(name) == weight_shapes.end()) {
             error_message = "Weights missing parameter: " + name;
             return false;

@@ -35,7 +35,8 @@ public:
                        const TextPreprocessingConfig& preprocess_config,
                        int batch_size,
                        float train_split = 0.8f,
-                       bool shuffle = true);
+                       bool shuffle = true,
+                       int num_workers = 0);
 
     // IBatcher interface
     Batch GetNextBatch() override;
@@ -59,6 +60,7 @@ private:
 
     int batch_size_;
     bool shuffle_;
+    int num_workers_ = 0;
     int max_length_ = 0;     // sequence length per sample (from config after overrides)
 
     // Normalization is a no-op for text (token IDs are categorical).
