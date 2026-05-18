@@ -59,6 +59,16 @@ void NodeEditor::SetAllNodesPinState(NodePinState state) {
     }
 }
 
+void NodeEditor::FocusNode(int node_id) {
+    if (node_id < 0) {
+        return;
+    }
+
+    // Defer the actual ImNodes interaction until Render(), where the editor
+    // context is definitely active.
+    pending_focus_node_id_ = node_id;
+}
+
 void NodeEditor::ClearValidationState() {
     node_pin_state_.clear();
 }
@@ -278,6 +288,24 @@ void NodeEditor::Render() {
         ImGui::SetWindowFontScale(zoom_);
 
         ImNodes::BeginNodeEditor();
+
+        if (pending_focus_node_id_ >= 0) {
+            auto it = std::find_if(nodes_.begin(), nodes_.end(),
+                                   [this](const MLNode& node) {
+                                       return node.id == pending_focus_node_id_;
+                                   });
+            if (it != nodes_.end()) {
+                ImNodes::ClearNodeSelection();
+                ImNodes::SelectNode(pending_focus_node_id_);
+                selected_node_id_ = pending_focus_node_id_;
+                if (properties_panel_) {
+                    properties_panel_->SetSelectedNode(&(*it));
+                }
+            } else {
+                spdlog::warn("NodeEditor: deferred focus node {} not found", pending_focus_node_id_);
+            }
+            pending_focus_node_id_ = -1;
+        }
 
         // Handle deferred ImNodes clear (must be inside BeginNodeEditor scope)
         // Note: We skip ImNodes::ClearNodeSelection/ClearLinkSelection because they may

@@ -1047,15 +1047,13 @@ Tensor FlattenLayer::Forward(const Tensor& input) {
         flat *= shape[i];
     }
 
-    const float* data = input.Data<float>();
-    return Tensor({batch, flat}, data, DataType::Float32);
+    return Tensor({batch, flat}, input.Data(), input.GetDataType());
 }
 
 Tensor FlattenLayer::Backward(const Tensor& grad_output) {
     // Pure CPU reshape back to the original shape saved in Forward.
     // Same reasoning as Forward: no GPU needed, just change the shape.
-    const float* data = grad_output.Data<float>();
-    return Tensor(input_shape_, data, DataType::Float32);
+    return Tensor(input_shape_, grad_output.Data(), grad_output.GetDataType());
 }
 
 // ============================================================================

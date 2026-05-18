@@ -5,42 +5,224 @@ development. Each entry has a severity, root cause, and suggested fix.
 
 ## Backend Issues
 
+### Backend compute library: memory tracking, leak risk, and GPU performance debt
+
+**Severity:** High - this affects the credibility of the ML backend,
+runtime speed, and our ability to diagnose leaks correctly.
+
+**Context:** Static review of the backend compute library in
+`cyxwiz-backend` shows that the main problems are structural, not
+isolated. The current Tensor abstraction is CPU-owned, many GPU paths
+copy to and from host on every operation, and memory tracking does not
+reflect real live allocations.
+
+#### 1. MemoryManager is misleading and not suitable for leak diagnosis
+
+**Status:** Resolved 2026-05-18. `MemoryManager` now records
+allocation sizes per pointer and decrements the live counter on
+deallocation, so `GetAllocatedBytes()` reports current live bytes
+instead of cumulative bytes.
+
+**Files:**
+- `cyxwiz-backend/src/core/memory_manager.cpp`
+- `cyxwiz-backend/include/cyxwiz/memory_manager.h`
+
+**Issue:** `MemoryManager::Allocate()` increments
+`g_allocated_bytes`, but `MemoryManager::Deallocate()` does not
+decrement it because allocation sizes are not tracked. As a result,
+`GetAllocatedBytes()` behaves more like "bytes ever allocated through
+this API" than "current live bytes." Worse, most of the hot tensor
+paths do not use `MemoryManager` at all - they use direct
+`malloc/free`, so the tracker misses the actual core allocations.
+
+**Impact:**
+- leak counters are not trustworthy
+- peak memory reporting is noisy
+- backend diagnostics can falsely suggest leaks or hide real ones
+
+**Suggested fix:**
+1. Either remove the current memory tracker entirely until it is
+   honest, or store size metadata per allocation and decrement on
+   deallocation.
+2. Route Tensor core allocations through one tracked allocator.
+3. Separate host-memory tracking from device-memory tracking.
+
+#### 2. Tensor is CPU-owned, so GPU ops repeatedly bounce through host memory
+
+**Files:**
+- `cyxwiz-backend/include/cyxwiz/tensor.h`
+- `cyxwiz-backend/src/core/tensor.cpp`
+
+**Issue:** `Tensor` stores CPU memory in `data_`, while
+`GetArray()` creates a fresh ArrayFire array and copies host data into
+it every time. `SetFromArray()` then copies the result back to CPU.
+This means the backend does not keep tensors resident on device across
+operations.
+
+**Symptoms in code:**
+- `GetArray()` always constructs a new AF array
+- `SetFromArray()` always copies device data back to CPU
+- factory methods such as `Zeros`, `Ones`, and `Random` do GPU work
+  and immediately copy the result to host
+
+**Impact:**
+- unnecessary host->device and device->host copies
+- poor scaling across chained linalg/training operations
+- "GPU acceleration" often behaves like temporary offload, not true
+  device-native execution
+
+**Suggested fix:**
+1. Redesign `Tensor` with persistent device residency.
+2. Add host/device dirty flags and explicit synchronization points.
+3. Make `GetArray()` return cached device state when valid instead of
+   recreating arrays from host memory every time.
+
+#### 3. Tensor GPU operator implementations leak heap objects on exceptions
+
+**Status:** Resolved 2026-05-18. The elementwise GPU operators now
+use stack `af::array` values instead of heap-allocated wrappers, so
+ArrayFire exceptions no longer leak operator-side heap objects.
+
+**File:** `cyxwiz-backend/src/core/tensor.cpp`
+
+**Issue:** The Tensor elementwise operators (`operator+`, `operator-`,
+`operator*`, `operator/`) allocate `af::array*` with `new` and only
+delete them on the success path. If an ArrayFire exception is thrown
+before cleanup, the catch block falls through to CPU without releasing
+those heap allocations.
+
+**Impact:**
+- exception-path leaks
+- long-running sessions can accumulate leaked `af::array` wrappers
+- hard-to-reproduce growth when GPU paths fail intermittently
+
+**Suggested fix:**
+1. Replace raw `af::array*` heap allocation with stack `af::array`
+   values or `std::unique_ptr`.
+2. Remove manual cleanup patterns in favor of RAII.
+3. Audit all ArrayFire exception paths for identical issues.
+
+#### 4. Tensor API advertises device transfer, but implementation is missing
+
+**Status:** Resolved 2026-05-18. The dead `Tensor::ToDevice` /
+`Tensor::ToCPU` declarations were removed from the public Tensor
+header, and the backend README example was updated so it no longer
+advertises an unsupported transfer API.
+
+**File:** `cyxwiz-backend/include/cyxwiz/tensor.h`
+
+**Issue:** `Tensor` declares `ToDevice(Device*)` and `ToCPU()`, but
+there is no implementation in the backend source for these methods.
+
+**Impact:**
+- API suggests true device management exists when it does not
+- encourages design drift and confusion about ownership semantics
+- makes optimization harder because the abstraction boundary is not
+  honest
+
+**Suggested fix:**
+1. Either implement `ToDevice` / `ToCPU` for real device residency
+   management, or remove them until the design is complete.
+2. Make device transition semantics explicit in the Tensor contract.
+
+#### 5. Cached `af_array_` state is mostly unused and adds complexity
+
+**Files:**
+- `cyxwiz-backend/include/cyxwiz/tensor.h`
+- `cyxwiz-backend/src/core/tensor.cpp`
+
+**Issue:** `Tensor` owns an `af_array_` pointer, but `GetArray()`
+ignores it and constructs a new ArrayFire array from CPU data each
+time. The code is carrying both host ownership and partial device
+ownership without using either model cleanly.
+
+**Impact:**
+- extra complexity without performance benefit
+- higher risk of stale-state bugs during future optimization work
+
+**Suggested fix:**
+1. Decide whether Tensor is host-primary or device-primary.
+2. Remove dead cached state if not used.
+3. If caching remains, make it authoritative and synchronized.
+
+#### 6. Optimizer GPU paths still copy parameter state back to CPU every step
+
+**File:** `cyxwiz-backend/src/algorithms/optimizer.cpp`
+
+**Issue:** SGD, Adam, and related optimizers create ArrayFire arrays
+from host parameter buffers, update them on GPU, then copy the updated
+parameters and optimizer state back to CPU every step.
+
+**Impact:**
+- heavy per-step host-device traffic
+- GPU advantage is reduced on small and medium training workloads
+- optimizer state never stays resident on device
+
+**Suggested fix:**
+1. Keep parameters and optimizer buffers on device across steps.
+2. Only sync to host at explicit boundaries (serialization, logging,
+   Python conversion, UI inspection).
+
+#### 7. Layer forward/backward code repeats the same host-device churn
+
+**Files:**
+- `cyxwiz-backend/src/algorithms/layers/linear.cpp`
+- `cyxwiz-backend/src/algorithms/sequential.cpp`
+- plus similar patterns in activation/loss/layer code
+
+**Issue:** Many layer implementations do GPU math and immediately copy
+results back to CPU tensors. Backward paths do the same for
+gradients, cached activations, and running statistics.
+
+**Examples:**
+- Linear layer forward copies AF output back to CPU result tensor
+- Linear backward copies gradients and grad_input back to CPU
+- BatchNorm rebuilds running stats from GPU results into new CPU
+  tensors
+
+**Impact:**
+- chained modules pay repeated synchronization costs
+- training throughput drops as graphs get deeper
+- cache tensors do not stay where the computation is happening
+
+**Suggested fix:**
+1. Move module caches and intermediate training state to device.
+2. Defer host materialization until needed for serialization or UI.
+3. Audit all hot-path modules for avoidable `host(...)` calls.
+
+#### 8. Core conclusion
+
+This is not a "one leak in one file" situation. The backend compute
+library currently behaves as:
+
+- CPU-owned Tensor model
+- temporary GPU offload for many operations
+- frequent host-device synchronization
+- inaccurate memory accounting
+
+That combination hurts both performance and observability.
+
+#### Recommended fix order
+
+1. Rework `Tensor` residency and synchronization model.
+2. Replace exception-prone raw ArrayFire heap allocations with RAII.
+3. Make memory tracking truthful and route core allocations through it.
+4. Keep optimizer state and layer intermediates on device.
+5. Add targeted profiling / ASan / leak-check runs after the structural
+   cleanup so measurements reflect real behavior.
+
 ### ~~Forward pass crash for image training~~ RESOLVED (22902ef9)
 
 **Severity:** ~~Critical~~ Fixed — image training now works end-to-end.
 
-**Status:** FlattenLayer batch-dimension bug was fixed (d6e203fa) —
-batch is now correctly read from `x.dims(0)` since `TensorToAf` maps
-our row-major `[batch, ...]` shape directly to AF dims. Workarounds
-(pre-flatten in batcher, Flatten skip in executor) were reverted.
-
-**Remaining issue:** Training still crashes at the Forward pass even
-after the Flatten fix. Tested with both 224x224 (OOM candidate) and
-34x34 (14 MB estimated, should fit). The crash happens inside the
-`Forward(batch.data)` call after the Flatten produces its output.
-
-**Root cause (needs investigation):** Likely a tensor layout mismatch
-between `FlattenLayer::Forward` output and `LinearLayer::Forward`
-input. Questions to answer:
-1. What layout does `LinearLayer::Forward` expect? `[batch, features]`
-   or `[features, batch]`? Check the matmul in LinearLayer.
-2. What does `FlattenLayer::Forward` actually produce? After the fix,
-   output is `af::moddims(x, af::dim4(batch, flat_features))` =
-   AF dims `[batch, flat_features]`.
-3. Does the matmul convention match? If LinearLayer does
-   `af::matmul(weights_.T, x)` it expects `[features, batch]`. If
-   `af::matmul(x, weights_)` it expects `[batch, features]`.
-4. The tabular MNIST path works with 2D `[batch, 784]` tensors that
-   never go through FlattenLayer. So the issue is specific to the
-   Flatten→Linear transition with 4D→2D reshaping.
-
-**Debug plan:** Add spdlog::info after FlattenLayer::Forward logging
-the output AF dims. Add spdlog::info at LinearLayer::Forward entry
-logging input AF dims + weight dims. Compare with the working MNIST
-tabular path to find the layout mismatch.
+**Status:** `FlattenLayer::Forward` is now a pure CPU reshape that
+preserves the incoming dtype and row-major `[batch, features]`
+layout. `DenseLayer::Forward` already expects that layout and applies
+`x @ W^T`, so the Flatten→Dense handoff is consistent again. The old
+ArrayFire reshape round-trip that could scramble layout was removed.
 
 **Files:** `cyxwiz-backend/src/algorithms/layer.cpp` (FlattenLayer
-+ LinearLayer Forward methods).
++ DenseLayer Forward methods).
 
 ---
 
@@ -220,9 +402,9 @@ Not started — deferred until the canvas-honest pin pass lands first.
   "Image / Audio follow the same async contract" and the pre-fix
   reality where only text was actually async.
 
-Audio folder load is still synchronous (separate follow-up — same
-pattern, just needs mirroring into the async wrapper with
-`backend == 4`).
+Audio folder load is also async now via `AudioLoader::LaunchAsyncLoad`
+with `AsyncTaskManager` backend tag `4`, so the remaining follow-up
+there is just any future UX polish.
 
 ---
 
@@ -291,12 +473,9 @@ on stack tensors; `DebugExecutor::Run` never touches
 `cyxwiz::DataRegistry`. Unit test asserts registry state unchanged
 after Run.
 
-**Follow-up work not in scope of v1:** dedicated
-`DebugResultsPanel` (per-layer timeline, grad-norm histogram, NaN
-heatmap) — for now results render in the reused compile popup.
-Async execution (move `Run()` off the UI thread) — only needed for
-models where the one-shot forward+backward exceeds ~500ms, which
-the v1 test suite doesn't hit.
+**Still pending:** async execution (move `Run()` off the UI thread) —
+only needed for models where the one-shot forward+backward exceeds
+~500ms, which the v1 test suite doesn't hit.
 
 ---
 
@@ -325,40 +504,38 @@ existing NodeMetadata system if it supports parameter type hints.
 
 ## Async / Threading
 
-### ProcessCompletedCallbacks never called
+### ProcessCompletedCallbacks wired into main render loop
 
-**Severity:** Low — currently unused, no impact.
+**Status:** Resolved 2026-05-18. `MainWindow::Render()` now drains
+`AsyncTaskManager::ProcessCompletedCallbacks()` once per frame before
+rendering the rest of the UI, so queued completion callbacks can fire
+on the main thread.
 
-**Issue:** `AsyncTaskManager::ProcessCompletedCallbacks()` is declared
-and implemented but never wired into the main render loop. Completion
-callbacks queued by RunAsync never fire. The DataInput dialog works
-around this by polling task state directly via `PollAsyncLoadResult`.
+**Files:**
+- `cyxwiz-engine/src/gui/main_window.cpp`
+- `cyxwiz-engine/src/core/async_task_manager.cpp`
 
-**Suggested fix:** Add `AsyncTaskManager::Instance().ProcessCompletedCallbacks()`
-to `MainWindow::Render()` or `Application::Update()`. One line, but
-needs testing to ensure no callback races with ImGui state.
-
-**File:** `cyxwiz-engine/src/core/async_task_manager.h:148`.
+**Note:** `DataInputDialog` still keeps its direct polling path for
+load-result handoff, which is fine. The callback pump is now available
+for other async users that register completion callbacks.
 
 ---
 
 ## Registry / Lifecycle
 
-### Image datasets not cleaned up on node delete
+### Image datasets cleaned up on node delete
 
-**Severity:** Medium — orphan entries leak.
+**Status:** Resolved. `NodeEditor::DeleteNode` and `ClearGraph` now
+call `UnregisterNodeDatasetIfOwned`, which unregisters tabular,
+image, audio, and text datasets by stored `dataset_name`.
 
-**Issue:** `NodeEditor::DeleteNode` and `ClearGraph` call
-`UnregisterNodeDatasetIfOwned` which checks Arrow and Parquet maps
-but NOT the new `image_dataset_entries_` map. Deleting a DataInput
-node that loaded images leaves an orphan entry.
+**Files:**
+- `cyxwiz-engine/src/gui/node_editor_nodes.cpp`
+- `cyxwiz-engine/src/core/data_registry_utils.cpp`
 
-**Suggested fix:** Extend `UnregisterNodeDatasetIfOwned` in
-`node_editor_nodes.cpp` to also call
-`registry.UnregisterImageDataset(name)`.
-
-**File:** `cyxwiz-engine/src/gui/node_editor_nodes.cpp`, the
-`UnregisterNodeDatasetIfOwned` helper.
+**Note:** This matches the async image loader's re-apply cleanup, so
+deleting a DataInput node or clearing the graph no longer leaves
+stale image entries behind.
 
 ---
 
@@ -1112,7 +1289,47 @@ supports backprop.
 
 ---
 
-## GRULayer — Broken AF Forward + Missing CPU Backward (2026-04-17)
+## GRULayer — CPU Forward + CPU BPTT landed 2026-04-18 (smoke test pending) | AF path still TODO
+
+**Status (2026-04-18):** CPU side rewritten end-to-end in
+`cyxwiz-backend/src/algorithms/layer.cpp`. Three changes:
+1. **CPU Forward populates caches.** New row-major layout:
+   - `cached_inputs_[L]`         `[seq, batch, layer_input_size]`
+   - `cached_gates_[L]`          `[seq, batch, 4 * H]` —
+     `[r_post | z_post | n_post | hn_pre]` per (t,b). The 4th slot
+     stores the unmodulated h-side projection feeding `n` so BPTT
+     can correctly split `d_n` into x-side (`d_x_proj_n = dn_pre`)
+     and h-side (`d_hn_pre = dn_pre * r`) parts.
+   - `cached_hidden_states_[L]`  `[seq + 1, batch, H]` (idx 0 = h_0)
+2. **CPU Backward (BPTT) implemented** following the LSTM CPU BPTT
+   recipe but adapted for GRU's asymmetric n-gate. Crucial: maintains
+   *separate* `dgates_x` and `dgates_h` vectors because the n-slot
+   values differ (the legacy AF backward used a single `dgates` for
+   both, AND zeroed the r-slot — two bugs that would have left
+   training broken even if AF Forward worked).
+3. **AF Forward gated `#if 0`.** Mirror of LSTM's pre-revival state.
+   AF path needs the same `TensorToAf3DRowMajor` + slice-write
+   `af::moddims(rhs, dim4(1,batch,hidden))` treatment LSTM got;
+   tracked as a perf follow-up below.
+
+The empty-cache `Backward` guard now returns zeros sized by
+`cached_input_.Shape()` (mirrors LSTM) and warns once instead of
+per-batch.
+
+**Pending verification:** `scripts/rebuild.sh` blocked on missing
+`vcpkg/scripts/buildsystems/vcpkg.cmake` — need either the junction
+to `D:/vcpkg/` or a fresh cmake configure. Once builds, run
+`test_04_sentiment_gru_mini.cyxgraph` for 3 epochs; expect monotonic
+loss + acc climbing above the 7-class random baseline (~14%) into
+the 30-50% range like the LSTM mini.
+
+**TODO once verified:** delete `GRUModule`'s one-shot warning in
+`cyxwiz-backend/src/algorithms/sequential.cpp:297-304` and update
+the `gru_wired_pending_layer_fix.md` memory.
+
+---
+
+### Original triage (2026-04-17) — kept for context
 
 **Severity:** Medium — GRU node is now wired end-to-end (graph
 compiler → `GRUModule` → training_executor case), but the underlying

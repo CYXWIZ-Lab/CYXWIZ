@@ -58,9 +58,7 @@ public:
     template<typename T>
     const T* Data() const { return static_cast<const T*>(Data()); }
 
-    // Device management
-    void ToDevice(Device* device);
-    void ToCPU();
+    // Device metadata
     Device* GetDevice() const { return device_; }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -93,10 +91,6 @@ private:
     Device* device_;
     void* data_;
     bool owns_data_;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    af::array* af_array_;
-#endif
 };
 
 } // namespace cyxwiz

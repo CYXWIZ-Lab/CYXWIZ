@@ -259,6 +259,7 @@ set(ENGINE_SOURCES
     src/gui/panels/model_summary_panel.cpp
     src/gui/panels/architecture_diagram.cpp
     src/gui/panels/lr_finder_panel.cpp
+    src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/data_profiler_panel.cpp
     src/gui/panels/correlation_matrix_panel.cpp
     src/gui/panels/missing_value_panel.cpp

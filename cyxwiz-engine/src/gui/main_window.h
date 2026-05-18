@@ -56,6 +56,7 @@ class DeploymentDialog;
 class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
+class StudioDebuggerPanel;
 class DataProfilerPanel;
 class CorrelationMatrixPanel;
 class MissingValuePanel;
@@ -133,6 +134,7 @@ class PluginManagerPanel;
 class DataStudioPanel;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
+struct StudioDebuggerSnapshot;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -228,6 +230,7 @@ private:
     // Compile the current graph as a dry-run (no training) and show results in a popup
     void CompileGraphAndReport();
     void RenderCompileResultPopup();
+    bool BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session);
 
     // Run Local Debug: gate on Compile, then execute one forward +
     // one backward pass on synthetic data via DebugExecutor. Feeds the
@@ -315,6 +318,7 @@ private:
     std::unique_ptr<cyxwiz::ExportDialog> export_dialog_;
     std::unique_ptr<cyxwiz::ImportDialog> import_dialog_;
     std::unique_ptr<cyxwiz::DeploymentDialog> deployment_dialog_;
+    std::unique_ptr<cyxwiz::StudioDebuggerPanel> studio_debugger_panel_;
 
     // Model Analysis panels (Phase 2)
     std::unique_ptr<cyxwiz::ModelSummaryPanel> model_summary_panel_;

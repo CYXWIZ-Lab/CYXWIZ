@@ -4874,9 +4874,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
     return node;
 }
 
-// Helper: if this node owns a tabular dataset (DataInput / DatasetInput
-// with a non-empty dataset_name parameter), drop it from the registry so
-// the next graph rebuild doesn't see a stale entry under the same name.
+// Helper: if this node owns a dataset (DataInput / DatasetInput with a
+// non-empty dataset_name parameter), drop it from every registry so the
+// next graph rebuild doesn't see a stale entry under the same name.
 // Defined locally because it's only used by DeleteNode and ClearGraph.
 static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
     if (node.type != NodeType::DataInput &&

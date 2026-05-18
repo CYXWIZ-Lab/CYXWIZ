@@ -1,0 +1,630 @@
+# To Fix 2 - CyxWiz Backend Review for Engineering Pickup
+
+This document captures a broader backend-library review of
+`cyxwiz-backend` with emphasis on architecture, API coherence,
+correctness, memory behavior, and performance.
+
+The goal is to give engineers a practical backlog they can pick up in
+priority order.
+
+---
+
+## Executive Summary
+
+The biggest issue in `cyxwiz-backend` is not one isolated bug. It is
+architectural drift:
+
+- overlapping abstractions for the same responsibilities
+- incomplete or misleading public APIs
+- a Tensor model that is still CPU-primary even when GPU paths exist
+- memory accounting that does not represent live usage
+- repeated host-device synchronization across training and linalg paths
+
+The backend contains a lot of working functionality, but it behaves
+more like a set of individually landed subsystems than a single clean
+compute library.
+
+---
+
+## Priority 0: Core Architectural Problems
+
+### 1. Overlapping abstractions for the same job
+
+**Severity:** High
+
+The backend currently has multiple competing abstractions:
+
+- `Layer` / `DenseLayer` / `Conv2DLayer` / etc. in
+  `include/cyxwiz/layer.h`
+- `Module` / `LinearModule` / `SequentialModel` in
+  `include/cyxwiz/sequential.h`
+- activation hierarchy in `include/cyxwiz/activation.h`
+- separate activation implementations in `src/algorithms/activation.cpp`
+  and `src/algorithms/activations/*.cpp`
+
+This causes:
+
+- duplicate implementation paths
+- unclear ownership of training behavior
+- weaker API ergonomics
+- more places for shape/layout bugs to hide
+
+**Observed examples:**
+
+- `DenseLayer` exists in `layer.*`
+- `LinearLayer` exists in `layers/linear.*`
+- `LinearModule` wraps `LinearLayer`
+- `Model` exists as a base class but actual training logic lives in
+  `SequentialModel`
+
+**Recommendation:**
+
+Pick one canonical stack and deprecate the others.
+
+Practical path:
+
+1. Decide whether `Layer` or `Module` is the canonical training unit.
+2. Map every existing model-facing API to that unit.
+3. Freeze new feature work on the non-canonical path.
+4. Migrate call sites incrementally.
+5. Remove duplicate classes only after compatibility is handled.
+
+---
+
+### 2. Two `DataLoader` concepts share the same name
+
+**Severity:** High
+
+There are two distinct `DataLoader` concepts in the same namespace:
+
+- `include/cyxwiz/data_loader.h`
+  - DuckDB-backed file/query loader
+- `include/cyxwiz/dataloader.h`
+  - training batch iterator over datasets
+
+This is a naming collision at the conceptual level.
+
+It causes:
+
+- confusion for maintainers
+- API ambiguity
+- documentation complexity
+- harder binding generation and language interop
+
+**Recommendation:**
+
+Rename one or both classes.
+
+Suggested split:
+
+- `TabularDataLoader` or `DuckDBDataLoader`
+- `BatchDataLoader` or `TrainingDataLoader`
+
+Also update docs and Python bindings to use the new terminology.
+
+---
+
+### 3. Tensor is CPU-primary, not truly device-aware
+
+**Severity:** High
+
+Current Tensor behavior:
+
+- CPU memory is stored in `data_`
+- `GetArray()` creates a fresh ArrayFire array each time
+- `SetFromArray()` copies the device result back to CPU
+- factory helpers create GPU arrays and immediately materialize them on CPU
+
+This means the backend is not keeping tensors resident on device across
+operations.
+
+**Consequences:**
+
+- excessive host->device copies
+- excessive device->host copies
+- poor performance for chained training operations
+- hard ceiling on GPU efficiency
+
+**Recommendation:**
+
+Redesign Tensor around explicit residency:
+
+1. host buffer
+2. device buffer
+3. host dirty flag
+4. device dirty flag
+5. explicit sync boundaries
+
+Target behavior:
+
+- pure device pipelines stay on device
+- host materialization happens only for serialization, UI inspection,
+  Python conversion, or explicit CPU access
+
+---
+
+## Priority 1: Correctness and API Honesty
+
+### 4. MemoryManager is not truthful
+
+**Severity:** High
+
+Current behavior:
+
+- `Allocate()` increments the byte counter
+- `Deallocate()` frees memory but does not decrement the counter
+- hot allocation paths often bypass `MemoryManager` entirely
+
+So:
+
+- `GetAllocatedBytes()` is not current live memory
+- leak investigations using these counters are unreliable
+
+**Recommendation:**
+
+Either:
+
+- implement real size tracking per allocation
+
+or:
+
+- remove or clearly relabel these counters until they are accurate
+
+Also route Tensor core allocations through a tracked allocator if
+tracking remains part of the public surface.
+
+---
+
+### 5. Declared API methods are missing or incomplete
+
+**Severity:** High
+
+Examples:
+
+- `Tensor::ToDevice(Device*)` / `Tensor::ToCPU()` were removed from the public Tensor API
+- C API `cyxwiz_tensor_matmul()` returns "not yet implemented"
+- `engine.h` is effectively empty
+
+This creates a mismatch between:
+
+- header surface
+- backend implementation
+- docs
+- user expectations
+
+**Recommendation:**
+
+For every public API:
+
+1. implement it
+2. remove it
+3. or mark it clearly unsupported/deferred
+
+The backend surface must be honest.
+
+---
+
+### 6. README and public docs overstate backend capabilities
+
+**Severity:** High
+
+The docs present the backend as a coherent high-performance ML compute
+library with GPU acceleration and device transfer semantics.
+
+But the implementation currently has:
+
+- missing `ToDevice` / `ToCPU`
+- incomplete CPU fallback coverage
+- duplicated model abstractions
+- unimplemented C API operations
+
+**Recommendation:**
+
+Audit docs against code.
+
+If the code is not ready to support a claim, the docs should not claim
+it yet.
+
+---
+
+## Priority 2: Memory and Leak Risks
+
+### 7. Tensor GPU operator exception paths can leak heap objects
+
+**Severity:** High
+
+In Tensor arithmetic operators:
+
+- `operator+`
+- `operator-`
+- `operator*`
+- `operator/`
+
+the code allocates `af::array*` with `new` and deletes only on the
+success path.
+
+If an exception is thrown before cleanup, the pointers leak.
+
+**Recommendation:**
+
+Immediate fix:
+
+- replace raw `af::array*` with stack `af::array`
+- or use `std::unique_ptr`
+
+Broader fix:
+
+- remove manual cleanup patterns in Tensor core
+- standardize RAII across ArrayFire interop
+
+---
+
+### 8. `af_array_` cached state is mostly vestigial
+
+**Severity:** Medium
+
+`Tensor` owns an `af_array_` pointer, but `GetArray()` ignores it and
+creates a new array from CPU memory every time.
+
+This means the code is carrying both:
+
+- host ownership
+- partial device ownership
+
+without a clean contract.
+
+**Recommendation:**
+
+Choose one:
+
+- real cached device-backed tensor state
+- or remove cached state until the device model is redesigned
+
+---
+
+## Priority 3: Performance Problems
+
+### 9. Optimizer GPU paths still copy state back every step
+
+**Severity:** High
+
+SGD, Adam, AdamW, RMSprop, AdaGrad, and others create GPU arrays from
+host parameter buffers, perform updates, then copy parameters and
+optimizer state back to CPU every step.
+
+This is expensive and undermines GPU gains.
+
+**Recommendation:**
+
+Keep:
+
+- parameters
+- optimizer moments / buffers
+- intermediate update tensors
+
+resident on device across steps.
+
+Only sync at explicit boundaries.
+
+---
+
+### 10. Layer implementations repeatedly materialize host data
+
+**Severity:** High
+
+Many forward/backward implementations:
+
+- compute on ArrayFire
+- immediately copy outputs back to CPU tensors
+- later re-upload those tensors for the next operation
+
+This is visible in:
+
+- `layers/linear.cpp`
+- `sequential.cpp`
+- parts of `layer.cpp`
+- parts of `loss.cpp`
+- parts of `activation.cpp`
+
+**Recommendation:**
+
+Refactor training hot paths to keep:
+
+- outputs
+- gradients
+- cached activations
+- running stats
+
+on device throughout the step.
+
+---
+
+### 11. Some "GPU helpers" do GPU work only to return CPU-owned tensors
+
+**Severity:** Medium
+
+Examples:
+
+- `Tensor::Zeros`
+- `Tensor::Ones`
+- `Tensor::Random`
+
+These allocate device arrays and immediately copy them back to host.
+
+**Recommendation:**
+
+After Tensor redesign:
+
+- device-backed constructors should stay on device
+- host-backed constructors should build directly on CPU
+
+Do not pay GPU setup cost if the result is immediately host-owned.
+
+---
+
+### 12. CPU fallback coverage is inconsistent
+
+**Severity:** High
+
+The build can run without ArrayFire, but many public operations cannot:
+
+- numerous activation functions
+- many losses
+- many layers
+- partial linalg coverage
+
+In several cases the code throws `"requires ArrayFire"` instead of
+using a real CPU implementation.
+
+**Recommendation:**
+
+Choose one explicit policy:
+
+Policy A:
+- backend supports CPU for all public APIs
+
+Policy B:
+- backend is GPU-first and some APIs are GPU-required
+
+But do not mix both stories implicitly.
+
+---
+
+## Priority 4: Build, Hygiene, and Maintainability
+
+### 13. Large monolithic source files should be split
+
+**Severity:** Medium
+
+Particularly large files:
+
+- `src/algorithms/layer.cpp`
+- `src/algorithms/sequential.cpp`
+- `src/algorithms/linear_algebra.cpp`
+- `src/algorithms/time_series.cpp`
+- `src/algorithms/text_processing.cpp`
+
+**Why this matters:**
+
+- harder code review
+- harder targeted testing
+- more hidden coupling
+- higher merge-conflict risk
+
+**Recommendation:**
+
+Split by domain responsibility.
+
+Example for `layer.cpp`:
+
+- dense / conv / pooling
+- normalization
+- recurrent
+- attention / transformer
+- utility reshape / upsample / pixel shuffle
+
+---
+
+### 14. Repository hygiene issue: stray `device_1.cpp`
+
+**Severity:** Medium
+
+`src/core/device_1.cpp` appears to contain build-command garbage rather
+than valid source.
+
+Even if it is not compiled, it should not remain in the source tree.
+
+**Recommendation:**
+
+- remove it after confirming it is not required
+- add a cleanup pass for accidental build artifacts in tracked files
+
+---
+
+### 15. Empty or placeholder surfaces should be cleaned up
+
+**Severity:** Low to Medium
+
+Examples:
+
+- `engine.h` has no meaningful surface
+- `model.cpp` is effectively placeholder
+
+**Recommendation:**
+
+Either:
+
+- remove these until needed
+
+or:
+
+- define the intended role clearly and implement accordingly
+
+---
+
+## Priority 5: Determinism, Thread Safety, and Global State
+
+### 16. Thread-safety story is weaker than documentation suggests
+
+**Severity:** Medium
+
+Global state exists in several places:
+
+- current active device singleton
+- backend initialization flag
+- default distributed process group
+- global stopword and lexicon caches
+
+This is not inherently wrong, but it means the backend is not simply
+"thread-safe for independent tensors" in any broad sense.
+
+**Recommendation:**
+
+Document which APIs are:
+
+- process-global
+- thread-local
+- instance-local
+
+and which are not safe for concurrent mutation.
+
+---
+
+### 17. Reproducibility is inconsistent
+
+**Severity:** Medium
+
+Different subsystems use different random sources:
+
+- `rand()` in Tensor random generation
+- `mt19937` in some algorithms
+- `random_device` in others
+
+This makes seeded reproducibility inconsistent across the backend.
+
+**Recommendation:**
+
+Adopt one RNG strategy:
+
+- explicit seedable engine
+- consistent API for random state
+- no raw `rand()` in core tensor paths
+
+---
+
+## Priority 6: Distributed Subsystem Maturity
+
+### 18. Distributed training code is promising but still experimental
+
+**Severity:** Medium
+
+Strengths:
+
+- structured process group abstraction
+- CPU and NCCL backends
+- default process group plumbing
+
+Weaknesses:
+
+- NCCL path still contains TODOs in critical areas
+- global singleton process-group model increases coupling
+- robustness needs more stress validation
+
+**Recommendation:**
+
+Treat distributed training as a focused subsystem with its own
+hardening plan:
+
+1. dtype/device validation
+2. proper average-reduction handling
+3. lifecycle and error-path testing
+4. multi-rank stress tests
+
+---
+
+## Suggested Engineering Roadmap
+
+### Phase A - Foundation Cleanup
+
+1. Remove/repair misleading public APIs
+2. Fix MemoryManager honesty
+3. Remove raw ArrayFire heap leaks
+4. Remove stray files and placeholders
+5. Align docs with reality
+
+### Phase B - Canonical Architecture Decision
+
+1. Choose one NN abstraction stack
+2. Rename conflicting `DataLoader` classes
+3. Define the intended long-term `Tensor` contract
+
+### Phase C - Tensor Residency Refactor
+
+1. Add device-backed state
+2. Add host/device dirty flags
+3. Stop rebuilding AF arrays from host each call
+4. Convert hot paths to persistent device execution
+
+### Phase D - Training Performance Pass
+
+1. optimizer state stays on device
+2. layer caches stay on device
+3. minimize `host(...)` calls in forward/backward
+4. validate throughput improvements with profiling
+
+### Phase E - Fallback and API Completion
+
+1. either complete CPU fallback or mark GPU-required APIs
+2. implement missing C API pieces
+3. remove dead/duplicate surfaces
+
+---
+
+## Best First Tasks for Engineers
+
+If picking this up incrementally, start here:
+
+### Task 1
+Replace exception-prone `new af::array` usage in `Tensor` ops with RAII.
+
+### Task 2
+Make `MemoryManager` truthful or remove exposed counters temporarily.
+
+### Task 3
+Write an RFC deciding:
+
+- `Layer` vs `Module`
+- `DataLoader` naming split
+- target Tensor residency model
+
+### Task 4
+Add a profiling harness for:
+
+- Tensor ops
+- optimizer step
+- linear layer forward/backward
+- simple sequential training loop
+
+### Task 5
+Audit README and public headers against actual backend behavior.
+
+---
+
+## Final Note
+
+The backend is already feature-rich, but it needs consolidation more
+than it needs more surface area.
+
+The highest-value engineering work now is:
+
+- reduce abstraction overlap
+- make the API honest
+- make Tensor/device behavior explicit
+- remove unnecessary host-device churn
+
+That work will improve:
+
+- maintainability
+- correctness
+- debuggability
+- training speed

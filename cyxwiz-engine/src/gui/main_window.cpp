@@ -50,6 +50,7 @@
 #include "panels/model_summary_panel.h"
 #include "panels/architecture_diagram.h"
 #include "panels/lr_finder_panel.h"
+#include "panels/studio_debugger_panel.h"
 #include "panels/data_profiler_panel.h"
 #include "panels/correlation_matrix_panel.h"
 #include "panels/missing_value_panel.h"
@@ -124,6 +125,7 @@
 #include "../plugin/plugin_manager.h"
 #include "../plugin/registries/plugin_panel_registry.h"
 #include "tutorial/tutorial_system.h"
+#include "../core/async_task_manager.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
@@ -281,6 +283,7 @@ MainWindow::MainWindow()
     export_dialog_ = std::make_unique<cyxwiz::ExportDialog>();
     import_dialog_ = std::make_unique<cyxwiz::ImportDialog>();
     deployment_dialog_ = std::make_unique<cyxwiz::DeploymentDialog>();
+    studio_debugger_panel_ = std::make_unique<cyxwiz::StudioDebuggerPanel>();
 
     // Model Analysis panels (Phase 2)
     model_summary_panel_ = std::make_unique<cyxwiz::ModelSummaryPanel>();
@@ -492,6 +495,19 @@ MainWindow::MainWindow()
     node_editor_->SetDebugCallback([this]() {
         this->LocalDebugGraphAndReport();
     });
+
+    if (studio_debugger_panel_) {
+        studio_debugger_panel_->SetRunDebugCallback([this]() {
+            cyxwiz::StudioDebuggerSnapshot session;
+            this->BuildStudioDebuggerSession(session);
+            return session;
+        });
+        studio_debugger_panel_->SetFocusNodeCallback([this](int node_id) {
+            if (node_editor_) {
+                node_editor_->FocusNode(node_id);
+            }
+        });
+    }
 
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
@@ -1786,6 +1802,9 @@ MainWindow::MainWindow()
 
     // Install custom dock node handler for Unreal-style tabs
     DockStyle::InstallCustomHandler();
+    auto& dock_style = GetDockStyle();
+    dock_style.SetSidebarPosition(gui::SidebarPosition::Right);
+    dock_style.SetSidebarAutoHide(false);
 
     // Initialize Tutorial System
     auto& tutorial = cyxwiz::TutorialSystem::Instance();
@@ -2229,6 +2248,8 @@ void MainWindow::Render() {
     // Handle global keyboard shortcuts
     HandleGlobalShortcuts();
 
+    cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+
     // Check if we need to connect P2PClient to monitoring panel
     if (!monitoring_job_id_.empty() && job_manager_ && p2p_training_panel_) {
         auto p2p_client = job_manager_->GetP2PClient(monitoring_job_id_);
@@ -2275,6 +2296,7 @@ void MainWindow::Render() {
     if (export_dialog_) export_dialog_->Render();
     if (import_dialog_) import_dialog_->Render();
     if (deployment_dialog_) deployment_dialog_->Render();
+    if (studio_debugger_panel_) studio_debugger_panel_->Render();
 
     // Render Python-created plot windows (cyxwiz_plotting)
     for (const auto& plot_window : cyxwiz::GetPythonPlotWindows()) {
@@ -2618,6 +2640,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     if (script_editor_) {
         dock_style.RegisterPanel("Script Editor", ICON_FA_CODE, script_editor_->GetVisiblePtr());
     }
+    if (studio_debugger_panel_) {
+        dock_style.RegisterPanel("Studio Debugger", ICON_FA_BUG, studio_debugger_panel_->GetVisiblePtr());
+    }
 
     // Side panels
     if (asset_browser_) {
@@ -2698,7 +2723,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
     if (plugin_manager_panel_) {
         dock_style.RegisterPanel("Plugin Manager", ICON_FA_PLUG, plugin_manager_panel_->GetVisiblePtr());
     }
-
     // Command Palette - action button (not a panel toggle)
     if (toolbar_) {
         dock_style.RegisterPanel("Command Palette", ICON_FA_MAGNIFYING_GLASS, nullptr, [this]() {
@@ -2722,6 +2746,7 @@ void MainWindow::SetDefaultPanelVisibility() {
     // They use ImGui window visibility directly. We leave them alone.
     // New-style panels that should be visible:
     if (asset_browser_) asset_browser_->SetVisible(true);
+    if (studio_debugger_panel_) studio_debugger_panel_->SetVisible(false);
 
     // === HIDE ALL OTHER PANELS ===
     // Users can enable these via View menu when needed
@@ -3210,6 +3235,22 @@ void MainWindow::LocalDebugGraphAndReport() {
     compile_result_summary_ = out.str();
     show_compile_result_popup_ = true;
 
+    if (studio_debugger_panel_) {
+        cyxwiz::StudioDebuggerSnapshot session;
+        session.success = result.success;
+        session.has_debug_result = true;
+        session.graph_hash = HashGraphStructure(nodes, links);
+        session.node_count = nodes.size();
+        session.link_count = links.size();
+        session.graph_summary = compile_result_summary_;
+        session.sample_summary = "Synthetic sample 0 (Local Debug)";
+        session.failure_summary = result.failure_summary;
+        session.issues = result.issues;
+        session.debug_result = result;
+        studio_debugger_panel_->SetSession(session);
+        studio_debugger_panel_->Show();
+    }
+
     // Staleness cache: only record the hash when the debug run actually
     // succeeded. A failed run leaves the previous cache in place, so the
     // user can fix the graph, re-run F6, and have the staleness gate
@@ -3220,6 +3261,85 @@ void MainWindow::LocalDebugGraphAndReport() {
         spdlog::info("LocalDebugGraphAndReport: cached debug hash {:#018x}",
                      last_debug_graph_hash_);
     }
+}
+
+bool MainWindow::BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session) {
+    session = cyxwiz::StudioDebuggerSnapshot{};
+
+    if (!node_editor_) {
+        session.failure_summary = "Node editor is not available.";
+        return false;
+    }
+
+    auto nodes = node_editor_->GetNodes();
+    auto links = node_editor_->GetLinks();
+    session.node_count = nodes.size();
+    session.link_count = links.size();
+    session.graph_hash = HashGraphStructure(nodes, links);
+    session.sample_summary = "Synthetic sample 0 (DebugExecutor POC)";
+
+    // Reuse the current compile gate so the debugger only runs against a
+    // graph that is structurally valid enough to execute.
+    BuildCompileResult(nodes, links);
+    session.graph_summary = compile_result_summary_;
+    session.issues = compile_result_issues_;
+    if (!compile_result_success_) {
+        session.success = false;
+        session.failure_summary = "Compile gate failed.";
+        return false;
+    }
+
+    cyxwiz::TrainingConfiguration config;
+    try {
+        cyxwiz::GraphCompiler compiler;
+        config = compiler.Compile(nodes, links);
+    } catch (const std::exception& e) {
+        session.failure_summary = std::string("Recompile threw: ") + e.what();
+        session.success = false;
+        session.issues.push_back({cyxwiz::IssueLevel::Error, -1, "", session.failure_summary});
+        return false;
+    }
+
+    try {
+        cyxwiz::DebugExecutor exe(std::move(config));
+        session.debug_result = exe.Run();
+        session.has_debug_result = true;
+        session.success = session.debug_result.success;
+        session.failure_summary = session.debug_result.failure_summary;
+
+        if (!session.debug_result.issues.empty()) {
+            session.issues = session.debug_result.issues;
+        }
+
+        std::ostringstream out;
+        out << session.graph_summary;
+        out << "\nDebugger:\n";
+        const char* stage_name = "Unknown";
+        switch (session.debug_result.reached) {
+            case cyxwiz::DebugStage::NotRun:        stage_name = "NotRun"; break;
+            case cyxwiz::DebugStage::BuildModel:    stage_name = "BuildModel"; break;
+            case cyxwiz::DebugStage::Forward:       stage_name = "Forward"; break;
+            case cyxwiz::DebugStage::Loss:          stage_name = "Loss"; break;
+            case cyxwiz::DebugStage::Backward:      stage_name = "Backward"; break;
+            case cyxwiz::DebugStage::OptimizerStep: stage_name = "OptimizerStep"; break;
+            case cyxwiz::DebugStage::Complete:      stage_name = "Complete"; break;
+        }
+        out << "  Stage: " << stage_name << "\n";
+        out << "  Forward time: " << session.debug_result.forward_total_ms << " ms\n";
+        out << "  Backward time: " << session.debug_result.backward_total_ms << " ms\n";
+        out << "  Loss: " << session.debug_result.loss_value
+            << (session.debug_result.loss_finite ? "" : " (NON-FINITE)") << "\n";
+        out << "  Params with grad: " << session.debug_result.params_with_grad << "\n";
+        out << "  Params missing: " << session.debug_result.params_missing_grad << "\n";
+        session.graph_summary = out.str();
+    } catch (const std::exception& e) {
+        session.failure_summary = std::string("Debug run threw: ") + e.what();
+        session.success = false;
+        session.issues.push_back({cyxwiz::IssueLevel::Error, -1, "", session.failure_summary});
+        return false;
+    }
+
+    return session.success;
 }
 
 void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,

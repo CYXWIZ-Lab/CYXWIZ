@@ -309,10 +309,9 @@ Tensor sum = t1 + t2;
 Tensor prod = t1 * t2;
 Tensor reshaped = t1.Reshape({100, 28, 28});
 
-// GPU transfer
+// Device metadata is tracked separately from Tensor storage.
 Device* gpu = new Device(DeviceType::CUDA, 0);
-t1.ToDevice(gpu);
-t1.ToCPU();
+std::cout << "Device type: " << static_cast<int>(gpu->GetType()) << "\n";
 ```
 
 #### Device
@@ -453,7 +452,7 @@ model.UnfreezeAll();       // Unfreeze all
 │  │      b) Load data onto GPU                                         │  │
 │  │         Device gpu(DeviceType::CUDA, 0);                           │  │
 │  │         gpu.SetActive();                                           │  │
-│  │         tensor.ToDevice(&gpu);                                     │  │
+│  │         // Tensor stays CPU-owned; device state is managed elsewhere. │  │
 │  │                                                                    │  │
 │  │      c) Execute training loop                                      │  │
 │  │         for epoch in range(epochs):                                │  │

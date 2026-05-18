@@ -837,6 +837,10 @@ public:
     using OpenCustomNodeEditorCallback = std::function<void()>;
     void SetOpenCustomNodeEditorCallback(OpenCustomNodeEditorCallback callback) { open_custom_node_editor_callback_ = callback; }
 
+    // Open Studio Debugger callback - opens the debugger panel from the Studio toolbar
+    using OpenStudioDebuggerCallback = std::function<void()>;
+    void SetOpenStudioDebuggerCallback(OpenStudioDebuggerCallback callback) { open_studio_debugger_callback_ = callback; }
+
     // Check if graph is ready for training
     bool IsGraphValid() const;
 
@@ -998,6 +1002,9 @@ public:
     void ClearValidationState();
     NodePinState GetNodePinState(int node_id) const;
     bool HasValidationState() const { return !node_pin_state_.empty(); }
+
+    // Select a node in the canvas and frame it into view.
+    void FocusNode(int node_id);
 
 private:
     void ShowToolbar();
@@ -1226,6 +1233,13 @@ private:
 
     // Open Custom Node Editor callback (opens CustomNodeEditorPanel)
     OpenCustomNodeEditorCallback open_custom_node_editor_callback_;
+
+    // Open Studio Debugger callback (opens StudioDebuggerPanel)
+    OpenStudioDebuggerCallback open_studio_debugger_callback_;
+
+    // Deferred focus request so sidebar actions never touch ImNodes outside
+    // the live editor render scope.
+    int pending_focus_node_id_ = -1;
 
     // Training animation state
     bool is_training_ = false;
