@@ -262,12 +262,12 @@ void TestExecutor::Test(
 
     // Apply preprocessing settings
     if (config_.preprocessing.has_normalization) {
-        test_batcher.SetNormalization(config_.preprocessing.norm_mean,
-                                       config_.preprocessing.norm_std);
+        test_batcher.SetLegacyNormalization(config_.preprocessing.norm_mean,
+                                            config_.preprocessing.norm_std);
     }
 
     if (config_.preprocessing.has_onehot) {
-        test_batcher.SetOneHotEncoding(config_.preprocessing.num_classes);
+        test_batcher.SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
     }
 
     // Flatten input for MLP

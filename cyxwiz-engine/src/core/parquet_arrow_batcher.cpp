@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <numeric>
+#include <thread>
 
 namespace cyxwiz {
 
@@ -20,12 +21,14 @@ ParquetArrowBatcher::ParquetArrowBatcher(
     size_t batch_size,
     bool shuffle,
     float train_split,
-    bool is_training)
+    bool is_training,
+    int num_workers)
     : dataset_(std::move(dataset)),
       label_column_(label_column),
       batch_size_(batch_size),
       shuffle_(shuffle),
       is_training_(is_training),
+      num_workers_(std::max(0, num_workers)),
       train_split_(train_split),
       rng_(std::random_device{}()) {
 
@@ -44,12 +47,13 @@ ParquetArrowBatcher::ParquetArrowBatcher(
     }
 
     spdlog::info("ParquetArrowBatcher: {} ({} row groups assigned, {} samples, "
-                 "{} features, batch_size={}, label_col='{}')",
+                 "{} features, batch_size={}, num_workers={}, label_col='{}')",
                  is_training_ ? "train" : "val",
                  assigned_row_groups_.size(),
                  num_samples_,
                  num_features_,
                  batch_size_,
+                 num_workers_,
                  label_column_);
 
     Reset();
@@ -259,7 +263,8 @@ Batch ParquetArrowBatcher::GetNextBatch() {
         // if a column turns out to be chunked.
         const int num_cols_in_table = current_table_->num_columns();
 
-        for (size_t feat_idx = 0; feat_idx < feature_cols_.size(); ++feat_idx) {
+        auto process_feature_range = [&](size_t feat_begin, size_t feat_end) {
+        for (size_t feat_idx = feat_begin; feat_idx < feat_end; ++feat_idx) {
             const int col_idx = feature_cols_[feat_idx];
             if (col_idx < 0 || col_idx >= num_cols_in_table) continue;
 
@@ -372,6 +377,27 @@ Batch ParquetArrowBatcher::GetNextBatch() {
             // Multi-chunk fallback omitted in first pass - row-group tables
             // from Parquet are typically single-chunked. If we ever see a
             // chunked column the above branch simply leaves zeros and logs.
+        }
+        };
+
+        if (num_workers_ > 1 && feature_cols_.size() > 1) {
+            size_t worker_count = std::min(static_cast<size_t>(num_workers_), feature_cols_.size());
+            size_t chunk_size = (feature_cols_.size() + worker_count - 1) / worker_count;
+            std::vector<std::thread> workers;
+            workers.reserve(worker_count);
+
+            for (size_t worker = 0; worker < worker_count; ++worker) {
+                size_t begin = worker * chunk_size;
+                size_t end = std::min(feature_cols_.size(), begin + chunk_size);
+                if (begin >= end) break;
+                workers.emplace_back(process_feature_range, begin, end);
+            }
+
+            for (auto& worker : workers) {
+                worker.join();
+            }
+        } else {
+            process_feature_range(0, feature_cols_.size());
         }
 
         // Extract labels for the same rows

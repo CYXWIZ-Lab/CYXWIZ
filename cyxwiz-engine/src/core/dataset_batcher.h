@@ -117,7 +117,8 @@ public:
         size_t batch_size,
         DatasetSplit split = DatasetSplit::Train,
         bool shuffle = true,
-        bool drop_last = false
+        bool drop_last = false,
+        int num_workers = 0
     );
 
     /**
@@ -162,6 +163,12 @@ public:
 
     [[deprecated("Use SetPreprocessingConfig() with the new preprocessing pipeline instead")]]
     void SetOneHotEncoding(size_t num_classes);
+
+    // Legacy runtime knobs used by the current training/test paths.
+    // These avoid self-triggering the public deprecation warning while
+    // keeping SetNormalization/SetOneHotEncoding available for old callers.
+    void SetLegacyNormalization(float mean, float std);
+    void SetLegacyOneHotEncoding(size_t num_classes);
 
     void SetFlatten(bool flatten) { flatten_ = flatten; }
 
@@ -221,6 +228,7 @@ private:
     DatasetSplit split_;
     bool shuffle_;
     bool drop_last_;
+    int num_workers_ = 0;
 
     std::vector<size_t> indices_;     // Sample indices for current split
     size_t current_index_ = 0;        // Current position in indices_
@@ -334,7 +342,8 @@ public:
         // partition_value: 0=train, 1=val, 2=test. Legacy callers omit
         // these args and keep chronological first-N% slicing unchanged.
         const std::string& partition_column = "",
-        int partition_value = 0
+        int partition_value = 0,
+        int num_workers = 0
     );
 
     // IBatcher interface
@@ -364,6 +373,7 @@ private:
     size_t batch_size_;
     bool shuffle_;
     bool is_training_;
+    int num_workers_ = 0;
     std::string partition_column_;   // Phase 4: time-series partition col name, "" = legacy slicing
     int partition_value_ = 0;        // which partition this batcher iterates (0=train, 1=val, 2=test)
 

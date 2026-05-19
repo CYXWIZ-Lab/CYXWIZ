@@ -3434,7 +3434,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
 
         if (config.num_workers > 0) {
             out << "                 num_workers=" << config.num_workers
-                << " (requested - not yet implemented)\n";
+                << " (forwarded to training batchers; prefetch still TODO)\n";
         }
 
         out << "\n";

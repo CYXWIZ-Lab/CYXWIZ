@@ -2873,6 +2873,16 @@ void DataInputDialog::RenderTextPreview() {
     ImGui::Text("%zu columns, %zu rows shown", preview_columns_.size(), preview_data_.size());
     ImGui::Spacing();
 
+    if (col_exists(label_col_str)) {
+        if (label_distribution_column_ != label_col_str) {
+            UpdateTextLabelDistribution();
+        }
+        RenderTextLabelDistribution();
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
+
     // Column table (same structure as RenderTabularPreview).
     if (ImGui::BeginTable("TextPreview", static_cast<int>(preview_columns_.size()),
         ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
@@ -2906,6 +2916,9 @@ void DataInputDialog::LoadPreview() {
     preview_error_.clear();
     preview_columns_.clear();
     preview_data_.clear();
+    label_distribution_.clear();
+    label_distribution_column_.clear();
+    label_distribution_total_ = 0;
 
     // Tabular and Text both read the first N rows of a CSV/TSV/JSON file
     // through LoadColumnList. Text category uses the same column table for
@@ -2920,6 +2933,82 @@ void DataInputDialog::LoadPreview() {
 
     preview_loaded_ = true;
     UpdateRAMEstimate();
+}
+
+void DataInputDialog::UpdateTextLabelDistribution() {
+    label_distribution_.clear();
+    label_distribution_column_.clear();
+    label_distribution_total_ = 0;
+
+    std::string label_col(text_label_column_);
+    if (label_col.empty() || preview_columns_.empty() || preview_data_.empty()) {
+        return;
+    }
+
+    int label_idx = -1;
+    for (int i = 0; i < static_cast<int>(preview_columns_.size()); ++i) {
+        if (preview_columns_[i] == label_col) {
+            label_idx = i;
+            break;
+        }
+    }
+    if (label_idx < 0) {
+        return;
+    }
+
+    std::map<std::string, size_t> counts;
+    for (const auto& row : preview_data_) {
+        if (label_idx >= static_cast<int>(row.size())) continue;
+        std::string value = row[label_idx];
+        if (value.empty()) value = "(empty)";
+        counts[value]++;
+        label_distribution_total_++;
+    }
+
+    label_distribution_.assign(counts.begin(), counts.end());
+    std::sort(label_distribution_.begin(), label_distribution_.end(),
+              [](const auto& a, const auto& b) {
+                  if (a.second != b.second) return a.second > b.second;
+                  return a.first < b.first;
+              });
+    label_distribution_column_ = label_col;
+}
+
+void DataInputDialog::RenderTextLabelDistribution() {
+    if (label_distribution_.empty() || label_distribution_total_ == 0) {
+        ImGui::TextDisabled("No label distribution available for preview rows.");
+        return;
+    }
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+    ImGui::TextColored(accent, "Class distribution");
+    ImGui::Spacing();
+    ImGui::Text("%zu classes in %zu preview rows",
+                label_distribution_.size(), label_distribution_total_);
+
+    size_t max_count = 1;
+    for (const auto& [_, count] : label_distribution_) {
+        max_count = std::max(max_count, count);
+    }
+
+    const size_t max_rows = std::min<size_t>(label_distribution_.size(), 8);
+    for (size_t i = 0; i < max_rows; ++i) {
+        const auto& [label, count] = label_distribution_[i];
+        float fraction = static_cast<float>(count) / static_cast<float>(max_count);
+        float pct = 100.0f * static_cast<float>(count) /
+                    static_cast<float>(label_distribution_total_);
+
+        ImGui::TextUnformatted(label.c_str());
+        ImGui::SameLine(150.0f);
+        ImGui::ProgressBar(fraction, ImVec2(-70.0f, 0.0f), "");
+        ImGui::SameLine();
+        ImGui::Text("%zu (%.1f%%)", count, pct);
+    }
+
+    if (label_distribution_.size() > max_rows) {
+        ImGui::TextDisabled("+ %zu more classes", label_distribution_.size() - max_rows);
+    }
 }
 
 void DataInputDialog::LoadColumnList() {
@@ -2970,6 +3059,8 @@ void DataInputDialog::LoadColumnList() {
         }
         line_count++;
     }
+
+    UpdateTextLabelDistribution();
 }
 
 void DataInputDialog::UpdateRAMEstimate() {
@@ -3365,37 +3456,37 @@ void DataInputDialog::ComputeDataProfile() {
                     for (int chunk_idx = 0; chunk_idx < column->num_chunks(); chunk_idx++) {
                         auto chunk = column->chunk(chunk_idx);
                         // Handle all numeric types
-                        if (auto arr = std::dynamic_pointer_cast<arrow::DoubleArray>(chunk)) {
-                            for (int64_t i = 0; i < arr->length(); i++) {
-                                if (!arr->IsNull(i)) process_value(arr->Value(i));
+                        if (auto double_arr = std::dynamic_pointer_cast<arrow::DoubleArray>(chunk)) {
+                            for (int64_t i = 0; i < double_arr->length(); i++) {
+                                if (!double_arr->IsNull(i)) process_value(double_arr->Value(i));
                             }
-                        } else if (auto arr = std::dynamic_pointer_cast<arrow::FloatArray>(chunk)) {
-                            for (int64_t i = 0; i < arr->length(); i++) {
-                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                        } else if (auto float_arr = std::dynamic_pointer_cast<arrow::FloatArray>(chunk)) {
+                            for (int64_t i = 0; i < float_arr->length(); i++) {
+                                if (!float_arr->IsNull(i)) process_value(static_cast<double>(float_arr->Value(i)));
                             }
-                        } else if (auto arr = std::dynamic_pointer_cast<arrow::Int64Array>(chunk)) {
-                            for (int64_t i = 0; i < arr->length(); i++) {
-                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                        } else if (auto int64_arr = std::dynamic_pointer_cast<arrow::Int64Array>(chunk)) {
+                            for (int64_t i = 0; i < int64_arr->length(); i++) {
+                                if (!int64_arr->IsNull(i)) process_value(static_cast<double>(int64_arr->Value(i)));
                             }
-                        } else if (auto arr = std::dynamic_pointer_cast<arrow::Int32Array>(chunk)) {
-                            for (int64_t i = 0; i < arr->length(); i++) {
-                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                        } else if (auto int32_arr = std::dynamic_pointer_cast<arrow::Int32Array>(chunk)) {
+                            for (int64_t i = 0; i < int32_arr->length(); i++) {
+                                if (!int32_arr->IsNull(i)) process_value(static_cast<double>(int32_arr->Value(i)));
                             }
-                        } else if (auto arr = std::dynamic_pointer_cast<arrow::Int16Array>(chunk)) {
-                            for (int64_t i = 0; i < arr->length(); i++) {
-                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                        } else if (auto int16_arr = std::dynamic_pointer_cast<arrow::Int16Array>(chunk)) {
+                            for (int64_t i = 0; i < int16_arr->length(); i++) {
+                                if (!int16_arr->IsNull(i)) process_value(static_cast<double>(int16_arr->Value(i)));
                             }
-                        } else if (auto arr = std::dynamic_pointer_cast<arrow::Int8Array>(chunk)) {
-                            for (int64_t i = 0; i < arr->length(); i++) {
-                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                        } else if (auto int8_arr = std::dynamic_pointer_cast<arrow::Int8Array>(chunk)) {
+                            for (int64_t i = 0; i < int8_arr->length(); i++) {
+                                if (!int8_arr->IsNull(i)) process_value(static_cast<double>(int8_arr->Value(i)));
                             }
-                        } else if (auto arr = std::dynamic_pointer_cast<arrow::UInt64Array>(chunk)) {
-                            for (int64_t i = 0; i < arr->length(); i++) {
-                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                        } else if (auto uint64_arr = std::dynamic_pointer_cast<arrow::UInt64Array>(chunk)) {
+                            for (int64_t i = 0; i < uint64_arr->length(); i++) {
+                                if (!uint64_arr->IsNull(i)) process_value(static_cast<double>(uint64_arr->Value(i)));
                             }
-                        } else if (auto arr = std::dynamic_pointer_cast<arrow::UInt32Array>(chunk)) {
-                            for (int64_t i = 0; i < arr->length(); i++) {
-                                if (!arr->IsNull(i)) process_value(static_cast<double>(arr->Value(i)));
+                        } else if (auto uint32_arr = std::dynamic_pointer_cast<arrow::UInt32Array>(chunk)) {
+                            for (int64_t i = 0; i < uint32_arr->length(); i++) {
+                                if (!uint32_arr->IsNull(i)) process_value(static_cast<double>(uint32_arr->Value(i)));
                             }
                         }
                     }
@@ -3701,7 +3792,7 @@ void DataLoaderDialog::RenderContent() {
     }
     if (num_workers_ > 0) {
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                           "  Honored by text batch loading; other batchers may still ignore it.");
+                           "  Honored by training batchers; prefetching is still a separate future optimization.");
     } else {
         ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
     }

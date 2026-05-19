@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <thread>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -11,8 +13,10 @@ AudioDatasetBatcher::AudioDatasetBatcher(
     const AudioPreprocessingConfig& preprocess_config,
     int batch_size,
     float train_split,
-    bool shuffle)
-    : batch_size_(batch_size), shuffle_(shuffle), rng_(42)
+    bool shuffle,
+    int num_workers)
+    : batch_size_(batch_size), shuffle_(shuffle),
+      num_workers_(std::max(0, num_workers)), rng_(42)
 {
     // Build the AudioDatasetConfig. Start from the entry's dialog-baked
     // defaults, then let graph preprocessing nodes override them. The
@@ -145,9 +149,9 @@ AudioDatasetBatcher::AudioDatasetBatcher(
 
     Reset();
     spdlog::info("AudioDatasetBatcher: {} train / {} val samples, "
-                 "{} classes, feature shape [{} x {}], batch_size={}",
+                 "{} classes, feature shape [{} x {}], batch_size={}, num_workers={}",
                  train_indices_.size(), val_indices_.size(), num_classes_,
-                 feature_rows_, feature_cols_, batch_size_);
+                 feature_rows_, feature_cols_, batch_size_, num_workers_);
 }
 
 Batch AudioDatasetBatcher::GetNextBatch() {
@@ -171,9 +175,37 @@ Batch AudioDatasetBatcher::GetNextBatch() {
         batch_labels.reserve(actual_size);
     }
 
+    std::vector<std::pair<std::vector<float>, int>> samples(actual_size);
+
+    auto load_range = [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            size_t idx = epoch_order_[current_idx_ + i];
+            samples[i] = dataset_->GetItem(idx);
+        }
+    };
+
+    if (num_workers_ > 1 && actual_size > 1) {
+        size_t worker_count = std::min(static_cast<size_t>(num_workers_), actual_size);
+        size_t chunk_size = (actual_size + worker_count - 1) / worker_count;
+        std::vector<std::thread> workers;
+        workers.reserve(worker_count);
+
+        for (size_t worker = 0; worker < worker_count; ++worker) {
+            size_t begin = worker * chunk_size;
+            size_t end = std::min(actual_size, begin + chunk_size);
+            if (begin >= end) break;
+            workers.emplace_back(load_range, begin, end);
+        }
+
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    } else {
+        load_range(0, actual_size);
+    }
+
     for (size_t i = 0; i < actual_size; ++i) {
-        size_t idx = epoch_order_[current_idx_ + i];
-        auto [features, label] = dataset_->GetItem(idx);
+        auto& [features, label] = samples[i];
 
         if (features.size() != sample_dim) {
             // Bad sample (decode/extract failed): zero-fill so the batch

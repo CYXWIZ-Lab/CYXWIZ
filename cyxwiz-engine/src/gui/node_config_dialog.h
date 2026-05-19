@@ -419,6 +419,9 @@ private:
     std::vector<std::vector<std::string>> preview_data_;
     std::vector<ImTextureID> preview_image_textures_;
     std::vector<std::string> preview_image_labels_;
+    std::vector<std::pair<std::string, size_t>> label_distribution_;
+    std::string label_distribution_column_;
+    size_t label_distribution_total_ = 0;
     bool preview_loaded_ = false;
     std::string preview_error_;
     std::string status_message_;
@@ -464,6 +467,8 @@ private:
     DataLoadState data_load_state_ = DataLoadState::NotLoaded;
 
     // Helper methods
+    void UpdateTextLabelDistribution();
+    void RenderTextLabelDistribution();
     void RenderDataProfilingTab();
     void ComputeDataProfile();
     void UnloadDataset();

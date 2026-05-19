@@ -40,7 +40,8 @@ public:
                         const AudioPreprocessingConfig& preprocess_config,
                         int batch_size,
                         float train_split = 0.8f,
-                        bool shuffle = true);
+                        bool shuffle = true,
+                        int num_workers = 0);
 
     // IBatcher interface
     Batch GetNextBatch() override;
@@ -64,6 +65,7 @@ private:
 
     int batch_size_;
     bool shuffle_;
+    int num_workers_ = 0;
     bool flatten_ = true;   // default flatten — most audio classifiers use Dense head
 
     int feature_rows_ = 0;  // n_fft/2+1, n_mels, or n_mfcc

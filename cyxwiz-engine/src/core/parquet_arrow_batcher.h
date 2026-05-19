@@ -53,7 +53,8 @@ public:
                         size_t batch_size,
                         bool shuffle = true,
                         float train_split = 0.8f,
-                        bool is_training = true);
+                        bool is_training = true,
+                        int num_workers = 0);
 
     // IBatcher interface
     Batch GetNextBatch() override;
@@ -74,6 +75,7 @@ private:
     size_t batch_size_;
     bool shuffle_;
     bool is_training_;
+    int num_workers_ = 0;
     float train_split_;
 
     // Column layout (populated by InitializeColumns at construction)

@@ -255,7 +255,7 @@ bool TrainingManager::StartTrainingImage(
     // extracted from the graph's Resize / Normalize / Augmentation nodes.
     auto batcher = std::make_unique<ImageDatasetBatcher>(
         image_entry, config.image_preprocessing,
-        batch_size, config.train_ratio, config.shuffle);
+        batch_size, config.train_ratio, config.shuffle, config.num_workers);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Image dataset has 0 samples");
@@ -271,8 +271,8 @@ bool TrainingManager::StartTrainingImage(
     int ch = config.image_preprocessing.convert_to_grayscale ? 1 : 3;
     config.input_size = static_cast<size_t>(tw * th * ch);
 
-    spdlog::info("TrainingManager: Image dataset {} samples, input_size={} ({}x{}x{})",
-                 batcher->GetNumSamples(), config.input_size, tw, th, ch);
+    spdlog::info("TrainingManager: Image dataset {} samples, input_size={} ({}x{}x{}), num_workers={}",
+                 batcher->GetNumSamples(), config.input_size, tw, th, ch, config.num_workers);
 
     // Set up normalization / one-hot from the compiled graph config
     if (config.preprocessing.has_normalization) {
@@ -314,7 +314,7 @@ bool TrainingManager::StartTrainingAudio(
     auto batcher = std::make_unique<AudioDatasetBatcher>(
         audio_entry,
         config.audio_preprocessing,
-        batch_size, config.train_ratio, config.shuffle);
+        batch_size, config.train_ratio, config.shuffle, config.num_workers);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Audio dataset has 0 samples");
@@ -331,9 +331,9 @@ bool TrainingManager::StartTrainingAudio(
         static_cast<size_t>(batcher->GetFeatureCols())
     };
 
-    spdlog::info("TrainingManager: Audio dataset {} samples, input_size={} ({}x{})",
+    spdlog::info("TrainingManager: Audio dataset {} samples, input_size={} ({}x{}), num_workers={}",
                  batcher->GetNumSamples(), config.input_size,
-                 batcher->GetFeatureRows(), batcher->GetFeatureCols());
+                 batcher->GetFeatureRows(), batcher->GetFeatureCols(), config.num_workers);
 
     // Mirror image path: hand normalization / one-hot through to the batcher.
     if (config.preprocessing.has_normalization) {

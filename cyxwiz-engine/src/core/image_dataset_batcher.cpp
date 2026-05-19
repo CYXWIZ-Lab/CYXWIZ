@@ -2,6 +2,8 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <numeric>
+#include <thread>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -10,8 +12,10 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     const ImagePreprocessingConfig& preprocess_config,
     int batch_size,
     float train_split,
-    bool shuffle)
-    : batch_size_(batch_size), shuffle_(shuffle), rng_(42)
+    bool shuffle,
+    int num_workers)
+    : batch_size_(batch_size), shuffle_(shuffle),
+      num_workers_(std::max(0, num_workers)), rng_(42)
 {
     // Extract target dimensions from the Resize config. If no Resize node
     // was in the graph, fall back to 224x224 which is the most common
@@ -80,8 +84,8 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     }
 
     Reset();
-    spdlog::info("ImageDatasetBatcher: {} train / {} val samples, {} classes, batch_size={}",
-                 train_indices_.size(), val_indices_.size(), num_classes_, batch_size_);
+    spdlog::info("ImageDatasetBatcher: {} train / {} val samples, {} classes, batch_size={}, num_workers={}",
+                 train_indices_.size(), val_indices_.size(), num_classes_, batch_size_, num_workers_);
 }
 
 Batch ImageDatasetBatcher::GetNextBatch() {
@@ -106,9 +110,37 @@ Batch ImageDatasetBatcher::GetNextBatch() {
         batch_labels.reserve(actual_size);
     }
 
+    std::vector<std::pair<std::vector<float>, int>> samples(actual_size);
+
+    auto load_range = [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            size_t idx = epoch_order_[current_idx_ + i];
+            samples[i] = dataset_->GetItem(idx);
+        }
+    };
+
+    if (num_workers_ > 1 && actual_size > 1) {
+        size_t worker_count = std::min(static_cast<size_t>(num_workers_), actual_size);
+        size_t chunk_size = (actual_size + worker_count - 1) / worker_count;
+        std::vector<std::thread> workers;
+        workers.reserve(worker_count);
+
+        for (size_t worker = 0; worker < worker_count; ++worker) {
+            size_t begin = worker * chunk_size;
+            size_t end = std::min(actual_size, begin + chunk_size);
+            if (begin >= end) break;
+            workers.emplace_back(load_range, begin, end);
+        }
+
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    } else {
+        load_range(0, actual_size);
+    }
+
     for (size_t i = 0; i < actual_size; ++i) {
-        size_t idx = epoch_order_[current_idx_ + i];
-        auto [pixels, label] = dataset_->GetItem(idx);
+        auto& [pixels, label] = samples[i];
 
         if (pixels.empty()) {
             // Fill with zeros on bad samples

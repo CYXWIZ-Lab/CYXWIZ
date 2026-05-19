@@ -658,10 +658,10 @@ acts on them. When option (b) lands, wire these through:
 - `seed` (default 42) — RNG seed for shuffle order. Currently the
   batcher seeds itself; should accept this from config so two runs
   with the same seed produce the same epoch order.
-- `num_workers` (default 4) — already has a "not yet implemented"
-  warning. Needs a worker pool in the batcher for parallel sample
-  loading. Critical for image/audio pipelines where decode is the
-  bottleneck.
+- `num_workers` (default 4) — now implemented;
+  implemented across training batchers for parallel sample loading /
+  feature-column materialization. Remaining improvement is a shared
+  prefetch layer.
 - `prefetch_factor` (default 2) — batches to prefetch per worker.
   Pairs with num_workers; meaningless without it.
 - `pin_memory` (default false) — allocate batches in pinned host
@@ -915,23 +915,33 @@ committed to the `Nodes_Implementation` branch. Relevant commits:
 Kept in this tofix strictly as a landed-commit pointer so the
 history of how Phase 3 reached git is traceable.
 
-### num_workers=4 not implemented — DataLoader runs single-threaded
+### num_workers support is partial
 
-**Severity:** Medium — slows training on multi-core hosts.
+**Status:** Mostly resolved. `GraphCompiler` now forwards
+`num_workers` to `TrainingConfiguration`. `DatasetBatcher`,
+`TextDatasetBatcher`, `ImageDatasetBatcher`, and `AudioDatasetBatcher`
+honor it by loading samples across worker threads. `ArrowDatasetBatcher`
+and `ParquetArrowBatcher` honor it by parallelizing feature-column
+materialization for wide tabular batches.
 
-**Issue:** Every compile logs
-`GraphCompiler: num_workers=4 requested but not yet implemented -
-batching runs single-threaded`. The node param is plumbed through
-to `TrainingConfiguration` but no batcher honors it.
+**Remaining issue:** current implementations parallelize within one
+batch rather than prefetching the next batch. A shared prefetching
+layer would still be cleaner than per-batcher worker splits.
 
-**Fix:** Implement a pool in the `IBatcher` base class or in
-`TextDatasetBatcher` / `ArrowDatasetBatcher` to prefetch N batches
-in parallel. Non-trivial because batcher state (shuffle, epoch
-progress) is currently single-threaded.
+**Suggested fix:** Add a shared prefetching layer to `IBatcher` so
+all batchers can overlap sample loading with model execution.
+Non-trivial because batcher state (shuffle, epoch progress, phase)
+is currently single-threaded.
 
-**Files:** `cyxwiz-engine/src/core/text_dataset_batcher.cpp` (when
-committed), `cyxwiz-engine/src/core/graph_compiler.cpp:238` (warning
-emit site).
+**Files:**
+- `cyxwiz-engine/src/core/text_dataset_batcher.cpp`
+- `cyxwiz-engine/src/core/image_dataset_batcher.cpp`
+- `cyxwiz-engine/src/core/audio_dataset_batcher.cpp`
+- `cyxwiz-engine/src/core/dataset_batcher.cpp`
+- `cyxwiz-engine/src/core/parquet_arrow_batcher.cpp`
+- `cyxwiz-engine/src/core/graph_compiler.cpp`
+- `cyxwiz-engine/src/gui/data_input_dialog.cpp`
+- `cyxwiz-engine/src/gui/main_window.cpp`
 
 ### Training logs silent mid-epoch — no per-batch feedback
 
@@ -977,9 +987,15 @@ Embedding → TransformerEncoder → Dense through to convergence.
 Transformer variants, run each to convergence, fix whatever breaks.
 Medium-size task — LSTM-style investigation + fixes could reoccur.
 
-### Text preview doesn't show class distribution
+### ~~Text preview doesn't show class distribution~~ RESOLVED 2026-05-18
 
 **Severity:** Low — nice-to-have.
+
+**Status:** `RenderTextPreview` now shows a compact class distribution
+summary above the preview table when the mapped label column exists.
+`LoadColumnList()` computes per-label counts from the preview rows,
+and the renderer refreshes the distribution if the user edits the
+label-column mapping after loading the preview.
 
 **Issue:** `RenderTextPreview` (added in 7b7bd34b) shows a CSV head
 table with mapped text/label columns highlighted green or red. It

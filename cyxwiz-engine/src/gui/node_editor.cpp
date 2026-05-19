@@ -1808,7 +1808,6 @@ void NodeEditor::RenderNodes() {
             // Settings - match Node Browser exactly
             const float ICON_BOX_SIZE = 64.0f * zoom_;
             const float CORNER_RADIUS = 6.0f;
-            const float BORDER_THICKNESS = 2.0f;
 
             bool show_name = true;
             auto show_name_it = node.parameters.find("show_name");

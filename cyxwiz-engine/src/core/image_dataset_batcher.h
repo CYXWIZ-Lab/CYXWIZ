@@ -19,7 +19,8 @@ public:
                         const ImagePreprocessingConfig& preprocess_config,
                         int batch_size,
                         float train_split = 0.8f,
-                        bool shuffle = true);
+                        bool shuffle = true,
+                        int num_workers = 0);
 
     Batch GetNextBatch() override;
     void Reset() override;
@@ -40,6 +41,7 @@ private:
 
     int batch_size_;
     bool shuffle_;
+    int num_workers_ = 0;
     bool flatten_ = false;  // output [batch, H, W, C] — let graph's Flatten node handle it
 
     float norm_mean_ = 0.0f;

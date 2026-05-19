@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <thread>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -18,12 +20,14 @@ DatasetBatcher::DatasetBatcher(
     size_t batch_size,
     DatasetSplit split,
     bool shuffle,
-    bool drop_last)
+    bool drop_last,
+    int num_workers)
     : dataset_(dataset)
     , batch_size_(batch_size)
     , split_(split)
     , shuffle_(shuffle)
     , drop_last_(drop_last)
+    , num_workers_(std::max(0, num_workers))
     , rng_(std::random_device{}())
 {
     if (!dataset_.IsValid()) {
@@ -34,8 +38,8 @@ DatasetBatcher::DatasetBatcher(
     // Get indices for the specified split
     indices_ = dataset_.GetSplitIndices(split);
 
-    spdlog::info("DatasetBatcher: Created for {} samples, batch_size={}, shuffle={}",
-                 indices_.size(), batch_size_, shuffle_);
+    spdlog::info("DatasetBatcher: Created for {} samples, batch_size={}, shuffle={}, num_workers={}",
+                 indices_.size(), batch_size_, shuffle_, num_workers_);
 
     // Initial shuffle if enabled
     if (shuffle_) {
@@ -89,9 +93,37 @@ Batch DatasetBatcher::GetNextBatch() {
                           apply_augmentation_on_train_ &&
                           split_ == DatasetSplit::Train;
 
-    for (size_t i = batch_start; i < batch_end; ++i) {
-        size_t sample_idx = indices_[i];
-        auto [sample, label] = dataset_.GetSample(sample_idx);
+    std::vector<std::pair<std::vector<float>, int>> samples(actual_batch_size);
+
+    auto load_range = [&](size_t begin, size_t end) {
+        for (size_t offset = begin; offset < end; ++offset) {
+            size_t sample_idx = indices_[batch_start + offset];
+            samples[offset] = dataset_.GetSample(sample_idx);
+        }
+    };
+
+    if (num_workers_ > 1 && actual_batch_size > 1) {
+        size_t worker_count = std::min(static_cast<size_t>(num_workers_), actual_batch_size);
+        size_t chunk_size = (actual_batch_size + worker_count - 1) / worker_count;
+        std::vector<std::thread> workers;
+        workers.reserve(worker_count);
+
+        for (size_t worker = 0; worker < worker_count; ++worker) {
+            size_t begin = worker * chunk_size;
+            size_t end = std::min(actual_batch_size, begin + chunk_size);
+            if (begin >= end) break;
+            workers.emplace_back(load_range, begin, end);
+        }
+
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    } else {
+        load_range(0, actual_batch_size);
+    }
+
+    for (size_t offset = 0; offset < actual_batch_size; ++offset) {
+        auto [sample, label] = std::move(samples[offset]);
 
         // Apply augmentation if enabled (BEFORE preprocessing)
         if (should_augment) {
@@ -185,12 +217,20 @@ size_t DatasetBatcher::GetNumBatches() const {
 }
 
 void DatasetBatcher::SetNormalization(float mean, float std) {
+    SetLegacyNormalization(mean, std);
+}
+
+void DatasetBatcher::SetOneHotEncoding(size_t num_classes) {
+    SetLegacyOneHotEncoding(num_classes);
+}
+
+void DatasetBatcher::SetLegacyNormalization(float mean, float std) {
     normalize_ = true;
     norm_mean_ = mean;
     norm_std_ = std;
 }
 
-void DatasetBatcher::SetOneHotEncoding(size_t num_classes) {
+void DatasetBatcher::SetLegacyOneHotEncoding(size_t num_classes) {
     one_hot_ = true;
     num_classes_ = num_classes;
 }
@@ -394,15 +434,15 @@ void DatasetIterator::ResetAll() {
 }
 
 void DatasetIterator::SetNormalization(float mean, float std) {
-    train_batcher_->SetNormalization(mean, std);
-    val_batcher_->SetNormalization(mean, std);
-    test_batcher_->SetNormalization(mean, std);
+    train_batcher_->SetLegacyNormalization(mean, std);
+    val_batcher_->SetLegacyNormalization(mean, std);
+    test_batcher_->SetLegacyNormalization(mean, std);
 }
 
 void DatasetIterator::SetOneHotEncoding(size_t num_classes) {
-    train_batcher_->SetOneHotEncoding(num_classes);
-    val_batcher_->SetOneHotEncoding(num_classes);
-    test_batcher_->SetOneHotEncoding(num_classes);
+    train_batcher_->SetLegacyOneHotEncoding(num_classes);
+    val_batcher_->SetLegacyOneHotEncoding(num_classes);
+    test_batcher_->SetLegacyOneHotEncoding(num_classes);
 }
 
 void DatasetIterator::SetFlatten(bool flatten) {
@@ -491,8 +531,36 @@ AnnotatedBatch DatasetBatcher::GetAnnotatedBatch(const std::string& dataset_id,
                           apply_augmentation_on_train_ &&
                           split_ == DatasetSplit::Train;
 
-    for (size_t idx : sample_indices) {
-        auto [sample, label] = dataset_.GetSample(idx);
+    std::vector<std::pair<std::vector<float>, int>> samples(batch.size);
+
+    auto load_range = [&](size_t begin, size_t end) {
+        for (size_t offset = begin; offset < end; ++offset) {
+            samples[offset] = dataset_.GetSample(sample_indices[offset]);
+        }
+    };
+
+    if (num_workers_ > 1 && batch.size > 1) {
+        size_t worker_count = std::min(static_cast<size_t>(num_workers_), batch.size);
+        size_t chunk_size = (batch.size + worker_count - 1) / worker_count;
+        std::vector<std::thread> workers;
+        workers.reserve(worker_count);
+
+        for (size_t worker = 0; worker < worker_count; ++worker) {
+            size_t begin = worker * chunk_size;
+            size_t end = std::min(batch.size, begin + chunk_size);
+            if (begin >= end) break;
+            workers.emplace_back(load_range, begin, end);
+        }
+
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    } else {
+        load_range(0, batch.size);
+    }
+
+    for (size_t offset = 0; offset < batch.size; ++offset) {
+        auto [sample, label] = std::move(samples[offset]);
 
         // Apply augmentation if enabled
         if (should_augment && !sample.empty()) {
@@ -563,12 +631,14 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     float train_split,
     bool is_training,
     const std::string& partition_column,
-    int partition_value)
+    int partition_value,
+    int num_workers)
     : dataset_(dataset)
     , label_column_(label_column)
     , batch_size_(batch_size)
     , shuffle_(shuffle)
     , is_training_(is_training)
+    , num_workers_(std::max(0, num_workers))
     , partition_column_(partition_column)
     , partition_value_(partition_value)
     , rng_(std::random_device{}())
@@ -651,8 +721,8 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     // Initialize feature/label column indices
     InitializeColumns();
 
-    spdlog::info("ArrowDatasetBatcher: {} samples, {} features, batch_size={}, shuffle={}",
-                 indices_.size(), num_features_, batch_size_, shuffle_);
+    spdlog::info("ArrowDatasetBatcher: {} samples, {} features, batch_size={}, shuffle={}, num_workers={}",
+                 indices_.size(), num_features_, batch_size_, shuffle_, num_workers_);
 
     if (shuffle_) {
         ShuffleIndices();
@@ -792,7 +862,8 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         spdlog::default_logger()->flush();  // Force flush to ensure logs are written before crash
 
         // OPTIMIZED: Process column by column (Arrow is columnar, this is much faster)
-        for (size_t feat_idx = 0; feat_idx < feature_cols_.size(); ++feat_idx) {
+        auto process_feature_range = [&](size_t feat_begin, size_t feat_end) {
+        for (size_t feat_idx = feat_begin; feat_idx < feat_end; ++feat_idx) {
             int col_idx = feature_cols_[feat_idx];
 
             // Log first column for debugging
@@ -968,6 +1039,27 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                     }
                 }
             }
+        }
+        };
+
+        if (num_workers_ > 1 && feature_cols_.size() > 1) {
+            size_t worker_count = std::min(static_cast<size_t>(num_workers_), feature_cols_.size());
+            size_t chunk_size = (feature_cols_.size() + worker_count - 1) / worker_count;
+            std::vector<std::thread> workers;
+            workers.reserve(worker_count);
+
+            for (size_t worker = 0; worker < worker_count; ++worker) {
+                size_t begin = worker * chunk_size;
+                size_t end = std::min(feature_cols_.size(), begin + chunk_size);
+                if (begin >= end) break;
+                workers.emplace_back(process_feature_range, begin, end);
+            }
+
+            for (auto& worker : workers) {
+                worker.join();
+            }
+        } else {
+            process_feature_range(0, feature_cols_.size());
         }
 
         // CHECKPOINT: feature column loop completed successfully

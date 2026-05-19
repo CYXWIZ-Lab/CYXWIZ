@@ -208,9 +208,18 @@ CyxWizApp::CyxWizApp(int argc, char** argv)
     }
 }
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4722)
+#endif
 CyxWizApp::~CyxWizApp() {
+    // Shutdown intentionally ends the process with _exit(0) after
+    // explicit resource cleanup to avoid unsafe singleton destruction.
     Shutdown();
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
@@ -852,6 +861,8 @@ void CyxWizApp::HandleInput() {
 }
 
 void CyxWizApp::Update(float delta_time) {
+    (void)delta_time;
+
     // Update components
     if (job_manager_) {
         job_manager_->Update();

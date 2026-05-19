@@ -112,6 +112,8 @@ public:
     virtual DynamicPinResult ResolveDynamicPins(
         const std::string& node_type_name,
         const std::map<std::string, std::string>& parameters) {
+        (void)node_type_name;
+        (void)parameters;
         return {};
     }
 
@@ -119,6 +121,7 @@ public:
     // Called by GraphExecutor each tick for plugin nodes.
     // Default returns failure — plugins must override to support live execution.
     virtual PluginNodeEvalResult EvaluateNode(const PluginNodeEvalContext& ctx) {
+        (void)ctx;
         PluginNodeEvalResult r;
         r.success = false;
         r.error_message = "EvaluateNode not implemented";

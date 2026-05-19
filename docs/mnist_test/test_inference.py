@@ -9,13 +9,16 @@ Usage:
 
 Options:
     --endpoint URL      Server endpoint (default: http://localhost:8080/v1/predict)
-    --deployment-id ID  Deployment ID (auto-detected if not specified)
+    --deployment-id ID  Deployment ID (optional; not needed for Embedded mode)
     --num-samples N     Number of samples to test (default: 100)
     --show-errors       Show details of incorrect predictions
+    --verbose           Print actual/predicted values for every sample
+    --log-file PATH     Save per-sample results to CSV
     --download          Download MNIST data if not present
 """
 # python test_inference.py --download --num-samples 100
 import argparse
+import csv
 import json
 import os
 import sys
@@ -88,12 +91,18 @@ def load_mnist_labels(filepath):
 
 
 def get_deployment_id(endpoint_base):
-    """Auto-detect deployment ID from deployments endpoint."""
+    """Auto-detect deployment ID from deployments endpoint.
+
+    Embedded mode does not expose /v1/deployments, so a missing endpoint
+    is treated as "no deployment id required".
+    """
     deployments_url = endpoint_base.replace('/v1/predict', '/v1/deployments')
 
     try:
         if HAS_REQUESTS:
             resp = requests.get(deployments_url, timeout=5)
+            if resp.status_code == 404:
+                return None
             data = resp.json()
         else:
             with urllib.request.urlopen(deployments_url, timeout=5) as resp:
@@ -109,17 +118,15 @@ def get_deployment_id(endpoint_base):
         print(f"Auto-detected deployment: {deployment_id}")
         return deployment_id
 
-    except Exception as e:
-        print(f"Error checking deployments: {e}")
+    except Exception:
         return None
 
 
 def run_inference(endpoint, deployment_id, input_data):
     """Send inference request to server."""
-    payload = {
-        'deployment_id': deployment_id,
-        'input': input_data.tolist()
-    }
+    payload = {'input': input_data.tolist()}
+    if deployment_id:
+        payload['deployment_id'] = deployment_id
 
     headers = {'Content-Type': 'application/json'}
 
@@ -158,6 +165,17 @@ def print_digit(image, label, predicted):
     print("+" + "-" * 28 + "+")
 
 
+def softmax(values):
+    """Convert logits to probabilities."""
+    arr = np.asarray(values, dtype=np.float64)
+    arr = arr - np.max(arr)
+    exp = np.exp(arr)
+    denom = np.sum(exp)
+    if denom == 0:
+        return np.zeros_like(exp)
+    return exp / denom
+
+
 def main():
     parser = argparse.ArgumentParser(description='Test MNIST model inference')
     parser.add_argument('--endpoint', default='http://localhost:8080/v1/predict',
@@ -170,18 +188,19 @@ def main():
                         help='Show ASCII art for incorrect predictions')
     parser.add_argument('--show-all', action='store_true',
                         help='Show ASCII art for all predictions')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Print per-sample actual and predicted values')
+    parser.add_argument('--log-file', default=None,
+                        help='Write per-sample results to CSV')
     parser.add_argument('--data-dir', default='./mnist_data',
                         help='Directory for MNIST data')
     parser.add_argument('--download', action='store_true',
                         help='Download MNIST data if not present')
     args = parser.parse_args()
 
-    # Auto-detect deployment ID if not provided
+    # Auto-detect deployment ID if not provided.
     if not args.deployment_id:
         args.deployment_id = get_deployment_id(args.endpoint)
-        if not args.deployment_id:
-            print("Error: Could not auto-detect deployment ID. Please specify with --deployment-id")
-            sys.exit(1)
 
     # Download data if requested
     if args.download:
@@ -205,25 +224,37 @@ def main():
     # Run inference
     print(f"\nTesting {args.num_samples} samples...")
     print(f"Endpoint: {args.endpoint}")
-    print(f"Deployment: {args.deployment_id}")
+    print(f"Deployment: {args.deployment_id or '(embedded / none)'}")
     print("-" * 50)
 
     correct = 0
     errors = []
     total_latency = 0
+    csv_file = None
+    csv_writer = None
+
+    if args.log_file:
+        csv_file = open(args.log_file, 'w', newline='', encoding='utf-8')
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(['index', 'actual', 'predicted', 'correct', 'probability_pct', 'raw_logit', 'latency_ms'])
 
     for i in range(min(args.num_samples, len(images))):
         image = images[i]
         label = labels[i]
 
+        start = __import__('time').perf_counter()
         output, error = run_inference(args.endpoint, args.deployment_id, image)
+        elapsed_ms = (__import__('time').perf_counter() - start) * 1000.0
 
         if error:
             print(f"\rSample {i+1}: Error - {error}")
             continue
 
-        predicted = np.argmax(output)
-        confidence = output[predicted] * 100
+        probabilities = softmax(output)
+        predicted = int(np.argmax(probabilities))
+        confidence = probabilities[predicted] * 100.0
+        raw_score = float(output[predicted])
+        total_latency += elapsed_ms
 
         if predicted == label:
             correct += 1
@@ -236,20 +267,43 @@ def main():
         accuracy = correct / (i + 1) * 100
         print(f"\rProgress: {i+1}/{args.num_samples} | Accuracy: {accuracy:.1f}% | Last: {label}->{predicted} {status}  ", end='')
 
+        if args.verbose:
+            print()
+            print(
+                f"Sample {i+1}: actual={label}, predicted={predicted}, "
+                f"prob={confidence:.1f}%, raw={raw_score:.6f}, latency={elapsed_ms:.1f} ms"
+            )
+
         if args.show_all:
             print()
             print_digit(image, label, predicted)
+
+        if csv_writer:
+            csv_writer.writerow([
+                i + 1,
+                int(label),
+                int(predicted),
+                int(predicted == label),
+                f"{confidence:.4f}",
+                f"{raw_score:.6f}",
+                f"{elapsed_ms:.3f}",
+            ])
 
     print()
     print("=" * 50)
     print(f"Results: {correct}/{args.num_samples} correct ({correct/args.num_samples*100:.1f}% accuracy)")
     print(f"Errors: {len(errors)}")
+    if args.num_samples > 0:
+        print(f"Avg latency: {total_latency / args.num_samples:.1f} ms")
 
     if args.show_errors and errors:
         print("\nIncorrect predictions:")
         for idx, image, label, predicted, conf in errors[:10]:  # Show first 10
             print_digit(image, label, predicted)
             print(f"  Confidence: {conf:.1f}%")
+
+    if csv_file:
+        csv_file.close()
 
     return 0 if correct / args.num_samples > 0.8 else 1
 

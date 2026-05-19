@@ -169,11 +169,11 @@ void TrainingExecutor::Train(
         arrow_train_batcher = std::make_unique<ArrowDatasetBatcher>(
             arrow_dataset_, effective_label, batch_size,
             config_.shuffle, config_.train_ratio, true,
-            partition_col, /*partition_value=*/0);
+            partition_col, /*partition_value=*/0, config_.num_workers);
         arrow_val_batcher = std::make_unique<ArrowDatasetBatcher>(
             arrow_dataset_, effective_label, batch_size,
             false, config_.train_ratio, false,
-            partition_col, /*partition_value=*/1);
+            partition_col, /*partition_value=*/1, config_.num_workers);
 
         if (config_.drop_last) {
             spdlog::warn("TrainingExecutor: drop_last=true requested but ArrowDatasetBatcher "
@@ -222,10 +222,10 @@ void TrainingExecutor::Train(
 
         parquet_train_batcher = std::make_unique<ParquetArrowBatcher>(
             parquet_dataset_, label_column_, batch_size,
-            config_.shuffle, config_.train_ratio, true);
+            config_.shuffle, config_.train_ratio, true, config_.num_workers);
         parquet_val_batcher = std::make_unique<ParquetArrowBatcher>(
             parquet_dataset_, label_column_, batch_size,
-            false, config_.train_ratio, false);
+            false, config_.train_ratio, false, config_.num_workers);
 
         if (config_.drop_last) {
             spdlog::warn("TrainingExecutor: drop_last=true requested but ParquetArrowBatcher "
@@ -286,9 +286,9 @@ void TrainingExecutor::Train(
         // Validation batcher never shuffles and never drops the last batch.
         legacy_train_batcher = std::make_unique<DatasetBatcher>(
             dataset_, batch_size, DatasetSplit::Train,
-            config_.shuffle, config_.drop_last);
+            config_.shuffle, config_.drop_last, config_.num_workers);
         legacy_val_batcher = std::make_unique<DatasetBatcher>(
-            dataset_, batch_size, DatasetSplit::Validation, false, false);
+            dataset_, batch_size, DatasetSplit::Validation, false, false, config_.num_workers);
 
         // Apply NEW preprocessing pipeline (if configured)
         std::string dataset_name = dataset_.GetName();
@@ -331,15 +331,15 @@ void TrainingExecutor::Train(
 
         // Apply OLD preprocessing settings
         if (config_.preprocessing.has_normalization) {
-            legacy_train_batcher->SetNormalization(config_.preprocessing.norm_mean,
-                                                    config_.preprocessing.norm_std);
-            legacy_val_batcher->SetNormalization(config_.preprocessing.norm_mean,
-                                                  config_.preprocessing.norm_std);
+            legacy_train_batcher->SetLegacyNormalization(config_.preprocessing.norm_mean,
+                                                         config_.preprocessing.norm_std);
+            legacy_val_batcher->SetLegacyNormalization(config_.preprocessing.norm_mean,
+                                                       config_.preprocessing.norm_std);
         }
 
         if (config_.preprocessing.has_onehot) {
-            legacy_train_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
-            legacy_val_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
+            legacy_train_batcher->SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
+            legacy_val_batcher->SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
         }
 
         legacy_train_batcher->SetFlatten(true);
