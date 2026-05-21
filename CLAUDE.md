@@ -348,6 +348,44 @@ Existing precedents: `DataInputDialog`, `TokenizerDialog`.
 | **Backend Features** | Tokenizer, upsampling, time-series, audio, RL | `cyxwiz-backend/src/algorithms/` |
 | **Transformer/RNN** | Embedding, LSTM, GRU, MultiHeadAttention, Transformer | `cyxwiz-backend/include/cyxwiz/layer.h` |
 
+## Studio Debugger Implementation State (2026-05-21)
+
+The current priority is the Studio Debugger, tracked in
+`docs/Data Studio/tofix9.md` and `docs/Data Studio/SYSTEM_DEBUGGER_ARCHI.md`.
+Do not treat it as a log viewer only. It is the workflow that lets users run
+preflight, local debug, smoke checks, graph trace inspection, crash review, and
+recommendations before spending hours on full training.
+
+What is already implemented in this pass:
+
+- `DebugSessionManager` owns debug sessions built from immutable graph
+  snapshots.
+- `PreflightValidator` reuses compile/data-readiness checks for debugger
+  gating.
+- `SmokeRunExecutor` supports the first real-data smoke-run path.
+- `DebugRunStore`, `DebugTraceRecord`, `TrainingTraceCollector`, and
+  `CrashRunRecorder` provide the first persistence and crash-envelope layer.
+- `DebugRecommendationEngine` produces rule-based guidance from trace and
+  validation signals.
+- `StudioDebuggerPanel` runs debug work through `AsyncTaskManager` / Task View
+  so the UI should not freeze while a debug run executes.
+- The debugger UI now has the first graph trace view: a frozen node/link
+  snapshot with per-node status aggregation, issue counts, recommendation
+  counts, and trace tooltips.
+- `TrainingPlotPanel` emits lifecycle/read/write/trim events so long-training
+  UI races can be correlated with crash reports.
+
+Important rules for future debugger work:
+
+- Capture graph state on the UI thread before launching background debug work.
+- Pass the frozen snapshot to backend/debugger code; do not read live editor
+  state from a worker.
+- Keep long debugger actions in `AsyncTaskManager` and visible in Task View.
+- Full tensor dumps must stay opt-in and capped; default persistence should
+  store metadata, trace summaries, metrics, issues, and recommendations.
+- Next planned slices are richer graph trace status, node inspector/details,
+  Windows crash import, then tensor/value preview tables.
+
 ## P2P Training (Critical)
 
 **Flow**: Engine → Central Server (reserve node) → P2P stream to Server Node → Unlimited jobs within reservation

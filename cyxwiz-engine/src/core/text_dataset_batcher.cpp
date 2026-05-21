@@ -12,22 +12,20 @@ TextDatasetBatcher::TextDatasetBatcher(
     const TextPreprocessingConfig& preprocess_config,
     int batch_size,
     float train_split,
+    float val_split,
+    float test_split,
     bool shuffle,
     int num_workers)
     : batch_size_(batch_size), shuffle_(shuffle),
       num_workers_(std::max(0, num_workers)), rng_(42)
 {
-    // Build the TextDatasetConfig. Start from the entry's dialog-baked
-    // defaults, then apply graph-preprocessing overrides on top. Each
-    // of the three text node types can independently override its
-    // sub-config via the `has_*_node` presence flags on
-    // TextPreprocessingConfig.
+    // Build the TextDatasetConfig. Start from the entry defaults, then apply
+    // graph preprocessing overrides on top.
     TextDatasetConfig cfg;
     cfg.text_column = entry.text_column;
     cfg.label_column = entry.label_column;
     cfg.has_labels = entry.has_labels;
 
-    // Tokenizer + shared fields from entry (dialog defaults)
     switch (entry.tokenizer_type) {
         case 0: cfg.tokenizer_type = TokenizerType::Whitespace; break;
         case 2: cfg.tokenizer_type = TokenizerType::Character; break;
@@ -42,8 +40,6 @@ TextDatasetBatcher::TextDatasetBatcher(
     cfg.max_vocab_size = entry.max_vocab_size;
     cfg.vocab_file     = entry.vocab_file;
 
-    // Graph-node overrides (Phase 3). Each extractor sets a presence
-    // flag, so we only override the sub-config it explicitly touched.
     if (preprocess_config.has_tokenizer_node) {
         switch (preprocess_config.tokenizer_type) {
             case 0: cfg.tokenizer_type = TokenizerType::Whitespace; break;
@@ -57,15 +53,12 @@ TextDatasetBatcher::TextDatasetBatcher(
         cfg.max_length    = preprocess_config.max_length;
         cfg.min_word_freq = preprocess_config.min_word_freq;
         cfg.max_vocab_size = preprocess_config.max_vocab_size;
-        spdlog::info("TextDatasetBatcher: TextTokenizer node overrides dialog "
-                     "defaults (type={}, max_length={}, lowercase={})",
+        spdlog::info("TextDatasetBatcher: TextTokenizer node overrides dialog defaults "
+                     "(type={}, max_length={}, lowercase={})",
                      preprocess_config.tokenizer_type,
                      cfg.max_length, cfg.lowercase);
     }
     if (preprocess_config.has_vocabulary_node) {
-        // TextVocabulary stomps on vocab sub-config even if
-        // TextTokenizer already set it. Useful for "use a pre-built
-        // vocab file" workflow.
         cfg.min_word_freq  = preprocess_config.min_word_freq;
         cfg.max_vocab_size = preprocess_config.max_vocab_size;
         cfg.vocab_file     = preprocess_config.vocab_file;
@@ -94,21 +87,37 @@ TextDatasetBatcher::TextDatasetBatcher(
         return;
     }
 
-    // Shuffled train/val split — same leakage-free pattern as Phase 2.1
-    // audio. All_indices gets shuffled once, then we take [0..train_count)
-    // as train and [train_count..total) as val. Reset() re-shuffles only
-    // the train indices between epochs; val order stays deterministic.
     size_t total = dataset_->Size();
+    float split_sum = train_split + val_split + test_split;
+    if (!(split_sum > 0.0f)) {
+        train_split = 0.8f;
+        val_split = 0.1f;
+        test_split = 0.1f;
+        split_sum = 1.0f;
+    }
+
+    train_split /= split_sum;
+    val_split /= split_sum;
+    test_split /= split_sum;
+
     size_t train_count = static_cast<size_t>(total * train_split);
-    if (train_count == 0) train_count = total;
+    size_t val_count = static_cast<size_t>(total * val_split);
+    if (train_count == 0) train_count = 1;
     if (train_count > total) train_count = total;
+    if (train_count + val_count > total) {
+        val_count = total - train_count;
+    }
+    size_t test_count = total - train_count - val_count;
 
     std::vector<size_t> all_indices(total);
     std::iota(all_indices.begin(), all_indices.end(), 0);
     std::shuffle(all_indices.begin(), all_indices.end(), rng_);
 
     train_indices_.assign(all_indices.begin(), all_indices.begin() + train_count);
-    val_indices_.assign(all_indices.begin() + train_count, all_indices.end());
+    val_indices_.assign(all_indices.begin() + train_count,
+                        all_indices.begin() + train_count + val_count);
+    test_indices_.assign(all_indices.begin() + train_count + val_count,
+                         all_indices.begin() + train_count + val_count + test_count);
 
     num_classes_ = entry.num_classes;
     if (num_classes_ == 0) {
@@ -117,10 +126,10 @@ TextDatasetBatcher::TextDatasetBatcher(
     }
 
     Reset();
-    spdlog::info("TextDatasetBatcher: {} train / {} val samples, {} classes, "
+    spdlog::info("TextDatasetBatcher: {} train / {} val / {} test samples, {} classes, "
                  "vocab_size={}, max_length={}, batch_size={}, num_workers={}",
-                 train_indices_.size(), val_indices_.size(), num_classes_,
-                 GetVocabSize(), max_length_, batch_size_, num_workers_);
+                 train_indices_.size(), val_indices_.size(), test_indices_.size(),
+                 num_classes_, GetVocabSize(), max_length_, batch_size_, num_workers_);
 }
 
 size_t TextDatasetBatcher::GetVocabSize() const {
@@ -178,9 +187,6 @@ Batch TextDatasetBatcher::GetNextBatch() {
     for (size_t i = 0; i < actual_size; ++i) {
         auto& [tokens, label] = samples[i];
         if (tokens.size() != sample_dim) {
-            // TextDataset::GetItem should produce a padded/truncated
-            // sequence already. If it doesn't, zero-fill so the batch
-            // tensor has uniform shape.
             tokens.assign(sample_dim, 0.0f);
             label = 0;
         }
@@ -215,6 +221,8 @@ Batch TextDatasetBatcher::GetNextBatch() {
 void TextDatasetBatcher::Reset() {
     if (current_phase_ == BatcherPhase::Val) {
         epoch_order_ = val_indices_;
+    } else if (current_phase_ == BatcherPhase::Test) {
+        epoch_order_ = test_indices_;
     } else {
         epoch_order_ = train_indices_;
         if (shuffle_) {
@@ -226,8 +234,6 @@ void TextDatasetBatcher::Reset() {
 
 void TextDatasetBatcher::SetPhase(BatcherPhase phase) {
     current_phase_ = phase;
-    // Caller is expected to call Reset() afterwards; the training
-    // executor's RunValidationArrow does exactly that.
 }
 
 bool TextDatasetBatcher::IsEpochComplete() const {
@@ -240,12 +246,18 @@ size_t TextDatasetBatcher::GetNumBatches() const {
 }
 
 size_t TextDatasetBatcher::GetNumSamples() const {
-    return train_indices_.size();
+    switch (current_phase_) {
+        case BatcherPhase::Val:
+            return val_indices_.size();
+        case BatcherPhase::Test:
+            return test_indices_.size();
+        case BatcherPhase::Train:
+        default:
+            return train_indices_.size();
+    }
 }
 
 void TextDatasetBatcher::SetNormalization(float mean, float std_dev) {
-    // Normalization is a no-op for text — token IDs are categorical.
-    // Setter is only here to satisfy the IBatcher interface.
     norm_mean_ = mean;
     norm_std_ = (std_dev > 0.0f) ? std_dev : 1.0f;
     do_normalize_ = true;
@@ -257,7 +269,7 @@ void TextDatasetBatcher::SetOneHotEncoding(size_t num_classes) {
 }
 
 void TextDatasetBatcher::SetFlatten(bool /*flatten*/) {
-    // Text is always 1D (flat) per sample; flag is ignored.
+    // Text is always flat per sample; flag is ignored.
 }
 
 } // namespace cyxwiz

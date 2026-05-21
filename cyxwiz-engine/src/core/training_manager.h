@@ -51,7 +51,7 @@ public:
         DatasetHandle dataset,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel = nullptr,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
@@ -64,7 +64,7 @@ public:
         const std::string& label_column,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel = nullptr,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
@@ -81,7 +81,7 @@ public:
         const std::string& label_column,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel = nullptr,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
@@ -90,7 +90,7 @@ public:
         const DataRegistry::ImageDatasetEntry& image_entry,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel = nullptr,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
@@ -99,7 +99,7 @@ public:
         const DataRegistry::AudioDatasetEntry& audio_entry,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel = nullptr,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
@@ -108,7 +108,7 @@ public:
         const DataRegistry::TextDatasetEntry& text_entry,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel = nullptr,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
@@ -116,6 +116,13 @@ public:
      * Stop the current training session
      */
     void StopTraining();
+
+    /**
+     * Wait for the training worker to exit after StopTraining().
+     * Intended for shutdown/lifetime-sensitive paths before UI objects owned by
+     * the worker callbacks are destroyed.
+     */
+    void WaitForTrainingStop();
 
     /**
      * Pause the current training session
@@ -189,7 +196,7 @@ private:
         std::unique_ptr<TrainingExecutor> executor,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel,
+        std::weak_ptr<TrainingPlotPanel> plot_panel,
         std::function<void(bool)> node_editor_callback
     );
 
@@ -222,7 +229,7 @@ private:
         std::unique_ptr<TrainingExecutor> executor,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel,
+        std::weak_ptr<TrainingPlotPanel> plot_panel,
         std::function<void(bool)> node_editor_callback,
         const std::string& task_name,
         const std::string& start_msg

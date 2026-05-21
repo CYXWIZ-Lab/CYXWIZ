@@ -14,6 +14,7 @@
 
 #include "node_config_dialog.h"
 #include "node_editor.h"
+#include "../core/worker_defaults.h"
 #include "loaders/audio_loader.h"
 #include "loaders/data_loader.h"
 #include "loaders/image_loader.h"
@@ -3719,6 +3720,7 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         ReadIntParam(node_->parameters, "batch_size", batch_size_);
         ReadBoolParam(node_->parameters, "shuffle", shuffle_);
         ReadBoolParam(node_->parameters, "drop_last", drop_last_);
+        num_workers_ = cyxwiz::GetDefaultNumWorkers();
         ReadIntParam(node_->parameters, "num_workers", num_workers_);
     }
 }
@@ -3741,7 +3743,7 @@ void DataLoaderDialog::Reset() {
     batch_size_ = 32;
     shuffle_ = true;
     drop_last_ = false;
-    num_workers_ = 0;
+    num_workers_ = cyxwiz::GetDefaultNumWorkers();
     ReadIntParam(original_params_, "batch_size", batch_size_);
     ReadBoolParam(original_params_, "shuffle", shuffle_);
     ReadBoolParam(original_params_, "drop_last", drop_last_);
@@ -3792,7 +3794,7 @@ void DataLoaderDialog::RenderContent() {
     }
     if (num_workers_ > 0) {
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                           "  Honored by training batchers; prefetching is still a separate future optimization.");
+                           "  Honored by training batchers; empty fields use a hardware-based default.");
     } else {
         ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
     }

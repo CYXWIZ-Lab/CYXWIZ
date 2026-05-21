@@ -120,6 +120,14 @@ set(ENGINE_SOURCES
     src/core/model_builder.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
+    src/core/debug_session_manager.cpp
+    src/core/preflight_validator.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/text_preprocessing_tracer.cpp
+    src/core/smoke_run_executor.cpp
+    src/core/debug_recommendation_engine.cpp
+    src/core/training_trace_collector.cpp
+    src/core/debug_run_store.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
@@ -981,9 +989,12 @@ set_target_properties(test_arrow_integration PROPERTIES
 # full engine executable being built.
 add_executable(test_debug_executor
     tests/test_debug_executor.cpp
+    src/core/dataset_base.cpp
     src/core/model_builder.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
+    src/core/text_dataset_batcher.cpp
+    src/core/formats/text_dataset.cpp
 )
 
 target_include_directories(test_debug_executor PRIVATE

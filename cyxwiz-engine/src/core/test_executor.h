@@ -3,6 +3,7 @@
 #include "graph_compiler.h"
 #include "dataset_batcher.h"
 #include "data_registry.h"
+#include "text_dataset_batcher.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/loss.h>
@@ -105,6 +106,7 @@ public:
      * @param dataset Dataset handle from DataRegistry
      */
     TestExecutor(TrainingConfiguration config, DatasetHandle dataset);
+    TestExecutor(TrainingConfiguration config, const DataRegistry::TextDatasetEntry& text_entry);
 
     ~TestExecutor();
 
@@ -149,6 +151,8 @@ public:
 private:
     TrainingConfiguration config_;
     DatasetHandle dataset_;
+    DataRegistry::TextDatasetEntry text_entry_;
+    bool use_text_dataset_ = false;
 
     // Thread safety
     std::atomic<bool> is_testing_{false};

@@ -135,6 +135,7 @@ class DataStudioPanel;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
 struct StudioDebuggerSnapshot;
+enum class StudioDebuggerRunMode;
 } // namespace cyxwiz
 
 namespace scripting {
@@ -230,7 +231,14 @@ private:
     // Compile the current graph as a dry-run (no training) and show results in a popup
     void CompileGraphAndReport();
     void RenderCompileResultPopup();
-    bool BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session);
+    bool BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session,
+                                    cyxwiz::StudioDebuggerRunMode mode,
+                                    int sample_index);
+    bool BuildStudioDebuggerSessionFromSnapshot(cyxwiz::StudioDebuggerSnapshot& session,
+                                                cyxwiz::StudioDebuggerRunMode mode,
+                                                int sample_index,
+                                                std::vector<MLNode> nodes,
+                                                std::vector<NodeLink> links);
 
     // Run Local Debug: gate on Compile, then execute one forward +
     // one backward pass on synthetic data via DebugExecutor. Feeds the
@@ -292,7 +300,7 @@ private:
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
-    std::unique_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
+    std::shared_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
     std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
     std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;

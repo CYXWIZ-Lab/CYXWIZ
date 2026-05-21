@@ -16,6 +16,7 @@
 
 #include "properties.h"
 #include "../core/node_metadata_registry.h"
+#include "../core/worker_defaults.h"
 #include "node_editor.h"
 #include "../core/data_registry.h"
 #include "../core/arrow_dataset.h"
@@ -1195,11 +1196,58 @@ void Properties::RenderNodeProperties(MLNode& node) {
 
             ImGui::Spacing();
 
+            // ---- Checkpointing ----
+            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Checkpointing");
+
+            std::string& save_best_checkpoint = node.parameters["save_best_checkpoint"];
+            if (save_best_checkpoint.empty()) save_best_checkpoint = "true";
+            bool save_best_checkpoint_val = (save_best_checkpoint == "true");
+            if (ImGui::Checkbox("Save Best Checkpoint", &save_best_checkpoint_val)) {
+                save_best_checkpoint = save_best_checkpoint_val ? "true" : "false";
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Keep the best validation epoch instead of only the last epoch.");
+            }
+
+            std::string& early_stop_patience = node.parameters["early_stopping_patience"];
+            if (early_stop_patience.empty()) early_stop_patience = "5";
+            char patience_buffer[16];
+            strncpy(patience_buffer, early_stop_patience.c_str(), sizeof(patience_buffer) - 1);
+            patience_buffer[sizeof(patience_buffer) - 1] = '\0';
+            ImGui::Text("Early Stop Patience:");
+            ImGui::SameLine(140.0f);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputText("##early_stopping_patience", patience_buffer, sizeof(patience_buffer),
+                                 ImGuiInputTextFlags_CharsDecimal)) {
+                early_stop_patience = patience_buffer;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Stop after this many epochs with no validation improvement.\n"
+                                  "Set 0 to disable early stopping.");
+            }
+
+            std::string& checkpoint_dir = node.parameters["checkpoint_dir"];
+            if (checkpoint_dir.empty()) checkpoint_dir = "";
+            char checkpoint_dir_buffer[260];
+            strncpy(checkpoint_dir_buffer, checkpoint_dir.c_str(), sizeof(checkpoint_dir_buffer) - 1);
+            checkpoint_dir_buffer[sizeof(checkpoint_dir_buffer) - 1] = '\0';
+            ImGui::Text("Checkpoint Dir:");
+            ImGui::SameLine(140.0f);
+            ImGui::SetNextItemWidth(220.0f);
+            if (ImGui::InputText("##checkpoint_dir", checkpoint_dir_buffer, sizeof(checkpoint_dir_buffer))) {
+                checkpoint_dir = checkpoint_dir_buffer;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Optional checkpoint root. Empty uses the default run-local folder.");
+            }
+
+            ImGui::Spacing();
+
             // ---- Performance ----
             ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Performance");
 
             std::string& num_workers = node.parameters["num_workers"];
-            if (num_workers.empty()) num_workers = "4";
+            if (num_workers.empty()) num_workers = std::to_string(cyxwiz::GetDefaultNumWorkers());
             char workers_buffer[16];
             strncpy(workers_buffer, num_workers.c_str(), sizeof(workers_buffer) - 1);
             workers_buffer[sizeof(workers_buffer) - 1] = '\0';
@@ -1212,7 +1260,7 @@ void Properties::RenderNodeProperties(MLNode& node) {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Background threads for data loading. 0 = single-threaded.\n"
-                                  "(Currently not yet honored — runs single-threaded.)");
+                                  "Empty uses a hardware-based default.");
             }
 
             std::string& prefetch = node.parameters["prefetch_factor"];

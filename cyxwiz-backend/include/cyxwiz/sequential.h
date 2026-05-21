@@ -244,6 +244,7 @@ public:
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
+    void SetTraining(bool training) override;
     std::map<std::string, Tensor> GetParameters() override;
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
@@ -252,11 +253,14 @@ public:
 
 private:
     std::unique_ptr<GRULayer> layer_;
+    std::vector<std::unique_ptr<GRULayer>> forward_layers_;
+    std::vector<std::unique_ptr<GRULayer>> reverse_layers_;
     size_t input_size_;
     size_t hidden_size_;
     size_t num_layers_;
     bool bidirectional_;
     bool return_sequences_;
+    bool split_bidirectional_path_ = false;
     std::vector<size_t> last_full_output_shape_;
 };
 

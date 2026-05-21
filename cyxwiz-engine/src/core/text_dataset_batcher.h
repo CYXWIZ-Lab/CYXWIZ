@@ -35,6 +35,8 @@ public:
                        const TextPreprocessingConfig& preprocess_config,
                        int batch_size,
                        float train_split = 0.8f,
+                       float val_split = 0.1f,
+                       float test_split = 0.1f,
                        bool shuffle = true,
                        int num_workers = 0);
 
@@ -54,6 +56,7 @@ public:
     int GetMaxLength() const { return max_length_; }
     size_t GetVocabSize() const;
     size_t GetNumValSamples() const { return val_indices_.size(); }
+    size_t GetNumTestSamples() const { return test_indices_.size(); }
 
 private:
     std::shared_ptr<TextDataset> dataset_;
@@ -75,6 +78,7 @@ private:
     // Separate train/val index sets, shuffled split at construction.
     std::vector<size_t> train_indices_;
     std::vector<size_t> val_indices_;
+    std::vector<size_t> test_indices_;
     BatcherPhase current_phase_ = BatcherPhase::Train;
 
     std::vector<size_t> epoch_order_;

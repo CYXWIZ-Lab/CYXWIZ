@@ -101,6 +101,72 @@ bool TestManager::StartTesting(
     return true;
 }
 
+bool TestManager::StartTestingText(
+    TrainingConfiguration config,
+    const DataRegistry::TextDatasetEntry& text_entry,
+    int batch_size,
+    std::shared_ptr<SequentialModel> model,
+    TestCompleteCallback on_complete)
+{
+    if (is_testing_.load()) {
+        spdlog::warn("TestManager: Cannot start text testing - already testing");
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_testing_.load()) {
+        return false;
+    }
+
+    auto executor = std::make_unique<TestExecutor>(std::move(config), text_entry);
+    if (model) {
+        executor->SetModel(model);
+    }
+
+    is_testing_.store(true);
+    stop_requested_.store(false);
+
+    std::string task_name = "Testing Model";
+    current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
+        task_name,
+        [](LambdaTask& task) {
+            while (!task.ShouldStop()) {
+                auto& mgr = TestManager::Instance();
+                if (!mgr.IsTestingActive()) {
+                    break;
+                }
+                auto metrics = mgr.GetCurrentMetrics();
+                float progress = metrics.total_batches > 0 ?
+                    static_cast<float>(metrics.current_batch) / metrics.total_batches : 0.0f;
+                task.ReportProgress(progress,
+                    "Batch " + std::to_string(metrics.current_batch) + "/" +
+                    std::to_string(metrics.total_batches) +
+                    " - Acc: " + std::to_string(static_cast<int>(metrics.test_accuracy * 100)) + "%");
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            task.MarkCompleted();
+        },
+        nullptr,
+        nullptr
+    ));
+
+    if (on_testing_start_) {
+        on_testing_start_("Testing Model");
+    }
+
+    if (testing_thread_ && testing_thread_->joinable()) {
+        testing_thread_->join();
+    }
+
+    testing_thread_ = std::make_unique<std::thread>(
+        &TestManager::TestingThreadFunc, this,
+        std::move(executor), batch_size, on_complete
+    );
+
+    spdlog::info("TestManager: Started text testing (batch_size={})", batch_size);
+    return true;
+}
+
 void TestManager::StopTesting() {
     if (!is_testing_.load()) {
         return;

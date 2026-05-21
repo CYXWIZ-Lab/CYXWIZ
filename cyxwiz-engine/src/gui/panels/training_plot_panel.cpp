@@ -1,8 +1,12 @@
 #include "training_plot_panel.h"
+#include "../../core/crash_run_recorder.h"
+#include "../../core/training_manager.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <limits>
 #include <numeric>
 
 namespace cyxwiz {
@@ -24,14 +28,25 @@ TrainingPlotPanel::TrainingPlotPanel()
     val_accuracy_.color = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);  // Yellow
 
     visible_ = true;
+    RecordPanelEvent("TrainingPlotPanel.Created");
 }
 
 TrainingPlotPanel::~TrainingPlotPanel() {
-    // Cleanup handled by base class
+    RecordPanelEvent("TrainingPlotPanel.Destroyed");
 }
 
 void TrainingPlotPanel::Render() {
-    if (!visible_) return;
+    if (!visible_) {
+        if (last_render_visible_) {
+            RecordPanelEvent("TrainingPlotPanel.Hidden");
+            last_render_visible_ = false;
+        }
+        return;
+    }
+    if (!last_render_visible_) {
+        RecordPanelEvent("TrainingPlotPanel.Visible");
+        last_render_visible_ = true;
+    }
 
     // Larger default size for better visibility
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
@@ -70,6 +85,8 @@ void TrainingPlotPanel::Render() {
         if (show_custom_metrics_ && !custom_metrics_.empty()) {
             RenderCustomMetricsPlot();
         }
+
+        RenderCurveSummary();
 
         // Render statistics
         if (!train_loss_.values.empty()) {
@@ -125,6 +142,9 @@ void TrainingPlotPanel::Render() {
 
 void TrainingPlotPanel::AddLossPoint(double epoch, double train_loss, double val_loss) {
     std::lock_guard<std::mutex> lock(data_mutex_);
+    RecordPanelEvent("TrainingPlotPanel.WriteLoss",
+                     "epoch=" + std::to_string(epoch) +
+                     " train_loss=" + std::to_string(train_loss));
 
     train_loss_.epochs.push_back(epoch);
     train_loss_.values.push_back(train_loss);
@@ -139,6 +159,9 @@ void TrainingPlotPanel::AddLossPoint(double epoch, double train_loss, double val
 
 void TrainingPlotPanel::AddAccuracyPoint(double epoch, double train_acc, double val_acc) {
     std::lock_guard<std::mutex> lock(data_mutex_);
+    RecordPanelEvent("TrainingPlotPanel.WriteAccuracy",
+                     "epoch=" + std::to_string(epoch) +
+                     " train_acc=" + std::to_string(train_acc));
 
     train_accuracy_.epochs.push_back(epoch);
     train_accuracy_.values.push_back(train_acc);
@@ -234,6 +257,10 @@ void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds) {
 void TrainingPlotPanel::SetBatchProgress(int current_epoch, int current_batch,
                                           int total_batches, float running_loss) {
     std::lock_guard<std::mutex> lock(data_mutex_);
+    RecordPanelEvent("TrainingPlotPanel.WriteBatchProgress",
+                     "epoch=" + std::to_string(current_epoch) +
+                     " batch=" + std::to_string(current_batch) +
+                     "/" + std::to_string(total_batches));
     // Advance epoch counter as soon as the first batch of that epoch fires,
     // so the UI doesn't show "Epoch 0/N" while batch N of epoch 1 is running.
     // Don't regress the counter (epoch_callback may have already set it higher).
@@ -302,27 +329,18 @@ void TrainingPlotPanel::RenderLossPlot() {
     float plot_height = std::max(300.0f, (available_height - 100.0f) / 2.0f);
 
     if (ImPlot::BeginPlot("Loss", ImVec2(-1, plot_height))) {
-        // Enable zoom and pan on both axes (default behavior)
         ImPlot::SetupAxes("Epoch", "Loss", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
 
-        // Only auto-fit when checkbox is enabled
         if (auto_scale_ && !train_loss_.epochs.empty()) {
-            // Use AutoFit flags for smooth auto-scaling that still allows manual zoom
-            ImPlot::SetupAxisLimits(ImAxis_X1, 0,
-                std::max(1, static_cast<int>(train_loss_.epochs.back())) + 1,
-                ImGuiCond_Always);
-            // Auto-fit Y axis based on data
-            double min_loss = CalculateMin(train_loss_.values);
-            double max_loss = CalculateMax(train_loss_.values);
-            if (!val_loss_.values.empty()) {
-                min_loss = std::min(min_loss, CalculateMin(val_loss_.values));
-                max_loss = std::max(max_loss, CalculateMax(val_loss_.values));
-            }
-            double padding = (max_loss - min_loss) * 0.1;
+            const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_loss_);
+            ImPlot::SetupAxisLimits(ImAxis_X1, min_epoch, max_epoch, ImGuiCond_Always);
+
+            ValueRange range = CalculateVisibleRange(train_loss_, val_loss_, min_epoch, max_epoch);
+            double padding = (range.max - range.min) * 0.1;
             if (padding < 0.01) padding = 0.1;
             ImPlot::SetupAxisLimits(ImAxis_Y1,
-                std::max(0.0, min_loss - padding),
-                max_loss + padding,
+                std::max(0.0, range.min - padding),
+                range.max + padding,
                 ImGuiCond_Always);
         }
 
@@ -354,26 +372,18 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
     float plot_height = std::max(300.0f, available_height - 80.0f);
 
     if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, plot_height))) {
-        // Enable zoom and pan on both axes (default behavior)
         ImPlot::SetupAxes("Epoch", "Accuracy (%)", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
 
-        // Only auto-fit when checkbox is enabled
         if (auto_scale_ && !train_accuracy_.epochs.empty()) {
-            ImPlot::SetupAxisLimits(ImAxis_X1, 0,
-                std::max(1, static_cast<int>(train_accuracy_.epochs.back())) + 1,
-                ImGuiCond_Always);
-            // Auto-fit Y axis based on data with some padding
-            double min_acc = CalculateMin(train_accuracy_.values);
-            double max_acc = CalculateMax(train_accuracy_.values);
-            if (!val_accuracy_.values.empty()) {
-                min_acc = std::min(min_acc, CalculateMin(val_accuracy_.values));
-                max_acc = std::max(max_acc, CalculateMax(val_accuracy_.values));
-            }
-            double padding = (max_acc - min_acc) * 0.1;
+            const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_accuracy_);
+            ImPlot::SetupAxisLimits(ImAxis_X1, min_epoch, max_epoch, ImGuiCond_Always);
+
+            ValueRange range = CalculateVisibleRange(train_accuracy_, val_accuracy_, min_epoch, max_epoch);
+            double padding = (range.max - range.min) * 0.1;
             if (padding < 1.0) padding = 5.0;
             ImPlot::SetupAxisLimits(ImAxis_Y1,
-                std::max(0.0, min_acc - padding),
-                std::min(100.0, max_acc + padding),
+                std::max(0.0, range.min - padding),
+                std::min(100.0, range.max + padding),
                 ImGuiCond_Always);
         }
 
@@ -419,6 +429,10 @@ void TrainingPlotPanel::RenderCustomMetricsPlot() {
 }
 
 void TrainingPlotPanel::RenderControls() {
+    auto& tm = TrainingManager::Instance();
+    const bool training_active = tm.IsTrainingActive();
+    const bool training_paused = tm.IsPaused();
+
     if (ImGui::Button("Clear All")) {
         Clear();
     }
@@ -431,12 +445,48 @@ void TrainingPlotPanel::RenderControls() {
 
     ImGui::Checkbox("Auto Scale", &auto_scale_);
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("When enabled, axes auto-fit to data.\nDisable to manually zoom/pan.");
+        ImGui::SetTooltip("When enabled, axes adapt to the live training data.\nDisable to manually zoom/pan.");
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Follow Current", &follow_current_epoch_);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Keep the epoch axis scrolled to the latest batch/epoch.");
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::SliderInt("Epoch Window", &visible_epoch_window_, 3, 50);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Number of epochs visible while following live training.");
     }
     ImGui::SameLine();
     ImGui::Checkbox("Show Loss", &show_loss_plot_);
     ImGui::SameLine();
     ImGui::Checkbox("Show Accuracy", &show_accuracy_plot_);
+
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Training");
+    ImGui::SameLine();
+
+    if (training_active) {
+        if (training_paused) {
+            if (ImGui::Button("Continue")) {
+                tm.ResumeTraining();
+            }
+        } else {
+            if (ImGui::Button("Pause")) {
+                tm.PauseTraining();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Early Stop")) {
+            tm.StopTraining();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Stops training at the next batch boundary and keeps the current model state.");
+        }
+    } else {
+        ImGui::TextDisabled("Idle");
+    }
 
     if (!custom_metrics_.empty()) {
         ImGui::SameLine();
@@ -453,19 +503,207 @@ void TrainingPlotPanel::RenderControls() {
         ImGui::BulletText("Scroll on axis: Zoom that axis only");
         ImGui::BulletText("Right-drag: Pan view");
         ImGui::BulletText("Double-click: Reset zoom");
-        ImGui::BulletText("Disable 'Auto Scale' for manual control");
+        ImGui::BulletText("Disable Auto Scale or Follow Current for manual control");
         ImGui::EndTooltip();
     }
+}
+
+void TrainingPlotPanel::RenderCurveSummary() {
+    ImGui::Separator();
+    ImGui::Text("Curve Summary");
+
+    auto slope_last = [](const MetricSeries& series, size_t window) -> double {
+        const size_t count = std::min(series.epochs.size(), series.values.size());
+        if (count < 2) return 0.0;
+
+        const size_t start = count > window ? count - window : 0;
+        const double dx = series.epochs[count - 1] - series.epochs[start];
+        if (dx <= 0.0) return 0.0;
+        return (series.values[count - 1] - series.values[start]) / dx;
+    };
+
+    auto volatility_last = [](const MetricSeries& series, size_t window) -> double {
+        const size_t count = std::min(series.epochs.size(), series.values.size());
+        if (count < 3) return 0.0;
+
+        const size_t start = count > window ? count - window : 1;
+        double total_delta = 0.0;
+        size_t deltas = 0;
+        for (size_t i = start; i < count; ++i) {
+            total_delta += std::abs(series.values[i] - series.values[i - 1]);
+            ++deltas;
+        }
+        return deltas > 0 ? total_delta / static_cast<double>(deltas) : 0.0;
+    };
+
+    auto best_index = [](const MetricSeries& series, bool lower_is_better) -> int {
+        const size_t count = std::min(series.epochs.size(), series.values.size());
+        if (count == 0) return -1;
+
+        size_t best = 0;
+        for (size_t i = 1; i < count; ++i) {
+            if ((lower_is_better && series.values[i] < series.values[best]) ||
+                (!lower_is_better && series.values[i] > series.values[best])) {
+                best = i;
+            }
+        }
+        return static_cast<int>(best);
+    };
+
+    auto closest_value = [](const MetricSeries& series, double epoch) -> double {
+        const size_t count = std::min(series.epochs.size(), series.values.size());
+        if (count == 0) return 0.0;
+
+        size_t best = 0;
+        double best_distance = std::abs(series.epochs[0] - epoch);
+        for (size_t i = 1; i < count; ++i) {
+            const double distance = std::abs(series.epochs[i] - epoch);
+            if (distance < best_distance) {
+                best = i;
+                best_distance = distance;
+            }
+        }
+        return series.values[best];
+    };
+
+    auto trend_label = [](double slope, bool lower_is_better) -> const char* {
+        const double threshold = lower_is_better ? 0.002 : 0.05;
+        if (std::abs(slope) < threshold) return "flat";
+        const bool improving = lower_is_better ? slope < 0.0 : slope > 0.0;
+        return improving ? "improving" : "worsening";
+    };
+
+    const double train_loss_slope = slope_last(train_loss_, 120);
+    const double val_loss_slope = slope_last(val_loss_, 5);
+    const double train_acc_slope = slope_last(train_accuracy_, 120);
+    const double val_acc_slope = slope_last(val_accuracy_, 5);
+    const double val_loss_volatility = volatility_last(val_loss_, 5);
+
+    const int best_val_loss_idx = best_index(val_loss_, true);
+    const int best_val_acc_idx = best_index(val_accuracy_, false);
+
+    double rough_epoch = -1.0;
+    if (best_val_loss_idx >= 0) {
+        int rising_streak = 0;
+        for (size_t i = static_cast<size_t>(best_val_loss_idx) + 1;
+             i < val_loss_.values.size();
+             ++i) {
+            if (val_loss_.values[i] > val_loss_.values[i - 1]) {
+                ++rising_streak;
+                if (rising_streak >= 2) {
+                    rough_epoch = val_loss_.epochs[i - 1];
+                    break;
+                }
+            } else {
+                rising_streak = 0;
+            }
+        }
+    }
+
+    const bool has_validation = !val_loss_.values.empty() || !val_accuracy_.values.empty();
+    const bool val_loss_worsening = val_loss_slope > 0.0;
+    const bool val_acc_worsening = val_acc_slope < 0.0;
+    const bool gap_large = !val_loss_.values.empty() && !train_loss_.values.empty() &&
+        (val_loss_.values.back() - closest_value(train_loss_, val_loss_.epochs.back())) > 0.25;
+
+    const char* recommendation = "continue";
+    ImVec4 recommendation_color = ImVec4(0.45f, 0.85f, 0.55f, 1.0f);
+    if (has_validation && (gap_large || val_loss_worsening || val_acc_worsening || rough_epoch >= 0.0)) {
+        recommendation = "inspect validation";
+        recommendation_color = ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
+    }
+    if (has_validation && rough_epoch >= 0.0 && val_loss_volatility > 0.02) {
+        recommendation = "consider early stop";
+        recommendation_color = ImVec4(1.0f, 0.55f, 0.35f, 1.0f);
+    }
+
+    ImGui::Columns(2, "curve_summary", false);
+
+    ImGui::Text("Train Curve:");
+    ImGui::NextColumn();
+    ImGui::Text("loss %s, accuracy %s",
+        trend_label(train_loss_slope, true),
+        trend_label(train_acc_slope, false));
+    ImGui::NextColumn();
+
+    ImGui::Text("Validation Curve:");
+    ImGui::NextColumn();
+    if (!val_loss_.values.empty() || !val_accuracy_.values.empty()) {
+        ImGui::Text("loss %s, accuracy %s",
+            trend_label(val_loss_slope, true),
+            trend_label(val_acc_slope, false));
+    } else {
+        ImGui::TextDisabled("waiting for validation points");
+    }
+    ImGui::NextColumn();
+
+    ImGui::Text("Best Validation:");
+    ImGui::NextColumn();
+    if (best_val_loss_idx >= 0) {
+        ImGui::Text("loss %.4f at epoch %.2f",
+            val_loss_.values[best_val_loss_idx],
+            val_loss_.epochs[best_val_loss_idx]);
+        if (best_val_acc_idx >= 0) {
+            ImGui::SameLine();
+            ImGui::Text("| acc %.2f%% at epoch %.2f",
+                val_accuracy_.values[best_val_acc_idx],
+                val_accuracy_.epochs[best_val_acc_idx]);
+        }
+    } else {
+        ImGui::TextDisabled("no validation data yet");
+    }
+    ImGui::NextColumn();
+
+    ImGui::Text("Rough Point:");
+    ImGui::NextColumn();
+    if (rough_epoch >= 0.0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
+            "validation loss starts rising around epoch %.2f", rough_epoch);
+    } else if (val_loss_.values.size() >= 3) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
+            "no sustained validation rise detected");
+    } else {
+        ImGui::TextDisabled("need more validation points");
+    }
+    ImGui::NextColumn();
+
+    ImGui::Text("Generalization Gap:");
+    ImGui::NextColumn();
+    if (!val_loss_.values.empty() && !train_loss_.values.empty()) {
+        const double epoch = val_loss_.epochs.back();
+        const double train_near_val = closest_value(train_loss_, epoch);
+        const double gap = val_loss_.values.back() - train_near_val;
+        ImGui::Text("val_loss - train_loss = %.4f", gap);
+        ImGui::SameLine();
+        if (gap > 0.25) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "possible overfit");
+        } else {
+            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f), "controlled");
+        }
+    } else {
+        ImGui::TextDisabled("waiting for train/validation loss");
+    }
+    ImGui::NextColumn();
+
+    ImGui::Text("Validation Roughness:");
+    ImGui::NextColumn();
+    if (val_loss_.values.size() >= 3) {
+        ImGui::Text("recent avg delta %.4f", val_loss_volatility);
+    } else {
+        ImGui::TextDisabled("need more validation points");
+    }
+    ImGui::NextColumn();
+
+    ImGui::Text("Suggested Action:");
+    ImGui::NextColumn();
+    ImGui::TextColored(recommendation_color, "%s", recommendation);
+
+    ImGui::Columns(1);
 }
 
 void TrainingPlotPanel::RenderTrainingStatus() {
     // Training status header with colored indicator
     ImGui::BeginChild("TrainingStatus", ImVec2(0, 100), true);
-
-    // Debug info (temporary)
-    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-        "[Debug: training=%d, epoch=%d/%d, avg_time=%.1f]",
-        is_training_ ? 1 : 0, current_epoch_, total_epochs_, avg_epoch_time_);
 
     // Status indicator
     if (is_training_) {
@@ -568,13 +806,33 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         if (!val_loss_.values.empty()) {
             ImGui::SameLine(360);
             ImGui::TextColored(ImVec4(0.3f, 0.5f, 1.0f, 1.0f),
-                "Val Loss: %.6f", val_loss_.values.back());
+                    "Val Loss: %.6f", val_loss_.values.back());
         }
 
         if (!val_accuracy_.values.empty()) {
             ImGui::SameLine(540);
             ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                "Val Acc: %.2f%%", val_accuracy_.values.back());
+                    "Val Acc: %.2f%%", val_accuracy_.values.back());
+        }
+
+        if (!val_loss_.values.empty() || !val_accuracy_.values.empty()) {
+            ImGui::Spacing();
+            ImGui::Text("Validation Signal:");
+            ImGui::SameLine(150);
+            if (!val_loss_.values.empty()) {
+                const double recent_val_loss = val_loss_.values.back();
+                const double recent_train_loss = train_loss_.values.empty() ? recent_val_loss : train_loss_.values.back();
+                const double gap = recent_val_loss - recent_train_loss;
+                if (gap > 0.25) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                        "val_loss is above train_loss by %.4f", gap);
+                } else {
+                    ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
+                        "validation gap is controlled");
+                }
+            } else {
+                ImGui::TextDisabled("validation metrics not available yet");
+            }
         }
     }
 
@@ -615,12 +873,94 @@ void TrainingPlotPanel::RenderStatistics() {
 void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {
     if (series.epochs.size() > max_points_) {
         size_t to_remove = series.epochs.size() - max_points_;
+        RecordPanelEvent("TrainingPlotPanel.TrimData",
+                         series.name + " remove=" + std::to_string(to_remove));
         series.epochs.erase(series.epochs.begin(), series.epochs.begin() + to_remove);
         series.values.erase(series.values.begin(), series.values.begin() + to_remove);
     }
 }
 
-double TrainingPlotPanel::CalculateMean(const std::vector<double>& values, size_t last_n) {
+void TrainingPlotPanel::RecordPanelEvent(const std::string& action,
+                                         const std::string& detail) const {
+    CrashRunRecorder::Instance().MarkPanelEvent(action, detail);
+}
+
+std::pair<double, double> TrainingPlotPanel::CalculateEpochWindow(const MetricSeries& series) const {
+    const double latest_epoch = series.epochs.empty() ? 0.0 : series.epochs.back();
+    const double planned_epochs = total_epochs_ > 0 ? static_cast<double>(total_epochs_) : latest_epoch;
+    const double window = static_cast<double>(std::max(3, visible_epoch_window_));
+
+    if (!follow_current_epoch_) {
+        const double max_epoch = std::max({1.0, planned_epochs, latest_epoch});
+        return {0.0, max_epoch + 0.25};
+    }
+
+    if (latest_epoch <= window) {
+        const double max_epoch = std::max(window, std::min(planned_epochs, window));
+        return {0.0, max_epoch + 0.25};
+    }
+
+    const double min_epoch = std::max(0.0, latest_epoch - window);
+    const double max_epoch = std::max(latest_epoch + 0.25, min_epoch + window);
+    return {min_epoch, max_epoch};
+}
+
+TrainingPlotPanel::ValueRange TrainingPlotPanel::CalculateVisibleRange(
+    const MetricSeries& primary,
+    const MetricSeries& secondary,
+    double min_epoch,
+    double max_epoch) const
+{
+    ValueRange range;
+    range.min = std::numeric_limits<double>::max();
+    range.max = std::numeric_limits<double>::lowest();
+
+    auto add_series = [&](const MetricSeries& series) {
+        const size_t count = std::min(series.epochs.size(), series.values.size());
+        for (size_t i = 0; i < count; ++i) {
+            const double epoch = series.epochs[i];
+            if (epoch < min_epoch || epoch > max_epoch) {
+                continue;
+            }
+            range.min = std::min(range.min, series.values[i]);
+            range.max = std::max(range.max, series.values[i]);
+            range.has_values = true;
+        }
+    };
+
+    add_series(primary);
+    add_series(secondary);
+
+    if (!range.has_values) {
+        range.min = primary.values.empty() ? 0.0 : CalculateMin(primary.values);
+        range.max = primary.values.empty() ? 1.0 : CalculateMax(primary.values);
+        range.has_values = true;
+    }
+
+    if (range.min == range.max) {
+        range.min -= 0.5;
+        range.max += 0.5;
+    }
+
+    return range;
+}
+
+bool TrainingPlotPanel::HasData() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    ++sampled_read_events_;
+    if (sampled_read_events_ == 1 || sampled_read_events_ % 60 == 0) {
+        RecordPanelEvent("TrainingPlotPanel.ReadHasData",
+                         "points=" + std::to_string(train_loss_.values.size()));
+    }
+    return !train_loss_.values.empty();
+}
+
+bool TrainingPlotPanel::IsTraining() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    return is_training_;
+}
+
+double TrainingPlotPanel::CalculateMean(const std::vector<double>& values, size_t last_n) const {
     if (values.empty()) return 0.0;
 
     size_t start = values.size() > last_n ? values.size() - last_n : 0;
@@ -628,12 +968,12 @@ double TrainingPlotPanel::CalculateMean(const std::vector<double>& values, size_
     return sum / (values.size() - start);
 }
 
-double TrainingPlotPanel::CalculateMin(const std::vector<double>& values) {
+double TrainingPlotPanel::CalculateMin(const std::vector<double>& values) const {
     if (values.empty()) return 0.0;
     return *std::min_element(values.begin(), values.end());
 }
 
-double TrainingPlotPanel::CalculateMax(const std::vector<double>& values) {
+double TrainingPlotPanel::CalculateMax(const std::vector<double>& values) const {
     if (values.empty()) return 0.0;
     return *std::max_element(values.begin(), values.end());
 }

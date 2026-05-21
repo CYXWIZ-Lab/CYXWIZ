@@ -1,4 +1,8 @@
 #include "training_executor.h"
+#include "checkpoint_manager.h"
+#include "crash_run_recorder.h"
+#include <cyxwiz/debug_hooks.h>
+#include "training_trace_collector.h"
 #include "model_builder.h"
 #include "data_registry.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -9,6 +13,8 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+#include <filesystem>
+#include <limits>
 
 namespace cyxwiz {
 
@@ -66,7 +72,7 @@ TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
     , external_batcher_(std::move(external_batcher))
     , mode_(DatasetMode::Image)
 {
-    spdlog::info("TrainingExecutor: Created with external IBatcher (Image mode), "
+    spdlog::info("TrainingExecutor: Created with external IBatcher, "
                  "{} layers, input_size={}, output_size={}",
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
@@ -103,12 +109,13 @@ void TrainingExecutor::Train(
     stop_requested_.store(false);
     is_paused_.store(false);
 
-    // Initialize
-    if (!Initialize(batch_size)) {
-        spdlog::error("TrainingExecutor: Failed to initialize");
-        is_training_.store(false);
-        return;
-    }
+    try {
+        // Initialize
+        if (!Initialize(batch_size)) {
+            spdlog::error("TrainingExecutor: Failed to initialize");
+            is_training_.store(false);
+            return;
+        }
 
     // Setup metrics
     UpdateMetrics([epochs](TrainingMetrics& m) {
@@ -263,13 +270,13 @@ void TrainingExecutor::Train(
         // augmentation pipeline. We just point the training loop at it.
         // Validation uses the same batcher reset for now — Phase 1.4
         // can add a separate validation batcher without augmentation.
-        spdlog::info("TrainingExecutor: Using Image dataset for training "
+        spdlog::info("TrainingExecutor: Using external batcher for training "
                      "(batch_size={}, num_workers={}, {} samples)",
                      batch_size, config_.num_workers,
                      external_batcher_ ? external_batcher_->GetNumSamples() : 0);
 
         if (!external_batcher_) {
-            spdlog::error("TrainingExecutor: Image mode but no external batcher");
+            spdlog::error("TrainingExecutor: external batcher mode but no external batcher");
             return;
         }
 
@@ -365,6 +372,28 @@ void TrainingExecutor::Train(
     model_->SetTraining(true);
 
     spdlog::debug("TrainingExecutor: Step 3 - Entering training loop");
+    CrashRunRecorder::Instance().StartTrainingRun(config_, epochs, batch_size, num_train_samples);
+    BackendDebugHooks::SetDebugEventCallback([](const std::string& source,
+                                                const std::string& message) {
+        CrashRunRecorder::Instance().MarkBackendEvent(source, message);
+    });
+    const auto last_run = CrashRunRecorder::LoadLastRun();
+    TrainingTraceCollector::Instance().StartRun(
+        last_run ? last_run->run_id : "training-run");
+
+    std::unique_ptr<CheckpointManager> checkpoint_manager;
+    float best_val_loss = std::numeric_limits<float>::infinity();
+    int epochs_without_improvement = 0;
+    const int early_stopping_patience = std::max(0, config_.early_stopping_patience);
+    const bool save_best_checkpoint = config_.save_best_checkpoint;
+    bool validation_ran = false;
+
+    std::filesystem::path checkpoint_root = config_.checkpoint_dir.empty()
+        ? (std::filesystem::current_path() / ".cyxwiz" / "checkpoints")
+        : std::filesystem::path(config_.checkpoint_dir);
+    checkpoint_root /= last_run ? last_run->run_id : "training-run";
+    checkpoint_manager = std::make_unique<CheckpointManager>(checkpoint_root.string());
+
     // Training loop
     for (int epoch = 1; epoch <= epochs; ++epoch) {
         spdlog::debug("TrainingExecutor: Epoch {} starting", epoch);
@@ -423,10 +452,12 @@ void TrainingExecutor::Train(
         model_->SetTraining(false);
         if (mode_ == DatasetMode::Legacy) {
             RunValidation(*legacy_val_batcher);
+            validation_ran = true;
         } else if (active_val_ibatcher) {
             active_val_ibatcher->SetPhase(BatcherPhase::Val);
             RunValidationArrow(*active_val_ibatcher);
             active_val_ibatcher->SetPhase(BatcherPhase::Train);
+            validation_ran = true;
         }
         model_->SetTraining(true);
 
@@ -459,6 +490,30 @@ void TrainingExecutor::Train(
                      epoch, epochs, current.train_loss, current.train_accuracy * 100,
                      current.val_loss, current.val_accuracy * 100, epoch_time, samples_per_sec);
 
+        if (validation_ran && checkpoint_manager && save_best_checkpoint && std::isfinite(current.val_loss)) {
+            if (current.val_loss < best_val_loss) {
+                best_val_loss = current.val_loss;
+                epochs_without_improvement = 0;
+                if (checkpoint_manager->SaveBestModel(*model_, optimizer_.get(), current, current.val_loss)) {
+                    spdlog::info("TrainingExecutor: Best validation checkpoint saved at epoch {} (val_loss={:.4f})",
+                                 epoch, current.val_loss);
+                }
+            } else {
+                ++epochs_without_improvement;
+                spdlog::info("TrainingExecutor: No validation improvement for {} epoch(s) (best val_loss={:.4f})",
+                             epochs_without_improvement, best_val_loss);
+                if (early_stopping_patience > 0 &&
+                    epochs_without_improvement >= early_stopping_patience) {
+                    spdlog::info("TrainingExecutor: Early stopping after {} non-improving epoch(s) (patience={})",
+                                 epochs_without_improvement, early_stopping_patience);
+                    UpdateMetrics([](TrainingMetrics& m) {
+                        m.status_message = "Early stopping: validation loss plateaued";
+                    });
+                    break;
+                }
+            }
+        }
+
         // Notify plugin hooks: epoch end
         {
             cyxwiz::plugin::TrainingContext ctx;
@@ -482,9 +537,51 @@ void TrainingExecutor::Train(
         }
     }
 
+    TrainingMetrics final_metrics = GetMetrics();
+
+    // Mark complete
+    UpdateMetrics([](TrainingMetrics& m) {
+        m.is_training = false;
+        m.is_complete = true;
+        m.status_message = "Training complete";
+    });
+
+    if (!stop_requested_.load() && checkpoint_manager && save_best_checkpoint) {
+        const std::string best_checkpoint = checkpoint_manager->GetBestCheckpoint();
+        if (!best_checkpoint.empty()) {
+            auto restored = checkpoint_manager->LoadCheckpoint(*model_, optimizer_.get(), "best");
+            if (restored) {
+                final_metrics.current_epoch = restored->epoch;
+                final_metrics.current_batch = restored->global_step;
+                final_metrics.train_loss = restored->train_loss;
+                final_metrics.train_accuracy = restored->train_accuracy;
+                final_metrics.val_loss = restored->val_loss;
+                final_metrics.val_accuracy = restored->val_accuracy;
+                final_metrics.loss_history = restored->loss_history;
+                final_metrics.accuracy_history = restored->accuracy_history;
+                final_metrics.val_loss_history = restored->val_loss_history;
+                final_metrics.val_accuracy_history = restored->val_accuracy_history;
+                UpdateMetrics([&](TrainingMetrics& m) {
+                    m.current_epoch = restored->epoch;
+                    m.current_batch = restored->global_step;
+                    m.train_loss = restored->train_loss;
+                    m.train_accuracy = restored->train_accuracy;
+                    m.val_loss = restored->val_loss;
+                    m.val_accuracy = restored->val_accuracy;
+                    m.loss_history = restored->loss_history;
+                    m.accuracy_history = restored->accuracy_history;
+                    m.val_loss_history = restored->val_loss_history;
+                    m.val_accuracy_history = restored->val_accuracy_history;
+                    m.status_message = "Restored best validation checkpoint";
+                });
+                spdlog::info("TrainingExecutor: Restored best checkpoint from epoch {} (val_loss={:.4f})",
+                             restored->epoch, restored->val_loss);
+            }
+        }
+    }
+
     // Notify plugin hooks: training end
     {
-        TrainingMetrics final_metrics = GetMetrics();
         cyxwiz::plugin::TrainingContext ctx;
         ctx.current_epoch = final_metrics.current_epoch;
         ctx.total_epochs = final_metrics.total_epochs;
@@ -496,12 +593,14 @@ void TrainingExecutor::Train(
         cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyTrainingEnd(ctx);
     }
 
-    // Mark complete
-    UpdateMetrics([](TrainingMetrics& m) {
-        m.is_training = false;
-        m.is_complete = true;
-        m.status_message = "Training complete";
-    });
+    if (stop_requested_.load()) {
+        CrashRunRecorder::Instance().MarkCancelled();
+        TrainingTraceCollector::Instance().FinishRun("cancelled");
+    } else {
+        CrashRunRecorder::Instance().MarkCompleted();
+        TrainingTraceCollector::Instance().FinishRun("completed");
+    }
+    BackendDebugHooks::SetDebugEventCallback({});
 
     is_training_.store(false);
 
@@ -511,6 +610,21 @@ void TrainingExecutor::Train(
     }
 
     spdlog::info("TrainingExecutor: Training complete");
+    } catch (const std::exception& e) {
+        CrashRunRecorder::Instance().MarkFailed(e.what());
+        TrainingTraceCollector::Instance().FinishRun("failed");
+        BackendDebugHooks::SetDebugEventCallback({});
+        is_training_.store(false);
+        spdlog::error("TrainingExecutor: Training failed: {}", e.what());
+        throw;
+    } catch (...) {
+        CrashRunRecorder::Instance().MarkFailed("unknown native exception");
+        TrainingTraceCollector::Instance().FinishRun("failed");
+        BackendDebugHooks::SetDebugEventCallback({});
+        is_training_.store(false);
+        spdlog::error("TrainingExecutor: Training failed with unknown exception");
+        throw;
+    }
 }
 
 void TrainingExecutor::RunTrainingEpoch(
@@ -539,13 +653,28 @@ void TrainingExecutor::RunTrainingEpoch(
         if (ShouldStop()) break;
         WaitWhilePaused();
 
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
+            static_cast<int>(total_batches));
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
+            static_cast<int>(total_batches));
         Batch batch = batcher.GetNextBatch();
         if (!batch.IsValid()) break;
 
         batch_num++;
 
         // Forward pass through model
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::Forward, epoch, batch_num,
+            static_cast<int>(total_batches));
+        const auto forward_start = std::chrono::steady_clock::now();
         Tensor predictions = Forward(batch.data);
+        const auto forward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - forward_start).count();
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::Forward, epoch, batch_num,
+            static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
 
         // DEBUG: Log sample values for first batch of first epoch
         if (epoch == 1 && batch_num == 1) {
@@ -589,7 +718,16 @@ void TrainingExecutor::RunTrainingEpoch(
         }
 
         // Compute loss
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::ComputeLoss, epoch, batch_num,
+            static_cast<int>(total_batches));
         float batch_loss = ComputeLoss(predictions, batch.labels);
+        const std::string loss_status = std::isfinite(batch_loss) ? "ok" : "failed";
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::ComputeLoss, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f,
+            loss_status,
+            std::isfinite(batch_loss) ? "" : "Training loss became NaN or Inf.");
         epoch_loss += batch_loss;
 
         // Compute accuracy
@@ -617,10 +755,25 @@ void TrainingExecutor::RunTrainingEpoch(
         }
 
         // Backward pass
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::Backward, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss);
+        const auto backward_start = std::chrono::steady_clock::now();
         Backward(predictions, batch.labels);
+        const auto backward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - backward_start).count();
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::Backward, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
 
         // Update weights using optimizer
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::UpdateParameters, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss);
         model_->UpdateParameters(optimizer_.get());
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::UpdateParameters, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss);
 
         // Update metrics
         float current_loss = epoch_loss / batch_num;
@@ -652,6 +805,12 @@ void TrainingExecutor::RunTrainingEpoch(
 
         // Batch callback
         if (batch_cb) {
+            CrashRunRecorder::Instance().MarkStage(
+                TrainingTraceStage::BatchCallback, epoch, batch_num,
+                static_cast<int>(total_batches), batch_loss, current_acc);
+            TrainingTraceCollector::Instance().RecordStage(
+                TrainingTraceStage::BatchCallback, epoch, batch_num,
+                static_cast<int>(total_batches), batch_loss, current_acc);
             batch_cb(epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
         }
     }
@@ -664,6 +823,12 @@ void TrainingExecutor::RunTrainingEpoch(
         m.train_loss = final_loss;
         m.train_accuracy = final_acc;
     });
+    CrashRunRecorder::Instance().MarkStage(
+        TrainingTraceStage::EpochComplete, epoch, batch_num,
+        static_cast<int>(total_batches), final_loss, final_acc);
+    TrainingTraceCollector::Instance().RecordStage(
+        TrainingTraceStage::EpochComplete, epoch, batch_num,
+        static_cast<int>(total_batches), final_loss, final_acc);
 }
 
 void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
@@ -884,13 +1049,28 @@ void TrainingExecutor::RunTrainingEpochArrow(
         if (ShouldStop()) break;
         WaitWhilePaused();
 
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
+            static_cast<int>(total_batches));
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
+            static_cast<int>(total_batches));
         Batch batch = batcher.GetNextBatch();
         if (!batch.IsValid()) break;
 
         batch_num++;
 
         // Forward pass through model
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::Forward, epoch, batch_num,
+            static_cast<int>(total_batches));
+        const auto forward_start = std::chrono::steady_clock::now();
         Tensor predictions = Forward(batch.data);
+        const auto forward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - forward_start).count();
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::Forward, epoch, batch_num,
+            static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
 
         // DEBUG: Log sample values for first batch of first epoch
         if (epoch == 1 && batch_num == 1) {
@@ -913,9 +1093,22 @@ void TrainingExecutor::RunTrainingEpochArrow(
             spdlog::info("DEBUG Arrow: Label shape: [{}], output_size={}", shape_str, config_.output_size);
 
             const float* label_data = batch.labels.Data<float>();
-            if (label_data && !label_shape.empty()) {
-                spdlog::info("DEBUG Arrow: First label values: {:.1f}, {:.1f}, {:.1f}",
-                             label_data[0], label_data[1], label_data[2]);
+            size_t label_count = 0;
+            if (!label_shape.empty()) {
+                label_count = 1;
+                for (size_t dim : label_shape) {
+                    label_count *= dim;
+                }
+            }
+            if (label_data && label_count > 0) {
+                const size_t sample_count = std::min<size_t>(label_count, 3);
+                std::string label_str = "  [";
+                for (size_t i = 0; i < sample_count; ++i) {
+                    label_str += fmt::format("{:.1f}", label_data[i]);
+                    if (i + 1 < sample_count) label_str += ", ";
+                }
+                label_str += "]";
+                spdlog::info("DEBUG Arrow: First label values: {}", label_str);
             } else {
                 spdlog::error("DEBUG Arrow: Labels tensor is empty or invalid!");
             }
@@ -928,7 +1121,16 @@ void TrainingExecutor::RunTrainingEpochArrow(
         }
 
         // Compute loss
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::ComputeLoss, epoch, batch_num,
+            static_cast<int>(total_batches));
         float batch_loss = ComputeLoss(predictions, batch.labels);
+        const std::string loss_status = std::isfinite(batch_loss) ? "ok" : "failed";
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::ComputeLoss, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f,
+            loss_status,
+            std::isfinite(batch_loss) ? "" : "Training loss became NaN or Inf.");
         epoch_loss += batch_loss;
 
         // Compute accuracy
@@ -955,10 +1157,25 @@ void TrainingExecutor::RunTrainingEpochArrow(
         }
 
         // Backward pass
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::Backward, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss);
+        const auto backward_start = std::chrono::steady_clock::now();
         Backward(predictions, batch.labels);
+        const auto backward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - backward_start).count();
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::Backward, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
 
         // Update weights using optimizer
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::UpdateParameters, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss);
         model_->UpdateParameters(optimizer_.get());
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::UpdateParameters, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss);
 
         // Update metrics
         float current_loss = epoch_loss / batch_num;
@@ -992,6 +1209,12 @@ void TrainingExecutor::RunTrainingEpochArrow(
 
         // Batch callback
         if (batch_cb) {
+            CrashRunRecorder::Instance().MarkStage(
+                TrainingTraceStage::BatchCallback, epoch, batch_num,
+                static_cast<int>(total_batches), batch_loss, current_acc);
+            TrainingTraceCollector::Instance().RecordStage(
+                TrainingTraceStage::BatchCallback, epoch, batch_num,
+                static_cast<int>(total_batches), batch_loss, current_acc);
             batch_cb(epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
         }
     }
@@ -1004,6 +1227,12 @@ void TrainingExecutor::RunTrainingEpochArrow(
         m.train_loss = final_loss;
         m.train_accuracy = final_acc;
     });
+    CrashRunRecorder::Instance().MarkStage(
+        TrainingTraceStage::EpochComplete, epoch, batch_num,
+        static_cast<int>(total_batches), final_loss, final_acc);
+    TrainingTraceCollector::Instance().RecordStage(
+        TrainingTraceStage::EpochComplete, epoch, batch_num,
+        static_cast<int>(total_batches), final_loss, final_acc);
 }
 
 void TrainingExecutor::RunValidationArrow(IBatcher& batcher) {

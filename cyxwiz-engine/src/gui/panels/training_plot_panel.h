@@ -57,8 +57,8 @@ public:
                           float running_loss);
 
     // Getters for live metrics (thread-safe)
-    bool HasData() const { return !train_loss_.values.empty(); }
-    bool IsTraining() const { return is_training_; }
+    bool HasData() const;
+    bool IsTraining() const;
     int GetCurrentEpoch() const;
     double GetCurrentTrainLoss() const;
     double GetCurrentValLoss() const;
@@ -72,6 +72,12 @@ private:
         std::vector<double> values;
         std::string name;
         ImVec4 color;
+    };
+
+    struct ValueRange {
+        double min = 0.0;
+        double max = 0.0;
+        bool has_values = false;
     };
 
     // Plot IDs
@@ -91,6 +97,8 @@ private:
     bool show_accuracy_plot_ = true;
     bool show_custom_metrics_ = false;
     bool auto_scale_ = true;
+    bool follow_current_epoch_ = true;
+    int visible_epoch_window_ = 10;
     size_t max_points_ = 1000;
 
     // Training state
@@ -105,6 +113,8 @@ private:
     float samples_per_second_ = 0.0f;
     float total_training_time_ = 0.0f;
     std::vector<float> epoch_times_;  // For averaging
+    bool last_render_visible_ = false;
+    mutable size_t sampled_read_events_ = 0;
 
     // Thread safety
     mutable std::mutex data_mutex_;
@@ -115,13 +125,21 @@ private:
     void RenderAccuracyPlot();
     void RenderCustomMetricsPlot();
     void RenderControls();
+    void RenderCurveSummary();
     void RenderStatistics();
 
     // Internal helpers
+    std::pair<double, double> CalculateEpochWindow(const MetricSeries& series) const;
+    ValueRange CalculateVisibleRange(const MetricSeries& primary,
+                                     const MetricSeries& secondary,
+                                     double min_epoch,
+                                     double max_epoch) const;
     void TrimDataIfNeeded(MetricSeries& series);
-    double CalculateMean(const std::vector<double>& values, size_t last_n = 10);
-    double CalculateMin(const std::vector<double>& values);
-    double CalculateMax(const std::vector<double>& values);
+    void RecordPanelEvent(const std::string& action,
+                          const std::string& detail = "") const;
+    double CalculateMean(const std::vector<double>& values, size_t last_n = 10) const;
+    double CalculateMin(const std::vector<double>& values) const;
+    double CalculateMax(const std::vector<double>& values) const;
 };
 
 // Global accessor functions for Python integration

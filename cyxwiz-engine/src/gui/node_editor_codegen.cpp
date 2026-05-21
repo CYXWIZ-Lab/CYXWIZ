@@ -1304,6 +1304,15 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             std::string num_layers = "1";
             std::string bidirectional = "False";
             std::string dropout = "0.0";
+            auto normalize_bool = [](const std::string& value) -> std::string {
+                if (value == "true" || value == "1" || value == "True") {
+                    return "True";
+                }
+                if (value == "false" || value == "0" || value == "False") {
+                    return "False";
+                }
+                return value;
+            };
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
             it = node.parameters.find("hidden_size");
@@ -1311,7 +1320,7 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             it = node.parameters.find("num_layers");
             if (it != node.parameters.end()) num_layers = it->second;
             it = node.parameters.find("bidirectional");
-            if (it != node.parameters.end()) bidirectional = it->second;
+            if (it != node.parameters.end()) bidirectional = normalize_bool(it->second);
             it = node.parameters.find("dropout");
             if (it != node.parameters.end()) dropout = it->second;
             code = "nn.LSTM(input_size=" + input_size + ", hidden_size=" + hidden_size +
@@ -1326,6 +1335,15 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             std::string num_layers = "1";
             std::string bidirectional = "False";
             std::string dropout = "0.0";
+            auto normalize_bool = [](const std::string& value) -> std::string {
+                if (value == "true" || value == "1" || value == "True") {
+                    return "True";
+                }
+                if (value == "false" || value == "0" || value == "False") {
+                    return "False";
+                }
+                return value;
+            };
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
             it = node.parameters.find("hidden_size");
@@ -1333,7 +1351,7 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             it = node.parameters.find("num_layers");
             if (it != node.parameters.end()) num_layers = it->second;
             it = node.parameters.find("bidirectional");
-            if (it != node.parameters.end()) bidirectional = it->second;
+            if (it != node.parameters.end()) bidirectional = normalize_bool(it->second);
             it = node.parameters.find("dropout");
             if (it != node.parameters.end()) dropout = it->second;
             code = "nn.GRU(input_size=" + input_size + ", hidden_size=" + hidden_size +
@@ -1787,13 +1805,30 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             std::string input_size = "512";
             std::string hidden_size = "256";
             std::string num_layers = "1";
+            auto normalize_bool = [](const std::string& value) -> std::string {
+                if (value == "true" || value == "1" || value == "True") {
+                    return "True";
+                }
+                if (value == "false" || value == "0" || value == "False") {
+                    return "False";
+                }
+                return value;
+            };
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
             it = node.parameters.find("hidden_size");
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");
             if (it != node.parameters.end()) num_layers = it->second;
-            code = "cx.LSTM(input_size=" + input_size + ", hidden_size=" + hidden_size + ", num_layers=" + num_layers + ")";
+            std::string bidirectional = "false";
+            std::string dropout = "0.0";
+            it = node.parameters.find("bidirectional");
+            if (it != node.parameters.end()) bidirectional = normalize_bool(it->second);
+            it = node.parameters.find("dropout");
+            if (it != node.parameters.end()) dropout = it->second;
+            code = "cx.LSTM(input_size=" + input_size + ", hidden_size=" + hidden_size +
+                   ", num_layers=" + num_layers + ", bidirectional=" + bidirectional +
+                   ", dropout=" + dropout + ")";
             break;
         }
 
@@ -1801,13 +1836,28 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             std::string input_size = "512";
             std::string hidden_size = "256";
             std::string num_layers = "1";
+            std::string bidirectional = "false";
+            auto normalize_bool = [](const std::string& value) -> std::string {
+                if (value == "true" || value == "1" || value == "True") {
+                    return "True";
+                }
+                if (value == "false" || value == "0" || value == "False") {
+                    return "False";
+                }
+                return value;
+            };
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
             it = node.parameters.find("hidden_size");
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");
             if (it != node.parameters.end()) num_layers = it->second;
-            code = "cx.GRU(input_size=" + input_size + ", hidden_size=" + hidden_size + ", num_layers=" + num_layers + ")";
+            it = node.parameters.find("bidirectional");
+            if (it != node.parameters.end()) bidirectional = normalize_bool(it->second);
+            code = "cx.GRU(input_size=" + input_size +
+                   ", hidden_size=" + hidden_size +
+                   ", num_layers=" + num_layers +
+                   ", batch_first=True, bidirectional=" + bidirectional + ")";
             break;
         }
 

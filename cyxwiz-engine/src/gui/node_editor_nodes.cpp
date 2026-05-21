@@ -1,6 +1,7 @@
 #include "node_editor.h"
 #include "properties.h"
 #include "visualization/visualization_nodes.h"
+#include "../core/worker_defaults.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include "../core/data_registry.h"
 #include <imgui.h>
@@ -690,11 +691,14 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["shuffle"] = "true";
             node.parameters["drop_last"] = "false";
             node.parameters["seed"] = "42";             // reproducibility
-            node.parameters["num_workers"] = "4";
+            node.parameters["num_workers"] = std::to_string(cyxwiz::GetDefaultNumWorkers());
             node.parameters["prefetch_factor"] = "2";
             node.parameters["pin_memory"] = "false";    // CUDA host→device speedup
             node.parameters["log_interval"] = "10";     // log every N batches
             node.parameters["validation_freq"] = "1";   // validate every N epochs
+            node.parameters["save_best_checkpoint"] = "true";
+            node.parameters["early_stopping_patience"] = "5";
+            node.parameters["checkpoint_dir"] = "";
             break;
         }
 

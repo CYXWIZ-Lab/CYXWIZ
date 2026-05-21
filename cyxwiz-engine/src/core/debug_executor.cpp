@@ -64,6 +64,26 @@ float ExtractLossScalar(const Tensor& t) {
     return t.Data<float>()[0];
 }
 
+bool ShapesMatchForTrace(const std::vector<size_t>& predicted,
+                         const std::vector<size_t>& actual) {
+    if (predicted.empty()) {
+        return false;
+    }
+    if (actual == predicted) {
+        return true;
+    }
+
+    // CompiledLayer::output_shape is per-sample, while DebugExecutor runs a
+    // synthetic batch. Runtime tensors therefore often carry a leading batch
+    // dimension: predicted [512,96] vs actual [1,512,96].
+    if (actual.size() == predicted.size() + 1) {
+        return std::equal(predicted.begin(), predicted.end(),
+                          actual.begin() + 1);
+    }
+
+    return false;
+}
+
 } // namespace
 
 DebugExecutor::DebugExecutor(TrainingConfiguration config)
@@ -128,8 +148,7 @@ DebugResult DebugExecutor::Run() {
 
             trace.actual_shape = current.Shape();
             trace.shape_matches =
-                !trace.predicted_shape.empty() &&
-                trace.actual_shape == trace.predicted_shape;
+                ShapesMatchForTrace(trace.predicted_shape, trace.actual_shape);
 
             auto [has_nan, has_inf] = ScanFinite(current);
             trace.has_nan = has_nan;

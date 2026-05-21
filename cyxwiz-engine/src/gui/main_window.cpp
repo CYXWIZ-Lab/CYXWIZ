@@ -140,6 +140,13 @@
 #include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
 #include "../core/debug_executor.h"
+#include "../core/debug_session_manager.h"
+#include "../core/preflight_validator.h"
+#include "../core/text_preprocessing_tracer.h"
+#include "../core/smoke_run_executor.h"
+#include "../core/debug_recommendation_engine.h"
+#include "../core/training_trace_collector.h"
+#include "../core/debug_run_store.h"
 #include "../core/pipeline_materializer.h"
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
@@ -151,8 +158,11 @@
 #include <imgui_internal.h>
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <iterator>
 #include <sstream>
 #include <thread>
 
@@ -226,6 +236,28 @@ uint64_t HashGraphStructure(const std::vector<MLNode>& nodes,
     return h;
 }
 
+std::string NowLocalTimestampForDebugStore() {
+    const auto now = std::chrono::system_clock::now();
+    const auto now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &now_time);
+#else
+    localtime_r(&now_time, &tm);
+#endif
+    std::ostringstream out;
+    out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return out.str();
+}
+
+std::string MakeDebuggerRunId(uint64_t graph_hash) {
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    std::ostringstream out;
+    out << "local-debug-" << std::hex << graph_hash << "-" << std::dec << ms;
+    return out.str();
+}
+
 } // anonymous namespace
 
 MainWindow::MainWindow()
@@ -249,7 +281,7 @@ MainWindow::MainWindow()
     // New panel system
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
-    training_plot_panel_ = std::make_unique<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
+    training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
 
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
@@ -497,10 +529,22 @@ MainWindow::MainWindow()
     });
 
     if (studio_debugger_panel_) {
-        studio_debugger_panel_->SetRunDebugCallback([this]() {
-            cyxwiz::StudioDebuggerSnapshot session;
-            this->BuildStudioDebuggerSession(session);
-            return session;
+        studio_debugger_panel_->SetRunDebugCallback([this](cyxwiz::StudioDebuggerRunMode mode,
+                                                           int sample_index) {
+            std::vector<MLNode> nodes;
+            std::vector<NodeLink> links;
+            if (node_editor_) {
+                nodes = node_editor_->GetNodes();
+                links = node_editor_->GetLinks();
+            }
+            return [this, mode, sample_index,
+                    nodes = std::move(nodes),
+                    links = std::move(links)]() mutable {
+                cyxwiz::StudioDebuggerSnapshot session;
+                this->BuildStudioDebuggerSessionFromSnapshot(
+                    session, mode, sample_index, std::move(nodes), std::move(links));
+                return session;
+            };
         });
         studio_debugger_panel_->SetFocusNodeCallback([this](int node_id) {
             if (node_editor_) {
@@ -664,6 +708,13 @@ MainWindow::MainWindow()
         if (test_results_panel_) {
             test_results_panel_->Show();
             spdlog::info("Opened Test Results panel");
+        }
+    });
+
+    cyxwiz::TestManager::Instance().SetOnTestingEnd([this](bool success, const cyxwiz::TestingMetrics& metrics) {
+        if (success && test_results_panel_) {
+            test_results_panel_->SetResults(metrics);
+            test_results_panel_->Show();
         }
     });
 
@@ -1836,6 +1887,13 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow() {
     spdlog::info("MainWindow destructor: starting cleanup");
+
+    auto& training_mgr = cyxwiz::TrainingManager::Instance();
+    if (training_mgr.IsTrainingActive()) {
+        spdlog::info("~MainWindow: stopping active training before panel cleanup");
+        training_mgr.StopTraining();
+        training_mgr.WaitForTrainingStop();
+    }
 
     // IMPORTANT: Destroy panels that use PlotManager/Python BEFORE scripting_engine_
     // PlotWindow destructor calls PlotManager::DeletePlot() which may use Python
@@ -3066,7 +3124,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         started = loader->LaunchTraining(
             std::move(config), dataset_name, label_column,
             epochs, batch_size,
-            training_plot_panel_.get(), node_editor_callback);
+            training_plot_panel_, node_editor_callback);
     } else {
         // Fall back to legacy DatasetHandle path — the pre-Arrow route
         // kept for back-compat. No loader claims this registry shape.
@@ -3079,7 +3137,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                      dataset_name, epochs, batch_size);
         started = tm.StartTraining(
             std::move(config), dataset, epochs, batch_size,
-            training_plot_panel_.get(), node_editor_callback);
+            training_plot_panel_, node_editor_callback);
     }
 
     if (started) {
@@ -3173,6 +3231,11 @@ void MainWindow::LocalDebugGraphAndReport() {
                  "({} compiled layers, input_size={}, output_size={})",
                  config.layers.size(), config.input_size, config.output_size);
 
+    const uint64_t graph_hash = HashGraphStructure(nodes, links);
+    cyxwiz::PreflightValidator preflight_validator;
+    cyxwiz::DebugPreflightResult preflight =
+        preflight_validator.Validate(config, nodes, links, graph_hash);
+
     cyxwiz::DebugExecutor exe(std::move(config));
     cyxwiz::DebugResult result = exe.Run();
 
@@ -3239,9 +3302,11 @@ void MainWindow::LocalDebugGraphAndReport() {
         cyxwiz::StudioDebuggerSnapshot session;
         session.success = result.success;
         session.has_debug_result = true;
-        session.graph_hash = HashGraphStructure(nodes, links);
+        session.graph_hash = graph_hash;
         session.node_count = nodes.size();
         session.link_count = links.size();
+        session.preflight = preflight;
+        session.preflight_summary = preflight.summary;
         session.graph_summary = compile_result_summary_;
         session.sample_summary = "Synthetic sample 0 (Local Debug)";
         session.failure_summary = result.failure_summary;
@@ -3263,44 +3328,226 @@ void MainWindow::LocalDebugGraphAndReport() {
     }
 }
 
-bool MainWindow::BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session) {
-    session = cyxwiz::StudioDebuggerSnapshot{};
-
+bool MainWindow::BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session,
+                                            cyxwiz::StudioDebuggerRunMode mode,
+                                            int sample_index) {
     if (!node_editor_) {
+        session = cyxwiz::StudioDebuggerSnapshot{};
         session.failure_summary = "Node editor is not available.";
         return false;
     }
 
     auto nodes = node_editor_->GetNodes();
     auto links = node_editor_->GetLinks();
+    return BuildStudioDebuggerSessionFromSnapshot(
+        session, mode, sample_index, std::move(nodes), std::move(links));
+}
+
+bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
+    cyxwiz::StudioDebuggerSnapshot& session,
+    cyxwiz::StudioDebuggerRunMode mode,
+    int sample_index,
+    std::vector<MLNode> nodes,
+    std::vector<NodeLink> links) {
+    session = cyxwiz::StudioDebuggerSnapshot{};
+
     session.node_count = nodes.size();
     session.link_count = links.size();
     session.graph_hash = HashGraphStructure(nodes, links);
-    session.sample_summary = "Synthetic sample 0 (DebugExecutor POC)";
+    session.run_id = MakeDebuggerRunId(session.graph_hash);
+    const bool run_full = mode == cyxwiz::StudioDebuggerRunMode::FullWorkflow;
+    const bool run_local_debug = run_full || mode == cyxwiz::StudioDebuggerRunMode::LocalDebug;
+    const bool run_smoke = run_full || mode == cyxwiz::StudioDebuggerRunMode::SmokeRun;
+    const bool run_runtime = run_full || mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace;
 
-    // Reuse the current compile gate so the debugger only runs against a
-    // graph that is structurally valid enough to execute.
-    BuildCompileResult(nodes, links);
-    session.graph_summary = compile_result_summary_;
-    session.issues = compile_result_issues_;
-    if (!compile_result_success_) {
-        session.success = false;
-        session.failure_summary = "Compile gate failed.";
-        return false;
+    const char* mode_name = "FullWorkflow";
+    switch (mode) {
+        case cyxwiz::StudioDebuggerRunMode::FullWorkflow: mode_name = "FullWorkflow"; break;
+        case cyxwiz::StudioDebuggerRunMode::Preflight: mode_name = "Preflight"; break;
+        case cyxwiz::StudioDebuggerRunMode::LocalDebug: mode_name = "LocalDebug"; break;
+        case cyxwiz::StudioDebuggerRunMode::SmokeRun: mode_name = "SmokeRun"; break;
+        case cyxwiz::StudioDebuggerRunMode::RuntimeTrace: mode_name = "RuntimeTrace"; break;
+    }
+    const size_t selected_sample_index = static_cast<size_t>(std::max(0, sample_index));
+    cyxwiz::DebugSession debug_session = cyxwiz::DebugSessionManager::StartSession(
+        session.run_id, mode_name, session.graph_hash, nodes, links, selected_sample_index);
+    session.traces = debug_session.traces;
+    session.studio_events = debug_session.studio_events;
+    session.sample_summary = std::string("Studio Debugger mode: ") + mode_name +
+        " | sample " + std::to_string(selected_sample_index);
+    const std::string& run_id = session.run_id;
+    auto save_session = [&session]() {
+        cyxwiz::DebugRunStoreRecord record;
+        record.summary.run_id = session.run_id;
+        record.summary.timestamp = NowLocalTimestampForDebugStore();
+        record.summary.graph_hash = session.graph_hash;
+        record.summary.success = session.success;
+        record.summary.summary = session.failure_summary.empty()
+            ? "Studio debugger run completed."
+            : session.failure_summary;
+        record.issues = session.issues;
+        record.traces = session.traces;
+        record.studio_events = session.studio_events;
+        record.recommendations = session.recommendations;
+        cyxwiz::DebugRunStore::Save(record);
+        session.run_history = cyxwiz::DebugRunStore::ListRecent(8);
+    };
+
+    session.studio_events.push_back({
+        run_id,
+        "",
+        session.graph_hash,
+        -1,
+        "StudioDebugger.Run",
+        "started",
+        std::string("Studio Debugger started mode: ") + mode_name
+    });
+
+    if (mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace) {
+        if (auto last_run = cyxwiz::CrashRunRecorder::LoadLastRun()) {
+            session.last_run = *last_run;
+        }
+        if (auto training_trace = cyxwiz::TrainingTraceCollector::LoadLastTrace()) {
+            session.training_trace = *training_trace;
+        }
+        cyxwiz::DebugRecommendationEngine recommendation_engine;
+        session.recommendations = recommendation_engine.Build(
+            session.traces, session.issues, session.smoke_result,
+            session.last_run, session.training_trace);
+        session.success = true;
+        session.graph_summary =
+            "Runtime Trace loaded crash heartbeat and training trace without executing graph debug.";
+        save_session();
+        return true;
     }
 
     cyxwiz::TrainingConfiguration config;
+    bool compile_success = false;
+    std::string compile_summary;
     try {
         cyxwiz::GraphCompiler compiler;
         config = compiler.Compile(nodes, links);
+        session.issues = config.issues;
+        compile_success = config.is_valid;
+
+        std::ostringstream out;
+        out << "Layers:          " << config.layers.size() << "\n";
+        out << "Input size:      " << config.input_size << "\n";
+        out << "Output size:     " << config.output_size << "\n";
+        out << "Batch size:      " << config.batch_size << "\n";
+        out << "Dataset:         " << (config.dataset_name.empty() ? "(none)" : config.dataset_name) << "\n";
+        out << "Issues:          " << config.issues.size() << "\n";
+        compile_summary = out.str();
+        session.graph_summary = compile_summary;
     } catch (const std::exception& e) {
-        session.failure_summary = std::string("Recompile threw: ") + e.what();
+        session.failure_summary = std::string("Compile threw: ") + e.what();
         session.success = false;
         session.issues.push_back({cyxwiz::IssueLevel::Error, -1, "", session.failure_summary});
-        return false;
+        compile_summary = session.failure_summary;
     }
 
-    try {
+    cyxwiz::DebugTraceRecord compile_trace;
+    compile_trace.run_id = run_id;
+    compile_trace.node_id = -1;
+    compile_trace.node_name = "GraphCompiler";
+    compile_trace.node_type = "Compile";
+    compile_trace.phase = "Compile";
+    compile_trace.role = cyxwiz::DebugTraceRole::CompileArtifact;
+    compile_trace.status = compile_success ? "passed" : "failed";
+    compile_trace.issues = session.issues;
+    compile_trace.payload["node_count"] = nodes.size();
+    compile_trace.payload["link_count"] = links.size();
+    compile_trace.payload["issue_count"] = session.issues.size();
+    compile_trace.payload["summary"] = compile_summary;
+    session.traces.push_back(std::move(compile_trace));
+
+    if (!compile_success) {
+        session.success = false;
+        if (session.failure_summary.empty()) {
+            session.failure_summary = "Compile gate failed.";
+        }
+        session.studio_events.push_back({
+            run_id, "", session.graph_hash, -1,
+            "Compile", "failed", session.failure_summary
+        });
+        save_session();
+        return false;
+    }
+    session.studio_events.push_back({
+        run_id, "", session.graph_hash, -1,
+        "Compile", "passed", "Compile gate passed before Local Debug."
+    });
+
+    cyxwiz::PreflightValidator preflight_validator;
+    session.preflight = preflight_validator.Validate(config, nodes, links, session.graph_hash);
+    session.preflight_summary = session.preflight.summary;
+    cyxwiz::DebugTraceRecord preflight_trace;
+    preflight_trace.run_id = run_id;
+    preflight_trace.node_id = -1;
+    preflight_trace.node_name = "PreflightValidator";
+    preflight_trace.node_type = "Preflight";
+    preflight_trace.phase = "Preflight";
+    preflight_trace.role = session.preflight.ready
+        ? cyxwiz::DebugTraceRole::CompileArtifact
+        : cyxwiz::DebugTraceRole::Warning;
+    preflight_trace.status = session.preflight.ready ? "ready" : "blocked";
+    preflight_trace.issues = session.preflight.issues;
+    preflight_trace.payload["ready"] = session.preflight.ready;
+    preflight_trace.payload["issue_count"] = session.preflight.issues.size();
+    preflight_trace.payload["summary"] = session.preflight.summary;
+    session.traces.push_back(std::move(preflight_trace));
+    session.studio_events.push_back({
+        run_id, "", session.graph_hash, -1,
+        "Preflight", session.preflight.ready ? "ready" : "blocked",
+        session.preflight.ready ? "Preflight checks passed." : "Preflight reported blocking issues."
+    });
+
+    if (mode == cyxwiz::StudioDebuggerRunMode::Preflight) {
+        session.success = session.preflight.ready && compile_success;
+        session.failure_summary = session.success ? "" : "Preflight reported issues.";
+        cyxwiz::DebugRecommendationEngine recommendation_engine;
+        session.recommendations = recommendation_engine.Build(
+            session.traces, session.issues, session.smoke_result,
+            session.last_run, session.training_trace);
+        save_session();
+        return session.success;
+    }
+
+    if (run_smoke) {
+        cyxwiz::TextPreprocessingTracer text_tracer;
+        auto preprocessing_traces = text_tracer.TraceSample(
+            config, nodes, run_id, selected_sample_index);
+        session.traces.insert(session.traces.end(),
+                              std::make_move_iterator(preprocessing_traces.begin()),
+                              std::make_move_iterator(preprocessing_traces.end()));
+        if (!preprocessing_traces.empty()) {
+            session.studio_events.push_back({
+                run_id, "", session.graph_hash, -1,
+                "TextPreprocessingTrace", "captured",
+                "Captured first-sample text preprocessing trace."
+            });
+        }
+
+        cyxwiz::SmokeRunExecutor smoke_executor;
+        session.smoke_result = smoke_executor.RunTextSmoke(config, nodes, run_id, 100);
+        if (session.smoke_result.supported) {
+            session.traces.insert(session.traces.end(),
+                                  std::make_move_iterator(session.smoke_result.traces.begin()),
+                                  std::make_move_iterator(session.smoke_result.traces.end()));
+            session.studio_events.push_back({
+                run_id, "", session.graph_hash, -1,
+                "SmokeRun", session.smoke_result.success ? "passed" : "failed",
+                session.smoke_result.summary
+            });
+            if (!session.smoke_result.issues.empty()) {
+                session.issues.insert(session.issues.end(),
+                                      session.smoke_result.issues.begin(),
+                                      session.smoke_result.issues.end());
+            }
+        }
+    }
+
+    if (run_local_debug) try {
         cyxwiz::DebugExecutor exe(std::move(config));
         session.debug_result = exe.Run();
         session.has_debug_result = true;
@@ -3310,6 +3557,46 @@ bool MainWindow::BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& sess
         if (!session.debug_result.issues.empty()) {
             session.issues = session.debug_result.issues;
         }
+
+        for (const auto& trace : session.debug_result.layer_traces) {
+            cyxwiz::DebugTraceRecord record;
+            record.run_id = run_id;
+            record.node_id = trace.node_id;
+            record.node_name = trace.name;
+            record.node_type = std::to_string(static_cast<int>(trace.type));
+            record.phase = "Forward";
+            record.role = cyxwiz::DebugTraceRole::Activation;
+            record.output_shape = trace.actual_shape;
+            record.duration_ms = trace.forward_ms;
+            record.status = (trace.has_nan || trace.has_inf) ? "warning" :
+                (trace.shape_matches ? "ok" : "shape_mismatch");
+            record.payload["predicted_shape"] = trace.predicted_shape;
+            record.payload["actual_shape"] = trace.actual_shape;
+            record.payload["shape_matches"] = trace.shape_matches;
+            record.payload["has_nan"] = trace.has_nan;
+            record.payload["has_inf"] = trace.has_inf;
+            session.traces.push_back(std::move(record));
+        }
+
+        for (const auto& grad : session.debug_result.grad_norms) {
+            cyxwiz::DebugTraceRecord record;
+            record.run_id = run_id;
+            record.node_id = grad.layer_index;
+            record.node_name = grad.param_name;
+            record.node_type = "Parameter";
+            record.phase = "Backward";
+            record.role = cyxwiz::DebugTraceRole::Gradient;
+            record.status = grad.is_nan ? "nan" : (grad.is_zero ? "zero" : "ok");
+            record.payload["l2_norm"] = grad.l2_norm;
+            record.payload["is_nan"] = grad.is_nan;
+            record.payload["is_zero"] = grad.is_zero;
+            session.traces.push_back(std::move(record));
+        }
+        session.studio_events.push_back({
+            run_id, "", session.graph_hash, -1,
+            "LocalDebug", session.debug_result.success ? "passed" : "failed",
+            session.debug_result.success ? "Local Debug completed." : session.debug_result.failure_summary
+        });
 
         std::ostringstream out;
         out << session.graph_summary;
@@ -3336,9 +3623,33 @@ bool MainWindow::BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& sess
         session.failure_summary = std::string("Debug run threw: ") + e.what();
         session.success = false;
         session.issues.push_back({cyxwiz::IssueLevel::Error, -1, "", session.failure_summary});
+        session.studio_events.push_back({
+            run_id, "", session.graph_hash, -1,
+            "LocalDebug", "failed", session.failure_summary
+        });
+        save_session();
         return false;
     }
 
+    if (!run_local_debug && run_smoke) {
+        session.success = session.smoke_result.supported ? session.smoke_result.success : session.preflight.ready;
+        session.failure_summary = session.success ? "" : session.smoke_result.summary;
+    }
+
+    if (run_runtime) {
+        if (auto last_run = cyxwiz::CrashRunRecorder::LoadLastRun()) {
+            session.last_run = *last_run;
+        }
+        if (auto training_trace = cyxwiz::TrainingTraceCollector::LoadLastTrace()) {
+            session.training_trace = *training_trace;
+        }
+    }
+    cyxwiz::DebugRecommendationEngine recommendation_engine;
+    session.recommendations = recommendation_engine.Build(
+        session.traces, session.issues, session.smoke_result,
+        session.last_run, session.training_trace);
+
+    save_session();
     return session.success;
 }
 
@@ -3645,11 +3956,70 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
     spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
                  config.layers.size(), config.input_size, config.output_size);
 
-    spdlog::warn("Local testing from node graph is temporarily disabled.");
-    spdlog::info("To test your model:");
-    spdlog::info("  1. Use P2P Training panel for remote testing on compute nodes");
-    spdlog::info("  2. Or use 'Generate Code' to export and run locally");
-    (void)config;  // Suppress unused variable warning
+    if (config.batch_size <= 0) {
+        config.batch_size = 32;
+    }
+
+    auto& tm = cyxwiz::TrainingManager::Instance();
+    if (!tm.HasTrainedModel()) {
+        spdlog::error("StartTestingFromGraph: no trained model available. Train a model first.");
+        return;
+    }
+
+    std::string dataset_name;
+    for (const auto& node : nodes) {
+        if (node.type == NodeType::DataInput || node.type == NodeType::DatasetInput) {
+            auto it = node.parameters.find("dataset_name");
+            if (it != node.parameters.end() && !it->second.empty()) {
+                dataset_name = it->second;
+                break;
+            }
+        }
+    }
+
+    if (dataset_name.empty()) {
+        spdlog::error("StartTestingFromGraph: no dataset loaded. Configure the Data Input node first.");
+        return;
+    }
+
+    auto* raw_model = tm.GetLastTrainedModel();
+    auto model = std::shared_ptr<cyxwiz::SequentialModel>(raw_model, [](cyxwiz::SequentialModel*) {});
+
+    auto on_complete = [this](const cyxwiz::TestingMetrics& metrics) {
+        if (test_results_panel_) {
+            test_results_panel_->SetResults(metrics);
+            test_results_panel_->Show();
+        }
+    };
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    bool started = false;
+    if (registry.IsTextDataset(dataset_name)) {
+        const auto* text_entry = registry.GetTextDatasetEntry(dataset_name);
+        if (!text_entry) {
+            spdlog::error("StartTestingFromGraph: text dataset '{}' is registered but entry retrieval failed", dataset_name);
+            return;
+        }
+
+        started = cyxwiz::TestManager::Instance().StartTestingText(
+            std::move(config), *text_entry, config.batch_size, model, on_complete);
+    } else {
+        auto dataset = registry.GetDataset(dataset_name);
+        if (!dataset) {
+            spdlog::error("StartTestingFromGraph: dataset '{}' is not available in the legacy dataset registry.", dataset_name);
+            spdlog::info("Testing currently uses the legacy DatasetHandle path for non-text datasets.");
+            return;
+        }
+
+        started = cyxwiz::TestManager::Instance().StartTesting(
+            std::move(config), dataset, config.batch_size, model, on_complete);
+    }
+
+    if (started) {
+        spdlog::info("StartTestingFromGraph: testing started successfully");
+    } else {
+        spdlog::error("StartTestingFromGraph: failed to start testing");
+    }
 }
 
 void MainWindow::RenderSidebar() {

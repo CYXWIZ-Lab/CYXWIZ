@@ -931,7 +931,39 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"lstm", "recurrent", "sequence"}, 0, false, "LSTM layer", "", "",
         {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
         {{"Output", PinType::Tensor, true, "Output"}, {"Hidden", PinType::Tensor, false, "Hidden"}},
-        {{"hidden_size", "int", "128", "Hidden size", {}, ""}},
+        {{"input_size", "int", "256", "Input size", {}, ""},
+         {"hidden_size", "int", "128", "Hidden size", {}, ""},
+         {"num_layers", "int", "1", "Stacked layers", {}, ""},
+         {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
+         {"dropout", "float", "0.0", "Dropout", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::GRU, NodeCategory::Recurrent, "GRU", ICON_FA_REPEAT,
+        {"gru", "recurrent", "sequence"}, 0, false, "GRU layer", "", "",
+        {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
+        {{"Output", PinType::Tensor, true, "Output"}, {"Hidden", PinType::Tensor, false, "Hidden"}},
+        {{"input_size", "int", "256", "Input size", {}, ""},
+         {"hidden_size", "int", "128", "Hidden size", {}, ""},
+         {"num_layers", "int", "1", "Stacked layers", {}, ""},
+         {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
+         {"dropout", "float", "0.0", "Dropout", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RNN, NodeCategory::Recurrent, "RNN", ICON_FA_REPEAT,
+        {"rnn", "recurrent", "sequence"}, 0, false, "Simple RNN layer", "", "",
+        {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
+        {{"Output", PinType::Tensor, true, "Output"}, {"Hidden", PinType::Tensor, false, "Hidden"}},
+        {{"input_size", "int", "256", "Input size", {}, ""},
+         {"hidden_size", "int", "128", "Hidden size", {}, ""},
+         {"num_layers", "int", "1", "Stacked layers", {}, ""},
+         {"nonlinearity", "string", "tanh", "Nonlinearity", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Bidirectional, NodeCategory::Recurrent, "Bidirectional", ICON_FA_REPEAT,
+        {"bidirectional", "wrapper", "sequence"}, 0, false, "Bidirectional wrapper", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"merge_mode", "string", "concat", "Merge mode", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Dropout, NodeCategory::Regularization, "Dropout", ICON_FA_SHUFFLE,

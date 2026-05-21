@@ -70,10 +70,12 @@ struct AnnotatedBatch {
  */
 // Which phase the batcher is currently iterating. Image/audio batchers
 // use a single instance for both train and val (same underlying dataset);
-// SetPhase flips between the two index sets without reconstructing.
+// SetPhase flips between the index sets without reconstructing. Text now
+// also uses a dedicated Test phase so held-out evaluation can reuse the
+// same dataset entry after training.
 // Arrow/Parquet/legacy batchers ignore this since they already instantiate
 // separate train vs val batchers.
-enum class BatcherPhase { Train, Val };
+enum class BatcherPhase { Train, Val, Test };
 
 class IBatcher {
 public:
@@ -89,9 +91,9 @@ public:
     virtual void SetOneHotEncoding(size_t num_classes) = 0;
     virtual void SetFlatten(bool flatten) = 0;
 
-    // Switch between train and val index sets. Default: no-op (batchers
-    // that already have a separate val instance don't need this). The
-    // caller should call Reset() afterwards to pick up the new phase's
+    // Switch between train/val/test index sets. Default: no-op (batchers
+    // that already have a separate validation instance don't need this).
+    // The caller should call Reset() afterwards to pick up the new phase's
     // epoch order. Image/audio batchers override this.
     virtual void SetPhase(BatcherPhase /*phase*/) {}
 };

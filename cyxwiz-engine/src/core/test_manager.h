@@ -57,6 +57,14 @@ public:
         TestCompleteCallback on_complete = nullptr
     );
 
+    bool StartTestingText(
+        TrainingConfiguration config,
+        const DataRegistry::TextDatasetEntry& text_entry,
+        int batch_size,
+        std::shared_ptr<SequentialModel> model = nullptr,
+        TestCompleteCallback on_complete = nullptr
+    );
+
     /**
      * Stop the current testing session
      */

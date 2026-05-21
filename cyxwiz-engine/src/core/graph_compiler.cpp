@@ -56,6 +56,56 @@ std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
     }
     return out.str();
 }
+
+void ApplyTextInputShape(TrainingConfiguration& config) {
+    if (config.preprocessing_domain != PreprocessingDomain::Text) {
+        return;
+    }
+
+    int max_length = config.text_preprocessing.max_length;
+    const bool graph_overrides_length =
+        config.text_preprocessing.has_tokenizer_node ||
+        config.text_preprocessing.has_padding_node;
+
+    if (!graph_overrides_length && !config.dataset_name.empty()) {
+        if (const auto* entry =
+                DataRegistry::Instance().GetTextDatasetEntry(config.dataset_name)) {
+            max_length = entry->max_length;
+        }
+    }
+
+    if (max_length <= 0) {
+        max_length = 1;
+    }
+
+    config.input_shape = {static_cast<size_t>(max_length)};
+    config.input_size = static_cast<size_t>(max_length);
+}
+
+bool ParseBoolParam(const std::map<std::string, std::string>& params,
+                    const std::string& key,
+                    bool fallback = false) {
+    auto it = params.find(key);
+    if (it == params.end()) {
+        return fallback;
+    }
+    return it->second == "true" || it->second == "1";
+}
+
+size_t ParseSizeParam(const std::map<std::string, std::string>& params,
+                      const std::string& key,
+                      size_t fallback) {
+    auto it = params.find(key);
+    if (it == params.end()) {
+        return fallback;
+    }
+    try {
+        const int parsed = std::stoi(it->second);
+        return parsed > 0 ? static_cast<size_t>(parsed) : fallback;
+    } catch (...) {
+        return fallback;
+    }
+}
 } // anonymous namespace
 
 TrainingConfiguration GraphCompiler::Compile(
@@ -290,6 +340,12 @@ TrainingConfiguration GraphCompiler::Compile(
                     config.drop_last = (node.parameters.at("drop_last") == "true");
                 if (node.parameters.count("num_workers"))
                     config.num_workers = std::stoi(node.parameters.at("num_workers"));
+                if (node.parameters.count("save_best_checkpoint"))
+                    config.save_best_checkpoint = (node.parameters.at("save_best_checkpoint") == "true");
+                if (node.parameters.count("early_stopping_patience"))
+                    config.early_stopping_patience = std::stoi(node.parameters.at("early_stopping_patience"));
+                if (node.parameters.count("checkpoint_dir"))
+                    config.checkpoint_dir = node.parameters.at("checkpoint_dir");
             } catch (const std::exception& e) {
                 spdlog::warn("GraphCompiler: DataLoader param parse error ({}) - using defaults", e.what());
             }
@@ -297,8 +353,9 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     if (config.has_data_loader) {
-        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}",
-                     config.batch_size, config.epochs, config.shuffle, config.drop_last, config.num_workers);
+        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}, save_best_checkpoint={}, early_stopping_patience={}, checkpoint_dir='{}'",
+                     config.batch_size, config.epochs, config.shuffle, config.drop_last, config.num_workers,
+                     config.save_best_checkpoint, config.early_stopping_patience, config.checkpoint_dir);
         if (config.num_workers > 0) {
             spdlog::info("GraphCompiler: num_workers={} will be forwarded to supported batchers",
                          config.num_workers);
@@ -358,6 +415,22 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
+    // === Early domain detection ===
+    // Shape inference below needs the dataset domain before it sees the
+    // first model layer. Text graphs in particular use max_length as the
+    // synthetic/debug input width; if this is left empty, Local Debug falls
+    // back to [1] and Studio Debugger reports cosmetic shape mismatches.
+    if (dataset_node) {
+        auto cat_it = dataset_node->parameters.find("file_category");
+        const std::string cat = (cat_it != dataset_node->parameters.end())
+            ? cat_it->second : std::string();
+
+        if (auto* cat_loader = loaders::GetByCategory(
+                loaders::FileCategoryFromString(cat))) {
+            config.preprocessing_domain = cat_loader->Domain(cat);
+        }
+    }
+
     // Get topologically sorted node IDs
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
 
@@ -384,6 +457,8 @@ TrainingConfiguration GraphCompiler::Compile(
         if (IsPreprocessing(node->type)) {
             spdlog::info("GraphCompiler: Found preprocessing node '{}' (type={})", node->name, static_cast<int>(node->type));
             ExtractPreprocessing(*node, config);
+            ApplyTextInputShape(config);
+            current_shape = config.input_shape;
             if (node->type == gui::NodeType::Normalize) {
                 spdlog::info("GraphCompiler: Normalization enabled - mean={}, std={}",
                              config.preprocessing.norm_mean, config.preprocessing.norm_std);
@@ -1418,6 +1493,27 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
                                 static_cast<size_t>(embed_dim)};
             } else {
                 output_shape = {static_cast<size_t>(embed_dim)};
+            }
+            break;
+        }
+
+        case gui::NodeType::LSTM:
+        case gui::NodeType::GRU:
+        case gui::NodeType::RNN: {
+            const size_t hidden_size =
+                ParseSizeParam(layer.parameters, "hidden_size", 128);
+            const bool bidirectional =
+                ParseBoolParam(layer.parameters, "bidirectional", false);
+            const bool return_sequences =
+                ParseBoolParam(layer.parameters, "return_sequences", false);
+            const size_t output_features =
+                hidden_size * (bidirectional ? 2 : 1);
+
+            if (return_sequences) {
+                const size_t seq_len = input_shape.empty() ? 1 : input_shape[0];
+                output_shape = {seq_len, output_features};
+            } else {
+                output_shape = {output_features};
             }
             break;
         }

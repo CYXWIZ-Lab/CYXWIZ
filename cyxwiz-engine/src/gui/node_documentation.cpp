@@ -524,7 +524,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "control information flow, solving the vanishing gradient problem.",
         "Input: (batch, sequence_length, features). Can return all timesteps or just last.",
         {
-            {"units", "Number of hidden units"},
+            {"input_size", "Input feature size per timestep"},
+            {"hidden_size", "Number of hidden units"},
             {"num_layers", "Number of stacked LSTM layers"},
             {"bidirectional", "Process sequence in both directions"},
             {"dropout", "Dropout between LSTM layers"}
@@ -542,9 +543,11 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Often performs similarly with less computation.",
         "Faster than LSTM, good when data is limited.",
         {
-            {"units", "Number of hidden units"},
+            {"input_size", "Input feature size per timestep"},
+            {"hidden_size", "Number of hidden units"},
             {"num_layers", "Number of stacked GRU layers"},
-            {"bidirectional", "Process both directions"}
+            {"bidirectional", "Process both directions"},
+            {"dropout", "Dropout between GRU layers"}
         },
         {
             "Try GRU first - simpler and often sufficient",
@@ -559,7 +562,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Suffers from vanishing gradients for long sequences.",
         "Use LSTM/GRU for better long-term memory.",
         {
-            {"units", "Number of hidden units"},
+            {"input_size", "Input feature size per timestep"},
+            {"hidden_size", "Number of hidden units"},
+            {"num_layers", "Number of stacked layers"},
             {"activation", "Activation function (default: tanh)"}
         },
         {
@@ -574,7 +579,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Wraps an RNN layer to process the sequence in both directions. "
         "Doubles the output features (forward + backward).",
         "Use for tasks where future context helps (classification).",
-        {},
+        {
+            {"merge_mode", "How to combine forward/backward outputs"}
+        },
         {
             "Output is concatenated forward and backward states",
             "Not suitable for autoregressive generation"

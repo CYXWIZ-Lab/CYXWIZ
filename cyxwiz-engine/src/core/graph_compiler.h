@@ -240,6 +240,9 @@ struct TrainingConfiguration {
     bool drop_last = false;
     int num_workers = 0;                // forwarded to supported batchers
     bool has_data_loader = false;       // true if a DataLoader node was found
+    bool save_best_checkpoint = true;   // keep best validation epoch
+    int early_stopping_patience = 5;    // stop after this many non-improving epochs
+    std::string checkpoint_dir;         // optional override, defaults to run-local path
 
     // Preprocessing — tabular config (backward-compatible)
     GraphPreprocessingConfig preprocessing;

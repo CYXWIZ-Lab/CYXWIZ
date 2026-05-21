@@ -10,6 +10,8 @@
 #include "../src/core/model_builder.h"
 #include "../src/core/synthetic_batch.h"
 #include "../src/core/graph_compiler.h"
+#include "../src/core/text_dataset_batcher.h"
+#include "../src/core/formats/text_dataset.h"
 
 #include <cyxwiz/tensor.h>
 #include <spdlog/spdlog.h>
@@ -18,6 +20,7 @@
 #include <cassert>
 #include <cstring>
 #include <iostream>
+#include <filesystem>
 #include <stdexcept>
 
 using namespace cyxwiz;
@@ -74,6 +77,51 @@ TrainingConfiguration MakeTextConfig() {
     cfg.loss_type      = gui::NodeType::CrossEntropyLoss;
     cfg.optimizer_type = gui::NodeType::Adam;
     cfg.learning_rate  = 0.001f;
+    return cfg;
+}
+
+TrainingConfiguration MakeSentimentConfig(size_t num_layers = 1) {
+    TrainingConfiguration cfg;
+    cfg.input_size  = 128;
+    cfg.output_size = 7;
+    cfg.preprocessing_domain = PreprocessingDomain::Text;
+
+    CompiledLayer emb;
+    emb.type = gui::NodeType::Embedding;
+    emb.parameters["num_embeddings"] = "10000";
+    emb.parameters["embedding_dim"]  = "64";
+    cfg.layers.push_back(emb);
+
+    CompiledLayer gru;
+    gru.type = gui::NodeType::GRU;
+    gru.parameters["hidden_size"] = "96";
+    gru.parameters["num_layers"] = std::to_string(num_layers);
+    gru.parameters["bidirectional"] = "true";
+    gru.parameters["return_sequences"] = "false";
+    cfg.layers.push_back(gru);
+
+    CompiledLayer dense1;
+    dense1.type  = gui::NodeType::Dense;
+    dense1.units = 64;
+    cfg.layers.push_back(dense1);
+
+    CompiledLayer relu;
+    relu.type = gui::NodeType::ReLU;
+    cfg.layers.push_back(relu);
+
+    CompiledLayer drop;
+    drop.type = gui::NodeType::Dropout;
+    drop.dropout_rate = 0.35f;
+    cfg.layers.push_back(drop);
+
+    CompiledLayer dense2;
+    dense2.type  = gui::NodeType::Dense;
+    dense2.units = 7;
+    cfg.layers.push_back(dense2);
+
+    cfg.loss_type      = gui::NodeType::CrossEntropyLoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    cfg.learning_rate  = 0.0002f;
     return cfg;
 }
 
@@ -254,10 +302,149 @@ void TestDebugExecutorTextGraph() {
     // DebugExecutor is reporting reality here; when the backend cleanup
     // finishes, this count will drop to 0 and we can tighten the test.
     ExpectEq(res.params_with_grad, 3, "text params_with_grad");
-    ExpectEq(res.params_missing_grad, 1, "text params_missing_grad "
-                                         "(EmbeddingLayer legacy "
-                                         "grad_weight param)");
+    ExpectEq(res.params_missing_grad, 0, "text params_missing_grad");
     spdlog::info("  OK: text graph end-to-end, params_with_grad={}",
+                 res.params_with_grad);
+}
+
+void TestSentimentComputationCurrentPath() {
+    spdlog::info("--- TestSentimentComputationCurrentPath ---");
+
+    const std::string csv_path =
+        "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv";
+    const std::string vocab_path =
+        "D:/demo/mrcj/datasets/sentiment analysis/sentiment_analysis_vocab.txt";
+
+    if (!std::filesystem::exists(csv_path)) {
+        std::cerr << "FAIL: missing sentiment CSV: " << csv_path << "\n";
+        std::exit(1);
+    }
+    if (!std::filesystem::exists(vocab_path)) {
+        std::cerr << "FAIL: missing sentiment vocab: " << vocab_path << "\n";
+        std::exit(1);
+    }
+
+    TextDatasetConfig ds_cfg;
+    ds_cfg.text_column = "statement";
+    ds_cfg.label_column = "status";
+    ds_cfg.has_labels = true;
+    ds_cfg.tokenizer_type = TokenizerType::Word;
+    ds_cfg.max_length = 128;
+    ds_cfg.do_padding = true;
+    ds_cfg.do_truncation = true;
+    ds_cfg.lowercase = true;
+    ds_cfg.min_word_freq = 5;
+    ds_cfg.max_vocab_size = 10000;
+    ds_cfg.vocab_file = vocab_path;
+
+    TextDataset dataset(csv_path, ds_cfg);
+    auto info = dataset.GetInfo();
+    assert(dataset.Size() > 0);
+    ExpectEq(dataset.GetVocabSize(), 10000, "sentiment vocab size");
+    ExpectEq(info.num_classes, 7, "sentiment num_classes");
+    ExpectEq(info.shape.size(), 1, "sentiment shape ndim");
+    ExpectEq(info.shape[0], 128, "sentiment sample length");
+
+    auto sample = dataset.GetItem(0);
+    ExpectEq(sample.first.size(), 128, "sentiment sample length from GetItem");
+    assert(sample.second >= 0 && sample.second < 7);
+    for (float idf : sample.first) {
+        int64_t id = static_cast<int64_t>(idf);
+        if (id < 0 || id >= 10000) {
+            std::cerr << "FAIL: sentiment token id out of range: " << id << "\n";
+            std::exit(1);
+        }
+    }
+
+    DataRegistry::TextDatasetEntry entry;
+    entry.source_path = csv_path;
+    entry.text_column = "statement";
+    entry.label_column = "status";
+    entry.has_labels = true;
+    entry.tokenizer_type = 1;
+    entry.max_length = 128;
+    entry.lowercase = true;
+    entry.do_padding = true;
+    entry.do_truncation = true;
+    entry.min_word_freq = 5;
+    entry.max_vocab_size = 10000;
+    entry.vocab_file = vocab_path;
+    entry.num_samples = info.num_samples;
+    entry.num_classes = info.num_classes;
+    entry.class_names = info.class_names;
+    entry.vocab_size = dataset.GetVocabSize();
+
+    TextPreprocessingConfig preprocess;
+    preprocess.has_tokenizer_node = true;
+    preprocess.tokenizer_type = 1;
+    preprocess.lowercase = true;
+    preprocess.do_padding = true;
+    preprocess.do_truncation = true;
+    preprocess.has_vocabulary_node = true;
+    preprocess.min_word_freq = 5;
+    preprocess.max_vocab_size = 10000;
+    preprocess.vocab_file = vocab_path;
+    preprocess.has_padding_node = true;
+    preprocess.max_length = 128;
+    preprocess.pad_value = 0;
+
+    TextDatasetBatcher batcher(entry, preprocess, /*batch_size=*/1,
+                               /*train_split=*/0.8f, /*shuffle=*/false,
+                               /*num_workers=*/0);
+    batcher.Reset();
+    auto batch = batcher.GetNextBatch();
+
+    assert(batch.IsValid());
+    ExpectEq(batch.data.Shape().size(), 2, "sentiment batch ndim");
+    ExpectEq(batch.data.Shape()[0], 1, "sentiment batch dim0");
+    ExpectEq(batch.data.Shape()[1], 128, "sentiment batch dim1");
+    ExpectEq(batch.labels.Shape().size(), 1, "sentiment batch label ndim");
+    ExpectEq(batch.labels.Shape()[0], 1, "sentiment batch label dim0");
+    assert(batch.data.GetDataType() == DataType::Float32);
+    assert(batch.labels.GetDataType() == DataType::Float32);
+
+    auto cfg = MakeSentimentConfig();
+    DebugExecutor exe(cfg);
+    auto res = exe.Run();
+    if (res.reached != DebugStage::Complete) {
+        std::cerr << "FAIL: sentiment config reached="
+                  << static_cast<int>(res.reached)
+                  << " summary=" << res.failure_summary << "\n";
+        std::exit(1);
+    }
+    assert(res.success && "sentiment config should reach Complete cleanly");
+    assert(res.loss_finite && "sentiment config loss must be finite");
+    ExpectEq(res.layer_traces.size(), 6, "sentiment layer_traces");
+    ExpectEq(res.params_missing_grad, 0, "sentiment params_missing_grad");
+    ExpectEq(res.layer_traces[1].actual_shape.size(), 2,
+             "sentiment GRU trace ndim");
+    ExpectEq(res.layer_traces[1].actual_shape[1], 192,
+             "sentiment bidirectional GRU features");
+    spdlog::info("  OK: sentiment batch shape=[1,128], vocab={}, classes={}",
+                 dataset.GetVocabSize(), info.num_classes);
+}
+
+void TestSentimentComputationMultiLayerBiGRU() {
+    spdlog::info("--- TestSentimentComputationMultiLayerBiGRU ---");
+    auto cfg = MakeSentimentConfig(/*num_layers=*/2);
+    DebugExecutor exe(cfg);
+    auto res = exe.Run();
+    if (res.reached != DebugStage::Complete) {
+        std::cerr << "FAIL: multi-layer sentiment config reached="
+                  << static_cast<int>(res.reached)
+                  << " summary=" << res.failure_summary << "\n";
+        std::exit(1);
+    }
+    assert(res.success && "multi-layer sentiment config should reach Complete cleanly");
+    assert(res.loss_finite && "multi-layer sentiment config loss must be finite");
+    ExpectEq(res.layer_traces.size(), 6, "multi-layer layer_traces");
+    ExpectEq(res.params_with_grad, 21, "multi-layer params_with_grad");
+    ExpectEq(res.params_missing_grad, 0, "multi-layer params_missing_grad");
+    ExpectEq(res.layer_traces[1].actual_shape.size(), 2,
+             "multi-layer GRU trace ndim");
+    ExpectEq(res.layer_traces[1].actual_shape[1], 192,
+             "multi-layer bidirectional GRU features");
+    spdlog::info("  OK: multi-layer sentiment graph end-to-end, params_with_grad={}",
                  res.params_with_grad);
 }
 
@@ -273,6 +460,8 @@ int main() {
         TestDebugExecutorGoldenPath();
         TestDebugExecutorGradNormBookkeeping();
         TestDebugExecutorTextGraph();
+        TestSentimentComputationCurrentPath();
+        TestSentimentComputationMultiLayerBiGRU();
     } catch (const std::exception& e) {
         std::cerr << "FAIL: exception: " << e.what() << "\n";
         return 1;

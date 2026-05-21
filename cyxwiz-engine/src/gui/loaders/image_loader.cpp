@@ -219,7 +219,7 @@ bool ImageLoader::LaunchTraining(
     const std::string& /*label_column*/,
     int epochs,
     int batch_size,
-    cyxwiz::TrainingPlotPanel* plot_panel,
+    std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback) {
     auto* entry = cyxwiz::DataRegistry::Instance().GetImageDatasetEntry(dataset_name);
     if (!entry) {

@@ -58,6 +58,17 @@ TestExecutor::TestExecutor(TrainingConfiguration config, DatasetHandle dataset)
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
 
+TestExecutor::TestExecutor(
+    TrainingConfiguration config,
+    const DataRegistry::TextDatasetEntry& text_entry)
+    : config_(std::move(config))
+    , text_entry_(text_entry)
+    , use_text_dataset_(true)
+{
+    spdlog::info("TestExecutor: Created for text dataset with {} layers, input_size={}, output_size={}",
+                 config_.layers.size(), config_.input_size, config_.output_size);
+}
+
 TestExecutor::~TestExecutor() {
     Stop();
 }
@@ -89,6 +100,92 @@ bool TestExecutor::BuildModelFromConfig() {
                 model_->Add<LinearModule>(current_input_size, out_features, true);
                 spdlog::info("  [{}] Linear({} -> {})", i, current_input_size, out_features);
                 current_input_size = out_features;
+                break;
+            }
+
+            case gui::NodeType::Embedding: {
+                size_t num_embeddings = 10000;
+                size_t embedding_dim = 256;
+                auto ne_it = layer_cfg.parameters.find("num_embeddings");
+                if (ne_it != layer_cfg.parameters.end()) {
+                    try { num_embeddings = static_cast<size_t>(std::stoi(ne_it->second)); }
+                    catch (...) {}
+                }
+                auto ed_it = layer_cfg.parameters.find("embedding_dim");
+                if (ed_it != layer_cfg.parameters.end()) {
+                    try { embedding_dim = static_cast<size_t>(std::stoi(ed_it->second)); }
+                    catch (...) {}
+                }
+                if (num_embeddings < 2) num_embeddings = 2;
+                if (embedding_dim < 1) embedding_dim = 1;
+
+                model_->Add<EmbeddingModule>(num_embeddings, embedding_dim);
+                const size_t seq_len = current_input_size;
+                bool next_is_recurrent = false;
+                if (i + 1 < config_.layers.size()) {
+                    const auto nt = config_.layers[i + 1].type;
+                    if (nt == gui::NodeType::LSTM ||
+                        nt == gui::NodeType::GRU  ||
+                        nt == gui::NodeType::RNN) {
+                        next_is_recurrent = true;
+                    }
+                }
+                current_input_size = next_is_recurrent ? embedding_dim : (seq_len * embedding_dim);
+                spdlog::info("  [{}] Embedding({} x {})", i, num_embeddings, embedding_dim);
+                break;
+            }
+
+            case gui::NodeType::LSTM:
+            case gui::NodeType::GRU:
+            case gui::NodeType::RNN: {
+                size_t hidden_size = 128;
+                size_t num_layers = 1;
+                bool bidirectional = false;
+                bool return_sequences = false;
+
+                auto hs_it = layer_cfg.parameters.find("hidden_size");
+                if (hs_it != layer_cfg.parameters.end()) {
+                    try { hidden_size = static_cast<size_t>(std::stoi(hs_it->second)); }
+                    catch (...) {}
+                }
+                auto nl_it = layer_cfg.parameters.find("num_layers");
+                if (nl_it != layer_cfg.parameters.end()) {
+                    try { num_layers = static_cast<size_t>(std::stoi(nl_it->second)); }
+                    catch (...) {}
+                }
+                auto bi_it = layer_cfg.parameters.find("bidirectional");
+                if (bi_it != layer_cfg.parameters.end()) {
+                    bidirectional = (bi_it->second == "true" || bi_it->second == "1");
+                }
+                auto rs_it = layer_cfg.parameters.find("return_sequences");
+                if (rs_it != layer_cfg.parameters.end()) {
+                    return_sequences = (rs_it->second == "true" || rs_it->second == "1");
+                }
+                if (hidden_size < 1) hidden_size = 1;
+                if (num_layers < 1) num_layers = 1;
+
+                if (layer_cfg.type == gui::NodeType::LSTM) {
+                    model_->Add<LSTMModule>(current_input_size, hidden_size,
+                                            num_layers, bidirectional,
+                                            return_sequences);
+                    spdlog::info("  [{}] LSTM(in={}, hidden={}, layers={}, bidir={})",
+                                 i, current_input_size, hidden_size, num_layers, bidirectional);
+                } else if (layer_cfg.type == gui::NodeType::GRU) {
+                    model_->Add<GRUModule>(current_input_size, hidden_size,
+                                           num_layers, bidirectional,
+                                           return_sequences);
+                    spdlog::info("  [{}] GRU(in={}, hidden={}, layers={}, bidir={})",
+                                 i, current_input_size, hidden_size, num_layers, bidirectional);
+                } else {
+                    spdlog::warn("  [{}] RNN requested in test fallback; using GRUModule as the closest supported recurrent layer", i);
+                    model_->Add<GRUModule>(current_input_size, hidden_size,
+                                           num_layers, bidirectional,
+                                           return_sequences);
+                    spdlog::info("  [{}] RNN(as GRU fallback)(in={}, hidden={}, layers={}, bidir={})",
+                                 i, current_input_size, hidden_size, num_layers, bidirectional);
+                }
+
+                current_input_size = hidden_size * (bidirectional ? 2 : 1);
                 break;
             }
 
@@ -218,6 +315,16 @@ bool TestExecutor::Initialize(int /*batch_size*/) {
         }
     });
 
+    if (use_text_dataset_ && !text_entry_.class_names.empty()) {
+        UpdateMetrics([this](TestingMetrics& m) {
+            m.confusion_matrix.class_names = text_entry_.class_names;
+            for (size_t i = 0; i < m.per_class_metrics.size() &&
+                               i < text_entry_.class_names.size(); ++i) {
+                m.per_class_metrics[i].class_name = text_entry_.class_names[i];
+            }
+        });
+    }
+
     return true;
 }
 
@@ -257,23 +364,47 @@ void TestExecutor::Test(
         m.confidences.clear();
     });
 
-    // Create test batcher (use Test split if available, otherwise validation)
-    DatasetBatcher test_batcher(dataset_, batch_size, DatasetSplit::Test, false, false);
+    // Create the test batcher using the dataset type that was trained.
+    std::unique_ptr<DatasetBatcher> legacy_test_batcher;
+    std::unique_ptr<TextDatasetBatcher> text_test_batcher;
 
-    // Apply preprocessing settings
-    if (config_.preprocessing.has_normalization) {
-        test_batcher.SetLegacyNormalization(config_.preprocessing.norm_mean,
-                                            config_.preprocessing.norm_std);
+    if (use_text_dataset_) {
+        text_test_batcher = std::make_unique<TextDatasetBatcher>(
+            text_entry_,
+            config_.text_preprocessing,
+            batch_size,
+            config_.train_ratio,
+            config_.val_ratio,
+            config_.test_ratio,
+            false,
+            config_.num_workers);
+        text_test_batcher->SetPhase(BatcherPhase::Test);
+        text_test_batcher->Reset();
+
+        if (config_.preprocessing.has_onehot && config_.preprocessing.num_classes > 0) {
+            text_test_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
+        } else if (config_.output_size > 0) {
+            text_test_batcher->SetOneHotEncoding(config_.output_size);
+        }
+    } else {
+        legacy_test_batcher = std::make_unique<DatasetBatcher>(
+            dataset_, batch_size, DatasetSplit::Test, false, false, config_.num_workers);
+
+        if (config_.preprocessing.has_normalization) {
+            legacy_test_batcher->SetLegacyNormalization(config_.preprocessing.norm_mean,
+                                                        config_.preprocessing.norm_std);
+        }
+
+        if (config_.preprocessing.has_onehot) {
+            legacy_test_batcher->SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
+        }
+
+        legacy_test_batcher->SetFlatten(true);
     }
 
-    if (config_.preprocessing.has_onehot) {
-        test_batcher.SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
-    }
-
-    // Flatten input for MLP
-    test_batcher.SetFlatten(true);
-
-    size_t total_batches = test_batcher.GetNumBatches();
+    size_t total_batches = use_text_dataset_
+        ? text_test_batcher->GetNumBatches()
+        : legacy_test_batcher->GetNumBatches();
     UpdateMetrics([total_batches](TestingMetrics& m) {
         m.total_batches = static_cast<int>(total_batches);
     });
@@ -290,10 +421,12 @@ void TestExecutor::Test(
     float total_loss = 0.0f;
     int batch_num = 0;
 
-    while (!test_batcher.IsEpochComplete()) {
+    while (true) {
         if (ShouldStop()) break;
 
-        Batch batch = test_batcher.GetNextBatch();
+        Batch batch = use_text_dataset_
+            ? text_test_batcher->GetNextBatch()
+            : legacy_test_batcher->GetNextBatch();
         if (!batch.IsValid()) break;
 
         batch_num++;

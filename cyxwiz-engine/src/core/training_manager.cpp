@@ -1,7 +1,9 @@
 #include "training_manager.h"
+#include "crash_run_recorder.h"
 #include "image_dataset_batcher.h"
 #include "audio_dataset_batcher.h"
 #include "text_dataset_batcher.h"
+#include "worker_defaults.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
 
@@ -28,7 +30,7 @@ bool TrainingManager::StartTrainingCommon(
     std::unique_ptr<TrainingExecutor> executor,
     int epochs,
     int batch_size,
-    TrainingPlotPanel* plot_panel,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback,
     const std::string& task_name,
     const std::string& start_msg)
@@ -44,10 +46,10 @@ bool TrainingManager::StartTrainingCommon(
         node_editor_callback(true);
     }
 
-    if (plot_panel) {
-        plot_panel->Clear();
-        plot_panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
-        plot_panel->SetVisible(true);
+    if (auto panel = plot_panel.lock()) {
+        panel->Clear();
+        panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
+        panel->SetVisible(true);
     }
 
     // Tasks-panel progress tracker. Poll loop reads TrainingManager
@@ -101,7 +103,7 @@ bool TrainingManager::StartTraining(
     DatasetHandle dataset,
     int epochs,
     int batch_size,
-    TrainingPlotPanel* plot_panel,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback)
 {
     // Check if already training
@@ -130,7 +132,7 @@ bool TrainingManager::StartTrainingArrow(
     const std::string& label_column,
     int epochs,
     int batch_size,
-    TrainingPlotPanel* plot_panel,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback)
 {
     // Check if already training
@@ -192,7 +194,7 @@ bool TrainingManager::StartTrainingParquet(
     const std::string& label_column,
     int epochs,
     int batch_size,
-    TrainingPlotPanel* plot_panel,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback)
 {
     // Mirrors StartTrainingArrow; the only difference is the dataset type
@@ -240,7 +242,7 @@ bool TrainingManager::StartTrainingImage(
     const DataRegistry::ImageDatasetEntry& image_entry,
     int epochs,
     int batch_size,
-    TrainingPlotPanel* plot_panel,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback)
 {
     if (is_training_.load()) {
@@ -295,7 +297,7 @@ bool TrainingManager::StartTrainingAudio(
     const DataRegistry::AudioDatasetEntry& audio_entry,
     int epochs,
     int batch_size,
-    TrainingPlotPanel* plot_panel,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback)
 {
     if (is_training_.load()) {
@@ -356,7 +358,7 @@ bool TrainingManager::StartTrainingText(
     const DataRegistry::TextDatasetEntry& text_entry,
     int epochs,
     int batch_size,
-    TrainingPlotPanel* plot_panel,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback)
 {
     if (is_training_.load()) {
@@ -374,7 +376,12 @@ bool TrainingManager::StartTrainingText(
     auto batcher = std::make_unique<TextDatasetBatcher>(
         text_entry,
         config.text_preprocessing,
-        batch_size, config.train_ratio, config.shuffle, config.num_workers);
+        batch_size,
+        config.train_ratio,
+        config.val_ratio,
+        config.test_ratio,
+        config.shuffle,
+        config.num_workers);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Text dataset has 0 samples");
@@ -388,6 +395,18 @@ bool TrainingManager::StartTrainingText(
     // features, which is unusual but allowed.
     config.input_size = static_cast<size_t>(batcher->GetMaxLength());
     config.input_shape = { static_cast<size_t>(batcher->GetMaxLength()) };
+
+    // Honor the requested worker count, but clamp it to the platform
+    // budget so the engine does not oversubscribe the CPU.
+    const int normalized_workers = ClampNumWorkersToPlatform(config.num_workers);
+    if (normalized_workers != config.num_workers) {
+        spdlog::warn("TrainingManager: clamping num_workers from {} to {} based on platform",
+                     config.num_workers, normalized_workers);
+        config.num_workers = normalized_workers;
+    } else if (config.num_workers > 0) {
+        spdlog::info("TrainingManager: using num_workers={}",
+                     config.num_workers);
+    }
 
     spdlog::info("TrainingManager: Text dataset {} samples, input_size={} "
                  "(max_length), vocab_size={}, num_workers={}",
@@ -430,6 +449,23 @@ void TrainingManager::StopTraining() {
     }
 }
 
+void TrainingManager::WaitForTrainingStop() {
+    std::unique_ptr<std::thread> thread_to_join;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (training_thread_ && training_thread_->joinable() &&
+            training_thread_->get_id() != std::this_thread::get_id()) {
+            thread_to_join = std::move(training_thread_);
+        }
+    }
+
+    if (thread_to_join) {
+        spdlog::info("TrainingManager: Waiting for training thread to stop...");
+        thread_to_join->join();
+        spdlog::info("TrainingManager: Training thread stopped");
+    }
+}
+
 void TrainingManager::PauseTraining() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (current_executor_) {
@@ -456,7 +492,7 @@ void TrainingManager::TrainingThreadFunc(
     std::unique_ptr<TrainingExecutor> executor,
     int epochs,
     int batch_size,
-    TrainingPlotPanel* plot_panel,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback)
 {
     spdlog::info("TrainingManager: Training thread started");
@@ -501,16 +537,19 @@ void TrainingManager::TrainingThreadFunc(
         }
 
         // Update plot panel with metrics and training state
-        if (plot_panel) {
-            plot_panel->AddLossPoint(epoch, static_cast<double>(train_loss), static_cast<double>(val_loss));
+        if (auto panel = plot_panel.lock()) {
+            CrashRunRecorder::Instance().MarkStage(
+                TrainingTraceStage::UIPlotUpdate, epoch, 0, 0,
+                train_loss, train_acc);
+            panel->AddLossPoint(epoch, static_cast<double>(train_loss), static_cast<double>(val_loss));
             // Convert accuracy from fraction (0-1) to percentage (0-100) for display
-            plot_panel->AddAccuracyPoint(epoch, static_cast<double>(train_acc) * 100.0, static_cast<double>(val_acc) * 100.0);
+            panel->AddAccuracyPoint(epoch, static_cast<double>(train_acc) * 100.0, static_cast<double>(val_acc) * 100.0);
             // Update training state with timing info
-            plot_panel->SetTrainingState(true, epoch, epochs, epoch_time, samples_per_sec);
+            panel->SetTrainingState(true, epoch, epochs, epoch_time, samples_per_sec);
             spdlog::info("TrainingPlotPanel: Updated state - epoch={}/{}, time={:.1f}s, sps={:.0f}",
                          epoch, epochs, epoch_time, samples_per_sec);
         } else {
-            spdlog::warn("TrainingPlotPanel: plot_panel is null!");
+            spdlog::warn("TrainingPlotPanel: panel expired or unavailable");
         }
 
         // Notify progress callback
@@ -552,8 +591,11 @@ void TrainingManager::TrainingThreadFunc(
                     cached_metrics_.total_batches = total_batches;
                     cached_metrics_.train_loss = batch_loss;  // running estimate, overwritten each batch
                 }
-                if (plot_panel) {
-                    plot_panel->SetBatchProgress(epoch, batch, total_batches, batch_loss);
+                if (auto panel = plot_panel.lock()) {
+                    CrashRunRecorder::Instance().MarkStage(
+                        TrainingTraceStage::UIPlotUpdate, epoch, batch,
+                        total_batches, batch_loss, batch_acc);
+                    panel->SetBatchProgress(epoch, batch, total_batches, batch_loss);
 
                     // Progressive curve: x = (epoch - 1) + batch / total_batches
                     // gives a smooth 0..N x-axis where each integer is an epoch
@@ -563,12 +605,12 @@ void TrainingManager::TrainingThreadFunc(
                         double frac_epoch = static_cast<double>(epoch - 1) +
                                             static_cast<double>(batch) /
                                             static_cast<double>(total_batches);
-                        plot_panel->AddLossPoint(frac_epoch,
-                                                 static_cast<double>(batch_loss),
-                                                 -1.0);
-                        plot_panel->AddAccuracyPoint(frac_epoch,
-                                                     static_cast<double>(batch_acc) * 100.0,
-                                                     -1.0);
+                        panel->AddLossPoint(frac_epoch,
+                                            static_cast<double>(batch_loss),
+                                            -1.0);
+                        panel->AddAccuracyPoint(frac_epoch,
+                                                static_cast<double>(batch_acc) * 100.0,
+                                                -1.0);
                     }
                 }
             };
@@ -598,8 +640,8 @@ void TrainingManager::TrainingThreadFunc(
     }
 
     // Update plot panel with completion status
-    if (plot_panel) {
-        plot_panel->SetTrainingComplete(total_training_time);
+    if (auto panel = plot_panel.lock()) {
+        panel->SetTrainingComplete(total_training_time);
     }
 
     // Cleanup
@@ -620,12 +662,13 @@ void TrainingManager::TrainingThreadFunc(
     // Preserve trained model for export before clearing executor
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (current_executor_ && success) {
+        if (current_executor_ && (success || stop_requested_.load())) {
             // Transfer ownership of model and optimizer for later export
             last_trained_model_ = current_executor_->ReleaseModel();
             last_optimizer_ = current_executor_->ReleaseOptimizer();
             last_metrics_ = final_metrics;
-            spdlog::info("TrainingManager: Preserved trained model for export");
+            spdlog::info("TrainingManager: Preserved trained model for export (success={}, stopped={})",
+                         success, stop_requested_.load());
         }
         current_executor_.reset();
     }

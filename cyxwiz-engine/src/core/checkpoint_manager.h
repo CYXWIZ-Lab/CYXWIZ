@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <filesystem>
+#include <limits>
 
 namespace cyxwiz {
 

@@ -1,4 +1,5 @@
 #include "cyxwiz/layer.h"
+#include "cyxwiz/debug_hooks.h"
 #include "cyxwiz/tensor.h"
 #include <stdexcept>
 #include <cmath>
@@ -1370,15 +1371,13 @@ void EmbeddingLayer::LoadPretrainedWeights(const Tensor& weights, bool freeze) {
 std::map<std::string, Tensor> EmbeddingLayer::GetParameters() {
     std::map<std::string, Tensor> params;
     params["weight"] = weight_;
-    params["grad_weight"] = grad_weight_;
     return params;
 }
 
 std::map<std::string, Tensor> EmbeddingLayer::GetGradients() {
     // Match LinearLayer convention: one entry per trainable parameter.
-    // Used by EmbeddingModule so the optimizer can update weights
-    // through the standard Module::GetGradients() path instead of the
-    // legacy GetParameters()/"grad_weight" hack.
+    // Used by EmbeddingModule so the optimizer can update weights through
+    // the standard Module::GetGradients() path.
     std::map<std::string, Tensor> grads;
     grads["weight"] = grad_weight_;
     return grads;
@@ -2403,6 +2402,10 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
         // with the TensorToAf3DRowMajor at the entry.
         return AfToTensor3DRowMajor(output);
     } catch (const af::exception& e) {
+        BackendDebugHooks::EmitDebugEvent(
+            "LSTMLayer::Forward",
+            std::string("ArrayFire fallback: ") + e.what() +
+            (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
         spdlog::warn("ArrayFire LSTMLayer::Forward failed: {}, falling back to CPU", e.what());
     }
 #endif
@@ -2751,6 +2754,10 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
 
         return AfToTensor3DRowMajor(layer_grad);
     } catch (const af::exception& e) {
+        BackendDebugHooks::EmitDebugEvent(
+            "LSTMLayer::Backward",
+            std::string("ArrayFire fallback: ") + e.what() +
+            (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
         spdlog::warn("ArrayFire LSTMLayer::Backward failed: {}, falling back to CPU", e.what());
     }
 #endif

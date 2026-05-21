@@ -43,7 +43,7 @@ public:
         const std::string& label_column,
         int epochs,
         int batch_size,
-        TrainingPlotPanel* plot_panel,
+        std::weak_ptr<TrainingPlotPanel> plot_panel,
         std::function<void(bool)> node_editor_callback) override;
 
     cyxwiz::PreprocessingDomain Domain(
