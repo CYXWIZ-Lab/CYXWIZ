@@ -30,6 +30,17 @@ Built so far:
   recommendation count, and tooltip summary.
 - Training plot lifecycle/read/write/trim trace hooks to help diagnose the
   long-training crash pattern around plot vector mutation.
+- Live training trace reload in the Runtime lens, including a Tracy-inspired
+  per-thread event timeline and selected-event inspector.
+- Per-layer timing capture for `ModelForward` and `ModelBackward`, including
+  layer index, layer name, input shape, output shape, and duration.
+- Runtime warning capture from backend debug hooks into the training trace.
+- Lightweight memory snapshots on training trace events: CyxWiz CPU
+  allocated/peak bytes, ArrayFire allocated/locked bytes, and ArrayFire buffer
+  counts.
+- First Memory Trace UI in the Runtime lens with a recent memory trend graph,
+  latest memory bars, hover tooltips, and hints for CPU fallback, host copies,
+  GPU pressure, and retained device buffers.
 - Text loader async/shared-state cleanup and text batcher warning cleanup are
   included in the same stabilization pass.
 
@@ -49,16 +60,22 @@ Next implementation steps:
 3. Add Windows crash import from WER/Event Viewer and match it to the most
    recent debug/training run by timestamp, process name, and run id when
    available.
-4. Add richer tensor/value previews for activations, gradients, token ids,
+4. Deepen CPU/GPU runtime tracing so the debugger can classify backend paths
+   and fallback reasons per operation, not only record warnings.
+5. Deepen memory tracing with per-node tensor allocation summaries, peak
+   markers, and out-of-memory risk signals.
+6. Add richer tensor/value previews for activations, gradients, token ids,
    unknown-token ratios, padding, and truncation.
-5. Improve sample selection so Smoke Run can choose deterministic and
+7. Improve sample selection so Smoke Run can choose deterministic and
    stratified examples from dataset preview/labels.
-6. Polish the debugger UI after the workflow is stable: layout, colors,
+8. Polish the debugger UI after the workflow is stable: layout, colors,
    search/filter controls, graph interactions, and Comgra-like trace navigation.
 
 Still not complete:
 - true node-by-node execution for every real graph node
 - full tensor/value preview tables
+- full CPU/GPU fallback classification and runtime path timeline
+- per-node tensor allocation summaries and peak markers
 - generated-code/export correlation
 - deep graph edit and panel-event tracing
 - robust WER/Event Viewer import
@@ -166,11 +183,21 @@ When we build models, the debugger should focus on these points first:
 
 5. Runtime path selection
    - CPU fallback versus GPU path
+   - backend selected by the run: CPU, CUDA, OpenCL, ArrayFire
+   - backend actually used by each node/layer
+   - fallback reason when a GPU-capable graph runs on CPU
    - bidirectional recurrent support
    - multi-layer recurrent support
    - batcher mode selection
 
-6. Studio state
+6. Memory behavior
+   - CPU RAM used by dataset loading and batching
+   - GPU/device memory allocated, locked, cached, and peak usage
+   - per-node tensor allocation summaries where available
+   - warnings before out-of-memory failures
+   - whether memory pressure caused smaller batches, fallback, or failed allocation
+
+7. Studio state
    - stale graph snapshot
    - wrong dataset selected
    - wrong vocab file selected
@@ -189,6 +216,7 @@ Recommended decision loop:
 - if train improves but val stalls, reduce overfitting with dropout, class weights, or early stopping
 - if both train and val flatten early, increase model capacity or change the sequence head
 - if a faster or richer path exists but the model uses a fallback, fix the backend path before changing hyperparameters
+- if memory pressure is high, reduce batch size or sequence length before changing the model itself
 
 For the sentiment example, that means the debugger should make these tuning calls easy:
 - vocab size and `min_word_freq`
@@ -578,16 +606,81 @@ The Studio Debugger itself should stay custom, but some parts can reuse open sou
 - `TensorBoard` for training curves, scalar tracking, and embeddings
 - `OpenTelemetry` or Chrome-trace style events for structured runtime tracing
 - `Comgra` as design inspiration for dependency-focused tensor inspection, tensor roles, selector-driven GUI, sample-vs-summary views, helper debug values, and anomaly-oriented recordings
+- `Tracy` as an optional developer profiler and as design inspiration for runtime timelines, zones, thread lanes, memory plots, GPU events, and selected-event inspection
 
 Recommended split:
 - keep the Studio Debugger UI, node timeline, and trace selection in-house
 - reuse OSS only for supporting views, exports, or instrumentation
 - do not try to force a general model viewer to replace the debugger
 - do not make Comgra's PyTorch training recorder the core architecture; CyxWiz needs a Studio-first debugger driven by Studio graph snapshots and Studio events
+- do not embed Tracy's full profiler UI as the first Studio Debugger UI; use its profiling model and interaction patterns while keeping the user-facing debugger graph-aware and Studio-native
 
 ## What To Learn From Similar Tools
 
 These tools are not a 1:1 match for CyxWiz, but they show patterns worth copying.
+
+### Tracy
+
+Tracy is a real-time instrumentation profiler with CPU zones, GPU profiling,
+memory allocation tracking, lock/contention tracing, thread views, plots, and a
+high-performance timeline UI. It fits CyxWiz because our hardest training
+debugging problems are runtime problems: UI thread versus training thread,
+batcher stalls, recurrent layer cost, GPU-to-CPU fallback, memory pressure, and
+silent native crashes.
+
+What to borrow:
+- nested zones: `Training`, `Epoch`, `Batch`, `GetNextBatch`, `Forward`,
+  `LayerForward:LSTM`, `Backward`, `LayerBackward:LSTM`, `UpdateParameters`,
+  `BatchCallback`, `UIPlotUpdate`
+- thread lanes for UI thread, training thread, data loader workers, and backend
+  worker threads
+- timeline-first runtime view instead of only a table
+- warning/event markers over the timeline for fallback, NaN/Inf, OOM, shape
+  mismatch, checkpoint save, graph edit, and crash envelope updates
+- memory plots for process RAM, ArrayFire allocated bytes, locked bytes,
+  allocation buffers, GPU total/available estimates, and peak markers
+- selected-event inspector showing duration, thread, stage, node/layer, shapes,
+  backend, memory summary, and related recommendations
+- optional developer build instrumentation using compile flags such as
+  `CYXWIZ_ENABLE_TRACY`
+
+What not to borrow directly:
+- replacing Studio Debugger with Tracy's standalone profiler UI
+- exposing low-level profiler concepts before users can answer "what node or
+  graph decision should I change next?"
+- storing full profiler traces by default for normal users
+
+Recommended CyxWiz split:
+- Studio Debugger keeps the product UI: graph trace, node inspector, runtime
+  lens, recommendations, crash lens, and run history
+- Tracy integration is optional and developer-oriented: enable it for deep
+  profiling sessions, CI perf investigations, and backend hot-path work
+- Studio Debugger can export or correlate a run id with a Tracy capture later,
+  but first it should implement a Tracy-inspired timeline from our own
+  lightweight trace events
+
+Implementation idea:
+
+```cpp
+#ifdef CYXWIZ_ENABLE_TRACY
+#include <tracy/Tracy.hpp>
+#define CYX_PROFILE_ZONE(name) ZoneScopedN(name)
+#else
+#define CYX_PROFILE_ZONE(name)
+#endif
+```
+
+Initial zones to add later:
+- `DataLoader/GetNextBatch`
+- `Training/Forward`
+- `Training/Forward/Embedding`
+- `Training/Forward/Recurrent`
+- `Training/Forward/DenseHead`
+- `Training/Backward`
+- `Training/Backward/Recurrent`
+- `Training/UpdateParameters`
+- `Studio/UIPlotRead`
+- `Studio/UIPlotWrite`
 
 ### Comgra
 

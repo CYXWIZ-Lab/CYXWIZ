@@ -375,7 +375,12 @@ void TrainingExecutor::Train(
     CrashRunRecorder::Instance().StartTrainingRun(config_, epochs, batch_size, num_train_samples);
     BackendDebugHooks::SetDebugEventCallback([](const std::string& source,
                                                 const std::string& message) {
-        CrashRunRecorder::Instance().MarkBackendEvent(source, message);
+        if (source.rfind("Model", 0) == 0) {
+            TrainingTraceCollector::Instance().RecordRuntimeEvent(source, message);
+        } else {
+            CrashRunRecorder::Instance().MarkBackendEvent(source, message);
+            TrainingTraceCollector::Instance().RecordRuntimeWarning(source, message);
+        }
     });
     const auto last_run = CrashRunRecorder::LoadLastRun();
     TrainingTraceCollector::Instance().StartRun(

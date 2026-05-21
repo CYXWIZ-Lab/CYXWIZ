@@ -1,4 +1,5 @@
 ﻿#include <cyxwiz/sequential.h>
+#include <cyxwiz/debug_hooks.h>
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/activations/relu.h>
 #include <cyxwiz/activations/sigmoid.h>
@@ -21,6 +22,38 @@
 #endif
 
 namespace cyxwiz {
+
+namespace {
+
+std::string ShapeToStringForTrace(const std::vector<size_t>& shape) {
+    std::ostringstream out;
+    out << '[';
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i) {
+            out << ',';
+        }
+        out << shape[i];
+    }
+    out << ']';
+    return out.str();
+}
+
+void EmitModelLayerTrace(const char* stage,
+                         size_t layer_index,
+                         const std::string& layer_name,
+                         const std::vector<size_t>& input_shape,
+                         const std::vector<size_t>& output_shape,
+                         float duration_ms) {
+    std::ostringstream message;
+    message << "layer=" << layer_index
+            << " name=" << layer_name
+            << " input=" << ShapeToStringForTrace(input_shape)
+            << " output=" << ShapeToStringForTrace(output_shape)
+            << " duration_ms=" << duration_ms;
+    BackendDebugHooks::EmitDebugEvent(stage, message.str());
+}
+
+} // namespace
 
 // ============================================================================
 // LinearModule Implementation
@@ -1309,8 +1342,18 @@ Tensor SequentialModel::Forward(const Tensor& input) {
     Tensor current = input.Clone();
     intermediate_outputs_.push_back(input.Clone());  // Store input
 
-    for (auto& module : modules_) {
+    const bool trace_layers = BackendDebugHooks::HasDebugEventCallback();
+    for (size_t i = 0; i < modules_.size(); ++i) {
+        auto& module = modules_[i];
+        const auto input_shape = trace_layers ? current.Shape() : std::vector<size_t>{};
+        const auto layer_start = std::chrono::steady_clock::now();
         current = module->Forward(current);
+        if (trace_layers) {
+            const auto duration_ms = std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - layer_start).count();
+            EmitModelLayerTrace("ModelForward", i, module->GetName(),
+                                input_shape, current.Shape(), duration_ms);
+        }
         intermediate_outputs_.push_back(current.Clone());
     }
 
@@ -1321,8 +1364,18 @@ Tensor SequentialModel::Backward(const Tensor& grad_output) {
     Tensor grad = grad_output.Clone();
 
     // Backward through modules in reverse order
+    const bool trace_layers = BackendDebugHooks::HasDebugEventCallback();
     for (int i = static_cast<int>(modules_.size()) - 1; i >= 0; --i) {
+        const auto input_shape = trace_layers ? grad.Shape() : std::vector<size_t>{};
+        const auto layer_start = std::chrono::steady_clock::now();
         grad = modules_[i]->Backward(grad);
+        if (trace_layers) {
+            const auto duration_ms = std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - layer_start).count();
+            EmitModelLayerTrace("ModelBackward", static_cast<size_t>(i),
+                                modules_[i]->GetName(), input_shape, grad.Shape(),
+                                duration_ms);
+        }
     }
 
     return grad;

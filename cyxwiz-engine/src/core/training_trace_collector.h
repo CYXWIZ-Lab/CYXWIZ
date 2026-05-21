@@ -1,6 +1,7 @@
 #pragma once
 
 #include "crash_run_recorder.h"
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -20,6 +21,12 @@ struct TrainingTraceEvent {
     float loss = 0.0f;
     float accuracy = 0.0f;
     float duration_ms = 0.0f;
+    uint64_t cpu_allocated_bytes = 0;
+    uint64_t cpu_peak_bytes = 0;
+    uint64_t af_allocated_bytes = 0;
+    uint64_t af_locked_bytes = 0;
+    uint64_t af_alloc_buffers = 0;
+    uint64_t af_lock_buffers = 0;
     std::string status = "ok";
     std::string message;
 };
@@ -59,6 +66,11 @@ public:
                      float duration_ms = 0.0f,
                      const std::string& status = "ok",
                      const std::string& message = "");
+    void RecordRuntimeWarning(const std::string& source,
+                              const std::string& message);
+    void RecordRuntimeEvent(const std::string& stage,
+                            const std::string& message,
+                            const std::string& status = "ok");
     void FinishRun(const std::string& status);
 
     void Configure(const TrainingTraceSettings& settings);

@@ -108,6 +108,13 @@ proposal; these components now exist in code:
   recommendation count
 - plot panel lifecycle/read/write/trim event hooks for long-training crash
   diagnosis
+- live training trace reload in the Runtime lens
+- Tracy-inspired per-thread runtime timeline with selected-event inspection
+- per-layer forward/backward timing for model layers
+- backend runtime warning capture into training trace records
+- lightweight CPU and ArrayFire memory snapshots on trace events
+- first Memory Trace UI with recent trend graph, latest memory bars, hover
+  tooltips, and user hints for fallback/memory-pressure interpretation
 
 The active implementation flow is:
 
@@ -123,7 +130,9 @@ The next slice should stay focused on the visual debugger:
 1. improve graph trace status rendering
 2. add selected-node inspector details
 3. connect trace rows to graph-node selection
-4. then add Windows crash import and richer tensor/value preview
+4. add selected-node inspector details
+5. deepen CPU/GPU fallback classification and per-node memory attribution
+6. then add Windows crash import and richer tensor/value preview
 
 ## Debug Session
 
@@ -240,6 +249,8 @@ The debugger should not trace every tensor for every batch by default. Instead, 
 - periodic batch metrics
 - warnings
 - runtime fallback events
+- CPU/GPU backend path events
+- memory usage summaries and peak markers
 - first failure trace
 - first NaN or Inf trace
 - checkpoint metadata
@@ -518,6 +529,9 @@ For each model layer:
 - NaN count
 - Inf count
 - backend path: CPU, CUDA, OpenCL, fallback
+- backend requested versus backend actually used
+- fallback reason if execution moved from GPU to CPU
+- device id or backend name when available
 
 For backward:
 
@@ -528,6 +542,92 @@ For backward:
 - zero-gradient flag
 - missing-gradient flag
 - NaN or Inf flag
+
+## Runtime And Memory Trace
+
+The Runtime lens should explain where the work actually ran and whether memory
+pressure affected the run.
+
+CPU/GPU trace should capture:
+
+- requested backend: CPU, CUDA, OpenCL, ArrayFire default
+- active backend at run start
+- active backend per major stage or node when available
+- backend changes during the run
+- GPU-to-CPU fallback events
+- fallback reason: unsupported op, missing backend build, device error,
+  allocation failure, shape/layout limitation, or explicit user choice
+- device id and device name when available
+- elapsed time for stages that fall back
+
+Memory trace should capture lightweight summaries:
+
+- process RAM used at run start and peak
+- dataset memory estimate and loaded backend: Arrow, Parquet, Text, Image,
+  Audio, or custom
+- ArrayFire allocated bytes, locked bytes, allocation buffers, and lock buffers
+  when available
+- GPU/device total and available memory when available
+- per-node tensor allocation estimate when available
+- batch size, sequence length, and tensor shapes that drive memory pressure
+- out-of-memory warnings or failed allocation events
+- whether memory pressure caused batch-size reduction, CPU fallback, or run
+  cancellation
+
+The debugger should not store large allocation logs by default. Persist stage
+summaries, peak markers, fallback events, and the first allocation failure.
+Detailed allocation tracing can be an opt-in setting with a cap.
+
+### Tracy-Inspired Runtime Timeline
+
+CyxWiz should learn from Tracy's profiling model without replacing the Studio
+Debugger UI with a standalone profiler.
+
+The Runtime lens should evolve into a timeline with:
+
+- nested zones for `Training`, `Epoch`, `Batch`, `GetNextBatch`, `Forward`,
+  `LayerForward`, `Backward`, `LayerBackward`, `UpdateParameters`,
+  `BatchCallback`, and `UIPlotUpdate`
+- thread lanes for UI, training, data loader workers, and backend worker
+  threads
+- event markers for GPU-to-CPU fallback, NaN/Inf, OOM, shape mismatch,
+  checkpoint save, graph edit, cancellation, and crash-envelope writes
+- memory lanes for process RAM, ArrayFire allocated bytes, ArrayFire locked
+  bytes, GPU/device memory estimate, and peak markers
+- selected-event inspector showing duration, thread id, node/layer, input and
+  output shapes, backend path, memory summary, warning text, and linked
+  recommendations
+
+Optional developer integration:
+
+- add a build flag such as `CYXWIZ_ENABLE_TRACY`
+- wrap hot paths with lightweight macros that compile out by default
+- use Tracy captures for backend performance investigations
+- keep Studio Debugger persistence smaller and product-focused
+
+Example future macro:
+
+```cpp
+#ifdef CYXWIZ_ENABLE_TRACY
+#include <tracy/Tracy.hpp>
+#define CYX_PROFILE_ZONE(name) ZoneScopedN(name)
+#else
+#define CYX_PROFILE_ZONE(name)
+#endif
+```
+
+Initial profiling zones:
+
+- `DataLoader/GetNextBatch`
+- `Training/Forward`
+- `Training/Forward/Embedding`
+- `Training/Forward/Recurrent`
+- `Training/Forward/DenseHead`
+- `Training/Backward`
+- `Training/Backward/Recurrent`
+- `Training/UpdateParameters`
+- `Studio/UIPlotRead`
+- `Studio/UIPlotWrite`
 
 ## Studio Event Trace
 
@@ -573,6 +673,10 @@ Initial rule set:
 - both train and validation flat in smoke/full run: increase model capacity or revise features
 - train improves but validation worsens: increase regularization or fix class imbalance
 - CPU fallback in expected GPU path: fix backend support before comparing model quality
+- high memory pressure: reduce batch size, sequence length, embedding size, or
+  hidden size before assuming the model architecture is wrong
+- repeated allocation failures: inspect tensor shapes and dataset backend before
+  rerunning full training
 
 Recommendations must be labeled as guidance, not absolute truth.
 
@@ -594,10 +698,14 @@ Main views:
 
 - issue summary
 - node timeline
+- Tracy-inspired runtime timeline
+- thread lanes for UI, training, and data loading
 - Studio event timeline
 - selected trace inspector
+- selected runtime event inspector
 - tensor preview table
 - gradient table
+- memory plots
 - preprocessing summary
 - recommendations panel
 
@@ -609,6 +717,7 @@ Lenses:
 - `Values`
 - `Gradients`
 - `Runtime`
+- `Memory`
 - `Studio Events`
 - `Recommendations`
 

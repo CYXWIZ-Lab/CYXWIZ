@@ -97,10 +97,15 @@ private:
     void RenderRunHistory();
     void RenderRunComparison();
     void LoadStoredRun(const std::string& run_id);
+    void RefreshLiveTrainingTrace();
+    void RenderLiveTrainingStatus();
     void RenderOverview();
     void RenderGraphTraceView();
     void RenderLastRun();
     void RenderTrainingTrace();
+    void RenderRuntimeTimeline(const TrainingTraceSummary& trace);
+    void RenderMemoryTrace(const TrainingTraceSummary& trace);
+    void RenderLayerTimingBreakdown(const TrainingTraceSummary& trace);
     void RenderTraceTimeline();
     void RenderStudioEvents();
     void RenderSelectedTraceDetails();
@@ -130,6 +135,7 @@ private:
     StudioDebuggerLens active_lens_ = StudioDebuggerLens::Overview;
     StudioDebuggerRunMode run_mode_ = StudioDebuggerRunMode::FullWorkflow;
     int selected_sample_index_ = 0;
+    std::string selected_runtime_event_key_;
     bool run_in_progress_ = false;
     std::string run_status_message_;
 };

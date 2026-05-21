@@ -28,6 +28,11 @@ public:
         }
     }
 
+    static bool HasDebugEventCallback() {
+        std::lock_guard<std::mutex> lock(Mutex());
+        return static_cast<bool>(Callback());
+    }
+
 private:
     static std::mutex& Mutex() {
         static std::mutex mutex;

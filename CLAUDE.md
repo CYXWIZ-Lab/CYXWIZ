@@ -374,6 +374,15 @@ What is already implemented in this pass:
   counts, and trace tooltips.
 - `TrainingPlotPanel` emits lifecycle/read/write/trim events so long-training
   UI races can be correlated with crash reports.
+- Live training traces now feed the Runtime lens with a Tracy-inspired thread
+  timeline, selected-event inspection, per-layer `ModelForward` /
+  `ModelBackward` timing, runtime warning capture, and a live training status
+  card.
+- Training trace events now persist lightweight memory snapshots: CyxWiz CPU
+  allocated/peak bytes and ArrayFire allocated/locked bytes plus buffer counts.
+  The Runtime lens renders a memory trend graph and latest memory bars with
+  hints for CPU fallback, host-side copies, GPU pressure, and retained device
+  buffers.
 
 Important rules for future debugger work:
 
@@ -383,8 +392,11 @@ Important rules for future debugger work:
 - Keep long debugger actions in `AsyncTaskManager` and visible in Task View.
 - Full tensor dumps must stay opt-in and capped; default persistence should
   store metadata, trace summaries, metrics, issues, and recommendations.
-- Next planned slices are richer graph trace status, node inspector/details,
-  Windows crash import, then tensor/value preview tables.
+- Next planned slices are selected-node inspector/details, stronger CPU/GPU
+  fallback classification, Windows crash import, richer tensor/value preview
+  tables, and UI polish for graph/runtime navigation.
+- Tracy can be an optional developer profiling backend later, but the Studio
+  Debugger UI should remain graph-aware and Studio-native.
 
 ## P2P Training (Critical)
 

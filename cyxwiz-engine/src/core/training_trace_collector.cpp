@@ -1,11 +1,16 @@
 #include "training_trace_collector.h"
 
+#include <cyxwiz/memory_manager.h>
 #include <nlohmann/json.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <thread>
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
 
 namespace cyxwiz {
 
@@ -17,6 +22,27 @@ std::filesystem::path TraceDir() {
 
 std::filesystem::path CurrentTracePath() {
     return TraceDir() / "current_training_trace.json";
+}
+
+void PopulateMemorySnapshot(TrainingTraceEvent& event) {
+    event.cpu_allocated_bytes = static_cast<uint64_t>(MemoryManager::GetAllocatedBytes());
+    event.cpu_peak_bytes = static_cast<uint64_t>(MemoryManager::GetPeakBytes());
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        size_t alloc_bytes = 0;
+        size_t alloc_buffers = 0;
+        size_t lock_bytes = 0;
+        size_t lock_buffers = 0;
+        af::deviceMemInfo(&alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
+        event.af_allocated_bytes = static_cast<uint64_t>(alloc_bytes);
+        event.af_alloc_buffers = static_cast<uint64_t>(alloc_buffers);
+        event.af_locked_bytes = static_cast<uint64_t>(lock_bytes);
+        event.af_lock_buffers = static_cast<uint64_t>(lock_buffers);
+    } catch (...) {
+        // Memory tracing must never affect training.
+    }
+#endif
 }
 
 nlohmann::json EventToJson(const TrainingTraceEvent& event) {
@@ -31,6 +57,12 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"loss", event.loss},
         {"accuracy", event.accuracy},
         {"duration_ms", event.duration_ms},
+        {"cpu_allocated_bytes", event.cpu_allocated_bytes},
+        {"cpu_peak_bytes", event.cpu_peak_bytes},
+        {"af_allocated_bytes", event.af_allocated_bytes},
+        {"af_locked_bytes", event.af_locked_bytes},
+        {"af_alloc_buffers", event.af_alloc_buffers},
+        {"af_lock_buffers", event.af_lock_buffers},
         {"status", event.status},
         {"message", event.message}
     };
@@ -48,6 +80,12 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
     event.loss = j.value("loss", 0.0f);
     event.accuracy = j.value("accuracy", 0.0f);
     event.duration_ms = j.value("duration_ms", 0.0f);
+    event.cpu_allocated_bytes = j.value("cpu_allocated_bytes", uint64_t{0});
+    event.cpu_peak_bytes = j.value("cpu_peak_bytes", uint64_t{0});
+    event.af_allocated_bytes = j.value("af_allocated_bytes", uint64_t{0});
+    event.af_locked_bytes = j.value("af_locked_bytes", uint64_t{0});
+    event.af_alloc_buffers = j.value("af_alloc_buffers", uint64_t{0});
+    event.af_lock_buffers = j.value("af_lock_buffers", uint64_t{0});
     event.status = j.value("status", "ok");
     event.message = j.value("message", "");
     return event;
@@ -99,6 +137,7 @@ void TrainingTraceCollector::RecordStage(TrainingTraceStage stage,
     event.duration_ms = duration_ms;
     event.status = status;
     event.message = message;
+    PopulateMemorySnapshot(event);
     events_.push_back(event);
     while (events_.size() > settings_.max_recent_events) {
         events_.pop_front();
@@ -116,6 +155,58 @@ void TrainingTraceCollector::RecordStage(TrainingTraceStage stage,
     if (settings_.persist_enabled &&
         (events_since_write_ >= static_cast<size_t>(write_interval) ||
          status != "ok")) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordRuntimeWarning(const std::string& source,
+                                                  const std::string& message) {
+    RecordRuntimeEvent(source, message, "warning");
+}
+
+void TrainingTraceCollector::RecordRuntimeEvent(const std::string& stage,
+                                                const std::string& message,
+                                                const std::string& status) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    if (status != "ok") {
+        std::string warning = stage;
+        if (!warning.empty() && !message.empty()) {
+            warning += ": ";
+        }
+        warning += message;
+        warnings_.push_back(warning);
+        if (warnings_.size() > 50) {
+            warnings_.erase(warnings_.begin());
+        }
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = stage.empty() ? "RuntimeEvent" : stage;
+    event.thread_id = ThreadIdString();
+    event.status = status.empty() ? "ok" : status;
+    event.message = message;
+    if (!events_.empty()) {
+        const auto& latest = events_.back();
+        event.epoch = latest.epoch;
+        event.batch = latest.batch;
+        event.total_batches = latest.total_batches;
+        event.loss = latest.loss;
+        event.accuracy = latest.accuracy;
+    }
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (settings_.persist_enabled) {
         WriteLocked();
         events_since_write_ = 0;
     }

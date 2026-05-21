@@ -1,7 +1,10 @@
 #include "studio_debugger_panel.h"
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <iomanip>
 #include <map>
+#include <sstream>
 
 namespace cyxwiz {
 
@@ -120,6 +123,25 @@ bool IsRuntimeTrace(const DebugTraceRecord& trace) {
         trace.status == "warning";
 }
 
+std::string FormatBytesCompact(uint64_t bytes) {
+    const char* units[] = {"B", "KB", "MB", "GB"};
+    double value = static_cast<double>(bytes);
+    int unit = 0;
+    while (value >= 1024.0 && unit < 3) {
+        value /= 1024.0;
+        ++unit;
+    }
+
+    std::ostringstream out;
+    if (unit == 0) {
+        out << bytes << units[unit];
+    } else {
+        out.setf(std::ios::fixed);
+        out << std::setprecision(value >= 100.0 ? 0 : 1) << value << units[unit];
+    }
+    return out.str();
+}
+
 bool JsonHas(const nlohmann::json& payload, const char* key) {
     return payload.contains(key) && !payload.at(key).is_null();
 }
@@ -171,6 +193,57 @@ std::string JsonArrayPreview(const nlohmann::json& payload, const char* key, siz
         out += ", ...";
     }
     return out;
+}
+
+struct LayerTimingRow {
+    std::string direction;
+    int layer = -1;
+    std::string name;
+    std::string input_shape;
+    std::string output_shape;
+    float duration_ms = 0.0f;
+};
+
+std::string ExtractTraceToken(const std::string& message, const std::string& key) {
+    const std::string prefix = key + "=";
+    const size_t start = message.find(prefix);
+    if (start == std::string::npos) {
+        return "";
+    }
+    const size_t value_start = start + prefix.size();
+    const size_t end = message.find(' ', value_start);
+    return message.substr(value_start, end == std::string::npos
+        ? std::string::npos
+        : end - value_start);
+}
+
+std::optional<LayerTimingRow> ParseLayerTimingEvent(const TrainingTraceEvent& event) {
+    if (event.stage != "ModelForward" && event.stage != "ModelBackward") {
+        return std::nullopt;
+    }
+
+    LayerTimingRow row;
+    row.direction = event.stage == "ModelForward" ? "Forward" : "Backward";
+    const std::string layer = ExtractTraceToken(event.message, "layer");
+    if (!layer.empty()) {
+        try {
+            row.layer = std::stoi(layer);
+        } catch (...) {
+            row.layer = -1;
+        }
+    }
+    row.name = ExtractTraceToken(event.message, "name");
+    row.input_shape = ExtractTraceToken(event.message, "input");
+    row.output_shape = ExtractTraceToken(event.message, "output");
+    const std::string duration = ExtractTraceToken(event.message, "duration_ms");
+    if (!duration.empty()) {
+        try {
+            row.duration_ms = std::stof(duration);
+        } catch (...) {
+            row.duration_ms = 0.0f;
+        }
+    }
+    return row;
 }
 
 } // namespace
@@ -520,9 +593,47 @@ void StudioDebuggerPanel::RenderRunComparison() {
     ImGui::EndChild();
 }
 
+void StudioDebuggerPanel::RefreshLiveTrainingTrace() {
+    if (auto trace = TrainingTraceCollector::LoadLastTrace()) {
+        session_.training_trace = *trace;
+        if (has_current_session_) {
+            current_session_.training_trace = *trace;
+        }
+    }
+}
+
+void StudioDebuggerPanel::RenderLiveTrainingStatus() {
+    RefreshLiveTrainingTrace();
+    const auto& trace = session_.training_trace;
+    if (!trace.available) {
+        return;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Live Training");
+    ImGui::BeginChild("StudioDebuggerLiveTrainingStatus", ImVec2(0, 92), true);
+    ImGui::Text("Run: %s", trace.run_id.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("Status: %s", trace.status.c_str());
+    ImGui::Text("Epoch %d  Batch %d/%d  Stage: %s",
+                trace.latest_epoch,
+                trace.latest_batch,
+                trace.latest_total_batches,
+                trace.latest_stage.c_str());
+    ImGui::Text("Loss %.4f  Accuracy %.2f%%",
+                trace.latest_loss,
+                trace.latest_accuracy * 100.0f);
+    if (!trace.warnings.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                           "Latest warning: %s", trace.warnings.back().c_str());
+    }
+    ImGui::EndChild();
+}
+
 void StudioDebuggerPanel::RenderOverview() {
     if (!has_session_) {
         ImGui::TextDisabled("Run a debug session to capture a trace.");
+        RenderLiveTrainingStatus();
         return;
     }
 
@@ -548,6 +659,8 @@ void StudioDebuggerPanel::RenderOverview() {
                     session_.smoke_result.average_loss,
                     session_.smoke_result.last_accuracy * 100.0f);
     }
+
+    RenderLiveTrainingStatus();
 
     if (!session_.preflight.summary.empty()) {
         ImGui::Spacing();
@@ -892,11 +1005,7 @@ void StudioDebuggerPanel::RenderLastRun() {
 }
 
 void StudioDebuggerPanel::RenderTrainingTrace() {
-    if (!session_.training_trace.available) {
-        if (auto trace = TrainingTraceCollector::LoadLastTrace()) {
-            session_.training_trace = *trace;
-        }
-    }
+    RefreshLiveTrainingTrace();
 
     ImGui::Text("Training Trace");
     ImGui::BeginChild("StudioDebuggerTrainingTrace", ImVec2(0, 170), true);
@@ -920,6 +1029,8 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
     if (!trace.warnings.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
                            "Warnings: %zu", trace.warnings.size());
+        ImGui::SameLine();
+        ImGui::TextDisabled("latest: %s", trace.warnings.back().c_str());
     }
 
     ImGui::Separator();
@@ -942,6 +1053,348 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
         }
     }
 
+    ImGui::EndChild();
+
+    RenderRuntimeTimeline(trace);
+    RenderMemoryTrace(trace);
+    RenderLayerTimingBreakdown(trace);
+}
+
+void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trace) {
+    ImGui::Spacing();
+    ImGui::Text("Runtime Timeline");
+    ImGui::BeginChild("StudioDebuggerRuntimeTimeline", ImVec2(0, 220), true,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    if (trace.recent_events.empty()) {
+        ImGui::TextDisabled("No runtime events captured.");
+        ImGui::EndChild();
+        return;
+    }
+
+    std::map<std::string, std::vector<const TrainingTraceEvent*>> lanes;
+    float max_duration = 1.0f;
+    for (const auto& event : trace.recent_events) {
+        lanes[event.thread_id.empty() ? "(unknown)" : event.thread_id].push_back(&event);
+        max_duration = std::max(max_duration, event.duration_ms);
+    }
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float label_w = 92.0f;
+    const float row_h = 34.0f;
+    const float gap = 4.0f;
+    const float min_bar_w = 7.0f;
+    const float max_bar_w = 165.0f;
+    const int max_events_per_lane = 42;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const TrainingTraceEvent* selected_event = nullptr;
+    std::string selected_thread_id;
+
+    int lane_index = 0;
+    for (const auto& [thread_id, events] : lanes) {
+        const float y = origin.y + lane_index * row_h;
+        draw->AddText(ImVec2(origin.x, y + 8.0f),
+                      IM_COL32(185, 190, 202, 255),
+                      thread_id.c_str());
+        draw->AddLine(ImVec2(origin.x + label_w, y + row_h - 5.0f),
+                      ImVec2(origin.x + label_w + 1200.0f, y + row_h - 5.0f),
+                      IM_COL32(62, 68, 82, 255));
+
+        const int start = std::max(0, static_cast<int>(events.size()) - max_events_per_lane);
+        float x = origin.x + label_w;
+        for (int i = start; i < static_cast<int>(events.size()); ++i) {
+            const auto& event = *events[i];
+            const std::string event_key = thread_id + "|" + std::to_string(i) + "|" +
+                event.timestamp + "|" + event.stage;
+            if (event_key == selected_runtime_event_key_) {
+                selected_event = &event;
+                selected_thread_id = thread_id;
+            }
+            const float normalized = std::max(0.0f, event.duration_ms) / max_duration;
+            const float bar_w = event.duration_ms > 0.0f
+                ? std::max(min_bar_w, min_bar_w + normalized * max_bar_w)
+                : min_bar_w;
+            const ImVec2 min = ImVec2(x, y + 7.0f);
+            const ImVec2 max = ImVec2(x + bar_w, y + 25.0f);
+            ImU32 color = IM_COL32(88, 150, 255, 230);
+            if (event.status != "ok") {
+                color = event.status == "warning"
+                    ? IM_COL32(245, 188, 65, 240)
+                    : IM_COL32(245, 86, 86, 240);
+            } else if (event.stage.find("Backward") != std::string::npos) {
+                color = IM_COL32(183, 111, 255, 230);
+            } else if (event.stage.find("Forward") != std::string::npos) {
+                color = IM_COL32(76, 199, 132, 230);
+            } else if (event.stage.find("Batch") != std::string::npos) {
+                color = IM_COL32(100, 170, 255, 230);
+            }
+            draw->AddRectFilled(min, max, color, 3.0f);
+            draw->AddRect(min, max,
+                          event_key == selected_runtime_event_key_
+                              ? IM_COL32(255, 255, 255, 245)
+                              : IM_COL32(20, 24, 32, 220),
+                          3.0f,
+                          0,
+                          event_key == selected_runtime_event_key_ ? 2.0f : 1.0f);
+
+            ImGui::SetCursorScreenPos(min);
+            ImGui::InvisibleButton(
+                ("##runtime_event_" + thread_id + "_" + std::to_string(i)).c_str(),
+                ImVec2(bar_w, 18.0f));
+            if (ImGui::IsItemClicked()) {
+                selected_runtime_event_key_ = event_key;
+                selected_event = &event;
+                selected_thread_id = thread_id;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", event.stage.c_str());
+                ImGui::Text("Thread: %s", thread_id.c_str());
+                ImGui::Text("Epoch %d batch %d/%d", event.epoch, event.batch, event.total_batches);
+                ImGui::Text("Duration: %.2f ms", event.duration_ms);
+                ImGui::Text("Status: %s", event.status.c_str());
+                if (!event.message.empty()) {
+                    ImGui::Separator();
+                    ImGui::TextWrapped("%s", event.message.c_str());
+                }
+                ImGui::EndTooltip();
+            }
+            x += bar_w + gap;
+        }
+        ++lane_index;
+    }
+
+    ImGui::Dummy(ImVec2(label_w + 1300.0f,
+                        std::max(1, lane_index) * row_h + 8.0f));
+    ImGui::EndChild();
+
+    ImGui::Spacing();
+    ImGui::Text("Selected Runtime Event");
+    ImGui::BeginChild("StudioDebuggerSelectedRuntimeEvent", ImVec2(0, 120), true);
+    if (!selected_event) {
+        ImGui::TextDisabled("Click a timeline event to inspect it.");
+        ImGui::EndChild();
+        return;
+    }
+
+    ImGui::Text("Stage: %s", selected_event->stage.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("Status: %s", selected_event->status.c_str());
+    ImGui::Text("Thread: %s", selected_thread_id.c_str());
+    ImGui::Text("Epoch %d  Batch %d/%d  Duration %.2f ms",
+                selected_event->epoch,
+                selected_event->batch,
+                selected_event->total_batches,
+                selected_event->duration_ms);
+    ImGui::Text("Loss %.4f  Accuracy %.2f%%",
+                selected_event->loss,
+                selected_event->accuracy * 100.0f);
+    ImGui::Text("Memory CPU %s peak %s  AF alloc %s locked %s",
+                FormatBytesCompact(selected_event->cpu_allocated_bytes).c_str(),
+                FormatBytesCompact(selected_event->cpu_peak_bytes).c_str(),
+                FormatBytesCompact(selected_event->af_allocated_bytes).c_str(),
+                FormatBytesCompact(selected_event->af_locked_bytes).c_str());
+    if (!selected_event->message.empty()) {
+        ImGui::Separator();
+        ImGui::TextWrapped("%s", selected_event->message.c_str());
+    }
+    ImGui::EndChild();
+}
+
+void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
+    ImGui::Spacing();
+    ImGui::Text("Memory Trace");
+    ImGui::BeginChild("StudioDebuggerMemoryTrace", ImVec2(0, 255), true);
+
+    const TrainingTraceEvent* latest = nullptr;
+    uint64_t max_bytes = 0;
+    std::vector<const TrainingTraceEvent*> snapshots;
+    snapshots.reserve(trace.recent_events.size());
+    for (const auto& event : trace.recent_events) {
+        const uint64_t event_max = std::max(
+            std::max(event.cpu_allocated_bytes, event.cpu_peak_bytes),
+            std::max(event.af_allocated_bytes, event.af_locked_bytes));
+        if (event_max > 0) {
+            latest = &event;
+            max_bytes = std::max(max_bytes, event_max);
+            snapshots.push_back(&event);
+        }
+    }
+
+    if (!latest) {
+        ImGui::TextDisabled("No memory snapshots captured yet.");
+        ImGui::TextDisabled("Restart the rebuilt engine and begin a new training run to attach memory to trace events.");
+        ImGui::EndChild();
+        return;
+    }
+
+    ImGui::Text("Latest: %s  epoch %d batch %d/%d",
+                latest->stage.c_str(),
+                latest->epoch,
+                latest->batch,
+                latest->total_batches);
+    ImGui::SameLine();
+    ImGui::TextDisabled("snapshots: %d", static_cast<int>(snapshots.size()));
+
+    const ImVec2 graph_pos = ImGui::GetCursorScreenPos();
+    const float graph_w = std::max(260.0f, ImGui::GetContentRegionAvail().x);
+    const float graph_h = 82.0f;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(graph_pos,
+                        ImVec2(graph_pos.x + graph_w, graph_pos.y + graph_h),
+                        IM_COL32(24, 28, 36, 255),
+                        4.0f);
+    draw->AddRect(graph_pos,
+                  ImVec2(graph_pos.x + graph_w, graph_pos.y + graph_h),
+                  IM_COL32(70, 76, 90, 255),
+                  4.0f);
+
+    const size_t max_points = 80;
+    const size_t start = snapshots.size() > max_points ? snapshots.size() - max_points : 0;
+    const size_t point_count = snapshots.size() - start;
+    const auto point_for = [&](size_t i, uint64_t bytes) {
+        const float x = point_count > 1
+            ? graph_pos.x + (static_cast<float>(i) / static_cast<float>(point_count - 1)) * graph_w
+            : graph_pos.x + graph_w;
+        const float ratio = max_bytes > 0
+            ? std::min(1.0f, static_cast<float>(static_cast<double>(bytes) / static_cast<double>(max_bytes)))
+            : 0.0f;
+        const float y = graph_pos.y + graph_h - 8.0f - ratio * (graph_h - 16.0f);
+        return ImVec2(x, y);
+    };
+
+    for (int grid = 1; grid < 4; ++grid) {
+        const float y = graph_pos.y + graph_h * static_cast<float>(grid) / 4.0f;
+        draw->AddLine(ImVec2(graph_pos.x, y),
+                      ImVec2(graph_pos.x + graph_w, y),
+                      IM_COL32(48, 54, 66, 180));
+    }
+
+    for (size_t i = 1; i < point_count; ++i) {
+        const auto& prev = *snapshots[start + i - 1];
+        const auto& current = *snapshots[start + i];
+        draw->AddLine(point_for(i - 1, prev.cpu_allocated_bytes),
+                      point_for(i, current.cpu_allocated_bytes),
+                      IM_COL32(76, 199, 132, 240),
+                      2.0f);
+        draw->AddLine(point_for(i - 1, prev.af_allocated_bytes),
+                      point_for(i, current.af_allocated_bytes),
+                      IM_COL32(88, 150, 255, 240),
+                      2.0f);
+        draw->AddLine(point_for(i - 1, prev.af_locked_bytes),
+                      point_for(i, current.af_locked_bytes),
+                      IM_COL32(183, 111, 255, 230),
+                      1.5f);
+    }
+
+    ImGui::InvisibleButton("##StudioDebuggerMemoryTrend", ImVec2(graph_w, graph_h));
+    if (ImGui::IsItemHovered() && point_count > 0) {
+        const float mouse_x = ImGui::GetMousePos().x;
+        const float normalized = graph_w > 0.0f
+            ? std::min(1.0f, std::max(0.0f, (mouse_x - graph_pos.x) / graph_w))
+            : 0.0f;
+        const size_t relative = point_count > 1
+            ? static_cast<size_t>(normalized * static_cast<float>(point_count - 1) + 0.5f)
+            : 0;
+        const TrainingTraceEvent& event = *snapshots[start + std::min(relative, point_count - 1)];
+        ImGui::BeginTooltip();
+        ImGui::Text("%s", event.stage.c_str());
+        ImGui::Text("Epoch %d batch %d/%d", event.epoch, event.batch, event.total_batches);
+        ImGui::Text("CPU: %s  peak %s",
+                    FormatBytesCompact(event.cpu_allocated_bytes).c_str(),
+                    FormatBytesCompact(event.cpu_peak_bytes).c_str());
+        ImGui::Text("ArrayFire: alloc %s  locked %s",
+                    FormatBytesCompact(event.af_allocated_bytes).c_str(),
+                    FormatBytesCompact(event.af_locked_bytes).c_str());
+        ImGui::EndTooltip();
+    }
+
+    ImGui::TextColored(ImVec4(0.30f, 0.78f, 0.52f, 1.0f), "CPU allocated");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.35f, 0.60f, 1.0f, 1.0f), "ArrayFire allocated");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.72f, 0.44f, 1.0f, 1.0f), "ArrayFire locked");
+    ImGui::SameLine();
+    ImGui::TextDisabled("scale max %s", FormatBytesCompact(max_bytes).c_str());
+    ImGui::TextDisabled(
+        "Hint: rising CPU with flat GPU can indicate fallback or host-side copies; "
+        "rising AF locked memory can indicate GPU pressure or retained device buffers.");
+
+    const float full_w = std::max(120.0f, ImGui::GetContentRegionAvail().x - 140.0f);
+    auto draw_bar = [&](const char* label, uint64_t bytes, ImU32 color) {
+        ImGui::Text("%-10s", label);
+        ImGui::SameLine(95.0f);
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float ratio = max_bytes > 0
+            ? std::min(1.0f, static_cast<float>(static_cast<double>(bytes) / static_cast<double>(max_bytes)))
+            : 0.0f;
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(p, ImVec2(p.x + full_w, p.y + 14.0f), IM_COL32(36, 41, 52, 255), 3.0f);
+        draw->AddRectFilled(p, ImVec2(p.x + full_w * ratio, p.y + 14.0f), color, 3.0f);
+        draw->AddRect(p, ImVec2(p.x + full_w, p.y + 14.0f), IM_COL32(70, 76, 90, 255), 3.0f);
+        ImGui::Dummy(ImVec2(full_w, 16.0f));
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", FormatBytesCompact(bytes).c_str());
+    };
+
+    draw_bar("CPU now", latest->cpu_allocated_bytes, IM_COL32(76, 199, 132, 230));
+    draw_bar("CPU peak", latest->cpu_peak_bytes, IM_COL32(245, 188, 65, 230));
+    draw_bar("AF alloc", latest->af_allocated_bytes, IM_COL32(88, 150, 255, 230));
+    draw_bar("AF locked", latest->af_locked_bytes, IM_COL32(183, 111, 255, 230));
+
+    ImGui::Separator();
+    ImGui::TextDisabled("ArrayFire buffers: alloc %llu  locked %llu",
+                        static_cast<unsigned long long>(latest->af_alloc_buffers),
+                        static_cast<unsigned long long>(latest->af_lock_buffers));
+    ImGui::EndChild();
+}
+
+void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary& trace) {
+    std::vector<LayerTimingRow> rows;
+    rows.reserve(trace.recent_events.size());
+    for (const auto& event : trace.recent_events) {
+        if (auto row = ParseLayerTimingEvent(event)) {
+            rows.push_back(*row);
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("Layer Timing");
+    ImGui::BeginChild("StudioDebuggerLayerTiming", ImVec2(0, 190), true);
+    if (rows.empty()) {
+        ImGui::TextDisabled("No layer timing events yet.");
+        ImGui::TextDisabled("Restart the rebuilt engine and begin a new training run to capture ModelForward/ModelBackward events.");
+        ImGui::EndChild();
+        return;
+    }
+
+    std::sort(rows.begin(), rows.end(), [](const LayerTimingRow& a, const LayerTimingRow& b) {
+        return a.duration_ms > b.duration_ms;
+    });
+
+    ImGui::Columns(6, "StudioDebuggerLayerTimingColumns", true);
+    ImGui::Text("Stage"); ImGui::NextColumn();
+    ImGui::Text("Layer"); ImGui::NextColumn();
+    ImGui::Text("Name"); ImGui::NextColumn();
+    ImGui::Text("Input"); ImGui::NextColumn();
+    ImGui::Text("Output"); ImGui::NextColumn();
+    ImGui::Text("ms"); ImGui::NextColumn();
+    ImGui::Separator();
+
+    const int limit = std::min<int>(static_cast<int>(rows.size()), 12);
+    for (int i = 0; i < limit; ++i) {
+        const auto& row = rows[i];
+        const ImVec4 color = row.duration_ms >= 100.0f
+            ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
+            : ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+        ImGui::Text("%s", row.direction.c_str()); ImGui::NextColumn();
+        ImGui::Text("%d", row.layer); ImGui::NextColumn();
+        ImGui::Text("%s", row.name.c_str()); ImGui::NextColumn();
+        ImGui::Text("%s", row.input_shape.c_str()); ImGui::NextColumn();
+        ImGui::Text("%s", row.output_shape.c_str()); ImGui::NextColumn();
+        ImGui::TextColored(color, "%.2f", row.duration_ms); ImGui::NextColumn();
+    }
+    ImGui::Columns(1);
     ImGui::EndChild();
 }
 
