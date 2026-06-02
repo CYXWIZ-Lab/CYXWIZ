@@ -1,6 +1,9 @@
 #pragma once
 
 #include "api_export.h"
+#include <cstdint>
+#include <stdexcept>
+#include <type_traits>
 #include <vector>
 #include <memory>
 #include <initializer_list>
@@ -16,6 +19,8 @@ namespace cyxwiz {
 }
 
 namespace cyxwiz {
+
+class TensorHostBuffer;
 
 enum class DataType {
     Float32 = 0,
@@ -64,20 +69,160 @@ public:
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire array access (creates if needed, syncs from CPU data)
     af::array GetArray() const;
-    // Set from ArrayFire array (copies data back to CPU)
+    // 2D row-major Tensor view as semantic ArrayFire [rows, cols].
+    af::array GetArrayRowMajor2D() const;
+    // 3D row-major Tensor view as semantic ArrayFire [dim0, dim1, dim2].
+    af::array GetArrayRowMajor3D() const;
+    // Set from ArrayFire array, keeping device data resident until host data is requested.
     void SetFromArray(const af::array& arr);
+    // Set from semantic row-major ArrayFire views, keeping device data resident.
+    void SetFromArrayRowMajor2D(const af::array& arr);
+    void SetFromArrayRowMajor3D(const af::array& arr);
+    // Build a row-major 2D Tensor from semantic ArrayFire [rows, cols].
+    static Tensor FromArrayRowMajor2D(const af::array& arr);
+    // Build a row-major 3D Tensor from semantic ArrayFire [dim0, dim1, dim2].
+    static Tensor FromArrayRowMajor3D(const af::array& arr);
 #endif
 
     // Operations
     Tensor Clone() const;
     Tensor Reshape(const std::vector<size_t>& new_shape) const;
+    Tensor View(const std::vector<size_t>& new_shape) const;
+    Tensor Squeeze(int dim = -1) const;
+    Tensor Unsqueeze(int dim) const;
+    Tensor Flatten() const;
+    Tensor Flatten(int start_dim, int end_dim = -1) const;
     Tensor Transpose() const;
+    Tensor Transpose(int dim0, int dim1) const;
+    Tensor Permute(const std::vector<int>& dims) const;
+
+    // Indexing and slicing
+    float At(size_t idx) const;
+    float At(size_t i, size_t j) const;
+    float At(size_t i, size_t j, size_t k) const;
+    float At(size_t i, size_t j, size_t k, size_t l) const;
+    void Set(size_t idx, float value);
+    void Set(size_t i, size_t j, float value);
+    void Set(size_t i, size_t j, size_t k, float value);
+    void Set(size_t i, size_t j, size_t k, size_t l, float value);
+    template<typename T>
+    T AtAs(size_t idx) const {
+        EnsureDataType<T>();
+        if (idx >= NumElements()) {
+            throw std::out_of_range("Tensor::AtAs: index out of range");
+        }
+        return Data<T>()[idx];
+    }
+    template<typename T>
+    T AtAs(size_t i, size_t j) const {
+        return AtAs<T>(CheckedTypedLinearIndex({i, j}));
+    }
+    template<typename T>
+    T AtAs(size_t i, size_t j, size_t k) const {
+        return AtAs<T>(CheckedTypedLinearIndex({i, j, k}));
+    }
+    template<typename T>
+    T AtAs(size_t i, size_t j, size_t k, size_t l) const {
+        return AtAs<T>(CheckedTypedLinearIndex({i, j, k, l}));
+    }
+    template<typename T>
+    void SetAs(size_t idx, T value) {
+        EnsureDataType<T>();
+        if (idx >= NumElements()) {
+            throw std::out_of_range("Tensor::SetAs: index out of range");
+        }
+        Data<T>()[idx] = value;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        MarkHostModified();
+#endif
+    }
+    template<typename T>
+    void SetAs(size_t i, size_t j, T value) {
+        SetAs<T>(CheckedTypedLinearIndex({i, j}), value);
+    }
+    template<typename T>
+    void SetAs(size_t i, size_t j, size_t k, T value) {
+        SetAs<T>(CheckedTypedLinearIndex({i, j, k}), value);
+    }
+    template<typename T>
+    void SetAs(size_t i, size_t j, size_t k, size_t l, T value) {
+        SetAs<T>(CheckedTypedLinearIndex({i, j, k, l}), value);
+    }
+    Tensor Slice(int dim, int start, int end = -1, int step = 1) const;
+    Tensor IndexSelect(int dim, const std::vector<int>& indices) const;
+
+    // Concatenation and splitting
+    static Tensor Cat(const std::vector<Tensor>& tensors, int dim = 0);
+    static Tensor Stack(const std::vector<Tensor>& tensors, int dim = 0);
+    std::vector<Tensor> Split(int split_size, int dim = 0) const;
+    std::vector<Tensor> Split(const std::vector<int>& sizes, int dim = 0) const;
+    std::vector<Tensor> Chunk(int chunks, int dim = 0) const;
+
+    // Reductions
+    Tensor Sum() const;
+    Tensor Sum(int dim, bool keepdim = false) const;
+    Tensor Mean() const;
+    Tensor Mean(int dim, bool keepdim = false) const;
+    Tensor Max() const;
+    Tensor Max(int dim, bool keepdim = false) const;
+    Tensor Min() const;
+    Tensor Min(int dim, bool keepdim = false) const;
+    Tensor Prod() const;
+    Tensor Prod(int dim, bool keepdim = false) const;
+    Tensor Var() const;
+    Tensor Var(int dim, bool keepdim = false) const;
+    Tensor Std() const;
+    Tensor Std(int dim, bool keepdim = false) const;
 
     // Math operations
     Tensor operator+(const Tensor& other) const;
     Tensor operator-(const Tensor& other) const;
     Tensor operator*(const Tensor& other) const;
     Tensor operator/(const Tensor& other) const;
+    Tensor operator+(float scalar) const;
+    Tensor operator-(float scalar) const;
+    Tensor operator*(float scalar) const;
+    Tensor operator/(float scalar) const;
+    Tensor Pow(float exponent) const;
+    Tensor Pow(const Tensor& exponent) const;
+    Tensor Sqrt() const;
+    Tensor Exp() const;
+    Tensor Log() const;
+    Tensor Abs() const;
+    Tensor Sign() const;
+    Tensor Clip(float min_val, float max_val) const;
+    Tensor operator-() const;
+
+    // Linear algebra
+    Tensor Dot(const Tensor& other) const;
+    Tensor BatchMatMul(const Tensor& other) const;
+
+    // Comparisons return UInt8 masks with 1 for true and 0 for false.
+    Tensor operator>(const Tensor& other) const;
+    Tensor operator>(float scalar) const;
+    Tensor operator>=(const Tensor& other) const;
+    Tensor operator>=(float scalar) const;
+    Tensor operator<(const Tensor& other) const;
+    Tensor operator<(float scalar) const;
+    Tensor operator<=(const Tensor& other) const;
+    Tensor operator<=(float scalar) const;
+    Tensor operator==(const Tensor& other) const;
+    Tensor operator==(float scalar) const;
+    Tensor operator!=(const Tensor& other) const;
+    Tensor operator!=(float scalar) const;
+
+    // Logical operations treat zero as false and nonzero as true.
+    Tensor operator&&(const Tensor& other) const;
+    Tensor operator||(const Tensor& other) const;
+    Tensor operator!() const;
+
+    // Broadcasting
+    static bool IsBroadcastable(const std::vector<size_t>& shape1,
+                                const std::vector<size_t>& shape2);
+    static std::vector<size_t> BroadcastShape(const std::vector<size_t>& shape1,
+                                              const std::vector<size_t>& shape2);
+    Tensor BroadcastTo(const std::vector<size_t>& target_shape) const;
+    Tensor Expand(const std::vector<size_t>& target_shape) const;
 
     // Static factory methods
     static Tensor Zeros(const std::vector<size_t>& shape, DataType dtype = DataType::Float32);
@@ -86,11 +231,74 @@ public:
     static Tensor RangeN(const std::vector<size_t>& shape, DataType dtype = DataType::Float32);
 
 private:
+    template<typename>
+    struct AlwaysFalse : std::false_type {};
+
+    template<typename T>
+    static constexpr DataType NativeDataType() {
+        if constexpr (std::is_same_v<T, float>) {
+            return DataType::Float32;
+        } else if constexpr (std::is_same_v<T, double>) {
+            return DataType::Float64;
+        } else if constexpr (std::is_same_v<T, int32_t>) {
+            return DataType::Int32;
+        } else if constexpr (std::is_same_v<T, int64_t>) {
+            return DataType::Int64;
+        } else if constexpr (std::is_same_v<T, uint8_t>) {
+            return DataType::UInt8;
+        } else {
+            static_assert(AlwaysFalse<T>::value, "Unsupported Tensor accessor type");
+        }
+    }
+
+    template<typename T>
+    void EnsureDataType() const {
+        if (dtype_ != NativeDataType<T>()) {
+            throw std::runtime_error("Tensor typed accessor data type mismatch");
+        }
+    }
+
+    size_t CheckedTypedLinearIndex(std::initializer_list<size_t> indices) const {
+        if (indices.size() != shape_.size()) {
+            throw std::runtime_error("Tensor typed accessor rank mismatch");
+        }
+
+        size_t stride = NumElements();
+        size_t linear = 0;
+        size_t axis = 0;
+        for (size_t index : indices) {
+            const size_t dim = shape_[axis];
+            if (index >= dim) {
+                throw std::out_of_range("Tensor typed accessor index out of range");
+            }
+            stride /= dim;
+            linear += index * stride;
+            axis++;
+        }
+        return linear;
+    }
+
     std::vector<size_t> shape_;
     DataType dtype_;
     Device* device_;
-    void* data_;
-    bool owns_data_;
+    mutable std::unique_ptr<TensorHostBuffer> host_buffer_;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    enum class TensorDeviceLayout {
+        None,
+        ArrayFireNative,
+        RowMajor2D,
+        RowMajor3D
+    };
+
+    mutable std::unique_ptr<af::array> af_array_;
+    mutable bool host_current_;
+    mutable bool device_current_;
+    mutable TensorDeviceLayout device_layout_ = TensorDeviceLayout::None;
+
+    void EnsureHostCurrent() const;
+    void MarkHostModified() const;
+    void ClearDeviceCache() const;
+#endif
 };
 
 } // namespace cyxwiz

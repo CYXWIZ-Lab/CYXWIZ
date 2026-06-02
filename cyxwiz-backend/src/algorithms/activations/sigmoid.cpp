@@ -28,10 +28,6 @@ static bool UseGPU() {
 }
 
 Tensor Sigmoid::Forward(const Tensor& input) {
-    Tensor output(input.Shape(), input.GetDataType());
-
-    size_t num_elements = input.NumElements();
-
     if (input.GetDataType() != DataType::Float32) {
         throw std::runtime_error("Sigmoid only supports Float32 tensors");
     }
@@ -39,21 +35,21 @@ Tensor Sigmoid::Forward(const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (UseGPU()) {
         try {
-            af::array input_gpu(static_cast<dim_t>(num_elements),
-                                static_cast<const float*>(input.Data()));
+            af::array input_gpu = input.GetArray();
 
             // Sigmoid: 1 / (1 + exp(-x))
             af::array output_gpu = af::sigmoid(input_gpu);
 
-            output_gpu.host(output.Data<float>());
-            return output;
-        } catch (const af::exception& e) {
+            return Tensor(output_gpu);
+        } catch (const af::exception&) {
             // Fall through to CPU
         }
     }
 #endif
 
     // CPU fallback
+    Tensor output(input.Shape(), input.GetDataType());
+    size_t num_elements = input.NumElements();
     const float* input_data = static_cast<const float*>(input.Data());
     float* output_data = static_cast<float*>(output.Data());
 
@@ -69,31 +65,26 @@ Tensor Sigmoid::Backward(const Tensor& grad_output, const Tensor& input) {
         throw std::runtime_error("Sigmoid::Backward: gradient and input shapes must match");
     }
 
-    Tensor grad_input(input.Shape(), input.GetDataType());
-
-    size_t num_elements = input.NumElements();
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (UseGPU()) {
         try {
-            af::array grad_gpu(static_cast<dim_t>(num_elements),
-                               static_cast<const float*>(grad_output.Data()));
-            af::array input_gpu(static_cast<dim_t>(num_elements),
-                                static_cast<const float*>(input.Data()));
+            af::array grad_gpu = grad_output.GetArray();
+            af::array input_gpu = input.GetArray();
 
             // Gradient: grad * sigmoid(x) * (1 - sigmoid(x))
             af::array sigmoid_val = af::sigmoid(input_gpu);
             af::array grad_input_gpu = grad_gpu * sigmoid_val * (1.0f - sigmoid_val);
 
-            grad_input_gpu.host(grad_input.Data<float>());
-            return grad_input;
-        } catch (const af::exception& e) {
+            return Tensor(grad_input_gpu);
+        } catch (const af::exception&) {
             // Fall through to CPU
         }
     }
 #endif
 
     // CPU fallback
+    Tensor grad_input(input.Shape(), input.GetDataType());
+    size_t num_elements = input.NumElements();
     const float* grad_out_data = static_cast<const float*>(grad_output.Data());
     const float* input_data = static_cast<const float*>(input.Data());
     float* grad_in_data = static_cast<float*>(grad_input.Data());

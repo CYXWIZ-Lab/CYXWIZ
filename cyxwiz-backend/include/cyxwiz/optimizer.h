@@ -166,8 +166,8 @@ public:
 private:
     double rho_;      // Decay rate for running averages
     double epsilon_;
-    std::map<std::string, Tensor> acc_grad_;   // Accumulated squared gradients E[g²]
-    std::map<std::string, Tensor> acc_delta_;  // Accumulated squared updates E[Δx²]
+    std::map<std::string, Tensor> acc_grad_;   // Accumulated squared gradients
+    std::map<std::string, Tensor> acc_delta_;  // Accumulated squared updates
 };
 
 // LAMB Optimizer - Layer-wise Adaptive Moments optimizer for Batch training

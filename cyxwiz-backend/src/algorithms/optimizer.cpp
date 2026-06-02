@@ -62,34 +62,29 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (s_use_gpu && param.GetDataType() == DataType::Float32) {
             try {
-                af::array param_gpu(static_cast<dim_t>(num_elements),
-                                    static_cast<const float*>(param.Data()));
-                af::array grad_gpu(static_cast<dim_t>(num_elements),
-                                   static_cast<const float*>(grad.Data()));
+                af::array param_gpu = param.GetArray();
+                af::array grad_gpu = grad.GetArray();
 
                 if (momentum_ > 0.0) {
                     // Initialize velocity if needed
                     if (velocity_.find(name) == velocity_.end()) {
-                        velocity_[name] = Tensor(param.Shape(), DataType::Float32);
-                        // Use memset for faster zero-initialization (optimized from CPU loop)
-                        std::memset(velocity_[name].Data<float>(), 0, num_elements * sizeof(float));
+                        velocity_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
                     }
 
-                    af::array v_gpu(static_cast<dim_t>(num_elements),
-                                    static_cast<const float*>(velocity_[name].Data()));
+                    af::array v_gpu = velocity_[name].GetArray();
 
                     // v = momentum * v + grad
                     v_gpu = static_cast<float>(momentum_) * v_gpu + grad_gpu;
                     // param = param - lr * v
                     param_gpu = param_gpu - static_cast<float>(learning_rate_) * v_gpu;
 
-                    v_gpu.host(velocity_[name].Data<float>());
+                    velocity_[name].SetFromArray(v_gpu);
                 } else {
                     // Simple SGD: param = param - lr * grad
                     param_gpu = param_gpu - static_cast<float>(learning_rate_) * grad_gpu;
                 }
 
-                param_gpu.host(param.Data<float>());
+                param.SetFromArray(param_gpu);
                 continue;
             } catch (const af::exception& e) {
                 // Fall through to CPU
@@ -146,24 +141,17 @@ void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         // Initialize moment vectors if needed
         if (m_.find(name) == m_.end()) {
-            m_[name] = Tensor(param.Shape(), DataType::Float32);
-            v_[name] = Tensor(param.Shape(), DataType::Float32);
-            // Use memset for faster zero-initialization (optimized from CPU loop)
-            std::memset(m_[name].Data<float>(), 0, num_elements * sizeof(float));
-            std::memset(v_[name].Data<float>(), 0, num_elements * sizeof(float));
+            m_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
+            v_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (s_use_gpu && param.GetDataType() == DataType::Float32) {
             try {
-                af::array param_gpu(static_cast<dim_t>(num_elements),
-                                    static_cast<const float*>(param.Data()));
-                af::array grad_gpu(static_cast<dim_t>(num_elements),
-                                   static_cast<const float*>(grad.Data()));
-                af::array m_gpu(static_cast<dim_t>(num_elements),
-                                static_cast<const float*>(m_[name].Data()));
-                af::array v_gpu(static_cast<dim_t>(num_elements),
-                                static_cast<const float*>(v_[name].Data()));
+                af::array param_gpu = param.GetArray();
+                af::array grad_gpu = grad.GetArray();
+                af::array m_gpu = m_[name].GetArray();
+                af::array v_gpu = v_[name].GetArray();
 
                 float b1 = static_cast<float>(beta1_);
                 float b2 = static_cast<float>(beta2_);
@@ -183,10 +171,9 @@ void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
                 // Update parameters: param = param - lr * m_hat / (sqrt(v_hat) + eps)
                 param_gpu = param_gpu - lr * m_hat / (af::sqrt(v_hat) + eps);
 
-                // Copy back
-                param_gpu.host(param.Data<float>());
-                m_gpu.host(m_[name].Data<float>());
-                v_gpu.host(v_[name].Data<float>());
+                param.SetFromArray(param_gpu);
+                m_[name].SetFromArray(m_gpu);
+                v_[name].SetFromArray(v_gpu);
                 continue;
             } catch (const af::exception& e) {
                 spdlog::warn("Adam GPU step failed: {}, falling back to CPU", e.what());
@@ -251,10 +238,9 @@ void AdamWOptimizer::Step(std::map<std::string, Tensor>& parameters,
 #ifdef CYXWIZ_HAS_ARRAYFIRE
             if (s_use_gpu && param.GetDataType() == DataType::Float32) {
                 try {
-                    af::array param_gpu(static_cast<dim_t>(num_elements),
-                                        static_cast<const float*>(param.Data()));
+                    af::array param_gpu = param.GetArray();
                     param_gpu = param_gpu * (1.0f - wd);
-                    param_gpu.host(param.Data<float>());
+                    param.SetFromArray(param_gpu);
                     continue;
                 } catch (const af::exception& e) {
                     // Fall through to CPU
@@ -307,40 +293,34 @@ void RMSpropOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         // Initialize running average if needed
         if (v_.find(name) == v_.end()) {
-            v_[name] = Tensor(param.Shape(), DataType::Float32);
-            std::memset(v_[name].Data<float>(), 0, num_elements * sizeof(float));
+            v_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
             if (momentum_ > 0) {
-                buffer_[name] = Tensor(param.Shape(), DataType::Float32);
-                std::memset(buffer_[name].Data<float>(), 0, num_elements * sizeof(float));
+                buffer_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
             }
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (s_use_gpu && param.GetDataType() == DataType::Float32) {
             try {
-                af::array param_gpu(static_cast<dim_t>(num_elements),
-                                    static_cast<const float*>(param.Data()));
-                af::array grad_gpu(static_cast<dim_t>(num_elements),
-                                   static_cast<const float*>(grad.Data()));
-                af::array v_gpu(static_cast<dim_t>(num_elements),
-                                static_cast<const float*>(v_[name].Data()));
+                af::array param_gpu = param.GetArray();
+                af::array grad_gpu = grad.GetArray();
+                af::array v_gpu = v_[name].GetArray();
 
                 // v = alpha * v + (1 - alpha) * grad^2
                 v_gpu = alpha * v_gpu + (1.0f - alpha) * grad_gpu * grad_gpu;
 
                 if (momentum_ > 0) {
-                    af::array buf_gpu(static_cast<dim_t>(num_elements),
-                                      static_cast<const float*>(buffer_[name].Data()));
+                    af::array buf_gpu = buffer_[name].GetArray();
                     // buf = mom * buf + grad / sqrt(v + eps)
                     buf_gpu = mom * buf_gpu + grad_gpu / (af::sqrt(v_gpu) + eps);
                     param_gpu = param_gpu - lr * buf_gpu;
-                    buf_gpu.host(buffer_[name].Data<float>());
+                    buffer_[name].SetFromArray(buf_gpu);
                 } else {
                     param_gpu = param_gpu - lr * grad_gpu / (af::sqrt(v_gpu) + eps);
                 }
 
-                param_gpu.host(param.Data<float>());
-                v_gpu.host(v_[name].Data<float>());
+                param.SetFromArray(param_gpu);
+                v_[name].SetFromArray(v_gpu);
                 continue;
             } catch (const af::exception& e) {
                 spdlog::warn("RMSprop GPU step failed: {}, falling back to CPU", e.what());
@@ -405,27 +385,23 @@ void AdaGradOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         // Initialize cache if needed
         if (cache_.find(name) == cache_.end()) {
-            cache_[name] = Tensor(param.Shape(), DataType::Float32);
-            std::memset(cache_[name].Data<float>(), 0, num_elements * sizeof(float));
+            cache_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (s_use_gpu && param.GetDataType() == DataType::Float32) {
             try {
-                af::array param_gpu(static_cast<dim_t>(num_elements),
-                                    static_cast<const float*>(param.Data()));
-                af::array grad_gpu(static_cast<dim_t>(num_elements),
-                                   static_cast<const float*>(grad.Data()));
-                af::array cache_gpu(static_cast<dim_t>(num_elements),
-                                    static_cast<const float*>(cache_[name].Data()));
+                af::array param_gpu = param.GetArray();
+                af::array grad_gpu = grad.GetArray();
+                af::array cache_gpu = cache_[name].GetArray();
 
                 // cache += grad^2
                 cache_gpu = cache_gpu + grad_gpu * grad_gpu;
                 // param -= lr * grad / sqrt(cache + eps)
                 param_gpu = param_gpu - lr * grad_gpu / (af::sqrt(cache_gpu) + eps);
 
-                param_gpu.host(param.Data<float>());
-                cache_gpu.host(cache_[name].Data<float>());
+                param.SetFromArray(param_gpu);
+                cache_[name].SetFromArray(cache_gpu);
                 continue;
             } catch (const af::exception& e) {
                 spdlog::warn("AdaGrad GPU step failed: {}, falling back to CPU", e.what());
@@ -488,23 +464,17 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         // Initialize moment vectors if needed
         if (m_.find(name) == m_.end()) {
-            m_[name] = Tensor(param.Shape(), DataType::Float32);
-            v_[name] = Tensor(param.Shape(), DataType::Float32);
-            std::memset(m_[name].Data<float>(), 0, num_elements * sizeof(float));
-            std::memset(v_[name].Data<float>(), 0, num_elements * sizeof(float));
+            m_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
+            v_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (s_use_gpu && param.GetDataType() == DataType::Float32) {
             try {
-                af::array param_gpu(static_cast<dim_t>(num_elements),
-                                    static_cast<const float*>(param.Data()));
-                af::array grad_gpu(static_cast<dim_t>(num_elements),
-                                   static_cast<const float*>(grad.Data()));
-                af::array m_gpu(static_cast<dim_t>(num_elements),
-                                static_cast<const float*>(m_[name].Data()));
-                af::array v_gpu(static_cast<dim_t>(num_elements),
-                                static_cast<const float*>(v_[name].Data()));
+                af::array param_gpu = param.GetArray();
+                af::array grad_gpu = grad.GetArray();
+                af::array m_gpu = m_[name].GetArray();
+                af::array v_gpu = v_[name].GetArray();
 
                 // Update moments
                 m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
@@ -520,9 +490,9 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
                 // Update parameters
                 param_gpu = param_gpu - lr * m_nesterov / (af::sqrt(v_hat) + eps);
 
-                param_gpu.host(param.Data<float>());
-                m_gpu.host(m_[name].Data<float>());
-                v_gpu.host(v_[name].Data<float>());
+                param.SetFromArray(param_gpu);
+                m_[name].SetFromArray(m_gpu);
+                v_[name].SetFromArray(v_gpu);
                 continue;
             } catch (const af::exception& e) {
                 spdlog::warn("NAdam GPU step failed: {}, falling back to CPU", e.what());
@@ -585,39 +555,33 @@ void AdadeltaOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         // Initialize accumulators if needed
         if (acc_grad_.find(name) == acc_grad_.end()) {
-            acc_grad_[name] = Tensor(param.Shape(), DataType::Float32);
-            acc_delta_[name] = Tensor(param.Shape(), DataType::Float32);
-            std::memset(acc_grad_[name].Data<float>(), 0, num_elements * sizeof(float));
-            std::memset(acc_delta_[name].Data<float>(), 0, num_elements * sizeof(float));
+            acc_grad_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
+            acc_delta_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (s_use_gpu && param.GetDataType() == DataType::Float32) {
             try {
-                af::array param_gpu(static_cast<dim_t>(num_elements),
-                                    static_cast<const float*>(param.Data()));
-                af::array grad_gpu(static_cast<dim_t>(num_elements),
-                                   static_cast<const float*>(grad.Data()));
-                af::array acc_grad_gpu(static_cast<dim_t>(num_elements),
-                                       static_cast<const float*>(acc_grad_[name].Data()));
-                af::array acc_delta_gpu(static_cast<dim_t>(num_elements),
-                                        static_cast<const float*>(acc_delta_[name].Data()));
+                af::array param_gpu = param.GetArray();
+                af::array grad_gpu = grad.GetArray();
+                af::array acc_grad_gpu = acc_grad_[name].GetArray();
+                af::array acc_delta_gpu = acc_delta_[name].GetArray();
 
-                // Accumulate squared gradient: E[g²]_t = ρ * E[g²]_{t-1} + (1-ρ) * g²
+                // Accumulate squared gradient.
                 acc_grad_gpu = rho * acc_grad_gpu + (1.0f - rho) * grad_gpu * grad_gpu;
 
-                // Compute update: Δx = -sqrt(E[Δx²]_{t-1} + ε) / sqrt(E[g²]_t + ε) * g
+                // Compute update.
                 af::array delta = -af::sqrt(acc_delta_gpu + eps) / af::sqrt(acc_grad_gpu + eps) * grad_gpu;
 
-                // Accumulate squared update: E[Δx²]_t = ρ * E[Δx²]_{t-1} + (1-ρ) * Δx²
+                // Accumulate squared update.
                 acc_delta_gpu = rho * acc_delta_gpu + (1.0f - rho) * delta * delta;
 
-                // Apply update: x = x + Δx
+                // Apply update.
                 param_gpu = param_gpu + delta;
 
-                param_gpu.host(param.Data<float>());
-                acc_grad_gpu.host(acc_grad_[name].Data<float>());
-                acc_delta_gpu.host(acc_delta_[name].Data<float>());
+                param.SetFromArray(param_gpu);
+                acc_grad_[name].SetFromArray(acc_grad_gpu);
+                acc_delta_[name].SetFromArray(acc_delta_gpu);
                 continue;
             } catch (const af::exception& e) {
                 spdlog::warn("Adadelta GPU step failed: {}, falling back to CPU", e.what());
@@ -693,23 +657,17 @@ void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         // Initialize moment vectors if needed
         if (m_.find(name) == m_.end()) {
-            m_[name] = Tensor(param.Shape(), DataType::Float32);
-            v_[name] = Tensor(param.Shape(), DataType::Float32);
-            std::memset(m_[name].Data<float>(), 0, num_elements * sizeof(float));
-            std::memset(v_[name].Data<float>(), 0, num_elements * sizeof(float));
+            m_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
+            v_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (s_use_gpu && param.GetDataType() == DataType::Float32) {
             try {
-                af::array param_gpu(static_cast<dim_t>(num_elements),
-                                    static_cast<const float*>(param.Data()));
-                af::array grad_gpu(static_cast<dim_t>(num_elements),
-                                   static_cast<const float*>(grad.Data()));
-                af::array m_gpu(static_cast<dim_t>(num_elements),
-                                static_cast<const float*>(m_[name].Data()));
-                af::array v_gpu(static_cast<dim_t>(num_elements),
-                                static_cast<const float*>(v_[name].Data()));
+                af::array param_gpu = param.GetArray();
+                af::array grad_gpu = grad.GetArray();
+                af::array m_gpu = m_[name].GetArray();
+                af::array v_gpu = v_[name].GetArray();
 
                 // Update moments (same as Adam)
                 m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
@@ -739,9 +697,9 @@ void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
                 // Apply scaled update
                 param_gpu = param_gpu - lr * trust_ratio * adam_update;
 
-                param_gpu.host(param.Data<float>());
-                m_gpu.host(m_[name].Data<float>());
-                v_gpu.host(v_[name].Data<float>());
+                param.SetFromArray(param_gpu);
+                m_[name].SetFromArray(m_gpu);
+                v_[name].SetFromArray(v_gpu);
                 continue;
             } catch (const af::exception& e) {
                 spdlog::warn("LAMB GPU step failed: {}, falling back to CPU", e.what());

@@ -25,63 +25,14 @@ namespace cyxwiz {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
-// Helper: Convert CyxWiz DataType to ArrayFire dtype
-static af::dtype ToAfType(DataType dtype) {
-    switch (dtype) {
-        case DataType::Float32: return af::dtype::f32;
-        case DataType::Float64: return af::dtype::f64;
-        case DataType::Int32: return af::dtype::s32;
-        case DataType::Int64: return af::dtype::s64;
-        case DataType::UInt8: return af::dtype::u8;
-        default: throw std::runtime_error("Unsupported DataType for ArrayFire");
-    }
-}
-
 // Helper: Create ArrayFire array from Tensor
 static af::array TensorToAf(const Tensor& t) {
-    const auto& shape = t.Shape();
-    af::dim4 dims(1, 1, 1, 1);
-    for (size_t i = 0; i < shape.size() && i < 4; i++) {
-        dims[static_cast<unsigned int>(i)] = static_cast<dim_t>(shape[i]);
-    }
-
-    af::array arr(dims, ToAfType(t.GetDataType()));
-    arr.write(t.Data(), arr.bytes(), afHost);
-    return arr;
+    return t.GetArray();
 }
 
 // Helper: Create Tensor from ArrayFire array
 static Tensor AfToTensor(const af::array& arr) {
-    std::vector<size_t> shape;
-    for (unsigned int i = 0; i < 4; i++) {
-        if (arr.dims(i) > 1 || i == 0) {
-            shape.push_back(static_cast<size_t>(arr.dims(i)));
-        } else if (i > 0 && arr.dims(i) == 1) {
-            bool all_ones = true;
-            for (unsigned int j = i; j < 4; j++) {
-                if (arr.dims(j) != 1) {
-                    all_ones = false;
-                    break;
-                }
-            }
-            if (all_ones) break;
-            shape.push_back(static_cast<size_t>(arr.dims(i)));
-        }
-    }
-
-    DataType dtype = DataType::Float32;
-    switch (arr.type()) {
-        case af::dtype::f32: dtype = DataType::Float32; break;
-        case af::dtype::f64: dtype = DataType::Float64; break;
-        case af::dtype::s32: dtype = DataType::Int32; break;
-        case af::dtype::s64: dtype = DataType::Int64; break;
-        case af::dtype::u8: dtype = DataType::UInt8; break;
-        default: dtype = DataType::Float32;
-    }
-
-    Tensor result(shape, dtype);
-    arr.host(result.Data());
-    return result;
+    return Tensor(arr);
 }
 
 // Constants for GELU approximation

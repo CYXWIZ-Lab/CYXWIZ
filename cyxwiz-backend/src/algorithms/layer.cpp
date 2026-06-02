@@ -311,75 +311,21 @@ LSTMDirectionBackwardResult RunLSTMCpuDirectionBackward(
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
-// Helper: Convert CyxWiz DataType to ArrayFire dtype
-static af::dtype ToAfType(DataType dtype) {
-    switch (dtype) {
-        case DataType::Float32: return af::dtype::f32;
-        case DataType::Float64: return af::dtype::f64;
-        case DataType::Int32: return af::dtype::s32;
-        case DataType::Int64: return af::dtype::s64;
-        case DataType::UInt8: return af::dtype::u8;
-        default: throw std::runtime_error("Unsupported DataType for ArrayFire");
-    }
-}
-
-// Helper: Create ArrayFire array from Tensor
-// Note: CyxWiz Tensor uses row-major (C-style), ArrayFire uses column-major (Fortran-style)
-// For 2D arrays [rows, cols], we need to transpose after loading row-major data
+// Semantic Tensor-to-ArrayFire bridge for layer code.
+// Tensor owns layout conversion; layers request the layout they need.
 static af::array TensorToAf(const Tensor& t) {
-    const auto& shape = t.Shape();
-    af::dim4 dims(1, 1, 1, 1);
-    for (size_t i = 0; i < shape.size() && i < 4; i++) {
-        dims[static_cast<unsigned int>(i)] = static_cast<dim_t>(shape[i]);
-    }
-
-    // For 2D arrays, swap dimensions to account for row-major input
-    // We load as [cols, rows] then transpose to get [rows, cols] in column-major
-    if (shape.size() == 2) {
-        af::dim4 swapped_dims(dims[1], dims[0], 1, 1);
-        af::array arr(swapped_dims, ToAfType(t.GetDataType()));
-        arr.write(t.Data(), arr.bytes(), afHost);
-        return af::transpose(arr);  // Now [rows, cols] in column-major
-    }
-
-    af::array arr(dims, ToAfType(t.GetDataType()));
-    arr.write(t.Data(), arr.bytes(), afHost);
-    return arr;
+    return t.Shape().size() == 2 ? t.GetArrayRowMajor2D() : t.GetArray();
 }
 
 // 3D row-major → AF column-major with matching semantic axes.
 // Rationale: bare TensorToAf on 3D scrambles semantics — CyxWiz stores
-// [dim0, dim1, dim2] row-major (dim2 fastest-varying) but naive AF
-// assignment makes dim0 fastest-varying. Workaround: build AF with
-// REVERSED dims (so dim2 is the AF-fastest axis matching row-major
-// memory layout), write raw bytes, then af::reorder(2, 1, 0) to expose
-// the original semantic axis order.
-//
-// After this call, `arr.dims(0) == shape[0]`, `arr.dims(1) == shape[1]`,
-// `arr.dims(2) == shape[2]` and arr(i, j, k) semantically equals
-// t[i][j][k]. Use this for LSTM [batch, seq, features] input tensors
-// so the existing AF reorder/moddims math (which assumes semantic
-// axes) operates on the right data.
+// Tensor owns the 3D row-major conversion; this layer helper names the
+// semantic layout expected by recurrent kernels.
 static af::array TensorToAf3DRowMajor(const Tensor& t) {
-    const auto& shape = t.Shape();
-    if (shape.size() != 3) {
-        return TensorToAf(t);
-    }
-    af::dim4 reversed_dims(
-        static_cast<dim_t>(shape[2]),
-        static_cast<dim_t>(shape[1]),
-        static_cast<dim_t>(shape[0]),
-        1);
-    af::array arr(reversed_dims, ToAfType(t.GetDataType()));
-    arr.write(t.Data(), arr.bytes(), afHost);
-    return af::reorder(arr, 2, 1, 0);
+    return t.Shape().size() == 3 ? t.GetArrayRowMajor3D() : TensorToAf(t);
 }
 
-// Inverse of TensorToAf3DRowMajor. Takes a column-major AF array with
-// semantic axes [dim0, dim1, dim2] and produces a row-major CyxWiz
-// Tensor with the same semantic axes. Internally: af::reorder(2, 1, 0)
-// puts dim2 in the fastest-varying slot (matching row-major memory
-// layout), then host-copy.
+// Tensor owns the inverse 3D row-major conversion as well.
 // Forward-declare AfToTensor so AfToTensor3DRowMajor can fall back to
 // it for 4D inputs. AfToTensor's full definition is later in this file.
 static Tensor AfToTensor(const af::array& arr);
@@ -389,22 +335,7 @@ static Tensor AfToTensor3DRowMajor(const af::array& arr) {
         // Fall back to existing path for 4D; caller owns correctness.
         return AfToTensor(arr);
     }
-    af::array reordered = af::reorder(arr, 2, 1, 0);
-    std::vector<size_t> shape = {
-        static_cast<size_t>(arr.dims(0)),
-        static_cast<size_t>(arr.dims(1)),
-        static_cast<size_t>(arr.dims(2))
-    };
-    DataType dtype = DataType::Float32;
-    switch (arr.type()) {
-        case af::dtype::f32: dtype = DataType::Float32; break;
-        case af::dtype::f64: dtype = DataType::Float64; break;
-        case af::dtype::s32: dtype = DataType::Int32; break;
-        default: dtype = DataType::Float32;
-    }
-    Tensor result(shape, dtype);
-    reordered.host(result.Data());
-    return result;
+    return Tensor::FromArrayRowMajor3D(arr);
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -481,38 +412,13 @@ static Tensor AfToTensor(const af::array& arr) {
         else if (i == 0) ndims = 1;
     }
 
-    DataType dtype = DataType::Float32;
-    switch (arr.type()) {
-        case af::dtype::f32: dtype = DataType::Float32; break;
-        case af::dtype::f64: dtype = DataType::Float64; break;
-        case af::dtype::s32: dtype = DataType::Int32; break;
-        case af::dtype::s64: dtype = DataType::Int64; break;
-        case af::dtype::u8: dtype = DataType::UInt8; break;
-        default: dtype = DataType::Float32;
-    }
-
     // For 2D arrays, transpose to row-major before copying to Tensor
     if (ndims == 2) {
-        af::array transposed = af::transpose(arr);
-        std::vector<size_t> shape = {
-            static_cast<size_t>(arr.dims(0)),
-            static_cast<size_t>(arr.dims(1))
-        };
-        Tensor result(shape, dtype);
-        transposed.host(result.Data());
-        return result;
+        return Tensor::FromArrayRowMajor2D(arr);
     }
 
-    // For other dimensions, copy directly
-    std::vector<size_t> shape;
-    for (int i = 0; i < ndims; i++) {
-        shape.push_back(static_cast<size_t>(arr.dims(i)));
-    }
-    if (shape.empty()) shape.push_back(1);
-
-    Tensor result(shape, dtype);
-    arr.host(result.Data());
-    return result;
+    // For other dimensions, keep the ArrayFire result resident until host data is requested.
+    return Tensor(arr);
 }
 
 // Helper: Xavier/Glorot uniform initialization

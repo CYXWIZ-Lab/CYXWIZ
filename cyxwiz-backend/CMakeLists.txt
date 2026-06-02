@@ -60,6 +60,16 @@ endif()
 set(BACKEND_SOURCES
     src/core/engine.cpp
     src/core/tensor.cpp
+    src/core/tensor_utils.cpp
+    src/core/tensor_shape.cpp
+    src/core/tensor_reductions.cpp
+    src/core/tensor_elementwise.cpp
+    src/core/tensor_comparison.cpp
+    src/core/tensor_logical.cpp
+    src/core/tensor_linalg.cpp
+    src/core/tensor_broadcast.cpp
+    src/core/tensor_indexing.cpp
+    src/core/tensor_concat.cpp
     src/core/device.cpp
     src/core/memory_manager.cpp
     src/core/cyxwiz_c.cpp
@@ -264,6 +274,7 @@ set_target_properties(cyxwiz-backend PROPERTIES
 if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
     pybind11_add_module(pycyxwiz
         python/bindings.cpp
+        python/bindings_tensor.cpp
     )
 
     target_link_libraries(pycyxwiz PRIVATE
