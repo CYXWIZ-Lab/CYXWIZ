@@ -298,6 +298,19 @@ streaming datasets.
 **Next step:** keep estimates honest in UI and improve per-loader
 metadata where it is cheap to compute.
 
+**2026-06-03 update:** loader metadata audit found the useful cheap
+metadata already present: tabular loaders report concrete in-memory or
+Parquet-cache bytes, while image, audio, and text loaders mark their
+reported byte count as an if-fully-cached estimate. The DataInput Memory
+tab now makes lazy-loader estimates explicit as not reserved RAM and
+labels pre-load file size as disk size, not a RAM reservation. Deeper
+per-loader accounting can stay deferred until a loader has a concrete
+cache metric to expose.
+
+**Status:** complete for current Priority 4 scope. Remaining Query
+Console graph mutation work is intentionally deferred behind undo and
+mutation-safety design.
+
 ## Priority 5 - Model Coverage And Performance
 
 ### GRU verification

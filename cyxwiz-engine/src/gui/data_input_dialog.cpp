@@ -2079,6 +2079,7 @@ void DataInputDialog::RenderMemoryTab() {
                 ImGui::SameLine();
                 ImGui::TextDisabled("- ~%s if fully cached (estimated)",
                                     FormatBytes(loaded_memory_bytes_).c_str());
+                ImGui::TextDisabled("  Current RAM is loader cache plus active batches; this is not reserved RAM.");
             } else {
                 ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "In Memory");
                 ImGui::SameLine();
@@ -2135,7 +2136,8 @@ void DataInputDialog::RenderMemoryTab() {
         UpdateRAMEstimate();
         ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f),
                            "File size on disk: %.1f MB", estimated_ram_mb_);
-        ImGui::TextDisabled("   Actual RAM usage after load is usually smaller due to integer column compaction.");
+        ImGui::TextDisabled("   This is file size, not a RAM reservation. Actual RAM depends on loader mode.");
+        ImGui::TextDisabled("   In-memory tabular loads may shrink after integer compaction; lazy loaders decode batches on demand.");
     }
 
     // Advanced: force disk-backed cache (escape hatch for testing the
