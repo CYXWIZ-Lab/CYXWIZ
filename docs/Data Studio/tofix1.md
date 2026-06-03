@@ -54,6 +54,10 @@ instead of relying on `ArrowDatasetBatcher` fallback from the original
 DataInput label name. Local Debug's text Smoke Run now also tries the
 Cat-1 materialized Arrow path first and reports whether it used
 `materialized Arrow text` or the legacy text fallback.
+`test_text_arrow_training_launch` covers the worker-thread runtime
+contract for materialized text: `DataInput -> TextTokenizer` produces
+Arrow `tok_*` plus `y`, `ArrowDatasetBatcher` consumes it on a worker
+thread, and the model runs forward/loss/backward/update successfully.
 
 **What remains:**
 - Make Arrow the default text training path when a materialized Cat-1
@@ -69,9 +73,9 @@ Cat-1 materialized Arrow path first and reports whether it used
   operators or remain folded into the v1 combined tokenizer operator.
 - Run a GUI/runtime smoke graph for one minimal text training launch
   once legacy text path removal is planned. The headless model-step
-  smoke, runtime label handoff, and Local Debug Smoke Run materialized
-  Arrow path are covered; this remaining item is the threaded GUI
-  launch path.
+  smoke, worker-thread Arrow text smoke, runtime label handoff, and
+  Local Debug Smoke Run materialized Arrow path are covered; this
+  remaining item is the full GUI button launch path.
 - Update and rerun existing text smoke graphs:
   `test_01`, `v1`, `v2`, and `test_02_lstm`.
 
@@ -93,6 +97,14 @@ from global dataset conventions.
 **Next step:** audit `MainWindow::StartTrainingFromGraph`,
 `GraphCompiler`, `PipelineMaterializer`, and `TrainingExecutor` for
 places where graph topology is ignored after compile.
+
+**Follow-up from text Arrow smoke:** a direct focused test around
+`TrainingManager::StartTrainingArrow` currently pulls unrelated
+legacy/image/audio/text symbols because `TrainingExecutor::Train`
+contains all batcher modes in one large function. Before adding a full
+GUI button-launch regression test, split the per-backing setup enough
+that Arrow runtime tests can link the Arrow path without carrying every
+legacy dataset dependency.
 
 ### Normalize in DataInput vs graph
 

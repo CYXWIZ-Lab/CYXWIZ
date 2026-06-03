@@ -1118,6 +1118,40 @@ set_target_properties(test_text_arrow_materializer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Text Arrow Runtime Training Launch =====
+add_executable(test_text_arrow_training_launch
+    tests/test_text_arrow_training_launch.cpp
+    src/core/pipeline_table_materializer.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
+    src/core/model_builder.cpp
+)
+
+target_include_directories(test_text_arrow_training_launch PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${Stb_INCLUDE_DIR}
+)
+
+target_link_libraries(test_text_arrow_training_launch PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_arrow_training_launch PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_arrow_training_launch PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Label Column Resolver =====
 add_executable(test_label_column_resolver
     tests/test_label_column_resolver.cpp
