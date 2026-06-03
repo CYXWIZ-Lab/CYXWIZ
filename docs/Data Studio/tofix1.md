@@ -77,11 +77,12 @@ vocabulary before `TextTokenizerOperator` tokenizes.
 `TextTokenizer` operator instead of registering separate Arrow
 operators. `TextPadding.pad_value` remains fixed to the tokenizer PAD id
 0 in v1.
+`GraphCompiler` no longer extracts TextTokenizer/TextVocabulary/
+TextPadding into `TrainingConfiguration::text_preprocessing`; it only
+recognizes them as preprocessing nodes so they do not compile as model
+layers. Text node validation now reads node params directly in preflight.
 
 **What remains:**
-- Remove `ExtractTextTokenizer`, `ExtractTextVocabulary`, and
-  `ExtractTextPadding` from `graph_compiler.cpp` after no consumers
-  need `TrainingConfiguration::text_preprocessing`.
 - Run a GUI/runtime smoke graph for one minimal text training launch
   once legacy text path removal is planned. The headless model-step
   smoke, worker-thread Arrow text smoke, runtime label handoff, and

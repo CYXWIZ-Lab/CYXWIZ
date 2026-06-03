@@ -54,7 +54,7 @@ TextDatasetConfig BuildTextDatasetConfig(
         cfg.max_length     = preprocess_config.max_length;
         cfg.min_word_freq  = preprocess_config.min_word_freq;
         cfg.max_vocab_size = preprocess_config.max_vocab_size;
-        spdlog::info("TextDatasetBatcher: TextTokenizer node overrides dialog defaults "
+        spdlog::info("TextDatasetBatcher: tokenizer override config applies "
                      "(type={}, max_length={}, lowercase={})",
                      preprocess_config.tokenizer_type,
                      cfg.max_length, cfg.lowercase);
@@ -63,14 +63,14 @@ TextDatasetConfig BuildTextDatasetConfig(
         cfg.min_word_freq  = preprocess_config.min_word_freq;
         cfg.max_vocab_size = preprocess_config.max_vocab_size;
         cfg.vocab_file     = preprocess_config.vocab_file;
-        spdlog::info("TextDatasetBatcher: TextVocabulary node overrides vocab config "
+        spdlog::info("TextDatasetBatcher: vocabulary override config applies "
                      "(min_freq={}, max_vocab_size={}, vocab_file='{}')",
                      cfg.min_word_freq, cfg.max_vocab_size, cfg.vocab_file);
     }
     if (preprocess_config.has_padding_node) {
         cfg.do_padding = true;
         cfg.max_length = preprocess_config.max_length;
-        spdlog::info("TextDatasetBatcher: TextPadding node overrides padding config "
+        spdlog::info("TextDatasetBatcher: padding override config applies "
                      "(max_length={})", cfg.max_length);
     }
 

@@ -26,6 +26,21 @@ const char* DomainName(PreprocessingDomain domain) {
     return "Unknown";
 }
 
+bool TryReadIntParam(const gui::MLNode& node,
+                     const std::string& key,
+                     int& out) {
+    auto it = node.parameters.find(key);
+    if (it == node.parameters.end() || it->second.empty()) {
+        return false;
+    }
+    try {
+        out = std::stoi(it->second);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 } // namespace
 
 DebugPreflightResult PreflightValidator::Validate(
@@ -67,21 +82,34 @@ DebugPreflightResult PreflightValidator::Validate(
     }
 
     if (config.preprocessing_domain == PreprocessingDomain::Text) {
-        const auto& text = config.text_preprocessing;
-        if (text.has_vocabulary_node && !text.vocab_file.empty() &&
-            !std::filesystem::exists(text.vocab_file)) {
-            AddIssue(result, IssueLevel::Error,
-                     "TextVocabulary vocab_file does not exist: " + text.vocab_file);
-        }
+        for (const auto& node : nodes) {
+            if (node.type == gui::NodeType::TextVocabulary) {
+                auto vocab_file = node.parameters.find("vocab_file");
+                if (vocab_file != node.parameters.end() &&
+                    !vocab_file->second.empty() &&
+                    !std::filesystem::exists(vocab_file->second)) {
+                    AddIssue(result, IssueLevel::Error,
+                             "TextVocabulary vocab_file does not exist: " +
+                             vocab_file->second,
+                             node.id, node.name);
+                }
 
-        if (text.has_padding_node && text.max_length <= 0) {
-            AddIssue(result, IssueLevel::Error,
-                     "TextPadding max_length must be greater than zero.");
-        }
-
-        if (text.has_vocabulary_node && text.max_vocab_size == 0) {
-            AddIssue(result, IssueLevel::Warning,
-                     "TextVocabulary max_vocab_size is zero; vocabulary may be unusable.");
+                int max_vocab_size = -1;
+                if (TryReadIntParam(node, "max_vocab_size", max_vocab_size) &&
+                    max_vocab_size == 0) {
+                    AddIssue(result, IssueLevel::Warning,
+                             "TextVocabulary max_vocab_size is zero; vocabulary may be unusable.",
+                             node.id, node.name);
+                }
+            } else if (node.type == gui::NodeType::TextPadding) {
+                int max_length = 0;
+                if (TryReadIntParam(node, "max_length", max_length) &&
+                    max_length <= 0) {
+                    AddIssue(result, IssueLevel::Error,
+                             "TextPadding max_length must be greater than zero.",
+                             node.id, node.name);
+                }
+            }
         }
     }
 

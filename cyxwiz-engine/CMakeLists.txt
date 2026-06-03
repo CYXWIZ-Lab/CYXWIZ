@@ -1221,6 +1221,32 @@ set_target_properties(test_text_dataset_batcher_arrow PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Text Preflight Node Validation =====
+add_executable(test_text_preflight_nodes
+    tests/test_text_preflight_nodes.cpp
+    src/core/preflight_validator.cpp
+)
+
+target_include_directories(test_text_preflight_nodes PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_text_preflight_nodes PRIVATE
+    imgui::imgui
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_preflight_nodes PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_preflight_nodes PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Label Column Resolver =====
 add_executable(test_label_column_resolver
     tests/test_label_column_resolver.cpp

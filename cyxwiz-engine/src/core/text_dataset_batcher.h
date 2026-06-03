@@ -17,9 +17,9 @@ namespace cyxwiz {
  * ArrowDatasetBatcher. The public API stays stable for TrainingManager and
  * TestExecutor while text batches now consume tokenized Arrow rows.
  *
- * Supports dialog-fallback config and graph overrides from
- * TextTokenizer/TextVocabulary/TextPadding nodes. Train/val/test are
- * represented with an internal partition column on the tokenized table.
+ * Supports dialog-fallback config plus explicit legacy override config.
+ * Train/val/test are represented with an internal partition column on the
+ * tokenized table.
  */
 class TextDatasetBatcher : public IBatcher {
 public:

@@ -780,27 +780,15 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
-    // Text preprocessing mode summary — analogous to the audio block.
-    // Each of the three text sub-configs (tokenizer / vocabulary /
-    // padding) can be independently overridden by a graph node, so the
-    // log calls out which ones came from the graph vs the dialog.
+    // Text preprocessing is no longer extracted into TrainingConfiguration.
+    // TextTokenizer is a real Arrow operator; TextVocabulary/TextPadding
+    // fold into it during PipelineMaterializer. If no materialized Arrow
+    // table is selected, TextDatasetBatcher uses the dialog-baked defaults
+    // from DataRegistry::TextDatasetEntry.
     if (config.preprocessing_domain == PreprocessingDomain::Text) {
-        bool any_override = config.text_preprocessing.has_tokenizer_node ||
-                            config.text_preprocessing.has_vocabulary_node ||
-                            config.text_preprocessing.has_padding_node;
-        if (any_override) {
-            spdlog::info("GraphCompiler: text preprocessing driven by graph nodes "
-                         "(tokenizer={}, vocab={}, padding={}) — tokenizer_type={}, "
-                         "max_length={}",
-                         config.text_preprocessing.has_tokenizer_node,
-                         config.text_preprocessing.has_vocabulary_node,
-                         config.text_preprocessing.has_padding_node,
-                         config.text_preprocessing.tokenizer_type,
-                         config.text_preprocessing.max_length);
-        } else {
-            spdlog::info("GraphCompiler: text preprocessing uses dialog defaults "
-                         "(no TextTokenizer/TextVocabulary/TextPadding node in graph)");
-        }
+        spdlog::info("GraphCompiler: text preprocessing nodes are materialized "
+                     "through Arrow operators; legacy text fallback uses dialog "
+                     "defaults from the registered dataset");
     }
 
     // Final verdict: is_valid is the absence of any Error-level issue.
@@ -1236,75 +1224,10 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
                  config.audio_preprocessing.pitch_shift);
 }
 
-// --- Text extractors (Phase 3) ---
-//
-// The three text preprocessing nodes overlap in what they configure.
-// TextTokenizer is the "one-stop shop" carrying every tokenizer +
-// vocab + padding param. TextVocabulary lets the user override just
-// the vocabulary sub-config (e.g., load a pre-built vocab file).
-// TextPadding lets the user override just the padding params.
-// Presence flags on TextPreprocessingConfig track which sub-configs
-// came from the graph so TextDatasetBatcher knows which ones to
-// honor vs. fall back to the dialog defaults.
-
-static void ExtractTextTokenizer(const gui::MLNode& node, TrainingConfiguration& config) {
-    config.text_preprocessing.has_tokenizer_node = true;
-    // TextTokenizer carries ALL the tokenizer + vocab + padding params
-    // as a single unified node. TextVocabulary / TextPadding can
-    // override specific sub-configs on top if they're also present.
-    if (node.parameters.count("tokenizer_type"))
-        config.text_preprocessing.tokenizer_type = std::stoi(node.parameters.at("tokenizer_type"));
-    if (node.parameters.count("lowercase"))
-        config.text_preprocessing.lowercase = (node.parameters.at("lowercase") == "true");
-    if (node.parameters.count("padding"))
-        config.text_preprocessing.do_padding = (node.parameters.at("padding") == "true");
-    if (node.parameters.count("truncation"))
-        config.text_preprocessing.do_truncation = (node.parameters.at("truncation") == "true");
-    if (node.parameters.count("max_length"))
-        config.text_preprocessing.max_length = std::stoi(node.parameters.at("max_length"));
-    if (node.parameters.count("min_freq"))
-        config.text_preprocessing.min_word_freq = std::stoi(node.parameters.at("min_freq"));
-    if (node.parameters.count("max_vocab_size"))
-        config.text_preprocessing.max_vocab_size = std::stoi(node.parameters.at("max_vocab_size"));
-    spdlog::info("GraphCompiler: TextTokenizer type={}, max_length={}, "
-                 "lowercase={}, min_freq={}, max_vocab_size={}",
-                 config.text_preprocessing.tokenizer_type,
-                 config.text_preprocessing.max_length,
-                 config.text_preprocessing.lowercase,
-                 config.text_preprocessing.min_word_freq,
-                 config.text_preprocessing.max_vocab_size);
-}
-
-static void ExtractTextVocabulary(const gui::MLNode& node, TrainingConfiguration& config) {
-    // TextVocabulary overrides vocab sub-config only. If TextTokenizer
-    // also ran, its vocab params are now replaced. If not, the entry's
-    // dialog-baked defaults still provide the tokenizer_type etc.
-    config.text_preprocessing.has_vocabulary_node = true;
-    if (node.parameters.count("min_freq"))
-        config.text_preprocessing.min_word_freq = std::stoi(node.parameters.at("min_freq"));
-    if (node.parameters.count("max_vocab_size"))
-        config.text_preprocessing.max_vocab_size = std::stoi(node.parameters.at("max_vocab_size"));
-    if (node.parameters.count("vocab_file"))
-        config.text_preprocessing.vocab_file = node.parameters.at("vocab_file");
-    spdlog::info("GraphCompiler: TextVocabulary min_freq={}, max_vocab_size={}, "
-                 "vocab_file='{}'",
-                 config.text_preprocessing.min_word_freq,
-                 config.text_preprocessing.max_vocab_size,
-                 config.text_preprocessing.vocab_file);
-}
-
-static void ExtractTextPadding(const gui::MLNode& node, TrainingConfiguration& config) {
-    // TextPadding overrides padding sub-config only.
-    config.text_preprocessing.has_padding_node = true;
-    config.text_preprocessing.do_padding = true;
-    if (node.parameters.count("max_length"))
-        config.text_preprocessing.max_length = std::stoi(node.parameters.at("max_length"));
-    if (node.parameters.count("pad_value"))
-        config.text_preprocessing.pad_value = std::stoi(node.parameters.at("pad_value"));
-    spdlog::info("GraphCompiler: TextPadding max_length={}, pad_value={}",
-                 config.text_preprocessing.max_length,
-                 config.text_preprocessing.pad_value);
-}
+// --- Text preprocessing (Arrow materializer path) ---
+// TextTokenizer is applied by PipelineMaterializer. TextVocabulary and
+// TextPadding fold into the reachable tokenizer there instead of populating
+// TrainingConfiguration::text_preprocessing.
 
 // --- TimeSeries extractors (Phase 4 — deferred) ---
 
@@ -1335,10 +1258,10 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::MelSpectrogram,     PreprocessingDomain::Audio,       ExtractMelSpectrogram},
     {gui::NodeType::MFCC,               PreprocessingDomain::Audio,       ExtractMFCC},
     {gui::NodeType::AudioAugmentation,  PreprocessingDomain::Audio,       ExtractAudioAugmentation},
-    // Text (Phase 3)
-    {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        ExtractTextTokenizer},
-    {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        ExtractTextVocabulary},
-    {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        ExtractTextPadding},
+    // Text (Arrow materializer path; no TrainingConfiguration extraction)
+    {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        nullptr},
     // TimeSeries (Phase 4)
     {gui::NodeType::TimeSeriesWindow,   PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::TimeSeriesFeatures, PreprocessingDomain::TimeSeries,  nullptr},

@@ -150,23 +150,20 @@ struct AudioPreprocessingConfig {
 };
 
 /**
- * Text preprocessing configuration (Phase 3).
+ * Legacy text preprocessing override bundle.
  *
- * Populated by text-domain extractors in the graph compiler when a
- * TextTokenizer / TextVocabulary / TextPadding node is present.
- * Otherwise stays at default and TextDatasetBatcher falls back to
- * the dialog-baked defaults on DataRegistry::TextDatasetEntry.
+ * GraphCompiler no longer populates this from TextTokenizer /
+ * TextVocabulary / TextPadding nodes. Those graph nodes route through
+ * Arrow materialization: TextTokenizer is the real operator, while
+ * TextVocabulary and TextPadding fold into its params in
+ * PipelineMaterializer.
  *
- * The three text preprocessing nodes overlap in what they can set
- * (TextTokenizer carries a complete config; TextVocabulary and
- * TextPadding let the user override just their specific sub-config).
- * Presence flags record which sub-configs were explicitly provided
- * by the graph so the batcher knows what to override vs keep.
+ * This struct remains for explicit compatibility callers that construct
+ * TextDatasetBatcher directly with overrides. When all presence flags are
+ * false, TextDatasetBatcher uses the dialog-baked defaults on
+ * DataRegistry::TextDatasetEntry.
  */
 struct TextPreprocessingConfig {
-    // Set true by ExtractTextTokenizer when a TextTokenizer node is
-    // found. When false and the sub-specific flags below are also
-    // false, the batcher uses the dialog-baked defaults entirely.
     bool has_tokenizer_node = false;
     // tokenizer_type: 0=Whitespace, 1=Word, 2=Character
     int tokenizer_type = 1;
@@ -174,15 +171,13 @@ struct TextPreprocessingConfig {
     bool do_padding = true;
     bool do_truncation = true;
 
-    // Vocabulary — set by ExtractTextTokenizer, overridden by
-    // ExtractTextVocabulary if a TextVocabulary node is also present.
+    // Vocabulary override for explicit compatibility callers.
     bool has_vocabulary_node = false;
     int min_word_freq = 1;
     int max_vocab_size = -1;         // -1 = unlimited
     std::string vocab_file;          // optional pre-built vocab path
 
-    // Padding — set by ExtractTextTokenizer, overridden by
-    // ExtractTextPadding if a TextPadding node is also present.
+    // Padding override for explicit compatibility callers.
     bool has_padding_node = false;
     int max_length = 512;
     int pad_value = 0;
@@ -264,11 +259,8 @@ struct TrainingConfiguration {
     // AudioDatasetEntry.
     AudioPreprocessingConfig audio_preprocessing;
 
-    // Preprocessing — text-specific (Phase 3). Populated by text-
-    // domain extractors (TextTokenizer / TextVocabulary / TextPadding)
-    // when preprocessing_domain == Text. When none of the presence
-    // flags are true, TextDatasetBatcher falls back to the dialog
-    // defaults from TextDatasetEntry.
+    // Preprocessing - text-specific legacy override bundle. Graph text
+    // nodes now route through PipelineMaterializer instead of this config.
     TextPreprocessingConfig text_preprocessing;
 
     // Phase 4 Time-Series: set to true when Compile finds a TimeSeriesWindow
