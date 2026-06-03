@@ -314,63 +314,59 @@ void NodeEditor::ShowContextMenu() {
 // ============================================================================
 
 const char* NodeEditor::GetCategoryIcon(NodeCategory category) {
-    switch (category) {
-        case NodeCategory::DataSources:      return ICON_FA_DATABASE;
-        case NodeCategory::DataTransform:    return ICON_FA_FILTER;
-        case NodeCategory::Analytics:        return ICON_FA_CHART_LINE;
-        case NodeCategory::Preprocessing:    return ICON_FA_WAND_MAGIC_SPARKLES;
-        case NodeCategory::Layers:           return ICON_FA_LAYER_GROUP;
-        case NodeCategory::Activation:       return ICON_FA_BOLT;
-        case NodeCategory::Pooling:          return ICON_FA_COMPRESS;
-        case NodeCategory::Normalization:    return ICON_FA_SCALE_BALANCED;
-        case NodeCategory::Attention:        return ICON_FA_EYE;
-        case NodeCategory::Recurrent:        return ICON_FA_ROTATE;
-        case NodeCategory::ShapeOps:         return ICON_FA_OBJECT_GROUP;  // was ICON_FA_SHAPES
-        case NodeCategory::MergeOps:         return ICON_FA_RIGHT_LEFT;    // was ICON_FA_CODE_MERGE
-        case NodeCategory::Training:         return ICON_FA_GRADUATION_CAP;
-        case NodeCategory::Regularization:   return ICON_FA_SCALE_BALANCED;  // was ICON_FA_SHIELD_HALVED
-        case NodeCategory::Utility:          return ICON_FA_COG;            // was ICON_FA_SCREWDRIVER_WRENCH
-        case NodeCategory::Signal:           return ICON_FA_ARROWS_ROTATE; // was ICON_FA_WAVE_SQUARE
-        case NodeCategory::DataPipeline:     return ICON_FA_DIAGRAM_PROJECT;
-        case NodeCategory::DNN:              return ICON_FA_LIGHTBULB;      // was ICON_FA_BRAIN
-        case NodeCategory::TextProcessing:   return ICON_FA_FILE_LINES;
-        case NodeCategory::Upsampling:       return ICON_FA_EXPAND;         // was ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER
-        case NodeCategory::TimeSeries:       return ICON_FA_ARROW_TREND_UP; // was ICON_FA_CHART_AREA
-        case NodeCategory::Audio:            return ICON_FA_STETHOSCOPE;    // was ICON_FA_VOLUME_HIGH
-        case NodeCategory::RL:               return ICON_FA_GRADUATION_CAP; // was ICON_FA_ROBOT
-        case NodeCategory::Plugin:           return ICON_FA_DIAGRAM_PROJECT; // was ICON_FA_PUZZLE_PIECE
-        default:                             return ICON_FA_CUBE;
-    }
+    if (category == NodeCategory::DataSources) return ICON_FA_DATABASE;
+    if (category == NodeCategory::DataTransform) return ICON_FA_FILTER;
+    if (category == NodeCategory::Analytics) return ICON_FA_CHART_LINE;
+    if (category == NodeCategory::Preprocessing) return ICON_FA_WAND_MAGIC_SPARKLES;
+    if (category == NodeCategory::Layers) return ICON_FA_LAYER_GROUP;
+    if (category == NodeCategory::Activation) return ICON_FA_BOLT;
+    if (category == NodeCategory::Pooling) return ICON_FA_COMPRESS;
+    if (category == NodeCategory::Normalization) return ICON_FA_SCALE_BALANCED;
+    if (category == NodeCategory::Attention) return ICON_FA_EYE;
+    if (category == NodeCategory::Recurrent) return ICON_FA_ROTATE;
+    if (category == NodeCategory::ShapeOps) return ICON_FA_OBJECT_GROUP;  // was ICON_FA_SHAPES
+    if (category == NodeCategory::MergeOps) return ICON_FA_RIGHT_LEFT;    // was ICON_FA_CODE_MERGE
+    if (category == NodeCategory::Training) return ICON_FA_GRADUATION_CAP;
+    if (category == NodeCategory::Regularization) return ICON_FA_SCALE_BALANCED;  // was ICON_FA_SHIELD_HALVED
+    if (category == NodeCategory::Utility) return ICON_FA_COG;            // was ICON_FA_SCREWDRIVER_WRENCH
+    if (category == NodeCategory::Signal) return ICON_FA_ARROWS_ROTATE; // was ICON_FA_WAVE_SQUARE
+    if (category == NodeCategory::DataPipeline) return ICON_FA_DIAGRAM_PROJECT;
+    if (category == NodeCategory::DNN) return ICON_FA_LIGHTBULB;      // was ICON_FA_BRAIN
+    if (category == NodeCategory::TextProcessing) return ICON_FA_FILE_LINES;
+    if (category == NodeCategory::Upsampling) return ICON_FA_EXPAND;         // was ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER
+    if (category == NodeCategory::TimeSeries) return ICON_FA_ARROW_TREND_UP; // was ICON_FA_CHART_AREA
+    if (category == NodeCategory::Audio) return ICON_FA_STETHOSCOPE;    // was ICON_FA_VOLUME_HIGH
+    if (category == NodeCategory::RL) return ICON_FA_GRADUATION_CAP; // was ICON_FA_ROBOT
+    if (category == NodeCategory::Plugin) return ICON_FA_DIAGRAM_PROJECT; // was ICON_FA_PUZZLE_PIECE
+    return ICON_FA_CUBE;
 }
 
 const char* NodeEditor::GetCategoryName(NodeCategory category) {
-    switch (category) {
-        case NodeCategory::DataSources:      return "Data Sources";
-        case NodeCategory::DataTransform:    return "Data Transform";
-        case NodeCategory::Analytics:        return "Analytics";
-        case NodeCategory::Preprocessing:    return "Preprocessing";
-        case NodeCategory::Layers:           return "Layers";
-        case NodeCategory::Activation:       return "Activation";
-        case NodeCategory::Pooling:          return "Pooling";
-        case NodeCategory::Normalization:    return "Normalization";
-        case NodeCategory::Attention:        return "Attention";
-        case NodeCategory::Recurrent:        return "Recurrent";
-        case NodeCategory::ShapeOps:         return "Shape Operations";
-        case NodeCategory::MergeOps:         return "Merge Operations";
-        case NodeCategory::Training:         return "Training";
-        case NodeCategory::Regularization:   return "Regularization";
-        case NodeCategory::Utility:          return "Utility";
-        case NodeCategory::Signal:           return "Signal / Control";
-        case NodeCategory::DataPipeline:     return "Data Pipeline";
-        case NodeCategory::DNN:              return "DNN / Pre-trained";
-        case NodeCategory::TextProcessing:   return "Text Processing";
-        case NodeCategory::Upsampling:       return "Upsampling";
-        case NodeCategory::TimeSeries:       return "Time Series";
-        case NodeCategory::Audio:            return "Audio";
-        case NodeCategory::RL:               return "Reinforcement Learning";
-        case NodeCategory::Plugin:           return "Plugin Nodes";
-        default:                             return "Unknown";
-    }
+    if (category == NodeCategory::DataSources) return "Data Sources";
+    if (category == NodeCategory::DataTransform) return "Data Transform";
+    if (category == NodeCategory::Analytics) return "Analytics";
+    if (category == NodeCategory::Preprocessing) return "Preprocessing";
+    if (category == NodeCategory::Layers) return "Layers";
+    if (category == NodeCategory::Activation) return "Activation";
+    if (category == NodeCategory::Pooling) return "Pooling";
+    if (category == NodeCategory::Normalization) return "Normalization";
+    if (category == NodeCategory::Attention) return "Attention";
+    if (category == NodeCategory::Recurrent) return "Recurrent";
+    if (category == NodeCategory::ShapeOps) return "Shape Operations";
+    if (category == NodeCategory::MergeOps) return "Merge Operations";
+    if (category == NodeCategory::Training) return "Training";
+    if (category == NodeCategory::Regularization) return "Regularization";
+    if (category == NodeCategory::Utility) return "Utility";
+    if (category == NodeCategory::Signal) return "Signal / Control";
+    if (category == NodeCategory::DataPipeline) return "Data Pipeline";
+    if (category == NodeCategory::DNN) return "DNN / Pre-trained";
+    if (category == NodeCategory::TextProcessing) return "Text Processing";
+    if (category == NodeCategory::Upsampling) return "Upsampling";
+    if (category == NodeCategory::TimeSeries) return "Time Series";
+    if (category == NodeCategory::Audio) return "Audio";
+    if (category == NodeCategory::RL) return "Reinforcement Learning";
+    if (category == NodeCategory::Plugin) return "Plugin Nodes";
+    return "Unknown";
 }
 
 void NodeEditor::ShowCategorizedNodeMenu() {

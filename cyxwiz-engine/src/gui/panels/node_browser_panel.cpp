@@ -890,59 +890,79 @@ void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata) {
 }
 
 ImU32 NodeBrowserPanel::GetNodeColor(cyxwiz::NodeCategory category) const {
-    switch (category) {
-        case cyxwiz::NodeCategory::DataSources:
-            return IM_COL32(100, 181, 246, 255);  // Light Blue
-        case cyxwiz::NodeCategory::DataTransform:
-            return IM_COL32(38, 166, 154, 255);   // Teal
-        case cyxwiz::NodeCategory::Analytics:
-            return IM_COL32(156, 39, 176, 255);   // Purple
-        case cyxwiz::NodeCategory::Preprocessing:
-            return IM_COL32(129, 199, 132, 255);  // Light Green
-        case cyxwiz::NodeCategory::Layers:
-            return IM_COL32(39, 174, 96, 255);    // Green
-        case cyxwiz::NodeCategory::Activation:
-            return IM_COL32(243, 156, 18, 255);   // Orange
-        case cyxwiz::NodeCategory::Pooling:
-            return IM_COL32(155, 89, 182, 255);   // Light Purple
-        case cyxwiz::NodeCategory::Normalization:
-            return IM_COL32(236, 112, 99, 255);   // Coral
-        case cyxwiz::NodeCategory::Attention:
-            return IM_COL32(103, 58, 183, 255);   // Deep Purple
-        case cyxwiz::NodeCategory::Recurrent:
-            return IM_COL32(63, 81, 181, 255);    // Indigo
-        case cyxwiz::NodeCategory::ShapeOps:
-            return IM_COL32(26, 188, 156, 255);   // Turquoise
-        case cyxwiz::NodeCategory::MergeOps:
-            return IM_COL32(139, 195, 74, 255);   // Lime Green
-        case cyxwiz::NodeCategory::Training:
-            return IM_COL32(52, 73, 94, 255);     // Dark Blue Gray
-        case cyxwiz::NodeCategory::Regularization:
-            return IM_COL32(233, 30, 99, 255);    // Pink
-        case cyxwiz::NodeCategory::Utility:
-            return IM_COL32(96, 125, 139, 255);   // Blue Gray
-        case cyxwiz::NodeCategory::Signal:
-            return IM_COL32(0, 150, 136, 255);    // Teal
-        case cyxwiz::NodeCategory::DataPipeline:
-            return IM_COL32(0, 188, 212, 255);    // Cyan
-        case cyxwiz::NodeCategory::DNN:
-            return IM_COL32(41, 98, 255, 255);    // Deep Blue
-        case cyxwiz::NodeCategory::TextProcessing:
-            return IM_COL32(0, 121, 107, 255);    // Dark Teal
-        case cyxwiz::NodeCategory::Upsampling:
-            return IM_COL32(92, 107, 192, 255);   // Indigo
-        case cyxwiz::NodeCategory::TimeSeries:
-            return IM_COL32(255, 160, 0, 255);    // Amber
-        case cyxwiz::NodeCategory::Audio:
-            return IM_COL32(126, 87, 194, 255);   // Purple
-        case cyxwiz::NodeCategory::RL:
-            return IM_COL32(229, 57, 53, 255);    // Red
-        case cyxwiz::NodeCategory::Plugin:
-            return IM_COL32(68, 136, 170, 255);   // Steel Blue
-        case cyxwiz::NodeCategory::Unknown:
-        default:
-            return IM_COL32(127, 140, 141, 255);  // Gray
+    if (category == cyxwiz::NodeCategory::DataSources) {
+        return IM_COL32(100, 181, 246, 255);  // Light Blue
     }
+    if (category == cyxwiz::NodeCategory::DataTransform) {
+        return IM_COL32(38, 166, 154, 255);   // Teal
+    }
+    if (category == cyxwiz::NodeCategory::Analytics) {
+        return IM_COL32(156, 39, 176, 255);   // Purple
+    }
+    if (category == cyxwiz::NodeCategory::Preprocessing) {
+        return IM_COL32(129, 199, 132, 255);  // Light Green
+    }
+    if (category == cyxwiz::NodeCategory::Layers) {
+        return IM_COL32(39, 174, 96, 255);    // Green
+    }
+    if (category == cyxwiz::NodeCategory::Activation) {
+        return IM_COL32(243, 156, 18, 255);   // Orange
+    }
+    if (category == cyxwiz::NodeCategory::Pooling) {
+        return IM_COL32(155, 89, 182, 255);   // Light Purple
+    }
+    if (category == cyxwiz::NodeCategory::Normalization) {
+        return IM_COL32(236, 112, 99, 255);   // Coral
+    }
+    if (category == cyxwiz::NodeCategory::Attention) {
+        return IM_COL32(103, 58, 183, 255);   // Deep Purple
+    }
+    if (category == cyxwiz::NodeCategory::Recurrent) {
+        return IM_COL32(63, 81, 181, 255);    // Indigo
+    }
+    if (category == cyxwiz::NodeCategory::ShapeOps) {
+        return IM_COL32(26, 188, 156, 255);   // Turquoise
+    }
+    if (category == cyxwiz::NodeCategory::MergeOps) {
+        return IM_COL32(139, 195, 74, 255);   // Lime Green
+    }
+    if (category == cyxwiz::NodeCategory::Training) {
+        return IM_COL32(52, 73, 94, 255);     // Dark Blue Gray
+    }
+    if (category == cyxwiz::NodeCategory::Regularization) {
+        return IM_COL32(233, 30, 99, 255);    // Pink
+    }
+    if (category == cyxwiz::NodeCategory::Utility) {
+        return IM_COL32(96, 125, 139, 255);   // Blue Gray
+    }
+    if (category == cyxwiz::NodeCategory::Signal) {
+        return IM_COL32(0, 150, 136, 255);    // Teal
+    }
+    if (category == cyxwiz::NodeCategory::DataPipeline) {
+        return IM_COL32(0, 188, 212, 255);    // Cyan
+    }
+    if (category == cyxwiz::NodeCategory::DNN) {
+        return IM_COL32(41, 98, 255, 255);    // Deep Blue
+    }
+    if (category == cyxwiz::NodeCategory::TextProcessing) {
+        return IM_COL32(0, 121, 107, 255);    // Dark Teal
+    }
+    if (category == cyxwiz::NodeCategory::Upsampling) {
+        return IM_COL32(92, 107, 192, 255);   // Indigo
+    }
+    if (category == cyxwiz::NodeCategory::TimeSeries) {
+        return IM_COL32(255, 160, 0, 255);    // Amber
+    }
+    if (category == cyxwiz::NodeCategory::Audio) {
+        return IM_COL32(126, 87, 194, 255);   // Purple
+    }
+    if (category == cyxwiz::NodeCategory::RL) {
+        return IM_COL32(229, 57, 53, 255);    // Red
+    }
+    if (category == cyxwiz::NodeCategory::Plugin) {
+        return IM_COL32(68, 136, 170, 255);   // Steel Blue
+    }
+    return IM_COL32(127, 140, 141, 255);      // Gray
 }
 
 ImU32 NodeBrowserPanel::GetNodeColorDark(cyxwiz::NodeCategory category) const {

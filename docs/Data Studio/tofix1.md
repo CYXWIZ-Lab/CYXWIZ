@@ -284,14 +284,10 @@ not required for the current Text Fix B path.
 
 ### Full engine Debug build duplicate DataSources case
 
-The focused text/runtime tests pass, but the full `cyxwiz-engine` Debug
-target currently fails in `node_browser_panel.cpp` with MSVC C2196:
-`gui::NodeCategory::DataSources` is used by more than one `case` label
-in the same switch.
-
-**Next step:** fix the duplicate `DataSources` switch case before using
-full engine Debug rebuild as the final verification gate for later
-backend/runtime slices.
+**Status 2026-06-03:** fixed. The affected category display helpers in
+`node_editor_context_menu.cpp` and `node_browser_panel.cpp` no longer use
+`switch` statements, so the build is not blocked by duplicate enum case
+values. Full `cyxwiz-engine` Debug rebuild now passes.
 
 ## Closed Source
 
