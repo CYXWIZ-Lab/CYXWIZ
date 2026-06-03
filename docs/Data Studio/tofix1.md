@@ -124,10 +124,17 @@ methods (`Instance`, `GenerateUniqueName`, `UnloadDataset`,
 runtime tests can link the singleton and Arrow registry utilities
 without pulling `data_registry.cpp` and its legacy image/Kaggle/STB/
 OpenCV loader dependencies. `test_text_gui_training_launch` and
-`test_arrow_integration` now build against that smaller boundary. The
-remaining boundary is `TrainingExecutor::Train`: its per-backing setup
-still lives in one large function and should be split so Arrow training
-tests do not carry unrelated image/audio/text branches.
+`test_arrow_integration` now build against that smaller boundary.
+`TrainingExecutor::Train` has also started moving toward smaller runtime
+boundaries: Arrow and Parquet batcher construction now lives in
+`training_batcher_setup.cpp`, preserving time-series partition handling,
+normalization, one-hot/regression mode, and split warnings outside the
+epoch loop. `test_training_batcher_setup` covers the Arrow helper path
+and proves the returned owners, `IBatcher` pointers, split count, feature
+shape, and one-hot label shape. The remaining `TrainingExecutor` work is
+the legacy/external image/audio/text setup and the epoch loop topology;
+those should be split only after the graph contract is pinned down so the
+next refactor does not mix behavior changes with file organization.
 
 ### Normalize in DataInput vs graph
 

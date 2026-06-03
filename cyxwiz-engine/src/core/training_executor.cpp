@@ -5,6 +5,7 @@
 #include "training_trace_collector.h"
 #include "model_builder.h"
 #include "data_registry.h"
+#include "training_batcher_setup.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../preprocessing/statistics_calculator.h"
 #include "../plugin/registries/plugin_training_hook_manager.h"
@@ -130,145 +131,38 @@ void TrainingExecutor::Train(
         m.val_accuracy_history.clear();
     });
 
-    // Create batchers - Arrow in-memory, Parquet disk-backed, or legacy.
-    // All three end up driving the training loop through IBatcher pointers.
-    std::unique_ptr<ArrowDatasetBatcher> arrow_train_batcher;
-    std::unique_ptr<ArrowDatasetBatcher> arrow_val_batcher;
-    std::unique_ptr<ParquetArrowBatcher> parquet_train_batcher;
-    std::unique_ptr<ParquetArrowBatcher> parquet_val_batcher;
+    // Create batchers - Arrow in-memory, Parquet disk-backed, external, or
+    // legacy. Modern paths flow through IBatcher pointers; legacy keeps the
+    // existing DatasetBatcher loop for now.
+    TrainingBatcherSet modern_batchers;
     std::unique_ptr<DatasetBatcher> legacy_train_batcher;
     std::unique_ptr<DatasetBatcher> legacy_val_batcher;
 
-    // Non-owning IBatcher pointers — point at whichever concrete batcher
-    // the mode selected. The Arrow and Parquet paths both flow through the
-    // same IBatcher-aware training loops; the legacy path stays on the
-    // legacy-specific functions.
+    // Non-owning IBatcher pointers point at whichever concrete batcher the
+    // selected mode owns. Arrow, Parquet, image, audio, and text all share the
+    // IBatcher-aware loop; legacy DatasetHandle keeps its older loop.
     IBatcher* active_train_ibatcher = nullptr;
     IBatcher* active_val_ibatcher = nullptr;
 
     size_t num_train_samples = 0;
 
     if (mode_ == DatasetMode::Arrow) {
-        // Arrow-based batching (Data Studio)
-        spdlog::info("TrainingExecutor: Using Arrow dataset for training "
-                     "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={})",
-                     batch_size, config_.shuffle, config_.train_ratio,
-                     config_.is_time_series);
-
-        // Phase 4 Time-Series dispatch. When GraphCompiler detected a
-        // TimeSeriesWindow node, the Arrow table handed to us has
-        // already been materialized by PipelineMaterializer — windowed
-        // rows and an `__partition__` int8 column. Build the train and
-        // val batchers by filtering rows on partition value instead of
-        // the legacy first-N% train_split slicing, and flip regression
-        // mode on so labels round-trip as float.
-        const std::string partition_col = config_.is_time_series
-            ? "__partition__" : "";
-        // For time-series the effective label column is always the
-        // `y` emitted by TimeSeriesWindowOperator. Override whatever
-        // the DataInput node recorded (which was a column from the
-        // pre-materialization source table, not the windowed one).
-        const std::string effective_label =
-            config_.is_time_series ? "y" : label_column_;
-
-        // Honor DataLoader/DataSplit node config (or defaults if no such nodes)
-        // Validation batcher never shuffles regardless of config.
-        arrow_train_batcher = std::make_unique<ArrowDatasetBatcher>(
-            arrow_dataset_, effective_label, batch_size,
-            config_.shuffle, config_.train_ratio, true,
-            partition_col, /*partition_value=*/0, config_.num_workers);
-        arrow_val_batcher = std::make_unique<ArrowDatasetBatcher>(
-            arrow_dataset_, effective_label, batch_size,
-            false, config_.train_ratio, false,
-            partition_col, /*partition_value=*/1, config_.num_workers);
-
-        if (config_.drop_last) {
-            spdlog::warn("TrainingExecutor: drop_last=true requested but ArrowDatasetBatcher "
-                         "does not yet support it - last partial batch will be kept");
-        }
-        if (!config_.is_time_series &&
-            config_.has_data_split && config_.test_ratio > 0.01f) {
-            spdlog::warn("TrainingExecutor: test_ratio={:.2f} configured on DataSplit but "
-                         "ArrowDatasetBatcher has no held-out test split - the test portion "
-                         "will be merged into validation. train={:.2f}, val+test={:.2f}",
-                         config_.test_ratio, config_.train_ratio, 1.0f - config_.train_ratio);
-        }
-
-        // Apply preprocessing from config
-        if (config_.preprocessing.has_normalization) {
-            arrow_train_batcher->SetNormalization(config_.preprocessing.norm_mean,
-                                                   config_.preprocessing.norm_std);
-            arrow_val_batcher->SetNormalization(config_.preprocessing.norm_mean,
-                                                 config_.preprocessing.norm_std);
-        }
-
-        if (config_.is_time_series) {
-            // Time-series regression: float labels [batch, 1], no one-hot.
-            arrow_train_batcher->SetRegressionMode(true);
-            arrow_val_batcher->SetRegressionMode(true);
-        } else if (config_.preprocessing.has_onehot) {
-            // One-hot encoding for classification
-            arrow_train_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
-            arrow_val_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
-        } else {
-            // Default to output_size for classification
-            arrow_train_batcher->SetOneHotEncoding(config_.output_size);
-            arrow_val_batcher->SetOneHotEncoding(config_.output_size);
-        }
-
-        num_train_samples = arrow_train_batcher->GetNumSamples();
-        active_train_ibatcher = arrow_train_batcher.get();
-        active_val_ibatcher = arrow_val_batcher.get();
+        modern_batchers = BuildArrowTrainingBatchers(
+            config_, arrow_dataset_, label_column_, batch_size);
+        num_train_samples = modern_batchers.num_train_samples;
+        active_train_ibatcher = modern_batchers.train;
+        active_val_ibatcher = modern_batchers.val;
     } else if (mode_ == DatasetMode::Parquet) {
-        // Disk-backed Parquet batching — rows are fetched lazily from the
-        // memory-mapped Parquet cache one row group at a time. Same output
-        // shape as the Arrow path, so training loops don't need to know.
-        spdlog::info("TrainingExecutor: Using Parquet-backed dataset for training "
-                     "(batch_size={}, shuffle={}, train_ratio={:.2f})",
-                     batch_size, config_.shuffle, config_.train_ratio);
-
-        parquet_train_batcher = std::make_unique<ParquetArrowBatcher>(
-            parquet_dataset_, label_column_, batch_size,
-            config_.shuffle, config_.train_ratio, true, config_.num_workers);
-        parquet_val_batcher = std::make_unique<ParquetArrowBatcher>(
-            parquet_dataset_, label_column_, batch_size,
-            false, config_.train_ratio, false, config_.num_workers);
-
-        if (config_.drop_last) {
-            spdlog::warn("TrainingExecutor: drop_last=true requested but ParquetArrowBatcher "
-                         "does not yet support it - last partial batch will be kept");
-        }
-        if (config_.has_data_split && config_.test_ratio > 0.01f) {
-            spdlog::warn("TrainingExecutor: test_ratio={:.2f} configured on DataSplit but "
-                         "ParquetArrowBatcher has no held-out test split - the test portion "
-                         "will be merged into validation. train={:.2f}, val+test={:.2f}",
-                         config_.test_ratio, config_.train_ratio, 1.0f - config_.train_ratio);
-        }
-
-        // Apply preprocessing from config (same as Arrow path).
-        if (config_.preprocessing.has_normalization) {
-            parquet_train_batcher->SetNormalization(config_.preprocessing.norm_mean,
-                                                     config_.preprocessing.norm_std);
-            parquet_val_batcher->SetNormalization(config_.preprocessing.norm_mean,
-                                                   config_.preprocessing.norm_std);
-        }
-
-        if (config_.preprocessing.has_onehot) {
-            parquet_train_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
-            parquet_val_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
-        } else {
-            parquet_train_batcher->SetOneHotEncoding(config_.output_size);
-            parquet_val_batcher->SetOneHotEncoding(config_.output_size);
-        }
-
-        num_train_samples = parquet_train_batcher->GetNumSamples();
-        active_train_ibatcher = parquet_train_batcher.get();
-        active_val_ibatcher = parquet_val_batcher.get();
+        modern_batchers = BuildParquetTrainingBatchers(
+            config_, parquet_dataset_, label_column_, batch_size);
+        num_train_samples = modern_batchers.num_train_samples;
+        active_train_ibatcher = modern_batchers.train;
+        active_val_ibatcher = modern_batchers.val;
     } else if (mode_ == DatasetMode::Image) {
         // Image mode: the batcher was constructed externally by
         // StartTrainingImage with the correct target size and
         // augmentation pipeline. We just point the training loop at it.
-        // Validation uses the same batcher reset for now — Phase 1.4
+        // Validation uses the same batcher reset for now - Phase 1.4
         // can add a separate validation batcher without augmentation.
         spdlog::info("TrainingExecutor: Using external batcher for training "
                      "(batch_size={}, num_workers={}, {} samples)",
@@ -447,7 +341,7 @@ void TrainingExecutor::Train(
         // Run validation (eval mode).
         //
         // For image/audio batchers, active_train_ibatcher and
-        // active_val_ibatcher point to the *same* instance — the batcher
+        // active_val_ibatcher point to the *same* instance - the batcher
         // holds both train_indices_ and val_indices_ internally and switches
         // between them via SetPhase. Without SetPhase(Val) the val pass
         // would iterate the training indices, producing bogus "perfect val"
@@ -649,7 +543,7 @@ void TrainingExecutor::RunTrainingEpoch(
         m.current_batch = 0;
     });
 
-    // Epoch wall-clock start for the periodic progress log below —
+    // Epoch wall-clock start for the periodic progress log below -
     // mirrors RunTrainingEpochArrow so both training paths have the
     // same "training is alive" feedback loop.
     const auto epoch_start_time = std::chrono::steady_clock::now();
@@ -790,7 +684,7 @@ void TrainingExecutor::RunTrainingEpoch(
             m.train_accuracy = current_acc;
         });
 
-        // Periodic progress log — mirror of RunTrainingEpochArrow's
+        // Periodic progress log - mirror of RunTrainingEpochArrow's
         // version so non-Arrow training paths (legacy DatasetBatcher)
         // also get per-50-batch liveness signals.
         if (batch_num == 1 || batch_num % 50 == 0) {
@@ -961,7 +855,7 @@ void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets
     // Compute loss gradient
     Tensor grad = loss_->Backward(predictions, targets);
 
-    // AfToTensor can flatten trailing-1 dimensions (e.g. [16,1] → [16])
+    // AfToTensor can flatten trailing-1 dimensions (e.g. [16,1] -> [16])
     // when converting from column-major ArrayFire arrays back to row-major
     // CyxWiz tensors. The model's backward pass expects the gradient to
     // match the forward output shape exactly. Re-wrap the raw buffer with
@@ -1044,7 +938,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
     // Epoch wall-clock start for the periodic progress log below.
     // Without per-batch logging the training run goes completely
     // silent between the first-batch debug dump and the epoch-end
-    // summary, which can be 100+ seconds on a real dataset — making
+    // summary, which can be 100+ seconds on a real dataset - making
     // it impossible to tell "alive but slow" from "hung". This is
     // the fix for the tofix.md entry "Training logs silent mid-epoch".
     const auto epoch_start_time = std::chrono::steady_clock::now();

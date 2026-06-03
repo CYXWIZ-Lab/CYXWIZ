@@ -133,6 +133,7 @@ set(ENGINE_SOURCES
     src/core/debug_recommendation_engine.cpp
     src/core/training_trace_collector.cpp
     src/core/debug_run_store.cpp
+    src/core/training_batcher_setup.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
@@ -1193,6 +1194,40 @@ if(WIN32)
 endif()
 
 set_target_properties(test_text_gui_training_launch PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Training Batcher Setup Helper =====
+add_executable(test_training_batcher_setup
+    tests/test_training_batcher_setup.cpp
+    src/core/training_batcher_setup.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/parquet_arrow_batcher.cpp
+    src/core/dataset_base.cpp
+)
+
+target_include_directories(test_training_batcher_setup PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_training_batcher_setup PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_training_batcher_setup PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_training_batcher_setup PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
