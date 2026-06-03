@@ -27,11 +27,118 @@
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
+#include <cstdlib>
+#include <limits>
 #include <queue>
 #include <set>
 #include <algorithm>
 
 namespace gui {
+
+namespace {
+
+struct NumericRange {
+    double min_value = 0.0;
+    double max_value = 0.0;
+    bool has_range = false;
+};
+
+bool TryParseDoubleStrict(const std::string& text, double& value) {
+    if (text.empty()) {
+        return false;
+    }
+
+    char* end = nullptr;
+    value = std::strtod(text.c_str(), &end);
+    return end != text.c_str() && end && *end == '\0' && std::isfinite(value);
+}
+
+bool TryParseIntStrict(const std::string& text, int& value) {
+    if (text.empty()) {
+        return false;
+    }
+
+    char* end = nullptr;
+    long parsed = std::strtol(text.c_str(), &end, 10);
+    if (end == text.c_str() || !end || *end != '\0') {
+        return false;
+    }
+    if (parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    value = static_cast<int>(parsed);
+    return true;
+}
+
+NumericRange ParseNumericRange(const std::string& validation) {
+    NumericRange range;
+    if (validation.empty()) {
+        return range;
+    }
+
+    size_t dash_pos = validation.find('-', 1);
+    if (dash_pos == std::string::npos || dash_pos + 1 >= validation.size()) {
+        return range;
+    }
+
+    double min_value = 0.0;
+    double max_value = 0.0;
+    if (!TryParseDoubleStrict(validation.substr(0, dash_pos), min_value) ||
+        !TryParseDoubleStrict(validation.substr(dash_pos + 1), max_value) ||
+        min_value > max_value) {
+        return range;
+    }
+
+    range.min_value = min_value;
+    range.max_value = max_value;
+    range.has_range = true;
+    return range;
+}
+
+bool IsDialogOwnedNode(NodeType type) {
+    switch (type) {
+        case NodeType::DataInput:
+        case NodeType::DataOutput:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool IsInternalParameterName(const std::string& name) {
+    static const std::set<std::string> internal_params = {
+        "configured",
+        "data_loaded",
+        "loaded_backend",
+        "loaded_cols",
+        "loaded_memory_bytes",
+        "loaded_rows",
+        "audit_errors",
+        "audit_warnings",
+        "audit_status",
+        "file_category",
+        "source_type"
+    };
+    return internal_params.count(name) > 0;
+}
+
+bool ShouldHideGenericParameter(NodeType type, const cyxwiz::ParameterDefinition& param) {
+    if (IsInternalParameterName(param.name)) {
+        return true;
+    }
+
+    if (IsDialogOwnedNode(type) &&
+        (param.name == "dataset_name" ||
+         param.name == "file_path" ||
+         param.name == "folder_path" ||
+         param.type == "file")) {
+        return true;
+    }
+
+    return false;
+}
+
+} // namespace
 
 Properties::Properties() : show_window_(true) {
 }
@@ -2271,8 +2378,17 @@ void Properties::RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadat
         section_parameters_open_ = true;
 
         if (metadata && !metadata->parameters.empty()) {
+            bool rendered_any = false;
             for (const auto& param : metadata->parameters) {
+                if (ShouldHideGenericParameter(node.type, param)) {
+                    validation_errors_.erase(param.name);
+                    continue;
+                }
                 RenderParameter(node, param);
+                rendered_any = true;
+            }
+            if (!rendered_any) {
+                ImGui::TextDisabled("Configure this node from its dialog.");
             }
         } else {
             // Fallback to existing node-specific rendering
@@ -2359,6 +2475,13 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
         value = param.default_value;
     }
 
+    std::string initial_error;
+    if (!ValidateParameter(value, param, initial_error)) {
+        validation_errors_[param.name] = initial_error;
+    } else {
+        validation_errors_.erase(param.name);
+    }
+
     // Check for validation errors
     bool has_error = validation_errors_.count(param.name) > 0;
     if (has_error) {
@@ -2387,33 +2510,32 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
 
     // Render based on parameter type
     if (param.type == "int") {
-        int int_val = value.empty() ? 0 : std::stoi(value);
+        int int_val = 0;
+        TryParseIntStrict(value, int_val);
         ImGui::SetNextItemWidth(120.0f);
         if (ImGui::InputInt("##value", &int_val)) {
+            NumericRange range = ParseNumericRange(param.validation);
+            if (range.has_range) {
+                int_val = std::clamp(
+                    int_val,
+                    static_cast<int>(range.min_value),
+                    static_cast<int>(range.max_value));
+            }
             value = std::to_string(int_val);
             changed = true;
         }
     }
     else if (param.type == "float") {
-        float float_val = value.empty() ? 0.0f : std::stof(value);
+        double parsed_float = 0.0;
+        TryParseDoubleStrict(value, parsed_float);
+        float float_val = static_cast<float>(parsed_float);
         ImGui::SetNextItemWidth(120.0f);
 
-        // Try to parse range from validation string (e.g., "0.0-1.0")
-        float min_v = 0.0f, max_v = 1.0f;
-        bool has_range = false;
-        if (!param.validation.empty()) {
-            size_t dash_pos = param.validation.find('-');
-            // Handle negative numbers: look for dash that's not at the start
-            if (dash_pos != std::string::npos && dash_pos > 0) {
-                try {
-                    min_v = std::stof(param.validation.substr(0, dash_pos));
-                    max_v = std::stof(param.validation.substr(dash_pos + 1));
-                    has_range = true;
-                } catch (...) {}
-            }
-        }
-
-        if (has_range) {
+        NumericRange range = ParseNumericRange(param.validation);
+        if (range.has_range) {
+            float min_v = static_cast<float>(range.min_value);
+            float max_v = static_cast<float>(range.max_value);
+            float_val = std::clamp(float_val, min_v, max_v);
             if (ImGui::SliderFloat("##value", &float_val, min_v, max_v, "%.4f")) {
                 char buf[32];
                 snprintf(buf, sizeof(buf), "%.4f", float_val);
@@ -2436,7 +2558,7 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
             changed = true;
         }
     }
-    else if (param.type == "enum" && !param.enum_values.empty()) {
+    else if ((param.type == "enum" || param.type == "dropdown") && !param.enum_values.empty()) {
         // Find current index
         int current_idx = 0;
         for (size_t i = 0; i < param.enum_values.size(); i++) {
@@ -2508,6 +2630,7 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
             validation_errors_.erase(param.name);
         }
         InvalidateShapes();
+        has_error = validation_errors_.count(param.name) > 0;
     }
 
     // Show validation error
@@ -2530,60 +2653,46 @@ bool Properties::ValidateParameter(const std::string& value, const cyxwiz::Param
         return true;
     }
 
-    // Parse validation string for range (e.g., "0-100" or "0.0-1.0")
-    auto parseRange = [](const std::string& validation, double& min_val, double& max_val) -> bool {
-        if (validation.empty()) return false;
-        size_t dash_pos = validation.find('-');
-        if (dash_pos != std::string::npos && dash_pos > 0) {
-            try {
-                min_val = std::stod(validation.substr(0, dash_pos));
-                max_val = std::stod(validation.substr(dash_pos + 1));
-                return true;
-            } catch (...) {}
-        }
-        return false;
-    };
-
     // Type-specific validation
     if (param.type == "int") {
-        try {
-            int v = std::stoi(value);
-            double min_val, max_val;
-            if (parseRange(param.validation, min_val, max_val)) {
-                if (v < static_cast<int>(min_val)) {
-                    error = "Value must be >= " + std::to_string(static_cast<int>(min_val));
-                    return false;
-                }
-                if (v > static_cast<int>(max_val)) {
-                    error = "Value must be <= " + std::to_string(static_cast<int>(max_val));
-                    return false;
-                }
-            }
-        } catch (...) {
+        int v = 0;
+        if (!TryParseIntStrict(value, v)) {
             error = "Invalid integer";
             return false;
         }
+
+        NumericRange range = ParseNumericRange(param.validation);
+        if (range.has_range) {
+            if (v < static_cast<int>(range.min_value)) {
+                error = "Value must be >= " + std::to_string(static_cast<int>(range.min_value));
+                return false;
+            }
+            if (v > static_cast<int>(range.max_value)) {
+                error = "Value must be <= " + std::to_string(static_cast<int>(range.max_value));
+                return false;
+            }
+        }
     }
     else if (param.type == "float") {
-        try {
-            float v = std::stof(value);
-            double min_val, max_val;
-            if (parseRange(param.validation, min_val, max_val)) {
-                if (v < static_cast<float>(min_val)) {
-                    error = "Value must be >= " + std::to_string(static_cast<float>(min_val));
-                    return false;
-                }
-                if (v > static_cast<float>(max_val)) {
-                    error = "Value must be <= " + std::to_string(static_cast<float>(max_val));
-                    return false;
-                }
-            }
-        } catch (...) {
+        double v = 0.0;
+        if (!TryParseDoubleStrict(value, v)) {
             error = "Invalid number";
             return false;
         }
+
+        NumericRange range = ParseNumericRange(param.validation);
+        if (range.has_range) {
+            if (v < range.min_value) {
+                error = "Value must be >= " + std::to_string(range.min_value);
+                return false;
+            }
+            if (v > range.max_value) {
+                error = "Value must be <= " + std::to_string(range.max_value);
+                return false;
+            }
+        }
     }
-    else if (param.type == "enum" && !param.enum_values.empty()) {
+    else if ((param.type == "enum" || param.type == "dropdown") && !param.enum_values.empty()) {
         bool found = false;
         for (const auto& ev : param.enum_values) {
             if (ev == value) {

@@ -272,6 +272,17 @@ typed params.
 **Next step:** add typed validation and avoid editing hidden/internal
 params that should only be owned by dialogs.
 
+**2026-06-03 update:** first hardening slice landed. The metadata-driven
+Properties panel now filters dialog-owned/internal state such as loaded
+dataset status, audit counters, source type, and DataInput/DataOutput
+file fields from the generic editor. Simple typed params use strict
+integer/float parsing, range validation/clamping where metadata provides
+a range, and dropdown aliases share enum handling. Invalid stored values
+surface as validation errors instead of throwing during render. Complex
+data nodes remain owned by their dedicated dialogs, while `DatasetInput`
+keeps its registry dataset name editable because it has no dedicated
+dialog owner.
+
 ### Memory estimation is approximate
 
 Memory tab estimates are useful but still approximate across lazy and
