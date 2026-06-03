@@ -118,12 +118,16 @@ from global dataset conventions.
 `GraphCompiler`, `PipelineMaterializer`, and `TrainingExecutor` for
 places where graph topology is ignored after compile.
 
-**Follow-up from text Arrow smoke:** focused runtime tests still pull
-unrelated legacy/image/audio/text symbols because `DataRegistry` and
-`TrainingExecutor::Train` contain broad per-backing setup in large
-translation units. Split those boundaries enough that Arrow runtime
-tests can link the Arrow path without carrying every legacy dataset
-dependency.
+**Follow-up from text Arrow smoke:** core `DataRegistry` ownership
+methods (`Instance`, `GenerateUniqueName`, `UnloadDataset`,
+`UnloadAll`) were split into `data_registry_core.cpp`, so Arrow-only
+runtime tests can link the singleton and Arrow registry utilities
+without pulling `data_registry.cpp` and its legacy image/Kaggle/STB/
+OpenCV loader dependencies. `test_text_gui_training_launch` and
+`test_arrow_integration` now build against that smaller boundary. The
+remaining boundary is `TrainingExecutor::Train`: its per-backing setup
+still lives in one large function and should be split so Arrow training
+tests do not carry unrelated image/audio/text branches.
 
 ### Normalize in DataInput vs graph
 

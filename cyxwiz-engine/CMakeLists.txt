@@ -80,6 +80,7 @@ set(ENGINE_SOURCES
     src/core/engine_config.cpp
     src/core/python_detector.cpp
     src/core/window_manager.cpp
+    src/core/data_registry_core.cpp
     src/core/data_registry.cpp
     src/core/data_registry_config.cpp
     src/core/data_registry_utils.cpp
@@ -958,8 +959,7 @@ add_executable(test_arrow_integration
     src/core/arrow_dataset.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
-    src/core/data_registry.cpp
-    src/core/data_registry_config.cpp
+    src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_base.cpp
 )
@@ -1164,29 +1164,20 @@ add_executable(test_text_gui_training_launch
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
-    src/core/data_registry.cpp
-    src/core/data_registry_config.cpp
+    src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_base.cpp
     src/core/parquet_backed_dataset.cpp
-    src/core/datasets/kaggle_dataset.cpp
-    src/core/datasets/image_csv_dataset.cpp
-    src/core/datasets/streaming_dataset.cpp
-    src/core/image_utils.cpp
-    src/plotting/stb_image_impl.cpp
-    src/plugin/registries/plugin_data_loader_registry.cpp
 )
 
 target_include_directories(test_text_gui_training_launch PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${Stb_INCLUDE_DIR}
-    ${OpenCV_INCLUDE_DIRS}
 )
 
 target_link_libraries(test_text_gui_training_launch PRIVATE
     Arrow::arrow_shared
     Parquet::parquet_shared
-    ${OpenCV_LIBS}
     imgui::imgui
     spdlog::spdlog
     fmt::fmt

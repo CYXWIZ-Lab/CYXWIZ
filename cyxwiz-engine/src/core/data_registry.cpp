@@ -88,30 +88,6 @@ namespace cyxwiz {
 // DataRegistry Implementation
 // =============================================================================
 
-DataRegistry& DataRegistry::Instance() {
-    static DataRegistry instance;
-    return instance;
-}
-
-std::string DataRegistry::GenerateUniqueName(const std::string& base_name) {
-    std::string name = base_name;
-    if (name.empty()) {
-        name = "dataset";
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (datasets_.find(name) == datasets_.end()) {
-        return name;
-    }
-
-    // Add suffix to make unique
-    int suffix = 1;
-    while (datasets_.find(name + "_" + std::to_string(suffix)) != datasets_.end()) {
-        suffix++;
-    }
-    return name + "_" + std::to_string(suffix);
-}
-
 DatasetHandle DataRegistry::LoadDataset(const std::string& path, const std::string& name) {
     DatasetType type = DetectType(path);
 
@@ -730,39 +706,6 @@ bool DataRegistry::ExportHDF5(DatasetHandle handle, const std::string& filepath,
     spdlog::error("HDF5 support not compiled (HighFive library missing)");
     return false;
 #endif
-}
-
-void DataRegistry::UnloadDataset(const std::string& name) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto it = datasets_.find(name);
-    if (it != datasets_.end()) {
-        datasets_.erase(it);
-        spdlog::info("Unloaded dataset: {}", name);
-
-        if (on_unloaded_) {
-            on_unloaded_(name);
-        }
-    }
-}
-
-void DataRegistry::UnloadAll() {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    std::vector<std::string> names;
-    for (const auto& [name, _] : datasets_) {
-        names.push_back(name);
-    }
-
-    datasets_.clear();
-
-    for (const auto& name : names) {
-        if (on_unloaded_) {
-            on_unloaded_(name);
-        }
-    }
-
-    spdlog::info("Unloaded all datasets");
 }
 
 DatasetHandle DataRegistry::GetDataset(const std::string& name) {
