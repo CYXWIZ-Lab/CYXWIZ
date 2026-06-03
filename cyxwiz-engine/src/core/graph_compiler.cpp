@@ -48,6 +48,12 @@ bool IsLossNodeType(gui::NodeType type) {
            type == gui::NodeType::NLLLoss;
 }
 
+bool IsSupportedOptimizerNodeType(gui::NodeType type) {
+    return type == gui::NodeType::SGD ||
+           type == gui::NodeType::Adam ||
+           type == gui::NodeType::AdamW;
+}
+
 const char* IssueLevelLabel(IssueLevel level) {
     switch (level) {
         case IssueLevel::Error:   return "ERROR";
@@ -130,6 +136,19 @@ const gui::MLNode* FindFirstLossNodeInSet(
 
     for (const auto& node : nodes) {
         if (IsLossNodeType(node.type) &&
+            node_ids.count(node.id) > 0) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+const gui::MLNode* FindFirstOptimizerNodeInSet(
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& node_ids) {
+
+    for (const auto& node : nodes) {
+        if (IsSupportedOptimizerNodeType(node.type) &&
             node_ids.count(node.id) > 0) {
             return &node;
         }
@@ -413,6 +432,13 @@ TrainingConfiguration GraphCompiler::Compile(
             }
         }
     }
+    if (loss_node) {
+        const auto loss_reachable = CollectReachableNodeIds(loss_node->id, links);
+        if (const gui::MLNode* path_optimizer_node =
+                FindFirstOptimizerNodeInSet(nodes, loss_reachable)) {
+            optimizer_node = path_optimizer_node;
+        }
+    }
 
     // Phase 4 Time-Series detection. If the graph contains a
     // TimeSeriesWindow node, mark the config so the training dispatch
@@ -581,7 +607,11 @@ TrainingConfiguration GraphCompiler::Compile(
         config.preprocessing.has_onehot = true;
 
         // Try to get num_classes from Output node's "classes" parameter
-        const gui::MLNode* output_node = FindOutputNode(nodes);
+        const gui::MLNode* output_node = FindFirstReachableNodeOfType(
+            nodes, training_path_ids, gui::NodeType::Output);
+        if (!output_node) {
+            output_node = FindOutputNode(nodes);
+        }
         if (output_node) {
             auto it = output_node->parameters.find("classes");
             if (it != output_node->parameters.end() && !it->second.empty()) {
@@ -1048,9 +1078,7 @@ const gui::MLNode* GraphCompiler::FindLossNode(const std::vector<gui::MLNode>& n
 
 const gui::MLNode* GraphCompiler::FindOptimizerNode(const std::vector<gui::MLNode>& nodes) const {
     for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::SGD ||
-            node.type == gui::NodeType::Adam ||
-            node.type == gui::NodeType::AdamW) {
+        if (IsSupportedOptimizerNodeType(node.type)) {
             return &node;
         }
     }

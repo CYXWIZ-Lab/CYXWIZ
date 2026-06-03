@@ -146,6 +146,9 @@ selected source instead of the first matching node in raw node order.
 Compiler preprocessing/model extraction now uses the selected
 source-to-loss path instead of the full topological graph, so stale
 branches do not silently add preprocessing flags or model layers.
+Optimizer extraction now prefers the supported optimizer reachable from
+the selected loss, and CrossEntropy output class-count extraction now
+prefers an Output node on the selected source-to-loss path.
 `test_graph_topology_utils` covers the helper behavior with a stale first
 DataInput, stale first DataLoader, reverse loss reachability, and a
 connected branch that does not reach the loss. The remaining
@@ -156,9 +159,9 @@ changes with file organization.
 
 **Still open for Priority 2:** runtime label/data flow and the
 TrainingExecutor legacy/external setup remain registry-driven in places
-and still need pin-walked ownership. Optimizer/output ownership should
-also be audited against the selected loss path before this priority is
-closed.
+and still need pin-walked ownership. Whole-graph validation still audits
+all nodes, so stale disconnected training branches may remain a separate
+UX decision from compile extraction.
 
 ### Normalize in DataInput vs graph
 
