@@ -137,6 +137,7 @@
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
 #include "../core/data_registry.h"
+#include "../core/label_column_resolver.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
 #include "../core/debug_executor.h"
@@ -256,6 +257,37 @@ std::string MakeDebuggerRunId(uint64_t graph_hash) {
     std::ostringstream out;
     out << "local-debug-" << std::hex << graph_hash << "-" << std::dec << ms;
     return out.str();
+}
+
+std::string ResolveRuntimeArrowLabelColumn(
+    cyxwiz::DataRegistry& registry,
+    const std::string& dataset_name,
+    const std::string& requested_label) {
+    auto arrow_ds = registry.GetArrowDataset(dataset_name);
+    if (!arrow_ds) return requested_label;
+
+    auto schema = arrow_ds->GetSchema();
+    if (!schema) return requested_label;
+
+    if (!requested_label.empty() &&
+        schema->GetFieldByName(requested_label) != nullptr) {
+        return requested_label;
+    }
+
+    const int fallback_idx = cyxwiz::FindCommonLabelColumnIndex(schema);
+    if (fallback_idx < 0) {
+        return requested_label;
+    }
+
+    const std::string resolved = schema->field(fallback_idx)->name();
+    if (resolved != requested_label) {
+        spdlog::info("StartTrainingFromGraph: resolved Arrow label column "
+                     "'{}' -> '{}' for materialized dataset '{}'",
+                     requested_label.empty() ? "<auto>" : requested_label,
+                     resolved,
+                     dataset_name);
+    }
+    return resolved;
 }
 
 } // anonymous namespace
@@ -3105,6 +3137,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                          dataset_name, materialize_result.effective_dataset_name,
                          materialize_result.operators_applied);
             dataset_name = materialize_result.effective_dataset_name;
+            label_column = ResolveRuntimeArrowLabelColumn(
+                registry, dataset_name, label_column);
         }
     }
 
