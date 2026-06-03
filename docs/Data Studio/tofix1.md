@@ -44,7 +44,10 @@ If no materialized Cat-1 text table is selected, `TextLoader` logs that
 it is intentionally using the legacy `TextDatasetBatcher` fallback.
 Raw Arrow text backing for JSON, TXT, and folder corpora remains
 deferred because those sources need an explicit synthetic table schema
-for text and labels.
+for text and labels. The materializer test now runs the materialized
+Arrow batch through a real model forward, CrossEntropy loss, backward
+pass, and optimizer update, proving the tokenized table is compatible
+with the engine's training-step contract.
 
 **What remains:**
 - Make Arrow the default text training path when a materialized Cat-1
@@ -59,7 +62,8 @@ for text and labels.
 - Decide whether `TextVocabulary` and `TextPadding` stay separate real
   operators or remain folded into the v1 combined tokenizer operator.
 - Run a GUI/runtime smoke graph for one minimal text training launch
-  once legacy text path removal is planned.
+  once legacy text path removal is planned. The headless model-step
+  smoke is covered; this remaining item is the threaded GUI launch path.
 - Update and rerun existing text smoke graphs:
   `test_01`, `v1`, `v2`, and `test_02_lstm`.
 

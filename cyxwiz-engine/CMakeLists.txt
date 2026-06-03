@@ -1091,6 +1091,7 @@ add_executable(test_text_arrow_materializer
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
+    src/core/model_builder.cpp
 )
 
 target_include_directories(test_text_arrow_materializer PRIVATE

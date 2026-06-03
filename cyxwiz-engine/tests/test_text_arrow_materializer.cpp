@@ -1,11 +1,13 @@
 #include "../src/core/pipeline_materializer.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/dataset_batcher.h"
+#include "../src/core/model_builder.h"
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 
 #include <arrow/api.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
@@ -22,6 +24,10 @@ void Check(bool condition, const std::string& message) {
         std::cerr << "FAIL: " << message << "\n";
         std::exit(1);
     }
+}
+
+void CheckFinite(float value, const std::string& message) {
+    Check(std::isfinite(value), message);
 }
 
 std::shared_ptr<arrow::Array> FinishStringArray(
@@ -183,6 +189,42 @@ int main() {
         const float row_sum = label_data[r * 2] + label_data[r * 2 + 1];
         Check(row_sum == 1.0f, "one-hot label row should sum to 1");
     }
+
+    cyxwiz::TrainingConfiguration train_config;
+    train_config.input_size = 4;
+    train_config.input_shape = {4};
+    train_config.output_size = 2;
+    train_config.preprocessing_domain = cyxwiz::PreprocessingDomain::Text;
+    train_config.loss_type = gui::NodeType::CrossEntropyLoss;
+    train_config.optimizer_type = gui::NodeType::Adam;
+    train_config.learning_rate = 0.001f;
+
+    cyxwiz::CompiledLayer dense;
+    dense.type = gui::NodeType::Dense;
+    dense.units = 2;
+    train_config.layers.push_back(dense);
+
+    auto built = cyxwiz::BuildSequentialFromConfig(train_config);
+    Check(built.ok(), "training smoke should build model/loss/optimizer");
+    Check(built.model != nullptr, "training smoke missing model");
+    Check(built.loss != nullptr, "training smoke missing loss");
+    Check(built.optimizer != nullptr, "training smoke missing optimizer");
+
+    auto predictions = built.model->Forward(batch.data);
+    Check(predictions.Shape().size() == 2,
+          "training smoke predictions should be 2D");
+    Check(predictions.Shape()[0] == batch.size,
+          "training smoke prediction batch should match input batch");
+    Check(predictions.Shape()[1] == 2,
+          "training smoke prediction width should equal output_size");
+
+    auto loss = built.loss->Forward(predictions, batch.labels);
+    Check(loss.NumElements() == 1, "training smoke loss should be scalar");
+    CheckFinite(loss.Data<float>()[0], "training smoke loss should be finite");
+
+    auto grad = built.loss->Backward(predictions, batch.labels);
+    built.model->Backward(grad);
+    built.model->UpdateParameters(built.optimizer.get());
 
     std::remove(parquet_path.string().c_str());
 
