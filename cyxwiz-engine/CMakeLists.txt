@@ -106,6 +106,7 @@ set(ENGINE_SOURCES
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/annotation_manager.cpp
     src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
@@ -1079,6 +1080,36 @@ if(WIN32)
 endif()
 
 set_target_properties(test_text_tokenizer_operator PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Text Arrow Materializer =====
+add_executable(test_text_arrow_materializer
+    tests/test_text_arrow_materializer.cpp
+    src/core/pipeline_table_materializer.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+)
+
+target_include_directories(test_text_arrow_materializer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_text_arrow_materializer PRIVATE
+    Arrow::arrow_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_arrow_materializer PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_arrow_materializer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
