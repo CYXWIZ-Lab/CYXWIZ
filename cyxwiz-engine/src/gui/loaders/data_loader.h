@@ -75,6 +75,10 @@ struct AsyncLoadState {
     std::string source_path;         // file_path or folder_path that was loaded
     int num_classes = 0;             // set by image/audio/text loaders
     int vocab_size = 0;              // set by text loader
+    int audit_errors = 0;            // metadata/data sanity audit result
+    int audit_warnings = 0;
+    std::string audit_message;       // compact status suffix for the UI
+    std::vector<std::string> audit_issue_lines;
 };
 
 // Snapshot of dialog state the loader needs at Apply time. Copied by
@@ -100,6 +104,7 @@ struct ApplyContext {
     bool force_disk_backed = false;
     bool json_lines = false;
     int excel_sheet_idx = 0;
+    std::string label_column;
 
     // Text-specific (commit 2) -------------------------------------
     // text_has_labels is `true` when the corpus is class-subdir layout

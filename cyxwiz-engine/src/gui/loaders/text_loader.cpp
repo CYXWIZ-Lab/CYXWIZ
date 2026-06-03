@@ -2,6 +2,7 @@
 
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/dataset_audit.h"
 #include "../../core/formats/text_dataset.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/training_manager.h"
@@ -134,6 +135,11 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 state->message      = "Loaded " + std::to_string(info.num_samples) +
                                       " text samples (" + std::to_string(info.num_classes) +
                                       " classes, vocab " + std::to_string(probe.GetVocabSize()) + ")";
+                auto audit = cyxwiz::DatasetAudit::AuditText(name, text_entry);
+                state->audit_errors = audit.ErrorCount();
+                state->audit_warnings = audit.WarningCount();
+                state->audit_message = cyxwiz::FormatAuditSummary(audit);
+                state->audit_issue_lines = cyxwiz::FormatAuditIssueLines(audit);
             } catch (const std::exception& e) {
                 state->success = false;
                 state->message = std::string("Error loading text: ") + e.what();

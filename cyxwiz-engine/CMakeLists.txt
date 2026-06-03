@@ -111,6 +111,7 @@ set(ENGINE_SOURCES
     src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
+    src/core/dataset_audit.cpp
     src/core/graph_compiler.cpp
     src/core/graph_executor.cpp
     src/core/rl_training_executor.cpp
@@ -1017,6 +1018,39 @@ if(WIN32)
 endif()
 
 set_target_properties(test_debug_executor PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Dataset Audit =====
+add_executable(test_dataset_audit
+    tests/test_dataset_audit.cpp
+    src/core/arrow_dataset.cpp
+    src/core/dataset_audit.cpp
+    src/core/image_utils.cpp
+    src/core/parquet_backed_dataset.cpp
+)
+
+target_include_directories(test_dataset_audit PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_dataset_audit PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    ${OpenCV_LIBS}
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_dataset_audit PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_dataset_audit PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

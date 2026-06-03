@@ -2,6 +2,7 @@
 
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/dataset_audit.h"
 #include "../../core/formats/audio_dataset.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/training_manager.h"
@@ -131,6 +132,11 @@ uint64_t AudioLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     std::to_string(info.num_samples) + " audio files (" +
                     std::to_string(info.num_classes) + " classes) from " +
                     fs::path(folder).filename().string();
+                auto audit = cyxwiz::DatasetAudit::AuditAudio(name, final_entry);
+                state->audit_errors = audit.ErrorCount();
+                state->audit_warnings = audit.WarningCount();
+                state->audit_message = cyxwiz::FormatAuditSummary(audit);
+                state->audit_issue_lines = cyxwiz::FormatAuditIssueLines(audit);
             } catch (const std::exception& e) {
                 state->success = false;
                 state->message = std::string("Error loading audio: ") + e.what();

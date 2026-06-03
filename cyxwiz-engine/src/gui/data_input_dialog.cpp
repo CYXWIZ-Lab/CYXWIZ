@@ -641,6 +641,11 @@ void DataInputDialog::Apply() {
         ctx.force_disk_backed  = force_disk_backed_;
         ctx.json_lines         = json_lines_;
         ctx.excel_sheet_idx    = sheet_idx_;
+        ctx.label_column       =
+            (label_column_idx_ >= 0 &&
+             label_column_idx_ < static_cast<int>(available_columns_.size()))
+                ? available_columns_[label_column_idx_]
+                : std::string();
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {
@@ -915,6 +920,26 @@ void DataInputDialog::PollAsyncLoadResult() {
             spdlog::warn("DataInputDialog: no loader for backend tag {}",
                          state->backend);
         }
+        if (!state->audit_message.empty()) {
+            apply_status_message_ += " " + state->audit_message;
+            node_->parameters["audit_errors"] = std::to_string(state->audit_errors);
+            node_->parameters["audit_warnings"] = std::to_string(state->audit_warnings);
+            audit_issue_lines_ = state->audit_issue_lines;
+            if (state->audit_errors > 0) {
+                if (loader) {
+                    loader->Unregister(state->dataset_name);
+                }
+                node_->parameters["data_loaded"] = "false";
+                data_load_state_ = DataLoadState::NotLoaded;
+                apply_success_ = false;
+                apply_status_message_ =
+                    "Apply refused by dataset audit. " + state->audit_message;
+            }
+        } else {
+            node_->parameters.erase("audit_errors");
+            node_->parameters.erase("audit_warnings");
+            audit_issue_lines_.clear();
+        }
 
         spdlog::info("DataInputDialog: async load complete - {}", apply_status_message_);
     } else {
@@ -961,6 +986,10 @@ void DataInputDialog::RenderContent() {
             }
             if (ImGui::BeginTabItem("Memory")) {
                 RenderMemoryTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Audit")) {
+                RenderAuditTab();
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -2129,6 +2158,125 @@ void DataInputDialog::RenderMemoryTab() {
             "on the next Apply.");
     }
     ImGui::TextDisabled("   When on, the next Apply writes a Parquet cache in the system temp dir.");
+}
+
+namespace {
+
+int ReadIntParam(const gui::MLNode* node, const char* key, int fallback = 0) {
+    if (!node) return fallback;
+    auto it = node->parameters.find(key);
+    if (it == node->parameters.end() || it->second.empty()) return fallback;
+    try {
+        return std::stoi(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+}  // namespace
+
+void DataInputDialog::RenderAuditTab() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+    const ImVec4 ok_color(0.35f, 0.85f, 0.45f, 1.0f);
+    const ImVec4 warn_color(0.95f, 0.72f, 0.25f, 1.0f);
+    const ImVec4 err_color(0.95f, 0.35f, 0.35f, 1.0f);
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "DATASET AUDIT");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (!node_) {
+        ImGui::TextDisabled("No node is selected.");
+        return;
+    }
+
+    const int errors = ReadIntParam(node_, "audit_errors");
+    const int warnings = ReadIntParam(node_, "audit_warnings");
+    const bool has_audit_result =
+        errors > 0 || warnings > 0 || !audit_issue_lines_.empty();
+    const bool loaded = data_load_state_ == DataLoadState::InMemory &&
+                        !loaded_dataset_name_.empty();
+    if (!loaded && !has_audit_result) {
+        ImGui::TextDisabled("No loaded dataset to audit.");
+        ImGui::TextDisabled("Click Apply to load data and run the audit.");
+        return;
+    }
+
+    if (errors > 0) {
+        ImGui::TextColored(err_color, "Failed");
+    } else if (warnings > 0) {
+        ImGui::TextColored(warn_color, "Warnings");
+    } else {
+        ImGui::TextColored(ok_color, "Passed");
+    }
+
+    ImGui::Spacing();
+    if (!loaded && errors > 0) {
+        ImGui::TextDisabled("Dataset was not accepted by the audit.");
+    }
+    ImGui::Text("Dataset: %s", loaded_dataset_name_.c_str());
+    ImGui::Text("Rows / samples: %lld", static_cast<long long>(loaded_rows_));
+    if (loaded_cols_ > 0) {
+        ImGui::Text("Columns: %lld", static_cast<long long>(loaded_cols_));
+    }
+    if (loaded_backend_ > 0) {
+        ImGui::Text("Backend: %d", loaded_backend_);
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::BeginTable("DatasetAuditSummary", 2,
+        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg,
+        ImVec2(0, 0))) {
+        ImGui::TableSetupColumn("Check", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+        ImGui::TableHeadersRow();
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted("Errors");
+        ImGui::TableSetColumnIndex(1);
+        if (errors > 0) ImGui::TextColored(err_color, "%d", errors);
+        else ImGui::Text("%d", errors);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted("Warnings");
+        ImGui::TableSetColumnIndex(1);
+        if (warnings > 0) ImGui::TextColored(warn_color, "%d", warnings);
+        else ImGui::Text("%d", warnings);
+
+        ImGui::EndTable();
+    }
+
+    ImGui::Spacing();
+    if (errors == 0 && warnings == 0) {
+        ImGui::TextDisabled("Metadata and table-level audit checks found no issues.");
+    } else {
+        ImGui::TextDisabled("Current audit issues:");
+        ImGui::Spacing();
+        if (audit_issue_lines_.empty()) {
+            ImGui::TextDisabled("No issue details are available for this session.");
+        } else if (ImGui::BeginTable("DatasetAuditIssues", 1,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+            ImVec2(0, 180.0f))) {
+            ImGui::TableSetupColumn("Issue", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+            for (const auto& line : audit_issue_lines_) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextWrapped("%s", line.c_str());
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Richer drill-down details are still pending.");
 }
 
 void DataInputDialog::RenderMLDatasetOptions() {

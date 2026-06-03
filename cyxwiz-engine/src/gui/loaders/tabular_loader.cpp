@@ -3,6 +3,7 @@
 #include "../../core/arrow_dataset.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/data_registry.h"
+#include "../../core/dataset_audit.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/parquet_backed_dataset.h"
 #include "../../core/training_manager.h"
@@ -75,6 +76,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const bool force_disk        = ctx.force_disk_backed;
     const bool json_lines        = ctx.json_lines;
     const int excel_sheet        = ctx.excel_sheet_idx;
+    const std::string label_col  = ctx.label_column;
 
     state->dataset_name = name;
     state->source_path  = path;
@@ -83,7 +85,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     return mgr.RunAsync(
         "Loading " + name,
         [path, name, file_type, has_header, delim, skip_rows, max_rows,
-         force_disk, json_lines, excel_sheet, state]
+         force_disk, json_lines, excel_sheet, label_col, state]
         (cyxwiz::LambdaTask& task) {
             try {
                 task.ReportProgress(0.1f, "Reading " + file_type);
@@ -107,6 +109,11 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                             state->cols    = ds->GetNumColumns();
                             state->bytes   = ds->GetMemoryUsage();
                             state->message = "Loaded in memory";
+                            auto audit = cyxwiz::DatasetAudit::AuditTabular(name, ds, label_col);
+                            state->audit_errors = audit.ErrorCount();
+                            state->audit_warnings = audit.WarningCount();
+                            state->audit_message = cyxwiz::FormatAuditSummary(audit);
+                            state->audit_issue_lines = cyxwiz::FormatAuditIssueLines(audit);
                         } else {
                             state->success = false;
                             state->message = "Load completed but dataset missing from registry";
@@ -120,6 +127,11 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                             state->cols    = pq->GetNumColumns();
                             state->bytes   = pq->GetMemoryUsage();
                             state->message = "Loaded via Parquet cache";
+                            auto audit = cyxwiz::DatasetAudit::AuditParquet(name, pq, label_col);
+                            state->audit_errors = audit.ErrorCount();
+                            state->audit_warnings = audit.WarningCount();
+                            state->audit_message = cyxwiz::FormatAuditSummary(audit);
+                            state->audit_issue_lines = cyxwiz::FormatAuditIssueLines(audit);
                         } else {
                             state->success = false;
                             state->message = "Disk-backed load completed but dataset missing";
@@ -154,6 +166,11 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         state->cols    = dataset->GetNumColumns();
                         state->bytes   = dataset->GetMemoryUsage();
                         state->message = "Loaded " + file_type;
+                        auto audit = cyxwiz::DatasetAudit::AuditTabular(name, dataset, label_col);
+                        state->audit_errors = audit.ErrorCount();
+                        state->audit_warnings = audit.WarningCount();
+                        state->audit_message = cyxwiz::FormatAuditSummary(audit);
+                        state->audit_issue_lines = cyxwiz::FormatAuditIssueLines(audit);
                     } else {
                         state->success = false;
                         state->message = "Failed to load " + file_type +

@@ -229,6 +229,7 @@ private:
     void RenderLimitRowsTab();
     void RenderEncodingTab();
     void RenderMemoryTab();
+    void RenderAuditTab();
     void RenderMLDatasetOptions();
 
     // ML Dataset sub-renderers
@@ -443,6 +444,7 @@ private:
     // sitting in RAM when it isn't.
     bool loaded_memory_is_estimate_ = false;
     std::string loaded_dataset_name_;
+    std::vector<std::string> audit_issue_lines_;
 
     // STATE: Data profiling
     struct ColumnStats {
