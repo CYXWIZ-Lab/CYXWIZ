@@ -71,7 +71,7 @@ TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
                                    std::unique_ptr<IBatcher> external_batcher)
     : config_(std::move(config))
     , external_batcher_(std::move(external_batcher))
-    , mode_(DatasetMode::Image)
+    , mode_(DatasetMode::External)
 {
     spdlog::info("TrainingExecutor: Created with external IBatcher, "
                  "{} layers, input_size={}, output_size={}",
@@ -158,12 +158,10 @@ void TrainingExecutor::Train(
         num_train_samples = modern_batchers.num_train_samples;
         active_train_ibatcher = modern_batchers.train;
         active_val_ibatcher = modern_batchers.val;
-    } else if (mode_ == DatasetMode::Image) {
-        // Image mode: the batcher was constructed externally by
-        // StartTrainingImage with the correct target size and
-        // augmentation pipeline. We just point the training loop at it.
-        // Validation uses the same batcher reset for now - Phase 1.4
-        // can add a separate validation batcher without augmentation.
+    } else if (mode_ == DatasetMode::External) {
+        // External batchers are constructed by TrainingManager for
+        // image/audio/text datasets with the compiled graph config already
+        // applied. The executor only owns the common training loop.
         spdlog::info("TrainingExecutor: Using external batcher for training "
                      "(batch_size={}, num_workers={}, {} samples)",
                      batch_size, config_.num_workers,

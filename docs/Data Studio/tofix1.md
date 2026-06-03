@@ -155,6 +155,10 @@ legacy optimizer `epochs`/`batch_size` fallback instead of rescanning
 raw node order. The legacy `TrainingExecutor` branch also uses the
 compiled dataset name for preprocessing and augmentation registry lookup,
 falling back to `DatasetHandle::GetName()` only for older callers.
+External executor mode was audited and renamed internally from image-only
+wording to generic external `IBatcher` ownership; image/audio/text
+batchers are constructed by `TrainingManager` from the compiled graph
+config before entering the shared epoch loop.
 `test_graph_topology_utils` covers the helper behavior with a stale first
 DataInput, stale first DataLoader, reverse loss reachability, and a
 connected branch that does not reach the loss. The remaining
@@ -164,10 +168,10 @@ contract is pinned down so the next refactor does not mix behavior
 changes with file organization.
 
 **Still open for Priority 2:** runtime label/data flow and the
-TrainingExecutor external setup and epoch loop still need pin-walked
-ownership inside the executor. Whole-graph validation still audits all
-nodes, so stale disconnected training branches may remain a separate UX
-decision from compile extraction.
+TrainingExecutor epoch loop still needs a deeper pin-walked ownership
+decision for data/label semantics. Whole-graph validation still audits
+all nodes, so stale disconnected training branches may remain a separate
+UX decision from compile extraction.
 
 ### Normalize in DataInput vs graph
 

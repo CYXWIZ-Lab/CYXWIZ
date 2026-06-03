@@ -186,7 +186,7 @@ private:
     enum class DatasetMode {
         Legacy,   // DatasetHandle + legacy DatasetBatcher
         Arrow,    // ArrowDataset + ArrowDatasetBatcher
-        Image,    // ImageDatasetBatcher (externally constructed)
+        External, // Image/Audio/Text IBatcher constructed by TrainingManager
         Parquet   // ParquetBackedDataset + ParquetArrowBatcher (disk-backed)
     };
 
@@ -196,7 +196,7 @@ private:
     std::shared_ptr<ParquetBackedDataset> parquet_dataset_;
     std::string label_column_;
     DatasetMode mode_ = DatasetMode::Legacy;
-    std::unique_ptr<IBatcher> external_batcher_;  // for Image mode
+    std::unique_ptr<IBatcher> external_batcher_;
 
     // Thread safety
     std::atomic<bool> is_training_{false};
