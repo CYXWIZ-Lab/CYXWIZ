@@ -1082,6 +1082,30 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Label Column Resolver =====
+add_executable(test_label_column_resolver
+    tests/test_label_column_resolver.cpp
+)
+
+target_include_directories(test_label_column_resolver PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_label_column_resolver PRIVATE
+    Arrow::arrow_shared
+)
+
+if(WIN32)
+    target_compile_definitions(test_label_column_resolver PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_label_column_resolver PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== ASan Memory Test (standalone, no vcpkg deps) =====
 if(CYXWIZ_ENABLE_ASAN)
     add_executable(test_asan_memory

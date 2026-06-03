@@ -1,5 +1,6 @@
 #include "dataset_batcher.h"
 #include "annotation_manager.h"
+#include "label_column_resolver.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../preprocessing/statistics_calculator.h"
 #include "../preprocessing/normalization_transform.h"
@@ -738,12 +739,6 @@ void ArrowDatasetBatcher::InitializeColumns() {
     feature_cols_.clear();
     label_col_idx_ = -1;
 
-    // Common label column names for auto-detection
-    static const std::vector<std::string> common_label_names = {
-        "label", "Label", "LABEL", "class", "Class", "CLASS",
-        "target", "Target", "TARGET", "y", "Y", "digit", "category"
-    };
-
     // First pass: find explicit label column or auto-detect
     for (int i = 0; i < schema->num_fields(); ++i) {
         auto field = schema->field(i);
@@ -756,12 +751,9 @@ void ArrowDatasetBatcher::InitializeColumns() {
         }
         // Auto-detect common label names if no explicit label given
         else if (label_column_.empty() && label_col_idx_ < 0) {
-            for (const auto& common : common_label_names) {
-                if (name == common) {
-                    label_col_idx_ = i;
-                    spdlog::info("ArrowDatasetBatcher: Auto-detected label column '{}' at index {}", name, i);
-                    break;
-                }
+            if (IsCommonLabelColumnName(name)) {
+                label_col_idx_ = i;
+                spdlog::info("ArrowDatasetBatcher: Auto-detected label column '{}' at index {}", name, i);
             }
         }
     }
@@ -769,16 +761,11 @@ void ArrowDatasetBatcher::InitializeColumns() {
         spdlog::warn("ArrowDatasetBatcher: explicit label column '{}' not found; "
                      "falling back to common label-name auto-detection",
                      label_column_);
-        for (int i = 0; i < schema->num_fields() && label_col_idx_ < 0; ++i) {
-            const std::string name = schema->field(i)->name();
-            for (const auto& common : common_label_names) {
-                if (name == common) {
-                    label_col_idx_ = i;
-                    spdlog::info("ArrowDatasetBatcher: Auto-detected fallback label "
-                                 "column '{}' at index {}", name, i);
-                    break;
-                }
-            }
+        label_col_idx_ = FindCommonLabelColumnIndex(schema);
+        if (label_col_idx_ >= 0) {
+            spdlog::info("ArrowDatasetBatcher: Auto-detected fallback label "
+                         "column '{}' at index {}",
+                         schema->field(label_col_idx_)->name(), label_col_idx_);
         }
     }
 

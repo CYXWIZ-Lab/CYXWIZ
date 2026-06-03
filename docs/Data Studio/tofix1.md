@@ -27,7 +27,8 @@ Arrow plus legacy `TextDatasetEntry`, and
 The Arrow and Parquet batchers now fall back to common label-name
 auto-detection when a stale explicit label column is missing, so a
 materialized tokenizer table with `tok_*` and `y` does not silently use
-`y` as a feature.
+`y` as a feature. The shared label-name resolver is centralized and
+covered by `test_label_column_resolver`.
 
 **What remains:**
 - Make Arrow the canonical text path instead of dual-registration.
