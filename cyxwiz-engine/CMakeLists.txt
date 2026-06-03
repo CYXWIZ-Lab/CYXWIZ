@@ -1054,6 +1054,34 @@ set_target_properties(test_dataset_audit PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Text Tokenizer Operator =====
+add_executable(test_text_tokenizer_operator
+    tests/test_text_tokenizer_operator.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+)
+
+target_include_directories(test_text_tokenizer_operator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_text_tokenizer_operator PRIVATE
+    Arrow::arrow_shared
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_tokenizer_operator PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_tokenizer_operator PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== ASan Memory Test (standalone, no vcpkg deps) =====
 if(CYXWIZ_ENABLE_ASAN)
     add_executable(test_asan_memory

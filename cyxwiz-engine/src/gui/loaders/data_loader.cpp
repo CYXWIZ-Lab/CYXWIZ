@@ -66,8 +66,20 @@ DataLoader* GetByRegisteredDataset(const std::string& name) {
     // lookup but requires DataRegistry to know the FileCategory enum
     // (currently owned by the loaders module); deferred as future work
     // since the performance delta is negligible.
+    // Text CSVs also register their raw Arrow table for Cat-1 text
+    // operators. Prefer explicit domain loaders over the generic
+    // TabularLoader when both maps contain the same original dataset
+    // name. Materialized outputs have only Arrow backing, so they still
+    // route through TabularLoader.
     for (auto* l : GetRegistry().list) {
-        if (l->IsRegistered(name)) return l;
+        if (l->Category() != FileCategory::Tabular && l->IsRegistered(name)) {
+            return l;
+        }
+    }
+    for (auto* l : GetRegistry().list) {
+        if (l->Category() == FileCategory::Tabular && l->IsRegistered(name)) {
+            return l;
+        }
     }
     return nullptr;
 }

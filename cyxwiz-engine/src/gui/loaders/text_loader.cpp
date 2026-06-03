@@ -1,6 +1,7 @@
 #include "text_loader.h"
 
 #include "../../core/async_task_manager.h"
+#include "../../core/arrow_dataset.h"
 #include "../../core/data_registry.h"
 #include "../../core/dataset_audit.h"
 #include "../../core/formats/text_dataset.h"
@@ -10,6 +11,9 @@
 #include <spdlog/spdlog.h>
 
 #include <filesystem>
+#include <algorithm>
+#include <cctype>
+#include <stdexcept>
 
 namespace fs = std::filesystem;
 
@@ -47,6 +51,7 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     if (!ctx.previous_dataset_name.empty() &&
         ctx.previous_dataset_name != ctx.dataset_name) {
         registry.UnregisterTextDataset(ctx.previous_dataset_name);
+        registry.UnregisterTabularDataset(ctx.previous_dataset_name);
     }
     // NOTE: we intentionally do NOT pre-clear a same-name text entry
     // here. RegisterTextDataset uses map[name]=entry which atomically
@@ -98,9 +103,39 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 cyxwiz::TextDataset probe(path, probe_cfg);
                 auto info = probe.GetInfo();
 
-                task.ReportProgress(0.9f, "Registering dataset");
+                task.ReportProgress(0.75f, "Registering raw text table");
 
                 auto& reg = cyxwiz::DataRegistry::Instance();
+
+                fs::path source(path);
+                std::string ext = source.extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(),
+                               [](unsigned char c) {
+                                   return static_cast<char>(std::tolower(c));
+                               });
+                const bool arrow_backed_text_file =
+                    fs::is_regular_file(source) &&
+                    (ext == ".csv" || ext == ".tsv");
+                if (arrow_backed_text_file) {
+                    auto read_options = arrow::csv::ReadOptions::Defaults();
+                    auto parse_options = arrow::csv::ParseOptions::Defaults();
+                    auto convert_options = arrow::csv::ConvertOptions::Defaults();
+                    parse_options.delimiter = (ext == ".tsv") ? '\t' : ',';
+
+                    auto raw_arrow = cyxwiz::ArrowDataset::FromCSV(
+                        path, name, read_options, parse_options, convert_options);
+                    if (!raw_arrow || !raw_arrow->GetArrowTable()) {
+                        throw std::runtime_error(
+                            "failed to register text CSV as Arrow table");
+                    }
+                    if (!reg.RegisterArrowTable(raw_arrow->GetArrowTable(), name)) {
+                        throw std::runtime_error(
+                            "failed to store text CSV Arrow table");
+                    }
+                }
+
+                task.ReportProgress(0.9f, "Registering text metadata");
+
                 cyxwiz::DataRegistry::TextDatasetEntry text_entry;
                 text_entry.source_path    = path;
                 text_entry.text_column    = text_col;
@@ -155,7 +190,9 @@ bool TextLoader::IsRegistered(const std::string& name) const {
 }
 
 void TextLoader::Unregister(const std::string& name) {
-    cyxwiz::DataRegistry::Instance().UnregisterTextDataset(name);
+    auto& reg = cyxwiz::DataRegistry::Instance();
+    reg.UnregisterTextDataset(name);
+    reg.UnregisterTabularDataset(name);
 }
 
 bool TextLoader::RestoreFromRegistry(const std::string& name,

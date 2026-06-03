@@ -2174,11 +2174,22 @@ stale unsupported BPE/pretrained/special-token UI was removed from
 this dialog. This does **not** complete full Fix B; the remaining work
 is still the backend dataflow rewrite below.
 
+**Status update 2026-06-03:** Backend activation slice landed for
+single-file text CSV/TSV. `TextLoader` now registers the raw text file
+as an Arrow table under the dataset name, while still registering the
+legacy `TextDatasetEntry` metadata for compile/train/test
+compatibility. Loader ownership now prefers explicit Text/Image/Audio
+entries over generic Arrow ownership for original dataset names, so
+legacy text graphs still route through `TextLoader`; materialized
+`__materialized` Arrow outputs still route through `TabularLoader`.
+Added `test_text_tokenizer_operator` to validate the Arrow input
+contract for `TextTokenizerOperator`.
+
 **Still to do for full Fix B:**
-- DataInput text branch: register CSVs as Arrow tables (raw
-  string + label columns) instead of TextDatasetEntry, so the
-  materializer dispatch sees an Arrow source and the
-  TextTokenizer operator actually runs.
+- DataInput text branch: CSV/TSV now dual-registers raw Arrow +
+  TextDatasetEntry. Finish the rewire by making Arrow the canonical
+  path, deciding the JSON/TXT/folder-corpus raw table story, and then
+  removing the legacy `TextDatasetEntry` dependency.
 - MainWindow dispatch: route `IsArrowDataset` after materializer
   for text graphs (already happens - `__materialized` flows
   through Arrow path).
