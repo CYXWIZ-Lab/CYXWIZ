@@ -3563,7 +3563,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         }
 
         cyxwiz::SmokeRunExecutor smoke_executor;
-        session.smoke_result = smoke_executor.RunTextSmoke(config, nodes, run_id, 100);
+        session.smoke_result = smoke_executor.RunTextSmoke(
+            config, nodes, links, run_id, 100);
         if (session.smoke_result.supported) {
             session.traces.insert(session.traces.end(),
                                   std::make_move_iterator(session.smoke_result.traces.begin()),

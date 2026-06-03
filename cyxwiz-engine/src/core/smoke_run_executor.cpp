@@ -1,10 +1,13 @@
 #include "smoke_run_executor.h"
 
 #include "data_registry.h"
+#include "label_column_resolver.h"
 #include "model_builder.h"
+#include "pipeline_materializer.h"
 #include "text_dataset_batcher.h"
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <sstream>
 
 namespace cyxwiz {
@@ -120,6 +123,7 @@ DebugTraceRecord MakeSmokeRecord(const std::string& run_id,
 SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     TrainingConfiguration config,
     const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
     const std::string& run_id,
     int max_samples) const {
     SmokeRunResult result;
@@ -131,34 +135,94 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     }
     result.supported = true;
 
-    const auto* entry = DataRegistry::Instance().GetTextDatasetEntry(config.dataset_name);
-    if (!entry) {
-        result.summary = "Text dataset is not registered: " + config.dataset_name;
-        result.issues.push_back({IssueLevel::Error, -1, "TextDataset", result.summary});
-        return result;
+    auto& registry = DataRegistry::Instance();
+    const int batch_size = std::max(1, std::min(config.batch_size, 32));
+    std::unique_ptr<IBatcher> batcher;
+    std::string batcher_source = "legacy text";
+
+    if (registry.IsArrowDataset(config.dataset_name) && !links.empty()) {
+        auto materialized = PipelineMaterializer::Materialize(
+            nodes, links, registry, config.dataset_name);
+        if (!materialized.success) {
+            result.summary = materialized.error_message;
+            result.issues.push_back({
+                IssueLevel::Error, -1, "PipelineMaterializer", result.summary
+            });
+            return result;
+        }
+
+        if (materialized.operators_applied > 0) {
+            auto arrow_dataset =
+                registry.GetArrowDataset(materialized.effective_dataset_name);
+            if (!arrow_dataset || !arrow_dataset->GetSchema()) {
+                result.summary = "Materialized Arrow text table is unavailable: " +
+                                 materialized.effective_dataset_name;
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "PipelineMaterializer", result.summary
+                });
+                return result;
+            }
+
+            const int label_idx =
+                FindCommonLabelColumnIndex(arrow_dataset->GetSchema());
+            if (label_idx < 0) {
+                result.summary = "Materialized Arrow text table has no label column.";
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "ArrowDataset", result.summary
+                });
+                return result;
+            }
+
+            const std::string label_column =
+                arrow_dataset->GetSchema()->field(label_idx)->name();
+            batcher = std::make_unique<ArrowDatasetBatcher>(
+                arrow_dataset,
+                label_column,
+                static_cast<size_t>(batch_size),
+                /*shuffle=*/false,
+                config.train_ratio,
+                /*is_training=*/true);
+            batcher_source = "materialized Arrow text";
+
+            if (arrow_dataset->GetNumColumns() > 1) {
+                config.input_size =
+                    static_cast<size_t>(arrow_dataset->GetNumColumns() - 1);
+                config.input_shape = {config.input_size};
+            }
+        }
     }
 
-    const int batch_size = std::max(1, std::min(config.batch_size, 32));
-    TextDatasetBatcher batcher(
-        *entry,
-        config.text_preprocessing,
-        batch_size,
-        config.train_ratio,
-        false,
-        0);
+    if (!batcher) {
+        const auto* entry = registry.GetTextDatasetEntry(config.dataset_name);
+        if (!entry) {
+            result.summary = "Text dataset is not registered: " + config.dataset_name;
+            result.issues.push_back({IssueLevel::Error, -1, "TextDataset", result.summary});
+            return result;
+        }
 
-    if (batcher.GetNumSamples() == 0) {
+        auto text_batcher = std::make_unique<TextDatasetBatcher>(
+            *entry,
+            config.text_preprocessing,
+            batch_size,
+            config.train_ratio,
+            false,
+            0);
+
+        config.input_size = static_cast<size_t>(text_batcher->GetMaxLength());
+        config.input_shape = {static_cast<size_t>(text_batcher->GetMaxLength())};
+        batcher = std::move(text_batcher);
+    }
+
+    if (batcher->GetNumSamples() == 0) {
         result.summary = "Text dataset has no training samples.";
         result.issues.push_back({IssueLevel::Error, -1, "TextDataset", result.summary});
         return result;
     }
 
-    config.input_size = static_cast<size_t>(batcher.GetMaxLength());
-    config.input_shape = {static_cast<size_t>(batcher.GetMaxLength())};
     if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
-        batcher.SetOneHotEncoding(config.preprocessing.num_classes);
+        batcher->SetOneHotEncoding(config.preprocessing.num_classes);
     } else if (config.output_size > 0) {
-        batcher.SetOneHotEncoding(config.output_size);
+        batcher->SetOneHotEncoding(config.output_size);
     }
 
     BuiltModel built = BuildSequentialFromConfig(config);
@@ -170,14 +234,14 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     const int max_batches = std::max(
         1,
-        static_cast<int>((std::min<size_t>(batcher.GetNumSamples(), static_cast<size_t>(max_samples)) +
+        static_cast<int>((std::min<size_t>(batcher->GetNumSamples(), static_cast<size_t>(max_samples)) +
                           static_cast<size_t>(batch_size) - 1) /
                          static_cast<size_t>(batch_size)));
     const int model_node_id = FindFirstModelNode(nodes);
     float loss_sum = 0.0f;
 
-    for (int batch_index = 1; batch_index <= max_batches && !batcher.IsEpochComplete(); ++batch_index) {
-        Batch batch = batcher.GetNextBatch();
+    for (int batch_index = 1; batch_index <= max_batches && !batcher->IsEpochComplete(); ++batch_index) {
+        Batch batch = batcher->GetNextBatch();
         if (!batch.IsValid()) {
             break;
         }
@@ -277,6 +341,7 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     std::ostringstream out;
     out << "Smoke Run: " << (result.success ? "passed" : "failed")
+        << ", source=" << batcher_source
         << ", samples=" << result.samples_seen
         << ", batches=" << result.batches_seen
         << ", avg_loss=" << result.average_loss

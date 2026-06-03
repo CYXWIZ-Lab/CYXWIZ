@@ -51,7 +51,9 @@ with the engine's training-step contract. `StartTrainingFromGraph` now
 resolves the runtime label column against the materialized Arrow schema
 before loader dispatch, so a tokenized text table uses `y` explicitly
 instead of relying on `ArrowDatasetBatcher` fallback from the original
-DataInput label name.
+DataInput label name. Local Debug's text Smoke Run now also tries the
+Cat-1 materialized Arrow path first and reports whether it used
+`materialized Arrow text` or the legacy text fallback.
 
 **What remains:**
 - Make Arrow the default text training path when a materialized Cat-1
@@ -67,8 +69,9 @@ DataInput label name.
   operators or remain folded into the v1 combined tokenizer operator.
 - Run a GUI/runtime smoke graph for one minimal text training launch
   once legacy text path removal is planned. The headless model-step
-  smoke and runtime label handoff are covered; this remaining item is
-  the threaded GUI launch path.
+  smoke, runtime label handoff, and Local Debug Smoke Run materialized
+  Arrow path are covered; this remaining item is the threaded GUI
+  launch path.
 - Update and rerun existing text smoke graphs:
   `test_01`, `v1`, `v2`, and `test_02_lstm`.
 

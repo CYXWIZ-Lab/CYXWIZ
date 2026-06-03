@@ -26,6 +26,7 @@ public:
     SmokeRunResult RunTextSmoke(
         TrainingConfiguration config,
         const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
         const std::string& run_id,
         int max_samples = 100) const;
 };
