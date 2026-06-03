@@ -21,20 +21,49 @@ std::string FindDatasetName(const std::vector<MLNode>& nodes) {
         if (it != node.parameters.end() && !it->second.empty()) {
             return it->second;
         }
+        it = node.parameters.find("dataset");
+        if (it != node.parameters.end() && !it->second.empty()) {
+            return it->second;
+        }
     }
     return {};
 }
 
-std::string FindLabelColumn(const std::vector<MLNode>& nodes) {
+std::string FindLabelColumn(
+    const std::vector<MLNode>& nodes,
+    const std::string& dataset_name) {
+
+    const MLNode* fallback_data_input = nullptr;
     for (const auto& node : nodes) {
         if (node.type != NodeType::DataInput) {
             continue;
         }
-        auto it = node.parameters.find("label_column");
-        if (it != node.parameters.end() && !it->second.empty()) {
-            return it->second;
+
+        if (!fallback_data_input) {
+            fallback_data_input = &node;
         }
-        break;
+
+        auto dataset_it = node.parameters.find("dataset_name");
+        if (dataset_it == node.parameters.end() || dataset_it->second.empty()) {
+            dataset_it = node.parameters.find("dataset");
+        }
+        if (!dataset_name.empty() &&
+            dataset_it != node.parameters.end() &&
+            dataset_it->second == dataset_name) {
+            auto label_it = node.parameters.find("label_column");
+            if (label_it != node.parameters.end() && !label_it->second.empty()) {
+                return label_it->second;
+            }
+            return {};
+        }
+    }
+
+    if (fallback_data_input) {
+        auto label_it = fallback_data_input->parameters.find("label_column");
+        if (label_it != fallback_data_input->parameters.end() &&
+            !label_it->second.empty()) {
+            return label_it->second;
+        }
     }
     return {};
 }
@@ -138,7 +167,9 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         return result;
     }
 
-    std::string dataset_name = FindDatasetName(nodes);
+    std::string dataset_name = !config.dataset_name.empty()
+        ? config.dataset_name
+        : FindDatasetName(nodes);
     if (dataset_name.empty()) {
         result.error_message =
             "No dataset loaded. Please configure the Data Input node first.";
@@ -146,7 +177,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         return result;
     }
 
-    std::string label_column = FindLabelColumn(nodes);
+    std::string label_column = FindLabelColumn(nodes, dataset_name);
 
     int batch_size = config.batch_size;
     int epochs = config.epochs;

@@ -47,7 +47,8 @@ MaterializeResult PipelineMaterializer::Materialize(
         return result;
     }
 
-    auto table_result = MaterializeTable(nodes, links, source_table);
+    auto table_result = MaterializeTable(
+        nodes, links, source_table, source_dataset_name);
     if (!table_result.success) {
         result.success = false;
         result.error_message = table_result.error_message;

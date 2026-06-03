@@ -131,10 +131,17 @@ boundaries: Arrow and Parquet batcher construction now lives in
 normalization, one-hot/regression mode, and split warnings outside the
 epoch loop. `test_training_batcher_setup` covers the Arrow helper path
 and proves the returned owners, `IBatcher` pointers, split count, feature
-shape, and one-hot label shape. The remaining `TrainingExecutor` work is
-the legacy/external image/audio/text setup and the epoch loop topology;
-those should be split only after the graph contract is pinned down so the
-next refactor does not mix behavior changes with file organization.
+shape, and one-hot label shape. Runtime launch now also treats the
+compiled `TrainingConfiguration::dataset_name` as the dispatch source
+instead of rescanning node order, and `PipelineMaterializer` starts from
+the DataInput/DatasetInput that owns that source dataset. This prevents a
+stale or unrelated first DataInput from stealing materialization and
+label resolution. `test_text_gui_training_launch` covers that regression
+by putting an unused loaded DataInput first in the node list. The
+remaining `TrainingExecutor` work is the legacy/external image/audio/text
+setup and the epoch loop topology; those should be split only after the
+graph contract is pinned down so the next refactor does not mix behavior
+changes with file organization.
 
 ### Normalize in DataInput vs graph
 
@@ -272,6 +279,19 @@ are no longer enough.
 
 Deferred v3 consideration. Useful for generated/tokenized outputs, but
 not required for the current Text Fix B path.
+
+## Build Health Follow-Up
+
+### Full engine Debug build duplicate DataSources case
+
+The focused text/runtime tests pass, but the full `cyxwiz-engine` Debug
+target currently fails in `node_browser_panel.cpp` with MSVC C2196:
+`gui::NodeCategory::DataSources` is used by more than one `case` label
+in the same switch.
+
+**Next step:** fix the duplicate `DataSources` switch case before using
+full engine Debug rebuild as the final verification gate for later
+backend/runtime slices.
 
 ## Closed Source
 

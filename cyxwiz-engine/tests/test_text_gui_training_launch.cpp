@@ -20,6 +20,7 @@ namespace {
 
 constexpr const char* kDatasetName = "gui_text_runtime";
 constexpr const char* kMaterializedDatasetName = "gui_text_runtime__materialized";
+constexpr const char* kUnusedDatasetName = "unused_gui_text_runtime";
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -73,6 +74,21 @@ gui::MLNode MakeDataInputNode() {
         {"data_loaded", "true"},
         {"file_category", "text"},
         {"label_column", "label"},
+    };
+    return node;
+}
+
+gui::MLNode MakeUnusedDataInputNode() {
+    gui::MLNode node;
+    node.id = 99;
+    node.type = gui::NodeType::DataInput;
+    node.category = gui::NodeCategory::DataPipeline;
+    node.name = "Unused Data Input";
+    node.parameters = {
+        {"dataset_name", kUnusedDatasetName},
+        {"data_loaded", "true"},
+        {"file_category", "text"},
+        {"label_column", "wrong_label"},
     };
     return node;
 }
@@ -164,10 +180,14 @@ int main() {
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(kMaterializedDatasetName);
+    registry.UnregisterTabularDataset(kUnusedDatasetName);
     Check(registry.RegisterArrowTable(MakeTextTable(), kDatasetName) != nullptr,
           "raw text Arrow dataset should register");
+    Check(registry.RegisterArrowTable(MakeTextTable(), kUnusedDatasetName) != nullptr,
+          "unused raw text Arrow dataset should register");
 
     std::vector<gui::MLNode> nodes = {
+        MakeUnusedDataInputNode(),
         MakeDataInputNode(),
         MakeTokenizerNode(),
     };
@@ -265,6 +285,7 @@ int main() {
 
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(kMaterializedDatasetName);
+    registry.UnregisterTabularDataset(kUnusedDatasetName);
 
     std::cout << "Text GUI training launch helper passed\n";
     return 0;

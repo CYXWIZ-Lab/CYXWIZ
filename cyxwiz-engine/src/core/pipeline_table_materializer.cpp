@@ -14,10 +14,40 @@ namespace cyxwiz {
 
 namespace {
 
-const gui::MLNode* FindDataInputNode(const std::vector<gui::MLNode>& nodes) {
+bool IsDataInputNode(const gui::MLNode& node) {
+    return node.type == gui::NodeType::DataInput ||
+           node.type == gui::NodeType::DatasetInput;
+}
+
+std::string DatasetNameForNode(const gui::MLNode& node) {
+    auto dataset_name = node.parameters.find("dataset_name");
+    if (dataset_name != node.parameters.end() && !dataset_name->second.empty()) {
+        return dataset_name->second;
+    }
+
+    auto legacy_dataset = node.parameters.find("dataset");
+    if (legacy_dataset != node.parameters.end() && !legacy_dataset->second.empty()) {
+        return legacy_dataset->second;
+    }
+
+    return {};
+}
+
+const gui::MLNode* FindDataInputNode(
+    const std::vector<gui::MLNode>& nodes,
+    const std::string& source_dataset_name) {
+
+    if (!source_dataset_name.empty()) {
+        for (const auto& n : nodes) {
+            if (IsDataInputNode(n) &&
+                DatasetNameForNode(n) == source_dataset_name) {
+                return &n;
+            }
+        }
+    }
+
     for (const auto& n : nodes) {
-        if (n.type == gui::NodeType::DataInput ||
-            n.type == gui::NodeType::DatasetInput) {
+        if (IsDataInputNode(n)) {
             return &n;
         }
     }
@@ -112,7 +142,8 @@ std::map<std::string, std::string> BuildOperatorParams(
 MaterializeTableResult PipelineMaterializer::MaterializeTable(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
-    const std::shared_ptr<arrow::Table>& source_table) {
+    const std::shared_ptr<arrow::Table>& source_table,
+    const std::string& source_dataset_name) {
 
     MaterializeTableResult result;
     result.table = source_table;
@@ -123,7 +154,7 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
         return result;
     }
 
-    const gui::MLNode* data_input = FindDataInputNode(nodes);
+    const gui::MLNode* data_input = FindDataInputNode(nodes, source_dataset_name);
     if (!data_input) {
         return result;
     }

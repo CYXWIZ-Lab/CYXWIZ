@@ -65,7 +65,8 @@ public:
     static MaterializeTableResult MaterializeTable(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
-        const std::shared_ptr<arrow::Table>& source_table);
+        const std::shared_ptr<arrow::Table>& source_table,
+        const std::string& source_dataset_name = {});
 
     static MaterializeResult Materialize(
         const std::vector<gui::MLNode>& nodes,
