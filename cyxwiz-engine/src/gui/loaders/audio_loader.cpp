@@ -236,8 +236,9 @@ std::vector<ParamSchema> AudioLoader::NodeParams() const {
 }
 
 SyntheticBatch AudioLoader::MakeSynthetic(
-    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
-    return SyntheticBatch{};
+    const cyxwiz::TrainingConfiguration& config, uint32_t seed) const {
+    return MakeSyntheticForDomain(
+        config, cyxwiz::PreprocessingDomain::Audio, seed, "Audio");
 }
 
 }  // namespace cyxwiz::loaders

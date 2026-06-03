@@ -306,8 +306,9 @@ std::vector<ParamSchema> TextLoader::NodeParams() const {
 }
 
 SyntheticBatch TextLoader::MakeSynthetic(
-    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
-    return SyntheticBatch{};
+    const cyxwiz::TrainingConfiguration& config, uint32_t seed) const {
+    return MakeSyntheticForDomain(
+        config, cyxwiz::PreprocessingDomain::Text, seed, "Text");
 }
 
 }  // namespace cyxwiz::loaders

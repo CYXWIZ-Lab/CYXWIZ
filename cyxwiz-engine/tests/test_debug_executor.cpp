@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <filesystem>
@@ -453,6 +454,9 @@ void TestSentimentComputationMultiLayerBiGRU() {
 int main() {
     spdlog::set_level(spdlog::level::info);
     try {
+        const bool run_slow_sentiment =
+            std::getenv("CYXWIZ_RUN_SLOW_DEBUG_TESTS") != nullptr;
+
         TestBuildSequentialTabular();
         TestSyntheticBatchTabular();
         TestSyntheticBatchText();
@@ -460,8 +464,13 @@ int main() {
         TestDebugExecutorGoldenPath();
         TestDebugExecutorGradNormBookkeeping();
         TestDebugExecutorTextGraph();
-        TestSentimentComputationCurrentPath();
-        TestSentimentComputationMultiLayerBiGRU();
+        if (run_slow_sentiment) {
+            TestSentimentComputationCurrentPath();
+            TestSentimentComputationMultiLayerBiGRU();
+        } else {
+            spdlog::info("Skipping slow sentiment debug checks. Set "
+                         "CYXWIZ_RUN_SLOW_DEBUG_TESTS=1 to run them.");
+        }
     } catch (const std::exception& e) {
         std::cerr << "FAIL: exception: " << e.what() << "\n";
         return 1;

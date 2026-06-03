@@ -254,8 +254,9 @@ std::vector<ParamSchema> ImageLoader::NodeParams() const {
 }
 
 SyntheticBatch ImageLoader::MakeSynthetic(
-    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
-    return SyntheticBatch{};
+    const cyxwiz::TrainingConfiguration& config, uint32_t seed) const {
+    return MakeSyntheticForDomain(
+        config, cyxwiz::PreprocessingDomain::Image, seed, "Image");
 }
 
 }  // namespace cyxwiz::loaders

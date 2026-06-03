@@ -222,16 +222,31 @@ Compact Apply-time audit is done. Deferred items remain:
 Local Debug infrastructure landed, but concrete synthetic batch
 generation remains thin across loaders.
 
-**Next step:** implement realistic `MakeSynthetic` per loader only where
-it directly supports compile/debug workflows.
+**Status 2026-06-03:** loader-level `MakeSynthetic` now returns a real
+single-sample synthetic batch for Tabular/TimeSeries, Image, Audio, and
+Text by delegating to the shared core `MakeSyntheticBatch` helper with
+the selected preprocessing domain. The returned loader batch includes
+feature/label tensors, sample count, and a compact summary. This keeps
+Local Debug shape generation in one core path while avoiding another
+category switch in the dialog.
+
+**Still deferred:** true image/audio/time-series shaped synthetic
+tensors remain folded into the current core flat-feature fallback until
+the debug executor has a concrete need to execute loader-native shapes.
 
 ### Training logs and sub-epoch validation
 
 Training can stay silent for long stretches within an epoch, and
 fractional validation cadence is still pending.
 
-**Next step:** add lightweight per-batch or rate-limited training
-progress updates before broad validation-cadence changes.
+**Status 2026-06-03:** lightweight per-batch progress has already
+landed. `TrainingExecutor` emits batch callbacks and periodic progress
+logs on both legacy and `IBatcher` paths, `TrainingManager` forwards the
+batch state to the dashboard, and `TrainingPlotPanel` renders batch
+count plus running loss and progressive fractional-epoch curves.
+
+**Still deferred:** fractional validation cadence is a separate training
+policy change and should not be mixed with progress visibility.
 
 ## Priority 4 - Studio And Workflow UX
 

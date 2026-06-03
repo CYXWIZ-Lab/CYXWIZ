@@ -18,6 +18,7 @@
 // writes, PollAsyncLoadResult reads).
 
 #include <atomic>
+#include <cyxwiz/tensor.h>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -171,14 +172,24 @@ struct ParamSchema {
     std::string description;
 };
 
-// Placeholder return type for DataLoader::MakeSynthetic — powers the
-// Local Debug workflow (deferred feature, tracked in tofix.md). Kept
-// minimal (empty flag only) so the virtual method has a real type,
-// but no real tensor production happens yet; each loader returns an
-// empty batch. Filled out when Local Debug lands.
+// Loader-facing synthetic batch used by Local Debug / smoke workflows
+// that want to ask the selected loader for a graph-compatible sample.
+// The tensor payload is produced by the shared core synthetic generator;
+// loader implementations only select the preprocessing domain and add
+// a small summary for UI/debug surfaces.
 struct SyntheticBatch {
     bool is_empty = true;
+    cyxwiz::Tensor features;
+    cyxwiz::Tensor labels;
+    size_t sample_count = 0;
+    std::string summary;
 };
+
+SyntheticBatch MakeSyntheticForDomain(
+    const cyxwiz::TrainingConfiguration& config,
+    cyxwiz::PreprocessingDomain domain,
+    uint32_t seed,
+    const char* domain_name);
 
 // Populated by DataLoader::RestoreFromRegistry from registry metadata
 // when a dialog reopens on an already-loaded dataset. The dialog splats
@@ -313,15 +324,13 @@ public:
     // belong to at least one loader's schema.
     virtual std::vector<ParamSchema> NodeParams() const = 0;
 
-    // === Synthetic data for Local Debug (commit 8, skeleton) ===
+    // === Synthetic data for Local Debug ===
     // Produces a small batch of synthetic data matching the loader's
     // expected tensor shape. Powers the Local Debug workflow — the
     // user picks "train with synthetic data" to smoke-test the graph
-    // without a real dataset. Current implementations all return an
-    // empty SyntheticBatch; the real generator lands with the Local
-    // Debug feature (tracked in tofix.md). Method exists now so Local
-    // Debug doesn't become yet another category switch when it's
-    // wired.
+    // without a real dataset. The shared core generator owns shape/value
+    // rules; each loader only selects the domain so this does not become
+    // another category switch in DataInputDialog.
     virtual SyntheticBatch MakeSynthetic(
         const cyxwiz::TrainingConfiguration& config, uint32_t seed) const = 0;
 };

@@ -4,11 +4,28 @@
 #include "tabular_loader.h"
 #include "text_loader.h"
 
+#include "../../core/graph_compiler.h"
+#include "../../core/synthetic_batch.h"
+
 #include <memory>
+#include <string>
+#include <utility>
 
 namespace cyxwiz::loaders {
 
 namespace {
+
+std::string ShapeString(const std::vector<size_t>& shape) {
+    if (shape.empty()) {
+        return "";
+    }
+    std::string out;
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i > 0) out += "x";
+        out += std::to_string(shape[i]);
+    }
+    return out;
+}
 
 // Heap-allocated loader instances owned by `owners`; `list` holds raw
 // pointers into that vector so callers never deal with unique_ptrs.
@@ -41,6 +58,28 @@ Registry& GetRegistry() {
 }
 
 }  // namespace
+
+SyntheticBatch MakeSyntheticForDomain(
+    const cyxwiz::TrainingConfiguration& config,
+    cyxwiz::PreprocessingDomain domain,
+    uint32_t seed,
+    const char* domain_name) {
+    auto local_config = config;
+    local_config.preprocessing_domain = domain;
+
+    auto generated = cyxwiz::MakeSyntheticBatch(local_config, seed);
+
+    SyntheticBatch out;
+    out.is_empty = false;
+    out.features = std::move(generated.features);
+    out.labels = std::move(generated.labels);
+    const auto& feature_shape = out.features.Shape();
+    out.sample_count = feature_shape.empty() ? 0 : feature_shape.front();
+    out.summary = std::string(domain_name ? domain_name : "Dataset") +
+        " synthetic batch: features=[" + ShapeString(feature_shape) +
+        "], labels=[" + ShapeString(out.labels.Shape()) + "]";
+    return out;
+}
 
 DataLoader* GetByCategory(FileCategory cat) {
     auto& r = GetRegistry();

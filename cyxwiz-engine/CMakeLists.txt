@@ -996,10 +996,14 @@ set_target_properties(test_arrow_integration PROPERTIES
 # full engine executable being built.
 add_executable(test_debug_executor
     tests/test_debug_executor.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
     src/core/dataset_base.cpp
     src/core/model_builder.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/text_arrow_adapter.cpp
     src/core/text_dataset_batcher.cpp
     src/core/formats/text_dataset.cpp
 )
@@ -1009,6 +1013,8 @@ target_include_directories(test_debug_executor PRIVATE
 )
 
 target_link_libraries(test_debug_executor PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
     imgui::imgui               # graph_compiler.h transitively pulls node_editor.h -> imgui.h
     nlohmann_json::nlohmann_json
     spdlog::spdlog

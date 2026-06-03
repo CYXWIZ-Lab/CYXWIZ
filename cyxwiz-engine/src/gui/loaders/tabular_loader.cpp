@@ -322,9 +322,15 @@ std::vector<ParamSchema> TabularLoader::NodeParams() const {
 }
 
 SyntheticBatch TabularLoader::MakeSynthetic(
-    const cyxwiz::TrainingConfiguration& /*config*/, uint32_t /*seed*/) const {
-    // Stub — real synthetic tensor generation lands with Local Debug.
-    return SyntheticBatch{};
+    const cyxwiz::TrainingConfiguration& config, uint32_t seed) const {
+    const bool time_series =
+        config.preprocessing_domain == cyxwiz::PreprocessingDomain::TimeSeries;
+    return MakeSyntheticForDomain(
+        config,
+        time_series ? cyxwiz::PreprocessingDomain::TimeSeries
+                    : cyxwiz::PreprocessingDomain::Tabular,
+        seed,
+        time_series ? "TimeSeries" : "Tabular");
 }
 
 }  // namespace cyxwiz::loaders
