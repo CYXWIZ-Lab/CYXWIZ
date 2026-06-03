@@ -58,12 +58,17 @@ Cat-1 materialized Arrow path first and reports whether it used
 contract for materialized text: `DataInput -> TextTokenizer` produces
 Arrow `tok_*` plus `y`, `ArrowDatasetBatcher` consumes it on a worker
 thread, and the model runs forward/loss/backward/update successfully.
+Raw text Arrow backing now covers JSON/JSONL, TXT, and folder corpora
+through a small `TextDataset -> Arrow` adapter. CSV/TSV keep Arrow's
+native CSV reader so original file columns are preserved; adapter-backed
+sources expose a stable `text_column` UTF-8 column and, when the
+`TextDataset` reports classes, an int32 `label_column`. This is covered
+by `test_text_arrow_adapter`, including a folder-corpus table feeding
+`TextTokenizerOperator`.
 
 **What remains:**
 - Make Arrow the default text training path when a materialized Cat-1
   text table exists; keep legacy fallback only for unmaterialized text.
-- Implement raw table adapters for JSON, TXT, and folder corpora after
-  defining their synthetic text/label schema.
 - Rewrite or replace `TextDatasetBatcher` so text training consumes
   pre-tokenized Arrow data instead of tokenizing inside the batcher.
 - Remove `ExtractTextTokenizer`, `ExtractTextVocabulary`, and

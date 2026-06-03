@@ -6,6 +6,7 @@
 #include "../../core/dataset_audit.h"
 #include "../../core/formats/text_dataset.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
+#include "../../core/text_arrow_adapter.h"
 #include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
@@ -113,10 +114,10 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                                [](unsigned char c) {
                                    return static_cast<char>(std::tolower(c));
                                });
-                const bool arrow_backed_text_file =
+                const bool native_arrow_text_file =
                     fs::is_regular_file(source) &&
                     (ext == ".csv" || ext == ".tsv");
-                if (arrow_backed_text_file) {
+                if (native_arrow_text_file) {
                     auto read_options = arrow::csv::ReadOptions::Defaults();
                     auto parse_options = arrow::csv::ParseOptions::Defaults();
                     auto convert_options = arrow::csv::ConvertOptions::Defaults();
@@ -133,8 +134,24 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                             "failed to store text CSV Arrow table");
                     }
                 } else {
-                    spdlog::info("TextLoader: '{}' uses legacy text metadata only; "
-                                 "raw Arrow text backing is currently limited to CSV/TSV",
+                    auto raw_table_result = cyxwiz::BuildRawTextArrowTable(
+                        probe, text_col, label_col);
+                    if (!raw_table_result.ok()) {
+                        throw std::runtime_error(
+                            "failed to build raw text Arrow table: " +
+                            raw_table_result.status().ToString());
+                    }
+                    auto raw_table = raw_table_result.ValueOrDie();
+                    if (!raw_table) {
+                        throw std::runtime_error(
+                            "failed to build raw text Arrow table");
+                    }
+                    if (!reg.RegisterArrowTable(raw_table, name)) {
+                        throw std::runtime_error(
+                            "failed to store raw text Arrow table");
+                    }
+                    spdlog::info("TextLoader: '{}' registered raw text Arrow table "
+                                 "from TextDataset adapter",
                                  name);
                 }
 

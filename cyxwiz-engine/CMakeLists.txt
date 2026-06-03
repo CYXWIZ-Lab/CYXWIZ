@@ -103,6 +103,7 @@ set(ENGINE_SOURCES
     src/core/image_dataset_batcher.cpp
     src/core/audio_dataset_batcher.cpp
     src/core/text_dataset_batcher.cpp
+    src/core/text_arrow_adapter.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
@@ -1149,6 +1150,38 @@ if(WIN32)
 endif()
 
 set_target_properties(test_text_arrow_training_launch PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Text Arrow Adapter =====
+add_executable(test_text_arrow_adapter
+    tests/test_text_arrow_adapter.cpp
+    src/core/text_arrow_adapter.cpp
+    src/core/formats/text_dataset.cpp
+    src/core/dataset_base.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+)
+
+target_include_directories(test_text_arrow_adapter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_text_arrow_adapter PRIVATE
+    Arrow::arrow_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_arrow_adapter PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_arrow_adapter PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

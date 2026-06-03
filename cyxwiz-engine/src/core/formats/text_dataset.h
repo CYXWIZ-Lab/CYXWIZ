@@ -51,6 +51,7 @@ public:
 
     // Text-specific access
     const std::string& GetText(size_t index) const;
+    int GetLabel(size_t index) const;
     std::vector<int> GetTokenIds(size_t index) const;
 
     // Tokenizer access

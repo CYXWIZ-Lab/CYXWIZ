@@ -126,8 +126,12 @@ std::pair<std::vector<float>, int> TextDataset::GetItem(size_t index) const {
 
     auto token_ids = tokenizer_.Encode(texts_[index]);
 
-    // Convert int ids to float for Dataset interface compatibility
-    std::vector<float> data(token_ids.begin(), token_ids.end());
+    // Convert int ids to float for Dataset interface compatibility.
+    std::vector<float> data;
+    data.reserve(token_ids.size());
+    for (int id : token_ids) {
+        data.push_back(static_cast<float>(id));
+    }
 
     int label = config_.has_labels && index < labels_.size() ? labels_[index] : -1;
     return {data, label};
@@ -169,6 +173,10 @@ DatasetInfo TextDataset::GetInfo() const {
 const std::string& TextDataset::GetText(size_t index) const {
     static const std::string empty;
     return (index < texts_.size()) ? texts_[index] : empty;
+}
+
+int TextDataset::GetLabel(size_t index) const {
+    return (index < labels_.size()) ? labels_[index] : -1;
 }
 
 std::vector<int> TextDataset::GetTokenIds(size_t index) const {
@@ -397,7 +405,7 @@ void TextDataset::LoadJSON(const std::string& path) {
     // byte. JSONL lines start with '{', a JSON document starts with '[' or '{'
     // at file scope. Treat JSONL as the default when we see '{' because
     // picking the wrong parser there loses 99% of the rows.
-    char first = file.peek();
+    int first = file.peek();
     bool is_jsonl = (first == '{');
     file.seekg(0);
 
