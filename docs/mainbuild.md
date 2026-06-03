@@ -460,6 +460,47 @@ ctest --output-on-failure
 
 ---
 
+## Focused Windows Build/Audit Commands
+
+When working on a narrow engine change on Windows, use focused CMake/MSBuild
+commands instead of a full rebuild.
+
+### Compile-only engine audit
+
+```powershell
+cmake --build build --config Debug --target cyxwiz-engine -- /t:ClCompile /p:BuildProjectReferences=false /m:1 /v:minimal
+```
+
+- `cmake --build build`: uses the existing CMake build directory.
+- `--config Debug`: selects the Debug configuration for MSBuild generators.
+- `--target cyxwiz-engine`: builds only the desktop engine target.
+- `/t:ClCompile`: MSBuild compile-only target. It compiles C++ sources but
+  avoids the full link/post-build path.
+- `/p:BuildProjectReferences=false`: does not recursively build referenced
+  projects, keeping the audit focused on the target.
+- `/m:1`: uses one MSBuild worker for predictable, low-noise output.
+- `/v:minimal`: keeps MSBuild output compact while still showing errors.
+
+Use this when you only need to verify that touched engine files compile. Use a
+normal target build when you need a runnable executable.
+
+### Focused test target build
+
+```powershell
+cmake --build build --config Debug --target test_text_arrow_materializer -- /m:1 /v:minimal
+```
+
+This builds and links the named test executable so it can be run:
+
+```powershell
+build\bin\Debug\test_text_arrow_materializer.exe
+```
+
+Do not pass `/t:ClCompile` for tests when you need the `.exe`; compile-only
+does not produce a runnable test binary.
+
+---
+
 ## Quick Reference
 
 | Task | Command |
