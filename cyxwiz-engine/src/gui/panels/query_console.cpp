@@ -8,6 +8,67 @@
 
 namespace cyxwiz {
 
+namespace {
+
+bool FindMutationClause(const query::ASTNodePtr& node, query::ASTNodeType& mutation_type) {
+    if (!node) {
+        return false;
+    }
+
+    switch (node->type) {
+        case query::ASTNodeType::CreateClause:
+        case query::ASTNodeType::DeleteClause:
+        case query::ASTNodeType::SetClause:
+            mutation_type = node->type;
+            return true;
+        default:
+            break;
+    }
+
+    for (const auto& child : node->children) {
+        if (FindMutationClause(child, mutation_type)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+std::string MutationClauseName(query::ASTNodeType type) {
+    switch (type) {
+        case query::ASTNodeType::CreateClause:
+            return "CREATE";
+        case query::ASTNodeType::DeleteClause:
+            return "DELETE";
+        case query::ASTNodeType::SetClause:
+            return "SET";
+        default:
+            return "mutation";
+    }
+}
+
+query::QueryResult ValidateReadOnlyQuery(const std::string& query_text) {
+    query::Parser parser(query_text);
+    query::ASTNodePtr ast = parser.parse();
+    if (parser.hasError()) {
+        return query::QueryResult::makeError(
+            parser.getError(),
+            parser.getErrorLine(),
+            parser.getErrorColumn());
+    }
+
+    query::ASTNodeType mutation_type = query::ASTNodeType::Query;
+    if (FindMutationClause(ast, mutation_type)) {
+        return query::QueryResult::makeError(
+            "Query Console is read-only. " + MutationClauseName(mutation_type) +
+            " is disabled until graph mutation commands have undo integration.");
+    }
+
+    return query::QueryResult::makeSuccess();
+}
+
+} // namespace
+
 // Example queries for the dropdown
 const std::vector<QueryConsolePanel::ExampleQuery> QueryConsolePanel::example_queries_ = {
     {
@@ -150,6 +211,10 @@ void QueryConsolePanel::RenderToolbar() {
                 CopyResultsToClipboard();
             }
         }
+
+        ImGui::Separator();
+
+        ImGui::TextDisabled("Read-only");
 
         ImGui::Separator();
 
@@ -420,10 +485,17 @@ void QueryConsolePanel::ExecuteQuery(const std::string& query) {
         return;
     }
 
-    // Add to history
-    AddToHistory(query);
+    query::QueryResult validation = ValidateReadOnlyQuery(query);
+    if (!validation.success) {
+        current_result_ = validation;
+        has_result_ = true;
+        selected_row_ = -1;
+        spdlog::warn("Query rejected: {}", validation.error);
+        return;
+    }
 
     // Execute
+    AddToHistory(query);
     spdlog::info("Executing CyxQL query: {}", query);
     current_result_ = query::runQuery(*node_editor_, query);
     has_result_ = true;

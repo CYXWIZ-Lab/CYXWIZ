@@ -263,6 +263,13 @@ integration.
 **Next step:** start read-only query inspection before allowing graph
 mutation commands.
 
+**2026-06-03 update:** first read-only slice landed. Query Console now
+parses CyxQL before execution and rejects `CREATE`, `DELETE`, and `SET`
+clauses with a clear error instead of passing them to the executor.
+Read-only graph inspection queries continue to run through the existing
+CyxQL parser/executor path. Mutation commands remain deferred until they
+have graph mutation safety and undo integration.
+
 ### Properties panel generic parameter editor
 
 The generic parameter editor is still basic. Complex nodes should keep
