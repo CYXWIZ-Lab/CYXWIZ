@@ -1088,6 +1088,7 @@ add_executable(test_text_arrow_materializer
     tests/test_text_arrow_materializer.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/arrow_dataset.cpp
 )
 
 target_include_directories(test_text_arrow_materializer PRIVATE
@@ -1096,6 +1097,7 @@ target_include_directories(test_text_arrow_materializer PRIVATE
 
 target_link_libraries(test_text_arrow_materializer PRIVATE
     Arrow::arrow_shared
+    Parquet::parquet_shared
     imgui::imgui
     spdlog::spdlog
     fmt::fmt

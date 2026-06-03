@@ -1,10 +1,13 @@
 #include "../src/core/pipeline_materializer.h"
+#include "../src/core/arrow_dataset.h"
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 
 #include <arrow/api.h>
 
 #include <cstdlib>
+#include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -129,6 +132,31 @@ int main() {
     Check(table->GetColumnByName("y") != nullptr, "missing y label column");
     Check(table->GetColumnByName("text") == nullptr,
           "raw text column should not remain after tokenization");
+
+    const auto parquet_path =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_text_arrow_materializer.parquet";
+    std::remove(parquet_path.string().c_str());
+
+    cyxwiz::ArrowDataset tokenized_dataset(table, "tokenized_text");
+    Check(tokenized_dataset.ExportParquet(parquet_path.string()),
+          "tokenized table should export to Parquet");
+
+    auto reloaded = cyxwiz::ArrowDataset::FromParquet(
+        parquet_path.string(), "tokenized_text_reloaded");
+    Check(reloaded != nullptr, "exported Parquet should reload");
+    auto reloaded_table = reloaded->GetArrowTable();
+    Check(reloaded_table != nullptr, "reloaded table should not be null");
+    Check(reloaded_table->num_rows() == table->num_rows(),
+          "reloaded row count should match");
+    Check(reloaded_table->num_columns() == table->num_columns(),
+          "reloaded column count should match");
+    Check(reloaded_table->GetColumnByName("tok_0") != nullptr,
+          "reloaded table missing tok_0");
+    Check(reloaded_table->GetColumnByName("y") != nullptr,
+          "reloaded table missing y");
+
+    std::remove(parquet_path.string().c_str());
 
     std::cout << "Text Arrow materializer path passed\n";
     return 0;
