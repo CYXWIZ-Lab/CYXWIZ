@@ -215,7 +215,11 @@ Compact Apply-time audit is done. Deferred items remain:
   but only after a bounded worker/timeout design exists.
 - Text vocabulary coverage drill-down belongs in the richer text-node
   dialog/debugger flow, not the compact Apply audit.
-- More detailed audit issue drill-down UI remains pending.
+
+**Status 2026-06-03:** the DataInput Audit tab now renders
+current-session audit issues as a structured drill-down table with
+severity, issue code, detail text, and bounded examples instead of a
+flat string list.
 
 ### Local Debug and synthetic data expansion
 

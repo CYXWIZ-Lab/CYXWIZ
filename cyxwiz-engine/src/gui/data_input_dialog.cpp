@@ -28,6 +28,7 @@
 #include "../core/async_task_manager.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
+#include <cctype>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -2173,6 +2174,68 @@ int ReadIntParam(const gui::MLNode* node, const char* key, int fallback = 0) {
     }
 }
 
+std::string TrimCopy(std::string value) {
+    auto not_space = [](unsigned char c) {
+        return std::isspace(c) == 0;
+    };
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), not_space));
+    value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(), value.end());
+    return value;
+}
+
+std::vector<std::string> SplitAuditExamples(const std::string& value) {
+    std::vector<std::string> examples;
+    std::stringstream ss(value);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        item = TrimCopy(std::move(item));
+        if (!item.empty()) {
+            examples.push_back(std::move(item));
+        }
+    }
+    return examples;
+}
+
+struct AuditIssueView {
+    std::string severity = "info";
+    std::string code = "issue";
+    std::string message;
+    std::vector<std::string> examples;
+};
+
+AuditIssueView ParseAuditIssueLine(const std::string& line) {
+    AuditIssueView out;
+    out.message = line;
+
+    const size_t open = line.find(" [");
+    const size_t close = line.find("]: ", open == std::string::npos ? 0 : open);
+    if (open == std::string::npos || close == std::string::npos) {
+        return out;
+    }
+
+    out.severity = line.substr(0, open);
+    out.code = line.substr(open + 2, close - (open + 2));
+
+    std::string detail = line.substr(close + 3);
+    const std::string examples_marker = " Examples: ";
+    const size_t examples_pos = detail.find(examples_marker);
+    if (examples_pos != std::string::npos) {
+        out.examples = SplitAuditExamples(detail.substr(examples_pos + examples_marker.size()));
+        detail = detail.substr(0, examples_pos);
+    }
+    out.message = TrimCopy(std::move(detail));
+    return out;
+}
+
+ImVec4 AuditSeverityColor(const std::string& severity,
+                          const ImVec4& warn_color,
+                          const ImVec4& err_color,
+                          const ImVec4& ok_color) {
+    if (severity == "error") return err_color;
+    if (severity == "warning") return warn_color;
+    return ok_color;
+}
+
 }  // namespace
 
 void DataInputDialog::RenderAuditTab() {
@@ -2257,26 +2320,53 @@ void DataInputDialog::RenderAuditTab() {
     if (errors == 0 && warnings == 0) {
         ImGui::TextDisabled("Metadata and table-level audit checks found no issues.");
     } else {
-        ImGui::TextDisabled("Current audit issues:");
+        ImGui::TextDisabled("Current-session issue details:");
         ImGui::Spacing();
         if (audit_issue_lines_.empty()) {
             ImGui::TextDisabled("No issue details are available for this session.");
-        } else if (ImGui::BeginTable("DatasetAuditIssues", 1,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
-            ImVec2(0, 180.0f))) {
-            ImGui::TableSetupColumn("Issue", ImGuiTableColumnFlags_WidthStretch);
+        } else if (ImGui::BeginTable("DatasetAuditIssues", 3,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+            ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,
+            ImVec2(0, 240.0f))) {
+            ImGui::TableSetupColumn("Severity", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableSetupColumn("Code", ImGuiTableColumnFlags_WidthFixed, 210.0f);
+            ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableHeadersRow();
-            for (const auto& line : audit_issue_lines_) {
+
+            for (size_t i = 0; i < audit_issue_lines_.size(); ++i) {
+                const AuditIssueView issue = ParseAuditIssueLine(audit_issue_lines_[i]);
+                const ImVec4 severity_color =
+                    AuditSeverityColor(issue.severity, warn_color, err_color, ok_color);
+
+                ImGui::PushID(static_cast<int>(i));
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextWrapped("%s", line.c_str());
+                ImGui::TextColored(severity_color, "%s", issue.severity.c_str());
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextWrapped("%s", issue.code.c_str());
+
+                ImGui::TableSetColumnIndex(2);
+                const bool open = ImGui::TreeNodeEx(
+                    "issue",
+                    ImGuiTreeNodeFlags_SpanAvailWidth |
+                    ImGuiTreeNodeFlags_DefaultOpen,
+                    "%s", issue.message.c_str());
+                if (open) {
+                    if (!issue.examples.empty()) {
+                        ImGui::Spacing();
+                        ImGui::TextDisabled("Examples");
+                        for (const auto& example : issue.examples) {
+                            ImGui::BulletText("%s", example.c_str());
+                        }
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
             }
             ImGui::EndTable();
         }
     }
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Richer drill-down details are still pending.");
 }
 
 void DataInputDialog::RenderMLDatasetOptions() {
