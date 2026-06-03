@@ -152,7 +152,9 @@ prefers an Output node on the selected source-to-loss path.
 The compiled config now carries selected data source, loss, and optimizer
 node ids; runtime launch uses those ids for label-column lookup and
 legacy optimizer `epochs`/`batch_size` fallback instead of rescanning
-raw node order.
+raw node order. The legacy `TrainingExecutor` branch also uses the
+compiled dataset name for preprocessing and augmentation registry lookup,
+falling back to `DatasetHandle::GetName()` only for older callers.
 `test_graph_topology_utils` covers the helper behavior with a stale first
 DataInput, stale first DataLoader, reverse loss reachability, and a
 connected branch that does not reach the loss. The remaining
@@ -162,10 +164,10 @@ contract is pinned down so the next refactor does not mix behavior
 changes with file organization.
 
 **Still open for Priority 2:** runtime label/data flow and the
-TrainingExecutor legacy/external setup remain registry-driven in places
-and still need pin-walked ownership inside the executor. Whole-graph
-validation still audits all nodes, so stale disconnected training
-branches may remain a separate UX decision from compile extraction.
+TrainingExecutor external setup and epoch loop still need pin-walked
+ownership inside the executor. Whole-graph validation still audits all
+nodes, so stale disconnected training branches may remain a separate UX
+decision from compile extraction.
 
 ### Normalize in DataInput vs graph
 

@@ -192,7 +192,9 @@ void TrainingExecutor::Train(
             dataset_, batch_size, DatasetSplit::Validation, false, false, config_.num_workers);
 
         // Apply NEW preprocessing pipeline (if configured)
-        std::string dataset_name = dataset_.GetName();
+        const std::string dataset_name = !config_.dataset_name.empty()
+            ? config_.dataset_name
+            : dataset_.GetName();
         DataRegistry& registry = DataRegistry::Instance();
 
         if (registry.HasPreprocessingConfig(dataset_name)) {
@@ -221,9 +223,8 @@ void TrainingExecutor::Train(
         }
 
         // Load augmentation pipeline
-        std::string dataset_name_aug = dataset_.GetName();
-        if (registry.HasAugmentationPipeline(dataset_name_aug)) {
-            auto aug_pipeline = registry.GetAugmentationPipeline(dataset_name_aug);
+        if (registry.HasAugmentationPipeline(dataset_name)) {
+            auto aug_pipeline = registry.GetAugmentationPipeline(dataset_name);
             if (aug_pipeline) {
                 legacy_train_batcher->SetAugmentationPipeline(aug_pipeline);
                 legacy_train_batcher->SetApplyAugmentationOnTrain(true);
