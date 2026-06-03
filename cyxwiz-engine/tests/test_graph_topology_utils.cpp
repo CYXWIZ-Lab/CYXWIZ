@@ -41,12 +41,16 @@ int main() {
         Node(3, gui::NodeType::DataSplit, "active split"),
         Node(4, gui::NodeType::DataLoader, "active loader"),
         Node(5, gui::NodeType::Dense, "model"),
+        Node(6, gui::NodeType::CrossEntropyLoss, "loss"),
+        Node(7, gui::NodeType::Normalize, "stale connected branch"),
     };
 
     std::vector<gui::NodeLink> links = {
         Link(100, 2, 3),
         Link(101, 3, 4),
         Link(102, 4, 5),
+        Link(103, 5, 6),
+        Link(104, 2, 7),
     };
 
     Check(!cyxwiz::HasOutgoingLink(1, links),
@@ -59,6 +63,12 @@ int main() {
     Check(reachable.count(3) == 1, "active DataSplit should be reachable");
     Check(reachable.count(4) == 1, "active DataLoader should be reachable");
     Check(reachable.count(10) == 0, "stale DataLoader should not be reachable");
+
+    auto loss_ancestors = cyxwiz::CollectAncestorNodeIds(6, links);
+    Check(loss_ancestors.count(2) == 1, "active source should reach loss");
+    Check(loss_ancestors.count(5) == 1, "model should reach loss");
+    Check(loss_ancestors.count(7) == 0,
+          "stale connected branch should not reach loss");
 
     auto* split = cyxwiz::FindFirstReachableNodeOfType(
         nodes, reachable, gui::NodeType::DataSplit);

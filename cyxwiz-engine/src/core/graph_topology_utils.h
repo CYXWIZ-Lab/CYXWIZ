@@ -11,6 +11,10 @@ std::unordered_set<int> CollectReachableNodeIds(
     int source_node_id,
     const std::vector<gui::NodeLink>& links);
 
+std::unordered_set<int> CollectAncestorNodeIds(
+    int sink_node_id,
+    const std::vector<gui::NodeLink>& links);
+
 bool HasOutgoingLink(
     int node_id,
     const std::vector<gui::NodeLink>& links);

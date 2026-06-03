@@ -143,18 +143,22 @@ configuration: source selection now prefers a DataInput/DatasetInput that
 can reach a loss node, then falls back to connected/incomplete sources,
 and DataSplit/DataLoader extraction only reads nodes reachable from that
 selected source instead of the first matching node in raw node order.
+Compiler preprocessing/model extraction now uses the selected
+source-to-loss path instead of the full topological graph, so stale
+branches do not silently add preprocessing flags or model layers.
 `test_graph_topology_utils` covers the helper behavior with a stale first
-DataInput and stale first DataLoader. The remaining
+DataInput, stale first DataLoader, reverse loss reachability, and a
+connected branch that does not reach the loss. The remaining
 `TrainingExecutor` work is the legacy/external image/audio/text setup and
 the epoch loop topology; those should be split only after the graph
 contract is pinned down so the next refactor does not mix behavior
 changes with file organization.
 
-**Still open for Priority 2:** compiler preprocessing/model extraction
-still walks the full topological graph, so stale connected-but-unwanted
-branches need a separate contract decision before filtering. Runtime
-label/data flow and the TrainingExecutor legacy/external setup remain
-registry-driven in places and still need pin-walked ownership.
+**Still open for Priority 2:** runtime label/data flow and the
+TrainingExecutor legacy/external setup remain registry-driven in places
+and still need pin-walked ownership. Optimizer/output ownership should
+also be audited against the selected loss path before this priority is
+closed.
 
 ### Normalize in DataInput vs graph
 

@@ -123,6 +123,26 @@ size_t ParseSizeParam(const std::map<std::string, std::string>& params,
         return fallback;
     }
 }
+
+const gui::MLNode* FindFirstLossNodeInSet(
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& node_ids) {
+
+    for (const auto& node : nodes) {
+        if (IsLossNodeType(node.type) &&
+            node_ids.count(node.id) > 0) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+bool ContainsWhenFiltered(
+    const std::unordered_set<int>& node_ids,
+    int node_id) {
+
+    return node_ids.empty() || node_ids.count(node_id) > 0;
+}
 } // anonymous namespace
 
 TrainingConfiguration GraphCompiler::Compile(
@@ -137,7 +157,14 @@ TrainingConfiguration GraphCompiler::Compile(
     // at the first one). is_valid is determined at the end of Compile by
     // checking whether config.issues contains any Error-level entries.
     const gui::MLNode* dataset_node = FindDatasetInputNode(nodes, links);
-    const gui::MLNode* loss_node = FindLossNode(nodes);
+    const std::unordered_set<int> dataset_reachable =
+        dataset_node
+            ? CollectReachableNodeIds(dataset_node->id, links)
+            : std::unordered_set<int>{};
+    const gui::MLNode* loss_node = FindFirstLossNodeInSet(nodes, dataset_reachable);
+    if (!loss_node) {
+        loss_node = FindLossNode(nodes);
+    }
     const gui::MLNode* optimizer_node = FindOptimizerNode(nodes);
 
     if (nodes.empty()) {
@@ -314,11 +341,6 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
-    const std::unordered_set<int> dataset_reachable =
-        dataset_node
-            ? CollectReachableNodeIds(dataset_node->id, links)
-            : std::unordered_set<int>{};
-
     // Extract split ratios from the DataSplit node on the selected data path.
     if (const gui::MLNode* split_node = FindFirstReachableNodeOfType(
             nodes, dataset_reachable, gui::NodeType::DataSplit)) {
@@ -382,6 +404,16 @@ TrainingConfiguration GraphCompiler::Compile(
         spdlog::info("GraphCompiler: No DataLoader node - using defaults (batch_size=32, epochs=10, shuffle=true, drop_last=false)");
     }
 
+    std::unordered_set<int> training_path_ids;
+    if (dataset_node && loss_node) {
+        const auto loss_ancestors = CollectAncestorNodeIds(loss_node->id, links);
+        for (int node_id : dataset_reachable) {
+            if (loss_ancestors.count(node_id) > 0) {
+                training_path_ids.insert(node_id);
+            }
+        }
+    }
+
     // Phase 4 Time-Series detection. If the graph contains a
     // TimeSeriesWindow node, mark the config so the training dispatch
     // routes the Arrow batcher in regression mode (float labels, no
@@ -398,7 +430,8 @@ TrainingConfiguration GraphCompiler::Compile(
     // BuildSequentialFromConfig would construct Linear(1 -> hidden_units)
     // and crash at the first forward pass with a dimension mismatch.
     for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::TimeSeriesWindow) {
+        if (node.type == gui::NodeType::TimeSeriesWindow &&
+            ContainsWhenFiltered(training_path_ids, node.id)) {
             config.is_time_series = true;
             int input_width = 12;
             auto iw_it = node.parameters.find("input_width");
@@ -470,6 +503,16 @@ TrainingConfiguration GraphCompiler::Compile(
     for (int node_id : sorted_ids) {
         const gui::MLNode* node = FindNodeById(node_id, nodes);
         if (!node) continue;
+        const bool is_execution_node =
+            IsPreprocessing(node->type) ||
+            IsModelLayer(node->type) ||
+            IsActivation(node->type);
+        if (is_execution_node &&
+            !ContainsWhenFiltered(training_path_ids, node->id)) {
+            spdlog::debug("GraphCompiler: Skipping node '{}' outside selected training path",
+                          node->name);
+            continue;
+        }
 
         // Handle preprocessing nodes
         if (IsPreprocessing(node->type)) {
@@ -764,6 +807,9 @@ TrainingConfiguration GraphCompiler::Compile(
                 std::vector<int> topo = TopologicalSort(nodes, links);
                 bool seen_normalize = false;
                 for (int nid : topo) {
+                    if (!ContainsWhenFiltered(training_path_ids, nid)) {
+                        continue;
+                    }
                     const gui::MLNode* n = FindNodeById(nid, nodes);
                     if (!n) continue;
                     if (n->type == gui::NodeType::Normalize) {

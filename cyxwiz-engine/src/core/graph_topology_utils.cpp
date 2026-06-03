@@ -39,6 +39,40 @@ std::unordered_set<int> CollectReachableNodeIds(
     return visited;
 }
 
+std::unordered_set<int> CollectAncestorNodeIds(
+    int sink_node_id,
+    const std::vector<gui::NodeLink>& links) {
+
+    std::unordered_map<int, std::vector<int>> incoming;
+    incoming.reserve(links.size());
+    for (const auto& link : links) {
+        incoming[link.to_node].push_back(link.from_node);
+    }
+
+    std::unordered_set<int> visited;
+    std::queue<int> pending;
+    visited.insert(sink_node_id);
+    pending.push(sink_node_id);
+
+    while (!pending.empty()) {
+        const int current = pending.front();
+        pending.pop();
+
+        auto it = incoming.find(current);
+        if (it == incoming.end()) {
+            continue;
+        }
+
+        for (int previous : it->second) {
+            if (visited.insert(previous).second) {
+                pending.push(previous);
+            }
+        }
+    }
+
+    return visited;
+}
+
 bool HasOutgoingLink(
     int node_id,
     const std::vector<gui::NodeLink>& links) {
