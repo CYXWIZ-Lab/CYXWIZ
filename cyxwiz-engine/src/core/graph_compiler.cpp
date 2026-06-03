@@ -439,6 +439,15 @@ TrainingConfiguration GraphCompiler::Compile(
             optimizer_node = path_optimizer_node;
         }
     }
+    if (dataset_node) {
+        config.data_source_node_id = dataset_node->id;
+    }
+    if (loss_node) {
+        config.loss_node_id = loss_node->id;
+    }
+    if (optimizer_node) {
+        config.optimizer_node_id = optimizer_node->id;
+    }
 
     // Phase 4 Time-Series detection. If the graph contains a
     // TimeSeriesWindow node, mark the config so the training dispatch

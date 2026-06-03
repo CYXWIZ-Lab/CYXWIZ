@@ -149,6 +149,10 @@ branches do not silently add preprocessing flags or model layers.
 Optimizer extraction now prefers the supported optimizer reachable from
 the selected loss, and CrossEntropy output class-count extraction now
 prefers an Output node on the selected source-to-loss path.
+The compiled config now carries selected data source, loss, and optimizer
+node ids; runtime launch uses those ids for label-column lookup and
+legacy optimizer `epochs`/`batch_size` fallback instead of rescanning
+raw node order.
 `test_graph_topology_utils` covers the helper behavior with a stale first
 DataInput, stale first DataLoader, reverse loss reachability, and a
 connected branch that does not reach the loss. The remaining
@@ -159,9 +163,9 @@ changes with file organization.
 
 **Still open for Priority 2:** runtime label/data flow and the
 TrainingExecutor legacy/external setup remain registry-driven in places
-and still need pin-walked ownership. Whole-graph validation still audits
-all nodes, so stale disconnected training branches may remain a separate
-UX decision from compile extraction.
+and still need pin-walked ownership inside the executor. Whole-graph
+validation still audits all nodes, so stale disconnected training
+branches may remain a separate UX decision from compile extraction.
 
 ### Normalize in DataInput vs graph
 

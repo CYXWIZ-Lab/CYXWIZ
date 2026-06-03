@@ -111,6 +111,24 @@ gui::MLNode MakeTokenizerNode() {
     return node;
 }
 
+gui::MLNode MakeOptimizerNode(
+    int id,
+    const std::string& name,
+    const std::string& epochs,
+    const std::string& batch_size) {
+
+    gui::MLNode node;
+    node.id = id;
+    node.type = gui::NodeType::Adam;
+    node.category = gui::NodeCategory::Training;
+    node.name = name;
+    node.parameters = {
+        {"epochs", epochs},
+        {"batch_size", batch_size},
+    };
+    return node;
+}
+
 cyxwiz::TrainingConfiguration MakeTrainingConfig(
     const std::filesystem::path& checkpoint_dir) {
     cyxwiz::TrainingConfiguration config;
@@ -127,6 +145,8 @@ cyxwiz::TrainingConfiguration MakeTrainingConfig(
     config.shuffle = false;
     config.epochs = 1;
     config.batch_size = 2;
+    config.data_source_node_id = 1;
+    config.optimizer_node_id = 4;
     config.num_workers = 0;
     config.save_best_checkpoint = false;
     config.early_stopping_patience = 0;
@@ -188,8 +208,10 @@ int main() {
 
     std::vector<gui::MLNode> nodes = {
         MakeUnusedDataInputNode(),
+        MakeOptimizerNode(3, "Stale Adam", "99", "99"),
         MakeDataInputNode(),
         MakeTokenizerNode(),
+        MakeOptimizerNode(4, "Selected Adam", "", ""),
     };
     std::vector<gui::NodeLink> links = {
         {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},

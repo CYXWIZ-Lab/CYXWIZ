@@ -31,12 +31,21 @@ std::string FindDatasetName(const std::vector<MLNode>& nodes) {
 
 std::string FindLabelColumn(
     const std::vector<MLNode>& nodes,
-    const std::string& dataset_name) {
+    const std::string& dataset_name,
+    int data_source_node_id) {
 
     const MLNode* fallback_data_input = nullptr;
     for (const auto& node : nodes) {
         if (node.type != NodeType::DataInput) {
             continue;
+        }
+
+        if (node.id == data_source_node_id) {
+            auto label_it = node.parameters.find("label_column");
+            if (label_it != node.parameters.end() && !label_it->second.empty()) {
+                return label_it->second;
+            }
+            return {};
         }
 
         if (!fallback_data_input) {
@@ -74,6 +83,9 @@ void ApplyLegacyOptimizerLoopParams(
     int& epochs,
     int& batch_size) {
     for (const auto& node : nodes) {
+        if (config.optimizer_node_id >= 0 && node.id != config.optimizer_node_id) {
+            continue;
+        }
         if (node.type != NodeType::Adam &&
             node.type != NodeType::SGD &&
             node.type != NodeType::AdamW &&
@@ -177,7 +189,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         return result;
     }
 
-    std::string label_column = FindLabelColumn(nodes, dataset_name);
+    std::string label_column = FindLabelColumn(
+        nodes, dataset_name, config.data_source_node_id);
 
     int batch_size = config.batch_size;
     int epochs = config.epochs;

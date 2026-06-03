@@ -219,6 +219,7 @@ struct TrainingConfiguration {
 
     // Dataset configuration
     std::string dataset_name;           // Name of dataset in DataRegistry
+    int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
 
     // DataSplit configuration (from DataSplit node, or defaults if absent)
     float train_ratio = 0.8f;
@@ -271,10 +272,12 @@ struct TrainingConfiguration {
     bool is_time_series = false;
 
     // Loss function
+    int loss_node_id = -1;              // Selected loss node
     gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;
     std::map<std::string, std::string> loss_params;
 
     // Optimizer
+    int optimizer_node_id = -1;         // Selected supported optimizer node
     gui::NodeType optimizer_type = gui::NodeType::Adam;
     float learning_rate = 0.001f;
     float momentum = 0.9f;
