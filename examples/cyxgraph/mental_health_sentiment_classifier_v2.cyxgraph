@@ -1,9 +1,19 @@
 {
   "id": "mental_health_sentiment_classifier_v2",
   "name": "Mental Health Sentiment Classifier (v2 - regularized)",
-  "description": "Regularized variant of the 7-class mental health sentiment classifier. Two goals versus v1: (1) exercise the Phase 3 text preprocessing override path by placing explicit TextTokenizer / TextVocabulary / TextPadding nodes in the graph so the compiler's extractors run (v1 relies on the DataInput dialog defaults, which log as 'text preprocessing uses dialog defaults'); (2) attack the overfitting observed in v1 (train acc 89.5% / val acc 64.65% / val_loss rising from epoch 5) by halving model capacity. Changes: vocab tightened from 20000→10000 via TextVocabulary override (min_freq raised 2→5), Embedding num_embeddings matched to the tighter vocab (640K params instead of 1.28M), dense head collapsed from Dense(8192→256)→Dense(256→64)→Dense(64→7) to Dense(8192→128)→Dense(128→7) killing ~1M params, dropout bumped 0.4→0.5, learning rate lowered 5e-4→2e-4 for stabler convergence on a smaller head, and epochs capped at 8 (v1 val_loss minimum was at epoch 4 — anything past ~epoch 6 was pure overfit). Expected behavior: lower peak train acc (~75-80%), slightly better or comparable val acc (~65-68%), and a val_loss curve that doesn't diverge from train_loss as aggressively. Dataset file unchanged: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv with columns 'statement' and 'status'.",
+  "description": "Regularized variant of the 7-class mental health sentiment classifier. This graph exercises the current Arrow text path: DataInput raw text is materialized through TextTokenizer, TextVocabulary and TextPadding fold their params into the tokenizer, and Data plus Labels pins remain explicit through split, loader, loss, and optimizer. Dataset file unchanged: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv with columns statement and status.",
   "category": "Training Pipeline",
-  "tags": ["text", "sentiment", "mental-health", "nlp", "classification", "kaggle", "training", "v2", "regularized"],
+  "tags": [
+    "text",
+    "sentiment",
+    "mental-health",
+    "nlp",
+    "classification",
+    "kaggle",
+    "training",
+    "v2",
+    "regularized"
+  ],
   "parameters": [
     {
       "name": "batch_size",
@@ -17,7 +27,7 @@
       "name": "learning_rate",
       "type": "float",
       "default_value": "0.0002",
-      "description": "Adam learning rate — lowered from v1's 5e-4 to 2e-4 to stabilize training on the smaller head",
+      "description": "Adam learning rate --- lowered from v1's 5e-4 to 2e-4 to stabilize training on the smaller head",
       "min_value": "0.00001",
       "max_value": "0.01"
     },
@@ -25,7 +35,7 @@
       "name": "epochs",
       "type": "int",
       "default_value": "8",
-      "description": "Number of training epochs — capped at 8 because v1's val_loss minimum was at epoch 4 and rose monotonically afterward",
+      "description": "Number of training epochs --- capped at 8 because v1's val_loss minimum was at epoch 4 and rose monotonically afterward",
       "min_value": "1",
       "max_value": "200"
     },
@@ -49,7 +59,7 @@
       "name": "vocab_size",
       "type": "int",
       "default_value": "10000",
-      "description": "Tightened vocabulary cap — halved from v1's 20000 to cut embedding params from 1.28M to 640K. Rare-word pruning is tightened via min_freq below",
+      "description": "Tightened vocabulary cap --- halved from v1's 20000 to cut embedding params from 1.28M to 640K. Rare-word pruning is tightened via min_freq below",
       "min_value": "1000",
       "max_value": "50000"
     },
@@ -73,51 +83,316 @@
       "name": "dropout_rate",
       "type": "float",
       "default_value": "0.5",
-      "description": "Regularization strength — bumped from v1's 0.4 for stronger regularization on the overfitting-prone dense head",
+      "description": "Regularization strength --- bumped from v1's 0.4 for stronger regularization on the overfitting-prone dense head",
       "min_value": "0.0",
       "max_value": "0.7"
     }
   ],
   "template": {
     "nodes": [
-      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 300], "params": {"source_type": "file", "file_category": "text", "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv", "text_column": "statement", "text_label_column": "status", "text_tokenizer_type": "1", "text_max_length": "$max_length", "text_lowercase": "true", "text_min_freq": "2", "text_max_vocab_size": "20000"}},
-
-      {"id": "text_tokenizer", "type": "TextTokenizer", "name": "Tokenizer (word)", "pos": [250, 300], "params": {"tokenizer_type": "1", "max_length": "$max_length", "lowercase": "true", "min_freq": "$min_word_freq", "max_vocab_size": "$vocab_size"}},
-      {"id": "text_vocab", "type": "TextVocabulary", "name": "Vocabulary 10k", "pos": [500, 300], "params": {"min_freq": "$min_word_freq", "max_vocab_size": "$vocab_size"}},
-      {"id": "text_padding", "type": "TextPadding", "name": "Padding (post, 0)", "pos": [750, 300], "params": {"max_length": "$max_length", "pad_value": "0"}},
-
-      {"id": "data_split", "type": "DataSplit", "name": "Stratified Split", "pos": [1000, 300], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "stratified": "true", "seed": "42"}},
-      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [1250, 300], "params": {"batch_size": "$batch_size", "epochs": "$epochs", "shuffle": "true", "seed": "42", "validation_freq": "1"}},
-
-      {"id": "embedding", "type": "Embedding", "name": "Embedding 10k x N", "pos": [1500, 300], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$embedding_dim", "padding_idx": "0"}},
-
-      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [1750, 300]},
-
-      {"id": "fc1", "type": "Dense", "name": "Dense 128", "pos": [2000, 300], "params": {"units": "128"}},
-      {"id": "relu1", "type": "ReLU", "name": "ReLU", "pos": [2250, 300]},
-      {"id": "drop1", "type": "Dropout", "name": "Dropout", "pos": [2500, 300], "params": {"rate": "$dropout_rate"}},
-
-      {"id": "fc_out", "type": "Dense", "name": "Dense N", "pos": [2750, 300], "params": {"units": "$num_classes"}},
-
-      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [3000, 300]},
-      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [3250, 300], "params": {"learning_rate": "$learning_rate"}},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [3500, 300], "params": {"classes": "$num_classes"}}
+      {
+        "id": "data_input",
+        "type": "DataInput",
+        "name": "Data Input",
+        "pos": [
+          0,
+          300
+        ],
+        "params": {
+          "source_type": "file",
+          "file_category": "text",
+          "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+          "text_column": "statement",
+          "text_label_column": "status",
+          "text_tokenizer_type": "1",
+          "text_max_length": "$max_length",
+          "text_lowercase": "true",
+          "text_min_freq": "2",
+          "text_max_vocab_size": "20000"
+        }
+      },
+      {
+        "id": "text_tokenizer",
+        "type": "TextTokenizer",
+        "name": "Tokenizer (word)",
+        "pos": [
+          250,
+          300
+        ],
+        "params": {
+          "tokenizer_type": "1",
+          "max_length": "$max_length",
+          "lowercase": "true",
+          "min_freq": "$min_word_freq",
+          "max_vocab_size": "$vocab_size",
+          "text_col": "statement",
+          "label_col": "status",
+          "min_word_freq": "$min_word_freq"
+        }
+      },
+      {
+        "id": "text_vocab",
+        "type": "TextVocabulary",
+        "name": "Vocabulary 10k",
+        "pos": [
+          500,
+          300
+        ],
+        "params": {
+          "min_freq": "$min_word_freq",
+          "max_vocab_size": "$vocab_size"
+        }
+      },
+      {
+        "id": "text_padding",
+        "type": "TextPadding",
+        "name": "Padding (post, 0)",
+        "pos": [
+          750,
+          300
+        ],
+        "params": {
+          "max_length": "$max_length",
+          "pad_value": "0"
+        }
+      },
+      {
+        "id": "data_split",
+        "type": "DataSplit",
+        "name": "Stratified Split",
+        "pos": [
+          1000,
+          300
+        ],
+        "params": {
+          "train_ratio": "0.8",
+          "val_ratio": "0.1",
+          "test_ratio": "0.1",
+          "stratified": "true",
+          "seed": "42"
+        }
+      },
+      {
+        "id": "data_loader",
+        "type": "DataLoader",
+        "name": "DataLoader",
+        "pos": [
+          1250,
+          300
+        ],
+        "params": {
+          "batch_size": "$batch_size",
+          "epochs": "$epochs",
+          "shuffle": "true",
+          "seed": "42",
+          "validation_freq": "1"
+        }
+      },
+      {
+        "id": "embedding",
+        "type": "Embedding",
+        "name": "Embedding 10k x N",
+        "pos": [
+          1500,
+          300
+        ],
+        "params": {
+          "num_embeddings": "$vocab_size",
+          "embedding_dim": "$embedding_dim",
+          "padding_idx": "0"
+        }
+      },
+      {
+        "id": "flatten",
+        "type": "Flatten",
+        "name": "Flatten",
+        "pos": [
+          1750,
+          300
+        ]
+      },
+      {
+        "id": "fc1",
+        "type": "Dense",
+        "name": "Dense 128",
+        "pos": [
+          2000,
+          300
+        ],
+        "params": {
+          "units": "128"
+        }
+      },
+      {
+        "id": "relu1",
+        "type": "ReLU",
+        "name": "ReLU",
+        "pos": [
+          2250,
+          300
+        ]
+      },
+      {
+        "id": "drop1",
+        "type": "Dropout",
+        "name": "Dropout",
+        "pos": [
+          2500,
+          300
+        ],
+        "params": {
+          "rate": "$dropout_rate"
+        }
+      },
+      {
+        "id": "fc_out",
+        "type": "Dense",
+        "name": "Dense N",
+        "pos": [
+          2750,
+          300
+        ],
+        "params": {
+          "units": "$num_classes"
+        }
+      },
+      {
+        "id": "loss",
+        "type": "CrossEntropyLoss",
+        "name": "CrossEntropy",
+        "pos": [
+          3000,
+          300
+        ]
+      },
+      {
+        "id": "optimizer",
+        "type": "Adam",
+        "name": "Adam",
+        "pos": [
+          3250,
+          300
+        ],
+        "params": {
+          "learning_rate": "$learning_rate"
+        }
+      },
+      {
+        "id": "output",
+        "type": "Output",
+        "name": "Output",
+        "pos": [
+          3500,
+          300
+        ],
+        "params": {
+          "classes": "$num_classes"
+        }
+      }
     ],
     "links": [
-      {"from": "data_input", "to": "text_tokenizer"},
-      {"from": "text_tokenizer", "to": "text_vocab"},
-      {"from": "text_vocab", "to": "text_padding"},
-      {"from": "text_padding", "to": "data_split"},
-      {"from": "data_split", "to": "data_loader"},
-      {"from": "data_loader", "to": "embedding"},
-      {"from": "embedding", "to": "flatten"},
-      {"from": "flatten", "to": "fc1"},
-      {"from": "fc1", "to": "relu1"},
-      {"from": "relu1", "to": "drop1"},
-      {"from": "drop1", "to": "fc_out"},
-      {"from": "fc_out", "to": "loss"},
-      {"from": "loss", "to": "optimizer"},
-      {"from": "optimizer", "to": "output"}
+      {
+        "from": "data_input",
+        "to": "text_tokenizer",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "text_tokenizer",
+        "to": "text_vocab",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "text_vocab",
+        "to": "text_padding",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "text_padding",
+        "to": "data_split",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "data_input",
+        "to": "data_split",
+        "from_pin": 1,
+        "to_pin": 1
+      },
+      {
+        "from": "data_split",
+        "to": "data_loader",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "data_split",
+        "to": "data_loader",
+        "from_pin": 1,
+        "to_pin": 1
+      },
+      {
+        "from": "data_loader",
+        "to": "embedding",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "embedding",
+        "to": "flatten",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "flatten",
+        "to": "fc1",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "fc1",
+        "to": "relu1",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "relu1",
+        "to": "drop1",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "drop1",
+        "to": "fc_out",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "fc_out",
+        "to": "loss",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "data_loader",
+        "to": "loss",
+        "from_pin": 1,
+        "to_pin": 1
+      },
+      {
+        "from": "loss",
+        "to": "optimizer",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "optimizer",
+        "to": "output",
+        "from_pin": 0,
+        "to_pin": 0
+      }
     ]
   }
 }

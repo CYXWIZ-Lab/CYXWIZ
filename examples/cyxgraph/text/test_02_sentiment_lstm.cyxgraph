@@ -1,9 +1,18 @@
 {
   "id": "mental_health_sentiment_lstm",
-  "name": "Mental Health Sentiment — LSTM Classifier (smoke test)",
-  "description": "First end-to-end text + LSTM smoke test for CyxWiz. Purpose is to exercise the LSTMModule / training_executor LSTM case / Embedding → LSTM shape lookahead plumbing added 2026-04-15 — not to beat v2's accuracy. Architecture: Embedding(10000 x 64) → LSTM(in=64, hidden=128, return_sequences=false) → Dense(128→64) → ReLU → Dropout(0.3) → Dense(64→7). The LSTM's last-timestep reduction produces [batch, 128] directly, so no Flatten node is needed between LSTM and the Dense head — different from v1/v2 which flatten the full [batch, seq_len, embed_dim] tensor. The Embedding case in training_executor.cpp looks ahead one step and, when the next layer is LSTM/GRU/RNN, keeps current_input_size = embedding_dim (64) instead of multiplying it by seq_len — so LSTM sees the correct per-timestep feature count. Compared against v2 (Embedding → Flatten → Dense(128) → Dense(7)) we expect similar or worse val acc because LSTM learns its own features from scratch over only 8 epochs on 42k samples, but the goal is 'does it train without crashing' — anything above random (~14%) validates the plumbing. Dataset file unchanged: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv.",
+  "name": "Mental Health Sentiment - LSTM Classifier (smoke test)",
+  "description": "End-to-end text plus LSTM smoke test. This graph exercises the current Arrow text path: DataInput raw text is materialized through TextTokenizer, TextVocabulary and TextPadding fold their params into the tokenizer, and the tokenized sequence feeds Embedding -> LSTM -> Dense. Dataset file unchanged: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv.",
   "category": "Training Pipeline",
-  "tags": ["text", "sentiment", "mental-health", "nlp", "classification", "lstm", "smoke-test", "training"],
+  "tags": [
+    "text",
+    "sentiment",
+    "mental-health",
+    "nlp",
+    "classification",
+    "lstm",
+    "smoke-test",
+    "training"
+  ],
   "parameters": [
     {
       "name": "batch_size",
@@ -17,7 +26,7 @@
       "name": "learning_rate",
       "type": "float",
       "default_value": "0.0005",
-      "description": "Adam learning rate — slightly higher than v2's 2e-4 because LSTM typically needs more gradient signal to learn recurrent dynamics from scratch",
+      "description": "Adam learning rate --- slightly higher than v2's 2e-4 because LSTM typically needs more gradient signal to learn recurrent dynamics from scratch",
       "min_value": "0.00001",
       "max_value": "0.01"
     },
@@ -25,7 +34,7 @@
       "name": "epochs",
       "type": "int",
       "default_value": "4",
-      "description": "Number of training epochs — capped at 4 for a smoke test; the goal is to verify the plumbing works, not reach convergence",
+      "description": "Number of training epochs --- capped at 4 for a smoke test; the goal is to verify the plumbing works, not reach convergence",
       "min_value": "1",
       "max_value": "200"
     },
@@ -41,7 +50,7 @@
       "name": "embedding_dim",
       "type": "int",
       "default_value": "64",
-      "description": "Token embedding vector size — this becomes LSTM's input_size per timestep",
+      "description": "Token embedding vector size --- this becomes LSTM's input_size per timestep",
       "min_value": "8",
       "max_value": "512"
     },
@@ -49,7 +58,7 @@
       "name": "lstm_hidden",
       "type": "int",
       "default_value": "128",
-      "description": "LSTM hidden state size — this becomes the feature count fed to the Dense head",
+      "description": "LSTM hidden state size --- this becomes the feature count fed to the Dense head",
       "min_value": "8",
       "max_value": "1024"
     },
@@ -88,44 +97,315 @@
   ],
   "template": {
     "nodes": [
-      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 300], "params": {"source_type": "file", "file_category": "text", "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv", "text_column": "statement", "text_label_column": "status", "text_tokenizer_type": "1", "text_max_length": "$max_length", "text_lowercase": "true", "text_min_freq": "2", "text_max_vocab_size": "20000"}},
-
-      {"id": "text_tokenizer", "type": "TextTokenizer", "name": "Tokenizer (word)", "pos": [250, 300], "params": {"tokenizer_type": "1", "max_length": "$max_length", "lowercase": "true", "min_freq": "$min_word_freq", "max_vocab_size": "$vocab_size"}},
-      {"id": "text_vocab", "type": "TextVocabulary", "name": "Vocabulary 10k", "pos": [500, 300], "params": {"min_freq": "$min_word_freq", "max_vocab_size": "$vocab_size"}},
-      {"id": "text_padding", "type": "TextPadding", "name": "Padding (post, 0)", "pos": [750, 300], "params": {"max_length": "$max_length", "pad_value": "0"}},
-
-      {"id": "data_split", "type": "DataSplit", "name": "Stratified Split", "pos": [1000, 300], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "stratified": "true", "seed": "42"}},
-      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [1250, 300], "params": {"batch_size": "$batch_size", "epochs": "$epochs", "shuffle": "true", "seed": "42", "validation_freq": "1"}},
-
-      {"id": "embedding", "type": "Embedding", "name": "Embedding 10k x 64", "pos": [1500, 300], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$embedding_dim", "padding_idx": "0"}},
-
-      {"id": "lstm", "type": "LSTM", "name": "LSTM 128 (last)", "pos": [1750, 300], "params": {"hidden_size": "$lstm_hidden", "num_layers": "1", "bidirectional": "false", "return_sequences": "false"}},
-
-      {"id": "fc1", "type": "Dense", "name": "Dense 64", "pos": [2000, 300], "params": {"units": "64"}},
-      {"id": "relu1", "type": "ReLU", "name": "ReLU", "pos": [2250, 300]},
-      {"id": "drop1", "type": "Dropout", "name": "Dropout", "pos": [2500, 300], "params": {"rate": "$dropout_rate"}},
-
-      {"id": "fc_out", "type": "Dense", "name": "Dense N", "pos": [2750, 300], "params": {"units": "$num_classes"}},
-
-      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [3000, 300]},
-      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [3250, 300], "params": {"learning_rate": "$learning_rate"}},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [3500, 300], "params": {"classes": "$num_classes"}}
+      {
+        "id": "data_input",
+        "type": "DataInput",
+        "name": "Data Input",
+        "pos": [
+          0,
+          300
+        ],
+        "params": {
+          "source_type": "file",
+          "file_category": "text",
+          "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+          "text_column": "statement",
+          "text_label_column": "status",
+          "text_tokenizer_type": "1",
+          "text_max_length": "$max_length",
+          "text_lowercase": "true",
+          "text_min_freq": "2",
+          "text_max_vocab_size": "20000"
+        }
+      },
+      {
+        "id": "text_tokenizer",
+        "type": "TextTokenizer",
+        "name": "Tokenizer (word)",
+        "pos": [
+          250,
+          300
+        ],
+        "params": {
+          "tokenizer_type": "1",
+          "max_length": "$max_length",
+          "lowercase": "true",
+          "min_freq": "$min_word_freq",
+          "max_vocab_size": "$vocab_size",
+          "text_col": "statement",
+          "label_col": "status",
+          "min_word_freq": "$min_word_freq"
+        }
+      },
+      {
+        "id": "text_vocab",
+        "type": "TextVocabulary",
+        "name": "Vocabulary 10k",
+        "pos": [
+          500,
+          300
+        ],
+        "params": {
+          "min_freq": "$min_word_freq",
+          "max_vocab_size": "$vocab_size"
+        }
+      },
+      {
+        "id": "text_padding",
+        "type": "TextPadding",
+        "name": "Padding (post, 0)",
+        "pos": [
+          750,
+          300
+        ],
+        "params": {
+          "max_length": "$max_length",
+          "pad_value": "0"
+        }
+      },
+      {
+        "id": "data_split",
+        "type": "DataSplit",
+        "name": "Stratified Split",
+        "pos": [
+          1000,
+          300
+        ],
+        "params": {
+          "train_ratio": "0.8",
+          "val_ratio": "0.1",
+          "test_ratio": "0.1",
+          "stratified": "true",
+          "seed": "42"
+        }
+      },
+      {
+        "id": "data_loader",
+        "type": "DataLoader",
+        "name": "DataLoader",
+        "pos": [
+          1250,
+          300
+        ],
+        "params": {
+          "batch_size": "$batch_size",
+          "epochs": "$epochs",
+          "shuffle": "true",
+          "seed": "42",
+          "validation_freq": "1"
+        }
+      },
+      {
+        "id": "embedding",
+        "type": "Embedding",
+        "name": "Embedding 10k x 64",
+        "pos": [
+          1500,
+          300
+        ],
+        "params": {
+          "num_embeddings": "$vocab_size",
+          "embedding_dim": "$embedding_dim",
+          "padding_idx": "0"
+        }
+      },
+      {
+        "id": "lstm",
+        "type": "LSTM",
+        "name": "LSTM 128 (last)",
+        "pos": [
+          1750,
+          300
+        ],
+        "params": {
+          "hidden_size": "$lstm_hidden",
+          "num_layers": "1",
+          "bidirectional": "false",
+          "return_sequences": "false"
+        }
+      },
+      {
+        "id": "fc1",
+        "type": "Dense",
+        "name": "Dense 64",
+        "pos": [
+          2000,
+          300
+        ],
+        "params": {
+          "units": "64"
+        }
+      },
+      {
+        "id": "relu1",
+        "type": "ReLU",
+        "name": "ReLU",
+        "pos": [
+          2250,
+          300
+        ]
+      },
+      {
+        "id": "drop1",
+        "type": "Dropout",
+        "name": "Dropout",
+        "pos": [
+          2500,
+          300
+        ],
+        "params": {
+          "rate": "$dropout_rate"
+        }
+      },
+      {
+        "id": "fc_out",
+        "type": "Dense",
+        "name": "Dense N",
+        "pos": [
+          2750,
+          300
+        ],
+        "params": {
+          "units": "$num_classes"
+        }
+      },
+      {
+        "id": "loss",
+        "type": "CrossEntropyLoss",
+        "name": "CrossEntropy",
+        "pos": [
+          3000,
+          300
+        ]
+      },
+      {
+        "id": "optimizer",
+        "type": "Adam",
+        "name": "Adam",
+        "pos": [
+          3250,
+          300
+        ],
+        "params": {
+          "learning_rate": "$learning_rate"
+        }
+      },
+      {
+        "id": "output",
+        "type": "Output",
+        "name": "Output",
+        "pos": [
+          3500,
+          300
+        ],
+        "params": {
+          "classes": "$num_classes"
+        }
+      }
     ],
     "links": [
-      {"from": "data_input", "to": "text_tokenizer"},
-      {"from": "text_tokenizer", "to": "text_vocab"},
-      {"from": "text_vocab", "to": "text_padding"},
-      {"from": "text_padding", "to": "data_split"},
-      {"from": "data_split", "to": "data_loader"},
-      {"from": "data_loader", "to": "embedding"},
-      {"from": "embedding", "to": "lstm"},
-      {"from": "lstm", "to": "fc1"},
-      {"from": "fc1", "to": "relu1"},
-      {"from": "relu1", "to": "drop1"},
-      {"from": "drop1", "to": "fc_out"},
-      {"from": "fc_out", "to": "loss"},
-      {"from": "loss", "to": "optimizer"},
-      {"from": "optimizer", "to": "output"}
+      {
+        "from": "data_input",
+        "to": "text_tokenizer",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "text_tokenizer",
+        "to": "text_vocab",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "text_vocab",
+        "to": "text_padding",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "text_padding",
+        "to": "data_split",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "data_input",
+        "to": "data_split",
+        "from_pin": 1,
+        "to_pin": 1
+      },
+      {
+        "from": "data_split",
+        "to": "data_loader",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "data_split",
+        "to": "data_loader",
+        "from_pin": 1,
+        "to_pin": 1
+      },
+      {
+        "from": "data_loader",
+        "to": "embedding",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "embedding",
+        "to": "lstm",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "lstm",
+        "to": "fc1",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "fc1",
+        "to": "relu1",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "relu1",
+        "to": "drop1",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "drop1",
+        "to": "fc_out",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "fc_out",
+        "to": "loss",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "data_loader",
+        "to": "loss",
+        "from_pin": 1,
+        "to_pin": 1
+      },
+      {
+        "from": "loss",
+        "to": "optimizer",
+        "from_pin": 0,
+        "to_pin": 0
+      },
+      {
+        "from": "optimizer",
+        "to": "output",
+        "from_pin": 0,
+        "to_pin": 0
+      }
     ]
   }
 }

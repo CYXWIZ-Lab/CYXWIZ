@@ -81,6 +81,14 @@ operators. `TextPadding.pad_value` remains fixed to the tokenizer PAD id
 TextPadding into `TrainingConfiguration::text_preprocessing`; it only
 recognizes them as preprocessing nodes so they do not compile as model
 layers. Text node validation now reads node params directly in preflight.
+Saved text smoke graph templates `test_01`, `v1`, `v2`, and
+`test_02_lstm` were updated to the current contract: clean ASCII JSON,
+explicit Data/Labels pin indices, canonical `TextTokenizer` Arrow params
+(`text_col`, `label_col`, `min_word_freq`), and no stale extractor
+wording. `test_text_smoke_graph_patterns` now validates those templates
+load as known node types, keep required pins connected, route label flow
+to loss targets, route model predictions to loss predictions, route loss
+to optimizer, and keep tokenizer params complete.
 
 **What remains:**
 - Run a GUI/runtime smoke graph for one minimal text training launch
@@ -88,12 +96,10 @@ layers. Text node validation now reads node params directly in preflight.
   smoke, worker-thread Arrow text smoke, runtime label handoff, and
   Local Debug Smoke Run materialized Arrow path are covered; this
   remaining item is the full GUI button launch path.
-- Update and rerun existing text smoke graphs:
-  `test_01`, `v1`, `v2`, and `test_02_lstm`.
 
-**Sweet spot for next slice:** remove the legacy graph compiler text
-extractors in a separate cleanup commit, then run GUI/runtime and saved
-graph smoke coverage.
+**Sweet spot for next slice:** run one full GUI button-launch text
+training smoke against the updated saved graph templates, then close the
+Text Fix B item if no GUI-only regression appears.
 
 ## Priority 2 - Graph Honesty And Runtime Contracts
 
