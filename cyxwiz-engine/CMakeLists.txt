@@ -189,6 +189,7 @@ set(ENGINE_SOURCES
     src/core/formats/timeseries_dataset.cpp
     src/core/formats/audio_dataset.cpp
     src/core/gym_connector.cpp
+    src/gui/graph_training_launcher.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_clipboard.cpp
@@ -1150,6 +1151,57 @@ if(WIN32)
 endif()
 
 set_target_properties(test_text_arrow_training_launch PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Text GUI Training Launch Helper =====
+add_executable(test_text_gui_training_launch
+    tests/test_text_gui_training_launch.cpp
+    src/gui/graph_training_launcher.cpp
+    src/core/pipeline_materializer.cpp
+    src/core/pipeline_table_materializer.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
+    src/core/model_builder.cpp
+    src/core/data_registry.cpp
+    src/core/data_registry_config.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_base.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/datasets/kaggle_dataset.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/datasets/streaming_dataset.cpp
+    src/core/image_utils.cpp
+    src/plotting/stb_image_impl.cpp
+    src/plugin/registries/plugin_data_loader_registry.cpp
+)
+
+target_include_directories(test_text_gui_training_launch PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${Stb_INCLUDE_DIR}
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+target_link_libraries(test_text_gui_training_launch PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    ${OpenCV_LIBS}
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_gui_training_launch PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_gui_training_launch PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

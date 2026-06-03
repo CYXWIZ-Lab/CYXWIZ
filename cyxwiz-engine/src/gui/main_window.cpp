@@ -9,6 +9,7 @@
 
 #include "main_window.h"
 #include "loaders/data_loader.h"
+#include "graph_training_launcher.h"
 #include "node_editor.h"
 #include "console.h"
 #include "viewport.h"
@@ -137,7 +138,6 @@
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
 #include "../core/data_registry.h"
-#include "../core/label_column_resolver.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
 #include "../core/debug_executor.h"
@@ -148,7 +148,6 @@
 #include "../core/debug_recommendation_engine.h"
 #include "../core/training_trace_collector.h"
 #include "../core/debug_run_store.h"
-#include "../core/pipeline_materializer.h"
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
@@ -174,7 +173,7 @@ namespace gui {
 namespace {
 
 // FNV-1a 64-bit. Deterministic, dependency-free, and fine for detecting
-// "did the graph change" — this is not a cryptographic use.
+// "did the graph change" - this is not a cryptographic use.
 inline void HashFnvMix(uint64_t& h, const std::string& s) {
     for (unsigned char c : s) {
         h ^= c;
@@ -257,37 +256,6 @@ std::string MakeDebuggerRunId(uint64_t graph_hash) {
     std::ostringstream out;
     out << "local-debug-" << std::hex << graph_hash << "-" << std::dec << ms;
     return out.str();
-}
-
-std::string ResolveRuntimeArrowLabelColumn(
-    cyxwiz::DataRegistry& registry,
-    const std::string& dataset_name,
-    const std::string& requested_label) {
-    auto arrow_ds = registry.GetArrowDataset(dataset_name);
-    if (!arrow_ds) return requested_label;
-
-    auto schema = arrow_ds->GetSchema();
-    if (!schema) return requested_label;
-
-    if (!requested_label.empty() &&
-        schema->GetFieldByName(requested_label) != nullptr) {
-        return requested_label;
-    }
-
-    const int fallback_idx = cyxwiz::FindCommonLabelColumnIndex(schema);
-    if (fallback_idx < 0) {
-        return requested_label;
-    }
-
-    const std::string resolved = schema->field(fallback_idx)->name();
-    if (resolved != requested_label) {
-        spdlog::info("StartTrainingFromGraph: resolved Arrow label column "
-                     "'{}' -> '{}' for materialized dataset '{}'",
-                     requested_label.empty() ? "<auto>" : requested_label,
-                     resolved,
-                     dataset_name);
-    }
-    return resolved;
 }
 
 } // anonymous namespace
@@ -2519,7 +2487,7 @@ void MainWindow::Render() {
         ImGui::ShowDemoWindow(&show_demo_window_);
     }
 
-    // Render the Compile Graph result popup (triggered from Train → Compile Graph menu)
+    // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
 
     // Render tutorial overlay (on top of all panels)
@@ -3019,169 +2987,71 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         cyxwiz::GraphCompiler compiler;
         cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
 
-    if (!config.is_valid) {
-        // Defensive — should be unreachable because BuildCompileResult
-        // already validated. Keep as a safety net in case of races.
-        spdlog::error("Graph compilation failed (post-gate): {}", config.error_message);
-        return;
-    }
-
-    spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
-                 config.layers.size(), config.input_size, config.output_size);
-
-    // Get dataset from DataRegistry (loaded by DataInput node)
-    auto& registry = cyxwiz::DataRegistry::Instance();
-
-    // Find the dataset name from the DataInput node parameters
-    std::string dataset_name;
-    for (const auto& node : nodes) {
-        if (node.type == NodeType::DataInput || node.type == NodeType::DatasetInput) {
-            auto it = node.parameters.find("dataset_name");
-            if (it != node.parameters.end() && !it->second.empty()) {
-                dataset_name = it->second;
-                break;
-            }
-        }
-    }
-
-    if (dataset_name.empty()) {
-        spdlog::error("No dataset loaded. Please configure the Data Input node first.");
-        return;
-    }
-
-    // Get label column from DataInput node parameters
-    std::string label_column;
-    for (const auto& node : nodes) {
-        if (node.type == NodeType::DataInput) {
-            auto it = node.parameters.find("label_column");
-            if (it != node.parameters.end() && !it->second.empty()) {
-                label_column = it->second;
-            }
-            break;
-        }
-    }
-
-    // batch_size / epochs / shuffle / drop_last all live on the DataLoader
-    // node and are extracted by GraphCompiler into TrainingConfiguration.
-    // If no DataLoader is present, config holds the defaults (batch_size=32,
-    // epochs=10).
-    int batch_size = config.batch_size;
-    int epochs = config.epochs;
-
-    // Legacy: older project files put epochs/batch_size on the optimizer node.
-    // Honor those values if DataLoader didn't override them, and warn so users
-    // can migrate. New projects should set everything on DataLoader.
-    for (const auto& node : nodes) {
-        if (node.type == NodeType::Adam || node.type == NodeType::SGD ||
-            node.type == NodeType::AdamW || node.type == NodeType::RMSprop) {
-            auto ep_it = node.parameters.find("epochs");
-            if (ep_it != node.parameters.end() && !ep_it->second.empty()) {
-                if (config.has_data_loader) {
-                    spdlog::warn("epochs is set on the optimizer node AND a DataLoader node is "
-                                 "present - using DataLoader's value ({}). Remove epochs from "
-                                 "the optimizer node to clear this warning.", epochs);
-                } else {
-                    spdlog::warn("epochs on the optimizer node is deprecated - move it to a "
-                                 "DataLoader node. Honoring legacy value for now.");
-                    try { epochs = std::stoi(ep_it->second); } catch (...) {}
-                }
-            }
-            auto bs_it = node.parameters.find("batch_size");
-            if (bs_it != node.parameters.end() && !bs_it->second.empty()) {
-                if (config.has_data_loader) {
-                    spdlog::warn("batch_size is set on the optimizer node AND a DataLoader node is "
-                                 "present - using DataLoader's value ({}). Remove batch_size from "
-                                 "the optimizer node to clear this warning.", batch_size);
-                } else {
-                    spdlog::warn("batch_size on the optimizer node is deprecated - move it to a "
-                                 "DataLoader node. Honoring legacy value for now.");
-                    try { batch_size = std::stoi(bs_it->second); } catch (...) {}
-                }
-            }
-            break;
-        }
-    }
-
-    // Start training using TrainingManager
-    auto& tm = cyxwiz::TrainingManager::Instance();
-
-    // Set up node editor callback to update training animation and pin state.
-    // When training ends, flip all nodes' pin state to Trained so pins go
-    // solid green — the user's at-a-glance signal that the graph has been run.
-    auto node_editor_callback = [this](bool is_training) {
-        if (!node_editor_) return;
-        node_editor_->SetTrainingActive(is_training);
-        if (!is_training) {
-            node_editor_->SetAllNodesPinState(NodeEditor::NodePinState::Trained);
-        }
-    };
-
-    // Cat-1 IPipelineOperator pass — see docs/phase4_time_series_plan.md.
-    // Walks the graph from DataInput forward and applies any node that has a
-    // registered IPipelineOperator (e.g. LogTransform, TimeSeriesWindow). When
-    // at least one operator fires, the materializer registers the transformed
-    // table under "<source>__materialized" in DataRegistry; we swap dataset_name
-    // here so the dispatch below routes the batcher at the materialized variant.
-    // Pass-through is the universal default — graphs without Cat-1 operators
-    // and non-Arrow sources (Parquet/image/audio/text) see zero behavior change.
-    {
-        auto materialize_result = cyxwiz::PipelineMaterializer::Materialize(
-            nodes, links, registry, dataset_name);
-        if (!materialize_result.success) {
-            spdlog::error("StartTrainingFromGraph: materializer failed - {}",
-                          materialize_result.error_message);
+        if (!config.is_valid) {
+            // Defensive - should be unreachable because BuildCompileResult
+            // already validated. Keep as a safety net in case of races.
+            spdlog::error("Graph compilation failed (post-gate): {}", config.error_message);
             return;
         }
-        if (materialize_result.operators_applied > 0) {
-            spdlog::info("StartTrainingFromGraph: materialized '{}' -> '{}' ({} Cat-1 ops)",
-                         dataset_name, materialize_result.effective_dataset_name,
-                         materialize_result.operators_applied);
-            dataset_name = materialize_result.effective_dataset_name;
-            label_column = ResolveRuntimeArrowLabelColumn(
-                registry, dataset_name, label_column);
-        }
-    }
 
-    bool started = false;
+        spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
+                     config.layers.size(), config.input_size, config.output_size);
 
-    // Dispatch via loader polymorphism. GetByRegisteredDataset walks
-    // the registered loaders (Tabular/Text/Image/Audio) and returns
-    // the first one that owns `dataset_name`. Each loader's
-    // LaunchTraining pulls the right registry entry and hands it to
-    // the matching TrainingManager::StartTraining* method, preserving
-    // the per-category logging + config.input_size handling.
-    //
-    // Tabular covers both Arrow in-memory (default fast path) and
-    // Parquet disk-backed (LoadTabularCSV auto-detect); the loader
-    // picks between them internally.
-    if (auto* loader = cyxwiz::loaders::GetByRegisteredDataset(dataset_name)) {
-        started = loader->LaunchTraining(
-            std::move(config), dataset_name, label_column,
-            epochs, batch_size,
-            training_plot_panel_, node_editor_callback);
-    } else {
-        // Fall back to legacy DatasetHandle path — the pre-Arrow route
-        // kept for back-compat. No loader claims this registry shape.
-        auto dataset = registry.GetDataset(dataset_name);
-        if (!dataset) {
-            spdlog::error("Dataset '{}' not found in registry. Load data first.", dataset_name);
-            return;
-        }
-        spdlog::info("Starting legacy training: dataset={}, epochs={}, batch_size={}",
-                     dataset_name, epochs, batch_size);
-        started = tm.StartTraining(
-            std::move(config), dataset, epochs, batch_size,
-            training_plot_panel_, node_editor_callback);
-    }
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        auto& tm = cyxwiz::TrainingManager::Instance();
 
-    if (started) {
-        spdlog::info("Training started successfully");
-        if (training_plot_panel_) {
-            training_plot_panel_->SetVisible(true);
+        // Set up node editor callback to update training animation and pin state.
+        // When training ends, flip all nodes' pin state to Trained so pins go
+        // solid green - the user's at-a-glance signal that the graph has been run.
+        auto node_editor_callback = [this](bool is_training) {
+            if (!node_editor_) return;
+            node_editor_->SetTrainingActive(is_training);
+            if (!is_training) {
+                node_editor_->SetAllNodesPinState(NodeEditor::NodePinState::Trained);
+            }
+        };
+
+        auto dispatch_training = [&registry, &tm](
+            cyxwiz::TrainingConfiguration dispatch_config,
+            const std::string& dataset_name,
+            const std::string& label_column,
+            int epochs,
+            int batch_size,
+            std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
+            std::function<void(bool)> callback) {
+
+            // Dispatch via loader polymorphism. GetByRegisteredDataset walks
+            // registered loaders and picks the one that owns the runtime dataset.
+            if (auto* loader = cyxwiz::loaders::GetByRegisteredDataset(dataset_name)) {
+                return loader->LaunchTraining(
+                    std::move(dispatch_config), dataset_name, label_column,
+                    epochs, batch_size, plot_panel, std::move(callback));
+            }
+
+            // Fall back to the legacy DatasetHandle path kept for back-compat.
+            auto dataset = registry.GetDataset(dataset_name);
+            if (!dataset) {
+                spdlog::error("Dataset '{}' not found in registry. Load data first.",
+                              dataset_name);
+                return false;
+            }
+            spdlog::info("Starting legacy training: dataset={}, epochs={}, batch_size={}",
+                         dataset_name, epochs, batch_size);
+            return tm.StartTraining(
+                std::move(dispatch_config), dataset, epochs, batch_size,
+                plot_panel, std::move(callback));
+        };
+
+        auto launch_result = StartGraphTrainingFromCompiledConfig(
+            nodes, links, std::move(config), registry, training_plot_panel_,
+            node_editor_callback, dispatch_training);
+
+        if (launch_result.started) {
+            spdlog::info("Training started successfully");
+            if (training_plot_panel_) {
+                training_plot_panel_->SetVisible(true);
+            }
         }
-    } else {
-        spdlog::error("Failed to start training - another training session may be active");
-    }
 
     } catch (const std::exception& e) {
         spdlog::error("StartTrainingFromGraph exception: {}", e.what());
@@ -3191,7 +3061,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
 }
 
 // ---------------------------------------------------------------------------
-// Compile Graph (dry-run) — validates and compiles the node graph without
+// Compile Graph (dry-run) - validates and compiles the node graph without
 // starting training, then shows the result in a modal popup. Lets users catch
 // config errors before committing to a full training run.
 // ---------------------------------------------------------------------------
@@ -3705,7 +3575,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         compile_result_success_ = config.is_valid;
 
         // Build the architecture summary text. Even when the graph has
-        // errors, the partial summary is informative — it shows what the
+        // errors, the partial summary is informative - it shows what the
         // compiler managed to extract before hitting issues.
         std::ostringstream out;
         out << "Layers:          " << config.layers.size() << "\n";
@@ -3915,7 +3785,7 @@ void MainWindow::RenderCompileResultPopup() {
             for (const auto& issue : compile_result_issues_) {
                 // Pre-initialize so an unknown IssueLevel value (future
                 // enum addition, or memory corruption) can't leave `tag`
-                // uninitialized — ImGui::TextUnformatted(nullptr) would
+                // uninitialized - ImGui::TextUnformatted(nullptr) would
                 // read garbage or crash. C4701/C4703 warning was real.
                 ImVec4 color{0.8f, 0.8f, 0.8f, 1.0f};
                 const char* tag = "[?]    ";
@@ -4167,7 +4037,7 @@ void MainWindow::HandleGlobalShortcuts() {
 
     // Local Debug (F6) - run one forward + one backward pass on synthetic
     // data. Sits between F5 (Train) and F7 (Compile). Gated by Compile
-    // internally — errors in the graph short-circuit before DebugExecutor
+    // internally - errors in the graph short-circuit before DebugExecutor
     // touches anything.
     if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F6)) {
         LocalDebugGraphAndReport();

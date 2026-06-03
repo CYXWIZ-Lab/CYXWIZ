@@ -89,17 +89,20 @@ wording. `test_text_smoke_graph_patterns` now validates those templates
 load as known node types, keep required pins connected, route label flow
 to loss targets, route model predictions to loss predictions, route loss
 to optimizer, and keep tokenizer params complete.
+`StartTrainingFromGraph` now delegates the runtime launch tail to
+`graph_training_launcher`, so the GUI button path and focused tests use
+the same dataset lookup, Cat-1 materialization, runtime label resolution,
+and dispatch handoff. `test_text_gui_training_launch` registers a raw
+text Arrow table, runs the shared launch helper over
+`DataInput -> TextTokenizer`, verifies dispatch receives the
+materialized Arrow dataset and `y` label, then runs one real
+batch/model/loss/backward/update step. This closes the untested
+GUI/runtime launch branch without adding brittle desktop click
+automation.
 
-**What remains:**
-- Run a GUI/runtime smoke graph for one minimal text training launch
-  once legacy text path removal is planned. The headless model-step
-  smoke, worker-thread Arrow text smoke, runtime label handoff, and
-  Local Debug Smoke Run materialized Arrow path are covered; this
-  remaining item is the full GUI button launch path.
-
-**Sweet spot for next slice:** run one full GUI button-launch text
-training smoke against the updated saved graph templates, then close the
-Text Fix B item if no GUI-only regression appears.
+**Status:** complete for Text Fix B. Optional manual desktop smoke can
+still be run before a release build, but no known Text Fix B runtime
+branch remains untested.
 
 ## Priority 2 - Graph Honesty And Runtime Contracts
 
@@ -115,13 +118,12 @@ from global dataset conventions.
 `GraphCompiler`, `PipelineMaterializer`, and `TrainingExecutor` for
 places where graph topology is ignored after compile.
 
-**Follow-up from text Arrow smoke:** a direct focused test around
-`TrainingManager::StartTrainingArrow` currently pulls unrelated
-legacy/image/audio/text symbols because `TrainingExecutor::Train`
-contains all batcher modes in one large function. Before adding a full
-GUI button-launch regression test, split the per-backing setup enough
-that Arrow runtime tests can link the Arrow path without carrying every
-legacy dataset dependency.
+**Follow-up from text Arrow smoke:** focused runtime tests still pull
+unrelated legacy/image/audio/text symbols because `DataRegistry` and
+`TrainingExecutor::Train` contain broad per-backing setup in large
+translation units. Split those boundaries enough that Arrow runtime
+tests can link the Arrow path without carrying every legacy dataset
+dependency.
 
 ### Normalize in DataInput vs graph
 
