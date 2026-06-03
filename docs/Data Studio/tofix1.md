@@ -72,13 +72,16 @@ covers train, validation, and test batches from that delegated path.
 `TextDataset` now supports an explicit raw-load mode so the compatibility
 wrapper can parse JSON/TXT/folder corpora without building a duplicate
 vocabulary before `TextTokenizerOperator` tokenizes.
+`TextVocabulary` and `TextPadding` stay folded into tokenizer v1:
+`PipelineMaterializer` folds their supported params into the reachable
+`TextTokenizer` operator instead of registering separate Arrow
+operators. `TextPadding.pad_value` remains fixed to the tokenizer PAD id
+0 in v1.
 
 **What remains:**
 - Remove `ExtractTextTokenizer`, `ExtractTextVocabulary`, and
   `ExtractTextPadding` from `graph_compiler.cpp` after no consumers
   need `TrainingConfiguration::text_preprocessing`.
-- Decide whether `TextVocabulary` and `TextPadding` stay separate real
-  operators or remain folded into the v1 combined tokenizer operator.
 - Run a GUI/runtime smoke graph for one minimal text training launch
   once legacy text path removal is planned. The headless model-step
   smoke, worker-thread Arrow text smoke, runtime label handoff, and
@@ -87,9 +90,9 @@ vocabulary before `TextTokenizerOperator` tokenizes.
 - Update and rerun existing text smoke graphs:
   `test_01`, `v1`, `v2`, and `test_02_lstm`.
 
-**Sweet spot for next slice:** do not delete the legacy path yet. First
-decide the `TextVocabulary`/`TextPadding` contract, then remove the
-legacy graph compiler extractors in a separate cleanup commit.
+**Sweet spot for next slice:** remove the legacy graph compiler text
+extractors in a separate cleanup commit, then run GUI/runtime and saved
+graph smoke coverage.
 
 ## Priority 2 - Graph Honesty And Runtime Contracts
 

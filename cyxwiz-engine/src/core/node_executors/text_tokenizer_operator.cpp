@@ -17,6 +17,16 @@ bool TextTokenizerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    text_col_.clear();
+    label_col_.clear();
+    vocab_file_.clear();
+    max_length_ = 256;
+    tokenizer_type_ = 1;
+    lowercase_ = true;
+    min_word_freq_ = 2;
+    max_vocab_size_ = 10000;
+    last_vocab_size_ = 0;
+
     auto it = params.find("text_col");
     if (it == params.end() || it->second.empty()) {
         error = "TextTokenizer: 'text_col' parameter is required";
@@ -26,6 +36,8 @@ bool TextTokenizerOperator::Configure(
 
     auto lc = params.find("label_col");
     if (lc != params.end()) label_col_ = lc->second;
+    auto vf = params.find("vocab_file");
+    if (vf != params.end()) vocab_file_ = vf->second;
 
     auto read_int = [&](const char* key, int default_value, int& out) -> bool {
         auto p = params.find(key);
@@ -98,7 +110,14 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     tokenizer.SetPadding(true);
     tokenizer.SetTruncation(true);
 
-    tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
+    if (!vocab_file_.empty()) {
+        if (!tokenizer.GetVocabulary().LoadFromFile(vocab_file_)) {
+            return arrow::Status::Invalid(
+                "TextTokenizer: failed to load vocab_file '" + vocab_file_ + "'");
+        }
+    } else {
+        tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
+    }
     const size_t trained_vocab_size = tokenizer.GetVocabulary().Size();
 
     // Encode + pad. EncodeBatch then PadBatch produces the final

@@ -6,6 +6,7 @@
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 
+#include <map>
 #include <queue>
 #include <unordered_set>
 
@@ -28,6 +29,82 @@ const gui::MLNode* FindNodeById(int id, const std::vector<gui::MLNode>& nodes) {
         if (n.id == id) return &n;
     }
     return nullptr;
+}
+
+bool IsFoldedTextConfigNode(gui::NodeType type) {
+    return type == gui::NodeType::TextVocabulary ||
+           type == gui::NodeType::TextPadding;
+}
+
+void FoldTextConfigNodeParams(
+    const gui::MLNode& config_node,
+    std::map<std::string, std::string>& params) {
+
+    if (config_node.type == gui::NodeType::TextVocabulary) {
+        auto min_freq = config_node.parameters.find("min_freq");
+        if (min_freq != config_node.parameters.end()) {
+            params["min_word_freq"] = min_freq->second;
+        }
+        auto max_vocab = config_node.parameters.find("max_vocab_size");
+        if (max_vocab != config_node.parameters.end()) {
+            params["max_vocab_size"] = max_vocab->second;
+        }
+        auto vocab_file = config_node.parameters.find("vocab_file");
+        if (vocab_file != config_node.parameters.end()) {
+            params["vocab_file"] = vocab_file->second;
+        }
+    } else if (config_node.type == gui::NodeType::TextPadding) {
+        auto max_length = config_node.parameters.find("max_length");
+        if (max_length != config_node.parameters.end()) {
+            params["max_length"] = max_length->second;
+        }
+        // pad_value is intentionally not folded in v1. TextTokenizer uses
+        // the tokenizer PAD id, which is fixed at 0.
+    }
+}
+
+void FoldReachableTextConfigParams(
+    const gui::MLNode& tokenizer_node,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    std::map<std::string, std::string>& params) {
+
+    std::queue<int> queue;
+    std::unordered_set<int> visited;
+    queue.push(tokenizer_node.id);
+    visited.insert(tokenizer_node.id);
+
+    while (!queue.empty()) {
+        const int node_id = queue.front();
+        queue.pop();
+
+        for (const auto& link : links) {
+            if (link.from_node != node_id ||
+                !visited.insert(link.to_node).second) {
+                continue;
+            }
+
+            const gui::MLNode* child = FindNodeById(link.to_node, nodes);
+            if (!child || !IsFoldedTextConfigNode(child->type)) {
+                continue;
+            }
+
+            FoldTextConfigNodeParams(*child, params);
+            queue.push(child->id);
+        }
+    }
+}
+
+std::map<std::string, std::string> BuildOperatorParams(
+    const gui::MLNode& node,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links) {
+
+    auto params = node.parameters;
+    if (node.type == gui::NodeType::TextTokenizer) {
+        FoldReachableTextConfigParams(node, nodes, links, params);
+    }
+    return params;
 }
 
 } // namespace
@@ -89,7 +166,8 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
             }
 
             std::string err;
-            if (!op->Configure(node->parameters, err)) {
+            auto params = BuildOperatorParams(*node, nodes, links);
+            if (!op->Configure(params, err)) {
                 result.success = false;
                 result.error_message =
                     "PipelineMaterializer: Configure failed for node '" +

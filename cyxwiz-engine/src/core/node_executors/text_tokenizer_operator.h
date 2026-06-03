@@ -20,11 +20,11 @@ namespace cyxwiz {
  * mapping a string label column to integer class IDs (string→int
  * vocab built in this Apply pass).
  *
- * v1 combines tokenize + vocab build + padding into one operator,
- * mirroring how TimeSeriesWindow combined windowing + label
- * extraction. Splitting into separate TextTokenizer / TextVocabulary
- * / TextPadding nodes is a future refinement once a real use case
- * needs the intermediate stages addressable separately.
+ * v1 combines tokenize + vocab build + padding into one operator.
+ * TextVocabulary and TextPadding are folded parameter nodes in
+ * PipelineMaterializer; they are not separate Arrow table transforms.
+ * Splitting them into standalone operators is deferred until a real use
+ * case needs intermediate vocab/token columns addressable separately.
  *
  * Closes Fix B from tofix.md "TextTokenizer is a config extractor,
  * not a pipeline operation" — this operator IS the real pipeline
@@ -41,6 +41,7 @@ namespace cyxwiz {
  *   lowercase         (default true)    — lowercase before tokenizing
  *   min_word_freq     (default 2)       — vocabulary frequency floor
  *   max_vocab_size    (default 10000)   — vocabulary cap
+ *   vocab_file        (optional)        — load vocabulary instead of training
  */
 class TextTokenizerOperator : public IPipelineOperator {
 public:
@@ -64,6 +65,7 @@ private:
     bool lowercase_ = true;
     int min_word_freq_ = 2;
     int max_vocab_size_ = 10000;
+    std::string vocab_file_;
     size_t last_vocab_size_ = 0;
 };
 

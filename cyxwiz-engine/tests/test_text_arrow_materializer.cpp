@@ -58,6 +58,21 @@ std::shared_ptr<arrow::Table> MakeTextTable() {
     return arrow::Table::Make(schema, {text, label}, 3);
 }
 
+std::shared_ptr<arrow::Table> MakeFoldedConfigTextTable() {
+    auto text = FinishStringArray({
+        "uniqueonly",
+        "common",
+        "common",
+    });
+    auto label = FinishStringArray({"a", "b", "b"});
+
+    auto schema = arrow::schema({
+        arrow::field("text", arrow::utf8()),
+        arrow::field("label", arrow::utf8()),
+    });
+    return arrow::Table::Make(schema, {text, label}, 3);
+}
+
 gui::MLNode MakeDataInputNode() {
     gui::MLNode node;
     node.id = 1;
@@ -83,6 +98,44 @@ gui::MLNode MakeTokenizerNode() {
         {"max_vocab_size", "100"},
     };
     return node;
+}
+
+gui::MLNode MakeVocabularyNode() {
+    gui::MLNode node;
+    node.id = 3;
+    node.type = gui::NodeType::TextVocabulary;
+    node.category = gui::NodeCategory::TextProcessing;
+    node.name = "Text Vocabulary";
+    node.parameters = {
+        {"min_freq", "2"},
+        {"max_vocab_size", "100"},
+    };
+    return node;
+}
+
+gui::MLNode MakePaddingNode() {
+    gui::MLNode node;
+    node.id = 4;
+    node.type = gui::NodeType::TextPadding;
+    node.category = gui::NodeCategory::TextProcessing;
+    node.name = "Text Padding";
+    node.parameters = {
+        {"max_length", "6"},
+        {"pad_value", "0"},
+    };
+    return node;
+}
+
+float ReadFloatValue(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& column_name,
+    int64_t row) {
+
+    auto column = table->GetColumnByName(column_name);
+    Check(column != nullptr, "missing float column " + column_name);
+    Check(column->num_chunks() == 1, "expected one float chunk");
+    auto array = std::static_pointer_cast<arrow::FloatArray>(column->chunk(0));
+    return array->Value(row);
 }
 
 } // namespace
@@ -139,6 +192,30 @@ int main() {
     Check(table->GetColumnByName("y") != nullptr, "missing y label column");
     Check(table->GetColumnByName("text") == nullptr,
           "raw text column should not remain after tokenization");
+
+    {
+        std::vector<gui::MLNode> folded_nodes = {
+            MakeDataInputNode(),
+            MakeTokenizerNode(),
+            MakeVocabularyNode(),
+            MakePaddingNode(),
+        };
+        std::vector<gui::NodeLink> folded_links = {
+            {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
+            {2, 2, 0, 3, 0, gui::LinkType::TensorFlow},
+            {3, 3, 0, 4, 0, gui::LinkType::TensorFlow},
+        };
+
+        auto folded = cyxwiz::PipelineMaterializer::MaterializeTable(
+            folded_nodes, folded_links, MakeFoldedConfigTextTable());
+        Check(folded.success, folded.error_message);
+        Check(folded.operators_applied == 1,
+              "folded TextVocabulary/TextPadding should not add operators");
+        Check(folded.table->num_columns() == 7,
+              "TextPadding max_length should fold into tokenizer width");
+        Check(ReadFloatValue(folded.table, "tok_0", 0) == 1.0f,
+              "TextVocabulary min_freq should fold into tokenizer vocab");
+    }
 
     const auto parquet_path =
         std::filesystem::temp_directory_path() /
