@@ -161,17 +161,20 @@ batchers are constructed by `TrainingManager` from the compiled graph
 config before entering the shared epoch loop.
 `test_graph_topology_utils` covers the helper behavior with a stale first
 DataInput, stale first DataLoader, reverse loss reachability, and a
-connected branch that does not reach the loss. The remaining
-`TrainingExecutor` work is the legacy/external image/audio/text setup and
-the epoch loop topology; those should be split only after the graph
-contract is pinned down so the next refactor does not mix behavior
-changes with file organization.
+connected branch that does not reach the loss.
 
-**Still open for Priority 2:** runtime label/data flow and the
-TrainingExecutor epoch loop still needs a deeper pin-walked ownership
-decision for data/label semantics. Whole-graph validation still audits
-all nodes, so stale disconnected training branches may remain a separate
-UX decision from compile extraction.
+**Decision 2026-06-03:** the current runtime boundary is compile-time
+pin validation plus a compiled dataset/batcher contract, not a full
+per-batch tensor router. `GraphCompiler` owns graph honesty for data,
+labels, predictions, loss, and optimizer reachability. Runtime launch
+uses the selected source/loss/optimizer ids and compiled dataset name,
+then `TrainingExecutor` consumes `IBatcher::Batch{data, labels}` from
+the selected batcher. A deeper tensor-router epoch loop is deferred until
+there is a concrete multi-output runtime need.
+
+**Deferred beyond Priority 2:** whole-graph validation still audits all
+nodes, so stale disconnected training branches may remain a separate UX
+decision from compile extraction.
 
 ### Normalize in DataInput vs graph
 
@@ -179,8 +182,14 @@ Normalization remains split between DataInput options and graph nodes.
 The long-term direction is one honest preprocessing path where graph
 nodes own transformations and DataInput owns loading/profiling.
 
-**Next step:** decide which DataInput normalization controls become
-deprecated aliases and which graph node owns the canonical behavior.
+**Decision 2026-06-03:** keep DataInput `normalize` as a loader/decode
+option, for example uint8 image/HDF5/custom data scaled into `[0,1]`
+during loading. It is not the canonical training preprocessing path.
+Graph `Normalize` remains the canonical train-time preprocessing node
+and is the path that sets `TrainingConfiguration::preprocessing` and
+batcher normalization. Do not add a second graph transform behind the
+DataInput checkbox; future UI wording can make the loader/decode scope
+clearer without changing runtime behavior.
 
 ### DataLoader pin and label flow follow-up
 
@@ -188,8 +197,14 @@ Pin pass and compile-gate enforcement landed, but label/data flow should
 continue moving toward explicit graph contracts rather than hidden
 DataInput assumptions.
 
-**Next step:** after Text Fix B, audit DataLoader/DataSplit/Loss label
-paths against actual pin connections.
+**Status 2026-06-03:** audited after Text Fix B. DataInput, DataLoader,
+DataSplit, and Loss now use explicit label/data pin contracts at compile
+time: required pins must be connected, loss Targets must trace upstream
+to a Labels-typed pin, loss Predictions must trace to a model/output
+path, and optimizer loss input must trace to a loss node. Runtime label
+selection follows the selected data source id and compiled dataset name.
+This completes the Priority 2 label-flow contract for the current
+batcher-based executor.
 
 ## Priority 3 - Data Quality And Debuggability
 
