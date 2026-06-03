@@ -31,7 +31,11 @@ materialized tokenizer table with `tok_*` and `y` does not silently use
 covered by `test_label_column_resolver`. `test_text_arrow_materializer`
 now proves a graph-shaped Arrow table flow from `DataInput` through
 `TextTokenizer` into a tokenized table, then exports and reloads that
-tokenized table as Parquet.
+tokenized table as Parquet. It also verifies that the materialized
+`tok_*` plus `y` table feeds `ArrowDatasetBatcher` as training-ready
+feature tensors with one-hot labels. `ArrowDatasetBatcher` was split
+into its own translation unit so this boundary can be tested without
+linking unrelated legacy preprocessing code.
 
 **What remains:**
 - Make Arrow the canonical text path instead of dual-registration.
@@ -44,8 +48,8 @@ tokenized table as Parquet.
   need `TrainingConfiguration::text_preprocessing`.
 - Decide whether `TextVocabulary` and `TextPadding` stay separate real
   operators or remain folded into the v1 combined tokenizer operator.
-- Verify materialized `DataInput(Text CSV) -> TextTokenizer` Arrow table
-  can feed a minimal training launch.
+- Run a GUI/runtime smoke graph for one minimal text training launch
+  once legacy text path removal is planned.
 - Update and rerun existing text smoke graphs:
   `test_01`, `v1`, `v2`, and `test_02_lstm`.
 

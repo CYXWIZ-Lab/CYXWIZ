@@ -1,5 +1,6 @@
 #include "../src/core/pipeline_materializer.h"
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/dataset_batcher.h"
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 
@@ -155,6 +156,33 @@ int main() {
           "reloaded table missing tok_0");
     Check(reloaded_table->GetColumnByName("y") != nullptr,
           "reloaded table missing y");
+
+    auto batcher_dataset = std::make_shared<cyxwiz::ArrowDataset>(
+        table, "tokenized_text_train");
+    cyxwiz::ArrowDatasetBatcher batcher(
+        batcher_dataset,
+        "y",
+        /*batch_size=*/2,
+        /*shuffle=*/false,
+        /*train_split=*/1.0f,
+        /*is_training=*/true);
+    batcher.SetOneHotEncoding(2);
+
+    auto batch = batcher.GetNextBatch();
+    Check(batch.IsValid(), "training batch should be valid");
+    Check(batch.size == 2, "training batch should contain 2 samples");
+    Check(batch.data.Shape().size() == 2, "feature tensor should be 2D");
+    Check(batch.data.Shape()[0] == 2, "feature batch dimension should be 2");
+    Check(batch.data.Shape()[1] == 4, "feature width should equal max_length");
+    Check(batch.labels.Shape().size() == 2, "label tensor should be 2D");
+    Check(batch.labels.Shape()[0] == 2, "label batch dimension should be 2");
+    Check(batch.labels.Shape()[1] == 2, "label width should equal num_classes");
+
+    const float* label_data = batch.labels.Data<float>();
+    for (size_t r = 0; r < batch.size; ++r) {
+        const float row_sum = label_data[r * 2] + label_data[r * 2 + 1];
+        Check(row_sum == 1.0f, "one-hot label row should sum to 1");
+    }
 
     std::remove(parquet_path.string().c_str());
 

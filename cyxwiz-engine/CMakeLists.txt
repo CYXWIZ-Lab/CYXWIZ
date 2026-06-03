@@ -103,6 +103,7 @@ set(ENGINE_SOURCES
     src/core/image_dataset_batcher.cpp
     src/core/audio_dataset_batcher.cpp
     src/core/text_dataset_batcher.cpp
+    src/core/arrow_dataset_batcher.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
@@ -1089,6 +1090,7 @@ add_executable(test_text_arrow_materializer
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
 )
 
 target_include_directories(test_text_arrow_materializer PRIVATE
