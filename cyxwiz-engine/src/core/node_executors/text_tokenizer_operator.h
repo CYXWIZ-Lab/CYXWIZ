@@ -2,6 +2,8 @@
 
 #include "pipeline_operator.h"
 
+#include <cstddef>
+
 namespace cyxwiz {
 
 /**
@@ -52,6 +54,8 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    size_t GetLastVocabSize() const { return last_vocab_size_; }
+
 private:
     std::string text_col_;
     std::string label_col_;
@@ -60,6 +64,7 @@ private:
     bool lowercase_ = true;
     int min_word_freq_ = 2;
     int max_vocab_size_ = 10000;
+    size_t last_vocab_size_ = 0;
 };
 
 } // namespace cyxwiz

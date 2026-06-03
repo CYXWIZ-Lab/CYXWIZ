@@ -28,6 +28,11 @@ struct TextDatasetConfig {
     std::string vocab_file;        // Pre-built vocabulary path (optional)
 };
 
+enum class TextDatasetLoadMode {
+    Tokenized,
+    RawOnly,
+};
+
 /**
  * TextDataset - Loads text data and tokenizes on-the-fly.
  *
@@ -41,7 +46,9 @@ struct TextDatasetConfig {
  */
 class TextDataset : public Dataset {
 public:
-    TextDataset(const std::string& path, const TextDatasetConfig& config);
+    TextDataset(const std::string& path,
+                const TextDatasetConfig& config,
+                TextDatasetLoadMode mode = TextDatasetLoadMode::Tokenized);
     ~TextDataset() override = default;
 
     // Dataset interface
@@ -58,7 +65,10 @@ public:
     const Tokenizer& GetTokenizer() const { return tokenizer_; }
     Tokenizer& GetTokenizer() { return tokenizer_; }
 
-    size_t GetVocabSize() const { return tokenizer_.GetVocabulary().Size(); }
+    size_t GetVocabSize() const {
+        return tokenizer_initialized_ ? tokenizer_.GetVocabulary().Size() : 0;
+    }
+    bool IsTokenizerInitialized() const { return tokenizer_initialized_; }
 
 private:
     std::vector<std::string> texts_;
@@ -72,6 +82,7 @@ private:
     TextDatasetConfig config_;
     Tokenizer tokenizer_;
     std::string source_path_;
+    bool tokenizer_initialized_ = false;
 
     void LoadTextFile(const std::string& path);
     void LoadCSV(const std::string& path);

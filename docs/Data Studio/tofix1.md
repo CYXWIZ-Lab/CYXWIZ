@@ -69,6 +69,9 @@ by `test_text_arrow_adapter`, including a folder-corpus table feeding
 `TextTokenizerOperator`, and `ArrowDatasetBatcher`; `GetNextBatch()` no
 longer tokenizes samples itself. `test_text_dataset_batcher_arrow`
 covers train, validation, and test batches from that delegated path.
+`TextDataset` now supports an explicit raw-load mode so the compatibility
+wrapper can parse JSON/TXT/folder corpora without building a duplicate
+vocabulary before `TextTokenizerOperator` tokenizes.
 
 **What remains:**
 - Remove `ExtractTextTokenizer`, `ExtractTextVocabulary`, and
@@ -76,9 +79,6 @@ covers train, validation, and test batches from that delegated path.
   need `TrainingConfiguration::text_preprocessing`.
 - Decide whether `TextVocabulary` and `TextPadding` stay separate real
   operators or remain folded into the v1 combined tokenizer operator.
-- Split raw text parsing from `TextDataset` tokenizer initialization so
-  the legacy compatibility wrapper no longer builds a duplicate
-  TextDataset vocabulary before `TextTokenizerOperator` tokenizes.
 - Run a GUI/runtime smoke graph for one minimal text training launch
   once legacy text path removal is planned. The headless model-step
   smoke, worker-thread Arrow text smoke, runtime label handoff, and
@@ -88,9 +88,8 @@ covers train, validation, and test batches from that delegated path.
   `test_01`, `v1`, `v2`, and `test_02_lstm`.
 
 **Sweet spot for next slice:** do not delete the legacy path yet. First
-prove one complete Arrow graph from DataInput text CSV through
-TextTokenizer into training or export, then remove extractors in a
-separate cleanup commit.
+decide the `TextVocabulary`/`TextPadding` contract, then remove the
+legacy graph compiler extractors in a separate cleanup commit.
 
 ## Priority 2 - Graph Honesty And Runtime Contracts
 

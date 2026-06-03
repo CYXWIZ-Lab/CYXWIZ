@@ -82,7 +82,12 @@ int main() {
         cfg.label_column = "label";
         cfg.has_labels = true;
         cfg.max_length = 4;
-        cyxwiz::TextDataset dataset(jsonl.string(), cfg);
+        cyxwiz::TextDataset dataset(
+            jsonl.string(), cfg, cyxwiz::TextDatasetLoadMode::RawOnly);
+        Check(!dataset.IsTokenizerInitialized(),
+              "raw-only TextDataset should not initialize tokenizer");
+        Check(dataset.GetVocabSize() == 0,
+              "raw-only TextDataset should not build vocabulary");
 
         auto table = BuildTableOrFail(dataset, "body", "label");
         Check(table->num_rows() == 2, "JSONL table row count");
@@ -141,6 +146,8 @@ int main() {
         }, error), error);
         auto tokenized = tokenizer.Apply(table);
         Check(tokenized.ok(), tokenized.status().ToString());
+        Check(tokenizer.GetLastVocabSize() > 0,
+              "tokenizer should report trained vocabulary size");
         auto out = tokenized.ValueOrDie();
         Check(out != nullptr, "tokenizer returned null table");
         Check(out->GetColumnByName("tok_0") != nullptr, "missing tok_0");

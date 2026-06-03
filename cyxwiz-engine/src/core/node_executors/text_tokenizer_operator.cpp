@@ -66,6 +66,7 @@ bool TextTokenizerOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    last_vocab_size_ = 0;
     if (!input) {
         return arrow::Status::Invalid("TextTokenizer: input table is null");
     }
@@ -98,6 +99,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     tokenizer.SetTruncation(true);
 
     tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
+    const size_t trained_vocab_size = tokenizer.GetVocabulary().Size();
 
     // Encode + pad. EncodeBatch then PadBatch produces the final
     // [num_samples, max_length] int matrix.
@@ -175,8 +177,9 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     spdlog::info("TextTokenizer: {} samples tokenized, vocab_size={}, "
                  "max_length={}, classes={}",
-                 n, tokenizer.GetVocabulary().Size(), max_length_,
+                 n, trained_vocab_size, max_length_,
                  class_names.size());
+    last_vocab_size_ = trained_vocab_size;
     return out_table;
 }
 

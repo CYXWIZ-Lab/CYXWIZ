@@ -61,6 +61,8 @@ int main() {
 
     auto result = op.Apply(input);
     Check(result.ok(), result.status().ToString());
+    Check(op.GetLastVocabSize() > 0,
+          "operator should report trained vocabulary size");
 
     auto output = result.ValueOrDie();
     Check(output != nullptr, "output table is null");

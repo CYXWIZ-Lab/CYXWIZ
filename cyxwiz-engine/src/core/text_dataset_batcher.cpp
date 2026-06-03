@@ -178,7 +178,8 @@ TextDatasetBatcher::TextDatasetBatcher(
 
     std::shared_ptr<TextDataset> raw_dataset;
     try {
-        raw_dataset = std::make_shared<TextDataset>(entry.source_path, cfg);
+        raw_dataset = std::make_shared<TextDataset>(
+            entry.source_path, cfg, TextDatasetLoadMode::RawOnly);
     } catch (const std::exception& e) {
         spdlog::error("TextDatasetBatcher: failed to construct TextDataset: {}", e.what());
         return;
@@ -191,7 +192,6 @@ TextDatasetBatcher::TextDatasetBatcher(
 
     const auto info = raw_dataset->GetInfo();
     num_classes_ = entry.num_classes > 0 ? entry.num_classes : info.num_classes;
-    vocab_size_ = raw_dataset->GetVocabSize();
 
     const std::string raw_label_col =
         cfg.has_labels ? cfg.label_column : std::string{};
@@ -233,6 +233,7 @@ TextDatasetBatcher::TextDatasetBatcher(
         spdlog::error("TextDatasetBatcher: tokenizer returned null table");
         return;
     }
+    vocab_size_ = tokenizer.GetLastVocabSize();
 
     auto partitioned_result = AddSplitPartitionColumn(
         tokenized_table, train_split, val_split, test_split, shuffle);

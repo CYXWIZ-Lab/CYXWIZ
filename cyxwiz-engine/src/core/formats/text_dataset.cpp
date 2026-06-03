@@ -75,7 +75,9 @@ bool ReadCSVRow(std::istream& in, char delimiter,
 
 } // namespace
 
-TextDataset::TextDataset(const std::string& path, const TextDatasetConfig& config)
+TextDataset::TextDataset(const std::string& path,
+                         const TextDatasetConfig& config,
+                         TextDatasetLoadMode mode)
     : config_(config), tokenizer_(config.tokenizer_type), source_path_(path) {
 
     // Detect format and load
@@ -99,7 +101,12 @@ TextDataset::TextDataset(const std::string& path, const TextDatasetConfig& confi
         return;
     }
 
-    // Initialize tokenizer
+    if (mode == TextDatasetLoadMode::RawOnly) {
+        spdlog::info("TextDataset raw-loaded: {} samples, max_length={}",
+                     texts_.size(), config_.max_length);
+        return;
+    }
+
     InitTokenizer();
 
     spdlog::info("TextDataset loaded: {} samples, vocab_size={}, max_length={}",
@@ -117,11 +124,17 @@ void TextDataset::InitTokenizer() {
     } else {
         tokenizer_.Train(texts_, config_.min_word_freq, config_.max_vocab_size);
     }
+    tokenizer_initialized_ = true;
 }
 
 std::pair<std::vector<float>, int> TextDataset::GetItem(size_t index) const {
     if (index >= texts_.size()) {
         return {{}, -1};
+    }
+
+    int label = config_.has_labels && index < labels_.size() ? labels_[index] : -1;
+    if (!tokenizer_initialized_) {
+        return {{}, label};
     }
 
     auto token_ids = tokenizer_.Encode(texts_[index]);
@@ -133,7 +146,6 @@ std::pair<std::vector<float>, int> TextDataset::GetItem(size_t index) const {
         data.push_back(static_cast<float>(id));
     }
 
-    int label = config_.has_labels && index < labels_.size() ? labels_[index] : -1;
     return {data, label};
 }
 
@@ -180,7 +192,7 @@ int TextDataset::GetLabel(size_t index) const {
 }
 
 std::vector<int> TextDataset::GetTokenIds(size_t index) const {
-    if (index >= texts_.size()) return {};
+    if (index >= texts_.size() || !tokenizer_initialized_) return {};
     return tokenizer_.Encode(texts_[index]);
 }
 
