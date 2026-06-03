@@ -1,26 +1,27 @@
 #include "text_dataset_batcher.h"
+#include "formats/text_dataset.h"
+#include "node_executors/text_tokenizer_operator.h"
+#include "text_arrow_adapter.h"
+
+#include <arrow/builder.h>
 #include <spdlog/spdlog.h>
+
 #include <algorithm>
+#include <map>
+#include <memory>
 #include <numeric>
-#include <utility>
-#include <thread>
+#include <random>
+#include <string>
+#include <vector>
 
 namespace cyxwiz {
 
-TextDatasetBatcher::TextDatasetBatcher(
+namespace {
+
+TextDatasetConfig BuildTextDatasetConfig(
     const DataRegistry::TextDatasetEntry& entry,
-    const TextPreprocessingConfig& preprocess_config,
-    int batch_size,
-    float train_split,
-    float val_split,
-    float test_split,
-    bool shuffle,
-    int num_workers)
-    : batch_size_(batch_size), shuffle_(shuffle),
-      num_workers_(std::max(0, num_workers)), rng_(42)
-{
-    // Build the TextDatasetConfig. Start from the entry defaults, then apply
-    // graph preprocessing overrides on top.
+    const TextPreprocessingConfig& preprocess_config) {
+
     TextDatasetConfig cfg;
     cfg.text_column = entry.text_column;
     cfg.label_column = entry.label_column;
@@ -47,11 +48,11 @@ TextDatasetBatcher::TextDatasetBatcher(
             case 1:
             default: cfg.tokenizer_type = TokenizerType::Word; break;
         }
-        cfg.lowercase     = preprocess_config.lowercase;
-        cfg.do_padding    = preprocess_config.do_padding;
-        cfg.do_truncation = preprocess_config.do_truncation;
-        cfg.max_length    = preprocess_config.max_length;
-        cfg.min_word_freq = preprocess_config.min_word_freq;
+        cfg.lowercase      = preprocess_config.lowercase;
+        cfg.do_padding     = preprocess_config.do_padding;
+        cfg.do_truncation  = preprocess_config.do_truncation;
+        cfg.max_length     = preprocess_config.max_length;
+        cfg.min_word_freq  = preprocess_config.min_word_freq;
         cfg.max_vocab_size = preprocess_config.max_vocab_size;
         spdlog::info("TextDatasetBatcher: TextTokenizer node overrides dialog defaults "
                      "(type={}, max_length={}, lowercase={})",
@@ -73,21 +74,30 @@ TextDatasetBatcher::TextDatasetBatcher(
                      "(max_length={})", cfg.max_length);
     }
 
-    max_length_ = cfg.max_length;
+    return cfg;
+}
 
-    try {
-        dataset_ = std::make_shared<TextDataset>(entry.source_path, cfg);
-    } catch (const std::exception& e) {
-        spdlog::error("TextDatasetBatcher: failed to construct TextDataset: {}", e.what());
-        return;
+int TokenizerTypeToParam(TokenizerType type) {
+    switch (type) {
+        case TokenizerType::Whitespace: return 0;
+        case TokenizerType::Character: return 2;
+        case TokenizerType::Word:
+        default: return 1;
+    }
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> AddSplitPartitionColumn(
+    const std::shared_ptr<arrow::Table>& table,
+    float train_split,
+    float val_split,
+    float test_split,
+    bool shuffle) {
+
+    if (!table) {
+        return arrow::Status::Invalid("TextDatasetBatcher: tokenized table is null");
     }
 
-    if (!dataset_ || dataset_->Size() == 0) {
-        spdlog::error("TextDatasetBatcher: dataset is empty or null");
-        return;
-    }
-
-    size_t total = dataset_->Size();
+    const size_t total = static_cast<size_t>(table->num_rows());
     float split_sum = train_split + val_split + test_split;
     if (!(split_sum > 0.0f)) {
         train_split = 0.8f;
@@ -95,181 +105,238 @@ TextDatasetBatcher::TextDatasetBatcher(
         test_split = 0.1f;
         split_sum = 1.0f;
     }
-
     train_split /= split_sum;
     val_split /= split_sum;
     test_split /= split_sum;
 
     size_t train_count = static_cast<size_t>(total * train_split);
     size_t val_count = static_cast<size_t>(total * val_split);
-    if (train_count == 0) train_count = 1;
+    if (total > 0 && train_count == 0) train_count = 1;
     if (train_count > total) train_count = total;
     if (train_count + val_count > total) {
         val_count = total - train_count;
     }
-    size_t test_count = total - train_count - val_count;
+    const size_t test_count = total - train_count - val_count;
 
-    std::vector<size_t> all_indices(total);
-    std::iota(all_indices.begin(), all_indices.end(), 0);
-    std::shuffle(all_indices.begin(), all_indices.end(), rng_);
-
-    train_indices_.assign(all_indices.begin(), all_indices.begin() + train_count);
-    val_indices_.assign(all_indices.begin() + train_count,
-                        all_indices.begin() + train_count + val_count);
-    test_indices_.assign(all_indices.begin() + train_count + val_count,
-                         all_indices.begin() + train_count + val_count + test_count);
-
-    num_classes_ = entry.num_classes;
-    if (num_classes_ == 0) {
-        auto info = dataset_->GetInfo();
-        num_classes_ = info.num_classes;
+    std::vector<size_t> order(total);
+    std::iota(order.begin(), order.end(), 0);
+    if (shuffle) {
+        std::mt19937 rng(42);
+        std::shuffle(order.begin(), order.end(), rng);
     }
 
-    Reset();
-    spdlog::info("TextDatasetBatcher: {} train / {} val / {} test samples, {} classes, "
-                 "vocab_size={}, max_length={}, batch_size={}, num_workers={}",
-                 train_indices_.size(), val_indices_.size(), test_indices_.size(),
-                 num_classes_, GetVocabSize(), max_length_, batch_size_, num_workers_);
+    std::vector<int8_t> partitions(total, 0);
+    for (size_t i = 0; i < order.size(); ++i) {
+        int8_t partition = 0;
+        if (i >= train_count + val_count) {
+            partition = 2;
+        } else if (i >= train_count) {
+            partition = 1;
+        }
+        partitions[order[i]] = partition;
+    }
+
+    arrow::Int8Builder builder;
+    ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(total)));
+    for (int8_t partition : partitions) {
+        ARROW_RETURN_NOT_OK(builder.Append(partition));
+    }
+
+    std::shared_ptr<arrow::Array> partition_array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&partition_array));
+    auto partition_chunked =
+        std::make_shared<arrow::ChunkedArray>(partition_array);
+
+    ARROW_ASSIGN_OR_RAISE(auto out, table->AddColumn(
+        table->num_columns(),
+        arrow::field("__partition__", arrow::int8()),
+        partition_chunked));
+
+    spdlog::info("TextDatasetBatcher: partitioned tokenized text table "
+                 "({} train / {} val / {} test rows)",
+                 train_count, val_count, test_count);
+    return out;
+}
+
+} // namespace
+
+TextDatasetBatcher::TextDatasetBatcher(
+    const DataRegistry::TextDatasetEntry& entry,
+    const TextPreprocessingConfig& preprocess_config,
+    int batch_size,
+    float train_split,
+    float val_split,
+    float test_split,
+    bool shuffle,
+    int num_workers)
+    : batch_size_(batch_size),
+      num_workers_(std::max(0, num_workers))
+{
+    const TextDatasetConfig cfg =
+        BuildTextDatasetConfig(entry, preprocess_config);
+    max_length_ = cfg.max_length;
+
+    std::shared_ptr<TextDataset> raw_dataset;
+    try {
+        raw_dataset = std::make_shared<TextDataset>(entry.source_path, cfg);
+    } catch (const std::exception& e) {
+        spdlog::error("TextDatasetBatcher: failed to construct TextDataset: {}", e.what());
+        return;
+    }
+
+    if (!raw_dataset || raw_dataset->Size() == 0) {
+        spdlog::error("TextDatasetBatcher: dataset is empty or null");
+        return;
+    }
+
+    const auto info = raw_dataset->GetInfo();
+    num_classes_ = entry.num_classes > 0 ? entry.num_classes : info.num_classes;
+    vocab_size_ = raw_dataset->GetVocabSize();
+
+    const std::string raw_label_col =
+        cfg.has_labels ? cfg.label_column : std::string{};
+    auto raw_table_result = BuildRawTextArrowTable(
+        *raw_dataset, cfg.text_column, raw_label_col);
+    if (!raw_table_result.ok()) {
+        spdlog::error("TextDatasetBatcher: failed to build raw Arrow table: {}",
+                      raw_table_result.status().ToString());
+        return;
+    }
+
+    std::map<std::string, std::string> tokenizer_params = {
+        {"text_col", cfg.text_column},
+        {"tokenizer_type", std::to_string(TokenizerTypeToParam(cfg.tokenizer_type))},
+        {"max_length", std::to_string(cfg.max_length)},
+        {"lowercase", cfg.lowercase ? "true" : "false"},
+        {"min_word_freq", std::to_string(cfg.min_word_freq)},
+        {"max_vocab_size", std::to_string(cfg.max_vocab_size)},
+    };
+    if (!raw_label_col.empty()) {
+        tokenizer_params["label_col"] = raw_label_col;
+    }
+
+    TextTokenizerOperator tokenizer;
+    std::string error;
+    if (!tokenizer.Configure(tokenizer_params, error)) {
+        spdlog::error("TextDatasetBatcher: tokenizer configure failed: {}", error);
+        return;
+    }
+
+    auto tokenized_result = tokenizer.Apply(raw_table_result.ValueOrDie());
+    if (!tokenized_result.ok()) {
+        spdlog::error("TextDatasetBatcher: tokenizer apply failed: {}",
+                      tokenized_result.status().ToString());
+        return;
+    }
+    auto tokenized_table = tokenized_result.ValueOrDie();
+    if (!tokenized_table) {
+        spdlog::error("TextDatasetBatcher: tokenizer returned null table");
+        return;
+    }
+
+    auto partitioned_result = AddSplitPartitionColumn(
+        tokenized_table, train_split, val_split, test_split, shuffle);
+    if (!partitioned_result.ok()) {
+        spdlog::error("TextDatasetBatcher: partitioning tokenized table failed: {}",
+                      partitioned_result.status().ToString());
+        return;
+    }
+    tokenized_dataset_ = std::make_shared<ArrowDataset>(
+        partitioned_result.ValueOrDie(), "legacy_text_tokenized");
+
+    const size_t normalized_batch_size =
+        static_cast<size_t>(std::max(1, batch_size_));
+    train_batcher_ = std::make_unique<ArrowDatasetBatcher>(
+        tokenized_dataset_, "y", normalized_batch_size,
+        shuffle, 1.0f, true, "__partition__", 0, num_workers_);
+    val_batcher_ = std::make_unique<ArrowDatasetBatcher>(
+        tokenized_dataset_, "y", normalized_batch_size,
+        false, 1.0f, false, "__partition__", 1, num_workers_);
+    test_batcher_ = std::make_unique<ArrowDatasetBatcher>(
+        tokenized_dataset_, "y", normalized_batch_size,
+        false, 1.0f, false, "__partition__", 2, num_workers_);
+
+    if (num_classes_ > 0) {
+        train_batcher_->SetOneHotEncoding(num_classes_);
+        val_batcher_->SetOneHotEncoding(num_classes_);
+        test_batcher_->SetOneHotEncoding(num_classes_);
+    }
+
+    active_batcher_ = train_batcher_.get();
+    val_samples_ = val_batcher_ ? val_batcher_->GetNumSamples() : 0;
+    test_samples_ = test_batcher_ ? test_batcher_->GetNumSamples() : 0;
+
+    spdlog::info("TextDatasetBatcher: Arrow-backed compatibility path ready "
+                 "({} train / {} val / {} test samples, {} classes, vocab_size={}, "
+                 "max_length={}, batch_size={}, num_workers={})",
+                 train_batcher_->GetNumSamples(), val_samples_, test_samples_, num_classes_,
+                 vocab_size_, max_length_, batch_size_, num_workers_);
 }
 
 size_t TextDatasetBatcher::GetVocabSize() const {
-    return dataset_ ? dataset_->GetVocabSize() : 0;
+    return vocab_size_;
 }
 
 Batch TextDatasetBatcher::GetNextBatch() {
-    Batch batch;
-    if (!dataset_ || current_idx_ >= epoch_order_.size()) return batch;
-
-    size_t actual_size = std::min(static_cast<size_t>(batch_size_),
-                                   epoch_order_.size() - current_idx_);
-    if (actual_size == 0) return batch;
-
-    size_t sample_dim = static_cast<size_t>(max_length_);
-    std::vector<std::pair<std::vector<float>, int>> samples(actual_size);
-
-    auto load_range = [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            size_t idx = epoch_order_[current_idx_ + i];
-            samples[i] = dataset_->GetItem(idx);
-        }
-    };
-
-    if (num_workers_ > 1 && actual_size > 1) {
-        size_t worker_count = std::min(static_cast<size_t>(num_workers_), actual_size);
-        size_t chunk_size = (actual_size + worker_count - 1) / worker_count;
-        std::vector<std::thread> workers;
-        workers.reserve(worker_count);
-
-        for (size_t worker = 0; worker < worker_count; ++worker) {
-            size_t begin = worker * chunk_size;
-            size_t end = std::min(actual_size, begin + chunk_size);
-            if (begin >= end) break;
-            workers.emplace_back(load_range, begin, end);
-        }
-
-        for (auto& worker : workers) {
-            worker.join();
-        }
-    } else {
-        load_range(0, actual_size);
-    }
-
-    std::vector<float> batch_data;
-    batch_data.reserve(actual_size * sample_dim);
-    std::vector<float> batch_labels;
-
-    if (do_onehot_ && num_classes_ > 0) {
-        batch_labels.resize(actual_size * num_classes_, 0.0f);
-    } else {
-        batch_labels.reserve(actual_size);
-    }
-
-    for (size_t i = 0; i < actual_size; ++i) {
-        auto& [tokens, label] = samples[i];
-        if (tokens.size() != sample_dim) {
-            tokens.assign(sample_dim, 0.0f);
-            label = 0;
-        }
-
-        batch_data.insert(batch_data.end(), tokens.begin(), tokens.end());
-
-        if (do_onehot_ && num_classes_ > 0) {
-            if (label >= 0 && static_cast<size_t>(label) < num_classes_) {
-                batch_labels[i * num_classes_ + label] = 1.0f;
-            }
-        } else {
-            batch_labels.push_back(static_cast<float>(label));
-        }
-    }
-
-    batch.data = Tensor({actual_size, sample_dim},
-                        batch_data.data(), DataType::Float32);
-
-    if (do_onehot_ && num_classes_ > 0) {
-        batch.labels = Tensor({actual_size, num_classes_},
-                              batch_labels.data(), DataType::Float32);
-    } else {
-        batch.labels = Tensor({actual_size},
-                              batch_labels.data(), DataType::Float32);
-    }
-
-    batch.size = actual_size;
-    current_idx_ += actual_size;
-    return batch;
+    return active_batcher_ ? active_batcher_->GetNextBatch() : Batch{};
 }
 
 void TextDatasetBatcher::Reset() {
-    if (current_phase_ == BatcherPhase::Val) {
-        epoch_order_ = val_indices_;
-    } else if (current_phase_ == BatcherPhase::Test) {
-        epoch_order_ = test_indices_;
-    } else {
-        epoch_order_ = train_indices_;
-        if (shuffle_) {
-            std::shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
-        }
+    if (active_batcher_) {
+        active_batcher_->Reset();
     }
-    current_idx_ = 0;
 }
 
 void TextDatasetBatcher::SetPhase(BatcherPhase phase) {
-    current_phase_ = phase;
+    switch (phase) {
+        case BatcherPhase::Val:
+            active_batcher_ = val_batcher_.get();
+            break;
+        case BatcherPhase::Test:
+            active_batcher_ = test_batcher_.get();
+            break;
+        case BatcherPhase::Train:
+        default:
+            active_batcher_ = train_batcher_.get();
+            break;
+    }
 }
 
 bool TextDatasetBatcher::IsEpochComplete() const {
-    return current_idx_ >= epoch_order_.size();
+    return !active_batcher_ || active_batcher_->IsEpochComplete();
 }
 
 size_t TextDatasetBatcher::GetNumBatches() const {
-    if (batch_size_ <= 0) return 0;
-    return (epoch_order_.size() + batch_size_ - 1) / batch_size_;
+    return active_batcher_ ? active_batcher_->GetNumBatches() : 0;
 }
 
 size_t TextDatasetBatcher::GetNumSamples() const {
-    switch (current_phase_) {
-        case BatcherPhase::Val:
-            return val_indices_.size();
-        case BatcherPhase::Test:
-            return test_indices_.size();
-        case BatcherPhase::Train:
-        default:
-            return train_indices_.size();
-    }
+    return active_batcher_ ? active_batcher_->GetNumSamples() : 0;
 }
 
 void TextDatasetBatcher::SetNormalization(float mean, float std_dev) {
     norm_mean_ = mean;
     norm_std_ = (std_dev > 0.0f) ? std_dev : 1.0f;
     do_normalize_ = true;
+    spdlog::debug("TextDatasetBatcher: normalization ignored for token IDs "
+                  "(mean={}, std={})", norm_mean_, norm_std_);
 }
 
 void TextDatasetBatcher::SetOneHotEncoding(size_t num_classes) {
     num_classes_ = num_classes;
-    do_onehot_ = true;
+    if (train_batcher_) {
+        train_batcher_->SetOneHotEncoding(num_classes);
+    }
+    if (val_batcher_) {
+        val_batcher_->SetOneHotEncoding(num_classes);
+    }
+    if (test_batcher_) {
+        test_batcher_->SetOneHotEncoding(num_classes);
+    }
 }
 
 void TextDatasetBatcher::SetFlatten(bool /*flatten*/) {
-    // Text is always flat per sample; flag is ignored.
+    // Text token tables are already flat per sample.
 }
 
 } // namespace cyxwiz

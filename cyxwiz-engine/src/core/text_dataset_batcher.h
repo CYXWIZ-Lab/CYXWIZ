@@ -1,33 +1,25 @@
 #pragma once
 
-#include "dataset_batcher.h"
 #include "data_registry.h"
+#include "dataset_batcher.h"
 #include "graph_compiler.h"
-#include "formats/text_dataset.h"
+
 #include <memory>
-#include <random>
-#include <vector>
 
 namespace cyxwiz {
 
 /**
- * TextDatasetBatcher — IBatcher implementation for text datasets.
+ * TextDatasetBatcher - IBatcher compatibility wrapper for legacy text
+ * training.
  *
- * Wraps a TextDataset (which owns the tokenizer + vocabulary and
- * produces token-ID sequences per sample) and stacks samples into
- * fixed-size batches of shape [batch_size, max_length]. The tokenized
- * vectors are already padded/truncated to max_length by the
- * underlying TextDataset::GetItem, so we just concatenate.
+ * It materializes the TextDataset source into a raw Arrow table, applies
+ * TextTokenizerOperator, then delegates batch iteration to
+ * ArrowDatasetBatcher. The public API stays stable for TrainingManager and
+ * TestExecutor while text batches now consume tokenized Arrow rows.
  *
- * Supports both dialog-fallback mode (entry's TextDatasetConfig is
- * authoritative) and graph-override mode (TextPreprocessingConfig
- * from TextTokenizer/TextVocabulary/TextPadding nodes overrides
- * specific sub-configs). Presence flags on the preprocess_config
- * tell us which sub-configs to respect.
- *
- * Uses the same shuffled-split + SetPhase pattern as Phase 2.1
- * audio — train and val are separate index lists drawn from a
- * single shuffled permutation of the dataset.
+ * Supports dialog-fallback config and graph overrides from
+ * TextTokenizer/TextVocabulary/TextPadding nodes. Train/val/test are
+ * represented with an internal partition column on the tokenized table.
  */
 class TextDatasetBatcher : public IBatcher {
 public:
@@ -40,7 +32,6 @@ public:
                        bool shuffle = true,
                        int num_workers = 0);
 
-    // IBatcher interface
     Batch GetNextBatch() override;
     void Reset() override;
     bool IsEpochComplete() const override;
@@ -52,39 +43,30 @@ public:
     void SetFlatten(bool flatten) override;
     void SetPhase(BatcherPhase phase) override;
 
-    // Text-specific accessors
     int GetMaxLength() const { return max_length_; }
     size_t GetVocabSize() const;
-    size_t GetNumValSamples() const { return val_indices_.size(); }
-    size_t GetNumTestSamples() const { return test_indices_.size(); }
+    size_t GetNumValSamples() const { return val_samples_; }
+    size_t GetNumTestSamples() const { return test_samples_; }
 
 private:
-    std::shared_ptr<TextDataset> dataset_;
+    std::shared_ptr<ArrowDataset> tokenized_dataset_;
+    std::unique_ptr<ArrowDatasetBatcher> train_batcher_;
+    std::unique_ptr<ArrowDatasetBatcher> val_batcher_;
+    std::unique_ptr<ArrowDatasetBatcher> test_batcher_;
+    ArrowDatasetBatcher* active_batcher_ = nullptr;
 
-    int batch_size_;
-    bool shuffle_;
+    int batch_size_ = 0;
     int num_workers_ = 0;
-    int max_length_ = 0;     // sequence length per sample (from config after overrides)
+    int max_length_ = 0;
 
-    // Normalization is a no-op for text (token IDs are categorical).
-    // Kept only to satisfy the IBatcher interface.
     float norm_mean_ = 0.0f;
     float norm_std_ = 1.0f;
     bool do_normalize_ = false;
 
     size_t num_classes_ = 0;
-    bool do_onehot_ = false;
-
-    // Separate train/val index sets, shuffled split at construction.
-    std::vector<size_t> train_indices_;
-    std::vector<size_t> val_indices_;
-    std::vector<size_t> test_indices_;
-    BatcherPhase current_phase_ = BatcherPhase::Train;
-
-    std::vector<size_t> epoch_order_;
-    size_t current_idx_ = 0;
-
-    std::mt19937 rng_;
+    size_t vocab_size_ = 0;
+    size_t val_samples_ = 0;
+    size_t test_samples_ = 0;
 };
 
 } // namespace cyxwiz

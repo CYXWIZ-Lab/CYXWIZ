@@ -1185,6 +1185,42 @@ set_target_properties(test_text_arrow_adapter PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Text Dataset Batcher Arrow Delegation =====
+add_executable(test_text_dataset_batcher_arrow
+    tests/test_text_dataset_batcher_arrow.cpp
+    src/core/text_dataset_batcher.cpp
+    src/core/text_arrow_adapter.cpp
+    src/core/formats/text_dataset.cpp
+    src/core/dataset_base.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
+)
+
+target_include_directories(test_text_dataset_batcher_arrow PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_text_dataset_batcher_arrow PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_dataset_batcher_arrow PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_dataset_batcher_arrow PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Label Column Resolver =====
 add_executable(test_label_column_resolver
     tests/test_label_column_resolver.cpp

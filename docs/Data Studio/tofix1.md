@@ -64,18 +64,21 @@ native CSV reader so original file columns are preserved; adapter-backed
 sources expose a stable `text_column` UTF-8 column and, when the
 `TextDataset` reports classes, an int32 `label_column`. This is covered
 by `test_text_arrow_adapter`, including a folder-corpus table feeding
-`TextTokenizerOperator`.
+`TextTokenizerOperator`. Legacy text training compatibility now routes
+`TextDatasetBatcher` through raw Arrow materialization,
+`TextTokenizerOperator`, and `ArrowDatasetBatcher`; `GetNextBatch()` no
+longer tokenizes samples itself. `test_text_dataset_batcher_arrow`
+covers train, validation, and test batches from that delegated path.
 
 **What remains:**
-- Make Arrow the default text training path when a materialized Cat-1
-  text table exists; keep legacy fallback only for unmaterialized text.
-- Rewrite or replace `TextDatasetBatcher` so text training consumes
-  pre-tokenized Arrow data instead of tokenizing inside the batcher.
 - Remove `ExtractTextTokenizer`, `ExtractTextVocabulary`, and
   `ExtractTextPadding` from `graph_compiler.cpp` after no consumers
   need `TrainingConfiguration::text_preprocessing`.
 - Decide whether `TextVocabulary` and `TextPadding` stay separate real
   operators or remain folded into the v1 combined tokenizer operator.
+- Split raw text parsing from `TextDataset` tokenizer initialization so
+  the legacy compatibility wrapper no longer builds a duplicate
+  TextDataset vocabulary before `TextTokenizerOperator` tokenizes.
 - Run a GUI/runtime smoke graph for one minimal text training launch
   once legacy text path removal is planned. The headless model-step
   smoke, worker-thread Arrow text smoke, runtime label handoff, and
