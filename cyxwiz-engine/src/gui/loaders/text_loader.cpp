@@ -132,6 +132,10 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         throw std::runtime_error(
                             "failed to store text CSV Arrow table");
                     }
+                } else {
+                    spdlog::info("TextLoader: '{}' uses legacy text metadata only; "
+                                 "raw Arrow text backing is currently limited to CSV/TSV",
+                                 name);
                 }
 
                 task.ReportProgress(0.9f, "Registering text metadata");
@@ -252,6 +256,13 @@ bool TextLoader::LaunchTraining(
         spdlog::error("TextLoader: text dataset '{}' is registered but entry "
                       "could not be retrieved", dataset_name);
         return false;
+    }
+    if (cyxwiz::DataRegistry::Instance().IsArrowDataset(dataset_name)) {
+        spdlog::info("TextLoader: '{}' also has raw Arrow backing. Using legacy "
+                     "TextDatasetBatcher because no materialized Cat-1 text table "
+                     "was selected; graphs with TextTokenizer materialize to "
+                     "'{}__materialized' and route through Arrow training.",
+                     dataset_name, dataset_name);
     }
     spdlog::info("TextLoader: Starting text training: dataset={}, epochs={}, "
                  "batch_size={}, num_workers={}, {} samples, {} classes, "

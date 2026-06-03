@@ -35,12 +35,22 @@ tokenized table as Parquet. It also verifies that the materialized
 `tok_*` plus `y` table feeds `ArrowDatasetBatcher` as training-ready
 feature tensors with one-hot labels. `ArrowDatasetBatcher` was split
 into its own translation unit so this boundary can be tested without
-linking unrelated legacy preprocessing code.
+linking unrelated legacy preprocessing code. Text CSV/TSV with a
+`TextTokenizer` graph now has a clear canonical training route:
+DataInput registers raw Arrow plus legacy metadata, the Cat-1
+materializer writes `<dataset>__materialized` as Arrow-only output, and
+loader dispatch routes that materialized table through Arrow training.
+If no materialized Cat-1 text table is selected, `TextLoader` logs that
+it is intentionally using the legacy `TextDatasetBatcher` fallback.
+Raw Arrow text backing for JSON, TXT, and folder corpora remains
+deferred because those sources need an explicit synthetic table schema
+for text and labels.
 
 **What remains:**
-- Make Arrow the canonical text path instead of dual-registration.
-- Decide and implement the raw table story for JSON, TXT, and folder
-  corpora.
+- Make Arrow the default text training path when a materialized Cat-1
+  text table exists; keep legacy fallback only for unmaterialized text.
+- Implement raw table adapters for JSON, TXT, and folder corpora after
+  defining their synthetic text/label schema.
 - Rewrite or replace `TextDatasetBatcher` so text training consumes
   pre-tokenized Arrow data instead of tokenizing inside the batcher.
 - Remove `ExtractTextTokenizer`, `ExtractTextVocabulary`, and
