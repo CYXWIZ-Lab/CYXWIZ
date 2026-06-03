@@ -2,6 +2,7 @@
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
+#include "graph_topology_utils.h"
 #include "../gui/loaders/data_loader.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -29,6 +30,22 @@ void AddIssue(TrainingConfiguration& config, IssueLevel level,
     issue.node_id = node_id;
     issue.node_name = node_name;
     config.issues.push_back(std::move(issue));
+}
+
+bool IsDatasetSourceType(gui::NodeType type) {
+    return type == gui::NodeType::DataInput ||
+           type == gui::NodeType::DatasetInput;
+}
+
+bool IsLossNodeType(gui::NodeType type) {
+    return type == gui::NodeType::MSELoss ||
+           type == gui::NodeType::CrossEntropyLoss ||
+           type == gui::NodeType::BCELoss ||
+           type == gui::NodeType::BCEWithLogits ||
+           type == gui::NodeType::L1Loss ||
+           type == gui::NodeType::SmoothL1Loss ||
+           type == gui::NodeType::HuberLoss ||
+           type == gui::NodeType::NLLLoss;
 }
 
 const char* IssueLevelLabel(IssueLevel level) {
@@ -119,7 +136,7 @@ TrainingConfiguration GraphCompiler::Compile(
     // Collect all structural errors at once (the old ValidateGraph stopped
     // at the first one). is_valid is determined at the end of Compile by
     // checking whether config.issues contains any Error-level entries.
-    const gui::MLNode* dataset_node = FindDatasetInputNode(nodes);
+    const gui::MLNode* dataset_node = FindDatasetInputNode(nodes, links);
     const gui::MLNode* loss_node = FindLossNode(nodes);
     const gui::MLNode* optimizer_node = FindOptimizerNode(nodes);
 
@@ -297,23 +314,26 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
-    // Extract split ratios from DataSplit node if present
-    for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::DataSplit) {
-            config.has_data_split = true;
-            try {
-                if (node.parameters.count("train_ratio"))
-                    config.train_ratio = std::stof(node.parameters.at("train_ratio"));
-                if (node.parameters.count("val_ratio"))
-                    config.val_ratio = std::stof(node.parameters.at("val_ratio"));
-                if (node.parameters.count("test_ratio"))
-                    config.test_ratio = std::stof(node.parameters.at("test_ratio"));
-                if (node.parameters.count("seed"))
-                    config.split_seed = std::stoi(node.parameters.at("seed"));
-            } catch (const std::exception& e) {
-                spdlog::warn("GraphCompiler: DataSplit param parse error ({}) - using defaults", e.what());
-            }
-            break;
+    const std::unordered_set<int> dataset_reachable =
+        dataset_node
+            ? CollectReachableNodeIds(dataset_node->id, links)
+            : std::unordered_set<int>{};
+
+    // Extract split ratios from the DataSplit node on the selected data path.
+    if (const gui::MLNode* split_node = FindFirstReachableNodeOfType(
+            nodes, dataset_reachable, gui::NodeType::DataSplit)) {
+        config.has_data_split = true;
+        try {
+            if (split_node->parameters.count("train_ratio"))
+                config.train_ratio = std::stof(split_node->parameters.at("train_ratio"));
+            if (split_node->parameters.count("val_ratio"))
+                config.val_ratio = std::stof(split_node->parameters.at("val_ratio"));
+            if (split_node->parameters.count("test_ratio"))
+                config.test_ratio = std::stof(split_node->parameters.at("test_ratio"));
+            if (split_node->parameters.count("seed"))
+                config.split_seed = std::stoi(split_node->parameters.at("seed"));
+        } catch (const std::exception& e) {
+            spdlog::warn("GraphCompiler: DataSplit param parse error ({}) - using defaults", e.what());
         }
     }
     if (config.has_data_split) {
@@ -326,30 +346,28 @@ TrainingConfiguration GraphCompiler::Compile(
     // Extract training-loop config from DataLoader node if present.
     // DataLoader owns batch_size / epochs / shuffle / drop_last / num_workers —
     // all the "how do I iterate training" hyperparameters.
-    for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::DataLoader) {
-            config.has_data_loader = true;
-            try {
-                if (node.parameters.count("batch_size"))
-                    config.batch_size = std::stoi(node.parameters.at("batch_size"));
-                if (node.parameters.count("epochs"))
-                    config.epochs = std::stoi(node.parameters.at("epochs"));
-                if (node.parameters.count("shuffle"))
-                    config.shuffle = (node.parameters.at("shuffle") == "true");
-                if (node.parameters.count("drop_last"))
-                    config.drop_last = (node.parameters.at("drop_last") == "true");
-                if (node.parameters.count("num_workers"))
-                    config.num_workers = std::stoi(node.parameters.at("num_workers"));
-                if (node.parameters.count("save_best_checkpoint"))
-                    config.save_best_checkpoint = (node.parameters.at("save_best_checkpoint") == "true");
-                if (node.parameters.count("early_stopping_patience"))
-                    config.early_stopping_patience = std::stoi(node.parameters.at("early_stopping_patience"));
-                if (node.parameters.count("checkpoint_dir"))
-                    config.checkpoint_dir = node.parameters.at("checkpoint_dir");
-            } catch (const std::exception& e) {
-                spdlog::warn("GraphCompiler: DataLoader param parse error ({}) - using defaults", e.what());
-            }
-            break;
+    if (const gui::MLNode* loader_node = FindFirstReachableNodeOfType(
+            nodes, dataset_reachable, gui::NodeType::DataLoader)) {
+        config.has_data_loader = true;
+        try {
+            if (loader_node->parameters.count("batch_size"))
+                config.batch_size = std::stoi(loader_node->parameters.at("batch_size"));
+            if (loader_node->parameters.count("epochs"))
+                config.epochs = std::stoi(loader_node->parameters.at("epochs"));
+            if (loader_node->parameters.count("shuffle"))
+                config.shuffle = (loader_node->parameters.at("shuffle") == "true");
+            if (loader_node->parameters.count("drop_last"))
+                config.drop_last = (loader_node->parameters.at("drop_last") == "true");
+            if (loader_node->parameters.count("num_workers"))
+                config.num_workers = std::stoi(loader_node->parameters.at("num_workers"));
+            if (loader_node->parameters.count("save_best_checkpoint"))
+                config.save_best_checkpoint = (loader_node->parameters.at("save_best_checkpoint") == "true");
+            if (loader_node->parameters.count("early_stopping_patience"))
+                config.early_stopping_patience = std::stoi(loader_node->parameters.at("early_stopping_patience"));
+            if (loader_node->parameters.count("checkpoint_dir"))
+                config.checkpoint_dir = loader_node->parameters.at("checkpoint_dir");
+        } catch (const std::exception& e) {
+            spdlog::warn("GraphCompiler: DataLoader param parse error ({}) - using defaults", e.what());
         }
     }
     if (config.has_data_loader) {
@@ -825,7 +843,7 @@ bool GraphCompiler::ValidateGraph(
     }
 
     // Check for dataset input
-    if (!FindDatasetInputNode(nodes)) {
+    if (!FindDatasetInputNode(nodes, links)) {
         error = "Graph must have a DatasetInput node";
         return false;
     }
@@ -940,26 +958,42 @@ std::vector<int> GraphCompiler::GetInputNodes(
     return inputs;
 }
 
-const gui::MLNode* GraphCompiler::FindDatasetInputNode(const std::vector<gui::MLNode>& nodes) const {
+const gui::MLNode* GraphCompiler::FindDatasetInputNode(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links) const {
+    const gui::MLNode* first_source = nullptr;
+    const gui::MLNode* first_connected_source = nullptr;
     for (const auto& node : nodes) {
-        // Both smart DataInput and legacy DatasetInput nodes are valid data sources
-        if (node.type == gui::NodeType::DataInput || node.type == gui::NodeType::DatasetInput) {
-            return &node;
+        if (!IsDatasetSourceType(node.type)) {
+            continue;
+        }
+
+        if (!first_source) {
+            first_source = &node;
+        }
+
+        if (!HasOutgoingLink(node.id, links)) {
+            continue;
+        }
+
+        if (!first_connected_source) {
+            first_connected_source = &node;
+        }
+
+        const auto reachable = CollectReachableNodeIds(node.id, links);
+        for (const auto& candidate : nodes) {
+            if (IsLossNodeType(candidate.type) &&
+                reachable.count(candidate.id) > 0) {
+                return &node;
+            }
         }
     }
-    return nullptr;
+    return first_connected_source ? first_connected_source : first_source;
 }
 
 const gui::MLNode* GraphCompiler::FindLossNode(const std::vector<gui::MLNode>& nodes) const {
     for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::MSELoss ||
-            node.type == gui::NodeType::CrossEntropyLoss ||
-            node.type == gui::NodeType::BCELoss ||
-            node.type == gui::NodeType::BCEWithLogits ||
-            node.type == gui::NodeType::L1Loss ||
-            node.type == gui::NodeType::SmoothL1Loss ||
-            node.type == gui::NodeType::HuberLoss ||
-            node.type == gui::NodeType::NLLLoss) {
+        if (IsLossNodeType(node.type)) {
             return &node;
         }
     }

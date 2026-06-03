@@ -137,11 +137,24 @@ instead of rescanning node order, and `PipelineMaterializer` starts from
 the DataInput/DatasetInput that owns that source dataset. This prevents a
 stale or unrelated first DataInput from stealing materialization and
 label resolution. `test_text_gui_training_launch` covers that regression
-by putting an unused loaded DataInput first in the node list. The
-remaining `TrainingExecutor` work is the legacy/external image/audio/text
-setup and the epoch loop topology; those should be split only after the
-graph contract is pinned down so the next refactor does not mix behavior
+by putting an unused loaded DataInput first in the node list.
+`GraphCompiler` has also started using graph reachability for data-path
+configuration: source selection now prefers a DataInput/DatasetInput that
+can reach a loss node, then falls back to connected/incomplete sources,
+and DataSplit/DataLoader extraction only reads nodes reachable from that
+selected source instead of the first matching node in raw node order.
+`test_graph_topology_utils` covers the helper behavior with a stale first
+DataInput and stale first DataLoader. The remaining
+`TrainingExecutor` work is the legacy/external image/audio/text setup and
+the epoch loop topology; those should be split only after the graph
+contract is pinned down so the next refactor does not mix behavior
 changes with file organization.
+
+**Still open for Priority 2:** compiler preprocessing/model extraction
+still walks the full topological graph, so stale connected-but-unwanted
+branches need a separate contract decision before filtering. Runtime
+label/data flow and the TrainingExecutor legacy/external setup remain
+registry-driven in places and still need pin-walked ownership.
 
 ### Normalize in DataInput vs graph
 

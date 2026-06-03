@@ -133,6 +133,7 @@ set(ENGINE_SOURCES
     src/core/debug_recommendation_engine.cpp
     src/core/training_trace_collector.cpp
     src/core/debug_run_store.cpp
+    src/core/graph_topology_utils.cpp
     src/core/training_batcher_setup.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
@@ -1228,6 +1229,31 @@ if(WIN32)
 endif()
 
 set_target_properties(test_training_batcher_setup PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Graph Topology Utilities =====
+add_executable(test_graph_topology_utils
+    tests/test_graph_topology_utils.cpp
+    src/core/graph_topology_utils.cpp
+)
+
+target_include_directories(test_graph_topology_utils PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_graph_topology_utils PRIVATE
+    imgui::imgui
+)
+
+if(WIN32)
+    target_compile_definitions(test_graph_topology_utils PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_graph_topology_utils PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

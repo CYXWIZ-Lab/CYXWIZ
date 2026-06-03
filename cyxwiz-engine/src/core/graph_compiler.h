@@ -392,7 +392,9 @@ private:
     ) const;
 
     // Find specific node types
-    const gui::MLNode* FindDatasetInputNode(const std::vector<gui::MLNode>& nodes) const;
+    const gui::MLNode* FindDatasetInputNode(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links) const;
     const gui::MLNode* FindLossNode(const std::vector<gui::MLNode>& nodes) const;
     const gui::MLNode* FindOptimizerNode(const std::vector<gui::MLNode>& nodes) const;
     const gui::MLNode* FindOutputNode(const std::vector<gui::MLNode>& nodes) const;
