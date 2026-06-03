@@ -107,7 +107,7 @@ private:
 };
 
 /**
- * TokenizerDialog - Configuration dialog for Text Tokenization nodes
+ * TokenizerDialog - Configuration dialog for text preprocessing nodes
  */
 class TokenizerDialog : public NodeConfigDialog {
 public:
@@ -122,18 +122,24 @@ protected:
 private:
     void RenderTokenizerTab();
     void RenderVocabularyTab();
-    void RenderSpecialTokensTab();
+    void RenderPaddingTab();
     void RenderPreviewTab();
+    void LoadFromNode();
+    bool IsTokenizerNode() const;
+    bool IsVocabularyNode() const;
+    bool IsPaddingNode() const;
 
-    int tokenizer_type_ = 0;
+    int tokenizer_type_ = 1;
+    int max_length_ = 256;
     int max_vocab_size_ = 10000;
-    int min_frequency_ = 2;
+    int min_word_freq_ = 2;
+    int pad_value_ = 0;
     bool lowercase_ = true;
-    bool remove_punctuation_ = false;
-    char pad_token_[32] = "[PAD]";
-    char unk_token_[32] = "[UNK]";
-    char sos_token_[32] = "[SOS]";
-    char eos_token_[32] = "[EOS]";
+    bool padding_ = true;
+    bool truncation_ = true;
+    char text_col_[128] = "text";
+    char label_col_[128] = "";
+    char vocab_file_[260] = "";
     char sample_text_[1024] = "Hello world! This is a sample text for tokenization preview.";
     std::vector<std::string> preview_tokens_;
 };

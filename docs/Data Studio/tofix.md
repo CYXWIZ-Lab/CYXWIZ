@@ -2163,6 +2163,17 @@ the legacy `tokenizer_type` / `max_length` / `lowercase` /
 GraphCompiler config-extractor path keeps working unchanged for
 RegisterTextDataset graphs.
 
+**Status update 2026-06-03:** Frontend exposure slice landed. The
+`TokenizerDialog` now writes the canonical text-node params
+(`text_col`, `label_col`, `tokenizer_type`, `max_length`,
+`min_word_freq`, `max_vocab_size`) and keeps the compiler/operator
+aliases (`min_freq`, `text_column`, `padding`, `truncation`) in sync.
+It is registered for `TextTokenizer`, `TextVocabulary`, and
+`TextPadding`, so all three nodes expose an Open Dialog path. The
+stale unsupported BPE/pretrained/special-token UI was removed from
+this dialog. This does **not** complete full Fix B; the remaining work
+is still the backend dataflow rewrite below.
+
 **Still to do for full Fix B:**
 - DataInput text branch: register CSVs as Arrow tables (raw
   string + label columns) instead of TextDatasetEntry, so the

@@ -23,6 +23,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 
 namespace gui {
 
@@ -541,71 +542,184 @@ void CSVReaderDialog::LoadPreview() {
 
 // ==================== TokenizerDialog ====================
 
-TokenizerDialog::TokenizerDialog(MLNode* node)
-    : NodeConfigDialog("Tokenizer Configuration", node)
-{
-    if (node_) {
-        if (node_->parameters.count("method")) {
-            std::string method = node_->parameters["method"];
-            if (method == "word") tokenizer_type_ = 0;
-            else if (method == "character") tokenizer_type_ = 1;
-            else if (method == "subword") tokenizer_type_ = 2;
-        }
-        if (node_->parameters.count("max_vocab_size")) {
-            try { max_vocab_size_ = std::stoi(node_->parameters["max_vocab_size"]); } catch (...) {}
-        }
-        if (node_->parameters.count("min_frequency")) {
-            try { min_frequency_ = std::stoi(node_->parameters["min_frequency"]); } catch (...) {}
-        }
-        if (node_->parameters.count("lowercase")) {
-            lowercase_ = (node_->parameters["lowercase"] == "true");
-        }
+namespace {
+
+std::string TextDialogTitle(const MLNode* node) {
+    if (!node) return "Text Preprocessing Configuration";
+    switch (node->type) {
+        case NodeType::TextVocabulary:
+            return "Text Vocabulary Configuration";
+        case NodeType::TextPadding:
+            return "Text Padding Configuration";
+        case NodeType::TextTokenizer:
+        default:
+            return "Text Tokenizer Configuration";
     }
+}
+
+void CopyParam(const MLNode* node, const char* key, char* dest, size_t dest_size) {
+    if (!node || dest_size == 0) return;
+    auto it = node->parameters.find(key);
+    if (it == node->parameters.end()) return;
+    std::strncpy(dest, it->second.c_str(), dest_size - 1);
+    dest[dest_size - 1] = '\0';
+}
+
+void ReadIntParam(const MLNode* node, const char* key, int& value) {
+    if (!node) return;
+    auto it = node->parameters.find(key);
+    if (it == node->parameters.end() || it->second.empty()) return;
+    try {
+        value = std::stoi(it->second);
+    } catch (...) {
+    }
+}
+
+void ReadBoolParam(const MLNode* node, const char* key, bool& value) {
+    if (!node) return;
+    auto it = node->parameters.find(key);
+    if (it == node->parameters.end() || it->second.empty()) return;
+    value = (it->second == "true" || it->second == "1");
+}
+
+const char* MethodNameFromType(int tokenizer_type) {
+    switch (tokenizer_type) {
+        case 0: return "whitespace";
+        case 2: return "character";
+        case 1:
+        default:
+            return "word";
+    }
+}
+
+} // namespace
+
+TokenizerDialog::TokenizerDialog(MLNode* node)
+    : NodeConfigDialog(TextDialogTitle(node), node)
+{
+    LoadFromNode();
+}
+
+bool TokenizerDialog::IsTokenizerNode() const {
+    return !node_ || node_->type == NodeType::TextTokenizer;
+}
+
+bool TokenizerDialog::IsVocabularyNode() const {
+    return node_ && node_->type == NodeType::TextVocabulary;
+}
+
+bool TokenizerDialog::IsPaddingNode() const {
+    return node_ && node_->type == NodeType::TextPadding;
+}
+
+void TokenizerDialog::LoadFromNode() {
+    if (!node_) return;
+
+    tokenizer_type_ = 1;
+    max_length_ = IsPaddingNode() ? 512 : 256;
+    max_vocab_size_ = IsVocabularyNode() ? -1 : 10000;
+    min_word_freq_ = IsVocabularyNode() ? 1 : 2;
+    pad_value_ = 0;
+    lowercase_ = true;
+    padding_ = true;
+    truncation_ = true;
+    std::strncpy(text_col_, "text", sizeof(text_col_) - 1);
+    text_col_[sizeof(text_col_) - 1] = '\0';
+    label_col_[0] = '\0';
+    vocab_file_[0] = '\0';
+
+    auto method = node_->parameters.find("method");
+    if (method != node_->parameters.end()) {
+        if (method->second == "whitespace") tokenizer_type_ = 0;
+        else if (method->second == "word") tokenizer_type_ = 1;
+        else if (method->second == "character") tokenizer_type_ = 2;
+    }
+
+    if (node_->parameters.count("text_col")) {
+        CopyParam(node_, "text_col", text_col_, sizeof(text_col_));
+    } else {
+        CopyParam(node_, "text_column", text_col_, sizeof(text_col_));
+    }
+    CopyParam(node_, "label_col", label_col_, sizeof(label_col_));
+    CopyParam(node_, "vocab_file", vocab_file_, sizeof(vocab_file_));
+
+    ReadIntParam(node_, "tokenizer_type", tokenizer_type_);
+    ReadIntParam(node_, "max_length", max_length_);
+    ReadIntParam(node_, "max_vocab_size", max_vocab_size_);
+    ReadIntParam(node_, "min_word_freq", min_word_freq_);
+    ReadIntParam(node_, "min_freq", min_word_freq_);
+    ReadIntParam(node_, "min_frequency", min_word_freq_);
+    ReadIntParam(node_, "pad_value", pad_value_);
+    ReadBoolParam(node_, "lowercase", lowercase_);
+    ReadBoolParam(node_, "padding", padding_);
+    ReadBoolParam(node_, "truncation", truncation_);
+
+    if (tokenizer_type_ < 0 || tokenizer_type_ > 2) tokenizer_type_ = 1;
+    if (max_length_ < 1) max_length_ = 1;
+    if (min_word_freq_ < 1) min_word_freq_ = 1;
 }
 
 void TokenizerDialog::Apply() {
     if (!node_) return;
 
-    switch (tokenizer_type_) {
-        case 0: node_->parameters["method"] = "word"; break;
-        case 1: node_->parameters["method"] = "character"; break;
-        case 2: node_->parameters["method"] = "subword"; break;
+    if (IsTokenizerNode()) {
+        node_->parameters["text_col"] = text_col_;
+        node_->parameters["label_col"] = label_col_;
+        node_->parameters["text_column"] = text_col_;
+        node_->parameters["method"] = MethodNameFromType(tokenizer_type_);
+        node_->parameters["tokenizer_type"] = std::to_string(tokenizer_type_);
+        node_->parameters["max_length"] = std::to_string(max_length_);
+        node_->parameters["lowercase"] = lowercase_ ? "true" : "false";
+        node_->parameters["padding"] = padding_ ? "true" : "false";
+        node_->parameters["truncation"] = truncation_ ? "true" : "false";
+        node_->parameters["min_word_freq"] = std::to_string(min_word_freq_);
+        node_->parameters["min_freq"] = std::to_string(min_word_freq_);
+        node_->parameters["max_vocab_size"] = std::to_string(max_vocab_size_);
     }
 
-    node_->parameters["max_vocab_size"] = std::to_string(max_vocab_size_);
-    node_->parameters["min_frequency"] = std::to_string(min_frequency_);
-    node_->parameters["lowercase"] = lowercase_ ? "true" : "false";
-    node_->parameters["remove_punctuation"] = remove_punctuation_ ? "true" : "false";
-    node_->parameters["pad_token"] = pad_token_;
-    node_->parameters["unk_token"] = unk_token_;
-    node_->parameters["sos_token"] = sos_token_;
-    node_->parameters["eos_token"] = eos_token_;
+    if (IsVocabularyNode()) {
+        node_->parameters["min_freq"] = std::to_string(min_word_freq_);
+        node_->parameters["min_word_freq"] = std::to_string(min_word_freq_);
+        node_->parameters["max_vocab_size"] = std::to_string(max_vocab_size_);
+        node_->parameters["vocab_file"] = vocab_file_;
+    }
+
+    if (IsPaddingNode()) {
+        node_->parameters["max_length"] = std::to_string(max_length_);
+        node_->parameters["pad_value"] = std::to_string(pad_value_);
+        node_->parameters["padding"] = "true";
+        node_->parameters["truncation"] = truncation_ ? "true" : "false";
+    }
 
     has_changes_ = false;
-    spdlog::info("TokenizerDialog: Applied tokenizer settings");
+    spdlog::info("TokenizerDialog: Applied text preprocessing settings");
 }
 
 void TokenizerDialog::Reset() {
     if (!node_) return;
     node_->parameters = original_params_;
+    LoadFromNode();
+    preview_tokens_.clear();
     has_changes_ = false;
 }
 
 void TokenizerDialog::RenderContent() {
-    if (ImGui::BeginTabBar("TokenizerTabs")) {
-        if (ImGui::BeginTabItem("Tokenizer")) {
+    if (ImGui::BeginTabBar("TextPreprocessingTabs")) {
+        if (IsTokenizerNode() && ImGui::BeginTabItem("Tokenizer")) {
             RenderTokenizerTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Vocabulary")) {
+        if ((IsTokenizerNode() || IsVocabularyNode()) &&
+            ImGui::BeginTabItem("Vocabulary")) {
             RenderVocabularyTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Special Tokens")) {
-            RenderSpecialTokensTab();
+        if ((IsTokenizerNode() || IsPaddingNode()) &&
+            ImGui::BeginTabItem("Padding")) {
+            RenderPaddingTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Preview")) {
+        if (IsTokenizerNode() && ImGui::BeginTabItem("Preview")) {
             RenderPreviewTab();
             ImGui::EndTabItem();
         }
@@ -616,48 +730,34 @@ void TokenizerDialog::RenderContent() {
 void TokenizerDialog::RenderTokenizerTab() {
     ImGui::Spacing();
 
-    ImGui::Text("Tokenization Method:");
-    const char* methods[] = { "Word-level", "Character-level", "Subword (BPE)" };
+    ImGui::Text("Text column:");
+    ImGui::SetNextItemWidth(240.0f);
+    if (ImGui::InputText("##text_col", text_col_, sizeof(text_col_))) {
+        has_changes_ = true;
+    }
+
+    ImGui::Text("Label column:");
+    ImGui::SetNextItemWidth(240.0f);
+    if (ImGui::InputText("##label_col", label_col_, sizeof(label_col_))) {
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("optional");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Tokenizer:");
+    const char* methods[] = { "Whitespace", "Word", "Character" };
     ImGui::SetNextItemWidth(200.0f);
-    if (ImGui::Combo("##method", &tokenizer_type_, methods, 3)) {
+    if (ImGui::Combo("##tokenizer_type", &tokenizer_type_, methods, 3)) {
         has_changes_ = true;
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Method-specific description
-    switch (tokenizer_type_) {
-        case 0:
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                "Word-level tokenization splits text by whitespace and punctuation.\n"
-                "Best for: English text, simple models, when vocabulary size is manageable.");
-            break;
-        case 1:
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                "Character-level tokenization splits text into individual characters.\n"
-                "Best for: Character-based models, languages without spaces.");
-            break;
-        case 2:
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                "Subword (BPE) learns common subword units from the corpus.\n"
-                "Best for: Large vocabularies, handling unknown words, multilingual.");
-            break;
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Preprocessing options
-    ImGui::Text("Preprocessing:");
 
     if (ImGui::Checkbox("Convert to lowercase", &lowercase_)) {
-        has_changes_ = true;
-    }
-
-    if (ImGui::Checkbox("Remove punctuation", &remove_punctuation_)) {
         has_changes_ = true;
     }
 }
@@ -665,70 +765,61 @@ void TokenizerDialog::RenderTokenizerTab() {
 void TokenizerDialog::RenderVocabularyTab() {
     ImGui::Spacing();
 
-    ImGui::Text("Maximum Vocabulary Size:");
+    ImGui::Text("Minimum token frequency:");
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::InputInt("##min_word_freq", &min_word_freq_)) {
+        if (min_word_freq_ < 1) min_word_freq_ = 1;
+        has_changes_ = true;
+    }
+
+    ImGui::Spacing();
+
+    ImGui::Text("Maximum vocabulary size:");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##max_vocab", &max_vocab_size_)) {
-        if (max_vocab_size_ < 100) max_vocab_size_ = 100;
+        if (max_vocab_size_ < -1) max_vocab_size_ = -1;
         has_changes_ = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(100 - 1,000,000)");
+    ImGui::TextDisabled("-1 = unlimited");
 
-    ImGui::Spacing();
-
-    ImGui::Text("Minimum Token Frequency:");
-    ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::InputInt("##min_freq", &min_frequency_)) {
-        if (min_frequency_ < 1) min_frequency_ = 1;
-        has_changes_ = true;
+    if (IsVocabularyNode()) {
+        ImGui::Spacing();
+        ImGui::Text("Vocabulary file:");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##vocab_file", vocab_file_, sizeof(vocab_file_))) {
+            has_changes_ = true;
+        }
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(Tokens appearing less are replaced with [UNK])");
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-        "Vocabulary building options:\n"
-        "- Build from training data\n"
-        "- Load pre-built vocabulary file\n"
-        "- Use pretrained tokenizer (BERT, GPT-2, etc.)");
 }
 
-void TokenizerDialog::RenderSpecialTokensTab() {
+void TokenizerDialog::RenderPaddingTab() {
     ImGui::Spacing();
 
-    ImGui::Text("Configure special tokens used during tokenization:");
-    ImGui::Spacing();
-
-    ImGui::Text("Padding Token:");
+    ImGui::Text("Maximum sequence length:");
     ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::InputText("##pad", pad_token_, sizeof(pad_token_))) {
+    if (ImGui::InputInt("##max_length", &max_length_)) {
+        if (max_length_ < 1) max_length_ = 1;
         has_changes_ = true;
+    }
+
+    if (IsPaddingNode()) {
+        ImGui::Spacing();
+        ImGui::Text("Pad value:");
+        ImGui::SetNextItemWidth(150.0f);
+        if (ImGui::InputInt("##pad_value", &pad_value_)) {
+            has_changes_ = true;
+        }
     }
 
     ImGui::Spacing();
 
-    ImGui::Text("Unknown Token:");
-    ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::InputText("##unk", unk_token_, sizeof(unk_token_))) {
-        has_changes_ = true;
+    if (IsTokenizerNode()) {
+        if (ImGui::Checkbox("Pad sequences", &padding_)) {
+            has_changes_ = true;
+        }
     }
-
-    ImGui::Spacing();
-
-    ImGui::Text("Start of Sequence:");
-    ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::InputText("##sos", sos_token_, sizeof(sos_token_))) {
-        has_changes_ = true;
-    }
-
-    ImGui::Spacing();
-
-    ImGui::Text("End of Sequence:");
-    ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::InputText("##eos", eos_token_, sizeof(eos_token_))) {
+    if (ImGui::Checkbox("Truncate long sequences", &truncation_)) {
         has_changes_ = true;
     }
 }
@@ -747,27 +838,39 @@ void TokenizerDialog::RenderPreviewTab() {
     if (ImGui::Button("Tokenize Preview")) {
         preview_tokens_.clear();
 
-        // Simple word tokenization for preview
         std::string text = sample_text_;
         if (lowercase_) {
-            std::transform(text.begin(), text.end(), text.begin(), ::tolower);
+            std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
         }
 
-        std::stringstream ss(text);
-        std::string word;
-        while (ss >> word) {
-            if (tokenizer_type_ == 1) {
-                // Character-level
-                for (char c : word) {
+        if (tokenizer_type_ == 2) {
+            for (char c : text) {
+                if (!std::isspace(static_cast<unsigned char>(c))) {
                     preview_tokens_.push_back(std::string(1, c));
                 }
-            } else {
-                // Word-level
-                if (remove_punctuation_) {
-                    word.erase(std::remove_if(word.begin(), word.end(), ::ispunct), word.end());
+            }
+        } else if (tokenizer_type_ == 1) {
+            std::string token;
+            for (char c : text) {
+                unsigned char uc = static_cast<unsigned char>(c);
+                if (std::isalnum(uc) || c == '_') {
+                    token.push_back(c);
+                } else if (!token.empty()) {
+                    preview_tokens_.push_back(token);
+                    token.clear();
                 }
-                if (!word.empty()) {
-                    preview_tokens_.push_back(word);
+            }
+            if (!token.empty()) {
+                preview_tokens_.push_back(token);
+            }
+        } else {
+            std::stringstream ss(text);
+            std::string token;
+            while (ss >> token) {
+                if (!token.empty()) {
+                    preview_tokens_.push_back(token);
                 }
             }
         }
@@ -909,6 +1012,12 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
     });
 
     RegisterDialog(NT::TextTokenizer, [](MLNode* node) {
+        return std::make_unique<TokenizerDialog>(node);
+    });
+    RegisterDialog(NT::TextVocabulary, [](MLNode* node) {
+        return std::make_unique<TokenizerDialog>(node);
+    });
+    RegisterDialog(NT::TextPadding, [](MLNode* node) {
         return std::make_unique<TokenizerDialog>(node);
     });
 
