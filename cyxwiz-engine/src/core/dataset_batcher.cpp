@@ -765,6 +765,22 @@ void ArrowDatasetBatcher::InitializeColumns() {
             }
         }
     }
+    if (!label_column_.empty() && label_col_idx_ < 0) {
+        spdlog::warn("ArrowDatasetBatcher: explicit label column '{}' not found; "
+                     "falling back to common label-name auto-detection",
+                     label_column_);
+        for (int i = 0; i < schema->num_fields() && label_col_idx_ < 0; ++i) {
+            const std::string name = schema->field(i)->name();
+            for (const auto& common : common_label_names) {
+                if (name == common) {
+                    label_col_idx_ = i;
+                    spdlog::info("ArrowDatasetBatcher: Auto-detected fallback label "
+                                 "column '{}' at index {}", name, i);
+                    break;
+                }
+            }
+        }
+    }
 
     // Second pass: collect feature columns (all numeric except label)
     for (int i = 0; i < schema->num_fields(); ++i) {

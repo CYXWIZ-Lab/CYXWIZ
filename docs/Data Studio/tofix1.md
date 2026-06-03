@@ -24,6 +24,10 @@ canonical params and is exposed for `TextTokenizer`, `TextVocabulary`,
 and `TextPadding`. Single-file text CSV/TSV now dual-registers raw
 Arrow plus legacy `TextDatasetEntry`, and
 `test_text_tokenizer_operator` validates the Arrow operator contract.
+The Arrow and Parquet batchers now fall back to common label-name
+auto-detection when a stale explicit label column is missing, so a
+materialized tokenizer table with `tok_*` and `y` does not silently use
+`y` as a feature.
 
 **What remains:**
 - Make Arrow the canonical text path instead of dual-registration.

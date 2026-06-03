@@ -74,12 +74,36 @@ void ParquetArrowBatcher::InitializeColumns() {
     feature_cols_.clear();
     feature_cols_.reserve(num_cols);
 
+    static const std::vector<std::string> common_label_names = {
+        "label", "Label", "LABEL", "class", "Class", "CLASS",
+        "target", "Target", "TARGET", "y", "Y", "digit", "category"
+    };
+
     for (int i = 0; i < num_cols; ++i) {
         const auto& field_name = schema->field(i)->name();
         if (!label_column_.empty() && field_name == label_column_) {
             label_col_idx_ = i;
         } else {
             feature_cols_.push_back(i);
+        }
+    }
+    if (!label_column_.empty() && label_col_idx_ < 0) {
+        spdlog::warn("ParquetArrowBatcher: explicit label column '{}' not found; "
+                     "falling back to common label-name auto-detection",
+                     label_column_);
+        for (int i = 0; i < num_cols && label_col_idx_ < 0; ++i) {
+            const auto& field_name = schema->field(i)->name();
+            for (const auto& common : common_label_names) {
+                if (field_name == common) {
+                    label_col_idx_ = i;
+                    feature_cols_.erase(
+                        std::remove(feature_cols_.begin(), feature_cols_.end(), i),
+                        feature_cols_.end());
+                    spdlog::info("ParquetArrowBatcher: auto-detected fallback label "
+                                 "column at index {} ('{}')", i, field_name);
+                    break;
+                }
+            }
         }
     }
     num_features_ = feature_cols_.size();
