@@ -130,12 +130,12 @@ int main() {
                       {Pin(202, gui::PinType::Tensor, "Output", false)});
     dense.parameters["units"] = "2";
 
-    auto dot = Node(3,
-                    gui::NodeType::TensorDot,
-                    "Deferred Dot",
-                    {Pin(301, gui::PinType::Tensor, "A", true),
-                     Pin(302, gui::PinType::Tensor, "B", true)},
-                    {Pin(303, gui::PinType::Tensor, "Output", false)});
+    auto batch_matmul = Node(3,
+                             gui::NodeType::TensorBatchMatMul,
+                             "Deferred BatchMatMul",
+                             {Pin(301, gui::PinType::Tensor, "A", true),
+                              Pin(302, gui::PinType::Tensor, "B", true)},
+                             {Pin(303, gui::PinType::Tensor, "Output", false)});
 
     auto loss = Node(4,
                      gui::NodeType::MSELoss,
@@ -150,7 +150,7 @@ int main() {
                           {Pin(501, gui::PinType::Loss, "Loss", true)},
                           {});
 
-    std::vector<gui::MLNode> nodes = {data, dense, dot, loss, optimizer};
+    std::vector<gui::MLNode> nodes = {data, dense, batch_matmul, loss, optimizer};
     std::vector<gui::NodeLink> links = {
         Link(1, 1, 101, 2, 201),
         Link(2, 2, 202, 3, 301),
@@ -163,15 +163,15 @@ int main() {
     cyxwiz::GraphCompiler compiler;
     auto config = compiler.Compile(nodes, links, true);
 
-    Check(!config.is_valid, "training path with template TensorDot must be invalid");
+    Check(!config.is_valid, "training path with template TensorBatchMatMul must be invalid");
     Check(HasIssueText(config, "template/deferred"),
           "compile should report template/deferred status");
-    Check(HasIssueText(config, "Deferred Dot"),
+    Check(HasIssueText(config, "Deferred BatchMatMul"),
           "compile issue should name the deferred node");
 
-    auto side_dot = dot;
+    auto side_dot = batch_matmul;
     side_dot.id = 6;
-    side_dot.name = "Disconnected Deferred Dot";
+    side_dot.name = "Disconnected Deferred BatchMatMul";
     side_dot.inputs = {Pin(601, gui::PinType::Tensor, "A", true),
                        Pin(602, gui::PinType::Tensor, "B", true)};
     side_dot.outputs = {Pin(603, gui::PinType::Tensor, "Output", false)};
@@ -196,7 +196,7 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "deferred node outside selected training path should not block compile");
-    Check(!HasIssueText(config, "Disconnected Deferred Dot"),
+    Check(!HasIssueText(config, "Disconnected Deferred BatchMatMul"),
           "compile should not report side deferred node");
     Check(config.layers.size() == 1,
           "linear selected path should still compile one sequential layer");
@@ -309,6 +309,37 @@ int main() {
           "graph plan should include Data-to-Concatenate second input edge");
     Check(HasPlanEdge(config.graph_plan, 10, 1003, 4, 401),
           "graph plan should include Concatenate-to-loss prediction edge");
+
+    auto runtime_dot = Node(13,
+                            gui::NodeType::TensorDot,
+                            "Runtime Dot",
+                            {Pin(1301, gui::PinType::Tensor, "A", true),
+                             Pin(1302, gui::PinType::Tensor, "B", true)},
+                            {Pin(1303, gui::PinType::Tensor, "Output", false)});
+
+    nodes = {data, abs, runtime_dot, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 13, 1301),
+        Link(3, 1, 101, 13, 1302),
+        Link(4, 13, 1303, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "selected training path with backend-supported TensorDot should compile");
+    Check(!HasIssueText(config, "Runtime Dot"),
+          "supported graph-runtime TensorDot should not be reported as deferred");
+    Check(config.graph_op_node_ids.size() == 1,
+          "selected TensorDot graph should record one graph runtime op");
+    Check(HasGraphOpId(config, 13),
+          "selected TensorDot graph should record the TensorDot node id");
+    Check(config.layers.size() == 1,
+          "selected TensorDot graph should still extract only the unary tensor layer");
+    Check(HasPlanNode(config.graph_plan, 13),
+          "graph plan should include selected TensorDot node");
 
     auto compare = Node(11,
                         gui::NodeType::TensorCompare,

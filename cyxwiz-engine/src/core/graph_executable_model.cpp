@@ -173,6 +173,18 @@ Tensor RunMaskForward(const CompiledGraphNode& node,
     throw std::runtime_error("GraphExecutableModel unsupported mask graph op");
 }
 
+Tensor RunLinalgForward(const CompiledGraphNode& node,
+                        const std::vector<const Tensor*>& inputs) {
+    if (node.type == gui::NodeType::TensorDot) {
+        if (inputs.size() != 2) {
+            throw std::runtime_error("GraphExecutableModel TensorDot needs exactly two inputs");
+        }
+        return inputs[0]->Dot(*inputs[1]);
+    }
+
+    throw std::runtime_error("GraphExecutableModel unsupported linalg graph op");
+}
+
 Tensor RunConcatForward(const CompiledGraphNode& node,
                         const std::vector<const Tensor*>& inputs) {
     if (inputs.size() < 2) {
@@ -230,6 +242,26 @@ std::vector<Tensor> RunMaskBackward(const std::vector<const Tensor*>& inputs,
         grads.push_back(Tensor::Zeros(input->Shape(), grad_output.GetDataType()));
     }
     return grads;
+}
+
+std::vector<Tensor> RunLinalgBackward(const CompiledGraphNode& node,
+                                      const std::vector<const Tensor*>& inputs,
+                                      const Tensor& grad_output) {
+    if (node.type == gui::NodeType::TensorDot) {
+        if (inputs.size() != 2) {
+            throw std::runtime_error("GraphExecutableModel TensorDot backward needs exactly two inputs");
+        }
+        if (inputs[0]->Shape() != inputs[1]->Shape()) {
+            throw std::runtime_error("GraphExecutableModel TensorDot backward input shapes must match");
+        }
+        if (grad_output.NumElements() != 1) {
+            throw std::runtime_error("GraphExecutableModel TensorDot backward requires scalar gradient");
+        }
+        const float scale = grad_output.At(0);
+        return {*inputs[1] * scale, *inputs[0] * scale};
+    }
+
+    throw std::runtime_error("GraphExecutableModel unsupported linalg graph op backward");
 }
 
 std::vector<Tensor> RunConcatBackward(const CompiledGraphNode& node,
@@ -311,7 +343,8 @@ GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> mode
             node->type != gui::NodeType::Average &&
             node->type != gui::NodeType::Concatenate &&
             node->type != gui::NodeType::TensorCompare &&
-            node->type != gui::NodeType::TensorLogicalMask) {
+            node->type != gui::NodeType::TensorLogicalMask &&
+            node->type != gui::NodeType::TensorDot) {
             throw std::invalid_argument("GraphExecutableModel unsupported graph op node");
         }
         if (TensorIncomingEdges(plan_, node_id).size() < 2) {
@@ -456,6 +489,8 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
             } else if (node.type == gui::NodeType::TensorCompare ||
                        node.type == gui::NodeType::TensorLogicalMask) {
                 output = RunMaskForward(node, inputs);
+            } else if (node.type == gui::NodeType::TensorDot) {
+                output = RunLinalgForward(node, inputs);
             } else {
                 output = RunMergeForward(node.type, inputs);
             }
@@ -536,6 +571,8 @@ Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
             } else if (node.type == gui::NodeType::TensorCompare ||
                        node.type == gui::NodeType::TensorLogicalMask) {
                 input_grads = RunMaskBackward(inputs, grad);
+            } else if (node.type == gui::NodeType::TensorDot) {
+                input_grads = RunLinalgBackward(node, inputs, grad);
             } else {
                 input_grads = RunMergeBackward(node.type, inputs, grad);
             }

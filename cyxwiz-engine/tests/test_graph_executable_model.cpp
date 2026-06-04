@@ -36,6 +36,12 @@ cyxwiz::Tensor MakeTensor(const std::vector<float>& values) {
                           cyxwiz::DataType::Float32);
 }
 
+cyxwiz::Tensor MakeVector(const std::vector<float>& values) {
+    return cyxwiz::Tensor({values.size()},
+                          values.data(),
+                          cyxwiz::DataType::Float32);
+}
+
 cyxwiz::CompiledLayer TensorAbsLayer() {
     cyxwiz::CompiledLayer layer;
     layer.type = gui::NodeType::TensorAbs;
@@ -147,6 +153,33 @@ cyxwiz::CompiledGraphPlan MergePlan(gui::NodeType merge_type) {
     return plan;
 }
 
+cyxwiz::CompiledGraphPlan DotPlan() {
+    cyxwiz::CompiledGraphPlan plan;
+    plan.available = true;
+    plan.data_node_id = 1;
+    plan.data_pin_id = 101;
+    plan.label_pin_id = 102;
+    plan.prediction_pin_id = 401;
+    plan.label_target_pin_id = 402;
+    plan.loss_node_id = 4;
+    plan.loss_output_pin_id = 403;
+    plan.optimizer_node_id = 5;
+    plan.nodes = {
+        PlanNode(gui::NodeType::DataInput, 1, "Data"),
+        PlanNode(gui::NodeType::TensorDot, 2, "Dot"),
+        PlanNode(gui::NodeType::MSELoss, 4, "Loss"),
+        PlanNode(gui::NodeType::SGD, 5, "SGD"),
+    };
+    plan.edges = {
+        PlanEdge(1, 101, 2, 201),
+        PlanEdge(1, 101, 2, 202),
+        PlanEdge(2, 203, 4, 401),
+        PlanEdge(1, 102, 4, 402),
+        PlanEdge(4, 403, 5, 501),
+    };
+    return plan;
+}
+
 cyxwiz::TrainingConfiguration LinearConfig() {
     cyxwiz::TrainingConfiguration config;
     config.input_size = 3;
@@ -170,6 +203,19 @@ cyxwiz::TrainingConfiguration MergeConfig(gui::NodeType merge_type) {
     config.optimizer_type = gui::NodeType::SGD;
     config.learning_rate = 0.01f;
     config.graph_plan = MergePlan(merge_type);
+    config.graph_op_node_ids = {2};
+    return config;
+}
+
+cyxwiz::TrainingConfiguration DotConfig() {
+    cyxwiz::TrainingConfiguration config;
+    config.input_size = 3;
+    config.output_size = 1;
+    config.input_shape = {3};
+    config.loss_type = gui::NodeType::MSELoss;
+    config.optimizer_type = gui::NodeType::SGD;
+    config.learning_rate = 0.01f;
+    config.graph_plan = DotPlan();
     config.graph_op_node_ids = {2};
     return config;
 }
@@ -267,6 +313,39 @@ void CheckBinaryMaskOp(gui::NodeType mask_type,
     for (size_t col = 0; col < input_values.size(); ++col) {
         CheckNear(backward.At(0, col), 0.0f, 1e-4f,
                   name + " backward should be zero for masks");
+    }
+}
+
+void CheckDotOp() {
+    cyxwiz::BuiltExecutableModel built =
+        cyxwiz::BuildExecutableFromConfig(DotConfig());
+    Check(built.ok(), "TensorDot graph executable should build through executable config");
+    auto* graph =
+        dynamic_cast<cyxwiz::GraphExecutableModel*>(built.model.get());
+    Check(graph != nullptr, "TensorDot builder should return GraphExecutableModel");
+    Check(graph->GraphOpNodeIds() == std::vector<int>({2}),
+          "TensorDot should preserve graph op node ids");
+
+    cyxwiz::Tensor output = graph->Forward(MakeVector({2.0f, 3.0f, 4.0f}));
+    Check(output.Shape() == std::vector<size_t>({1}),
+          "TensorDot forward should produce scalar tensor");
+    CheckNear(output.At(0), 29.0f, 1e-4f,
+              "TensorDot forward should compute inner product");
+
+    const cyxwiz::Tensor* cached = graph->FindCachedTensor(2, 203);
+    Check(cached != nullptr, "TensorDot should cache output");
+    Check(cached->Shape() == std::vector<size_t>({1}),
+          "TensorDot cached output should be scalar");
+    CheckNear(cached->At(0), 29.0f, 1e-4f,
+              "TensorDot cached output should match");
+
+    cyxwiz::Tensor backward = graph->Backward(cyxwiz::Tensor::Ones({1}));
+    Check(backward.Shape() == std::vector<size_t>({3}),
+          "TensorDot backward should return input vector shape");
+    const std::vector<float> expected_grad = {4.0f, 6.0f, 8.0f};
+    for (size_t i = 0; i < expected_grad.size(); ++i) {
+        CheckNear(backward.At(i), expected_grad[i], 1e-4f,
+                  "TensorDot backward should accumulate both shared inputs");
     }
 }
 
@@ -368,6 +447,7 @@ int main() {
                       {0.0f, 2.0f, -1.0f},
                       {0.0f, 1.0f, 1.0f},
                       "TensorLogicalMask");
+    CheckDotOp();
 
     std::cout << "Graph executable model parity passed\n";
     return 0;

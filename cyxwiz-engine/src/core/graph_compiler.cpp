@@ -94,9 +94,14 @@ bool IsGraphRuntimeBinaryMaskOp(gui::NodeType type) {
            type == gui::NodeType::TensorLogicalMask;
 }
 
+bool IsGraphRuntimeLinalgOp(gui::NodeType type) {
+    return type == gui::NodeType::TensorDot;
+}
+
 bool IsGraphRuntimeFanInOp(gui::NodeType type) {
     return IsGraphRuntimeMergeOp(type) ||
-           IsGraphRuntimeBinaryMaskOp(type);
+           IsGraphRuntimeBinaryMaskOp(type) ||
+           IsGraphRuntimeLinalgOp(type);
 }
 
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
@@ -964,8 +969,17 @@ void CollectGraphRuntimeOpNodeIds(
             CountConnectedSelectedTensorInputs(node, links, training_path_ids);
         if (connected_inputs < 2) {
             std::ostringstream msg;
-            msg << "Graph runtime merge node '" << node.name
+            msg << "Graph runtime node '" << node.name
                 << "' requires at least two connected tensor inputs";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+        if ((IsGraphRuntimeBinaryMaskOp(node.type) ||
+             IsGraphRuntimeLinalgOp(node.type)) &&
+            connected_inputs != 2) {
+            std::ostringstream msg;
+            msg << "Graph runtime node '" << node.name
+                << "' requires exactly two connected tensor inputs";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
