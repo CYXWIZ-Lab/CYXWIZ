@@ -641,6 +641,16 @@ compatibility hook. No multi-input tensor group is exposed yet; the
 remaining work is to add a real graph executable that consumes
 `CompiledGraphPlan` before enabling merge/concat/mask/linalg nodes.
 
+**2026-06-04 update:** added the first opt-in `GraphExecutableModel`
+skeleton. It consumes `CompiledGraphPlan`, validates that the selected
+path is still a single tensor chain from Data through compiled layers to
+Loss, and rejects malformed/fan-in plans. For parity only, execution
+delegates to the existing sequential backend, so normal training remains
+unchanged and no multi-input node is enabled. Added a focused graph
+executable test proving forward/backward parity for `TensorAbs ->
+TensorPow`, preserving layer node ids, and rejecting fan-in or missing
+plan-node records.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

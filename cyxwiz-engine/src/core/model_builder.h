@@ -39,4 +39,9 @@ BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config);
 // without changing training-loop call sites.
 BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config);
 
+// Build a graph-plan-backed executable for parity tests. This remains opt-in:
+// normal training still uses BuildSequentialFromConfig until graph execution
+// supports real fan-in nodes.
+BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration& config);
+
 } // namespace cyxwiz

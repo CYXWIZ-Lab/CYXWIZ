@@ -139,6 +139,7 @@ set(ENGINE_SOURCES
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
     src/core/test_executor.cpp
     # Node executors (shared logic for nodes and panels)
     src/core/node_executors/kmeans_executor.cpp
@@ -1291,6 +1292,36 @@ if(WIN32)
 endif()
 
 set_target_properties(test_executable_model_wrapper PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Graph Executable Model =====
+add_executable(test_graph_executable_model
+    tests/test_graph_executable_model.cpp
+    src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+)
+
+target_include_directories(test_graph_executable_model PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_graph_executable_model PRIVATE
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_graph_executable_model PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_graph_executable_model PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

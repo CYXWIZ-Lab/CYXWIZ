@@ -1,4 +1,5 @@
 #include "model_builder.h"
+#include "graph_executable_model.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -676,6 +677,38 @@ BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& conf
 
     out.model = std::make_unique<SequentialExecutableModel>(
         std::move(sequential.model));
+    out.loss = std::move(sequential.loss);
+    out.optimizer = std::move(sequential.optimizer);
+    return out;
+}
+
+BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration& config) {
+    BuiltExecutableModel out;
+
+    std::vector<int> layer_node_ids;
+    layer_node_ids.reserve(config.layers.size());
+    for (const auto& layer : config.layers) {
+        layer_node_ids.push_back(layer.node_id);
+    }
+
+    std::string reason;
+    if (!GraphExecutableModel::CanRunLinearPlan(config.graph_plan,
+                                               layer_node_ids,
+                                               &reason)) {
+        spdlog::warn("GraphExecutableModel: cannot build graph executable: {}",
+                     reason);
+        return out;
+    }
+
+    BuiltModel sequential = BuildSequentialFromConfig(config);
+    if (!sequential.ok()) {
+        return out;
+    }
+
+    out.model = std::make_unique<GraphExecutableModel>(
+        std::move(sequential.model),
+        config.graph_plan,
+        std::move(layer_node_ids));
     out.loss = std::move(sequential.loss);
     out.optimizer = std::move(sequential.optimizer);
     return out;
