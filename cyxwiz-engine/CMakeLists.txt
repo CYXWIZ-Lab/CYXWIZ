@@ -1197,6 +1197,34 @@ set_target_properties(test_pattern_template_guard PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Tensor Reshape Runtime Contract =====
+add_executable(test_tensor_reshape_runtime_contract
+    tests/test_tensor_reshape_runtime_contract.cpp
+    src/core/model_builder.cpp
+)
+
+target_include_directories(test_tensor_reshape_runtime_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_tensor_reshape_runtime_contract PRIVATE
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_tensor_reshape_runtime_contract PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_tensor_reshape_runtime_contract PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Text Arrow Materializer =====
 add_executable(test_text_arrow_materializer
     tests/test_text_arrow_materializer.cpp

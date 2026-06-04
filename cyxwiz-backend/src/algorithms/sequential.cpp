@@ -16,6 +16,7 @@
 #include <chrono>
 #include <ctime>
 #include <filesystem>
+#include <utility>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -1433,6 +1434,37 @@ Tensor FlattenModule::Backward(const Tensor& grad_output) {
     // Pure CPU reshape back to original shape (same as Forward).
     const float* grad_data = grad_output.Data<float>();
     return Tensor(original_shape_, grad_data, grad_output.GetDataType());
+}
+
+// ============================================================================
+// ReshapeModule Implementation
+// ============================================================================
+
+ReshapeModule::ReshapeModule(std::vector<size_t> target_sample_shape)
+    : target_sample_shape_(std::move(target_sample_shape)) {
+    if (target_sample_shape_.empty()) {
+        throw std::runtime_error("ReshapeModule: target sample shape must not be empty");
+    }
+}
+
+Tensor ReshapeModule::Forward(const Tensor& input) {
+    original_shape_ = input.Shape();
+    if (original_shape_.empty()) {
+        throw std::runtime_error("ReshapeModule: input must include a batch dimension");
+    }
+
+    std::vector<size_t> target_shape;
+    target_shape.reserve(target_sample_shape_.size() + 1);
+    target_shape.push_back(original_shape_[0]);
+    target_shape.insert(target_shape.end(),
+                        target_sample_shape_.begin(),
+                        target_sample_shape_.end());
+
+    return input.Reshape(target_shape);
+}
+
+Tensor ReshapeModule::Backward(const Tensor& grad_output) {
+    return grad_output.Reshape(original_shape_);
 }
 
 // ============================================================================

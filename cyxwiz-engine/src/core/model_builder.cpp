@@ -336,6 +336,21 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 break;
             }
 
+            case gui::NodeType::Reshape:
+            case gui::NodeType::View: {
+                if (layer_cfg.output_shape.empty()) {
+                    spdlog::error("  [{}] {} missing resolved output_shape",
+                                  i, layer_cfg.type == gui::NodeType::Reshape ? "Reshape" : "View");
+                    break;
+                }
+                model.Add<ReshapeModule>(layer_cfg.output_shape);
+                spdlog::info("  [{}] {}({} dims)",
+                             i,
+                             layer_cfg.type == gui::NodeType::Reshape ? "Reshape" : "View",
+                             layer_cfg.output_shape.size());
+                break;
+            }
+
             case gui::NodeType::BatchNorm: {
                 // BatchNorm uses current feature size (output of previous Dense layer)
                 float eps = layer_cfg.eps > 0 ? layer_cfg.eps : 1e-5f;

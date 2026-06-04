@@ -237,6 +237,13 @@ bool TestExecutor::BuildModelFromConfig() {
                 model_->Add<FlattenModule>(1);
                 break;
 
+            case gui::NodeType::Reshape:
+            case gui::NodeType::View:
+                if (!layer_cfg.output_shape.empty()) {
+                    model_->Add<ReshapeModule>(layer_cfg.output_shape);
+                }
+                break;
+
             case gui::NodeType::Output: {
                 size_t out_features = config_.output_size;
                 model_->Add<LinearModule>(current_input_size, out_features, true);

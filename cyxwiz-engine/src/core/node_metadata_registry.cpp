@@ -1110,14 +1110,14 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Reshaped"}},
         {{"shape", "string", "-1,256", "Target shape", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::View, NodeCategory::ShapeOps, "View", ICON_FA_ARROWS_LEFT_RIGHT,
         {"view", "reshape", "shape", "tensor"}, 0, false, "View tensor with a new shape", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Viewed"}},
         {{"shape", "string", "-1,256", "Target shape", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Permute, NodeCategory::ShapeOps, "Permute", ICON_FA_SHUFFLE,
         {"permute", "transpose", "axes", "shape", "tensor"}, 0, false, "Reorder tensor dimensions", "", "",

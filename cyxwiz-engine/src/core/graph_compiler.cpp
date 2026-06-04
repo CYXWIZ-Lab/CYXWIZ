@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <queue>
 #include <set>
 #include <sstream>
@@ -162,6 +163,118 @@ bool ContainsWhenFiltered(
     int node_id) {
 
     return node_ids.empty() || node_ids.count(node_id) > 0;
+}
+
+bool CheckedMultiplySize(size_t lhs, size_t rhs, size_t& out) {
+    if (lhs != 0 && rhs > std::numeric_limits<size_t>::max() / lhs) {
+        return false;
+    }
+    out = lhs * rhs;
+    return true;
+}
+
+size_t ShapeElementCount(const std::vector<size_t>& shape) {
+    size_t count = 1;
+    for (size_t dim : shape) {
+        size_t next = 0;
+        if (!CheckedMultiplySize(count, dim, next)) {
+            throw std::overflow_error("shape element count overflow");
+        }
+        count = next;
+    }
+    return count;
+}
+
+bool ResolveReshapeTargetShape(const std::map<std::string, std::string>& params,
+                               const std::vector<size_t>& input_shape,
+                               std::vector<size_t>& target_shape,
+                               std::string& error) {
+    auto it = params.find("shape");
+    if (it == params.end() || it->second.empty()) {
+        error = "Reshape/View requires a non-empty shape parameter";
+        return false;
+    }
+    if (input_shape.empty()) {
+        error = "Reshape/View requires a known input shape";
+        return false;
+    }
+
+    std::string shape_str = it->second;
+    shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
+    shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
+    shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ' '), shape_str.end());
+
+    std::vector<int64_t> dims;
+    std::stringstream ss(shape_str);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        if (token.empty()) {
+            error = "Reshape/View shape contains an empty dimension";
+            return false;
+        }
+        try {
+            dims.push_back(std::stoll(token));
+        } catch (...) {
+            error = "Reshape/View shape contains a non-integer dimension";
+            return false;
+        }
+    }
+
+    if (dims.empty()) {
+        error = "Reshape/View requires at least one target dimension";
+        return false;
+    }
+
+    int infer_index = -1;
+    size_t known_product = 1;
+    for (size_t i = 0; i < dims.size(); ++i) {
+        const int64_t dim = dims[i];
+        if (dim == -1) {
+            if (infer_index != -1) {
+                error = "Reshape/View allows at most one -1 inferred dimension";
+                return false;
+            }
+            infer_index = static_cast<int>(i);
+            continue;
+        }
+        if (dim <= 0) {
+            error = "Reshape/View dimensions must be positive, except one optional -1";
+            return false;
+        }
+        size_t next = 0;
+        if (!CheckedMultiplySize(known_product, static_cast<size_t>(dim), next)) {
+            error = "Reshape/View target shape product overflows";
+            return false;
+        }
+        known_product = next;
+    }
+
+    size_t input_elements = 0;
+    try {
+        input_elements = ShapeElementCount(input_shape);
+    } catch (...) {
+        error = "Reshape/View input shape product overflows";
+        return false;
+    }
+
+    target_shape.clear();
+    target_shape.reserve(dims.size());
+    if (infer_index >= 0) {
+        if (known_product == 0 || input_elements % known_product != 0) {
+            error = "Reshape/View inferred dimension is not divisible by input elements";
+            return false;
+        }
+        dims[static_cast<size_t>(infer_index)] =
+            static_cast<int64_t>(input_elements / known_product);
+    } else if (known_product != input_elements) {
+        error = "Reshape/View target shape must preserve element count";
+        return false;
+    }
+
+    for (int64_t dim : dims) {
+        target_shape.push_back(static_cast<size_t>(dim));
+    }
+    return true;
 }
 } // anonymous namespace
 
@@ -590,7 +703,19 @@ TrainingConfiguration GraphCompiler::Compile(
             layer.input_shape = current_shape;
 
             // Infer output shape
-            layer.output_shape = InferOutputShape(layer, current_shape);
+            if (node->type == gui::NodeType::Reshape ||
+                node->type == gui::NodeType::View) {
+                std::string error;
+                if (!ResolveReshapeTargetShape(layer.parameters,
+                                               current_shape,
+                                               layer.output_shape,
+                                               error)) {
+                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                    layer.output_shape = current_shape;
+                }
+            } else {
+                layer.output_shape = InferOutputShape(layer, current_shape);
+            }
             current_shape = layer.output_shape;
 
             config.layers.push_back(layer);
@@ -1127,6 +1252,8 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::GlobalMaxPool:
         case gui::NodeType::GlobalAvgPool:
         case gui::NodeType::Flatten:
+        case gui::NodeType::Reshape:
+        case gui::NodeType::View:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::ConvTranspose2D:
@@ -1611,6 +1738,19 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
                 output_shape = {flat_size};
             }
             break;
+
+        case gui::NodeType::Reshape:
+        case gui::NodeType::View: {
+            std::string error;
+            if (!ResolveReshapeTargetShape(layer.parameters,
+                                           input_shape,
+                                           output_shape,
+                                           error)) {
+                spdlog::warn("GraphCompiler: {}", error);
+                output_shape = input_shape;
+            }
+            break;
+        }
 
         // Layers/activations that don't change shape
         case gui::NodeType::Dropout:

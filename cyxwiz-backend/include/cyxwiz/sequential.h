@@ -391,6 +391,25 @@ private:
 };
 
 /**
+ * @brief Batch-preserving reshape module.
+ *
+ * The target shape describes one sample. Forward preserves the leading
+ * batch dimension and reshapes [batch, ...] to [batch, target...].
+ */
+class CYXWIZ_API ReshapeModule : public Module {
+public:
+    explicit ReshapeModule(std::vector<size_t> target_sample_shape);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Reshape"; }
+
+private:
+    std::vector<size_t> target_sample_shape_;
+    std::vector<size_t> original_shape_;  // For backward reshape
+};
+
+/**
  * @brief Wrapper for LeakyReLU activation
  */
 class CYXWIZ_API LeakyReLUModule : public Module {
