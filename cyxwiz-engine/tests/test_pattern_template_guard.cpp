@@ -67,6 +67,10 @@ int main() {
     auto& library = gui::patterns::PatternLibrary::Instance();
     Check(library.LoadPatternFromFile(WritePattern("guard_dense", "Dense").string()),
           "failed to load implemented-node pattern");
+    Check(library.LoadPatternFromFile(WritePattern("guard_add", "Add").string()),
+          "failed to load graph-runtime merge pattern");
+    Check(library.LoadPatternFromFile(WritePattern("guard_concat", "Concatenate").string()),
+          "failed to load deferred merge pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_tensor_dot", "TensorDot").string()),
           "failed to load template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_typo", "DefinitelyNotANode").string()),
@@ -91,11 +95,28 @@ int main() {
 
     nodes.clear();
     links.clear();
+    Check(library.InstantiatePatternWithCreator(
+              "guard_add", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
+          "implemented graph-runtime Add pattern should instantiate");
+    Check(creator_calls == 2, "Add pattern should call node creator once");
+    Check(nodes.size() == 1 && nodes.front().type == gui::NodeType::Add,
+          "Add pattern created wrong node type");
+
+    nodes.clear();
+    links.clear();
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_concat", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
+          "deferred Concatenate pattern should be rejected");
+    Check(nodes.empty() && links.empty(), "Concatenate rejection should leave no partial graph");
+    Check(creator_calls == 2, "Concatenate rejection should not call node creator");
+
+    nodes.clear();
+    links.clear();
     Check(!library.InstantiatePatternWithCreator(
               "guard_tensor_dot", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "template node pattern should be rejected");
     Check(nodes.empty() && links.empty(), "template rejection should leave no partial graph");
-    Check(creator_calls == 1, "template rejection should not call node creator");
+    Check(creator_calls == 2, "template rejection should not call node creator");
 
     nodes.clear();
     links.clear();
@@ -103,7 +124,7 @@ int main() {
               "guard_typo", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "unknown node pattern should be rejected");
     Check(nodes.empty() && links.empty(), "unknown rejection should leave no partial graph");
-    Check(creator_calls == 1, "unknown rejection should not call node creator");
+    Check(creator_calls == 2, "unknown rejection should not call node creator");
 
     int next_pin_id = 2000;
     Check(!library.InstantiatePattern(

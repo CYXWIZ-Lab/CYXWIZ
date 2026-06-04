@@ -701,6 +701,13 @@ available through `AsSequentialModel`/`ReleaseSequentialModel`; graph
 executables warn and skip best-checkpoint save/restore until graph model
 serialization is designed. Frontend exposure is still deferred.
 
+**2026-06-04 update:** exposed only the proven same-shape merge group in
+frontend metadata. `Add`, `Multiply`, and `Average` are now marked
+`Implemented`, which makes them addable from Studio search/pattern flows.
+`Concatenate`, linalg, and two-input mask nodes remain
+`Template`/deferred. `test_pattern_template_guard` now proves `Add` can
+instantiate while `Concatenate` and `TensorDot` still cannot.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

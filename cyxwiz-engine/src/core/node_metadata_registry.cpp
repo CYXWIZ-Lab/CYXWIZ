@@ -1158,19 +1158,19 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"add", "sum", "merge", "tensor"}, 0, false, "Add tensors elementwise", "", "",
         {{"Input 1", PinType::Tensor, true, "First input"}, {"Input 2", PinType::Tensor, true, "Second input"}},
         {{"Output", PinType::Tensor, true, "Sum"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Multiply, NodeCategory::MergeOps, "Multiply", ICON_FA_XMARK,
         {"multiply", "mul", "product", "merge", "tensor"}, 0, false, "Multiply tensors elementwise", "", "",
         {{"Input 1", PinType::Tensor, true, "First input"}, {"Input 2", PinType::Tensor, true, "Second input"}},
         {{"Output", PinType::Tensor, true, "Product"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Average, NodeCategory::MergeOps, "Average", ICON_FA_CALCULATOR,
         {"average", "mean", "merge", "tensor"}, 0, false, "Average tensors elementwise", "", "",
         {{"Input 1", PinType::Tensor, true, "First input"}, {"Input 2", PinType::Tensor, true, "Second input"}},
         {{"Output", PinType::Tensor, true, "Average"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorSum, NodeCategory::Analytics, "Tensor Sum", ICON_FA_CALCULATOR,
         {"tensor", "sum", "reduce", "reduction"}, 0, false, "Sum tensor values", "", "",
