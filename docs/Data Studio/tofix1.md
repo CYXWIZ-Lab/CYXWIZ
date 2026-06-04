@@ -820,6 +820,14 @@ Full Debug `cyxwiz-engine` build and `test_pipeline_operator_metadata`
 pass. The old `data_table.cpp` stub-parameter note appears stale in the
 current tree; only the explicit Excel-loader TODO remains there.
 
+**2026-06-05 update:** audited the remaining Cat-1 legacy pin/parameter
+debt. `LogTransform` and `Differencing` were still created with Tensor
+pins even though their factory operators and metadata are Arrow
+Dataset/table contracts; editor node creation now uses Dataset pins for
+both. `TimeSeriesSplit` still needs a separate contract decision because
+the runtime operator appends a `__partition__` column to one table while
+the older UI shape presents train/validation/test outputs.
+
 ## Build Health Follow-Up
 
 ### Full engine Debug build duplicate DataSources case

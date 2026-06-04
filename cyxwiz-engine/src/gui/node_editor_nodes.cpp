@@ -2475,13 +2475,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::LogTransform: {
             NodePin in;
             in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
+            in.type = PinType::Dataset;
             in.name = "Data";
             in.is_input = true;
             node.inputs.push_back(in);
             NodePin out;
             out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
+            out.type = PinType::Dataset;
             out.name = "Transformed";
             out.is_input = false;
             node.outputs.push_back(out);
@@ -2492,13 +2492,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::Differencing: {
             NodePin in;
             in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
+            in.type = PinType::Dataset;
             in.name = "Data";
             in.is_input = true;
             node.inputs.push_back(in);
             NodePin out;
             out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
+            out.type = PinType::Dataset;
             out.name = "Differenced";
             out.is_input = false;
             node.outputs.push_back(out);
