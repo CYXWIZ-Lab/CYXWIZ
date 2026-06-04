@@ -383,6 +383,27 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 break;
             }
 
+            case gui::NodeType::TensorSign: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Sign);
+                spdlog::info("  [{}] TensorSign", i);
+                break;
+            }
+
+            case gui::NodeType::TensorPow: {
+                const float exponent = ParseFloatParam(layer_cfg, "exponent", 2.0f);
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Pow, exponent);
+                spdlog::info("  [{}] TensorPow(exponent={})", i, exponent);
+                break;
+            }
+
+            case gui::NodeType::TensorClip: {
+                const float min_val = ParseFloatParam(layer_cfg, "min", 0.0f);
+                const float max_val = ParseFloatParam(layer_cfg, "max", 1.0f);
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Clip, min_val, max_val);
+                spdlog::info("  [{}] TensorClip(min={}, max={})", i, min_val, max_val);
+                break;
+            }
+
             case gui::NodeType::BatchNorm: {
                 // BatchNorm uses current feature size (output of previous Dense layer)
                 float eps = layer_cfg.eps > 0 ? layer_cfg.eps : 1e-5f;

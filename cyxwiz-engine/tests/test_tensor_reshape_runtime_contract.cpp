@@ -61,9 +61,11 @@ void CheckUnaryModule(cyxwiz::TensorUnaryOp op,
                       const std::vector<float>& input_values,
                       const std::vector<float>& expected_output,
                       const std::vector<float>& expected_backward,
-                      const std::string& name) {
+                      const std::string& name,
+                      float scalar = 0.0f,
+                      float scalar2 = 0.0f) {
     cyxwiz::Tensor input = MakeTensor({1, input_values.size()}, input_values);
-    cyxwiz::TensorUnaryModule module(op);
+    cyxwiz::TensorUnaryModule module(op, scalar, scalar2);
 
     cyxwiz::Tensor output = module.Forward(input);
     CheckShape(output, {1, input_values.size()}, name + " forward should preserve shape");
@@ -137,6 +139,27 @@ int main() {
                          {1.0f, 2.0f},
                          {0.5f, 0.25f},
                          "TensorSqrt");
+
+        CheckUnaryModule(cyxwiz::TensorUnaryOp::Sign,
+                         {-2.0f, 0.0f, 3.0f},
+                         {-1.0f, 0.0f, 1.0f},
+                         {0.0f, 0.0f, 0.0f},
+                         "TensorSign");
+
+        CheckUnaryModule(cyxwiz::TensorUnaryOp::Pow,
+                         {2.0f, 3.0f},
+                         {8.0f, 27.0f},
+                         {12.0f, 27.0f},
+                         "TensorPow",
+                         3.0f);
+
+        CheckUnaryModule(cyxwiz::TensorUnaryOp::Clip,
+                         {-1.0f, 0.5f, 2.0f},
+                         {0.0f, 0.5f, 1.0f},
+                         {0.0f, 1.0f, 0.0f},
+                         "TensorClip",
+                         0.0f,
+                         1.0f);
     }
 
     {
@@ -210,7 +233,33 @@ int main() {
         sqrt.input_shape = {3, 2};
         sqrt.output_shape = {3, 2};
 
-        config.layers = {reshape, squeeze, unsqueeze, permute, view, abs, exp, log, sqrt};
+        cyxwiz::CompiledLayer pow;
+        pow.type = gui::NodeType::TensorPow;
+        pow.node_id = 10;
+        pow.name = "TensorPow";
+        pow.input_shape = {3, 2};
+        pow.output_shape = {3, 2};
+        pow.parameters = {{"exponent", "2.0"}};
+
+        cyxwiz::CompiledLayer clip;
+        clip.type = gui::NodeType::TensorClip;
+        clip.node_id = 11;
+        clip.name = "TensorClip";
+        clip.input_shape = {3, 2};
+        clip.output_shape = {3, 2};
+        clip.parameters = {{"min", "0.0"}, {"max", "10.0"}};
+
+        cyxwiz::CompiledLayer sign;
+        sign.type = gui::NodeType::TensorSign;
+        sign.node_id = 12;
+        sign.name = "TensorSign";
+        sign.input_shape = {3, 2};
+        sign.output_shape = {3, 2};
+
+        config.layers = {
+            reshape, squeeze, unsqueeze, permute, view,
+            abs, exp, log, sqrt, pow, clip, sign
+        };
 
         cyxwiz::BuiltModel built = cyxwiz::BuildSequentialFromConfig(config);
         Check(built.ok(), "BuildSequentialFromConfig should build bounded tensor op modules");
@@ -221,7 +270,7 @@ int main() {
         });
         cyxwiz::Tensor output = built.model->Forward(input);
         CheckShape(output, {2, 3, 2}, "Sequential shape op forward shape mismatch");
-        CheckNear(output.At(1, 2, 1), std::sqrt(12.0f), 1e-4f,
+        CheckNear(output.At(1, 2, 1), 1.0f, 1e-4f,
                   "Sequential unary tensor ops should transform values");
 
         cyxwiz::Tensor grad = MakeRangeTensor({2, 3, 2});

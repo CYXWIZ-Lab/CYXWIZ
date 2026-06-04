@@ -102,6 +102,9 @@ int FindFirstModelNode(const std::vector<gui::MLNode>& nodes) {
             case gui::NodeType::TensorExp:
             case gui::NodeType::TensorLog:
             case gui::NodeType::TensorSqrt:
+            case gui::NodeType::TensorSign:
+            case gui::NodeType::TensorPow:
+            case gui::NodeType::TensorClip:
             case gui::NodeType::Dropout:
                 return node.id;
             default:

@@ -538,9 +538,21 @@ through a shared backend `TensorUnaryModule`, are wired through
 `ModelBuilder`, `TestExecutor`, smoke-run model detection, metadata, and
 model analysis, and are covered by direct forward/backward checks plus a
 sequential runtime chain in `test_tensor_reshape_runtime_contract`.
-Parameterized or policy-sensitive Tensor math such as `TensorPow`,
-`TensorClip`, and `TensorSign`, plus merge/reduction/linalg/mask nodes,
-remain template/deferred until they receive separate contracts.
+Parameterized or policy-sensitive Tensor math, plus merge/reduction/
+linalg/mask nodes, remained deferred at this point until they received
+separate contracts.
+
+**2026-06-04 update:** completed the remaining scalar Tensor math group:
+`TensorPow`, `TensorClip`, and `TensorSign`. They now share
+`TensorUnaryModule` with scalar parameters where needed, validate
+`TensorPow.exponent` and `TensorClip.min/max` during graph compilation,
+preserve shape in compiler/analyzer paths, and run through
+`ModelBuilder`, `TestExecutor`, smoke-run model detection, and metadata.
+`TensorSign` uses a zero-gradient contract, `TensorPow` uses
+`exponent * x^(exponent-1)`, and `TensorClip` passes gradients only for
+values inside the clamp range. Remaining Tensor merge/reduction/linalg/
+mask nodes stay template/deferred until they get equally focused runtime
+contracts.
 
 ## Priority 7 - Future Architecture
 

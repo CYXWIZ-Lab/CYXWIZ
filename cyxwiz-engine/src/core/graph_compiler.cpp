@@ -134,6 +134,59 @@ size_t ParseSizeParam(const std::map<std::string, std::string>& params,
     }
 }
 
+bool ParseFloatParam(const std::map<std::string, std::string>& params,
+                     const std::string& key,
+                     float fallback,
+                     float& value,
+                     std::string& error) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        value = fallback;
+        return true;
+    }
+
+    try {
+        size_t parsed_chars = 0;
+        value = std::stof(it->second, &parsed_chars);
+        if (parsed_chars != it->second.size()) {
+            error = key + " must be a float";
+            return false;
+        }
+        if (!std::isfinite(value)) {
+            error = key + " must be finite";
+            return false;
+        }
+        return true;
+    } catch (...) {
+        error = key + " must be a float";
+        return false;
+    }
+}
+
+bool ValidateTensorScalarMathParams(gui::NodeType type,
+                                    const std::map<std::string, std::string>& params,
+                                    std::string& error) {
+    if (type == gui::NodeType::TensorPow) {
+        float exponent = 2.0f;
+        return ParseFloatParam(params, "exponent", 2.0f, exponent, error);
+    }
+
+    if (type == gui::NodeType::TensorClip) {
+        float min_val = 0.0f;
+        float max_val = 1.0f;
+        if (!ParseFloatParam(params, "min", 0.0f, min_val, error) ||
+            !ParseFloatParam(params, "max", 1.0f, max_val, error)) {
+            return false;
+        }
+        if (min_val > max_val) {
+            error = "TensorClip min must be <= max";
+            return false;
+        }
+    }
+
+    return true;
+}
+
 const gui::MLNode* FindFirstLossNodeInSet(
     const std::vector<gui::MLNode>& nodes,
     const std::unordered_set<int>& node_ids) {
@@ -945,6 +998,15 @@ TrainingConfiguration GraphCompiler::Compile(
                     AddIssue(config, IssueLevel::Error, error, node->id, node->name);
                     layer.output_shape = current_shape;
                 }
+            } else if (node->type == gui::NodeType::TensorPow ||
+                       node->type == gui::NodeType::TensorClip) {
+                std::string error;
+                if (!ValidateTensorScalarMathParams(node->type,
+                                                    layer.parameters,
+                                                    error)) {
+                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                }
+                layer.output_shape = current_shape;
             } else {
                 layer.output_shape = InferOutputShape(layer, current_shape);
             }
@@ -1493,6 +1555,9 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorExp:
         case gui::NodeType::TensorLog:
         case gui::NodeType::TensorSqrt:
+        case gui::NodeType::TensorSign:
+        case gui::NodeType::TensorPow:
+        case gui::NodeType::TensorClip:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::ConvTranspose2D:
@@ -2019,6 +2084,9 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::TensorExp:
         case gui::NodeType::TensorLog:
         case gui::NodeType::TensorSqrt:
+        case gui::NodeType::TensorSign:
+        case gui::NodeType::TensorPow:
+        case gui::NodeType::TensorClip:
             output_shape = input_shape;
             break;
 

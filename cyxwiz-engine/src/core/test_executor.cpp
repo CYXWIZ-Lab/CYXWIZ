@@ -6,6 +6,24 @@
 
 namespace cyxwiz {
 
+namespace {
+
+float ParseLayerFloatParam(const CompiledLayer& layer,
+                           const std::string& key,
+                           float fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    try {
+        return std::stof(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+} // namespace
+
 // ============================================================================
 // ConfusionMatrix Implementation
 // ============================================================================
@@ -267,6 +285,24 @@ bool TestExecutor::BuildModelFromConfig() {
             case gui::NodeType::TensorSqrt:
                 model_->Add<TensorUnaryModule>(TensorUnaryOp::Sqrt);
                 break;
+
+            case gui::NodeType::TensorSign:
+                model_->Add<TensorUnaryModule>(TensorUnaryOp::Sign);
+                break;
+
+            case gui::NodeType::TensorPow: {
+                const float exponent =
+                    ParseLayerFloatParam(layer_cfg, "exponent", 2.0f);
+                model_->Add<TensorUnaryModule>(TensorUnaryOp::Pow, exponent);
+                break;
+            }
+
+            case gui::NodeType::TensorClip: {
+                const float min_val = ParseLayerFloatParam(layer_cfg, "min", 0.0f);
+                const float max_val = ParseLayerFloatParam(layer_cfg, "max", 1.0f);
+                model_->Add<TensorUnaryModule>(TensorUnaryOp::Clip, min_val, max_val);
+                break;
+            }
 
             case gui::NodeType::Output: {
                 size_t out_features = config_.output_size;

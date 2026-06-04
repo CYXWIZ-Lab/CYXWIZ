@@ -1515,8 +1515,12 @@ Tensor PermuteModule::Backward(const Tensor& grad_output) {
 // TensorUnaryModule Implementation
 // ============================================================================
 
-TensorUnaryModule::TensorUnaryModule(TensorUnaryOp op)
-    : op_(op) {}
+TensorUnaryModule::TensorUnaryModule(TensorUnaryOp op,
+                                     float scalar,
+                                     float scalar2)
+    : op_(op),
+      scalar_(scalar),
+      scalar2_(scalar2) {}
 
 Tensor TensorUnaryModule::Forward(const Tensor& input) {
     input_cache_ = input.Clone();
@@ -1534,6 +1538,15 @@ Tensor TensorUnaryModule::Forward(const Tensor& input) {
             break;
         case TensorUnaryOp::Sqrt:
             output = input.Sqrt();
+            break;
+        case TensorUnaryOp::Sign:
+            output = input.Sign();
+            break;
+        case TensorUnaryOp::Pow:
+            output = input.Pow(scalar_);
+            break;
+        case TensorUnaryOp::Clip:
+            output = input.Clip(scalar_, scalar2_);
             break;
         default:
             throw std::runtime_error("TensorUnaryModule: unsupported unary op");
@@ -1553,6 +1566,23 @@ Tensor TensorUnaryModule::Backward(const Tensor& grad_output) {
             return grad_output / input_cache_;
         case TensorUnaryOp::Sqrt:
             return grad_output / (output_cache_ * 2.0f);
+        case TensorUnaryOp::Sign:
+            return Tensor::Zeros(grad_output.Shape(), grad_output.GetDataType());
+        case TensorUnaryOp::Pow:
+            if (scalar_ == 0.0f) {
+                return Tensor::Zeros(grad_output.Shape(), grad_output.GetDataType());
+            }
+            return grad_output * (input_cache_.Pow(scalar_ - 1.0f) * scalar_);
+        case TensorUnaryOp::Clip: {
+            Tensor mask = Tensor::Zeros(grad_output.Shape(), grad_output.GetDataType());
+            for (size_t i = 0; i < input_cache_.NumElements(); ++i) {
+                const float value = input_cache_.At(i);
+                if (value >= scalar_ && value <= scalar2_) {
+                    mask.Set(i, 1.0f);
+                }
+            }
+            return grad_output * mask;
+        }
         default:
             throw std::runtime_error("TensorUnaryModule: unsupported unary op");
     }
@@ -1568,6 +1598,12 @@ std::string TensorUnaryModule::GetName() const {
             return "TensorLog";
         case TensorUnaryOp::Sqrt:
             return "TensorSqrt";
+        case TensorUnaryOp::Sign:
+            return "TensorSign";
+        case TensorUnaryOp::Pow:
+            return "TensorPow";
+        case TensorUnaryOp::Clip:
+            return "TensorClip";
         default:
             return "TensorUnary";
     }

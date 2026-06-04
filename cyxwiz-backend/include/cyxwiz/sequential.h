@@ -42,7 +42,10 @@ enum class TensorUnaryOp {
     Abs,
     Exp,
     Log,
-    Sqrt
+    Sqrt,
+    Sign,
+    Pow,
+    Clip
 };
 
 /**
@@ -440,7 +443,9 @@ private:
  */
 class CYXWIZ_API TensorUnaryModule : public Module {
 public:
-    explicit TensorUnaryModule(TensorUnaryOp op);
+    explicit TensorUnaryModule(TensorUnaryOp op,
+                               float scalar = 0.0f,
+                               float scalar2 = 0.0f);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
@@ -448,6 +453,8 @@ public:
 
 private:
     TensorUnaryOp op_;
+    float scalar_;
+    float scalar2_;
     Tensor output_cache_;
 };
 

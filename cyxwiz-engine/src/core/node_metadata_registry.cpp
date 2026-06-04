@@ -1255,7 +1255,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Output"}},
         {{"exponent", "float", "2.0", "Scalar exponent", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorSqrt, NodeCategory::Analytics, "Tensor Sqrt", ICON_FA_CALCULATOR,
         {"tensor", "sqrt", "square root", "elementwise"}, 0, false, "Elementwise square root", "", "",
@@ -1285,7 +1285,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"tensor", "sign", "elementwise"}, 0, false, "Elementwise sign", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Output"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorClip, NodeCategory::Analytics, "Tensor Clip", ICON_FA_CALCULATOR,
         {"tensor", "clip", "clamp", "elementwise"}, 0, false, "Clip tensor values to a scalar range", "", "",
@@ -1293,7 +1293,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Output"}},
         {{"min", "float", "0.0", "Minimum value", {}, ""},
          {"max", "float", "1.0", "Maximum value", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorDot, NodeCategory::Analytics, "Tensor Dot", ICON_FA_CALCULATOR,
         {"tensor", "dot", "vector", "linalg"}, 0, false, "Compute vector dot product", "", "",

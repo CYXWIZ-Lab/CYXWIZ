@@ -101,6 +101,13 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::Sigmoid: return "Sigmoid";
         case gui::NodeType::Tanh: return "Tanh";
         case gui::NodeType::Softmax: return "Softmax";
+        case gui::NodeType::TensorAbs: return "TensorAbs";
+        case gui::NodeType::TensorExp: return "TensorExp";
+        case gui::NodeType::TensorLog: return "TensorLog";
+        case gui::NodeType::TensorSqrt: return "TensorSqrt";
+        case gui::NodeType::TensorSign: return "TensorSign";
+        case gui::NodeType::TensorPow: return "TensorPow";
+        case gui::NodeType::TensorClip: return "TensorClip";
         case gui::NodeType::Reshape: return "Reshape";
         case gui::NodeType::Permute: return "Permute";
         case gui::NodeType::Squeeze: return "Squeeze";
@@ -462,6 +469,9 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorExp:
         case gui::NodeType::TensorLog:
         case gui::NodeType::TensorSqrt:
+        case gui::NodeType::TensorSign:
+        case gui::NodeType::TensorPow:
+        case gui::NodeType::TensorClip:
             return true;
         default:
             return false;
@@ -734,6 +744,9 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
         case gui::NodeType::TensorExp:
         case gui::NodeType::TensorLog:
         case gui::NodeType::TensorSqrt:
+        case gui::NodeType::TensorSign:
+        case gui::NodeType::TensorPow:
+        case gui::NodeType::TensorClip:
             // Shape unchanged
             return input_shape;
         default:
