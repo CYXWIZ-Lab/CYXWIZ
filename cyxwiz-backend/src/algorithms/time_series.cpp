@@ -1124,7 +1124,6 @@ ForecastResult TimeSeries::SimpleES(const std::vector<double>& data, int horizon
         result.forecast.resize(horizon, level);
 
         // Prediction intervals (approximate)
-        double sigma = std::sqrt(result.mse);
         result.lower_bound.resize(horizon);
         result.upper_bound.resize(horizon);
 
@@ -1241,7 +1240,6 @@ ForecastResult TimeSeries::HoltLinear(const std::vector<double>& data, int horiz
         result.lower_bound.resize(horizon);
         result.upper_bound.resize(horizon);
 
-        double sigma = std::sqrt(result.mse);
         double phi_sum = 0;
 
         for (int h = 0; h < horizon; h++) {

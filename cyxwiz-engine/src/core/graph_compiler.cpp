@@ -2153,14 +2153,6 @@ struct PreprocessingNodeSpec {
 
 // --- Tabular extractors (migrated from the old switch) ---
 
-static void ExtractNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
-    config.preprocessing.has_normalization = true;
-    if (node.parameters.count("mean"))
-        config.preprocessing.norm_mean = std::stof(node.parameters.at("mean"));
-    if (node.parameters.count("std"))
-        config.preprocessing.norm_std = std::stof(node.parameters.at("std"));
-}
-
 static void ExtractReshape(const gui::MLNode& node, TrainingConfiguration& config) {
     config.preprocessing.has_reshape = true;
     if (node.parameters.count("shape")) {

@@ -771,6 +771,11 @@ are no longer enough.
 Deferred v3 consideration. Useful for generated/tokenized outputs, but
 not required for the current Text Fix B path.
 
+**Status:** complete for current roadmap scope. Priority 7 is a future
+architecture boundary, not an active implementation phase. Keep
+variable-shape samples and explicit decode/generation nodes deferred
+until a concrete v3 training or inference contract needs them.
+
 ## Priority 8 - Deferred Bug And Warning Debt
 
 Track issues observed while working Priority 6 but intentionally not
@@ -786,6 +791,15 @@ mixed into those slices:
 - Some older Cat-1 operators still have legacy params retained for
   saved-graph compatibility. Audit before removing any persisted param
   names.
+
+**2026-06-04 update:** started Priority 8 with a narrow warning-debt
+cleanup. Removed the two truly unused `sigma` locals in backend
+`time_series.cpp` and deleted the dead `ExtractNormalize` helper from
+`graph_compiler.cpp`; Normalize still uses the active
+`ExtractImageNormalize` registry path. Full Debug `cyxwiz-engine` build
+passes after the cleanup. Remaining narrowing/stub-parameter warnings
+should be handled only when reproduced against their current files and
+kept in similarly small slices.
 
 ## Build Health Follow-Up
 
