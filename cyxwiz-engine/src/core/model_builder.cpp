@@ -436,6 +436,30 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 break;
             }
 
+            case gui::NodeType::TensorProd: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Prod, dim, keepdim);
+                spdlog::info("  [{}] TensorProd(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorVar: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Var, dim, keepdim);
+                spdlog::info("  [{}] TensorVar(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorStd: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Std, dim, keepdim);
+                spdlog::info("  [{}] TensorStd(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
             case gui::NodeType::BatchNorm: {
                 // BatchNorm uses current feature size (output of previous Dense layer)
                 float eps = layer_cfg.eps > 0 ? layer_cfg.eps : 1e-5f;

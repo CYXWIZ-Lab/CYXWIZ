@@ -576,6 +576,17 @@ smoke-run detection, metadata, and runtime contract tests are updated.
 `TensorProd`, `TensorVar`, and `TensorStd` remain deferred because their
 gradient and numerical policies need their own focused contract.
 
+**2026-06-04 update:** completed the remaining scalar reduction group:
+`TensorProd`, `TensorVar`, and `TensorStd`. `TensorProd` uses a
+zero-aware backward contract so one-zero and multi-zero reductions do not
+produce divide-by-zero gradients. `TensorVar` uses the existing
+population-variance semantics, and `TensorStd` uses `sqrt(var)` with a
+zero-gradient contract at zero standard deviation. Compiler/analyzer
+inference, `ModelBuilder`, `TestExecutor`, smoke-run detection,
+metadata, and runtime contract tests are updated. Tensor broadcast/
+expand/index, merge/multi-input, linalg, and mask/compare nodes remain
+template/deferred until they receive their own runtime contracts.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

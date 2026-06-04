@@ -245,6 +245,38 @@ int main() {
                               0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
                              "TensorMaxDim");
 
+        CheckReductionModule(cyxwiz::TensorReductionOp::Prod,
+                             -1,
+                             false,
+                             {2, 1},
+                             {0.0f, 332640.0f},
+                             {120.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                              55440.0f, 47520.0f, 41580.0f, 36960.0f,
+                              33264.0f, 30240.0f},
+                             "TensorProdAll");
+
+        CheckReductionModule(cyxwiz::TensorReductionOp::Var,
+                             -1,
+                             false,
+                             {2, 1},
+                             {2.9166667f, 2.9166667f},
+                             {-0.8333333f, -0.5f, -0.1666667f,
+                              0.1666667f, 0.5f, 0.8333333f,
+                              -0.8333333f, -0.5f, -0.1666667f,
+                              0.1666667f, 0.5f, 0.8333333f},
+                             "TensorVarAll");
+
+        CheckReductionModule(cyxwiz::TensorReductionOp::Std,
+                             -1,
+                             false,
+                             {2, 1},
+                             {1.7078252f, 1.7078252f},
+                             {-0.2439750f, -0.1463850f, -0.0487950f,
+                              0.0487950f, 0.1463850f, 0.2439750f,
+                              -0.2439750f, -0.1463850f, -0.0487950f,
+                              0.0487950f, 0.1463850f, 0.2439750f},
+                             "TensorStdAll");
+
         cyxwiz::Tensor tied = MakeTensor({1, 4}, {2.0f, 2.0f, 1.0f, 0.0f});
         cyxwiz::TensorReductionModule tied_max(cyxwiz::TensorReductionOp::Max,
                                                -1,
@@ -391,9 +423,34 @@ int main() {
         sum.output_shape = {1};
         sum.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
 
+        cyxwiz::CompiledLayer prod;
+        prod.type = gui::NodeType::TensorProd;
+        prod.node_id = 17;
+        prod.name = "TensorProd";
+        prod.input_shape = {1};
+        prod.output_shape = {1};
+        prod.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
+
+        cyxwiz::CompiledLayer var;
+        var.type = gui::NodeType::TensorVar;
+        var.node_id = 18;
+        var.name = "TensorVar";
+        var.input_shape = {1};
+        var.output_shape = {1};
+        var.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
+
+        cyxwiz::CompiledLayer std;
+        std.type = gui::NodeType::TensorStd;
+        std.node_id = 19;
+        std.name = "TensorStd";
+        std.input_shape = {1};
+        std.output_shape = {1};
+        std.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
+
         config.layers = {
             reshape, squeeze, unsqueeze, permute, view,
-            abs, exp, log, sqrt, pow, clip, sign, max, min, mean, sum
+            abs, exp, log, sqrt, pow, clip, sign, max, min,
+            mean, sum, prod, var, std
         };
 
         cyxwiz::BuiltModel built = cyxwiz::BuildSequentialFromConfig(config);
@@ -405,7 +462,7 @@ int main() {
         });
         cyxwiz::Tensor output = built.model->Forward(input);
         CheckShape(output, {2, 1}, "Sequential tensor op forward shape mismatch");
-        CheckNear(output.At(1, 0), 1.0f, 1e-4f,
+        CheckNear(output.At(1, 0), 0.0f, 1e-4f,
                   "Sequential tensor ops should transform and reduce values");
 
         cyxwiz::Tensor grad = MakeRangeTensor({2, 1});

@@ -112,6 +112,9 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::TensorMean: return "TensorMean";
         case gui::NodeType::TensorMax: return "TensorMax";
         case gui::NodeType::TensorMin: return "TensorMin";
+        case gui::NodeType::TensorProd: return "TensorProd";
+        case gui::NodeType::TensorVar: return "TensorVar";
+        case gui::NodeType::TensorStd: return "TensorStd";
         case gui::NodeType::Reshape: return "Reshape";
         case gui::NodeType::Permute: return "Permute";
         case gui::NodeType::Squeeze: return "Squeeze";
@@ -480,6 +483,9 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorMean:
         case gui::NodeType::TensorMax:
         case gui::NodeType::TensorMin:
+        case gui::NodeType::TensorProd:
+        case gui::NodeType::TensorVar:
+        case gui::NodeType::TensorStd:
             return true;
         default:
             return false;
@@ -760,7 +766,10 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
         case gui::NodeType::TensorSum:
         case gui::NodeType::TensorMean:
         case gui::NodeType::TensorMax:
-        case gui::NodeType::TensorMin: {
+        case gui::NodeType::TensorMin:
+        case gui::NodeType::TensorProd:
+        case gui::NodeType::TensorVar:
+        case gui::NodeType::TensorStd: {
             const int dim = GetIntParam(node, "dim", -1);
             const bool keepdim = GetBoolParam(node, "keepdim", false);
             if (dim == -1) {

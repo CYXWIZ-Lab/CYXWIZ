@@ -1210,7 +1210,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Reduced tensor"}},
         {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
          {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorVar, NodeCategory::Analytics, "Tensor Var", ICON_FA_CALCULATOR,
         {"tensor", "var", "variance", "reduce", "reduction"}, 0, false, "Variance of tensor values", "", "",
@@ -1218,7 +1218,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Reduced tensor"}},
         {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
          {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorStd, NodeCategory::Analytics, "Tensor Std", ICON_FA_CALCULATOR,
         {"tensor", "std", "standard deviation", "reduce", "reduction"}, 0, false, "Standard deviation of tensor values", "", "",
@@ -1226,7 +1226,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Reduced tensor"}},
         {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
          {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorBroadcastTo, NodeCategory::ShapeOps, "Tensor Broadcast To", ICON_FA_EXPAND,
         {"tensor", "broadcast", "shape", "expand"}, 0, false, "Broadcast tensor to a target shape", "", "",

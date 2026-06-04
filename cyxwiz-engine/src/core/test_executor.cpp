@@ -350,6 +350,33 @@ bool TestExecutor::BuildModelFromConfig() {
                 break;
             }
 
+            case gui::NodeType::TensorProd: {
+                const int dim = static_cast<int>(
+                    ParseLayerFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim =
+                    ParseLayerBoolParam(layer_cfg, "keepdim", false);
+                model_->Add<TensorReductionModule>(TensorReductionOp::Prod, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorVar: {
+                const int dim = static_cast<int>(
+                    ParseLayerFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim =
+                    ParseLayerBoolParam(layer_cfg, "keepdim", false);
+                model_->Add<TensorReductionModule>(TensorReductionOp::Var, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorStd: {
+                const int dim = static_cast<int>(
+                    ParseLayerFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim =
+                    ParseLayerBoolParam(layer_cfg, "keepdim", false);
+                model_->Add<TensorReductionModule>(TensorReductionOp::Std, dim, keepdim);
+                break;
+            }
+
             case gui::NodeType::Output: {
                 size_t out_features = config_.output_size;
                 model_->Add<LinearModule>(current_input_size, out_features, true);

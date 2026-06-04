@@ -52,7 +52,10 @@ enum class TensorReductionOp {
     Sum,
     Mean,
     Max,
-    Min
+    Min,
+    Prod,
+    Var,
+    Std
 };
 
 /**
