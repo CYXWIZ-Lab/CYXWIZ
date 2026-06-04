@@ -1417,7 +1417,10 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
             }
 
             case NodeType::TensorCompare: {
-                std::string rhs = GetParamOrDefault(*node, "scalar", "0.0");
+                auto inputs = all_input_exprs(*node);
+                std::string rhs = inputs.size() > 1
+                    ? inputs[1]
+                    : GetParamOrDefault(*node, "scalar", "0.0");
                 std::string op = GetParamOrDefault(*node, "op", ">");
                 code += "        " + out + " = " + input_expr(*node, 0) + " " + op + " " + rhs + "\n";
                 record_output(out);
@@ -1425,7 +1428,14 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
             }
 
             case NodeType::TensorLogicalMask: {
-                code += "        " + out + " = ~" + input_expr(*node, 0) + "\n";
+                auto inputs = all_input_exprs(*node);
+                std::string op = GetParamOrDefault(*node, "op", "not");
+                if ((op == "and" || op == "or") && inputs.size() > 1) {
+                    const std::string py_op = op == "and" ? " & " : " | ";
+                    code += "        " + out + " = (" + input_expr(*node, 0) + ")" + py_op + "(" + inputs[1] + ")\n";
+                } else {
+                    code += "        " + out + " = ~" + input_expr(*node, 0) + "\n";
+                }
                 record_output(out);
                 break;
             }

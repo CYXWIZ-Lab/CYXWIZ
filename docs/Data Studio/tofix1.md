@@ -730,6 +730,16 @@ current one-input scalar/unary UI only; adding the second input pin and
 binary op controls should be a separate frontend slice. `TensorDot` and
 the remaining linalg group stay blocked.
 
+**2026-06-04 update:** exposed the tested two-input mask contract in
+Studio metadata and node creation. `TensorCompare` and
+`TensorLogicalMask` now create required `A` plus optional `B` tensor
+inputs, so existing scalar compare and unary `not` graphs stay valid
+while wired `B` inputs can use graph-runtime tensor compare or `and`/`or`
+mask composition. Python codegen now emits tensor rhs expressions when
+`B` is connected and keeps scalar/unary fallback otherwise. Metadata
+drift tests cover the optional `B` pin and logical `not`/`and`/`or`
+choices. `TensorDot` and linalg remain blocked.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type
