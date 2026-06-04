@@ -1468,6 +1468,50 @@ Tensor ReshapeModule::Backward(const Tensor& grad_output) {
 }
 
 // ============================================================================
+// PermuteModule Implementation
+// ============================================================================
+
+PermuteModule::PermuteModule(std::vector<int> sample_dims)
+    : sample_dims_(std::move(sample_dims)) {
+    if (sample_dims_.empty()) {
+        throw std::runtime_error("PermuteModule: sample dims must not be empty");
+    }
+
+    inverse_sample_dims_.resize(sample_dims_.size());
+    for (size_t i = 0; i < sample_dims_.size(); ++i) {
+        const int dim = sample_dims_[i];
+        if (dim < 0 || dim >= static_cast<int>(sample_dims_.size())) {
+            throw std::runtime_error("PermuteModule: sample dims must be normalized");
+        }
+        inverse_sample_dims_[static_cast<size_t>(dim)] = static_cast<int>(i);
+    }
+}
+
+Tensor PermuteModule::Forward(const Tensor& input) {
+    if (input.Shape().size() != sample_dims_.size() + 1) {
+        throw std::runtime_error("PermuteModule: input rank does not match sample dims");
+    }
+
+    std::vector<int> full_dims;
+    full_dims.reserve(sample_dims_.size() + 1);
+    full_dims.push_back(0);
+    for (int dim : sample_dims_) {
+        full_dims.push_back(dim + 1);
+    }
+    return input.Permute(full_dims);
+}
+
+Tensor PermuteModule::Backward(const Tensor& grad_output) {
+    std::vector<int> full_inverse_dims;
+    full_inverse_dims.reserve(inverse_sample_dims_.size() + 1);
+    full_inverse_dims.push_back(0);
+    for (int dim : inverse_sample_dims_) {
+        full_inverse_dims.push_back(dim + 1);
+    }
+    return grad_output.Permute(full_inverse_dims);
+}
+
+// ============================================================================
 // SequentialModel Implementation
 // ============================================================================
 

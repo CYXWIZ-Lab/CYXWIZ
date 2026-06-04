@@ -349,6 +349,16 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 break;
             }
 
+            case gui::NodeType::Permute: {
+                if (layer_cfg.dims.empty()) {
+                    spdlog::error("  [{}] Permute missing normalized dims", i);
+                    break;
+                }
+                model.Add<PermuteModule>(layer_cfg.dims);
+                spdlog::info("  [{}] Permute({} dims)", i, layer_cfg.dims.size());
+                break;
+            }
+
             case gui::NodeType::BatchNorm: {
                 // BatchNorm uses current feature size (output of previous Dense layer)
                 float eps = layer_cfg.eps > 0 ? layer_cfg.eps : 1e-5f;

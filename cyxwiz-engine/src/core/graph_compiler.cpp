@@ -402,6 +402,72 @@ bool ResolveUnsqueezeTargetShape(const std::map<std::string, std::string>& param
     return true;
 }
 
+bool ResolvePermuteTargetShape(const std::map<std::string, std::string>& params,
+                               const std::vector<size_t>& input_shape,
+                               std::vector<size_t>& target_shape,
+                               std::vector<int>& normalized_dims,
+                               std::string& error) {
+    if (input_shape.empty()) {
+        error = "Permute requires a known input shape";
+        return false;
+    }
+
+    auto it = params.find("dims");
+    if (it == params.end() || it->second.empty()) {
+        error = "Permute requires a non-empty dims parameter";
+        return false;
+    }
+
+    std::string dims_str = it->second;
+    dims_str.erase(std::remove(dims_str.begin(), dims_str.end(), '['), dims_str.end());
+    dims_str.erase(std::remove(dims_str.begin(), dims_str.end(), ']'), dims_str.end());
+    dims_str.erase(std::remove(dims_str.begin(), dims_str.end(), ' '), dims_str.end());
+
+    const int rank = static_cast<int>(input_shape.size());
+    std::stringstream ss(dims_str);
+    std::string token;
+    normalized_dims.clear();
+    std::vector<bool> seen(input_shape.size(), false);
+
+    while (std::getline(ss, token, ',')) {
+        if (token.empty()) {
+            error = "Permute dims contains an empty dimension";
+            return false;
+        }
+
+        int raw_dim = 0;
+        try {
+            raw_dim = std::stoi(token);
+        } catch (...) {
+            error = "Permute dims contains a non-integer dimension";
+            return false;
+        }
+
+        int axis = 0;
+        if (!NormalizeCompilerDim(raw_dim, rank, false, "Permute", axis, error)) {
+            return false;
+        }
+        if (seen[static_cast<size_t>(axis)]) {
+            error = "Permute dims must not contain duplicates";
+            return false;
+        }
+        seen[static_cast<size_t>(axis)] = true;
+        normalized_dims.push_back(axis);
+    }
+
+    if (normalized_dims.size() != input_shape.size()) {
+        error = "Permute dims must match input rank";
+        return false;
+    }
+
+    target_shape.clear();
+    target_shape.reserve(normalized_dims.size());
+    for (int axis : normalized_dims) {
+        target_shape.push_back(input_shape[static_cast<size_t>(axis)]);
+    }
+    return true;
+}
+
 bool ResolveShapeOpTargetShape(gui::NodeType type,
                                const std::map<std::string, std::string>& params,
                                const std::vector<size_t>& input_shape,
@@ -415,6 +481,14 @@ bool ResolveShapeOpTargetShape(gui::NodeType type,
             return ResolveSqueezeTargetShape(params, input_shape, target_shape, error);
         case gui::NodeType::Unsqueeze:
             return ResolveUnsqueezeTargetShape(params, input_shape, target_shape, error);
+        case gui::NodeType::Permute: {
+            std::vector<int> ignored_dims;
+            return ResolvePermuteTargetShape(params,
+                                             input_shape,
+                                             target_shape,
+                                             ignored_dims,
+                                             error);
+        }
         default:
             error = "Unsupported shape operation";
             return false;
@@ -850,13 +924,24 @@ TrainingConfiguration GraphCompiler::Compile(
             if (node->type == gui::NodeType::Reshape ||
                 node->type == gui::NodeType::View ||
                 node->type == gui::NodeType::Squeeze ||
-                node->type == gui::NodeType::Unsqueeze) {
+                node->type == gui::NodeType::Unsqueeze ||
+                node->type == gui::NodeType::Permute) {
                 std::string error;
-                if (!ResolveShapeOpTargetShape(node->type,
-                                               layer.parameters,
-                                               current_shape,
-                                               layer.output_shape,
-                                               error)) {
+                bool ok = false;
+                if (node->type == gui::NodeType::Permute) {
+                    ok = ResolvePermuteTargetShape(layer.parameters,
+                                                   current_shape,
+                                                   layer.output_shape,
+                                                   layer.dims,
+                                                   error);
+                } else {
+                    ok = ResolveShapeOpTargetShape(node->type,
+                                                   layer.parameters,
+                                                   current_shape,
+                                                   layer.output_shape,
+                                                   error);
+                }
+                if (!ok) {
                     AddIssue(config, IssueLevel::Error, error, node->id, node->name);
                     layer.output_shape = current_shape;
                 }
@@ -1401,6 +1486,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Flatten:
         case gui::NodeType::Reshape:
         case gui::NodeType::View:
+        case gui::NodeType::Permute:
         case gui::NodeType::Squeeze:
         case gui::NodeType::Unsqueeze:
         case gui::NodeType::Dropout:
@@ -1890,14 +1976,23 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
 
         case gui::NodeType::Reshape:
         case gui::NodeType::View:
+        case gui::NodeType::Permute:
         case gui::NodeType::Squeeze:
         case gui::NodeType::Unsqueeze: {
             std::string error;
-            if (!ResolveShapeOpTargetShape(layer.type,
-                                           layer.parameters,
-                                           input_shape,
-                                           output_shape,
-                                           error)) {
+            std::vector<int> ignored_dims;
+            const bool ok = layer.type == gui::NodeType::Permute
+                ? ResolvePermuteTargetShape(layer.parameters,
+                                            input_shape,
+                                            output_shape,
+                                            ignored_dims,
+                                            error)
+                : ResolveShapeOpTargetShape(layer.type,
+                                            layer.parameters,
+                                            input_shape,
+                                            output_shape,
+                                            error);
+            if (!ok) {
                 spdlog::warn("GraphCompiler: {}", error);
                 output_shape = input_shape;
             }

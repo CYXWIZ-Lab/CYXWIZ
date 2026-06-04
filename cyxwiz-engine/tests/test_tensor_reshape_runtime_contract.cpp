@@ -54,6 +54,21 @@ int main() {
     }
 
     {
+        cyxwiz::Tensor input = MakeRangeTensor({2, 2, 3});
+        cyxwiz::PermuteModule permute({1, 0});
+
+        cyxwiz::Tensor output = permute.Forward(input);
+        CheckShape(output, {2, 3, 2}, "PermuteModule should preserve batch dimension");
+        Check(output.At(0, 2, 1) == input.At(0, 1, 2),
+              "PermuteModule should reorder sample dimensions");
+
+        cyxwiz::Tensor backward = permute.Backward(output);
+        CheckShape(backward, {2, 2, 3}, "PermuteModule backward should invert shape");
+        Check(backward.At(1, 1, 2) == input.At(1, 1, 2),
+              "PermuteModule backward should invert data order");
+    }
+
+    {
         cyxwiz::TrainingConfiguration config;
         config.input_size = 6;
         config.output_size = 6;
@@ -81,14 +96,22 @@ int main() {
         unsqueeze.input_shape = {6};
         unsqueeze.output_shape = {6, 1};
 
+        cyxwiz::CompiledLayer permute;
+        permute.type = gui::NodeType::Permute;
+        permute.node_id = 4;
+        permute.name = "Permute";
+        permute.input_shape = {6, 1};
+        permute.output_shape = {1, 6};
+        permute.dims = {1, 0};
+
         cyxwiz::CompiledLayer view;
         view.type = gui::NodeType::View;
-        view.node_id = 4;
+        view.node_id = 5;
         view.name = "View";
-        view.input_shape = {6, 1};
+        view.input_shape = {1, 6};
         view.output_shape = {3, 2};
 
-        config.layers = {reshape, squeeze, unsqueeze, view};
+        config.layers = {reshape, squeeze, unsqueeze, permute, view};
 
         cyxwiz::BuiltModel built = cyxwiz::BuildSequentialFromConfig(config);
         Check(built.ok(), "BuildSequentialFromConfig should build bounded shape op modules");

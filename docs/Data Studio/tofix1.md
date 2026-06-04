@@ -520,14 +520,16 @@ still instantiate while template/unknown nodes leave no partial graph.
 
 **2026-06-04 update:** added the first real Tensor runtime contract for
 the bounded shape group `Reshape`/`View`, then extended it to
-`Squeeze`/`Unsqueeze`. These now compile as model layers, validate their
-per-sample target shape during graph compilation, and execute through a
-batch-preserving `ReshapeModule` with reversible backward reshape.
+`Squeeze`/`Unsqueeze` and `Permute`. These now compile as model layers
+and validate their per-sample target shape or dimension order during
+graph compilation. `Reshape`/`View`/`Squeeze`/`Unsqueeze` execute
+through a batch-preserving `ReshapeModule`; `Permute` executes through a
+batch-preserving `PermuteModule` with inverse-permute backward.
 `test_tensor_reshape_runtime_contract` verifies direct module behavior
 and `BuildSequentialFromConfig` execution through a
-`Reshape -> Squeeze -> Unsqueeze -> View` chain. Other Tensor
-shape/merge/reduction nodes remain template/deferred until they get
-similarly focused runtime contracts.
+`Reshape -> Squeeze -> Unsqueeze -> Permute -> View` chain. Other Tensor
+merge/reduction/math/linalg/mask nodes remain template/deferred until
+they get similarly focused runtime contracts.
 
 ## Priority 7 - Future Architecture
 

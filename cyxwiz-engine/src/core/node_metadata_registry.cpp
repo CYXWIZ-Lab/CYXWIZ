@@ -1124,7 +1124,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Permuted"}},
         {{"dims", "string", "0,2,1", "Dimension order", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Squeeze, NodeCategory::ShapeOps, "Squeeze", ICON_FA_COMPRESS,
         {"squeeze", "shape", "dimension", "tensor"}, 0, false, "Remove singleton tensor dimensions", "", "",

@@ -54,6 +54,9 @@ struct CompiledLayer {
     // Computed shapes (after compilation)
     std::vector<size_t> input_shape;
     std::vector<size_t> output_shape;
+
+    // For shape ops that need normalized dimension order at runtime.
+    std::vector<int> dims;
 };
 
 /**

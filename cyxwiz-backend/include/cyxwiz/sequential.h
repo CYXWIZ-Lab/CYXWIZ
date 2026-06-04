@@ -410,6 +410,25 @@ private:
 };
 
 /**
+ * @brief Batch-preserving permute module.
+ *
+ * The dims vector describes one sample. Forward preserves the leading
+ * batch dimension and permutes only sample dimensions.
+ */
+class CYXWIZ_API PermuteModule : public Module {
+public:
+    explicit PermuteModule(std::vector<int> sample_dims);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Permute"; }
+
+private:
+    std::vector<int> sample_dims_;
+    std::vector<int> inverse_sample_dims_;
+};
+
+/**
  * @brief Wrapper for LeakyReLU activation
  */
 class CYXWIZ_API LeakyReLUModule : public Module {

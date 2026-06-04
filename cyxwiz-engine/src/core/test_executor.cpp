@@ -246,6 +246,12 @@ bool TestExecutor::BuildModelFromConfig() {
                 }
                 break;
 
+            case gui::NodeType::Permute:
+                if (!layer_cfg.dims.empty()) {
+                    model_->Add<PermuteModule>(layer_cfg.dims);
+                }
+                break;
+
             case gui::NodeType::Output: {
                 size_t out_features = config_.output_size;
                 model_->Add<LinearModule>(current_input_size, out_features, true);
