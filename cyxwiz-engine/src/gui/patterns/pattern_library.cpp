@@ -1,5 +1,6 @@
 #include "pattern_library.h"
 #include "../node_editor.h"
+#include "../../core/node_metadata_registry.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -19,6 +20,34 @@ namespace gui::patterns {
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+namespace {
+
+bool IsInstantiablePatternNode(NodeType type, const std::string& resolved_type) {
+    if (type == NodeType::Unknown) {
+        spdlog::error("Pattern node type '{}' is not registered", resolved_type);
+        return false;
+    }
+
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    if (!registry.IsInitialized()) {
+        registry.Initialize();
+    }
+
+    const auto* metadata = registry.GetMetadata(type);
+    if (metadata == nullptr) {
+        spdlog::error("Pattern node type '{}' has no metadata contract", resolved_type);
+        return false;
+    }
+    if (metadata->IsTemplate()) {
+        spdlog::error("Pattern node type '{}' is a template node and cannot be instantiated", resolved_type);
+        return false;
+    }
+
+    return true;
+}
+
+} // namespace
 
 // Singleton instance
 PatternLibrary& PatternLibrary::Instance() {
@@ -502,8 +531,8 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         return it->second;
     }
 
-    spdlog::warn("Unknown node type: {}, defaulting to Dense", type_str);
-    return NodeType::Dense;
+    spdlog::warn("Unknown node type: {}", type_str);
+    return NodeType::Unknown;
 }
 
 bool PatternLibrary::InstantiatePattern(
@@ -539,6 +568,11 @@ bool PatternLibrary::InstantiatePattern(
         // Substitute parameters in type (for dynamic types like $activation)
         std::string resolved_type = SubstituteParams(pattern_node.type, merged_params);
         NodeType node_type = StringToNodeType(resolved_type);
+        if (!IsInstantiablePatternNode(node_type, resolved_type)) {
+            out_nodes.clear();
+            out_links.clear();
+            return false;
+        }
 
         // Create the node using NodeEditor's CreateNode logic
         MLNode node;
@@ -663,6 +697,11 @@ bool PatternLibrary::InstantiatePatternWithCreator(
         std::string resolved_type = SubstituteParams(pattern_node.type, merged_params);
         NodeType node_type = StringToNodeType(resolved_type);
         std::string resolved_name = SubstituteParams(pattern_node.name, merged_params);
+        if (!IsInstantiablePatternNode(node_type, resolved_type)) {
+            out_nodes.clear();
+            out_links.clear();
+            return false;
+        }
 
         // Use the callback to create the node with proper pins
         MLNode node = node_creator(node_type, resolved_name);

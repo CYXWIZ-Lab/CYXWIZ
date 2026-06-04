@@ -1168,6 +1168,35 @@ set_target_properties(test_pipeline_operator_metadata PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Pattern Template Guard =====
+add_executable(test_pattern_template_guard
+    tests/test_pattern_template_guard.cpp
+    src/gui/patterns/pattern_library.cpp
+    src/core/node_metadata_registry.cpp
+)
+
+target_include_directories(test_pattern_template_guard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_pattern_template_guard PRIVATE
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_pattern_template_guard PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_pattern_template_guard PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Text Arrow Materializer =====
 add_executable(test_text_arrow_materializer
     tests/test_text_arrow_materializer.cpp

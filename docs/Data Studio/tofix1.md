@@ -508,6 +508,16 @@ uses the canonical operator params and one-table output contracts.
 nodes only where drift is demonstrated by metadata/frontend/operator
 mismatches.
 
+**2026-06-04 update:** closed a pattern-instantiation bypass for
+template/deferred nodes. The Node Browser already blocks template cards,
+but saved/custom patterns could still instantiate template Tensor shape,
+merge, and reduction nodes through `PatternLibrary`, and unknown pattern
+node types silently fell back to `Dense`. Pattern instantiation now
+rejects unknown node types and metadata-template nodes before calling
+`NodeEditor::CreateNode`, including the legacy simplified instantiation
+path. Added `test_pattern_template_guard` to prove implemented nodes
+still instantiate while template/unknown nodes leave no partial graph.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type
