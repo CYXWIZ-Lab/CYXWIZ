@@ -239,6 +239,8 @@ bool TestExecutor::BuildModelFromConfig() {
 
             case gui::NodeType::Reshape:
             case gui::NodeType::View:
+            case gui::NodeType::Squeeze:
+            case gui::NodeType::Unsqueeze:
                 if (!layer_cfg.output_shape.empty()) {
                     model_->Add<ReshapeModule>(layer_cfg.output_shape);
                 }

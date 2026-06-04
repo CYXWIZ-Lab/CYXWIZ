@@ -337,17 +337,15 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
             }
 
             case gui::NodeType::Reshape:
-            case gui::NodeType::View: {
+            case gui::NodeType::View:
+            case gui::NodeType::Squeeze:
+            case gui::NodeType::Unsqueeze: {
                 if (layer_cfg.output_shape.empty()) {
-                    spdlog::error("  [{}] {} missing resolved output_shape",
-                                  i, layer_cfg.type == gui::NodeType::Reshape ? "Reshape" : "View");
+                    spdlog::error("  [{}] shape op missing resolved output_shape", i);
                     break;
                 }
                 model.Add<ReshapeModule>(layer_cfg.output_shape);
-                spdlog::info("  [{}] {}({} dims)",
-                             i,
-                             layer_cfg.type == gui::NodeType::Reshape ? "Reshape" : "View",
-                             layer_cfg.output_shape.size());
+                spdlog::info("  [{}] ShapeOp({} dims)", i, layer_cfg.output_shape.size());
                 break;
             }
 

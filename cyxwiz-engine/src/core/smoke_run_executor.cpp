@@ -95,6 +95,8 @@ int FindFirstModelNode(const std::vector<gui::MLNode>& nodes) {
             case gui::NodeType::Flatten:
             case gui::NodeType::Reshape:
             case gui::NodeType::View:
+            case gui::NodeType::Squeeze:
+            case gui::NodeType::Unsqueeze:
             case gui::NodeType::Dropout:
                 return node.id;
             default:

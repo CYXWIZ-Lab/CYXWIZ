@@ -519,13 +519,15 @@ path. Added `test_pattern_template_guard` to prove implemented nodes
 still instantiate while template/unknown nodes leave no partial graph.
 
 **2026-06-04 update:** added the first real Tensor runtime contract for
-the bounded shape group `Reshape`/`View`. These now compile as model
-layers, validate their per-sample target shape during graph compilation,
-and execute through a batch-preserving `ReshapeModule` with reversible
-backward reshape. `test_tensor_reshape_runtime_contract` verifies direct
-module behavior and `BuildSequentialFromConfig` execution through a
-`Reshape -> View` chain. Other Tensor shape/merge/reduction nodes remain
-template/deferred until they get similarly focused runtime contracts.
+the bounded shape group `Reshape`/`View`, then extended it to
+`Squeeze`/`Unsqueeze`. These now compile as model layers, validate their
+per-sample target shape during graph compilation, and execute through a
+batch-preserving `ReshapeModule` with reversible backward reshape.
+`test_tensor_reshape_runtime_contract` verifies direct module behavior
+and `BuildSequentialFromConfig` execution through a
+`Reshape -> Squeeze -> Unsqueeze -> View` chain. Other Tensor
+shape/merge/reduction nodes remain template/deferred until they get
+similarly focused runtime contracts.
 
 ## Priority 7 - Future Architecture
 
@@ -546,7 +548,8 @@ mixed into those slices:
 - Build warning cleanup: unused `sigma` in backend `time_series.cpp`;
   numeric narrowing warnings in `data_analyzer.cpp`,
   `preprocessing_operators.cpp`, and `signal_processing_operators.cpp`;
-  unreferenced stub parameters in `data_table.cpp`.
+  unreferenced stub parameters in `data_table.cpp`; unreferenced
+  `ExtractNormalize` in `graph_compiler.cpp`.
 - `test_pipeline_operator_metadata` is intentionally useful now, but it
   links many operator translation units. Consider a lighter registry
   boundary if this starts slowing normal focused test builds.

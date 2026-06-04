@@ -8,12 +8,14 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iomanip>
 #include <limits>
 #include <queue>
 #include <set>
 #include <sstream>
 #include <stack>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -275,6 +277,148 @@ bool ResolveReshapeTargetShape(const std::map<std::string, std::string>& params,
         target_shape.push_back(static_cast<size_t>(dim));
     }
     return true;
+}
+
+bool ParseIntParam(const std::map<std::string, std::string>& params,
+                   const std::string& key,
+                   int fallback,
+                   int& out,
+                   std::string& error) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        out = fallback;
+        return true;
+    }
+    try {
+        out = std::stoi(it->second);
+        return true;
+    } catch (...) {
+        error = key + " must be an integer";
+        return false;
+    }
+}
+
+bool NormalizeCompilerDim(int dim,
+                          int rank,
+                          bool allow_end,
+                          const std::string& op_name,
+                          int& normalized,
+                          std::string& error) {
+    const int min_dim = allow_end ? -rank - 1 : -rank;
+    const int max_dim = allow_end ? rank : rank - 1;
+    if (dim < min_dim || dim > max_dim) {
+        error = op_name + " dimension is out of range";
+        return false;
+    }
+    normalized = dim < 0 ? dim + rank + (allow_end ? 1 : 0) : dim;
+    return true;
+}
+
+bool ResolveSqueezeTargetShape(const std::map<std::string, std::string>& params,
+                               const std::vector<size_t>& input_shape,
+                               std::vector<size_t>& target_shape,
+                               std::string& error) {
+    if (input_shape.empty()) {
+        error = "Squeeze requires a known input shape";
+        return false;
+    }
+
+    int dim = -1;
+    if (!ParseIntParam(params, "dim", -1, dim, error)) {
+        error = "Squeeze " + error;
+        return false;
+    }
+
+    target_shape.clear();
+    if (dim == -1) {
+        for (size_t size : input_shape) {
+            if (size != 1) {
+                target_shape.push_back(size);
+            }
+        }
+    } else {
+        int axis = 0;
+        if (!NormalizeCompilerDim(dim,
+                                  static_cast<int>(input_shape.size()),
+                                  false,
+                                  "Squeeze",
+                                  axis,
+                                  error)) {
+            return false;
+        }
+        if (input_shape[static_cast<size_t>(axis)] != 1) {
+            error = "Squeeze selected dimension must have size 1";
+            return false;
+        }
+        for (size_t i = 0; i < input_shape.size(); ++i) {
+            if (i != static_cast<size_t>(axis)) {
+                target_shape.push_back(input_shape[i]);
+            }
+        }
+    }
+
+    if (target_shape.empty()) {
+        target_shape.push_back(1);
+    }
+    return true;
+}
+
+bool ResolveUnsqueezeTargetShape(const std::map<std::string, std::string>& params,
+                                 const std::vector<size_t>& input_shape,
+                                 std::vector<size_t>& target_shape,
+                                 std::string& error) {
+    if (input_shape.empty()) {
+        error = "Unsqueeze requires a known input shape";
+        return false;
+    }
+
+    int dim = 0;
+    if (!ParseIntParam(params, "dim", 0, dim, error)) {
+        error = "Unsqueeze " + error;
+        return false;
+    }
+
+    int axis = 0;
+    if (!NormalizeCompilerDim(dim,
+                              static_cast<int>(input_shape.size()),
+                              true,
+                              "Unsqueeze",
+                              axis,
+                              error)) {
+        return false;
+    }
+
+    target_shape.clear();
+    target_shape.reserve(input_shape.size() + 1);
+    for (int i = 0; i < static_cast<int>(input_shape.size()); ++i) {
+        if (i == axis) {
+            target_shape.push_back(1);
+        }
+        target_shape.push_back(input_shape[static_cast<size_t>(i)]);
+    }
+    if (axis == static_cast<int>(input_shape.size())) {
+        target_shape.push_back(1);
+    }
+    return true;
+}
+
+bool ResolveShapeOpTargetShape(gui::NodeType type,
+                               const std::map<std::string, std::string>& params,
+                               const std::vector<size_t>& input_shape,
+                               std::vector<size_t>& target_shape,
+                               std::string& error) {
+    switch (type) {
+        case gui::NodeType::Reshape:
+        case gui::NodeType::View:
+            return ResolveReshapeTargetShape(params, input_shape, target_shape, error);
+        case gui::NodeType::Squeeze:
+            return ResolveSqueezeTargetShape(params, input_shape, target_shape, error);
+        case gui::NodeType::Unsqueeze:
+            return ResolveUnsqueezeTargetShape(params, input_shape, target_shape, error);
+        default:
+            error = "Unsupported shape operation";
+            return false;
+    }
 }
 } // anonymous namespace
 
@@ -704,9 +848,12 @@ TrainingConfiguration GraphCompiler::Compile(
 
             // Infer output shape
             if (node->type == gui::NodeType::Reshape ||
-                node->type == gui::NodeType::View) {
+                node->type == gui::NodeType::View ||
+                node->type == gui::NodeType::Squeeze ||
+                node->type == gui::NodeType::Unsqueeze) {
                 std::string error;
-                if (!ResolveReshapeTargetShape(layer.parameters,
+                if (!ResolveShapeOpTargetShape(node->type,
+                                               layer.parameters,
                                                current_shape,
                                                layer.output_shape,
                                                error)) {
@@ -1254,6 +1401,8 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Flatten:
         case gui::NodeType::Reshape:
         case gui::NodeType::View:
+        case gui::NodeType::Squeeze:
+        case gui::NodeType::Unsqueeze:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::ConvTranspose2D:
@@ -1740,9 +1889,12 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
             break;
 
         case gui::NodeType::Reshape:
-        case gui::NodeType::View: {
+        case gui::NodeType::View:
+        case gui::NodeType::Squeeze:
+        case gui::NodeType::Unsqueeze: {
             std::string error;
-            if (!ResolveReshapeTargetShape(layer.parameters,
+            if (!ResolveShapeOpTargetShape(layer.type,
+                                           layer.parameters,
                                            input_shape,
                                            output_shape,
                                            error)) {

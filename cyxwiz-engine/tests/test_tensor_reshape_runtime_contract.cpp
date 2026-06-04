@@ -65,31 +65,45 @@ int main() {
         reshape.node_id = 1;
         reshape.name = "Reshape";
         reshape.input_shape = {6};
-        reshape.output_shape = {2, 3};
+        reshape.output_shape = {1, 6};
+
+        cyxwiz::CompiledLayer squeeze;
+        squeeze.type = gui::NodeType::Squeeze;
+        squeeze.node_id = 2;
+        squeeze.name = "Squeeze";
+        squeeze.input_shape = {1, 6};
+        squeeze.output_shape = {6};
+
+        cyxwiz::CompiledLayer unsqueeze;
+        unsqueeze.type = gui::NodeType::Unsqueeze;
+        unsqueeze.node_id = 3;
+        unsqueeze.name = "Unsqueeze";
+        unsqueeze.input_shape = {6};
+        unsqueeze.output_shape = {6, 1};
 
         cyxwiz::CompiledLayer view;
         view.type = gui::NodeType::View;
-        view.node_id = 2;
+        view.node_id = 4;
         view.name = "View";
-        view.input_shape = {2, 3};
+        view.input_shape = {6, 1};
         view.output_shape = {3, 2};
 
-        config.layers = {reshape, view};
+        config.layers = {reshape, squeeze, unsqueeze, view};
 
         cyxwiz::BuiltModel built = cyxwiz::BuildSequentialFromConfig(config);
-        Check(built.ok(), "BuildSequentialFromConfig should build Reshape/View modules");
+        Check(built.ok(), "BuildSequentialFromConfig should build bounded shape op modules");
 
         cyxwiz::Tensor input = MakeRangeTensor({2, 6});
         cyxwiz::Tensor output = built.model->Forward(input);
-        CheckShape(output, {2, 3, 2}, "Sequential Reshape/View forward shape mismatch");
-        Check(output.At(1, 2, 1) == 11.0f, "Sequential Reshape/View should preserve values");
+        CheckShape(output, {2, 3, 2}, "Sequential shape op forward shape mismatch");
+        Check(output.At(1, 2, 1) == 11.0f, "Sequential shape ops should preserve values");
 
         cyxwiz::Tensor grad = MakeRangeTensor({2, 3, 2});
         cyxwiz::Tensor backward = built.model->Backward(grad);
-        CheckShape(backward, {2, 6}, "Sequential Reshape/View backward shape mismatch");
-        Check(backward.At(11) == 11.0f, "Sequential Reshape/View backward should preserve values");
+        CheckShape(backward, {2, 6}, "Sequential shape op backward shape mismatch");
+        Check(backward.At(11) == 11.0f, "Sequential shape op backward should preserve values");
     }
 
-    std::cout << "Tensor reshape runtime contract passed\n";
+    std::cout << "Tensor shape runtime contract passed\n";
     return 0;
 }

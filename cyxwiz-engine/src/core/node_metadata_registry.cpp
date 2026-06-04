@@ -1131,14 +1131,14 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Squeezed"}},
         {{"dim", "int", "0", "Dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Unsqueeze, NodeCategory::ShapeOps, "Unsqueeze", ICON_FA_EXPAND,
         {"unsqueeze", "shape", "dimension", "tensor"}, 0, false, "Insert a singleton tensor dimension", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Unsqueezed"}},
         {{"dim", "int", "0", "Dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Split, NodeCategory::ShapeOps, "Split", ICON_FA_CODE_BRANCH,
         {"split", "chunk", "shape", "tensor"}, 0, false, "Split tensor along a dimension", "", "",
