@@ -3918,30 +3918,16 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             NodePin data_in;
             data_in.id = next_pin_id_++;
             data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
+            data_in.name = "Data";
             data_in.is_input = true;
             node.inputs.push_back(data_in);
 
-            NodePin target_in;
-            target_in.id = next_pin_id_++;
-            target_in.type = PinType::Tensor;
-            target_in.name = "Target";
-            target_in.is_input = true;
-            node.inputs.push_back(target_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Tensor;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
+            NodePin fitted_out;
+            fitted_out.id = next_pin_id_++;
+            fitted_out.type = PinType::Dataset;
+            fitted_out.name = "Fitted";
+            fitted_out.is_input = false;
+            node.outputs.push_back(fitted_out);
 
             // Tool-to-Node canonical params read by LinearRegressionOperator.
             // feature_cols is comma-sep predictor columns; target_col is the
@@ -3957,38 +3943,22 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             NodePin data_in;
             data_in.id = next_pin_id_++;
             data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
+            data_in.name = "Data";
             data_in.is_input = true;
             node.inputs.push_back(data_in);
 
-            NodePin target_in;
-            target_in.id = next_pin_id_++;
-            target_in.type = PinType::Tensor;
-            target_in.name = "Target";
-            target_in.is_input = true;
-            node.inputs.push_back(target_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Tensor;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
+            NodePin fitted_out;
+            fitted_out.id = next_pin_id_++;
+            fitted_out.type = PinType::Dataset;
+            fitted_out.name = "Fitted";
+            fitted_out.is_input = false;
+            node.outputs.push_back(fitted_out);
 
             // Tool-to-Node canonical params read by PolynomialRegressionOperator.
             // Single predictor only (backend PolynomialRegression takes one x).
             node.parameters["feature_col"] = "";
             node.parameters["target_col"] = "";
             node.parameters["degree"] = "2";
-            // Legacy panel param (operator always includes intercept).
-            node.parameters["fit_intercept"] = "true";
             break;
         }
 
@@ -4343,13 +4313,6 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             data_in.is_input = true;
             node.inputs.push_back(data_in);
 
-            NodePin target_in;
-            target_in.id = next_pin_id_++;
-            target_in.type = PinType::Tensor;
-            target_in.name = "Target";
-            target_in.is_input = true;
-            node.inputs.push_back(target_in);
-
             NodePin output_pin;
             output_pin.id = next_pin_id_++;
             output_pin.type = PinType::Dataset;
@@ -4378,26 +4341,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             data_in.is_input = true;
             node.inputs.push_back(data_in);
 
-            NodePin clean_out;
-            clean_out.id = next_pin_id_++;
-            clean_out.type = PinType::Dataset;
-            clean_out.name = "Clean";
-            clean_out.is_input = false;
-            node.outputs.push_back(clean_out);
-
-            NodePin outliers_out;
-            outliers_out.id = next_pin_id_++;
-            outliers_out.type = PinType::Dataset;
-            outliers_out.name = "Outliers";
-            outliers_out.is_input = false;
-            node.outputs.push_back(outliers_out);
-
-            NodePin mask_out;
-            mask_out.id = next_pin_id_++;
-            mask_out.type = PinType::Tensor;
-            mask_out.name = "Mask";
-            mask_out.is_input = false;
-            node.outputs.push_back(mask_out);
+            NodePin flagged_out;
+            flagged_out.id = next_pin_id_++;
+            flagged_out.type = PinType::Dataset;
+            flagged_out.name = "Flagged";
+            flagged_out.is_input = false;
+            node.outputs.push_back(flagged_out);
 
             // Tool-to-Node canonical params read by OutlierDetectorOperator.
             // columns="all" or empty = auto-detect numeric. method: iqr|zscore.
@@ -4743,14 +4692,14 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::FFTNode: {
             NodePin input_pin;
             input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Signal";
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
             input_pin.is_input = true;
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
             output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
+            output_pin.type = PinType::Dataset;
             output_pin.name = "Spectrum";
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
@@ -4761,8 +4710,6 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // changes) with frequency/magnitude/phase columns.
             node.parameters["signal_col"] = "";
             node.parameters["sample_rate"] = "1.0";
-            // Legacy panel param (operator ignores).
-            node.parameters["n_fft"] = "auto";
             break;
         }
 
@@ -4786,14 +4733,14 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::FilterDesigner: {
             NodePin input_pin;
             input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Signal";
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Data";
             input_pin.is_input = true;
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
             output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
+            output_pin.type = PinType::Dataset;
             output_pin.name = "Filtered";
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
@@ -4812,35 +4759,25 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::Convolution1D: {
-            NodePin signal_in;
-            signal_in.id = next_pin_id_++;
-            signal_in.type = PinType::Tensor;
-            signal_in.name = "Signal";
-            signal_in.is_input = true;
-            node.inputs.push_back(signal_in);
-
-            NodePin kernel_in;
-            kernel_in.id = next_pin_id_++;
-            kernel_in.type = PinType::Tensor;
-            kernel_in.name = "Kernel";
-            kernel_in.is_input = true;
-            node.inputs.push_back(kernel_in);
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
 
             NodePin output_pin;
             output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
+            output_pin.type = PinType::Dataset;
             output_pin.name = "Convolved";
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
             // Tool-to-Node canonical params read by Convolve1DOperator.
-            // kernel is a comma-separated list of taps (the Kernel input
-            // pin is visual-only — the materializer doesn't route
-            // Tensor-typed pins). "same" mode is forced by the operator
-            // to keep row count aligned with other input columns.
+            // kernel is a comma-separated list of taps. The operator
+            // preserves row alignment with same-length output.
             node.parameters["signal_col"] = "";
             node.parameters["kernel"] = "0.25,0.5,0.25";
-            // Legacy panel param (operator forces "same").
             node.parameters["mode"] = "same";
             break;
         }

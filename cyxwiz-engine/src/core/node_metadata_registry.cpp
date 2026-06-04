@@ -866,10 +866,12 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
     // Regression
     RegisterNode({NodeType::LinearRegressionNode, NodeCategory::Analytics, "Linear Regression", ICON_FA_CHART_LINE,
         {"linear", "regression"}, 0, false, "Linear Regression",
-        "Fits a linear model to minimize squared residuals.", "",
-        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Dataset, true, "Target"}},
-        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Dataset, true, "Predictions"}},
-        {{"fit_intercept", "bool", "true", "Fit intercept", {}, ""}},
+        "Fits a linear model and appends prediction/residual columns.", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Fitted", PinType::Dataset, true, "Input table plus prediction/residual"}},
+        {{"feature_cols", "string", "", "Predictor columns", {}, ""},
+         {"target_col", "string", "", "Target column", {}, ""},
+         {"fit_intercept", "bool", "true", "Fit intercept", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PolynomialRegressionNode, NodeCategory::Analytics, "Polynomial Regression", ICON_FA_CHART_LINE,
@@ -929,8 +931,10 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {"standardize", "zscore", "scaler"}, 0, false, "Z-score standardization",
         "Transforms features to have mean=0 and std=1.", "",
         {{"Data", PinType::Dataset, true, "Input data"}},
-        {{"Scaled", PinType::Dataset, true, "Standardized data"}, {"Scaler", PinType::Parameters, true, "Fitted scaler"}},
-        {{"with_mean", "bool", "true", "Center data", {}, ""},
+        {{"Scaled", PinType::Dataset, true, "Standardized data"}},
+        {{"columns", "string", "", "Columns to scale (empty = numeric auto-detect)", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"with_mean", "bool", "true", "Center data", {}, ""},
          {"with_std", "bool", "true", "Scale to unit variance", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -938,9 +942,11 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {"minmax", "normalize", "scaler"}, 0, false, "Min-Max normalization",
         "Scales features to [0, 1] or custom range.", "",
         {{"Data", PinType::Dataset, true, "Input data"}},
-        {{"Scaled", PinType::Dataset, true, "Normalized data"}, {"Scaler", PinType::Parameters, true, "Fitted scaler"}},
-        {{"feature_range_min", "float", "0.0", "Min value", {}, ""},
-         {"feature_range_max", "float", "1.0", "Max value", {}, ""}},
+        {{"Scaled", PinType::Dataset, true, "Normalized data"}},
+        {{"columns", "string", "", "Columns to scale (empty = numeric auto-detect)", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"min", "float", "0.0", "Target range minimum", {}, ""},
+         {"max", "float", "1.0", "Target range maximum", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     // (TrainTestSplit registration removed — use NodeType::DataSplit, which
@@ -1755,11 +1761,11 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
     // ===== Signal Processing Nodes (Phase 4) =====
     RegisterNode({NodeType::FFTNode, NodeCategory::Signal, "FFT", ICON_FA_WAVE_SQUARE,
         {"fft", "fourier", "frequency"}, 0, false, "Fast Fourier Transform",
-        "Compute the discrete Fourier transform of a signal.", "",
-        {{"Signal", PinType::Tensor, true, "Time-domain signal"}},
-        {{"Spectrum", PinType::Tensor, true, "Frequency spectrum"}, {"Frequencies", PinType::Tensor, true, "Frequency bins"}},
-        {{"n_fft", "int", "512", "FFT size", {}, ""},
-         {"window", "enum", "hann", "Window function", {"hann", "hamming", "blackman", "rectangular"}, ""}},
+        "Computes frequency, magnitude, and phase columns from one numeric signal column.", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Spectrum", PinType::Dataset, true, "Frequency-domain table"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"sample_rate", "float", "1.0", "Sample rate", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::IFFTNode, NodeCategory::Signal, "IFFT", ICON_FA_WAVE_SQUARE,
@@ -1771,13 +1777,15 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
 
     RegisterNode({NodeType::FilterDesigner, NodeCategory::Signal, "Filter Designer", ICON_FA_FILTER,
         {"filter", "fir", "iir", "lowpass"}, 0, false, "Design digital filters",
-        "Design FIR/IIR filters (lowpass, highpass, bandpass, bandstop).", "",
-        {{"Signal", PinType::Tensor, true, "Input signal"}},
-        {{"Filtered", PinType::Tensor, true, "Filtered signal"}, {"Coefficients", PinType::Tensor, true, "Filter coefficients"}},
-        {{"filter_type", "enum", "lowpass", "Filter type", {"lowpass", "highpass", "bandpass", "bandstop"}, ""},
-         {"method", "enum", "fir", "Filter method", {"fir", "iir_butter", "iir_cheby"}, ""},
-         {"cutoff", "float", "0.3", "Cutoff frequency (normalized)", {}, "0.0-1.0"},
-         {"order", "int", "5", "Filter order", {}, ""}},
+        "Designs and applies a filter to one numeric signal column.", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Filtered", PinType::Dataset, true, "Input table with filtered column"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"filter_type", "dropdown", "lowpass", "Filter type", {"lowpass", "highpass", "bandpass", "bandstop"}, ""},
+         {"cutoff", "float", "0.5", "Cutoff frequency", {}, ""},
+         {"cutoff_high", "float", "0", "Upper cutoff for band filters", {}, ""},
+         {"sample_rate", "float", "1.0", "Sample rate", {}, ""},
+         {"order", "int", "4", "Filter order", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::WaveletTransform, NodeCategory::Signal, "Wavelet Transform", ICON_FA_WATER,

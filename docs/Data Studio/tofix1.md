@@ -495,6 +495,19 @@ This intentionally does not rewrite all enum/string/category maps.
 older factory-backed nodes whose metadata/frontend pins predate their
 Arrow table operators, but that should be a separate small slice.
 
+**2026-06-04 update:** completed the first pin/parameter schema slice
+for factory-backed Cat-1 nodes. `LinearRegressionNode`,
+`PolynomialRegressionNode`, `TargetEncoder`, `OutlierDetector`,
+`FFTNode`, `FilterDesigner`, and `Convolution1D` now create dataset
+input/output pins that match their Arrow table operators instead of old
+model/tensor/panel-era shapes. `StandardScaler`, `MinMaxScaler`,
+`LinearRegressionNode`, `FFTNode`, and `FilterDesigner` metadata now
+uses the canonical operator params and one-table output contracts.
+
+**Remaining:** continue schema audit for other older factory-backed
+nodes only where drift is demonstrated by metadata/frontend/operator
+mismatches.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type
@@ -506,6 +519,21 @@ are no longer enough.
 
 Deferred v3 consideration. Useful for generated/tokenized outputs, but
 not required for the current Text Fix B path.
+
+## Priority 8 - Deferred Bug And Warning Debt
+
+Track issues observed while working Priority 6 but intentionally not
+mixed into those slices:
+- Build warning cleanup: unused `sigma` in backend `time_series.cpp`;
+  numeric narrowing warnings in `data_analyzer.cpp`,
+  `preprocessing_operators.cpp`, and `signal_processing_operators.cpp`;
+  unreferenced stub parameters in `data_table.cpp`.
+- `test_pipeline_operator_metadata` is intentionally useful now, but it
+  links many operator translation units. Consider a lighter registry
+  boundary if this starts slowing normal focused test builds.
+- Some older Cat-1 operators still have legacy params retained for
+  saved-graph compatibility. Audit before removing any persisted param
+  names.
 
 ## Build Health Follow-Up
 
