@@ -1827,11 +1827,14 @@ void NodeMetadataRegistry::InitializeLinearAlgebraNodes() {
 void NodeMetadataRegistry::InitializeTimeSeriesAnalysisNodes() {
     RegisterNode({NodeType::TimeSeriesDecomposition, NodeCategory::TimeSeries, "Decomposition", ICON_FA_LAYER_GROUP,
         {"decomposition", "trend", "seasonal", "residual", "stl"}, 0, false,
-        "Time Series Decomposition", "", "",
-        {{"Series", PinType::Dataset, true, "Series"}},
-        {{"Trend", PinType::Dataset, false, "Trend"}, {"Seasonal", PinType::Dataset, false, "Seasonal"}, {"Residual", PinType::Dataset, false, "Residual"}},
-        {{"method", "dropdown", "classical", "Method", {"classical", "stl"}, ""}},
-        NodeImplementationStatus::Template, 0});
+        "Append trend, seasonal, and residual columns to a time-series table", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Decomposed", PinType::Dataset, true, "Input table plus trend/seasonal/residual"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"period", "int", "12", "Seasonal period", {}, ""},
+         {"method", "dropdown", "additive", "Composition method", {"additive", "multiplicative"}, ""},
+         {"algorithm", "dropdown", "classical", "Algorithm", {"classical", "stl"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ACFNode, NodeCategory::TimeSeries, "ACF", ICON_FA_CHART_BAR,
         {"acf", "autocorrelation", "correlogram", "time", "series"}, 0, false,
@@ -1867,19 +1870,28 @@ void NodeMetadataRegistry::InitializeTimeSeriesAnalysisNodes() {
 
     RegisterNode({NodeType::ARIMAForecaster, NodeCategory::TimeSeries, "ARIMA", ICON_FA_CHART_LINE,
         {"arima", "forecast", "prediction", "time", "series"}, 0, false,
-        "ARIMA Forecasting", "", "",
-        {{"Series", PinType::Dataset, true, "Series"}},
-        {{"Forecast", PinType::Dataset, false, "Forecast"}},
-        {{"p", "int", "1", "AR order", {}, ""}, {"d", "int", "1", "Differencing", {}, ""}, {"q", "int", "1", "MA order", {}, ""}, {"horizon", "int", "10", "Forecast horizon", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        "Fit ARIMA in-sample and append fitted/residual columns", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Fitted", PinType::Dataset, true, "Input table plus fitted/residual"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"p", "int", "-1", "AR order (-1 auto)", {}, ""},
+         {"d", "int", "-1", "Differencing order (-1 auto)", {}, ""},
+         {"q", "int", "-1", "MA order (-1 auto)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ExponentialSmoothing, NodeCategory::TimeSeries, "Exp. Smoothing", ICON_FA_CHART_LINE,
         {"exponential", "smoothing", "holt", "winters", "forecast"}, 0, false,
-        "Exponential Smoothing", "", "",
-        {{"Series", PinType::Dataset, true, "Series"}},
-        {{"Forecast", PinType::Dataset, false, "Forecast"}},
-        {{"method", "dropdown", "simple", "Method", {"simple", "holt", "holt_winters"}, ""}},
-        NodeImplementationStatus::Template, 0});
+        "Fit exponential smoothing in-sample and append fitted/residual columns", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Fitted", PinType::Dataset, true, "Input table plus fitted/residual"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"method", "dropdown", "simple", "Method", {"simple", "holt", "holt_winters"}, ""},
+         {"alpha", "float", "-1", "Level smoothing (-1 auto)", {}, ""},
+         {"beta", "float", "-1", "Trend smoothing (-1 auto)", {}, ""},
+         {"gamma", "float", "-1", "Seasonal smoothing (-1 auto)", {}, ""},
+         {"period", "int", "-1", "Seasonal period for Holt-Winters", {}, ""},
+         {"damped", "bool", "false", "Use damped trend for Holt", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

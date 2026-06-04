@@ -1069,13 +1069,13 @@ ForecastResult TimeSeries::SimpleES(const std::vector<double>& data, int horizon
     result.method = "Simple Exponential Smoothing";
     result.horizon = horizon;
 
-    if (data.empty()) {
-        result.error_message = "Empty data";
+    if (data.size() < 2) {
+        result.error_message = "Need at least 2 data points";
         return result;
     }
 
-    if (horizon <= 0) {
-        result.error_message = "Horizon must be positive";
+    if (horizon < 0) {
+        result.error_message = "Horizon must be non-negative";
         return result;
     }
 

@@ -448,6 +448,20 @@ the UI must not present Tensor* nodes as completed executable operators.
 operator group, or leave the group explicitly deferred and move to the
 next panel-only/dead-node group.
 
+**2026-06-04 update:** completed the next small group for time-series
+analysis. `TimeSeriesDecomposition`, `ARIMAForecaster`, and
+`ExponentialSmoothing` are real Cat-1 in-sample table operators already
+registered in `PipelineOperatorFactory`; metadata and editor pins now
+match that contract instead of describing old panel-style forecast
+outputs. Added focused operator tests that verify each preserves row
+count and appends its expected columns. Future-row forecasting remains
+deferred because it changes table row count and needs a separate schema
+contract.
+
+**Remaining in this group:** `ACFNode`, `PACFNode`, `StationarityTest`,
+and `SeasonalityDetector` stay templates/Cat-2 candidates until there is
+a concrete table-output or inspection-panel contract.
+
 ### Known dual-maintained registration lists
 
 Node registration unification mostly landed, but some lists remain
