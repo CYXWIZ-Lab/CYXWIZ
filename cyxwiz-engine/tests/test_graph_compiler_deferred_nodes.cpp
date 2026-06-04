@@ -293,14 +293,22 @@ int main() {
     };
 
     config = compiler.Compile(nodes, links, true);
-    Check(!config.is_valid,
-          "selected training path with Concatenate should remain deferred");
-    Check(HasIssueText(config, "Runtime Concat"),
-          "unsupported merge node should still be reported by name");
-    Check(HasIssueText(config, "template/deferred"),
-          "unsupported merge node should still report template/deferred status");
-    Check(config.graph_op_node_ids.empty(),
-          "unsupported merge node should not be recorded as a graph runtime op");
+    Check(config.is_valid,
+          "selected training path with backend-supported Concatenate should compile");
+    Check(!HasIssueText(config, "Runtime Concat"),
+          "supported graph-runtime Concatenate should not be reported as deferred");
+    Check(config.graph_op_node_ids.size() == 1,
+          "selected Concatenate graph should record one graph runtime op");
+    Check(HasGraphOpId(config, 10),
+          "selected Concatenate graph should record the Concatenate node id");
+    Check(HasPlanNode(config.graph_plan, 10),
+          "graph plan should include selected Concatenate node");
+    Check(HasPlanEdge(config.graph_plan, 8, 802, 10, 1001),
+          "graph plan should include Abs-to-Concatenate edge");
+    Check(HasPlanEdge(config.graph_plan, 1, 101, 10, 1002),
+          "graph plan should include Data-to-Concatenate second input edge");
+    Check(HasPlanEdge(config.graph_plan, 10, 1003, 4, 401),
+          "graph plan should include Concatenate-to-loss prediction edge");
 
     std::cout << "Graph compiler deferred node guard and graph plan passed\n";
     return 0;

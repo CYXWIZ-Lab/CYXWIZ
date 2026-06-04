@@ -1152,7 +1152,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input 1", PinType::Tensor, true, "First input"}, {"Input 2", PinType::Tensor, true, "Second input"}},
         {{"Output", PinType::Tensor, true, "Concatenated"}},
         {{"dim", "int", "1", "Dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Add, NodeCategory::MergeOps, "Add", ICON_FA_PLUS,
         {"add", "sum", "merge", "tensor"}, 0, false, "Add tensors elementwise", "", "",

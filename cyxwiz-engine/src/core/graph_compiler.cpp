@@ -85,7 +85,8 @@ const char* ImplementationStatusLabel(NodeImplementationStatus status) {
 bool IsGraphRuntimeMergeOp(gui::NodeType type) {
     return type == gui::NodeType::Add ||
            type == gui::NodeType::Multiply ||
-           type == gui::NodeType::Average;
+           type == gui::NodeType::Average ||
+           type == gui::NodeType::Concatenate;
 }
 
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {

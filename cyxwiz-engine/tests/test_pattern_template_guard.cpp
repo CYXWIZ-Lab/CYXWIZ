@@ -104,11 +104,12 @@ int main() {
 
     nodes.clear();
     links.clear();
-    Check(!library.InstantiatePatternWithCreator(
+    Check(library.InstantiatePatternWithCreator(
               "guard_concat", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
-          "deferred Concatenate pattern should be rejected");
-    Check(nodes.empty() && links.empty(), "Concatenate rejection should leave no partial graph");
-    Check(creator_calls == 2, "Concatenate rejection should not call node creator");
+          "implemented Concatenate pattern should instantiate");
+    Check(creator_calls == 3, "Concatenate pattern should call node creator once");
+    Check(nodes.size() == 1 && nodes.front().type == gui::NodeType::Concatenate,
+          "Concatenate pattern created wrong node type");
 
     nodes.clear();
     links.clear();
@@ -116,7 +117,7 @@ int main() {
               "guard_tensor_dot", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "template node pattern should be rejected");
     Check(nodes.empty() && links.empty(), "template rejection should leave no partial graph");
-    Check(creator_calls == 2, "template rejection should not call node creator");
+    Check(creator_calls == 3, "template rejection should not call node creator");
 
     nodes.clear();
     links.clear();
@@ -124,7 +125,7 @@ int main() {
               "guard_typo", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "unknown node pattern should be rejected");
     Check(nodes.empty() && links.empty(), "unknown rejection should leave no partial graph");
-    Check(creator_calls == 2, "unknown rejection should not call node creator");
+    Check(creator_calls == 3, "unknown rejection should not call node creator");
 
     int next_pin_id = 2000;
     Check(!library.InstantiatePattern(

@@ -708,6 +708,16 @@ frontend metadata. `Add`, `Multiply`, and `Average` are now marked
 `Template`/deferred. `test_pattern_template_guard` now proves `Add` can
 instantiate while `Concatenate` and `TensorDot` still cannot.
 
+**2026-06-04 update:** completed the next graph fan-in slice for
+`Concatenate`. `GraphExecutableModel` now runs concat forward through
+`Tensor::Cat` and backward through `Tensor::Split` along the node's
+`dim` parameter. The compiler records selected-path `Concatenate` in
+`graph_op_node_ids`, and metadata marks it `Implemented` so Studio can
+add it. Focused tests prove concat forward shape/output, backward split
+gradient accumulation, compiler graph-plan handoff, and pattern
+instantiation. `TensorDot` and the remaining linalg/two-input mask nodes
+stay blocked.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -64,6 +65,15 @@ cyxwiz::CompiledGraphNode PlanNode(gui::NodeType type, int id, const std::string
     return node;
 }
 
+cyxwiz::CompiledGraphNode PlanNode(gui::NodeType type,
+                                   int id,
+                                   const std::string& name,
+                                   std::map<std::string, std::string> parameters) {
+    cyxwiz::CompiledGraphNode node = PlanNode(type, id, name);
+    node.parameters = std::move(parameters);
+    return node;
+}
+
 cyxwiz::CompiledGraphEdge PlanEdge(int from_node,
                                    int from_pin,
                                    int to_node,
@@ -117,7 +127,9 @@ cyxwiz::CompiledGraphPlan MergePlan(gui::NodeType merge_type) {
     plan.optimizer_node_id = 5;
     plan.nodes = {
         PlanNode(gui::NodeType::DataInput, 1, "Data"),
-        PlanNode(merge_type, 2, "Merge"),
+        merge_type == gui::NodeType::Concatenate
+            ? PlanNode(merge_type, 2, "Merge", {{"dim", "1"}})
+            : PlanNode(merge_type, 2, "Merge"),
         PlanNode(gui::NodeType::MSELoss, 4, "Loss"),
         PlanNode(gui::NodeType::SGD, 5, "SGD"),
     };
@@ -189,6 +201,39 @@ void CheckMergeOp(gui::NodeType merge_type,
     for (size_t col = 0; col < expected_data_grad.size(); ++col) {
         CheckNear(backward.At(0, col), expected_data_grad[col], 1e-4f,
                   name + " backward");
+    }
+}
+
+void CheckConcatOp() {
+    cyxwiz::BuiltExecutableModel built =
+        cyxwiz::BuildExecutableFromConfig(MergeConfig(gui::NodeType::Concatenate));
+    Check(built.ok(), "Concatenate graph executable should build through executable config");
+    auto* graph =
+        dynamic_cast<cyxwiz::GraphExecutableModel*>(built.model.get());
+    Check(graph != nullptr, "Concatenate builder should return GraphExecutableModel");
+    Check(graph->GraphOpNodeIds() == std::vector<int>({2}),
+          "Concatenate should preserve graph op node ids");
+
+    cyxwiz::Tensor output = graph->Forward(MakeTensor({2.0f, 3.0f, 4.0f}));
+    Check(output.Shape() == std::vector<size_t>({1, 6}),
+          "Concatenate forward should concatenate along feature dimension");
+    const std::vector<float> expected_output = {2.0f, 3.0f, 4.0f,
+                                                2.0f, 3.0f, 4.0f};
+    for (size_t col = 0; col < expected_output.size(); ++col) {
+        CheckNear(output.At(0, col), expected_output[col], 1e-4f,
+                  "Concatenate forward");
+    }
+
+    const cyxwiz::Tensor* cached = graph->FindCachedTensor(2, 203);
+    Check(cached != nullptr, "Concatenate should cache output");
+    CheckTensorNear(*cached, output, "Concatenate cached output should match");
+
+    cyxwiz::Tensor backward = graph->Backward(cyxwiz::Tensor::Ones({1, 6}));
+    Check(backward.Shape() == std::vector<size_t>({1, 3}),
+          "Concatenate backward should return original input shape");
+    for (size_t col = 0; col < 3; ++col) {
+        CheckNear(backward.At(0, col), 2.0f, 1e-4f,
+                  "Concatenate backward should accumulate split gradients");
     }
 }
 
@@ -281,6 +326,7 @@ int main() {
                  {2.0f, 3.0f, 4.0f},
                  {1.0f, 1.0f, 1.0f},
                  "Average");
+    CheckConcatOp();
 
     std::cout << "Graph executable model parity passed\n";
     return 0;

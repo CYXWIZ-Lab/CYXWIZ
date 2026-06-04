@@ -1,6 +1,7 @@
 #include "graph_executable_model.h"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -82,6 +83,29 @@ void RequireSameShape(const Tensor& left,
     }
 }
 
+int ParseIntParam(const std::map<std::string, std::string>& params,
+                  const std::string& key,
+                  int fallback) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        return fallback;
+    }
+    try {
+        size_t parsed = 0;
+        const int value = std::stoi(it->second, &parsed);
+        if (parsed != it->second.size()) {
+            throw std::runtime_error("GraphExecutableModel integer parameter has trailing text");
+        }
+        return value;
+    } catch (...) {
+        throw std::runtime_error("GraphExecutableModel invalid integer parameter '" + key + "'");
+    }
+}
+
+int GraphOpConcatDim(const CompiledGraphNode& node) {
+    return ParseIntParam(node.parameters, "dim", 1);
+}
+
 Tensor RunMergeForward(gui::NodeType type, const std::vector<const Tensor*>& inputs) {
     if (inputs.size() < 2) {
         throw std::runtime_error("GraphExecutableModel merge op needs at least two inputs");
@@ -109,6 +133,20 @@ Tensor RunMergeForward(gui::NodeType type, const std::vector<const Tensor*>& inp
     }
 
     throw std::runtime_error("GraphExecutableModel unsupported graph op");
+}
+
+Tensor RunConcatForward(const CompiledGraphNode& node,
+                        const std::vector<const Tensor*>& inputs) {
+    if (inputs.size() < 2) {
+        throw std::runtime_error("GraphExecutableModel Concatenate needs at least two inputs");
+    }
+
+    std::vector<Tensor> values;
+    values.reserve(inputs.size());
+    for (const Tensor* input : inputs) {
+        values.push_back(input->Clone());
+    }
+    return Tensor::Cat(values, GraphOpConcatDim(node));
 }
 
 std::vector<Tensor> RunMergeBackward(gui::NodeType type,
@@ -144,6 +182,28 @@ std::vector<Tensor> RunMergeBackward(gui::NodeType type,
     }
 
     throw std::runtime_error("GraphExecutableModel unsupported graph op backward");
+}
+
+std::vector<Tensor> RunConcatBackward(const CompiledGraphNode& node,
+                                      const std::vector<const Tensor*>& inputs,
+                                      const Tensor& grad_output) {
+    std::vector<int> sizes;
+    sizes.reserve(inputs.size());
+    const int dim = GraphOpConcatDim(node);
+    for (const Tensor* input : inputs) {
+        const auto& shape = input->Shape();
+        const int rank = static_cast<int>(shape.size());
+        const int axis = dim < 0 ? dim + rank : dim;
+        if (axis < 0 || axis >= rank) {
+            throw std::runtime_error("GraphExecutableModel Concatenate dim is out of range");
+        }
+        const size_t size = shape[static_cast<size_t>(axis)];
+        if (size > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+            throw std::runtime_error("GraphExecutableModel Concatenate split size is too large");
+        }
+        sizes.push_back(static_cast<int>(size));
+    }
+    return grad_output.Split(sizes, dim);
 }
 
 void AccumulateNodeGrad(std::map<int, Tensor>& grads, int node_id, const Tensor& grad) {
@@ -200,7 +260,8 @@ GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> mode
         }
         if (node->type != gui::NodeType::Add &&
             node->type != gui::NodeType::Multiply &&
-            node->type != gui::NodeType::Average) {
+            node->type != gui::NodeType::Average &&
+            node->type != gui::NodeType::Concatenate) {
             throw std::invalid_argument("GraphExecutableModel unsupported graph op node");
         }
         if (TensorIncomingEdges(plan_, node_id).size() < 2) {
@@ -340,7 +401,9 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
                 }
                 inputs.push_back(input_tensor);
             }
-            output = RunMergeForward(node.type, inputs);
+            output = node.type == gui::NodeType::Concatenate
+                ? RunConcatForward(node, inputs)
+                : RunMergeForward(node.type, inputs);
             executed = true;
         }
 
@@ -412,7 +475,10 @@ Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
                 }
                 inputs.push_back(input_tensor);
             }
-            std::vector<Tensor> input_grads = RunMergeBackward(node.type, inputs, grad);
+            std::vector<Tensor> input_grads =
+                node.type == gui::NodeType::Concatenate
+                    ? RunConcatBackward(node, inputs, grad)
+                    : RunMergeBackward(node.type, inputs, grad);
             for (size_t i = 0; i < incoming.size(); ++i) {
                 AccumulateNodeGrad(node_grads,
                                    incoming[i].from_node_id,

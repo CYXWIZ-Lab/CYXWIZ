@@ -14,12 +14,11 @@
 namespace cyxwiz {
 
 /**
- * Parity-only graph executable.
+ * Pin-aware graph executable.
  *
- * This is the first executable consumer of CompiledGraphPlan. It accepts only
- * a single tensor chain from Data to Loss and executes existing backend
- * modules by compiled graph node order. Fan-in nodes remain blocked until this
- * class grows multi-input node evaluation.
+ * Consumes CompiledGraphPlan and executes selected layer nodes plus explicitly
+ * enabled graph-op fan-in nodes. Graph ops stay opt-in via graph_op_node_ids so
+ * unsupported multi-input/linalg nodes remain blocked at compile/build time.
  */
 class GraphExecutableModel final : public IExecutableModel {
 public:
