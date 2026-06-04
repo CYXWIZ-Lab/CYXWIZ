@@ -1296,10 +1296,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorDot, NodeCategory::Analytics, "Tensor Dot", ICON_FA_CALCULATOR,
-        {"tensor", "dot", "vector", "linalg"}, 0, false, "Compute vector dot product", "", "",
+        {"tensor", "dot", "vector", "linalg"}, 0, false, "Compute vector or row-wise batch dot product", "", "",
         {{"A", PinType::Tensor, true, "Left input"}, {"B", PinType::Tensor, true, "Right input"}},
         {{"Output", PinType::Tensor, true, "Dot product"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorBatchMatMul, NodeCategory::Analytics, "Tensor Batch MatMul", ICON_FA_CALCULATOR,
         {"tensor", "batch", "matmul", "matrix", "linalg"}, 0, false, "Compute batched matrix multiplication", "", "",

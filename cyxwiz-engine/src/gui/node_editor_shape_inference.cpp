@@ -268,6 +268,14 @@ std::vector<size_t> ShapeInferenceEngine::InferNodeOutputShape(
             break;
         }
 
+        case NodeType::TensorDot:
+            if (input_shape.size() == 1) {
+                output_shape = {1};
+            } else if (input_shape.size() == 2) {
+                output_shape = {input_shape[0], 1};
+            }
+            break;
+
         // Activation functions and normalization - preserve shape
         case NodeType::ReLU:
         case NodeType::LeakyReLU:

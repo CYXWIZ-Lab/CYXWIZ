@@ -740,14 +740,17 @@ mask composition. Python codegen now emits tensor rhs expressions when
 drift tests cover the optional `B` pin and logical `not`/`and`/`or`
 choices. `TensorDot` and linalg remain blocked.
 
-**2026-06-04 update:** added the first linalg graph-runtime slice for
-`TensorDot` only. The backend graph executor now runs two-input 1D dot
-products through `Tensor::Dot` and backpropagates `grad * B` / `grad * A`,
-including accumulated gradients when both dot inputs share the same
-source tensor. The compiler records selected-path `TensorDot` as a graph
-op, while `TensorBatchMatMul` remains the explicit deferred linalg guard.
-Studio metadata still keeps `TensorDot` template-blocked until the
-user-facing batch/shape contract is designed.
+**2026-06-04 update:** completed the bounded `TensorDot` linalg slice.
+`Tensor::Dot` now supports both 1D vector dot and 2D row-wise batch dot
+with shape `[batch, features] -> [batch, 1]`. `GraphExecutableModel`
+runs selected-path `TensorDot` through that primitive and supports
+Float32/Float64 backward gradients for 2D batch dot, including
+accumulated gradients when both dot inputs share the same source tensor.
+Compiler graph-op handoff, Studio metadata, shape inference, pattern
+instantiation, and focused tensor/graph tests now match the implemented
+contract. `TensorBatchMatMul` remains the explicit deferred linalg guard.
+GPU-first execution is intentionally split into `tofix17.md`; the
+current `TensorDot` primitive is correct but CPU-backed.
 
 ## Priority 7 - Future Architecture
 

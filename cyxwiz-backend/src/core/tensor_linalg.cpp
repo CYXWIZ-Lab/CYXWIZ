@@ -19,6 +19,28 @@ Tensor DotTyped(const Tensor& left, const Tensor& right) {
     return Tensor({1}, &total, left.GetDataType());
 }
 
+template <typename T>
+Tensor RowWiseDotTyped(const Tensor& left, const Tensor& right) {
+    const auto& shape = left.Shape();
+    const size_t batch = shape[0];
+    const size_t features = shape[1];
+    const T* a = left.Data<T>();
+    const T* b = right.Data<T>();
+    Tensor result({batch, 1}, left.GetDataType());
+    T* out = result.Data<T>();
+
+    for (size_t row = 0; row < batch; row++) {
+        T total{};
+        for (size_t col = 0; col < features; col++) {
+            const size_t idx = row * features + col;
+            total = static_cast<T>(total + a[idx] * b[idx]);
+        }
+        out[row] = total;
+    }
+
+    return result;
+}
+
 Tensor DotPreservingType(const Tensor& left, const Tensor& right) {
     switch (left.GetDataType()) {
         case DataType::Float32: return DotTyped<float>(left, right);
@@ -26,6 +48,17 @@ Tensor DotPreservingType(const Tensor& left, const Tensor& right) {
         case DataType::Int32: return DotTyped<int32_t>(left, right);
         case DataType::Int64: return DotTyped<int64_t>(left, right);
         case DataType::UInt8: return DotTyped<uint8_t>(left, right);
+    }
+    throw std::runtime_error("Tensor::Dot: unsupported data type");
+}
+
+Tensor RowWiseDotPreservingType(const Tensor& left, const Tensor& right) {
+    switch (left.GetDataType()) {
+        case DataType::Float32: return RowWiseDotTyped<float>(left, right);
+        case DataType::Float64: return RowWiseDotTyped<double>(left, right);
+        case DataType::Int32: return RowWiseDotTyped<int32_t>(left, right);
+        case DataType::Int64: return RowWiseDotTyped<int64_t>(left, right);
+        case DataType::UInt8: return RowWiseDotTyped<uint8_t>(left, right);
     }
     throw std::runtime_error("Tensor::Dot: unsupported data type");
 }
@@ -85,13 +118,19 @@ void RequireSameDType(const Tensor& left, const Tensor& right, const char* messa
 
 Tensor Tensor::Dot(const Tensor& other) const {
     RequireSameDType(*this, other, "Tensor::Dot: data types must match");
-    if (shape_.size() != 1 || other.Shape().size() != 1) {
-        throw std::runtime_error("Tensor::Dot: both tensors must be 1D");
+    if (shape_.size() == 1 && other.Shape().size() == 1) {
+        if (shape_[0] != other.Shape()[0]) {
+            throw std::runtime_error("Tensor::Dot: vector sizes must match");
+        }
+        return DotPreservingType(*this, other);
     }
-    if (shape_[0] != other.Shape()[0]) {
-        throw std::runtime_error("Tensor::Dot: vector sizes must match");
+    if (shape_.size() == 2 && other.Shape().size() == 2) {
+        if (shape_ != other.Shape()) {
+            throw std::runtime_error("Tensor::Dot: 2D row-wise input shapes must match");
+        }
+        return RowWiseDotPreservingType(*this, other);
     }
-    return DotPreservingType(*this, other);
+    throw std::runtime_error("Tensor::Dot: both tensors must be 1D or both 2D");
 }
 
 Tensor Tensor::BatchMatMul(const Tensor& other) const {

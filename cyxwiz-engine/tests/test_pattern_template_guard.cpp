@@ -72,6 +72,8 @@ int main() {
     Check(library.LoadPatternFromFile(WritePattern("guard_concat", "Concatenate").string()),
           "failed to load deferred merge pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_tensor_dot", "TensorDot").string()),
+          "failed to load graph-runtime dot pattern");
+    Check(library.LoadPatternFromFile(WritePattern("guard_batch_matmul", "TensorBatchMatMul").string()),
           "failed to load template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_typo", "DefinitelyNotANode").string()),
           "failed to load unknown-node pattern");
@@ -113,11 +115,20 @@ int main() {
 
     nodes.clear();
     links.clear();
-    Check(!library.InstantiatePatternWithCreator(
+    Check(library.InstantiatePatternWithCreator(
               "guard_tensor_dot", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
-          "template node pattern should be rejected");
+          "implemented TensorDot pattern should instantiate");
+    Check(creator_calls == 4, "TensorDot pattern should call node creator once");
+    Check(nodes.size() == 1 && nodes.front().type == gui::NodeType::TensorDot,
+          "TensorDot pattern created wrong node type");
+
+    nodes.clear();
+    links.clear();
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_batch_matmul", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
+          "template TensorBatchMatMul pattern should be rejected");
     Check(nodes.empty() && links.empty(), "template rejection should leave no partial graph");
-    Check(creator_calls == 3, "template rejection should not call node creator");
+    Check(creator_calls == 4, "template rejection should not call node creator");
 
     nodes.clear();
     links.clear();
@@ -125,11 +136,11 @@ int main() {
               "guard_typo", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "unknown node pattern should be rejected");
     Check(nodes.empty() && links.empty(), "unknown rejection should leave no partial graph");
-    Check(creator_calls == 3, "unknown rejection should not call node creator");
+    Check(creator_calls == 4, "unknown rejection should not call node creator");
 
     int next_pin_id = 2000;
     Check(!library.InstantiatePattern(
-              "guard_tensor_dot", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
+              "guard_batch_matmul", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
           "legacy instantiation should also reject template nodes");
 
     std::cout << "Pattern template guard passed\n";

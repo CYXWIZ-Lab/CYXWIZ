@@ -42,6 +42,13 @@ cyxwiz::Tensor MakeVector(const std::vector<float>& values) {
                           cyxwiz::DataType::Float32);
 }
 
+cyxwiz::Tensor MakeMatrix(size_t rows, size_t cols, const std::vector<float>& values) {
+    Check(values.size() == rows * cols, "MakeMatrix value count must match shape");
+    return cyxwiz::Tensor({rows, cols},
+                          values.data(),
+                          cyxwiz::DataType::Float32);
+}
+
 cyxwiz::CompiledLayer TensorAbsLayer() {
     cyxwiz::CompiledLayer layer;
     layer.type = gui::NodeType::TensorAbs;
@@ -346,6 +353,32 @@ void CheckDotOp() {
     for (size_t i = 0; i < expected_grad.size(); ++i) {
         CheckNear(backward.At(i), expected_grad[i], 1e-4f,
                   "TensorDot backward should accumulate both shared inputs");
+    }
+
+    cyxwiz::Tensor batch_output =
+        graph->Forward(MakeMatrix(2, 3, {1.0f, 2.0f, 3.0f,
+                                         4.0f, 5.0f, 6.0f}));
+    Check(batch_output.Shape() == std::vector<size_t>({2, 1}),
+          "TensorDot 2D forward should produce one dot per batch row");
+    CheckNear(batch_output.At(0, 0), 14.0f, 1e-4f,
+              "TensorDot 2D forward first row");
+    CheckNear(batch_output.At(1, 0), 77.0f, 1e-4f,
+              "TensorDot 2D forward second row");
+
+    cyxwiz::Tensor batch_backward = graph->Backward(cyxwiz::Tensor::Ones({2, 1}));
+    Check(batch_backward.Shape() == std::vector<size_t>({2, 3}),
+          "TensorDot 2D backward should return input batch shape");
+    const std::vector<float> expected_batch_grad = {
+        2.0f, 4.0f, 6.0f,
+        8.0f, 10.0f, 12.0f,
+    };
+    for (size_t row = 0; row < 2; ++row) {
+        for (size_t col = 0; col < 3; ++col) {
+            CheckNear(batch_backward.At(row, col),
+                      expected_batch_grad[row * 3 + col],
+                      1e-4f,
+                      "TensorDot 2D backward should accumulate shared inputs");
+        }
     }
 }
 

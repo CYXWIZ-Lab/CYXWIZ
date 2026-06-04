@@ -320,6 +320,26 @@ TEST_CASE("Tensor dot computes 1D inner products", "[tensor]") {
     REQUIRE(result.Data<int32_t>()[0] == 32);
 }
 
+TEST_CASE("Tensor dot computes row-wise 2D inner products", "[tensor]") {
+    float left_data[] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f
+    };
+    float right_data[] = {
+        1.0f, 1.0f, 1.0f,
+        2.0f, 2.0f, 2.0f
+    };
+    cyxwiz::Tensor left({2, 3}, left_data, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor right({2, 3}, right_data, cyxwiz::DataType::Float32);
+
+    cyxwiz::Tensor result = left.Dot(right);
+
+    REQUIRE(result.Shape() == std::vector<size_t>{2, 1});
+    REQUIRE(result.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(result.Data<float>()[0] == Catch::Approx(6.0f));
+    REQUIRE(result.Data<float>()[1] == Catch::Approx(30.0f));
+}
+
 TEST_CASE("Tensor dot validates rank size and dtype", "[tensor]") {
     float left_data[] = {1.0f, 2.0f};
     float right_data[] = {3.0f, 4.0f, 5.0f};
