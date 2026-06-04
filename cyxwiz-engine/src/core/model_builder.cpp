@@ -1,5 +1,7 @@
 #include "model_builder.h"
 #include <spdlog/spdlog.h>
+#include <algorithm>
+#include <sstream>
 
 namespace cyxwiz {
 
@@ -41,6 +43,33 @@ bool ParseBoolParam(const CompiledLayer& layer,
         return fallback;
     }
     return it->second == "true" || it->second == "1";
+}
+
+std::vector<int> ParseIntListParam(const CompiledLayer& layer,
+                                   const std::string& key) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return {};
+    }
+
+    std::string value = it->second;
+    value.erase(std::remove(value.begin(), value.end(), '['), value.end());
+    value.erase(std::remove(value.begin(), value.end(), ']'), value.end());
+    value.erase(std::remove(value.begin(), value.end(), ' '), value.end());
+
+    std::vector<int> out;
+    std::stringstream ss(value);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        if (token.empty()) {
+            continue;
+        }
+        try {
+            out.push_back(std::stoi(token));
+        } catch (...) {
+        }
+    }
+    return out;
 }
 
 // Populate `model` with modules per config.layers. Returns false if
@@ -356,6 +385,38 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 }
                 model.Add<PermuteModule>(layer_cfg.dims);
                 spdlog::info("  [{}] Permute({} dims)", i, layer_cfg.dims.size());
+                break;
+            }
+
+            case gui::NodeType::TensorBroadcastTo: {
+                if (layer_cfg.output_shape.empty()) {
+                    spdlog::error("  [{}] TensorBroadcastTo missing resolved output_shape", i);
+                    break;
+                }
+                model.Add<TensorShapeModule>(TensorShapeOp::BroadcastTo, layer_cfg.output_shape);
+                spdlog::info("  [{}] TensorBroadcastTo({} dims)", i, layer_cfg.output_shape.size());
+                break;
+            }
+
+            case gui::NodeType::TensorExpand: {
+                if (layer_cfg.output_shape.empty()) {
+                    spdlog::error("  [{}] TensorExpand missing resolved output_shape", i);
+                    break;
+                }
+                model.Add<TensorShapeModule>(TensorShapeOp::Expand, layer_cfg.output_shape);
+                spdlog::info("  [{}] TensorExpand({} dims)", i, layer_cfg.output_shape.size());
+                break;
+            }
+
+            case gui::NodeType::TensorIndexSelect: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", 0.0f));
+                const std::vector<int> indices = ParseIntListParam(layer_cfg, "indices");
+                model.Add<TensorShapeModule>(TensorShapeOp::IndexSelect,
+                                             std::vector<size_t>{},
+                                             dim,
+                                             indices);
+                spdlog::info("  [{}] TensorIndexSelect(dim={}, indices={})",
+                             i, dim, indices.size());
                 break;
             }
 

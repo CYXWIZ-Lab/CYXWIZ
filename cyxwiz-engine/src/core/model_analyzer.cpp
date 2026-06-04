@@ -59,6 +59,54 @@ std::string FormatShape(const std::vector<size_t>& shape) {
     return oss.str();
 }
 
+std::vector<size_t> ParsePositiveShapeText(const std::string& value) {
+    std::string text = value;
+    text.erase(std::remove(text.begin(), text.end(), '['), text.end());
+    text.erase(std::remove(text.begin(), text.end(), ']'), text.end());
+    text.erase(std::remove(text.begin(), text.end(), ' '), text.end());
+
+    std::vector<size_t> out;
+    std::stringstream ss(text);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        if (token.empty()) {
+            return {};
+        }
+        try {
+            const int parsed = std::stoi(token);
+            if (parsed <= 0) {
+                return {};
+            }
+            out.push_back(static_cast<size_t>(parsed));
+        } catch (...) {
+            return {};
+        }
+    }
+    return out;
+}
+
+std::vector<int> ParseIntListText(const std::string& value) {
+    std::string text = value;
+    text.erase(std::remove(text.begin(), text.end(), '['), text.end());
+    text.erase(std::remove(text.begin(), text.end(), ']'), text.end());
+    text.erase(std::remove(text.begin(), text.end(), ' '), text.end());
+
+    std::vector<int> out;
+    std::stringstream ss(text);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        if (token.empty()) {
+            return {};
+        }
+        try {
+            out.push_back(std::stoi(token));
+        } catch (...) {
+            return {};
+        }
+    }
+    return out;
+}
+
 std::string GetNodeTypeName(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Dense: return "Dense";
@@ -115,6 +163,9 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::TensorProd: return "TensorProd";
         case gui::NodeType::TensorVar: return "TensorVar";
         case gui::NodeType::TensorStd: return "TensorStd";
+        case gui::NodeType::TensorBroadcastTo: return "TensorBroadcastTo";
+        case gui::NodeType::TensorExpand: return "TensorExpand";
+        case gui::NodeType::TensorIndexSelect: return "TensorIndexSelect";
         case gui::NodeType::Reshape: return "Reshape";
         case gui::NodeType::Permute: return "Permute";
         case gui::NodeType::Squeeze: return "Squeeze";
@@ -463,6 +514,12 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::LayerNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::Flatten:
+        case gui::NodeType::Reshape:
+        case gui::NodeType::View:
+        case gui::NodeType::Permute:
+        case gui::NodeType::Squeeze:
+        case gui::NodeType::Unsqueeze:
         case gui::NodeType::LSTM:
         case gui::NodeType::GRU:
         case gui::NodeType::RNN:
@@ -486,6 +543,9 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorProd:
         case gui::NodeType::TensorVar:
         case gui::NodeType::TensorStd:
+        case gui::NodeType::TensorBroadcastTo:
+        case gui::NodeType::TensorExpand:
+        case gui::NodeType::TensorIndexSelect:
             return true;
         default:
             return false;
@@ -763,6 +823,38 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
         case gui::NodeType::TensorClip:
             // Shape unchanged
             return input_shape;
+        case gui::NodeType::TensorBroadcastTo:
+        case gui::NodeType::TensorExpand: {
+            auto it = node.parameters.find("shape");
+            if (it == node.parameters.end()) {
+                return input_shape;
+            }
+            std::vector<size_t> shape = ParsePositiveShapeText(it->second);
+            return shape.empty() ? input_shape : shape;
+        }
+        case gui::NodeType::TensorIndexSelect: {
+            if (input_shape.empty()) {
+                return input_shape;
+            }
+            int dim = GetIntParam(node, "dim", 0);
+            if (dim < 0) {
+                dim += static_cast<int>(input_shape.size());
+            }
+            if (dim < 0 || dim >= static_cast<int>(input_shape.size())) {
+                return input_shape;
+            }
+            auto it = node.parameters.find("indices");
+            if (it == node.parameters.end()) {
+                return input_shape;
+            }
+            std::vector<int> indices = ParseIntListText(it->second);
+            if (indices.empty()) {
+                return input_shape;
+            }
+            std::vector<size_t> out = input_shape;
+            out[static_cast<size_t>(dim)] = indices.size();
+            return out;
+        }
         case gui::NodeType::TensorSum:
         case gui::NodeType::TensorMean:
         case gui::NodeType::TensorMax:

@@ -587,6 +587,17 @@ metadata, and runtime contract tests are updated. Tensor broadcast/
 expand/index, merge/multi-input, linalg, and mask/compare nodes remain
 template/deferred until they receive their own runtime contracts.
 
+**2026-06-04 update:** completed the bounded tensor shape/index group:
+`TensorBroadcastTo`, `TensorExpand`, and `TensorIndexSelect`.
+Broadcast/expand target shapes are sample shapes; runtime preserves the
+leading batch dimension and pads only sample dimensions. Backward sums
+gradients across expanded axes. `TensorIndexSelect.dim` addresses sample
+dimensions, supports duplicate indices, and backward scatters/accumulates
+selected gradients. Compiler/analyzer inference, `ModelBuilder`,
+`TestExecutor`, smoke-run detection, metadata, and runtime contract tests
+are updated. Tensor merge/multi-input, linalg, and mask/compare nodes
+remain template/deferred until they receive their own runtime contracts.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

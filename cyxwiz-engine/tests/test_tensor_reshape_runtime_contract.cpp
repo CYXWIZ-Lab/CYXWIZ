@@ -142,6 +142,53 @@ int main() {
     }
 
     {
+        cyxwiz::Tensor input = MakeRangeTensor({2, 1, 3});
+        cyxwiz::TensorShapeModule broadcast(cyxwiz::TensorShapeOp::BroadcastTo,
+                                            {2, 3});
+
+        cyxwiz::Tensor output = broadcast.Forward(input);
+        CheckShape(output, {2, 2, 3}, "TensorBroadcastTo forward shape mismatch");
+        CheckNear(output.At(0, 1, 2), input.At(0, 0, 2), 1e-4f,
+                  "TensorBroadcastTo should repeat along expanded sample axes");
+
+        cyxwiz::Tensor backward = broadcast.Backward(cyxwiz::Tensor::Ones({2, 2, 3}));
+        CheckShape(backward, {2, 1, 3}, "TensorBroadcastTo backward shape mismatch");
+        for (size_t i = 0; i < backward.NumElements(); ++i) {
+            CheckNear(backward.At(i), 2.0f, 1e-4f,
+                      "TensorBroadcastTo backward should sum expanded gradients");
+        }
+
+        cyxwiz::TensorShapeModule expand(cyxwiz::TensorShapeOp::Expand, {2, 3});
+        cyxwiz::Tensor expanded = expand.Forward(input);
+        CheckShape(expanded, {2, 2, 3}, "TensorExpand forward shape mismatch");
+        cyxwiz::Tensor expand_backward = expand.Backward(cyxwiz::Tensor::Ones({2, 2, 3}));
+        CheckShape(expand_backward, {2, 1, 3}, "TensorExpand backward shape mismatch");
+        CheckNear(expand_backward.At(5), 2.0f, 1e-4f,
+                  "TensorExpand backward should sum expanded gradients");
+
+        cyxwiz::Tensor select_input = MakeRangeTensor({2, 3});
+        cyxwiz::TensorShapeModule select(cyxwiz::TensorShapeOp::IndexSelect,
+                                         {},
+                                         0,
+                                         {2, 0, 2});
+        cyxwiz::Tensor selected = select.Forward(select_input);
+        CheckShape(selected, {2, 3}, "TensorIndexSelect forward shape mismatch");
+        CheckNear(selected.At(0, 0), 2.0f, 1e-4f,
+                  "TensorIndexSelect should gather selected sample values");
+        CheckNear(selected.At(1, 2), 5.0f, 1e-4f,
+                  "TensorIndexSelect should gather duplicate selected values");
+
+        cyxwiz::Tensor select_backward = select.Backward(cyxwiz::Tensor::Ones({2, 3}));
+        CheckShape(select_backward, {2, 3}, "TensorIndexSelect backward shape mismatch");
+        CheckNear(select_backward.At(0, 0), 1.0f, 1e-4f,
+                  "TensorIndexSelect backward should scatter selected gradients");
+        CheckNear(select_backward.At(0, 1), 0.0f, 1e-4f,
+                  "TensorIndexSelect backward should leave unselected values at zero");
+        CheckNear(select_backward.At(0, 2), 2.0f, 1e-4f,
+                  "TensorIndexSelect backward should accumulate duplicate indices");
+    }
+
+    {
         CheckUnaryModule(cyxwiz::TensorUnaryOp::Abs,
                          {-2.0f, 0.0f, 3.0f},
                          {2.0f, 0.0f, 3.0f},
@@ -340,68 +387,92 @@ int main() {
         view.input_shape = {1, 6};
         view.output_shape = {3, 2};
 
+        cyxwiz::CompiledLayer broadcast;
+        broadcast.type = gui::NodeType::TensorBroadcastTo;
+        broadcast.node_id = 6;
+        broadcast.name = "TensorBroadcastTo";
+        broadcast.input_shape = {3, 2};
+        broadcast.output_shape = {1, 3, 2};
+        broadcast.parameters = {{"shape", "1,3,2"}};
+
+        cyxwiz::CompiledLayer expand;
+        expand.type = gui::NodeType::TensorExpand;
+        expand.node_id = 7;
+        expand.name = "TensorExpand";
+        expand.input_shape = {1, 3, 2};
+        expand.output_shape = {2, 3, 2};
+        expand.parameters = {{"shape", "2,3,2"}};
+
+        cyxwiz::CompiledLayer index_select;
+        index_select.type = gui::NodeType::TensorIndexSelect;
+        index_select.node_id = 8;
+        index_select.name = "TensorIndexSelect";
+        index_select.input_shape = {2, 3, 2};
+        index_select.output_shape = {2, 3, 2};
+        index_select.parameters = {{"dim", "0"}, {"indices", "1,0"}};
+
         cyxwiz::CompiledLayer abs;
         abs.type = gui::NodeType::TensorAbs;
-        abs.node_id = 6;
+        abs.node_id = 9;
         abs.name = "TensorAbs";
-        abs.input_shape = {3, 2};
-        abs.output_shape = {3, 2};
+        abs.input_shape = {2, 3, 2};
+        abs.output_shape = {2, 3, 2};
 
         cyxwiz::CompiledLayer exp;
         exp.type = gui::NodeType::TensorExp;
-        exp.node_id = 7;
+        exp.node_id = 10;
         exp.name = "TensorExp";
-        exp.input_shape = {3, 2};
-        exp.output_shape = {3, 2};
+        exp.input_shape = {2, 3, 2};
+        exp.output_shape = {2, 3, 2};
 
         cyxwiz::CompiledLayer log;
         log.type = gui::NodeType::TensorLog;
-        log.node_id = 8;
+        log.node_id = 11;
         log.name = "TensorLog";
-        log.input_shape = {3, 2};
-        log.output_shape = {3, 2};
+        log.input_shape = {2, 3, 2};
+        log.output_shape = {2, 3, 2};
 
         cyxwiz::CompiledLayer sqrt;
         sqrt.type = gui::NodeType::TensorSqrt;
-        sqrt.node_id = 9;
+        sqrt.node_id = 12;
         sqrt.name = "TensorSqrt";
-        sqrt.input_shape = {3, 2};
-        sqrt.output_shape = {3, 2};
+        sqrt.input_shape = {2, 3, 2};
+        sqrt.output_shape = {2, 3, 2};
 
         cyxwiz::CompiledLayer pow;
         pow.type = gui::NodeType::TensorPow;
-        pow.node_id = 10;
+        pow.node_id = 13;
         pow.name = "TensorPow";
-        pow.input_shape = {3, 2};
-        pow.output_shape = {3, 2};
+        pow.input_shape = {2, 3, 2};
+        pow.output_shape = {2, 3, 2};
         pow.parameters = {{"exponent", "2.0"}};
 
         cyxwiz::CompiledLayer clip;
         clip.type = gui::NodeType::TensorClip;
-        clip.node_id = 11;
+        clip.node_id = 14;
         clip.name = "TensorClip";
-        clip.input_shape = {3, 2};
-        clip.output_shape = {3, 2};
+        clip.input_shape = {2, 3, 2};
+        clip.output_shape = {2, 3, 2};
         clip.parameters = {{"min", "0.0"}, {"max", "10.0"}};
 
         cyxwiz::CompiledLayer sign;
         sign.type = gui::NodeType::TensorSign;
-        sign.node_id = 12;
+        sign.node_id = 15;
         sign.name = "TensorSign";
-        sign.input_shape = {3, 2};
-        sign.output_shape = {3, 2};
+        sign.input_shape = {2, 3, 2};
+        sign.output_shape = {2, 3, 2};
 
         cyxwiz::CompiledLayer max;
         max.type = gui::NodeType::TensorMax;
-        max.node_id = 13;
+        max.node_id = 16;
         max.name = "TensorMax";
-        max.input_shape = {3, 2};
+        max.input_shape = {2, 3, 2};
         max.output_shape = {1};
         max.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
 
         cyxwiz::CompiledLayer min;
         min.type = gui::NodeType::TensorMin;
-        min.node_id = 14;
+        min.node_id = 17;
         min.name = "TensorMin";
         min.input_shape = {1};
         min.output_shape = {1};
@@ -409,7 +480,7 @@ int main() {
 
         cyxwiz::CompiledLayer mean;
         mean.type = gui::NodeType::TensorMean;
-        mean.node_id = 15;
+        mean.node_id = 18;
         mean.name = "TensorMean";
         mean.input_shape = {1};
         mean.output_shape = {1};
@@ -417,7 +488,7 @@ int main() {
 
         cyxwiz::CompiledLayer sum;
         sum.type = gui::NodeType::TensorSum;
-        sum.node_id = 16;
+        sum.node_id = 19;
         sum.name = "TensorSum";
         sum.input_shape = {1};
         sum.output_shape = {1};
@@ -425,7 +496,7 @@ int main() {
 
         cyxwiz::CompiledLayer prod;
         prod.type = gui::NodeType::TensorProd;
-        prod.node_id = 17;
+        prod.node_id = 20;
         prod.name = "TensorProd";
         prod.input_shape = {1};
         prod.output_shape = {1};
@@ -433,7 +504,7 @@ int main() {
 
         cyxwiz::CompiledLayer var;
         var.type = gui::NodeType::TensorVar;
-        var.node_id = 18;
+        var.node_id = 21;
         var.name = "TensorVar";
         var.input_shape = {1};
         var.output_shape = {1};
@@ -441,7 +512,7 @@ int main() {
 
         cyxwiz::CompiledLayer std;
         std.type = gui::NodeType::TensorStd;
-        std.node_id = 19;
+        std.node_id = 22;
         std.name = "TensorStd";
         std.input_shape = {1};
         std.output_shape = {1};
@@ -449,6 +520,7 @@ int main() {
 
         config.layers = {
             reshape, squeeze, unsqueeze, permute, view,
+            broadcast, expand, index_select,
             abs, exp, log, sqrt, pow, clip, sign, max, min,
             mean, sum, prod, var, std
         };

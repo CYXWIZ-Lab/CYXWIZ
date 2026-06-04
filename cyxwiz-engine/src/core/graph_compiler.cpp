@@ -351,6 +351,89 @@ bool ParseIntParam(const std::map<std::string, std::string>& params,
     }
 }
 
+bool ParsePositiveShapeParam(const std::map<std::string, std::string>& params,
+                             const std::string& key,
+                             const std::string& op_name,
+                             std::vector<size_t>& dims,
+                             std::string& error) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        error = op_name + " requires a non-empty " + key + " parameter";
+        return false;
+    }
+
+    std::string shape_str = it->second;
+    shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
+    shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
+    shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ' '), shape_str.end());
+
+    dims.clear();
+    std::stringstream ss(shape_str);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        if (token.empty()) {
+            error = op_name + " shape contains an empty dimension";
+            return false;
+        }
+        try {
+            const int64_t dim = std::stoll(token);
+            if (dim <= 0) {
+                error = op_name + " shape dimensions must be positive";
+                return false;
+            }
+            dims.push_back(static_cast<size_t>(dim));
+        } catch (...) {
+            error = op_name + " shape contains a non-integer dimension";
+            return false;
+        }
+    }
+
+    if (dims.empty()) {
+        error = op_name + " requires at least one target dimension";
+        return false;
+    }
+    return true;
+}
+
+bool ParseIndexListParam(const std::map<std::string, std::string>& params,
+                         const std::string& key,
+                         const std::string& op_name,
+                         std::vector<int>& indices,
+                         std::string& error) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        error = op_name + " requires a non-empty " + key + " parameter";
+        return false;
+    }
+
+    std::string list_str = it->second;
+    list_str.erase(std::remove(list_str.begin(), list_str.end(), '['), list_str.end());
+    list_str.erase(std::remove(list_str.begin(), list_str.end(), ']'), list_str.end());
+    list_str.erase(std::remove(list_str.begin(), list_str.end(), ' '), list_str.end());
+
+    indices.clear();
+    std::stringstream ss(list_str);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        if (token.empty()) {
+            error = op_name + " indices contains an empty value";
+            return false;
+        }
+        try {
+            indices.push_back(std::stoi(token));
+        } catch (...) {
+            error = op_name + " indices contains a non-integer value";
+            return false;
+        }
+    }
+
+    if (indices.empty()) {
+        error = op_name + " requires at least one index";
+        return false;
+    }
+    return true;
+}
+
 bool NormalizeCompilerDim(int dim,
                           int rank,
                           bool allow_end,
@@ -521,6 +604,85 @@ bool ResolvePermuteTargetShape(const std::map<std::string, std::string>& params,
     return true;
 }
 
+bool ResolveTensorBroadcastTargetShape(gui::NodeType type,
+                                       const std::map<std::string, std::string>& params,
+                                       const std::vector<size_t>& input_shape,
+                                       std::vector<size_t>& target_shape,
+                                       std::string& error) {
+    const std::string op_name = type == gui::NodeType::TensorBroadcastTo
+        ? "TensorBroadcastTo"
+        : "TensorExpand";
+    if (input_shape.empty()) {
+        error = op_name + " requires a known input shape";
+        return false;
+    }
+    if (!ParsePositiveShapeParam(params, "shape", op_name, target_shape, error)) {
+        return false;
+    }
+    if (target_shape.size() < input_shape.size()) {
+        error = op_name + " target sample rank must be >= input sample rank";
+        return false;
+    }
+
+    const size_t sample_pad = target_shape.size() - input_shape.size();
+    for (size_t axis = 0; axis < target_shape.size(); ++axis) {
+        const size_t input_dim = axis < sample_pad ? 1 : input_shape[axis - sample_pad];
+        const size_t target_dim = target_shape[axis];
+        if (input_dim != 1 && input_dim != target_dim) {
+            error = op_name + " target shape is not broadcast-compatible";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ResolveTensorIndexSelectTargetShape(const std::map<std::string, std::string>& params,
+                                         const std::vector<size_t>& input_shape,
+                                         std::vector<size_t>& target_shape,
+                                         std::string& error) {
+    if (input_shape.empty()) {
+        error = "TensorIndexSelect requires a known input shape";
+        return false;
+    }
+
+    int dim = 0;
+    if (!ParseIntParam(params, "dim", 0, dim, error)) {
+        error = "TensorIndexSelect " + error;
+        return false;
+    }
+
+    int normalized_dim = 0;
+    if (!NormalizeCompilerDim(dim,
+                              static_cast<int>(input_shape.size()),
+                              false,
+                              "TensorIndexSelect",
+                              normalized_dim,
+                              error)) {
+        return false;
+    }
+
+    std::vector<int> indices;
+    if (!ParseIndexListParam(params, "indices", "TensorIndexSelect", indices, error)) {
+        return false;
+    }
+
+    const int dim_size = static_cast<int>(input_shape[static_cast<size_t>(normalized_dim)]);
+    for (int index : indices) {
+        int normalized = index;
+        if (normalized < 0) {
+            normalized += dim_size;
+        }
+        if (normalized < 0 || normalized >= dim_size) {
+            error = "TensorIndexSelect index is out of range";
+            return false;
+        }
+    }
+
+    target_shape = input_shape;
+    target_shape[static_cast<size_t>(normalized_dim)] = indices.size();
+    return true;
+}
+
 bool ResolveShapeOpTargetShape(gui::NodeType type,
                                const std::map<std::string, std::string>& params,
                                const std::vector<size_t>& input_shape,
@@ -542,6 +704,18 @@ bool ResolveShapeOpTargetShape(gui::NodeType type,
                                              ignored_dims,
                                              error);
         }
+        case gui::NodeType::TensorBroadcastTo:
+        case gui::NodeType::TensorExpand:
+            return ResolveTensorBroadcastTargetShape(type,
+                                                     params,
+                                                     input_shape,
+                                                     target_shape,
+                                                     error);
+        case gui::NodeType::TensorIndexSelect:
+            return ResolveTensorIndexSelectTargetShape(params,
+                                                       input_shape,
+                                                       target_shape,
+                                                       error);
         default:
             error = "Unsupported shape operation";
             return false;
@@ -1032,7 +1206,10 @@ TrainingConfiguration GraphCompiler::Compile(
                 node->type == gui::NodeType::View ||
                 node->type == gui::NodeType::Squeeze ||
                 node->type == gui::NodeType::Unsqueeze ||
-                node->type == gui::NodeType::Permute) {
+                node->type == gui::NodeType::Permute ||
+                node->type == gui::NodeType::TensorBroadcastTo ||
+                node->type == gui::NodeType::TensorExpand ||
+                node->type == gui::NodeType::TensorIndexSelect) {
                 std::string error;
                 bool ok = false;
                 if (node->type == gui::NodeType::Permute) {
@@ -1621,6 +1798,9 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Permute:
         case gui::NodeType::Squeeze:
         case gui::NodeType::Unsqueeze:
+        case gui::NodeType::TensorBroadcastTo:
+        case gui::NodeType::TensorExpand:
+        case gui::NodeType::TensorIndexSelect:
         case gui::NodeType::TensorAbs:
         case gui::NodeType::TensorExp:
         case gui::NodeType::TensorLog:
@@ -2124,7 +2304,10 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::View:
         case gui::NodeType::Permute:
         case gui::NodeType::Squeeze:
-        case gui::NodeType::Unsqueeze: {
+        case gui::NodeType::Unsqueeze:
+        case gui::NodeType::TensorBroadcastTo:
+        case gui::NodeType::TensorExpand:
+        case gui::NodeType::TensorIndexSelect: {
             std::string error;
             std::vector<int> ignored_dims;
             const bool ok = layer.type == gui::NodeType::Permute

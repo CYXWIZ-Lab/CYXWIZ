@@ -1233,14 +1233,14 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Broadcast tensor"}},
         {{"shape", "string", "", "Target shape", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorExpand, NodeCategory::ShapeOps, "Tensor Expand", ICON_FA_EXPAND,
         {"tensor", "expand", "broadcast", "shape"}, 0, false, "Materialize tensor expanded to a target shape", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Expanded tensor"}},
         {{"shape", "string", "", "Target shape", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorIndexSelect, NodeCategory::ShapeOps, "Tensor Index Select", ICON_FA_LIST_CHECK,
         {"tensor", "index", "select", "gather", "slice"}, 0, false, "Select entries along one dimension by index list", "", "",
@@ -1248,7 +1248,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Selected tensor"}},
         {{"dim", "int", "0", "Dimension", {}, ""},
          {"indices", "string", "", "Comma-separated indices", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorPow, NodeCategory::Analytics, "Tensor Pow", ICON_FA_CALCULATOR,
         {"tensor", "pow", "power", "elementwise"}, 0, false, "Raise tensor values to a scalar power", "", "",

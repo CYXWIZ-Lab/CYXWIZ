@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <sstream>
 
 namespace cyxwiz {
 
@@ -30,6 +31,33 @@ bool ParseLayerBoolParam(const CompiledLayer& layer,
         return fallback;
     }
     return it->second == "true" || it->second == "1";
+}
+
+std::vector<int> ParseLayerIntListParam(const CompiledLayer& layer,
+                                        const std::string& key) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return {};
+    }
+
+    std::string value = it->second;
+    value.erase(std::remove(value.begin(), value.end(), '['), value.end());
+    value.erase(std::remove(value.begin(), value.end(), ']'), value.end());
+    value.erase(std::remove(value.begin(), value.end(), ' '), value.end());
+
+    std::vector<int> out;
+    std::stringstream ss(value);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        if (token.empty()) {
+            continue;
+        }
+        try {
+            out.push_back(std::stoi(token));
+        } catch (...) {
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -279,6 +307,32 @@ bool TestExecutor::BuildModelFromConfig() {
                     model_->Add<PermuteModule>(layer_cfg.dims);
                 }
                 break;
+
+            case gui::NodeType::TensorBroadcastTo:
+                if (!layer_cfg.output_shape.empty()) {
+                    model_->Add<TensorShapeModule>(TensorShapeOp::BroadcastTo,
+                                                   layer_cfg.output_shape);
+                }
+                break;
+
+            case gui::NodeType::TensorExpand:
+                if (!layer_cfg.output_shape.empty()) {
+                    model_->Add<TensorShapeModule>(TensorShapeOp::Expand,
+                                                   layer_cfg.output_shape);
+                }
+                break;
+
+            case gui::NodeType::TensorIndexSelect: {
+                const int dim = static_cast<int>(
+                    ParseLayerFloatParam(layer_cfg, "dim", 0.0f));
+                const std::vector<int> indices =
+                    ParseLayerIntListParam(layer_cfg, "indices");
+                model_->Add<TensorShapeModule>(TensorShapeOp::IndexSelect,
+                                               std::vector<size_t>{},
+                                               dim,
+                                               indices);
+                break;
+            }
 
             case gui::NodeType::TensorAbs:
                 model_->Add<TensorUnaryModule>(TensorUnaryOp::Abs);

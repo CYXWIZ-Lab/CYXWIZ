@@ -1895,6 +1895,156 @@ std::string TensorReductionModule::GetName() const {
 }
 
 // ============================================================================
+// TensorShapeModule Implementation
+// ============================================================================
+
+TensorShapeModule::TensorShapeModule(TensorShapeOp op,
+                                     std::vector<size_t> target_shape,
+                                     int dim,
+                                     std::vector<int> indices)
+    : op_(op),
+      target_shape_(std::move(target_shape)),
+      dim_(dim),
+      indices_(std::move(indices)) {}
+
+Tensor TensorShapeModule::Forward(const Tensor& input) {
+    original_shape_ = input.Shape();
+    if (original_shape_.empty()) {
+        throw std::runtime_error("TensorShapeModule: input must include a batch dimension");
+    }
+
+    const size_t sample_rank = original_shape_.size() - 1;
+    if (op_ == TensorShapeOp::BroadcastTo || op_ == TensorShapeOp::Expand) {
+        if (target_shape_.size() < sample_rank) {
+            throw std::runtime_error("TensorShapeModule: target sample rank is too small");
+        }
+
+        sample_pad_ = target_shape_.size() - sample_rank;
+        padded_input_shape_.clear();
+        padded_input_shape_.reserve(target_shape_.size() + 1);
+        padded_input_shape_.push_back(original_shape_[0]);
+        for (size_t i = 0; i < sample_pad_; ++i) {
+            padded_input_shape_.push_back(1);
+        }
+        for (size_t i = 1; i < original_shape_.size(); ++i) {
+            padded_input_shape_.push_back(original_shape_[i]);
+        }
+
+        output_shape_.clear();
+        output_shape_.reserve(target_shape_.size() + 1);
+        output_shape_.push_back(original_shape_[0]);
+        output_shape_.insert(output_shape_.end(), target_shape_.begin(), target_shape_.end());
+
+        for (size_t axis = 0; axis < output_shape_.size(); ++axis) {
+            const size_t in_dim = padded_input_shape_[axis];
+            const size_t out_dim = output_shape_[axis];
+            if (in_dim != 1 && in_dim != out_dim) {
+                throw std::runtime_error("TensorShapeModule: incompatible target shape");
+            }
+        }
+
+        Tensor reshaped = padded_input_shape_ == original_shape_
+            ? input.Clone()
+            : input.Reshape(padded_input_shape_);
+        return op_ == TensorShapeOp::BroadcastTo
+            ? reshaped.BroadcastTo(output_shape_)
+            : reshaped.Expand(output_shape_);
+    }
+
+    if (op_ == TensorShapeOp::IndexSelect) {
+        if (sample_rank == 0) {
+            throw std::runtime_error("TensorShapeModule: input must include sample dimensions");
+        }
+        if (indices_.empty()) {
+            throw std::runtime_error("TensorShapeModule: indices must not be empty");
+        }
+        int normalized_dim = dim_;
+        if (normalized_dim < 0) {
+            normalized_dim += static_cast<int>(sample_rank);
+        }
+        if (normalized_dim < 0 || normalized_dim >= static_cast<int>(sample_rank)) {
+            throw std::runtime_error("TensorShapeModule: dim is out of range");
+        }
+
+        normalized_dim_ = normalized_dim;
+        const int full_dim = normalized_dim_ + 1;
+        const int dim_size = static_cast<int>(original_shape_[static_cast<size_t>(full_dim)]);
+        normalized_indices_.clear();
+        normalized_indices_.reserve(indices_.size());
+        for (int index : indices_) {
+            int normalized = index;
+            if (normalized < 0) {
+                normalized += dim_size;
+            }
+            if (normalized < 0 || normalized >= dim_size) {
+                throw std::out_of_range("TensorShapeModule: selected index out of range");
+            }
+            normalized_indices_.push_back(normalized);
+        }
+
+        output_shape_ = original_shape_;
+        output_shape_[static_cast<size_t>(full_dim)] = normalized_indices_.size();
+        return input.IndexSelect(full_dim, indices_);
+    }
+
+    throw std::runtime_error("TensorShapeModule: unsupported shape op");
+}
+
+Tensor TensorShapeModule::Backward(const Tensor& grad_output) {
+    Tensor grad_input = Tensor::Zeros(original_shape_, grad_output.GetDataType());
+
+    if (op_ == TensorShapeOp::BroadcastTo || op_ == TensorShapeOp::Expand) {
+        for (size_t i = 0; i < grad_output.NumElements(); ++i) {
+            const std::vector<size_t> out_indices = UnravelIndex(i, output_shape_);
+            std::vector<size_t> padded_indices(padded_input_shape_.size(), 0);
+            for (size_t axis = 0; axis < output_shape_.size(); ++axis) {
+                padded_indices[axis] = padded_input_shape_[axis] == 1 ? 0 : out_indices[axis];
+            }
+
+            std::vector<size_t> input_indices;
+            input_indices.reserve(original_shape_.size());
+            input_indices.push_back(padded_indices[0]);
+            for (size_t axis = 1 + sample_pad_; axis < padded_indices.size(); ++axis) {
+                input_indices.push_back(padded_indices[axis]);
+            }
+
+            const size_t input_index = RavelIndex(input_indices, original_shape_);
+            grad_input.Set(input_index, grad_input.At(input_index) + grad_output.At(i));
+        }
+        return grad_input;
+    }
+
+    if (op_ == TensorShapeOp::IndexSelect) {
+        const int full_dim = normalized_dim_ + 1;
+        for (size_t i = 0; i < grad_output.NumElements(); ++i) {
+            std::vector<size_t> out_indices = UnravelIndex(i, output_shape_);
+            std::vector<size_t> input_indices = out_indices;
+            input_indices[static_cast<size_t>(full_dim)] =
+                static_cast<size_t>(normalized_indices_[out_indices[static_cast<size_t>(full_dim)]]);
+
+            const size_t input_index = RavelIndex(input_indices, original_shape_);
+            grad_input.Set(input_index, grad_input.At(input_index) + grad_output.At(i));
+        }
+        return grad_input;
+    }
+
+    throw std::runtime_error("TensorShapeModule: unsupported shape op");
+}
+
+std::string TensorShapeModule::GetName() const {
+    switch (op_) {
+        case TensorShapeOp::BroadcastTo:
+            return "TensorBroadcastTo";
+        case TensorShapeOp::Expand:
+            return "TensorExpand";
+        case TensorShapeOp::IndexSelect:
+            return "TensorIndexSelect";
+        default:
+            return "TensorShape";
+    }
+}
+
+// ============================================================================
 // SequentialModel Implementation
 // ============================================================================
 

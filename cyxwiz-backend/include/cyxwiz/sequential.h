@@ -58,6 +58,12 @@ enum class TensorReductionOp {
     Std
 };
 
+enum class TensorShapeOp {
+    BroadcastTo,
+    Expand,
+    IndexSelect
+};
+
 /**
  * @brief A wrapper for any layer or activation that provides a uniform interface
  */
@@ -490,6 +496,36 @@ private:
     std::vector<size_t> output_shape_;
     size_t reduced_count_ = 1;
     Tensor output_cache_;
+};
+
+/**
+ * @brief Batch-preserving tensor shape/index module.
+ *
+ * The target shape and dim/indices parameters address sample dimensions.
+ * The leading batch dimension is preserved automatically.
+ */
+class CYXWIZ_API TensorShapeModule : public Module {
+public:
+    explicit TensorShapeModule(TensorShapeOp op,
+                               std::vector<size_t> target_shape = {},
+                               int dim = 0,
+                               std::vector<int> indices = {});
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    TensorShapeOp op_;
+    std::vector<size_t> target_shape_;
+    int dim_;
+    int normalized_dim_ = 0;
+    std::vector<int> indices_;
+    std::vector<int> normalized_indices_;
+    std::vector<size_t> original_shape_;
+    std::vector<size_t> padded_input_shape_;
+    std::vector<size_t> output_shape_;
+    size_t sample_pad_ = 0;
 };
 
 /**

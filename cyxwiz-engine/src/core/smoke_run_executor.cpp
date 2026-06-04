@@ -112,6 +112,9 @@ int FindFirstModelNode(const std::vector<gui::MLNode>& nodes) {
             case gui::NodeType::TensorProd:
             case gui::NodeType::TensorVar:
             case gui::NodeType::TensorStd:
+            case gui::NodeType::TensorBroadcastTo:
+            case gui::NodeType::TensorExpand:
+            case gui::NodeType::TensorIndexSelect:
             case gui::NodeType::Dropout:
                 return node.id;
             default:
