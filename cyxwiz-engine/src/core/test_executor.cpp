@@ -22,6 +22,16 @@ float ParseLayerFloatParam(const CompiledLayer& layer,
     }
 }
 
+bool ParseLayerBoolParam(const CompiledLayer& layer,
+                         const std::string& key,
+                         bool fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    return it->second == "true" || it->second == "1";
+}
+
 } // namespace
 
 // ============================================================================
@@ -301,6 +311,24 @@ bool TestExecutor::BuildModelFromConfig() {
                 const float min_val = ParseLayerFloatParam(layer_cfg, "min", 0.0f);
                 const float max_val = ParseLayerFloatParam(layer_cfg, "max", 1.0f);
                 model_->Add<TensorUnaryModule>(TensorUnaryOp::Clip, min_val, max_val);
+                break;
+            }
+
+            case gui::NodeType::TensorSum: {
+                const int dim = static_cast<int>(
+                    ParseLayerFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim =
+                    ParseLayerBoolParam(layer_cfg, "keepdim", false);
+                model_->Add<TensorReductionModule>(TensorReductionOp::Sum, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorMean: {
+                const int dim = static_cast<int>(
+                    ParseLayerFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim =
+                    ParseLayerBoolParam(layer_cfg, "keepdim", false);
+                model_->Add<TensorReductionModule>(TensorReductionOp::Mean, dim, keepdim);
                 break;
             }
 

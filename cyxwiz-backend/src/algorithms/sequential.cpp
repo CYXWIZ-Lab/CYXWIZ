@@ -39,6 +39,24 @@ std::string ShapeToStringForTrace(const std::vector<size_t>& shape) {
     return out.str();
 }
 
+std::vector<size_t> UnravelIndex(size_t index, const std::vector<size_t>& shape) {
+    std::vector<size_t> indices(shape.size(), 0);
+    for (size_t i = shape.size(); i-- > 0;) {
+        indices[i] = index % shape[i];
+        index /= shape[i];
+    }
+    return indices;
+}
+
+size_t RavelIndex(const std::vector<size_t>& indices,
+                  const std::vector<size_t>& shape) {
+    size_t linear = 0;
+    for (size_t i = 0; i < shape.size(); ++i) {
+        linear = linear * shape[i] + indices[i];
+    }
+    return linear;
+}
+
 void EmitModelLayerTrace(const char* stage,
                          size_t layer_index,
                          const std::string& layer_name,
@@ -1606,6 +1624,120 @@ std::string TensorUnaryModule::GetName() const {
             return "TensorClip";
         default:
             return "TensorUnary";
+    }
+}
+
+// ============================================================================
+// TensorReductionModule Implementation
+// ============================================================================
+
+TensorReductionModule::TensorReductionModule(TensorReductionOp op,
+                                             int dim,
+                                             bool keepdim)
+    : op_(op),
+      dim_(dim),
+      keepdim_(keepdim) {}
+
+Tensor TensorReductionModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    original_shape_ = input.Shape();
+    if (original_shape_.empty()) {
+        throw std::runtime_error("TensorReductionModule: input must include a batch dimension");
+    }
+
+    const size_t sample_rank = original_shape_.size() - 1;
+    if (sample_rank == 0) {
+        throw std::runtime_error("TensorReductionModule: input must include sample dimensions");
+    }
+
+    Tensor output = input.Clone();
+    reduced_count_ = 1;
+
+    if (dim_ == -1) {
+        for (size_t i = 1; i < original_shape_.size(); ++i) {
+            reduced_count_ *= original_shape_[i];
+        }
+        for (int axis = static_cast<int>(sample_rank); axis >= 1; --axis) {
+            output = output.Sum(axis, true);
+        }
+        if (op_ == TensorReductionOp::Mean) {
+            output = output / static_cast<float>(reduced_count_);
+        }
+        if (!keepdim_) {
+            output = output.Reshape({original_shape_[0], 1});
+        }
+        output_shape_ = output.Shape();
+        return output;
+    }
+
+    if (dim_ < 0 || dim_ >= static_cast<int>(sample_rank)) {
+        throw std::runtime_error("TensorReductionModule: dim is out of range");
+    }
+
+    const int full_dim = dim_ + 1;
+    reduced_count_ = original_shape_[static_cast<size_t>(full_dim)];
+    output = op_ == TensorReductionOp::Sum
+        ? input.Sum(full_dim, keepdim_)
+        : input.Mean(full_dim, keepdim_);
+    if (!keepdim_ && output.Shape().size() == 1) {
+        output = output.Reshape({original_shape_[0], 1});
+    }
+
+    output_shape_ = output.Shape();
+    return output;
+}
+
+Tensor TensorReductionModule::Backward(const Tensor& grad_output) {
+    Tensor grad_input = Tensor::Zeros(original_shape_, grad_output.GetDataType());
+    const size_t sample_rank = original_shape_.size() - 1;
+    const int full_dim = dim_ >= 0 ? dim_ + 1 : -1;
+    const float scale = op_ == TensorReductionOp::Mean
+        ? 1.0f / static_cast<float>(reduced_count_)
+        : 1.0f;
+
+    for (size_t i = 0; i < grad_input.NumElements(); ++i) {
+        const std::vector<size_t> input_indices = UnravelIndex(i, original_shape_);
+        std::vector<size_t> grad_indices;
+
+        if (dim_ == -1) {
+            if (keepdim_) {
+                grad_indices.assign(original_shape_.size(), 0);
+                grad_indices[0] = input_indices[0];
+            } else {
+                grad_indices = {input_indices[0], 0};
+            }
+        } else {
+            grad_indices.reserve(output_shape_.size());
+            for (size_t axis = 0; axis < original_shape_.size(); ++axis) {
+                if (static_cast<int>(axis) == full_dim) {
+                    if (keepdim_) {
+                        grad_indices.push_back(0);
+                    }
+                } else {
+                    grad_indices.push_back(input_indices[axis]);
+                }
+            }
+            if (!keepdim_ && grad_indices.size() == 1) {
+                grad_indices.push_back(0);
+            }
+        }
+
+        const size_t grad_index = RavelIndex(grad_indices, output_shape_);
+        grad_input.Set(i, grad_output.At(grad_index) * scale);
+    }
+
+    (void)sample_rank;
+    return grad_input;
+}
+
+std::string TensorReductionModule::GetName() const {
+    switch (op_) {
+        case TensorReductionOp::Sum:
+            return "TensorSum";
+        case TensorReductionOp::Mean:
+            return "TensorMean";
+        default:
+            return "TensorReduction";
     }
 }
 

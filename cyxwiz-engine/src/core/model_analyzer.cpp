@@ -108,6 +108,8 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::TensorSign: return "TensorSign";
         case gui::NodeType::TensorPow: return "TensorPow";
         case gui::NodeType::TensorClip: return "TensorClip";
+        case gui::NodeType::TensorSum: return "TensorSum";
+        case gui::NodeType::TensorMean: return "TensorMean";
         case gui::NodeType::Reshape: return "Reshape";
         case gui::NodeType::Permute: return "Permute";
         case gui::NodeType::Squeeze: return "Squeeze";
@@ -472,6 +474,8 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorSign:
         case gui::NodeType::TensorPow:
         case gui::NodeType::TensorClip:
+        case gui::NodeType::TensorSum:
+        case gui::NodeType::TensorMean:
             return true;
         default:
             return false;
@@ -749,6 +753,30 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
         case gui::NodeType::TensorClip:
             // Shape unchanged
             return input_shape;
+        case gui::NodeType::TensorSum:
+        case gui::NodeType::TensorMean: {
+            const int dim = GetIntParam(node, "dim", -1);
+            const bool keepdim = GetBoolParam(node, "keepdim", false);
+            if (dim == -1) {
+                if (keepdim) {
+                    return std::vector<size_t>(input_shape.size(), 1);
+                }
+                return {1};
+            }
+            if (dim < 0 || dim >= static_cast<int>(input_shape.size())) {
+                return input_shape;
+            }
+            std::vector<size_t> out = input_shape;
+            if (keepdim) {
+                out[static_cast<size_t>(dim)] = 1;
+            } else {
+                out.erase(out.begin() + dim);
+                if (out.empty()) {
+                    out.push_back(1);
+                }
+            }
+            return out;
+        }
         default:
             // Activations and others preserve shape
             if (IsActivation(node.type)) {

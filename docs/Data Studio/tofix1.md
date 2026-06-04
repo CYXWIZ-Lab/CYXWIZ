@@ -554,6 +554,18 @@ values inside the clamp range. Remaining Tensor merge/reduction/linalg/
 mask nodes stay template/deferred until they get equally focused runtime
 contracts.
 
+**2026-06-04 update:** added the first bounded Tensor reduction runtime
+contract for `TensorSum` and `TensorMean`. These reductions preserve the
+leading batch dimension, interpret `dim` as a per-sample dimension, use
+`dim=-1` to reduce all sample dimensions, and return `[batch, 1]` for
+scalar-per-sample results so downstream layers keep a feature axis.
+Backward expands gradients to the original input shape; `TensorMean`
+scales by the reduced element count. Compiler/analyzer shape inference,
+`ModelBuilder`, `TestExecutor`, smoke-run detection, metadata, and
+`test_tensor_reshape_runtime_contract` are updated. `TensorMax`,
+`TensorMin`, `TensorProd`, `TensorVar`, and `TensorStd` remain deferred
+until their gradient policy is handled explicitly.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

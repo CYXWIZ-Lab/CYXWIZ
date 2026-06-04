@@ -1178,7 +1178,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Reduced tensor"}},
         {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
          {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorMean, NodeCategory::Analytics, "Tensor Mean", ICON_FA_CALCULATOR,
         {"tensor", "mean", "average", "reduce", "reduction"}, 0, false, "Average tensor values", "", "",
@@ -1186,7 +1186,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Reduced tensor"}},
         {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
          {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorMax, NodeCategory::Analytics, "Tensor Max", ICON_FA_CALCULATOR,
         {"tensor", "max", "maximum", "reduce", "reduction"}, 0, false, "Maximum tensor values", "", "",

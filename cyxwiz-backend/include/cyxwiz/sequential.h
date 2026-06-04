@@ -48,6 +48,11 @@ enum class TensorUnaryOp {
     Clip
 };
 
+enum class TensorReductionOp {
+    Sum,
+    Mean
+};
+
 /**
  * @brief A wrapper for any layer or activation that provides a uniform interface
  */
@@ -456,6 +461,29 @@ private:
     float scalar_;
     float scalar2_;
     Tensor output_cache_;
+};
+
+/**
+ * @brief Batch-preserving tensor reduction module.
+ *
+ * The dim parameter addresses sample dimensions. dim=-1 reduces all
+ * sample dimensions while preserving the leading batch dimension.
+ */
+class CYXWIZ_API TensorReductionModule : public Module {
+public:
+    TensorReductionModule(TensorReductionOp op, int dim = -1, bool keepdim = false);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    TensorReductionOp op_;
+    int dim_;
+    bool keepdim_;
+    std::vector<size_t> original_shape_;
+    std::vector<size_t> output_shape_;
+    size_t reduced_count_ = 1;
 };
 
 /**

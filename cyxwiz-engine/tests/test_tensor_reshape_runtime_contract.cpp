@@ -83,6 +83,32 @@ void CheckUnaryModule(cyxwiz::TensorUnaryOp op,
     }
 }
 
+void CheckReductionModule(cyxwiz::TensorReductionOp op,
+                          int dim,
+                          bool keepdim,
+                          const std::vector<size_t>& expected_shape,
+                          const std::vector<float>& expected_output,
+                          const std::vector<float>& expected_backward,
+                          const std::string& name) {
+    cyxwiz::Tensor input = MakeRangeTensor({2, 2, 3});
+    cyxwiz::TensorReductionModule module(op, dim, keepdim);
+
+    cyxwiz::Tensor output = module.Forward(input);
+    CheckShape(output, expected_shape, name + " forward shape mismatch");
+    for (size_t i = 0; i < expected_output.size(); ++i) {
+        CheckNear(output.At(i), expected_output[i], 1e-4f,
+                  name + " forward value mismatch");
+    }
+
+    cyxwiz::Tensor grad = cyxwiz::Tensor::Ones(expected_shape);
+    cyxwiz::Tensor backward = module.Backward(grad);
+    CheckShape(backward, {2, 2, 3}, name + " backward shape mismatch");
+    for (size_t i = 0; i < expected_backward.size(); ++i) {
+        CheckNear(backward.At(i), expected_backward[i], 1e-4f,
+                  name + " backward value mismatch");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -160,6 +186,37 @@ int main() {
                          "TensorClip",
                          0.0f,
                          1.0f);
+    }
+
+    {
+        CheckReductionModule(cyxwiz::TensorReductionOp::Sum,
+                             -1,
+                             false,
+                             {2, 1},
+                             {15.0f, 51.0f},
+                             {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+                              1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+                             "TensorSumAll");
+
+        CheckReductionModule(cyxwiz::TensorReductionOp::Mean,
+                             -1,
+                             false,
+                             {2, 1},
+                             {2.5f, 8.5f},
+                             {1.0f / 6.0f, 1.0f / 6.0f, 1.0f / 6.0f,
+                              1.0f / 6.0f, 1.0f / 6.0f, 1.0f / 6.0f,
+                              1.0f / 6.0f, 1.0f / 6.0f, 1.0f / 6.0f,
+                              1.0f / 6.0f, 1.0f / 6.0f, 1.0f / 6.0f},
+                             "TensorMeanAll");
+
+        CheckReductionModule(cyxwiz::TensorReductionOp::Sum,
+                             1,
+                             false,
+                             {2, 2},
+                             {3.0f, 12.0f, 21.0f, 30.0f},
+                             {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+                              1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+                             "TensorSumDim");
     }
 
     {
@@ -256,9 +313,25 @@ int main() {
         sign.input_shape = {3, 2};
         sign.output_shape = {3, 2};
 
+        cyxwiz::CompiledLayer mean;
+        mean.type = gui::NodeType::TensorMean;
+        mean.node_id = 13;
+        mean.name = "TensorMean";
+        mean.input_shape = {3, 2};
+        mean.output_shape = {1};
+        mean.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
+
+        cyxwiz::CompiledLayer sum;
+        sum.type = gui::NodeType::TensorSum;
+        sum.node_id = 14;
+        sum.name = "TensorSum";
+        sum.input_shape = {1};
+        sum.output_shape = {1};
+        sum.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
+
         config.layers = {
             reshape, squeeze, unsqueeze, permute, view,
-            abs, exp, log, sqrt, pow, clip, sign
+            abs, exp, log, sqrt, pow, clip, sign, mean, sum
         };
 
         cyxwiz::BuiltModel built = cyxwiz::BuildSequentialFromConfig(config);
@@ -269,15 +342,15 @@ int main() {
             7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f
         });
         cyxwiz::Tensor output = built.model->Forward(input);
-        CheckShape(output, {2, 3, 2}, "Sequential shape op forward shape mismatch");
-        CheckNear(output.At(1, 2, 1), 1.0f, 1e-4f,
-                  "Sequential unary tensor ops should transform values");
+        CheckShape(output, {2, 1}, "Sequential tensor op forward shape mismatch");
+        CheckNear(output.At(1, 0), 1.0f, 1e-4f,
+                  "Sequential tensor ops should transform and reduce values");
 
-        cyxwiz::Tensor grad = MakeRangeTensor({2, 3, 2});
+        cyxwiz::Tensor grad = MakeRangeTensor({2, 1});
         cyxwiz::Tensor backward = built.model->Backward(grad);
-        CheckShape(backward, {2, 6}, "Sequential shape op backward shape mismatch");
+        CheckShape(backward, {2, 6}, "Sequential tensor op backward shape mismatch");
         Check(std::isfinite(backward.At(11)),
-              "Sequential unary tensor backward should produce finite gradients");
+              "Sequential tensor backward should produce finite gradients");
     }
 
     std::cout << "Tensor runtime contract passed\n";

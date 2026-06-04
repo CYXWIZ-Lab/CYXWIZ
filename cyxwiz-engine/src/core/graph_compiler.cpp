@@ -547,6 +547,55 @@ bool ResolveShapeOpTargetShape(gui::NodeType type,
             return false;
     }
 }
+
+bool ResolveReductionTargetShape(gui::NodeType type,
+                                 const std::map<std::string, std::string>& params,
+                                 const std::vector<size_t>& input_shape,
+                                 std::vector<size_t>& target_shape,
+                                 std::string& error) {
+    if (type != gui::NodeType::TensorSum &&
+        type != gui::NodeType::TensorMean) {
+        error = "Unsupported tensor reduction";
+        return false;
+    }
+    if (input_shape.empty()) {
+        error = "Tensor reduction requires a known input shape";
+        return false;
+    }
+
+    int dim = -1;
+    if (!ParseIntParam(params, "dim", -1, dim, error)) {
+        error = "Tensor reduction " + error;
+        return false;
+    }
+    const bool keepdim = ParseBoolParam(params, "keepdim", false);
+
+    target_shape.clear();
+    if (dim == -1) {
+        if (keepdim) {
+            target_shape.assign(input_shape.size(), 1);
+        } else {
+            target_shape = {1};
+        }
+        return true;
+    }
+
+    if (dim < 0 || dim >= static_cast<int>(input_shape.size())) {
+        error = "Tensor reduction dim is out of range";
+        return false;
+    }
+
+    target_shape = input_shape;
+    if (keepdim) {
+        target_shape[static_cast<size_t>(dim)] = 1;
+    } else {
+        target_shape.erase(target_shape.begin() + dim);
+        if (target_shape.empty()) {
+            target_shape.push_back(1);
+        }
+    }
+    return true;
+}
 } // anonymous namespace
 
 TrainingConfiguration GraphCompiler::Compile(
@@ -1007,6 +1056,17 @@ TrainingConfiguration GraphCompiler::Compile(
                     AddIssue(config, IssueLevel::Error, error, node->id, node->name);
                 }
                 layer.output_shape = current_shape;
+            } else if (node->type == gui::NodeType::TensorSum ||
+                       node->type == gui::NodeType::TensorMean) {
+                std::string error;
+                if (!ResolveReductionTargetShape(node->type,
+                                                 layer.parameters,
+                                                 current_shape,
+                                                 layer.output_shape,
+                                                 error)) {
+                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                    layer.output_shape = current_shape;
+                }
             } else {
                 layer.output_shape = InferOutputShape(layer, current_shape);
             }
@@ -1558,6 +1618,8 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorSign:
         case gui::NodeType::TensorPow:
         case gui::NodeType::TensorClip:
+        case gui::NodeType::TensorSum:
+        case gui::NodeType::TensorMean:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::ConvTranspose2D:
@@ -2062,6 +2124,20 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
                                             output_shape,
                                             error);
             if (!ok) {
+                spdlog::warn("GraphCompiler: {}", error);
+                output_shape = input_shape;
+            }
+            break;
+        }
+
+        case gui::NodeType::TensorSum:
+        case gui::NodeType::TensorMean: {
+            std::string error;
+            if (!ResolveReductionTargetShape(layer.type,
+                                             layer.parameters,
+                                             input_shape,
+                                             output_shape,
+                                             error)) {
                 spdlog::warn("GraphCompiler: {}", error);
                 output_shape = input_shape;
             }

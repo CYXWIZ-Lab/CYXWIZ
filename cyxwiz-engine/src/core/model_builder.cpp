@@ -404,6 +404,22 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 break;
             }
 
+            case gui::NodeType::TensorSum: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Sum, dim, keepdim);
+                spdlog::info("  [{}] TensorSum(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorMean: {
+                const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
+                model.Add<TensorReductionModule>(TensorReductionOp::Mean, dim, keepdim);
+                spdlog::info("  [{}] TensorMean(dim={}, keepdim={})", i, dim, keepdim);
+                break;
+            }
+
             case gui::NodeType::BatchNorm: {
                 // BatchNorm uses current feature size (output of previous Dense layer)
                 float eps = layer_cfg.eps > 0 ? layer_cfg.eps : 1e-5f;
