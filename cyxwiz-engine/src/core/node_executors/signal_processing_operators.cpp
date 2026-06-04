@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -57,6 +58,13 @@ arrow::Status ReadColumnAsDouble(
     }
     out.assign(floats.begin(), floats.end());
     return arrow::Status::OK();
+}
+
+arrow::Result<int64_t> CheckedSizeForArrow(size_t size, const std::string& context) {
+    if (size > static_cast<size_t>((std::numeric_limits<int64_t>::max)())) {
+        return arrow::Status::CapacityError(context + ": row count exceeds Arrow int64 capacity");
+    }
+    return static_cast<int64_t>(size);
 }
 
 } // namespace
@@ -110,10 +118,12 @@ FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "FFT: backend FFT failed: " + result.error_message);
     }
 
-    const int64_t nbins = static_cast<int64_t>(result.magnitude.size());
+    ARROW_ASSIGN_OR_RAISE(
+        const int64_t nbins,
+        CheckedSizeForArrow(result.magnitude.size(), "FFT"));
     if (nbins == 0 ||
-        static_cast<int64_t>(result.phase.size()) != nbins ||
-        static_cast<int64_t>(result.frequencies.size()) != nbins) {
+        result.phase.size() != result.magnitude.size() ||
+        result.frequencies.size() != result.magnitude.size()) {
         return arrow::Status::ExecutionError(
             "FFT: backend returned inconsistent bin counts "
             "(mag=" + std::to_string(result.magnitude.size()) +
@@ -206,18 +216,20 @@ Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "Convolve1D: backend failed: " + result.error_message);
     }
 
-    if (static_cast<int64_t>(result.output.size()) != static_cast<int64_t>(signal.size())) {
+    if (result.output.size() != signal.size()) {
         return arrow::Status::ExecutionError(
             "Convolve1D: 'same' mode produced " +
             std::to_string(result.output.size()) +
             " samples, expected " + std::to_string(signal.size()));
     }
 
+    ARROW_ASSIGN_OR_RAISE(
+        const int64_t row_count,
+        CheckedSizeForArrow(signal.size(), "Convolve1D"));
     std::vector<float> out_floats(result.output.begin(), result.output.end());
     ARROW_ASSIGN_OR_RAISE(
         auto new_table,
-        ReplaceColumnWithFloat(input, col_idx, out_floats,
-                                static_cast<int64_t>(signal.size())));
+        ReplaceColumnWithFloat(input, col_idx, out_floats, row_count));
 
     spdlog::info("Convolve1D: {} samples, kernel size {}, column '{}' replaced",
                  signal.size(), kernel_.size(), signal_col_);
@@ -340,18 +352,20 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     auto filtered = SignalProcessing::ApplyFilter(signal, filter);
-    if (static_cast<int64_t>(filtered.size()) != static_cast<int64_t>(signal.size())) {
+    if (filtered.size() != signal.size()) {
         return arrow::Status::ExecutionError(
             "FilterDesigner: ApplyFilter returned " +
             std::to_string(filtered.size()) + " samples, expected " +
             std::to_string(signal.size()));
     }
 
+    ARROW_ASSIGN_OR_RAISE(
+        const int64_t row_count,
+        CheckedSizeForArrow(signal.size(), "FilterDesigner"));
     std::vector<float> out_floats(filtered.begin(), filtered.end());
     ARROW_ASSIGN_OR_RAISE(
         auto new_table,
-        ReplaceColumnWithFloat(input, col_idx, out_floats,
-                                static_cast<int64_t>(signal.size())));
+        ReplaceColumnWithFloat(input, col_idx, out_floats, row_count));
 
     spdlog::info("FilterDesigner: type={}, cutoff={}{}, order={}, "
                  "sample_rate={}, {} samples filtered",

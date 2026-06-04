@@ -812,6 +812,14 @@ instead of silently narrowing. Full Debug `cyxwiz-engine` build and
 items are limited to signal-processing operator casts and any
 stub-parameter warnings that can still be reproduced in current files.
 
+**2026-06-04 update:** completed the signal-processing operator cast
+slice. `FFT`, `Convolve1D`, and `FilterDesigner` now compare backend
+vector sizes as `size_t` and convert to Arrow `int64_t` row counts only
+through a checked helper before reserving builders or replacing columns.
+Full Debug `cyxwiz-engine` build and `test_pipeline_operator_metadata`
+pass. The old `data_table.cpp` stub-parameter note appears stale in the
+current tree; only the explicit Excel-loader TODO remains there.
+
 ## Build Health Follow-Up
 
 ### Full engine Debug build duplicate DataSources case
