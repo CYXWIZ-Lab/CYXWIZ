@@ -660,6 +660,16 @@ order in reverse instead of delegating to `SequentialModel::Backward`.
 The parity test now verifies cached tensor slots as well as output and
 gradient parity. Multi-input/fan-in plans are still rejected.
 
+**2026-06-04 update:** added backend-only graph fan-in execution for the
+smallest merge group: `Add`, `Multiply`, and `Average`. This is wired
+only through explicit `GraphExecutableModel` graph-op node ids in focused
+tests; node metadata remains `Template`, so normal GUI/compiler training
+paths still block these nodes. The graph executable now evaluates
+same-shape merge inputs from cached `(node_id, pin_id)` tensors and
+propagates simple backward gradients through shared inputs. The focused
+test covers forward output, cached merge output, and data-gradient
+accumulation for all three ops.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

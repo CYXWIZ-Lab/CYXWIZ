@@ -1,5 +1,6 @@
 #include "graph_executable_model.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -40,14 +41,139 @@ int OutputPinForNode(const CompiledGraphPlan& plan, int node_id) {
     return -1;
 }
 
+std::vector<CompiledGraphEdge> TensorIncomingEdges(const CompiledGraphPlan& plan,
+                                                   int node_id) {
+    std::vector<CompiledGraphEdge> edges;
+    for (const auto& edge : plan.edges) {
+        if (edge.to_node_id == node_id &&
+            !IsLabelEdge(plan, edge) &&
+            !IsLossToOptimizerEdge(plan, edge)) {
+            edges.push_back(edge);
+        }
+    }
+    return edges;
+}
+
+const CompiledGraphNode* FindPlanNode(const CompiledGraphPlan& plan, int node_id) {
+    for (const auto& node : plan.nodes) {
+        if (node.node_id == node_id) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+const CompiledGraphEdge* PredictionEdge(const CompiledGraphPlan& plan) {
+    for (const auto& edge : plan.edges) {
+        if (edge.to_node_id == plan.loss_node_id &&
+            edge.to_pin_id == plan.prediction_pin_id) {
+            return &edge;
+        }
+    }
+    return nullptr;
+}
+
+void RequireSameShape(const Tensor& left,
+                      const Tensor& right,
+                      const char* context) {
+    if (left.Shape() != right.Shape()) {
+        throw std::runtime_error(std::string(context) +
+                                 ": tensor shapes must match exactly");
+    }
+}
+
+Tensor RunMergeForward(gui::NodeType type, const std::vector<const Tensor*>& inputs) {
+    if (inputs.size() < 2) {
+        throw std::runtime_error("GraphExecutableModel merge op needs at least two inputs");
+    }
+    for (size_t i = 1; i < inputs.size(); ++i) {
+        RequireSameShape(*inputs.front(), *inputs[i], "GraphExecutableModel merge forward");
+    }
+
+    if (type == gui::NodeType::Add || type == gui::NodeType::Average) {
+        Tensor output = inputs.front()->Clone();
+        for (size_t i = 1; i < inputs.size(); ++i) {
+            output = output + *inputs[i];
+        }
+        if (type == gui::NodeType::Average) {
+            output = output * (1.0f / static_cast<float>(inputs.size()));
+        }
+        return output;
+    }
+    if (type == gui::NodeType::Multiply) {
+        Tensor output = inputs.front()->Clone();
+        for (size_t i = 1; i < inputs.size(); ++i) {
+            output = output * *inputs[i];
+        }
+        return output;
+    }
+
+    throw std::runtime_error("GraphExecutableModel unsupported graph op");
+}
+
+std::vector<Tensor> RunMergeBackward(gui::NodeType type,
+                                     const std::vector<const Tensor*>& inputs,
+                                     const Tensor& grad_output) {
+    std::vector<Tensor> grads;
+    grads.reserve(inputs.size());
+
+    if (type == gui::NodeType::Add) {
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            grads.push_back(grad_output.Clone());
+        }
+        return grads;
+    }
+    if (type == gui::NodeType::Average) {
+        const float scale = 1.0f / static_cast<float>(inputs.size());
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            grads.push_back(grad_output * scale);
+        }
+        return grads;
+    }
+    if (type == gui::NodeType::Multiply) {
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            Tensor grad = grad_output.Clone();
+            for (size_t j = 0; j < inputs.size(); ++j) {
+                if (i != j) {
+                    grad = grad * *inputs[j];
+                }
+            }
+            grads.push_back(std::move(grad));
+        }
+        return grads;
+    }
+
+    throw std::runtime_error("GraphExecutableModel unsupported graph op backward");
+}
+
+void AccumulateNodeGrad(std::map<int, Tensor>& grads, int node_id, const Tensor& grad) {
+    auto it = grads.find(node_id);
+    if (it == grads.end()) {
+        grads.emplace(node_id, grad.Clone());
+    } else {
+        it->second = it->second + grad;
+    }
+}
+
 } // namespace
 
 GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> model,
                                            CompiledGraphPlan plan,
                                            std::vector<int> layer_node_ids)
+    : GraphExecutableModel(std::move(model),
+                           std::move(plan),
+                           std::move(layer_node_ids),
+                           {}) {
+}
+
+GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> model,
+                                           CompiledGraphPlan plan,
+                                           std::vector<int> layer_node_ids,
+                                           std::vector<int> graph_op_node_ids)
     : model_(std::move(model)),
       plan_(std::move(plan)),
-      layer_node_ids_(std::move(layer_node_ids)) {
+      layer_node_ids_(std::move(layer_node_ids)),
+      graph_op_node_ids_(std::move(graph_op_node_ids)) {
     if (!model_) {
         throw std::invalid_argument("GraphExecutableModel requires a model");
     }
@@ -56,10 +182,27 @@ GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> mode
             "GraphExecutableModel module count does not match layer node ids");
     }
 
-    std::string reason;
-    if (!CanRunLinearPlan(plan_, layer_node_ids_, &reason)) {
-        throw std::invalid_argument(
-            "GraphExecutableModel requires a linear graph plan: " + reason);
+    if (graph_op_node_ids_.empty()) {
+        std::string reason;
+        if (!CanRunLinearPlan(plan_, layer_node_ids_, &reason)) {
+            throw std::invalid_argument(
+                "GraphExecutableModel requires a linear graph plan: " + reason);
+        }
+    }
+    for (const int node_id : graph_op_node_ids_) {
+        const CompiledGraphNode* node = FindPlanNode(plan_, node_id);
+        if (!node) {
+            throw std::invalid_argument("GraphExecutableModel graph op is not in plan");
+        }
+        if (node->type != gui::NodeType::Add &&
+            node->type != gui::NodeType::Multiply &&
+            node->type != gui::NodeType::Average) {
+            throw std::invalid_argument("GraphExecutableModel unsupported graph op node");
+        }
+        if (TensorIncomingEdges(plan_, node_id).size() < 2) {
+            throw std::invalid_argument(
+                "GraphExecutableModel graph op requires at least two inputs");
+        }
     }
 }
 
@@ -150,37 +293,134 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
     tensor_cache_.clear();
     CacheTensor(plan_.data_node_id, plan_.data_pin_id, input);
 
-    Tensor current = input.Clone();
-    for (size_t i = 0; i < layer_node_ids_.size(); ++i) {
-        Module* module = model_->GetModule(i);
-        if (!module) {
-            throw std::runtime_error("GraphExecutableModel missing module for node " +
-                                     std::to_string(layer_node_ids_[i]));
+    for (const auto& node : plan_.nodes) {
+        if (node.node_id == plan_.data_node_id ||
+            node.node_id == plan_.loss_node_id ||
+            node.node_id == plan_.optimizer_node_id) {
+            continue;
         }
 
-        current = module->Forward(current);
+        size_t module_index = 0;
+        Tensor output;
+        bool executed = false;
 
-        const int output_pin_id = OutputPinForNode(plan_, layer_node_ids_[i]);
+        if (IsLayerNode(node.node_id, &module_index)) {
+            Module* module = model_->GetModule(module_index);
+            if (!module) {
+                throw std::runtime_error("GraphExecutableModel missing module for node " +
+                                         std::to_string(node.node_id));
+            }
+
+            const auto incoming = TensorIncomingEdges(plan_, node.node_id);
+            if (incoming.size() != 1) {
+                throw std::runtime_error(
+                    "GraphExecutableModel layer node requires exactly one input");
+            }
+            const Tensor* input_tensor =
+                FindCachedTensor(incoming.front().from_node_id,
+                                 incoming.front().from_pin_id);
+            if (!input_tensor) {
+                throw std::runtime_error("GraphExecutableModel missing cached input tensor");
+            }
+            output = module->Forward(*input_tensor);
+            executed = true;
+        } else if (IsGraphOpNode(node.node_id)) {
+            const auto incoming = TensorIncomingEdges(plan_, node.node_id);
+            std::vector<const Tensor*> inputs;
+            inputs.reserve(incoming.size());
+            for (const auto& edge : incoming) {
+                const Tensor* input_tensor =
+                    FindCachedTensor(edge.from_node_id, edge.from_pin_id);
+                if (!input_tensor) {
+                    throw std::runtime_error("GraphExecutableModel missing merge input tensor");
+                }
+                inputs.push_back(input_tensor);
+            }
+            output = RunMergeForward(node.type, inputs);
+            executed = true;
+        }
+
+        if (!executed) {
+            continue;
+        }
+
+        const int output_pin_id = OutputPinForNode(plan_, node.node_id);
         if (output_pin_id >= 0) {
-            CacheTensor(layer_node_ids_[i], output_pin_id, current);
+            CacheTensor(node.node_id, output_pin_id, output);
         }
     }
 
-    CacheTensor(plan_.loss_node_id, plan_.prediction_pin_id, current);
-    return current;
+    const CompiledGraphEdge* prediction_edge = PredictionEdge(plan_);
+    if (!prediction_edge) {
+        throw std::runtime_error("GraphExecutableModel missing prediction edge");
+    }
+    const Tensor* prediction =
+        FindCachedTensor(prediction_edge->from_node_id, prediction_edge->from_pin_id);
+    if (!prediction) {
+        throw std::runtime_error("GraphExecutableModel missing prediction tensor");
+    }
+
+    CacheTensor(plan_.loss_node_id, plan_.prediction_pin_id, *prediction);
+    return prediction->Clone();
 }
 
 Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
-    Tensor grad = grad_output.Clone();
-    for (int i = static_cast<int>(layer_node_ids_.size()) - 1; i >= 0; --i) {
-        Module* module = model_->GetModule(static_cast<size_t>(i));
-        if (!module) {
-            throw std::runtime_error("GraphExecutableModel missing module for node " +
-                                     std::to_string(layer_node_ids_[i]));
-        }
-        grad = module->Backward(grad);
+    const CompiledGraphEdge* prediction_edge = PredictionEdge(plan_);
+    if (!prediction_edge) {
+        throw std::runtime_error("GraphExecutableModel missing prediction edge");
     }
-    return grad;
+
+    std::map<int, Tensor> node_grads;
+    AccumulateNodeGrad(node_grads, prediction_edge->from_node_id, grad_output);
+
+    for (auto it = plan_.nodes.rbegin(); it != plan_.nodes.rend(); ++it) {
+        const auto& node = *it;
+        auto grad_it = node_grads.find(node.node_id);
+        if (grad_it == node_grads.end()) {
+            continue;
+        }
+        Tensor grad = grad_it->second.Clone();
+
+        size_t module_index = 0;
+        if (IsLayerNode(node.node_id, &module_index)) {
+            Module* module = model_->GetModule(module_index);
+            if (!module) {
+                throw std::runtime_error("GraphExecutableModel missing module for node " +
+                                         std::to_string(node.node_id));
+            }
+            const auto incoming = TensorIncomingEdges(plan_, node.node_id);
+            if (incoming.size() != 1) {
+                throw std::runtime_error(
+                    "GraphExecutableModel layer node requires exactly one input");
+            }
+            Tensor input_grad = module->Backward(grad);
+            AccumulateNodeGrad(node_grads, incoming.front().from_node_id, input_grad);
+        } else if (IsGraphOpNode(node.node_id)) {
+            const auto incoming = TensorIncomingEdges(plan_, node.node_id);
+            std::vector<const Tensor*> inputs;
+            inputs.reserve(incoming.size());
+            for (const auto& edge : incoming) {
+                const Tensor* input_tensor =
+                    FindCachedTensor(edge.from_node_id, edge.from_pin_id);
+                if (!input_tensor) {
+                    throw std::runtime_error(
+                        "GraphExecutableModel missing merge input tensor for backward");
+                }
+                inputs.push_back(input_tensor);
+            }
+            std::vector<Tensor> input_grads = RunMergeBackward(node.type, inputs, grad);
+            for (size_t i = 0; i < incoming.size(); ++i) {
+                AccumulateNodeGrad(node_grads,
+                                   incoming[i].from_node_id,
+                                   input_grads[i]);
+            }
+        }
+    }
+
+    auto data_grad = node_grads.find(plan_.data_node_id);
+    return data_grad != node_grads.end() ? data_grad->second.Clone()
+                                         : Tensor::Zeros(grad_output.Shape(),
+                                                         grad_output.GetDataType());
 }
 
 void GraphExecutableModel::SetTraining(bool training) {
@@ -201,6 +441,24 @@ std::map<std::string, Tensor> GraphExecutableModel::GetGradients() {
 
 void GraphExecutableModel::UpdateParameters(Optimizer* optimizer) {
     model_->UpdateParameters(optimizer);
+}
+
+bool GraphExecutableModel::IsLayerNode(int node_id, size_t* module_index) const {
+    for (size_t i = 0; i < layer_node_ids_.size(); ++i) {
+        if (layer_node_ids_[i] == node_id) {
+            if (module_index) {
+                *module_index = i;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool GraphExecutableModel::IsGraphOpNode(int node_id) const {
+    return std::find(graph_op_node_ids_.begin(),
+                     graph_op_node_ids_.end(),
+                     node_id) != graph_op_node_ids_.end();
 }
 
 const Tensor* GraphExecutableModel::FindCachedTensor(int node_id, int pin_id) const {

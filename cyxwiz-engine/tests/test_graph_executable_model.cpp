@@ -104,6 +104,33 @@ cyxwiz::CompiledGraphPlan LinearPlan() {
     return plan;
 }
 
+cyxwiz::CompiledGraphPlan MergePlan(gui::NodeType merge_type) {
+    cyxwiz::CompiledGraphPlan plan;
+    plan.available = true;
+    plan.data_node_id = 1;
+    plan.data_pin_id = 101;
+    plan.label_pin_id = 102;
+    plan.prediction_pin_id = 401;
+    plan.label_target_pin_id = 402;
+    plan.loss_node_id = 4;
+    plan.loss_output_pin_id = 403;
+    plan.optimizer_node_id = 5;
+    plan.nodes = {
+        PlanNode(gui::NodeType::DataInput, 1, "Data"),
+        PlanNode(merge_type, 2, "Merge"),
+        PlanNode(gui::NodeType::MSELoss, 4, "Loss"),
+        PlanNode(gui::NodeType::SGD, 5, "SGD"),
+    };
+    plan.edges = {
+        PlanEdge(1, 101, 2, 201),
+        PlanEdge(1, 101, 2, 202),
+        PlanEdge(2, 203, 4, 401),
+        PlanEdge(1, 102, 4, 402),
+        PlanEdge(4, 403, 5, 501),
+    };
+    return plan;
+}
+
 cyxwiz::TrainingConfiguration LinearConfig() {
     cyxwiz::TrainingConfiguration config;
     config.input_size = 3;
@@ -116,6 +143,37 @@ cyxwiz::TrainingConfiguration LinearConfig() {
     config.learning_rate = 0.01f;
     config.graph_plan = LinearPlan();
     return config;
+}
+
+void CheckTensorNear(const cyxwiz::Tensor& actual,
+                     const cyxwiz::Tensor& expected,
+                     const std::string& message);
+
+void CheckMergeOp(gui::NodeType merge_type,
+                  const std::vector<float>& expected_output,
+                  const std::vector<float>& expected_data_grad,
+                  const std::string& name) {
+    auto empty_sequential = std::make_unique<cyxwiz::SequentialModel>();
+    cyxwiz::GraphExecutableModel graph(std::move(empty_sequential),
+                                       MergePlan(merge_type),
+                                       {},
+                                       {2});
+
+    cyxwiz::Tensor output = graph.Forward(MakeTensor({2.0f, 3.0f, 4.0f}));
+    for (size_t col = 0; col < expected_output.size(); ++col) {
+        CheckNear(output.At(0, col), expected_output[col], 1e-4f,
+                  name + " forward");
+    }
+
+    const cyxwiz::Tensor* cached = graph.FindCachedTensor(2, 203);
+    Check(cached != nullptr, name + " should cache merge output");
+    CheckTensorNear(*cached, output, name + " cached output should match");
+
+    cyxwiz::Tensor backward = graph.Backward(cyxwiz::Tensor::Ones({1, 3}));
+    for (size_t col = 0; col < expected_data_grad.size(); ++col) {
+        CheckNear(backward.At(0, col), expected_data_grad[col], 1e-4f,
+                  name + " backward");
+    }
 }
 
 void CheckTensorNear(const cyxwiz::Tensor& actual,
@@ -194,6 +252,19 @@ int main() {
     config.graph_plan.nodes.erase(config.graph_plan.nodes.begin() + 2);
     rejected = cyxwiz::BuildGraphExecutableFromConfig(config);
     Check(!rejected.ok(), "graph plan missing a layer node should be rejected");
+
+    CheckMergeOp(gui::NodeType::Add,
+                 {4.0f, 6.0f, 8.0f},
+                 {2.0f, 2.0f, 2.0f},
+                 "Add");
+    CheckMergeOp(gui::NodeType::Multiply,
+                 {4.0f, 9.0f, 16.0f},
+                 {4.0f, 6.0f, 8.0f},
+                 "Multiply");
+    CheckMergeOp(gui::NodeType::Average,
+                 {2.0f, 3.0f, 4.0f},
+                 {1.0f, 1.0f, 1.0f},
+                 "Average");
 
     std::cout << "Graph executable model parity passed\n";
     return 0;

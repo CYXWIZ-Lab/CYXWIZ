@@ -26,6 +26,10 @@ public:
     GraphExecutableModel(std::unique_ptr<SequentialModel> model,
                          CompiledGraphPlan plan,
                          std::vector<int> layer_node_ids);
+    GraphExecutableModel(std::unique_ptr<SequentialModel> model,
+                         CompiledGraphPlan plan,
+                         std::vector<int> layer_node_ids,
+                         std::vector<int> graph_op_node_ids);
 
     static bool CanRunLinearPlan(const CompiledGraphPlan& plan,
                                  const std::vector<int>& layer_node_ids,
@@ -42,14 +46,18 @@ public:
 
     const CompiledGraphPlan& Plan() const { return plan_; }
     const std::vector<int>& LayerNodeIds() const { return layer_node_ids_; }
+    const std::vector<int>& GraphOpNodeIds() const { return graph_op_node_ids_; }
     const Tensor* FindCachedTensor(int node_id, int pin_id) const;
 
 private:
+    bool IsLayerNode(int node_id, size_t* module_index = nullptr) const;
+    bool IsGraphOpNode(int node_id) const;
     void CacheTensor(int node_id, int pin_id, const Tensor& tensor);
 
     std::unique_ptr<SequentialModel> model_;
     CompiledGraphPlan plan_;
     std::vector<int> layer_node_ids_;
+    std::vector<int> graph_op_node_ids_;
     std::map<std::pair<int, int>, Tensor> tensor_cache_;
 };
 
