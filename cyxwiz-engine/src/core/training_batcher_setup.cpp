@@ -1,4 +1,5 @@
 #include "training_batcher_setup.h"
+#include "worker_defaults.h"
 
 #include <spdlog/spdlog.h>
 
@@ -11,11 +12,16 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
     int batch_size) {
 
     TrainingBatcherSet result;
+    const int num_workers = ClampNumWorkersToPlatform(config.num_workers);
+    if (num_workers != config.num_workers) {
+        spdlog::warn("TrainingExecutor: clamping Arrow num_workers from {} to {} based on platform",
+                     config.num_workers, num_workers);
+    }
 
     spdlog::info("TrainingExecutor: Using Arrow dataset for training "
-                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={})",
+                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={})",
                  batch_size, config.shuffle, config.train_ratio,
-                 config.is_time_series);
+                 config.is_time_series, num_workers);
 
     const std::string partition_col = config.is_time_series
         ? "__partition__" : "";
@@ -25,11 +31,11 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
     result.arrow_train = std::make_unique<ArrowDatasetBatcher>(
         dataset, effective_label, batch_size,
         config.shuffle, config.train_ratio, true,
-        partition_col, /*partition_value=*/0, config.num_workers);
+        partition_col, /*partition_value=*/0, num_workers);
     result.arrow_val = std::make_unique<ArrowDatasetBatcher>(
         dataset, effective_label, batch_size,
         false, config.train_ratio, false,
-        partition_col, /*partition_value=*/1, config.num_workers);
+        partition_col, /*partition_value=*/1, num_workers);
 
     if (config.drop_last) {
         spdlog::warn("TrainingExecutor: drop_last=true requested but ArrowDatasetBatcher "
@@ -74,17 +80,22 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     int batch_size) {
 
     TrainingBatcherSet result;
+    const int num_workers = ClampNumWorkersToPlatform(config.num_workers);
+    if (num_workers != config.num_workers) {
+        spdlog::warn("TrainingExecutor: clamping Parquet num_workers from {} to {} based on platform",
+                     config.num_workers, num_workers);
+    }
 
     spdlog::info("TrainingExecutor: Using Parquet-backed dataset for training "
-                 "(batch_size={}, shuffle={}, train_ratio={:.2f})",
-                 batch_size, config.shuffle, config.train_ratio);
+                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, num_workers={})",
+                 batch_size, config.shuffle, config.train_ratio, num_workers);
 
     result.parquet_train = std::make_unique<ParquetArrowBatcher>(
         dataset, label_column, batch_size,
-        config.shuffle, config.train_ratio, true, config.num_workers);
+        config.shuffle, config.train_ratio, true, num_workers);
     result.parquet_val = std::make_unique<ParquetArrowBatcher>(
         dataset, label_column, batch_size,
-        false, config.train_ratio, false, config.num_workers);
+        false, config.train_ratio, false, num_workers);
 
     if (config.drop_last) {
         spdlog::warn("TrainingExecutor: drop_last=true requested but ParquetArrowBatcher "

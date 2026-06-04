@@ -380,12 +380,45 @@ deferred.
 
 **Next step:** profile before changing. Avoid speculative rewrites.
 
+**2026-06-04 update:** focused Debug backend LSTM tests pass
+(`cyxwiz-tests.exe "[lstm]"`: 8 test cases, 16 assertions) with a Debug
+baseline of about 3.2 seconds on this workstation. No `[lstm][arrayfire]`
+tagged test exists, so no AF-specific rewrite was made. Keep this as a
+profiling baseline and only optimize after a real workload identifies a
+recurrent hotspot.
+
+**Status:** complete for current no-speculative-rewrite scope.
+
 ### `num_workers` support is partial
 
 Some loaders/batchers honor worker settings better than others.
 
 **Next step:** document which data paths are actually parallel and make
 unsupported paths explicit rather than pretending all loaders scale.
+
+**2026-06-04 update:** `num_workers` is now treated as a bounded,
+explicit training-batcher budget rather than a blanket async loader
+promise. Graph compile and TrainingManager clamp requested values to the
+platform default, and Arrow/Parquet batcher factories clamp again for
+direct callers.
+
+Current support is synchronous per batch, not background prefetch:
+- legacy `DatasetBatcher` splits sample loading across workers.
+- `ImageDatasetBatcher` and `AudioDatasetBatcher` split per-sample
+  decode/feature extraction across workers.
+- `ArrowDatasetBatcher`, text's Arrow-backed compatibility path, and
+  `ParquetArrowBatcher` split feature-column extraction across workers
+  when there is more than one feature column.
+
+Unsupported/reserved fields are now explicit in UI/logs:
+- `prefetch_factor` is serialized for future compatibility but ignored
+  by current training batchers.
+- `pin_memory` is serialized for future compatibility but ignored by
+  current training batchers.
+
+**Status:** complete for current explicit-contract scope. True async
+prefetch queues and pinned host-memory transfers remain deferred
+performance work.
 
 ## Priority 6 - Tool-To-Node Migration
 

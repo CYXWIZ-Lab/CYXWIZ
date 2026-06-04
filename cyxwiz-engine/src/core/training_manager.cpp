@@ -9,6 +9,23 @@
 
 namespace cyxwiz {
 
+namespace {
+
+void NormalizeTrainingNumWorkers(TrainingConfiguration& config,
+                                 const char* context) {
+    const int requested = config.num_workers;
+    const int normalized = ClampNumWorkersToPlatform(requested);
+    if (normalized != requested) {
+        spdlog::warn("{}: clamping num_workers from {} to {} based on platform",
+                     context, requested, normalized);
+        config.num_workers = normalized;
+    } else if (config.num_workers > 0) {
+        spdlog::info("{}: using num_workers={}", context, config.num_workers);
+    }
+}
+
+} // namespace
+
 TrainingManager& TrainingManager::Instance() {
     static TrainingManager instance;
     return instance;
@@ -119,6 +136,8 @@ bool TrainingManager::StartTraining(
         return false;
     }
 
+    NormalizeTrainingNumWorkers(config, "TrainingManager");
+
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), dataset);
     return StartTrainingCommon(
         std::move(executor), epochs, batch_size, plot_panel,
@@ -181,6 +200,8 @@ bool TrainingManager::StartTrainingArrow(
         spdlog::warn("TrainingManager: Arrow dataset has only {} column - no separate label column", num_cols);
     }
 
+    NormalizeTrainingNumWorkers(config, "TrainingManager");
+
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), arrow_dataset, label_column);
     return StartTrainingCommon(
         std::move(executor), epochs, batch_size, plot_panel,
@@ -230,6 +251,8 @@ bool TrainingManager::StartTrainingParquet(
         spdlog::warn("TrainingManager: Parquet dataset has only {} column - no separate label column", num_cols);
     }
 
+    NormalizeTrainingNumWorkers(config, "TrainingManager");
+
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), parquet_dataset, label_column);
     return StartTrainingCommon(
         std::move(executor), epochs, batch_size, plot_panel,
@@ -252,6 +275,8 @@ bool TrainingManager::StartTrainingImage(
 
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_training_.load()) return false;
+
+    NormalizeTrainingNumWorkers(config, "TrainingManager");
 
     // Build the ImageDatasetBatcher with the image preprocessing config
     // extracted from the graph's Resize / Normalize / Augmentation nodes.
@@ -307,6 +332,8 @@ bool TrainingManager::StartTrainingAudio(
 
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_training_.load()) return false;
+
+    NormalizeTrainingNumWorkers(config, "TrainingManager");
 
     // Build the audio batcher. AudioDatasetBatcher constructs the
     // underlying AudioDataset from the entry, applies any graph-driven
@@ -369,6 +396,10 @@ bool TrainingManager::StartTrainingText(
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_training_.load()) return false;
 
+    // Normalize before constructing TextDatasetBatcher so its delegated
+    // ArrowDatasetBatchers receive the actual worker budget.
+    NormalizeTrainingNumWorkers(config, "TrainingManager");
+
     // Build the text batcher. TextDatasetBatcher owns a TextDataset
     // internally which performs tokenization + vocab building on
     // construction. Graph preprocessing nodes (Tokenizer / Vocabulary /
@@ -395,18 +426,6 @@ bool TrainingManager::StartTrainingText(
     // features, which is unusual but allowed.
     config.input_size = static_cast<size_t>(batcher->GetMaxLength());
     config.input_shape = { static_cast<size_t>(batcher->GetMaxLength()) };
-
-    // Honor the requested worker count, but clamp it to the platform
-    // budget so the engine does not oversubscribe the CPU.
-    const int normalized_workers = ClampNumWorkersToPlatform(config.num_workers);
-    if (normalized_workers != config.num_workers) {
-        spdlog::warn("TrainingManager: clamping num_workers from {} to {} based on platform",
-                     config.num_workers, normalized_workers);
-        config.num_workers = normalized_workers;
-    } else if (config.num_workers > 0) {
-        spdlog::info("TrainingManager: using num_workers={}",
-                     config.num_workers);
-    }
 
     spdlog::info("TrainingManager: Text dataset {} samples, input_size={} "
                  "(max_length), vocab_size={}, num_workers={}",

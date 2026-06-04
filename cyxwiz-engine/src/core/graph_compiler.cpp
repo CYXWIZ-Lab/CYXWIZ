@@ -3,6 +3,7 @@
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
 #include "graph_topology_utils.h"
+#include "worker_defaults.h"
 #include "../gui/loaders/data_loader.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -401,6 +402,20 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.drop_last = (loader_node->parameters.at("drop_last") == "true");
             if (loader_node->parameters.count("num_workers"))
                 config.num_workers = std::stoi(loader_node->parameters.at("num_workers"));
+            const int requested_workers = config.num_workers;
+            config.num_workers = ClampNumWorkersToPlatform(config.num_workers);
+            if (config.num_workers != requested_workers) {
+                spdlog::warn("GraphCompiler: clamping DataLoader num_workers from {} to {} based on platform",
+                             requested_workers, config.num_workers);
+            }
+            if (loader_node->parameters.count("prefetch_factor")) {
+                spdlog::warn("GraphCompiler: DataLoader prefetch_factor is currently ignored; "
+                             "num_workers uses synchronous per-batch workers only");
+            }
+            if (loader_node->parameters.count("pin_memory") &&
+                loader_node->parameters.at("pin_memory") == "true") {
+                spdlog::warn("GraphCompiler: DataLoader pin_memory=true is currently ignored");
+            }
             if (loader_node->parameters.count("save_best_checkpoint"))
                 config.save_best_checkpoint = (loader_node->parameters.at("save_best_checkpoint") == "true");
             if (loader_node->parameters.count("early_stopping_patience"))

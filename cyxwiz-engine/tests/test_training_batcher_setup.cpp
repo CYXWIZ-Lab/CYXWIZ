@@ -1,5 +1,6 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/training_batcher_setup.h"
+#include "../src/core/worker_defaults.h"
 
 #include <arrow/api.h>
 
@@ -68,6 +69,14 @@ cyxwiz::TrainingConfiguration MakeConfig() {
 } // namespace
 
 int main() {
+    Check(cyxwiz::ClampNumWorkersToPlatform(-3) == 0,
+          "negative workers should normalize to single-threaded");
+    Check(cyxwiz::ClampNumWorkersToPlatform(0) == 0,
+          "zero workers should remain single-threaded");
+    Check(cyxwiz::ClampNumWorkersToPlatform(cyxwiz::GetDefaultNumWorkers() + 64) ==
+              cyxwiz::GetDefaultNumWorkers(),
+          "oversized workers should clamp to platform default");
+
     auto batchers = cyxwiz::BuildArrowTrainingBatchers(
         MakeConfig(),
         MakeDataset(),
@@ -87,6 +96,17 @@ int main() {
     Check(batch.data.Shape()[1] == 2, "feature width should be 2");
     Check(batch.labels.Shape().size() == 2, "label tensor should be 2D");
     Check(batch.labels.Shape()[1] == 2, "labels should be one-hot by output_size");
+
+    auto high_worker_config = MakeConfig();
+    high_worker_config.num_workers = cyxwiz::GetDefaultNumWorkers() + 64;
+    auto high_worker_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        high_worker_config,
+        MakeDataset(),
+        "label",
+        /*batch_size=*/2);
+    auto high_worker_batch = high_worker_batchers.train->GetNextBatch();
+    Check(high_worker_batch.IsValid(),
+          "oversized worker config should still produce a valid batch");
 
     std::cout << "Training batcher setup passed\n";
     return 0;

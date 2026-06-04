@@ -4034,7 +4034,7 @@ void DataLoaderDialog::RenderContent() {
     }
     if (num_workers_ > 0) {
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                           "  Honored by training batchers; empty fields use a hardware-based default.");
+                           "  Used as synchronous per-batch workers where supported; no async prefetch yet.");
     } else {
         ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
     }

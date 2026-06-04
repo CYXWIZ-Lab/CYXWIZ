@@ -1366,8 +1366,8 @@ void Properties::RenderNodeProperties(MLNode& node) {
                 num_workers = workers_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Background threads for data loading. 0 = single-threaded.\n"
-                                  "Empty uses a hardware-based default.");
+                ImGui::SetTooltip("Synchronous per-batch workers where supported. 0 = single-threaded.\n"
+                                  "Empty uses a hardware-based default; async prefetch is not active yet.");
             }
 
             std::string& prefetch = node.parameters["prefetch_factor"];
@@ -1383,7 +1383,7 @@ void Properties::RenderNodeProperties(MLNode& node) {
                 prefetch = prefetch_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Batches to prefetch per worker, hides I/O latency.");
+                ImGui::SetTooltip("Reserved for future async prefetch. Current training batchers ignore this field.");
             }
 
             std::string& pin_memory = node.parameters["pin_memory"];
@@ -1393,7 +1393,7 @@ void Properties::RenderNodeProperties(MLNode& node) {
                 pin_memory = pin_memory_val ? "true" : "false";
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Allocate batches in pinned host memory for faster GPU transfer.");
+                ImGui::SetTooltip("Reserved for future pinned host-memory transfers. Current batchers ignore this field.");
             }
 
             ImGui::Spacing();
