@@ -752,6 +752,13 @@ contract. `TensorBatchMatMul` remains the explicit deferred linalg guard.
 GPU-first execution is intentionally split into `tofix17.md`; the
 current `TensorDot` primitive is correct but CPU-backed.
 
+**Status:** complete for current Priority 6 scope. The migrated groups
+now have real runtime/compiler/frontend contracts or are explicitly
+deferred behind separate work items. Do not reopen Priority 6 for broad
+architecture or performance work; continue those through the specific
+deferred tracks already named here, especially `tofix17.md` for GPU
+execution and CPU fallback.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type
