@@ -667,4 +667,18 @@ BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
     return out;
 }
 
+BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config) {
+    BuiltExecutableModel out;
+    BuiltModel sequential = BuildSequentialFromConfig(config);
+    if (!sequential.ok()) {
+        return out;
+    }
+
+    out.model = std::make_unique<SequentialExecutableModel>(
+        std::move(sequential.model));
+    out.loss = std::move(sequential.loss);
+    out.optimizer = std::move(sequential.optimizer);
+    return out;
+}
+
 } // namespace cyxwiz

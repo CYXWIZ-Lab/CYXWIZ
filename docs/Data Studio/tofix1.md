@@ -631,6 +631,16 @@ a valid selected path and excludes a disconnected deferred Tensor branch.
 All remaining multi-input merge/linalg/two-input mask nodes remain
 template/deferred.
 
+**2026-06-04 update:** added the next small graph-runtime contract slice:
+`IExecutableModel` plus a `SequentialExecutableModel` adapter. The new
+`BuildExecutableFromConfig` path returns the narrow executable interface
+while still wrapping the existing `SequentialModel`, so current training
+behavior is unchanged. A focused wrapper test verifies forward/backward
+delegation, builder wrapping, and the transitional `AsSequentialModel`
+compatibility hook. No multi-input tensor group is exposed yet; the
+remaining work is to add a real graph executable that consumes
+`CompiledGraphPlan` before enabling merge/concat/mask/linalg nodes.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

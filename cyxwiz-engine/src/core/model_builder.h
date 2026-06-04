@@ -1,5 +1,6 @@
 #pragma once
 
+#include "executable_model.h"
 #include "graph_compiler.h"
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/loss.h>
@@ -19,10 +20,23 @@ struct BuiltModel {
     bool ok() const { return model != nullptr; }
 };
 
+struct BuiltExecutableModel {
+    std::unique_ptr<IExecutableModel> model;
+    std::unique_ptr<Loss>             loss;
+    std::unique_ptr<Optimizer>        optimizer;
+
+    bool ok() const { return model != nullptr; }
+};
+
 // Build SequentialModel + Loss + Optimizer from a TrainingConfiguration.
 // Pure function — no side effects beyond logging. Shared between
 // TrainingExecutor (real training) and DebugExecutor (one-step local
 // debug sanity check).
 BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config);
+
+// Build the narrow executable model interface. Today this wraps the existing
+// SequentialModel; future graph-runtime work can select GraphExecutableModel
+// without changing training-loop call sites.
+BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config);
 
 } // namespace cyxwiz
