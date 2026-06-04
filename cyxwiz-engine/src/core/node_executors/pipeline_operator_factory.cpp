@@ -135,6 +135,18 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::TimeSeriesDecomposition, []() {
         return std::make_unique<TimeSeriesDecompositionOperator>();
     });
+    RegisterCreator(gui::NodeType::ACFNode, []() {
+        return std::make_unique<ACFOperator>();
+    });
+    RegisterCreator(gui::NodeType::PACFNode, []() {
+        return std::make_unique<PACFOperator>();
+    });
+    RegisterCreator(gui::NodeType::StationarityTest, []() {
+        return std::make_unique<StationarityTestOperator>();
+    });
+    RegisterCreator(gui::NodeType::SeasonalityDetector, []() {
+        return std::make_unique<SeasonalityDetectorOperator>();
+    });
     RegisterCreator(gui::NodeType::ARIMAForecaster, []() {
         return std::make_unique<ARIMAOperator>();
     });

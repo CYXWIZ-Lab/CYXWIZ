@@ -280,6 +280,10 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::LogTransform:
         case NodeType::Differencing:
         case NodeType::TimeSeriesDecomposition:
+        case NodeType::ACFNode:
+        case NodeType::PACFNode:
+        case NodeType::StationarityTest:
+        case NodeType::SeasonalityDetector:
         case NodeType::ARIMAForecaster:
         case NodeType::ExponentialSmoothing:
             return NodeCategory::TimeSeries;
@@ -2526,6 +2530,79 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["period"] = "12";
             node.parameters["method"] = "additive";     // additive / multiplicative
             node.parameters["algorithm"] = "classical"; // classical / stl
+            break;
+        }
+
+        case NodeType::ACFNode: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Dataset;
+            out.name = "ACF";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["signal_col"] = "";
+            node.parameters["max_lag"] = "-1";
+            break;
+        }
+
+        case NodeType::PACFNode: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Dataset;
+            out.name = "PACF";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["signal_col"] = "";
+            node.parameters["max_lag"] = "-1";
+            break;
+        }
+
+        case NodeType::StationarityTest: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Dataset;
+            out.name = "Results";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["signal_col"] = "";
+            node.parameters["max_lags"] = "-1";
+            break;
+        }
+
+        case NodeType::SeasonalityDetector: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "Data";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Dataset;
+            out.name = "Periods";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["signal_col"] = "";
+            node.parameters["min_period"] = "2";
+            node.parameters["max_period"] = "-1";
             break;
         }
 
@@ -5452,6 +5529,14 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(255, 213, 0, 255);
         case NodeType::Differencing:
             return IM_COL32(255, 230, 0, 255);
+        case NodeType::TimeSeriesDecomposition:
+        case NodeType::ACFNode:
+        case NodeType::PACFNode:
+        case NodeType::StationarityTest:
+        case NodeType::SeasonalityDetector:
+        case NodeType::ARIMAForecaster:
+        case NodeType::ExponentialSmoothing:
+            return IM_COL32(255, 179, 64, 255);
 
         // ===== Audio - Deep Purple =====
         case NodeType::AudioInput:

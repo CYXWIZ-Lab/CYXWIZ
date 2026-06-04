@@ -88,6 +88,69 @@ bool ParseDoubleOptional(const std::map<std::string, std::string>& params,
     }
 }
 
+arrow::Result<std::shared_ptr<arrow::Array>> BuildInt32Array(
+    const std::vector<int32_t>& values) {
+    arrow::Int32Builder builder;
+    ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(values.size())));
+    for (int32_t v : values) ARROW_RETURN_NOT_OK(builder.Append(v));
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    return array;
+}
+
+arrow::Result<std::shared_ptr<arrow::Array>> BuildDoubleArray(
+    const std::vector<double>& values) {
+    arrow::DoubleBuilder builder;
+    ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(values.size())));
+    for (double v : values) ARROW_RETURN_NOT_OK(builder.Append(v));
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    return array;
+}
+
+arrow::Result<std::shared_ptr<arrow::Array>> BuildBoolArray(
+    const std::vector<bool>& values) {
+    arrow::BooleanBuilder builder;
+    ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(values.size())));
+    for (bool v : values) ARROW_RETURN_NOT_OK(builder.Append(v));
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    return array;
+}
+
+arrow::Result<std::shared_ptr<arrow::Array>> BuildStringArray(
+    const std::vector<std::string>& values) {
+    arrow::StringBuilder builder;
+    ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(values.size())));
+    for (const auto& v : values) ARROW_RETURN_NOT_OK(builder.Append(v));
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    return array;
+}
+
+bool ParseSignalColumn(const std::map<std::string, std::string>& params,
+                       const std::string& op_name,
+                       std::string& signal_col,
+                       std::string& error) {
+    auto s = params.find("signal_col");
+    if (s == params.end() || s->second.empty()) {
+        error = op_name + ": 'signal_col' parameter is required";
+        return false;
+    }
+    signal_col = s->second;
+    return true;
+}
+
+std::vector<bool> MarkSignificant(int size, const std::vector<int>& lags) {
+    std::vector<bool> out(static_cast<size_t>(size), false);
+    for (int lag : lags) {
+        if (lag >= 0 && lag < size) {
+            out[static_cast<size_t>(lag)] = true;
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 // ============================================================================
@@ -304,6 +367,240 @@ ExponentialSmoothingOperator::Apply(
     spdlog::info("{}: n={} method={} RMSE={:.4f} AIC={:.4f}",
                  GetName(), signal.size(), method_, result.rmse, result.aic);
     return out;
+}
+
+// ============================================================================
+// ACFOperator
+// ============================================================================
+
+bool ACFOperator::Configure(
+    const std::map<std::string, std::string>& params,
+    std::string& error) {
+    if (!ParseSignalColumn(params, GetName(), signal_col_, error)) return false;
+    if (!ParseIntOptional(params, "max_lag", max_lag_, GetName(), error)) return false;
+    if (!ParseIntOptional(params, "lags", max_lag_, GetName(), error)) return false;
+    if (max_lag_ == 0 || max_lag_ < -1) {
+        error = GetName() + ": max_lag must be -1 or >= 1";
+        return false;
+    }
+    return true;
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>>
+ACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
+
+    std::vector<double> signal;
+    ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
+
+    auto result = TimeSeries::ComputeACF(signal, max_lag_);
+    if (!result.success) {
+        return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
+    }
+
+    const int n = static_cast<int>(result.acf.size());
+    std::vector<int32_t> lags;
+    lags.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) lags.push_back(i);
+
+    ARROW_ASSIGN_OR_RAISE(auto lag_arr, BuildInt32Array(lags));
+    ARROW_ASSIGN_OR_RAISE(auto acf_arr, BuildDoubleArray(result.acf));
+    ARROW_ASSIGN_OR_RAISE(auto lower_arr, BuildDoubleArray(result.confidence_lower));
+    ARROW_ASSIGN_OR_RAISE(auto upper_arr, BuildDoubleArray(result.confidence_upper));
+    ARROW_ASSIGN_OR_RAISE(auto sig_arr, BuildBoolArray(
+        MarkSignificant(n, result.significant_acf_lags)));
+
+    auto schema = arrow::schema({
+        arrow::field("lag", arrow::int32()),
+        arrow::field("acf", arrow::float64()),
+        arrow::field("confidence_lower", arrow::float64()),
+        arrow::field("confidence_upper", arrow::float64()),
+        arrow::field("significant", arrow::boolean()),
+    });
+    return arrow::Table::Make(schema, {lag_arr, acf_arr, lower_arr, upper_arr, sig_arr});
+}
+
+// ============================================================================
+// PACFOperator
+// ============================================================================
+
+bool PACFOperator::Configure(
+    const std::map<std::string, std::string>& params,
+    std::string& error) {
+    if (!ParseSignalColumn(params, GetName(), signal_col_, error)) return false;
+    if (!ParseIntOptional(params, "max_lag", max_lag_, GetName(), error)) return false;
+    if (!ParseIntOptional(params, "lags", max_lag_, GetName(), error)) return false;
+    if (max_lag_ == 0 || max_lag_ < -1) {
+        error = GetName() + ": max_lag must be -1 or >= 1";
+        return false;
+    }
+    return true;
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>>
+PACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
+
+    std::vector<double> signal;
+    ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
+
+    auto result = TimeSeries::ComputePACF(signal, max_lag_);
+    if (!result.success) {
+        return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
+    }
+
+    const int n = static_cast<int>(result.pacf.size());
+    std::vector<int32_t> lags;
+    lags.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) lags.push_back(i);
+
+    ARROW_ASSIGN_OR_RAISE(auto lag_arr, BuildInt32Array(lags));
+    ARROW_ASSIGN_OR_RAISE(auto pacf_arr, BuildDoubleArray(result.pacf));
+    ARROW_ASSIGN_OR_RAISE(auto lower_arr, BuildDoubleArray(result.confidence_lower));
+    ARROW_ASSIGN_OR_RAISE(auto upper_arr, BuildDoubleArray(result.confidence_upper));
+    ARROW_ASSIGN_OR_RAISE(auto sig_arr, BuildBoolArray(
+        MarkSignificant(n, result.significant_pacf_lags)));
+
+    auto schema = arrow::schema({
+        arrow::field("lag", arrow::int32()),
+        arrow::field("pacf", arrow::float64()),
+        arrow::field("confidence_lower", arrow::float64()),
+        arrow::field("confidence_upper", arrow::float64()),
+        arrow::field("significant", arrow::boolean()),
+    });
+    return arrow::Table::Make(schema, {lag_arr, pacf_arr, lower_arr, upper_arr, sig_arr});
+}
+
+// ============================================================================
+// StationarityTestOperator
+// ============================================================================
+
+bool StationarityTestOperator::Configure(
+    const std::map<std::string, std::string>& params,
+    std::string& error) {
+    if (!ParseSignalColumn(params, GetName(), signal_col_, error)) return false;
+    if (!ParseIntOptional(params, "max_lags", max_lags_, GetName(), error)) return false;
+    if (max_lags_ < -1) {
+        error = GetName() + ": max_lags must be -1 or >= 0";
+        return false;
+    }
+    return true;
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>>
+StationarityTestOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
+
+    std::vector<double> signal;
+    ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
+
+    auto result = TimeSeries::TestStationarity(signal, max_lags_);
+    if (!result.success) {
+        return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
+    }
+
+    ARROW_ASSIGN_OR_RAISE(auto adf_stat, BuildDoubleArray({result.adf_statistic}));
+    ARROW_ASSIGN_OR_RAISE(auto adf_p, BuildDoubleArray({result.adf_pvalue}));
+    ARROW_ASSIGN_OR_RAISE(auto adf_st, BuildBoolArray({result.adf_stationary}));
+    ARROW_ASSIGN_OR_RAISE(auto kpss_stat, BuildDoubleArray({result.kpss_statistic}));
+    ARROW_ASSIGN_OR_RAISE(auto kpss_p, BuildDoubleArray({result.kpss_pvalue}));
+    ARROW_ASSIGN_OR_RAISE(auto kpss_st, BuildBoolArray({result.kpss_stationary}));
+    ARROW_ASSIGN_OR_RAISE(auto stationary, BuildBoolArray({result.is_stationary}));
+    ARROW_ASSIGN_OR_RAISE(auto diff, BuildInt32Array(
+        {static_cast<int32_t>(result.suggested_differencing)}));
+    ARROW_ASSIGN_OR_RAISE(auto rolling, BuildInt32Array(
+        {static_cast<int32_t>(result.rolling_window)}));
+    ARROW_ASSIGN_OR_RAISE(auto analysis, BuildStringArray({result.analysis}));
+
+    auto schema = arrow::schema({
+        arrow::field("adf_statistic", arrow::float64()),
+        arrow::field("adf_pvalue", arrow::float64()),
+        arrow::field("adf_stationary", arrow::boolean()),
+        arrow::field("kpss_statistic", arrow::float64()),
+        arrow::field("kpss_pvalue", arrow::float64()),
+        arrow::field("kpss_stationary", arrow::boolean()),
+        arrow::field("is_stationary", arrow::boolean()),
+        arrow::field("suggested_differencing", arrow::int32()),
+        arrow::field("rolling_window", arrow::int32()),
+        arrow::field("analysis", arrow::utf8()),
+    });
+    return arrow::Table::Make(schema, {
+        adf_stat, adf_p, adf_st, kpss_stat, kpss_p, kpss_st,
+        stationary, diff, rolling, analysis});
+}
+
+// ============================================================================
+// SeasonalityDetectorOperator
+// ============================================================================
+
+bool SeasonalityDetectorOperator::Configure(
+    const std::map<std::string, std::string>& params,
+    std::string& error) {
+    if (!ParseSignalColumn(params, GetName(), signal_col_, error)) return false;
+    if (!ParseIntOptional(params, "min_period", min_period_, GetName(), error)) return false;
+    if (!ParseIntOptional(params, "max_period", max_period_, GetName(), error)) return false;
+    if (min_period_ < 2) {
+        error = GetName() + ": min_period must be >= 2";
+        return false;
+    }
+    if (max_period_ != -1 && max_period_ <= min_period_) {
+        error = GetName() + ": max_period must be -1 or > min_period";
+        return false;
+    }
+    return true;
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>>
+SeasonalityDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
+
+    std::vector<double> signal;
+    ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
+
+    auto result = TimeSeries::DetectSeasonality(signal, min_period_, max_period_);
+    if (!result.success) {
+        return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
+    }
+
+    std::vector<int32_t> periods;
+    std::vector<double> strengths;
+    if (result.candidate_periods.empty()) {
+        periods.push_back(static_cast<int32_t>(result.detected_period));
+        strengths.push_back(result.strength);
+    } else {
+        for (int period : result.candidate_periods) {
+            periods.push_back(static_cast<int32_t>(period));
+        }
+        strengths.reserve(periods.size());
+        for (size_t i = 0; i < periods.size(); ++i) {
+            strengths.push_back(i < result.candidate_strengths.size()
+                                    ? result.candidate_strengths[i]
+                                    : 0.0);
+        }
+    }
+
+    std::vector<bool> primary(periods.size(), false);
+    for (size_t i = 0; i < periods.size(); ++i) {
+        primary[i] = periods[i] == result.detected_period;
+    }
+    std::vector<bool> has_seasonality(periods.size(), result.has_seasonality);
+    std::vector<std::string> analysis(periods.size(), result.analysis);
+
+    ARROW_ASSIGN_OR_RAISE(auto period_arr, BuildInt32Array(periods));
+    ARROW_ASSIGN_OR_RAISE(auto strength_arr, BuildDoubleArray(strengths));
+    ARROW_ASSIGN_OR_RAISE(auto primary_arr, BuildBoolArray(primary));
+    ARROW_ASSIGN_OR_RAISE(auto has_arr, BuildBoolArray(has_seasonality));
+    ARROW_ASSIGN_OR_RAISE(auto analysis_arr, BuildStringArray(analysis));
+
+    auto schema = arrow::schema({
+        arrow::field("period", arrow::int32()),
+        arrow::field("strength", arrow::float64()),
+        arrow::field("is_primary", arrow::boolean()),
+        arrow::field("has_seasonality", arrow::boolean()),
+        arrow::field("analysis", arrow::utf8()),
+    });
+    return arrow::Table::Make(schema, {
+        period_arr, strength_arr, primary_arr, has_arr, analysis_arr});
 }
 
 } // namespace cyxwiz

@@ -458,9 +458,19 @@ count and appends its expected columns. Future-row forecasting remains
 deferred because it changes table row count and needs a separate schema
 contract.
 
-**Remaining in this group:** `ACFNode`, `PACFNode`, `StationarityTest`,
-and `SeasonalityDetector` stay templates/Cat-2 candidates until there is
-a concrete table-output or inspection-panel contract.
+**2026-06-04 update:** completed the remaining time-series analysis
+nodes as Cat-1 table-output operators. `ACFNode` and `PACFNode` emit
+lag-indexed statistic/confidence/significance tables.
+`StationarityTest` emits a one-row ADF/KPSS summary table, and
+`SeasonalityDetector` emits candidate periods with strengths and primary
+detection fields. These nodes are now registered in the runtime factory,
+metadata, editor creation path, graph load/type maps, pattern maps, and
+CyxQL string conversion. The focused time-series operator test covers all
+seven implemented analysis operators. Rich plot/dialog views can still
+be added later as Cat-2 inspection surfaces, but the dead-node exposure
+gap for this time-series group is closed.
+
+**Status:** complete for the bounded time-series analysis group.
 
 ### Known dual-maintained registration lists
 

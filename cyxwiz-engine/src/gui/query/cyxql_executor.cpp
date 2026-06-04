@@ -1077,6 +1077,19 @@ std::string Executor::nodeTypeToString(gui::NodeType type) const {
         {gui::NodeType::TensorReshape, "TensorReshape"},
         {gui::NodeType::Normalize, "Normalize"},
         {gui::NodeType::OneHotEncode, "OneHotEncode"},
+        {gui::NodeType::TimeSeriesWindow, "TimeSeriesWindow"},
+        {gui::NodeType::TimeSeriesFeatures, "TimeSeriesFeatures"},
+        {gui::NodeType::TimeSeriesSplit, "TimeSeriesSplit"},
+        {gui::NodeType::TimeSeriesCSV, "TimeSeriesCSV"},
+        {gui::NodeType::LogTransform, "LogTransform"},
+        {gui::NodeType::Differencing, "Differencing"},
+        {gui::NodeType::TimeSeriesDecomposition, "TimeSeriesDecomposition"},
+        {gui::NodeType::ACFNode, "ACFNode"},
+        {gui::NodeType::PACFNode, "PACFNode"},
+        {gui::NodeType::StationarityTest, "StationarityTest"},
+        {gui::NodeType::SeasonalityDetector, "SeasonalityDetector"},
+        {gui::NodeType::ARIMAForecaster, "ARIMAForecaster"},
+        {gui::NodeType::ExponentialSmoothing, "ExponentialSmoothing"},
     };
 
     auto it = typeNames.find(type);
@@ -1096,6 +1109,13 @@ gui::NodeType Executor::stringToNodeType(const std::string& str) const {
         {"MultiHeadAttention", gui::NodeType::MultiHeadAttention},
         {"DatasetInput", gui::NodeType::DatasetInput},
         {"Output", gui::NodeType::Output},
+        {"TimeSeriesDecomposition", gui::NodeType::TimeSeriesDecomposition},
+        {"ACFNode", gui::NodeType::ACFNode},
+        {"PACFNode", gui::NodeType::PACFNode},
+        {"StationarityTest", gui::NodeType::StationarityTest},
+        {"SeasonalityDetector", gui::NodeType::SeasonalityDetector},
+        {"ARIMAForecaster", gui::NodeType::ARIMAForecaster},
+        {"ExponentialSmoothing", gui::NodeType::ExponentialSmoothing},
         // Add more as needed
     };
 

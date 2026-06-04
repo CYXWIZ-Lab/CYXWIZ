@@ -120,12 +120,98 @@ void TestExponentialSmoothing() {
     CheckHasColumn(output, "residual");
 }
 
+void TestACF() {
+    cyxwiz::ACFOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"signal_col", "signal"},
+        {"max_lag", "6"},
+    }, error), error);
+
+    auto result = op.Apply(MakeTimeSeriesTable());
+    Check(result.ok(), result.status().ToString());
+    auto output = result.ValueOrDie();
+    Check(output->num_rows() == 7, "ACF should emit max_lag + 1 rows");
+    CheckHasColumn(output, "lag");
+    CheckHasColumn(output, "acf");
+    CheckHasColumn(output, "confidence_lower");
+    CheckHasColumn(output, "confidence_upper");
+    CheckHasColumn(output, "significant");
+}
+
+void TestPACF() {
+    cyxwiz::PACFOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"signal_col", "signal"},
+        {"max_lag", "6"},
+    }, error), error);
+
+    auto result = op.Apply(MakeTimeSeriesTable());
+    Check(result.ok(), result.status().ToString());
+    auto output = result.ValueOrDie();
+    Check(output->num_rows() == 7, "PACF should emit max_lag + 1 rows");
+    CheckHasColumn(output, "lag");
+    CheckHasColumn(output, "pacf");
+    CheckHasColumn(output, "confidence_lower");
+    CheckHasColumn(output, "confidence_upper");
+    CheckHasColumn(output, "significant");
+}
+
+void TestStationarity() {
+    cyxwiz::StationarityTestOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"signal_col", "signal"},
+        {"max_lags", "-1"},
+    }, error), error);
+
+    auto result = op.Apply(MakeTimeSeriesTable());
+    Check(result.ok(), result.status().ToString());
+    auto output = result.ValueOrDie();
+    Check(output->num_rows() == 1, "stationarity should emit one summary row");
+    CheckHasColumn(output, "adf_statistic");
+    CheckHasColumn(output, "adf_pvalue");
+    CheckHasColumn(output, "adf_stationary");
+    CheckHasColumn(output, "kpss_statistic");
+    CheckHasColumn(output, "kpss_pvalue");
+    CheckHasColumn(output, "kpss_stationary");
+    CheckHasColumn(output, "is_stationary");
+    CheckHasColumn(output, "suggested_differencing");
+    CheckHasColumn(output, "rolling_window");
+    CheckHasColumn(output, "analysis");
+}
+
+void TestSeasonality() {
+    cyxwiz::SeasonalityDetectorOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"signal_col", "signal"},
+        {"min_period", "2"},
+        {"max_period", "-1"},
+    }, error), error);
+
+    auto result = op.Apply(MakeTimeSeriesTable());
+    Check(result.ok(), result.status().ToString());
+    auto output = result.ValueOrDie();
+    Check(output->num_rows() >= 1, "seasonality should emit at least one row");
+    CheckHasColumn(output, "period");
+    CheckHasColumn(output, "strength");
+    CheckHasColumn(output, "is_primary");
+    CheckHasColumn(output, "has_seasonality");
+    CheckHasColumn(output, "analysis");
+}
+
 } // namespace
 
 int main() {
     TestDecomposition();
     TestArima();
     TestExponentialSmoothing();
+    TestACF();
+    TestPACF();
+    TestStationarity();
+    TestSeasonality();
     std::cout << "Time-series analysis operators passed\n";
     return 0;
 }

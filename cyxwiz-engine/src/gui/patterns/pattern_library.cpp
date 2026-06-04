@@ -489,6 +489,10 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"Differencing", NodeType::Differencing},
         // Phase 5 time-series analysis (in-sample fit only).
         {"TimeSeriesDecomposition", NodeType::TimeSeriesDecomposition},
+        {"ACFNode", NodeType::ACFNode},
+        {"PACFNode", NodeType::PACFNode},
+        {"StationarityTest", NodeType::StationarityTest},
+        {"SeasonalityDetector", NodeType::SeasonalityDetector},
         {"ARIMAForecaster", NodeType::ARIMAForecaster},
         {"ExponentialSmoothing", NodeType::ExponentialSmoothing}
     };

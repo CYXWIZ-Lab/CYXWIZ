@@ -114,4 +114,89 @@ private:
     bool damped_ = false;
 };
 
+/**
+ * ACFOperator - Cat-1 Band 1 analysis operator.
+ *
+ * Emits a lag-indexed table: lag, acf, confidence_lower,
+ * confidence_upper, significant.
+ */
+class ACFOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "ACF"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+
+    bool Configure(const std::map<std::string, std::string>& params,
+                   std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
+        const std::shared_ptr<arrow::Table>& input) override;
+
+private:
+    std::string signal_col_;
+    int max_lag_ = -1;
+};
+
+/**
+ * PACFOperator - Cat-1 Band 1 analysis operator.
+ *
+ * Emits a lag-indexed table: lag, pacf, confidence_lower,
+ * confidence_upper, significant.
+ */
+class PACFOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "PACF"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+
+    bool Configure(const std::map<std::string, std::string>& params,
+                   std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
+        const std::shared_ptr<arrow::Table>& input) override;
+
+private:
+    std::string signal_col_;
+    int max_lag_ = -1;
+};
+
+/**
+ * StationarityTestOperator - Cat-1 Band 1 analysis operator.
+ *
+ * Emits a one-row summary table with ADF/KPSS statistics and the
+ * suggested ARIMA differencing order.
+ */
+class StationarityTestOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "StationarityTest"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+
+    bool Configure(const std::map<std::string, std::string>& params,
+                   std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
+        const std::shared_ptr<arrow::Table>& input) override;
+
+private:
+    std::string signal_col_;
+    int max_lags_ = -1;
+};
+
+/**
+ * SeasonalityDetectorOperator - Cat-1 Band 1 analysis operator.
+ *
+ * Emits candidate periods with strength scores. If no candidate exists,
+ * emits one row containing the primary detection fields.
+ */
+class SeasonalityDetectorOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "SeasonalityDetector"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+
+    bool Configure(const std::map<std::string, std::string>& params,
+                   std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
+        const std::shared_ptr<arrow::Table>& input) override;
+
+private:
+    std::string signal_col_;
+    int min_period_ = 2;
+    int max_period_ = -1;
+};
+
 } // namespace cyxwiz

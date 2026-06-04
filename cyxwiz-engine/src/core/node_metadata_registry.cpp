@@ -1838,35 +1838,40 @@ void NodeMetadataRegistry::InitializeTimeSeriesAnalysisNodes() {
 
     RegisterNode({NodeType::ACFNode, NodeCategory::TimeSeries, "ACF", ICON_FA_CHART_BAR,
         {"acf", "autocorrelation", "correlogram", "time", "series"}, 0, false,
-        "Autocorrelation Function", "", "",
-        {{"Series", PinType::Dataset, true, "Series"}},
-        {{"ACF", PinType::Dataset, false, "ACF"}},
-        {{"lags", "int", "40", "Number of lags", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        "Compute autocorrelation by lag as a table", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"ACF", PinType::Dataset, true, "Lag table with acf and confidence bounds"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"max_lag", "int", "-1", "Maximum lag (-1 auto)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PACFNode, NodeCategory::TimeSeries, "PACF", ICON_FA_CHART_BAR,
         {"pacf", "partial", "autocorrelation", "time", "series"}, 0, false,
-        "Partial Autocorrelation", "", "",
-        {{"Series", PinType::Dataset, true, "Series"}},
-        {{"PACF", PinType::Dataset, false, "PACF"}},
-        {{"lags", "int", "40", "Number of lags", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        "Compute partial autocorrelation by lag as a table", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"PACF", PinType::Dataset, true, "Lag table with pacf and confidence bounds"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"max_lag", "int", "-1", "Maximum lag (-1 auto)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::StationarityTest, NodeCategory::TimeSeries, "Stationarity Test", ICON_FA_SCALE_BALANCED,
         {"stationarity", "adf", "kpss", "unit", "root", "test"}, 0, false,
-        "Test for Stationarity", "", "",
-        {{"Series", PinType::Dataset, true, "Series"}},
-        {{"Results", PinType::Dataset, false, "Results"}},
-        {{"test", "dropdown", "adf", "Test Type", {"adf", "kpss", "both"}, ""}},
-        NodeImplementationStatus::Template, 0});
+        "Run ADF and KPSS stationarity checks", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Results", PinType::Dataset, true, "One-row stationarity summary"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"max_lags", "int", "-1", "ADF max lags (-1 auto)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SeasonalityDetector, NodeCategory::TimeSeries, "Seasonality Detector", ICON_FA_CALENDAR,
         {"seasonality", "period", "detect", "frequency"}, 0, false,
-        "Detect Seasonal Patterns", "", "",
-        {{"Series", PinType::Dataset, true, "Series"}},
-        {{"Periods", PinType::Dataset, false, "Periods"}},
-        {},
-        NodeImplementationStatus::Template, 0});
+        "Detect candidate seasonal periods", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Periods", PinType::Dataset, true, "Candidate period table"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"min_period", "int", "2", "Minimum period", {}, ""},
+         {"max_period", "int", "-1", "Maximum period (-1 auto)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ARIMAForecaster, NodeCategory::TimeSeries, "ARIMA", ICON_FA_CHART_LINE,
         {"arima", "forecast", "prediction", "time", "series"}, 0, false,
