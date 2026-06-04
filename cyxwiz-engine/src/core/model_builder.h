@@ -34,14 +34,13 @@ struct BuiltExecutableModel {
 // debug sanity check).
 BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config);
 
-// Build the narrow executable model interface. Today this wraps the existing
-// SequentialModel; future graph-runtime work can select GraphExecutableModel
-// without changing training-loop call sites.
+// Build the narrow executable model interface. Sequential configs wrap the
+// existing SequentialModel; configs with graph_op_node_ids use the graph-plan
+// executable path.
 BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config);
 
-// Build a graph-plan-backed executable for parity tests. This remains opt-in:
-// normal training still uses BuildSequentialFromConfig until graph execution
-// supports real fan-in nodes.
+// Build a graph-plan-backed executable. Used directly by focused graph-runtime
+// tests and indirectly by BuildExecutableFromConfig for graph-op configs.
 BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration& config);
 
 } // namespace cyxwiz

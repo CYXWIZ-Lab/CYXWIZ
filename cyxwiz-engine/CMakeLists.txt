@@ -1271,6 +1271,7 @@ add_executable(test_executable_model_wrapper
     tests/test_executable_model_wrapper.cpp
     src/core/model_builder.cpp
     src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
 )
 
 target_include_directories(test_executable_model_wrapper PRIVATE

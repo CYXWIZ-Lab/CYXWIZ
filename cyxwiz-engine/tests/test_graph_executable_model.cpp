@@ -167,11 +167,11 @@ void CheckMergeOp(gui::NodeType merge_type,
                   const std::vector<float>& expected_data_grad,
                   const std::string& name) {
     cyxwiz::BuiltExecutableModel built =
-        cyxwiz::BuildGraphExecutableFromConfig(MergeConfig(merge_type));
-    Check(built.ok(), name + " graph executable should build through config");
+        cyxwiz::BuildExecutableFromConfig(MergeConfig(merge_type));
+    Check(built.ok(), name + " graph executable should build through executable config");
     auto* graph =
         dynamic_cast<cyxwiz::GraphExecutableModel*>(built.model.get());
-    Check(graph != nullptr, name + " builder should return GraphExecutableModel");
+    Check(graph != nullptr, name + " executable builder should return GraphExecutableModel");
     Check(graph->GraphOpNodeIds() == std::vector<int>({2}),
           name + " should preserve graph op node ids");
 

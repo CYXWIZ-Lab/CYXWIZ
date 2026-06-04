@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <limits>
+#include <optional>
 
 namespace cyxwiz {
 
@@ -83,7 +84,7 @@ TrainingExecutor::~TrainingExecutor() {
 }
 
 bool TrainingExecutor::Initialize(int /*batch_size*/) {
-    auto built = BuildSequentialFromConfig(config_);
+    auto built = BuildExecutableFromConfig(config_);
     if (!built.ok()) {
         spdlog::error("TrainingExecutor: Failed to build model from config");
         return false;
@@ -392,9 +393,17 @@ void TrainingExecutor::Train(
             if (current.val_loss < best_val_loss) {
                 best_val_loss = current.val_loss;
                 epochs_without_improvement = 0;
-                if (checkpoint_manager->SaveBestModel(*model_, optimizer_.get(), current, current.val_loss)) {
-                    spdlog::info("TrainingExecutor: Best validation checkpoint saved at epoch {} (val_loss={:.4f})",
-                                 epoch, current.val_loss);
+                if (SequentialModel* sequential_model = model_->AsSequentialModel()) {
+                    if (checkpoint_manager->SaveBestModel(*sequential_model,
+                                                          optimizer_.get(),
+                                                          current,
+                                                          current.val_loss)) {
+                        spdlog::info("TrainingExecutor: Best validation checkpoint saved at epoch {} (val_loss={:.4f})",
+                                     epoch, current.val_loss);
+                    }
+                } else {
+                    spdlog::warn("TrainingExecutor: save_best_checkpoint is not available for graph executable models yet");
+                    checkpoint_manager.reset();
                 }
             } else {
                 ++epochs_without_improvement;
@@ -447,7 +456,12 @@ void TrainingExecutor::Train(
     if (!stop_requested_.load() && checkpoint_manager && save_best_checkpoint) {
         const std::string best_checkpoint = checkpoint_manager->GetBestCheckpoint();
         if (!best_checkpoint.empty()) {
-            auto restored = checkpoint_manager->LoadCheckpoint(*model_, optimizer_.get(), "best");
+            std::optional<CheckpointMetadata> restored;
+            if (SequentialModel* sequential_model = model_->AsSequentialModel()) {
+                restored = checkpoint_manager->LoadCheckpoint(*sequential_model,
+                                                              optimizer_.get(),
+                                                              "best");
+            }
             if (restored) {
                 final_metrics.current_epoch = restored->epoch;
                 final_metrics.current_batch = restored->global_step;

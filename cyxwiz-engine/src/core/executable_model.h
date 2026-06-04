@@ -34,6 +34,7 @@ public:
     // a real SequentialModel. GraphExecutableModel will return nullptr here.
     virtual SequentialModel* AsSequentialModel() { return nullptr; }
     virtual const SequentialModel* AsSequentialModel() const { return nullptr; }
+    virtual std::unique_ptr<SequentialModel> ReleaseSequentialModel() { return nullptr; }
 };
 
 class SequentialExecutableModel final : public IExecutableModel {
@@ -51,6 +52,7 @@ public:
 
     SequentialModel* AsSequentialModel() override { return model_.get(); }
     const SequentialModel* AsSequentialModel() const override { return model_.get(); }
+    std::unique_ptr<SequentialModel> ReleaseSequentialModel() override;
 
 private:
     std::unique_ptr<SequentialModel> model_;

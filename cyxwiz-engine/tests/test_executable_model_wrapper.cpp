@@ -75,6 +75,13 @@ int main() {
                   "wrapper backward should delegate zero sign gradient");
         CheckNear(backward.At(0, 2), 1.0f, 1e-4f,
                   "wrapper backward should delegate positive sign gradient");
+
+        std::unique_ptr<cyxwiz::SequentialModel> released =
+            wrapper.ReleaseSequentialModel();
+        Check(released != nullptr,
+              "SequentialExecutableModel should release wrapped sequential model");
+        Check(wrapper.AsSequentialModel() == nullptr,
+              "released wrapper should no longer expose sequential model");
     }
 
     {

@@ -669,6 +669,10 @@ BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
 }
 
 BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config) {
+    if (!config.graph_op_node_ids.empty()) {
+        return BuildGraphExecutableFromConfig(config);
+    }
+
     BuiltExecutableModel out;
     BuiltModel sequential = BuildSequentialFromConfig(config);
     if (!sequential.ok()) {

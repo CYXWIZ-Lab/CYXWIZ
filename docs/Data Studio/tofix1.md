@@ -690,6 +690,17 @@ plan with a graph-op id, while selected-path `Concatenate` and
 switch to `BuildGraphExecutableFromConfig` before these are exposed to
 users.
 
+**2026-06-04 update:** runtime model construction now uses the executable
+interface as the training-loop boundary. `BuildExecutableFromConfig`
+keeps sequential configs on the `SequentialExecutableModel` wrapper and
+routes configs with `graph_op_node_ids` to `GraphExecutableModel`.
+`TrainingExecutor` stores `IExecutableModel`, so forward/backward/update
+can run graph-backed models without forcing them through
+`SequentialModel`. Sequential export/checkpoint compatibility remains
+available through `AsSequentialModel`/`ReleaseSequentialModel`; graph
+executables warn and skip best-checkpoint save/restore until graph model
+serialization is designed. Frontend exposure is still deferred.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

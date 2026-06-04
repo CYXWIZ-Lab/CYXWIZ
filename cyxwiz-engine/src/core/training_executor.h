@@ -1,5 +1,6 @@
 #pragma once
 
+#include "executable_model.h"
 #include "graph_compiler.h"
 #include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
 #include "parquet_arrow_batcher.h"
@@ -161,7 +162,9 @@ public:
     /**
      * Get the trained model (for export)
      */
-    SequentialModel* GetModel() { return model_.get(); }
+    SequentialModel* GetModel() {
+        return model_ ? model_->AsSequentialModel() : nullptr;
+    }
 
     /**
      * Get the optimizer (for export)
@@ -171,7 +174,9 @@ public:
     /**
      * Release ownership of the model (transfers ownership to caller)
      */
-    std::unique_ptr<SequentialModel> ReleaseModel() { return std::move(model_); }
+    std::unique_ptr<SequentialModel> ReleaseModel() {
+        return model_ ? model_->ReleaseSequentialModel() : nullptr;
+    }
 
     /**
      * Release ownership of the optimizer (transfers ownership to caller)
@@ -207,7 +212,7 @@ private:
     TrainingMetrics metrics_;
 
     // Training components - DYNAMIC MODEL
-    std::unique_ptr<SequentialModel> model_;
+    std::unique_ptr<IExecutableModel> model_;
     std::unique_ptr<Optimizer> optimizer_;
     std::unique_ptr<Loss> loss_;  // Unified loss function (MSE, CrossEntropy, BCE, etc.)
 

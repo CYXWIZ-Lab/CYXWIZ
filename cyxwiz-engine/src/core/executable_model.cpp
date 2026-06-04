@@ -39,4 +39,8 @@ void SequentialExecutableModel::UpdateParameters(Optimizer* optimizer) {
     model_->UpdateParameters(optimizer);
 }
 
+std::unique_ptr<SequentialModel> SequentialExecutableModel::ReleaseSequentialModel() {
+    return std::move(model_);
+}
+
 } // namespace cyxwiz
