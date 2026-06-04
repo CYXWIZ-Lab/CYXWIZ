@@ -103,6 +103,15 @@ bool HasPlanEdge(const cyxwiz::CompiledGraphPlan& plan,
     return false;
 }
 
+bool HasGraphOpId(const cyxwiz::TrainingConfiguration& config, int node_id) {
+    for (int graph_op_node_id : config.graph_op_node_ids) {
+        if (graph_op_node_id == node_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 int main() {
@@ -220,6 +229,78 @@ int main() {
     Check(HasPlanEdge(plan, 4, 403, 5, 501),
           "graph plan should include loss-to-optimizer edge");
     Check(plan.edges.size() == 4, "graph plan should contain only selected path edges");
+
+    auto abs = Node(8,
+                    gui::NodeType::TensorAbs,
+                    "Abs",
+                    {Pin(801, gui::PinType::Tensor, "Input", true)},
+                    {Pin(802, gui::PinType::Tensor, "Output", false)});
+
+    auto add = Node(9,
+                    gui::NodeType::Add,
+                    "Runtime Add",
+                    {Pin(901, gui::PinType::Tensor, "Input 1", true),
+                     Pin(902, gui::PinType::Tensor, "Input 2", true)},
+                    {Pin(903, gui::PinType::Tensor, "Output", false)});
+
+    nodes = {data, abs, add, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 9, 901),
+        Link(3, 1, 101, 9, 902),
+        Link(4, 9, 903, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "selected training path with backend-supported Add should compile");
+    Check(!HasIssueText(config, "Runtime Add"),
+          "supported graph-runtime Add should not be reported as deferred");
+    Check(config.layers.size() == 1,
+          "selected Add graph should still extract the unary tensor layer");
+    Check(config.graph_op_node_ids.size() == 1,
+          "selected Add graph should record one graph runtime op");
+    Check(HasGraphOpId(config, 9),
+          "selected Add graph should record the Add node id");
+    Check(config.graph_plan.available,
+          "selected Add graph should still produce a graph plan");
+    Check(HasPlanNode(config.graph_plan, 9),
+          "graph plan should include selected Add node");
+    Check(HasPlanEdge(config.graph_plan, 8, 802, 9, 901),
+          "graph plan should include Abs-to-Add edge");
+    Check(HasPlanEdge(config.graph_plan, 1, 101, 9, 902),
+          "graph plan should include Data-to-Add second input edge");
+    Check(HasPlanEdge(config.graph_plan, 9, 903, 4, 401),
+          "graph plan should include Add-to-loss prediction edge");
+
+    auto concat = Node(10,
+                       gui::NodeType::Concatenate,
+                       "Runtime Concat",
+                       {Pin(1001, gui::PinType::Tensor, "Input 1", true),
+                        Pin(1002, gui::PinType::Tensor, "Input 2", true)},
+                       {Pin(1003, gui::PinType::Tensor, "Output", false)});
+
+    nodes = {data, abs, concat, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 10, 1001),
+        Link(3, 1, 101, 10, 1002),
+        Link(4, 10, 1003, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected training path with Concatenate should remain deferred");
+    Check(HasIssueText(config, "Runtime Concat"),
+          "unsupported merge node should still be reported by name");
+    Check(HasIssueText(config, "template/deferred"),
+          "unsupported merge node should still report template/deferred status");
+    Check(config.graph_op_node_ids.empty(),
+          "unsupported merge node should not be recorded as a graph runtime op");
 
     std::cout << "Graph compiler deferred node guard and graph plan passed\n";
     return 0;

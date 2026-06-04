@@ -679,6 +679,17 @@ normal sequential training or marking merge nodes implemented in
 metadata. Focused tests now build Add/Multiply/Average through
 `BuildGraphExecutableFromConfig` instead of bypassing the builder.
 
+**2026-06-04 update:** compiler selected-path handoff now recognizes only
+the backend-supported merge ops (`Add`, `Multiply`, `Average`) and
+records their node ids in `TrainingConfiguration::graph_op_node_ids`.
+The metadata/frontend status stays `Template`, and unsupported merge
+siblings such as `Concatenate` still block as deferred. The focused
+compiler regression proves selected-path `Add` compiles into the graph
+plan with a graph-op id, while selected-path `Concatenate` and
+`TensorDot` remain blocked. Runtime train launch still needs an explicit
+switch to `BuildGraphExecutableFromConfig` before these are exposed to
+users.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

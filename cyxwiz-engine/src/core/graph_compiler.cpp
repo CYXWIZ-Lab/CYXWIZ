@@ -82,6 +82,41 @@ const char* ImplementationStatusLabel(NodeImplementationStatus status) {
     return "unknown";
 }
 
+bool IsGraphRuntimeMergeOp(gui::NodeType type) {
+    return type == gui::NodeType::Add ||
+           type == gui::NodeType::Multiply ||
+           type == gui::NodeType::Average;
+}
+
+bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
+    for (const auto& pin : node.inputs) {
+        if (pin.id == pin_id) {
+            return pin.is_input && pin.type == gui::PinType::Tensor;
+        }
+    }
+    return false;
+}
+
+int CountConnectedSelectedTensorInputs(
+    const gui::MLNode& node,
+    const std::vector<gui::NodeLink>& links,
+    const std::unordered_set<int>& selected_node_ids) {
+    int connected = 0;
+    for (const auto& link : links) {
+        if (link.to_node != node.id) {
+            continue;
+        }
+        if (selected_node_ids.count(link.from_node) == 0 ||
+            selected_node_ids.count(link.to_node) == 0) {
+            continue;
+        }
+        if (IsTensorInputPin(node, link.to_pin)) {
+            ++connected;
+        }
+    }
+    return connected;
+}
+
 // Build the legacy single-string error_message from the issues list so
 // existing callers that only look at error_message keep working.
 std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
@@ -869,6 +904,9 @@ void ValidateTrainingPathImplementationStatus(
         if (metadata->status == NodeImplementationStatus::Implemented) {
             continue;
         }
+        if (IsGraphRuntimeMergeOp(node.type)) {
+            continue;
+        }
 
         std::ostringstream msg;
         msg << "Node '" << node.name << "' is "
@@ -878,6 +916,53 @@ void ValidateTrainingPathImplementationStatus(
             msg << " (" << metadata->brief_description << ")";
         }
         AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+    }
+}
+
+void CollectGraphRuntimeOpNodeIds(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const std::vector<int>& sorted_node_ids,
+    const std::unordered_set<int>& training_path_ids,
+    TrainingConfiguration& config) {
+    if (training_path_ids.empty()) {
+        return;
+    }
+
+    std::unordered_map<int, const gui::MLNode*> by_id;
+    by_id.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        by_id[node.id] = &node;
+    }
+
+    for (int node_id : sorted_node_ids) {
+        if (training_path_ids.count(node_id) == 0) {
+            continue;
+        }
+
+        auto it = by_id.find(node_id);
+        if (it == by_id.end()) {
+            continue;
+        }
+        const gui::MLNode& node = *it->second;
+        if (!IsGraphRuntimeMergeOp(node.type)) {
+            continue;
+        }
+
+        const int connected_inputs =
+            CountConnectedSelectedTensorInputs(node, links, training_path_ids);
+        if (connected_inputs < 2) {
+            std::ostringstream msg;
+            msg << "Graph runtime merge node '" << node.name
+                << "' requires at least two connected tensor inputs";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        // Same-shape enforcement remains in GraphExecutableModel, where the
+        // concrete runtime tensor shapes are known. The compiler only records
+        // deliberately-enabled graph ops here.
+        config.graph_op_node_ids.push_back(node.id);
     }
 }
 } // anonymous namespace
@@ -1253,6 +1338,12 @@ TrainingConfiguration GraphCompiler::Compile(
 
     // Get topologically sorted node IDs
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
+    CollectGraphRuntimeOpNodeIds(
+        nodes,
+        links,
+        sorted_ids,
+        training_path_ids,
+        config);
     config.graph_plan = BuildCompiledGraphPlan(
         nodes,
         links,
