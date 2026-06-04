@@ -166,6 +166,8 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::TensorBroadcastTo: return "TensorBroadcastTo";
         case gui::NodeType::TensorExpand: return "TensorExpand";
         case gui::NodeType::TensorIndexSelect: return "TensorIndexSelect";
+        case gui::NodeType::TensorCompare: return "TensorCompare";
+        case gui::NodeType::TensorLogicalMask: return "TensorLogicalMask";
         case gui::NodeType::Reshape: return "Reshape";
         case gui::NodeType::Permute: return "Permute";
         case gui::NodeType::Squeeze: return "Squeeze";
@@ -546,6 +548,8 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorBroadcastTo:
         case gui::NodeType::TensorExpand:
         case gui::NodeType::TensorIndexSelect:
+        case gui::NodeType::TensorCompare:
+        case gui::NodeType::TensorLogicalMask:
             return true;
         default:
             return false;
@@ -821,6 +825,8 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
         case gui::NodeType::TensorSign:
         case gui::NodeType::TensorPow:
         case gui::NodeType::TensorClip:
+        case gui::NodeType::TensorCompare:
+        case gui::NodeType::TensorLogicalMask:
             // Shape unchanged
             return input_shape;
         case gui::NodeType::TensorBroadcastTo:

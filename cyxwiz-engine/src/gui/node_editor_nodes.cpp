@@ -1811,17 +1811,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             NodePin input_a;
             input_a.id = next_pin_id_++;
             input_a.type = PinType::Tensor;
-            input_a.name = "A";
+            input_a.name = "Input";
             input_a.is_input = true;
             node.inputs.push_back(input_a);
-
-            NodePin input_b;
-            input_b.id = next_pin_id_++;
-            input_b.type = PinType::Tensor;
-            input_b.name = "B";
-            input_b.is_input = true;
-            input_b.is_required = false;
-            node.inputs.push_back(input_b);
 
             NodePin output_pin;
             output_pin.id = next_pin_id_++;
@@ -1834,7 +1826,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
                 node.parameters["op"] = ">";
                 node.parameters["scalar"] = "0.0";
             } else {
-                node.parameters["op"] = "and";
+                node.parameters["op"] = "not";
             }
             break;
         }

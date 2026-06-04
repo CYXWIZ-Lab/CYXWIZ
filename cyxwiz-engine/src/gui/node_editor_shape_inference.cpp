@@ -279,6 +279,8 @@ std::vector<size_t> ShapeInferenceEngine::InferNodeOutputShape(
         case NodeType::GroupNorm:
         case NodeType::InstanceNorm:
         case NodeType::Dropout:
+        case NodeType::TensorCompare:
+        case NodeType::TensorLogicalMask:
         case NodeType::Normalize:
         case NodeType::Augmentation:
         case NodeType::DataLoader:

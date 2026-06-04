@@ -60,6 +60,21 @@ std::vector<int> ParseLayerIntListParam(const CompiledLayer& layer,
     return out;
 }
 
+TensorMaskOp ParseLayerTensorMaskOp(const CompiledLayer& layer) {
+    auto it = layer.parameters.find("op");
+    const std::string op = it != layer.parameters.end() ? it->second : ">";
+
+    if (layer.type == gui::NodeType::TensorLogicalMask) {
+        return TensorMaskOp::LogicalNot;
+    }
+    if (op == ">=") return TensorMaskOp::CompareGreaterEqual;
+    if (op == "<") return TensorMaskOp::CompareLess;
+    if (op == "<=") return TensorMaskOp::CompareLessEqual;
+    if (op == "==") return TensorMaskOp::CompareEqual;
+    if (op == "!=") return TensorMaskOp::CompareNotEqual;
+    return TensorMaskOp::CompareGreater;
+}
+
 } // namespace
 
 // ============================================================================
@@ -367,6 +382,17 @@ bool TestExecutor::BuildModelFromConfig() {
                 model_->Add<TensorUnaryModule>(TensorUnaryOp::Clip, min_val, max_val);
                 break;
             }
+
+            case gui::NodeType::TensorCompare: {
+                const TensorMaskOp op = ParseLayerTensorMaskOp(layer_cfg);
+                const float scalar = ParseLayerFloatParam(layer_cfg, "scalar", 0.0f);
+                model_->Add<TensorMaskModule>(op, scalar);
+                break;
+            }
+
+            case gui::NodeType::TensorLogicalMask:
+                model_->Add<TensorMaskModule>(TensorMaskOp::LogicalNot);
+                break;
 
             case gui::NodeType::TensorSum: {
                 const int dim = static_cast<int>(

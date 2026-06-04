@@ -1309,18 +1309,18 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::TensorCompare, NodeCategory::Analytics, "Tensor Compare", ICON_FA_CALCULATOR,
         {"tensor", "compare", "greater", "less", "equal", "mask"}, 0, false, "Compare tensors or tensor and scalar", "", "",
-        {{"A", PinType::Tensor, true, "Left input"}, {"B", PinType::Tensor, false, "Optional right input"}},
+        {{"Input", PinType::Tensor, true, "Input tensor"}},
         {{"Mask", PinType::Tensor, true, "Comparison mask"}},
-        {{"op", "enum", ">", "Comparison operator", {">", ">=", "<", "<=", "==", "!="}, ""},
-         {"scalar", "float", "0.0", "Scalar value when B is not connected", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        {{"op", "enum", ">", "Scalar comparison operator", {">", ">=", "<", "<=", "==", "!="}, ""},
+         {"scalar", "float", "0.0", "Scalar comparison value", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorLogicalMask, NodeCategory::Analytics, "Tensor Logical Mask", ICON_FA_CALCULATOR,
-        {"tensor", "logical", "mask", "and", "or", "not"}, 0, false, "Combine or invert tensor masks", "", "",
-        {{"A", PinType::Tensor, true, "Left mask"}, {"B", PinType::Tensor, false, "Optional right mask"}},
+        {"tensor", "logical", "mask", "not"}, 0, false, "Invert a tensor mask", "", "",
+        {{"Input", PinType::Tensor, true, "Input mask"}},
         {{"Mask", PinType::Tensor, true, "Logical mask"}},
-        {{"op", "enum", "and", "Logical operator", {"and", "or", "not"}, ""}},
-        NodeImplementationStatus::Template, 0});
+        {{"op", "enum", "not", "Logical operator", {"not"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Embedding, NodeCategory::Layers, "Embedding", ICON_FA_CUBES,
         {"embedding", "lookup"}, 0, false, "Embedding layer", "", "",

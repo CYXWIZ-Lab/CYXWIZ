@@ -64,6 +64,16 @@ enum class TensorShapeOp {
     IndexSelect
 };
 
+enum class TensorMaskOp {
+    CompareGreater,
+    CompareGreaterEqual,
+    CompareLess,
+    CompareLessEqual,
+    CompareEqual,
+    CompareNotEqual,
+    LogicalNot
+};
+
 /**
  * @brief A wrapper for any layer or activation that provides a uniform interface
  */
@@ -526,6 +536,25 @@ private:
     std::vector<size_t> padded_input_shape_;
     std::vector<size_t> output_shape_;
     size_t sample_pad_ = 0;
+};
+
+/**
+ * @brief Non-differentiable scalar compare/logical tensor mask module.
+ *
+ * This is intentionally single-input only. Multi-input mask/merge/linalg nodes
+ * need graph-runtime tensor fan-in before they can be executable layers.
+ */
+class CYXWIZ_API TensorMaskModule : public Module {
+public:
+    explicit TensorMaskModule(TensorMaskOp op, float scalar = 0.0f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    TensorMaskOp op_;
+    float scalar_;
 };
 
 /**

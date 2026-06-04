@@ -598,6 +598,18 @@ selected gradients. Compiler/analyzer inference, `ModelBuilder`,
 are updated. Tensor merge/multi-input, linalg, and mask/compare nodes
 remain template/deferred until they receive their own runtime contracts.
 
+**2026-06-04 update:** completed the bounded single-input tensor mask
+runtime contract. `TensorCompare` is now executable for scalar
+comparisons only (`>`, `>=`, `<`, `<=`, `==`, `!=` against the `scalar`
+parameter), and `TensorLogicalMask` is executable only for unary
+`op=not`. Both preserve tensor shape and use a zero-gradient backward
+contract because the mask boundary is non-differentiable. Compiler
+validation rejects saved graphs that still wire a second mask input, and
+metadata/new-node creation now exposes only the implemented single-input
+contract. Tensor merge/multi-input, linalg, and two-input mask operators
+remain deferred until graph runtime can carry multiple tensors into one
+model node.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

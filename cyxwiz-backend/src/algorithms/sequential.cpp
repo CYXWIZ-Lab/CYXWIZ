@@ -2045,6 +2045,77 @@ std::string TensorShapeModule::GetName() const {
 }
 
 // ============================================================================
+// TensorMaskModule Implementation
+// ============================================================================
+
+TensorMaskModule::TensorMaskModule(TensorMaskOp op, float scalar)
+    : op_(op),
+      scalar_(scalar) {}
+
+Tensor TensorMaskModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    Tensor output(input.Shape(), input.GetDataType());
+
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        const float value = input.At(i);
+        bool keep = false;
+        switch (op_) {
+            case TensorMaskOp::CompareGreater:
+                keep = value > scalar_;
+                break;
+            case TensorMaskOp::CompareGreaterEqual:
+                keep = value >= scalar_;
+                break;
+            case TensorMaskOp::CompareLess:
+                keep = value < scalar_;
+                break;
+            case TensorMaskOp::CompareLessEqual:
+                keep = value <= scalar_;
+                break;
+            case TensorMaskOp::CompareEqual:
+                keep = value == scalar_;
+                break;
+            case TensorMaskOp::CompareNotEqual:
+                keep = value != scalar_;
+                break;
+            case TensorMaskOp::LogicalNot:
+                keep = value == 0.0f;
+                break;
+            default:
+                throw std::runtime_error("TensorMaskModule: unsupported mask op");
+        }
+        output.Set(i, keep ? 1.0f : 0.0f);
+    }
+
+    return output;
+}
+
+Tensor TensorMaskModule::Backward(const Tensor& grad_output) {
+    return Tensor::Zeros(input_cache_.Shape(), grad_output.GetDataType());
+}
+
+std::string TensorMaskModule::GetName() const {
+    switch (op_) {
+        case TensorMaskOp::CompareGreater:
+            return "TensorCompareGreater";
+        case TensorMaskOp::CompareGreaterEqual:
+            return "TensorCompareGreaterEqual";
+        case TensorMaskOp::CompareLess:
+            return "TensorCompareLess";
+        case TensorMaskOp::CompareLessEqual:
+            return "TensorCompareLessEqual";
+        case TensorMaskOp::CompareEqual:
+            return "TensorCompareEqual";
+        case TensorMaskOp::CompareNotEqual:
+            return "TensorCompareNotEqual";
+        case TensorMaskOp::LogicalNot:
+            return "TensorLogicalNot";
+        default:
+            return "TensorMask";
+    }
+}
+
+// ============================================================================
 // SequentialModel Implementation
 // ============================================================================
 

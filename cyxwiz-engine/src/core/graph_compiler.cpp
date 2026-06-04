@@ -220,6 +220,24 @@ bool ContainsWhenFiltered(
     return node_ids.empty() || node_ids.count(node_id) > 0;
 }
 
+bool HasConnectedInputAfterFirst(const gui::MLNode& node,
+                                 const std::vector<gui::NodeLink>& links) {
+    if (node.inputs.size() <= 1) {
+        return false;
+    }
+    std::unordered_set<int> connected_input_pins;
+    connected_input_pins.reserve(links.size());
+    for (const auto& link : links) {
+        connected_input_pins.insert(link.to_pin);
+    }
+    for (size_t i = 1; i < node.inputs.size(); ++i) {
+        if (connected_input_pins.count(node.inputs[i].id) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool CheckedMultiplySize(size_t lhs, size_t rhs, size_t& out) {
     if (lhs != 0 && rhs > std::numeric_limits<size_t>::max() / lhs) {
         return false;
@@ -775,6 +793,40 @@ bool ResolveReductionTargetShape(gui::NodeType type,
     }
     return true;
 }
+
+bool ValidateTensorMaskParams(gui::NodeType type,
+                              const std::map<std::string, std::string>& params,
+                              std::string& error) {
+    if (type == gui::NodeType::TensorCompare) {
+        auto op_it = params.find("op");
+        const std::string op = op_it != params.end() ? op_it->second : ">";
+        if (op != ">" && op != ">=" && op != "<" &&
+            op != "<=" && op != "==" && op != "!=") {
+            error = "TensorCompare op must be one of >, >=, <, <=, ==, !=";
+            return false;
+        }
+
+        float scalar = 0.0f;
+        if (!ParseFloatParam(params, "scalar", 0.0f, scalar, error)) {
+            error = "TensorCompare " + error;
+            return false;
+        }
+        return true;
+    }
+
+    if (type == gui::NodeType::TensorLogicalMask) {
+        auto op_it = params.find("op");
+        const std::string op = op_it != params.end() ? op_it->second : "not";
+        if (op != "not") {
+            error = "TensorLogicalMask currently supports only op=not in the sequential runtime";
+            return false;
+        }
+        return true;
+    }
+
+    error = "Unsupported tensor mask operation";
+    return false;
+}
 } // anonymous namespace
 
 TrainingConfiguration GraphCompiler::Compile(
@@ -1235,6 +1287,20 @@ TrainingConfiguration GraphCompiler::Compile(
                 if (!ValidateTensorScalarMathParams(node->type,
                                                     layer.parameters,
                                                     error)) {
+                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                }
+                layer.output_shape = current_shape;
+            } else if (node->type == gui::NodeType::TensorCompare ||
+                       node->type == gui::NodeType::TensorLogicalMask) {
+                std::string error;
+                if (HasConnectedInputAfterFirst(*node, links)) {
+                    error = node->type == gui::NodeType::TensorCompare
+                        ? "TensorCompare currently supports only scalar comparison; disconnect input B"
+                        : "TensorLogicalMask currently supports only unary op=not; disconnect input B";
+                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                } else if (!ValidateTensorMaskParams(node->type,
+                                                     layer.parameters,
+                                                     error)) {
                     AddIssue(config, IssueLevel::Error, error, node->id, node->name);
                 }
                 layer.output_shape = current_shape;
@@ -1808,6 +1874,8 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorSign:
         case gui::NodeType::TensorPow:
         case gui::NodeType::TensorClip:
+        case gui::NodeType::TensorCompare:
+        case gui::NodeType::TensorLogicalMask:
         case gui::NodeType::TensorSum:
         case gui::NodeType::TensorMean:
         case gui::NodeType::TensorMax:
@@ -2366,6 +2434,8 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::TensorSign:
         case gui::NodeType::TensorPow:
         case gui::NodeType::TensorClip:
+        case gui::NodeType::TensorCompare:
+        case gui::NodeType::TensorLogicalMask:
             output_shape = input_shape;
             break;
 

@@ -83,6 +83,29 @@ void CheckUnaryModule(cyxwiz::TensorUnaryOp op,
     }
 }
 
+void CheckMaskModule(cyxwiz::TensorMaskOp op,
+                     const std::vector<float>& input_values,
+                     const std::vector<float>& expected_output,
+                     const std::string& name,
+                     float scalar = 0.0f) {
+    cyxwiz::Tensor input = MakeTensor({1, input_values.size()}, input_values);
+    cyxwiz::TensorMaskModule module(op, scalar);
+
+    cyxwiz::Tensor output = module.Forward(input);
+    CheckShape(output, {1, input_values.size()}, name + " forward should preserve shape");
+    for (size_t i = 0; i < expected_output.size(); ++i) {
+        CheckNear(output.At(0, i), expected_output[i], 1e-4f,
+                  name + " forward value mismatch");
+    }
+
+    cyxwiz::Tensor backward = module.Backward(cyxwiz::Tensor::Ones({1, input_values.size()}));
+    CheckShape(backward, {1, input_values.size()}, name + " backward should preserve shape");
+    for (size_t i = 0; i < expected_output.size(); ++i) {
+        CheckNear(backward.At(0, i), 0.0f, 1e-4f,
+                  name + " backward should be zero");
+    }
+}
+
 void CheckReductionModule(cyxwiz::TensorReductionOp op,
                           int dim,
                           bool keepdim,
@@ -233,6 +256,23 @@ int main() {
                          "TensorClip",
                          0.0f,
                          1.0f);
+
+        CheckMaskModule(cyxwiz::TensorMaskOp::CompareGreater,
+                        {-1.0f, 0.0f, 2.0f},
+                        {0.0f, 0.0f, 1.0f},
+                        "TensorCompareGreater",
+                        0.5f);
+
+        CheckMaskModule(cyxwiz::TensorMaskOp::CompareEqual,
+                        {-1.0f, 0.0f, 2.0f},
+                        {0.0f, 1.0f, 0.0f},
+                        "TensorCompareEqual",
+                        0.0f);
+
+        CheckMaskModule(cyxwiz::TensorMaskOp::LogicalNot,
+                        {0.0f, 1.0f, -2.0f},
+                        {1.0f, 0.0f, 0.0f},
+                        "TensorLogicalNot");
     }
 
     {
@@ -462,9 +502,25 @@ int main() {
         sign.input_shape = {2, 3, 2};
         sign.output_shape = {2, 3, 2};
 
+        cyxwiz::CompiledLayer compare;
+        compare.type = gui::NodeType::TensorCompare;
+        compare.node_id = 16;
+        compare.name = "TensorCompare";
+        compare.input_shape = {2, 3, 2};
+        compare.output_shape = {2, 3, 2};
+        compare.parameters = {{"op", ">"}, {"scalar", "0.5"}};
+
+        cyxwiz::CompiledLayer logical_not;
+        logical_not.type = gui::NodeType::TensorLogicalMask;
+        logical_not.node_id = 17;
+        logical_not.name = "TensorLogicalMask";
+        logical_not.input_shape = {2, 3, 2};
+        logical_not.output_shape = {2, 3, 2};
+        logical_not.parameters = {{"op", "not"}};
+
         cyxwiz::CompiledLayer max;
         max.type = gui::NodeType::TensorMax;
-        max.node_id = 16;
+        max.node_id = 18;
         max.name = "TensorMax";
         max.input_shape = {2, 3, 2};
         max.output_shape = {1};
@@ -472,7 +528,7 @@ int main() {
 
         cyxwiz::CompiledLayer min;
         min.type = gui::NodeType::TensorMin;
-        min.node_id = 17;
+        min.node_id = 19;
         min.name = "TensorMin";
         min.input_shape = {1};
         min.output_shape = {1};
@@ -480,7 +536,7 @@ int main() {
 
         cyxwiz::CompiledLayer mean;
         mean.type = gui::NodeType::TensorMean;
-        mean.node_id = 18;
+        mean.node_id = 20;
         mean.name = "TensorMean";
         mean.input_shape = {1};
         mean.output_shape = {1};
@@ -488,7 +544,7 @@ int main() {
 
         cyxwiz::CompiledLayer sum;
         sum.type = gui::NodeType::TensorSum;
-        sum.node_id = 19;
+        sum.node_id = 21;
         sum.name = "TensorSum";
         sum.input_shape = {1};
         sum.output_shape = {1};
@@ -496,7 +552,7 @@ int main() {
 
         cyxwiz::CompiledLayer prod;
         prod.type = gui::NodeType::TensorProd;
-        prod.node_id = 20;
+        prod.node_id = 22;
         prod.name = "TensorProd";
         prod.input_shape = {1};
         prod.output_shape = {1};
@@ -504,7 +560,7 @@ int main() {
 
         cyxwiz::CompiledLayer var;
         var.type = gui::NodeType::TensorVar;
-        var.node_id = 21;
+        var.node_id = 23;
         var.name = "TensorVar";
         var.input_shape = {1};
         var.output_shape = {1};
@@ -512,7 +568,7 @@ int main() {
 
         cyxwiz::CompiledLayer std;
         std.type = gui::NodeType::TensorStd;
-        std.node_id = 22;
+        std.node_id = 24;
         std.name = "TensorStd";
         std.input_shape = {1};
         std.output_shape = {1};
@@ -521,7 +577,8 @@ int main() {
         config.layers = {
             reshape, squeeze, unsqueeze, permute, view,
             broadcast, expand, index_select,
-            abs, exp, log, sqrt, pow, clip, sign, max, min,
+            abs, exp, log, sqrt, pow, clip, sign,
+            compare, logical_not, max, min,
             mean, sum, prod, var, std
         };
 
