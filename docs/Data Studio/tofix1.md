@@ -388,6 +388,8 @@ profiling baseline and only optimize after a real workload identifies a
 recurrent hotspot.
 
 **Status:** complete for current no-speculative-rewrite scope.
+Deferred LSTM AF optimization work has been moved to
+`docs/Data Studio/tofix16.md`.
 
 ### `num_workers` support is partial
 
@@ -418,7 +420,7 @@ Unsupported/reserved fields are now explicit in UI/logs:
 
 **Status:** complete for current explicit-contract scope. True async
 prefetch queues and pinned host-memory transfers remain deferred
-performance work.
+performance work and have been moved to `docs/Data Studio/tofix16.md`.
 
 ## Priority 6 - Tool-To-Node Migration
 
