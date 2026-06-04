@@ -50,7 +50,9 @@ enum class TensorUnaryOp {
 
 enum class TensorReductionOp {
     Sum,
-    Mean
+    Mean,
+    Max,
+    Min
 };
 
 /**
@@ -484,6 +486,7 @@ private:
     std::vector<size_t> original_shape_;
     std::vector<size_t> output_shape_;
     size_t reduced_count_ = 1;
+    Tensor output_cache_;
 };
 
 /**

@@ -1658,7 +1658,20 @@ Tensor TensorReductionModule::Forward(const Tensor& input) {
             reduced_count_ *= original_shape_[i];
         }
         for (int axis = static_cast<int>(sample_rank); axis >= 1; --axis) {
-            output = output.Sum(axis, true);
+            switch (op_) {
+                case TensorReductionOp::Sum:
+                case TensorReductionOp::Mean:
+                    output = output.Sum(axis, true);
+                    break;
+                case TensorReductionOp::Max:
+                    output = output.Max(axis, true);
+                    break;
+                case TensorReductionOp::Min:
+                    output = output.Min(axis, true);
+                    break;
+                default:
+                    throw std::runtime_error("TensorReductionModule: unsupported reduction op");
+            }
         }
         if (op_ == TensorReductionOp::Mean) {
             output = output / static_cast<float>(reduced_count_);
@@ -1667,6 +1680,7 @@ Tensor TensorReductionModule::Forward(const Tensor& input) {
             output = output.Reshape({original_shape_[0], 1});
         }
         output_shape_ = output.Shape();
+        output_cache_ = output.Clone();
         return output;
     }
 
@@ -1676,27 +1690,39 @@ Tensor TensorReductionModule::Forward(const Tensor& input) {
 
     const int full_dim = dim_ + 1;
     reduced_count_ = original_shape_[static_cast<size_t>(full_dim)];
-    output = op_ == TensorReductionOp::Sum
-        ? input.Sum(full_dim, keepdim_)
-        : input.Mean(full_dim, keepdim_);
+    switch (op_) {
+        case TensorReductionOp::Sum:
+            output = input.Sum(full_dim, keepdim_);
+            break;
+        case TensorReductionOp::Mean:
+            output = input.Mean(full_dim, keepdim_);
+            break;
+        case TensorReductionOp::Max:
+            output = input.Max(full_dim, keepdim_);
+            break;
+        case TensorReductionOp::Min:
+            output = input.Min(full_dim, keepdim_);
+            break;
+        default:
+            throw std::runtime_error("TensorReductionModule: unsupported reduction op");
+    }
     if (!keepdim_ && output.Shape().size() == 1) {
         output = output.Reshape({original_shape_[0], 1});
     }
 
     output_shape_ = output.Shape();
+    output_cache_ = output.Clone();
     return output;
 }
 
 Tensor TensorReductionModule::Backward(const Tensor& grad_output) {
     Tensor grad_input = Tensor::Zeros(original_shape_, grad_output.GetDataType());
-    const size_t sample_rank = original_shape_.size() - 1;
     const int full_dim = dim_ >= 0 ? dim_ + 1 : -1;
     const float scale = op_ == TensorReductionOp::Mean
         ? 1.0f / static_cast<float>(reduced_count_)
         : 1.0f;
 
-    for (size_t i = 0; i < grad_input.NumElements(); ++i) {
-        const std::vector<size_t> input_indices = UnravelIndex(i, original_shape_);
+    auto grad_index_for_input = [&](const std::vector<size_t>& input_indices) {
         std::vector<size_t> grad_indices;
 
         if (dim_ == -1) {
@@ -1722,11 +1748,39 @@ Tensor TensorReductionModule::Backward(const Tensor& grad_output) {
             }
         }
 
-        const size_t grad_index = RavelIndex(grad_indices, output_shape_);
-        grad_input.Set(i, grad_output.At(grad_index) * scale);
+        return RavelIndex(grad_indices, output_shape_);
+    };
+
+    std::vector<size_t> tie_counts(output_cache_.NumElements(), 0);
+    if (op_ == TensorReductionOp::Max || op_ == TensorReductionOp::Min) {
+        for (size_t i = 0; i < original_shape_.size(); ++i) {
+            if (original_shape_[i] == 0) {
+                throw std::runtime_error("TensorReductionModule: cannot reduce empty input");
+            }
+        }
+        for (size_t i = 0; i < input_cache_.NumElements(); ++i) {
+            const std::vector<size_t> input_indices = UnravelIndex(i, original_shape_);
+            const size_t grad_index = grad_index_for_input(input_indices);
+            if (input_cache_.At(i) == output_cache_.At(grad_index)) {
+                tie_counts[grad_index] += 1;
+            }
+        }
     }
 
-    (void)sample_rank;
+    for (size_t i = 0; i < grad_input.NumElements(); ++i) {
+        const std::vector<size_t> input_indices = UnravelIndex(i, original_shape_);
+        const size_t grad_index = grad_index_for_input(input_indices);
+        float value = grad_output.At(grad_index) * scale;
+        if (op_ == TensorReductionOp::Max || op_ == TensorReductionOp::Min) {
+            if (input_cache_.At(i) != output_cache_.At(grad_index)) {
+                value = 0.0f;
+            } else {
+                value /= static_cast<float>(tie_counts[grad_index]);
+            }
+        }
+        grad_input.Set(i, value);
+    }
+
     return grad_input;
 }
 
@@ -1736,6 +1790,10 @@ std::string TensorReductionModule::GetName() const {
             return "TensorSum";
         case TensorReductionOp::Mean:
             return "TensorMean";
+        case TensorReductionOp::Max:
+            return "TensorMax";
+        case TensorReductionOp::Min:
+            return "TensorMin";
         default:
             return "TensorReduction";
     }

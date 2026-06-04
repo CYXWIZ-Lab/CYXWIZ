@@ -332,6 +332,24 @@ bool TestExecutor::BuildModelFromConfig() {
                 break;
             }
 
+            case gui::NodeType::TensorMax: {
+                const int dim = static_cast<int>(
+                    ParseLayerFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim =
+                    ParseLayerBoolParam(layer_cfg, "keepdim", false);
+                model_->Add<TensorReductionModule>(TensorReductionOp::Max, dim, keepdim);
+                break;
+            }
+
+            case gui::NodeType::TensorMin: {
+                const int dim = static_cast<int>(
+                    ParseLayerFloatParam(layer_cfg, "dim", -1.0f));
+                const bool keepdim =
+                    ParseLayerBoolParam(layer_cfg, "keepdim", false);
+                model_->Add<TensorReductionModule>(TensorReductionOp::Min, dim, keepdim);
+                break;
+            }
+
             case gui::NodeType::Output: {
                 size_t out_features = config_.output_size;
                 model_->Add<LinearModule>(current_input_size, out_features, true);

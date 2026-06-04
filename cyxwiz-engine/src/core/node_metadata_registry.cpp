@@ -1194,7 +1194,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Reduced tensor"}},
         {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
          {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorMin, NodeCategory::Analytics, "Tensor Min", ICON_FA_CALCULATOR,
         {"tensor", "min", "minimum", "reduce", "reduction"}, 0, false, "Minimum tensor values", "", "",
@@ -1202,7 +1202,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Reduced tensor"}},
         {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
          {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorProd, NodeCategory::Analytics, "Tensor Prod", ICON_FA_CALCULATOR,
         {"tensor", "prod", "product", "reduce", "reduction"}, 0, false, "Product of tensor values", "", "",

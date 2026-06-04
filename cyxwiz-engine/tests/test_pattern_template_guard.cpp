@@ -67,7 +67,7 @@ int main() {
     auto& library = gui::patterns::PatternLibrary::Instance();
     Check(library.LoadPatternFromFile(WritePattern("guard_dense", "Dense").string()),
           "failed to load implemented-node pattern");
-    Check(library.LoadPatternFromFile(WritePattern("guard_tensor_max", "TensorMax").string()),
+    Check(library.LoadPatternFromFile(WritePattern("guard_tensor_prod", "TensorProd").string()),
           "failed to load template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_typo", "DefinitelyNotANode").string()),
           "failed to load unknown-node pattern");
@@ -92,7 +92,7 @@ int main() {
     nodes.clear();
     links.clear();
     Check(!library.InstantiatePatternWithCreator(
-              "guard_tensor_max", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
+              "guard_tensor_prod", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "template node pattern should be rejected");
     Check(nodes.empty() && links.empty(), "template rejection should leave no partial graph");
     Check(creator_calls == 1, "template rejection should not call node creator");
@@ -107,7 +107,7 @@ int main() {
 
     int next_pin_id = 2000;
     Check(!library.InstantiatePattern(
-              "guard_tensor_max", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
+              "guard_tensor_prod", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
           "legacy instantiation should also reject template nodes");
 
     std::cout << "Pattern template guard passed\n";

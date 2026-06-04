@@ -554,7 +554,9 @@ bool ResolveReductionTargetShape(gui::NodeType type,
                                  std::vector<size_t>& target_shape,
                                  std::string& error) {
     if (type != gui::NodeType::TensorSum &&
-        type != gui::NodeType::TensorMean) {
+        type != gui::NodeType::TensorMean &&
+        type != gui::NodeType::TensorMax &&
+        type != gui::NodeType::TensorMin) {
         error = "Unsupported tensor reduction";
         return false;
     }
@@ -1057,7 +1059,9 @@ TrainingConfiguration GraphCompiler::Compile(
                 }
                 layer.output_shape = current_shape;
             } else if (node->type == gui::NodeType::TensorSum ||
-                       node->type == gui::NodeType::TensorMean) {
+                       node->type == gui::NodeType::TensorMean ||
+                       node->type == gui::NodeType::TensorMax ||
+                       node->type == gui::NodeType::TensorMin) {
                 std::string error;
                 if (!ResolveReductionTargetShape(node->type,
                                                  layer.parameters,
@@ -1620,6 +1624,8 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorClip:
         case gui::NodeType::TensorSum:
         case gui::NodeType::TensorMean:
+        case gui::NodeType::TensorMax:
+        case gui::NodeType::TensorMin:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::ConvTranspose2D:
@@ -2131,7 +2137,9 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         }
 
         case gui::NodeType::TensorSum:
-        case gui::NodeType::TensorMean: {
+        case gui::NodeType::TensorMean:
+        case gui::NodeType::TensorMax:
+        case gui::NodeType::TensorMin: {
             std::string error;
             if (!ResolveReductionTargetShape(layer.type,
                                              layer.parameters,

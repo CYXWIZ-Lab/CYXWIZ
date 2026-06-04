@@ -562,9 +562,19 @@ scalar-per-sample results so downstream layers keep a feature axis.
 Backward expands gradients to the original input shape; `TensorMean`
 scales by the reduced element count. Compiler/analyzer shape inference,
 `ModelBuilder`, `TestExecutor`, smoke-run detection, metadata, and
-`test_tensor_reshape_runtime_contract` are updated. `TensorMax`,
-`TensorMin`, `TensorProd`, `TensorVar`, and `TensorStd` remain deferred
-until their gradient policy is handled explicitly.
+`test_tensor_reshape_runtime_contract` are updated. At that point
+`TensorMax`, `TensorMin`, `TensorProd`, `TensorVar`, and `TensorStd`
+remained deferred until their gradient policy was handled explicitly.
+
+**2026-06-04 update:** added the bounded extrema reduction runtime
+contract for `TensorMax` and `TensorMin`. They use the same
+batch-preserving `dim` and `keepdim` semantics as
+`TensorSum`/`TensorMean`, cache forward outputs for backward, and split
+gradient evenly across equal extrema so ties do not multiply upstream
+gradients. Compiler/analyzer inference, `ModelBuilder`, `TestExecutor`,
+smoke-run detection, metadata, and runtime contract tests are updated.
+`TensorProd`, `TensorVar`, and `TensorStd` remain deferred because their
+gradient and numerical policies need their own focused contract.
 
 ## Priority 7 - Future Architecture
 

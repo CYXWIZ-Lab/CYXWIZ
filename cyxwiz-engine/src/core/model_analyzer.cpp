@@ -110,6 +110,8 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::TensorClip: return "TensorClip";
         case gui::NodeType::TensorSum: return "TensorSum";
         case gui::NodeType::TensorMean: return "TensorMean";
+        case gui::NodeType::TensorMax: return "TensorMax";
+        case gui::NodeType::TensorMin: return "TensorMin";
         case gui::NodeType::Reshape: return "Reshape";
         case gui::NodeType::Permute: return "Permute";
         case gui::NodeType::Squeeze: return "Squeeze";
@@ -476,6 +478,8 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorClip:
         case gui::NodeType::TensorSum:
         case gui::NodeType::TensorMean:
+        case gui::NodeType::TensorMax:
+        case gui::NodeType::TensorMin:
             return true;
         default:
             return false;
@@ -754,7 +758,9 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
             // Shape unchanged
             return input_shape;
         case gui::NodeType::TensorSum:
-        case gui::NodeType::TensorMean: {
+        case gui::NodeType::TensorMean:
+        case gui::NodeType::TensorMax:
+        case gui::NodeType::TensorMin: {
             const int dim = GetIntParam(node, "dim", -1);
             const bool keepdim = GetBoolParam(node, "keepdim", false);
             if (dim == -1) {

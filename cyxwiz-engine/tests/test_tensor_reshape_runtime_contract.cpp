@@ -209,6 +209,24 @@ int main() {
                               1.0f / 6.0f, 1.0f / 6.0f, 1.0f / 6.0f},
                              "TensorMeanAll");
 
+        CheckReductionModule(cyxwiz::TensorReductionOp::Max,
+                             -1,
+                             false,
+                             {2, 1},
+                             {5.0f, 11.0f},
+                             {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+                              0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+                             "TensorMaxAll");
+
+        CheckReductionModule(cyxwiz::TensorReductionOp::Min,
+                             -1,
+                             false,
+                             {2, 1},
+                             {0.0f, 6.0f},
+                             {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+                             "TensorMinAll");
+
         CheckReductionModule(cyxwiz::TensorReductionOp::Sum,
                              1,
                              false,
@@ -217,6 +235,34 @@ int main() {
                              {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
                               1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
                              "TensorSumDim");
+
+        CheckReductionModule(cyxwiz::TensorReductionOp::Max,
+                             1,
+                             false,
+                             {2, 2},
+                             {2.0f, 5.0f, 8.0f, 11.0f},
+                             {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+                              0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+                             "TensorMaxDim");
+
+        cyxwiz::Tensor tied = MakeTensor({1, 4}, {2.0f, 2.0f, 1.0f, 0.0f});
+        cyxwiz::TensorReductionModule tied_max(cyxwiz::TensorReductionOp::Max,
+                                               -1,
+                                               false);
+        cyxwiz::Tensor tied_output = tied_max.Forward(tied);
+        CheckShape(tied_output, {1, 1}, "TensorMax tied forward shape mismatch");
+        CheckNear(tied_output.At(0), 2.0f, 1e-4f,
+                  "TensorMax tied forward value mismatch");
+        cyxwiz::Tensor tied_backward = tied_max.Backward(cyxwiz::Tensor::Ones({1, 1}));
+        CheckShape(tied_backward, {1, 4}, "TensorMax tied backward shape mismatch");
+        CheckNear(tied_backward.At(0), 0.5f, 1e-4f,
+                  "TensorMax tied backward first value mismatch");
+        CheckNear(tied_backward.At(1), 0.5f, 1e-4f,
+                  "TensorMax tied backward second value mismatch");
+        CheckNear(tied_backward.At(2), 0.0f, 1e-4f,
+                  "TensorMax tied backward non-max value mismatch");
+        CheckNear(tied_backward.At(3), 0.0f, 1e-4f,
+                  "TensorMax tied backward non-max value mismatch");
     }
 
     {
@@ -313,17 +359,33 @@ int main() {
         sign.input_shape = {3, 2};
         sign.output_shape = {3, 2};
 
+        cyxwiz::CompiledLayer max;
+        max.type = gui::NodeType::TensorMax;
+        max.node_id = 13;
+        max.name = "TensorMax";
+        max.input_shape = {3, 2};
+        max.output_shape = {1};
+        max.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
+
+        cyxwiz::CompiledLayer min;
+        min.type = gui::NodeType::TensorMin;
+        min.node_id = 14;
+        min.name = "TensorMin";
+        min.input_shape = {1};
+        min.output_shape = {1};
+        min.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
+
         cyxwiz::CompiledLayer mean;
         mean.type = gui::NodeType::TensorMean;
-        mean.node_id = 13;
+        mean.node_id = 15;
         mean.name = "TensorMean";
-        mean.input_shape = {3, 2};
+        mean.input_shape = {1};
         mean.output_shape = {1};
         mean.parameters = {{"dim", "-1"}, {"keepdim", "false"}};
 
         cyxwiz::CompiledLayer sum;
         sum.type = gui::NodeType::TensorSum;
-        sum.node_id = 14;
+        sum.node_id = 16;
         sum.name = "TensorSum";
         sum.input_shape = {1};
         sum.output_shape = {1};
@@ -331,7 +393,7 @@ int main() {
 
         config.layers = {
             reshape, squeeze, unsqueeze, permute, view,
-            abs, exp, log, sqrt, pow, clip, sign, mean, sum
+            abs, exp, log, sqrt, pow, clip, sign, max, min, mean, sum
         };
 
         cyxwiz::BuiltModel built = cyxwiz::BuildSequentialFromConfig(config);
