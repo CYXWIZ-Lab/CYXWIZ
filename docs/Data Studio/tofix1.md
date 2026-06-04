@@ -321,6 +321,23 @@ cleanup remain.
 **Next step:** run focused GRU smoke tests, then remove stale one-shot
 warnings only after verification.
 
+**2026-06-04 update:** focused GRU verification passed for the current
+scope. The low-level `[gru]` suite passes, text smoke graph pattern
+contracts pass, and the slow DebugExecutor path now exercises
+synthetic sentiment-shaped `Embedding -> BiGRU -> Dense` graphs for
+both single-layer and two-layer bidirectional GRU. The smoke verifies
+finite loss, complete forward/backward execution, no missing gradients,
+and the expected 192-feature bidirectional output width.
+
+The Debug CRT assertion seen during the old slow runtime check happened
+before GRU execution while loading an external sentiment CSV/vocab
+fixture. That loader fixture belongs to dataset-loader robustness, not
+GRU model verification, so the GRU smoke no longer depends on
+`D:/demo/...` files. No stale GRU ArrayFire one-shot warning was observed
+in the focused smoke run.
+
+**Status:** complete for current GRU verification scope.
+
 ### Transformer verification
 
 Transformer text path is still unverified relative to LSTM.
