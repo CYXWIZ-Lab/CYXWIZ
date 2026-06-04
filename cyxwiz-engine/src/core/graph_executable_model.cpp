@@ -29,6 +29,17 @@ void SetReason(std::string* reason, const std::string& value) {
     }
 }
 
+int OutputPinForNode(const CompiledGraphPlan& plan, int node_id) {
+    for (const auto& edge : plan.edges) {
+        if (edge.from_node_id == node_id &&
+            !IsLabelEdge(plan, edge) &&
+            !IsLossToOptimizerEdge(plan, edge)) {
+            return edge.from_pin_id;
+        }
+    }
+    return -1;
+}
+
 } // namespace
 
 GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> model,
@@ -39,6 +50,10 @@ GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> mode
       layer_node_ids_(std::move(layer_node_ids)) {
     if (!model_) {
         throw std::invalid_argument("GraphExecutableModel requires a model");
+    }
+    if (model_->Size() != layer_node_ids_.size()) {
+        throw std::invalid_argument(
+            "GraphExecutableModel module count does not match layer node ids");
     }
 
     std::string reason;
@@ -132,11 +147,40 @@ bool GraphExecutableModel::CanRunLinearPlan(const CompiledGraphPlan& plan,
 }
 
 Tensor GraphExecutableModel::Forward(const Tensor& input) {
-    return model_->Forward(input);
+    tensor_cache_.clear();
+    CacheTensor(plan_.data_node_id, plan_.data_pin_id, input);
+
+    Tensor current = input.Clone();
+    for (size_t i = 0; i < layer_node_ids_.size(); ++i) {
+        Module* module = model_->GetModule(i);
+        if (!module) {
+            throw std::runtime_error("GraphExecutableModel missing module for node " +
+                                     std::to_string(layer_node_ids_[i]));
+        }
+
+        current = module->Forward(current);
+
+        const int output_pin_id = OutputPinForNode(plan_, layer_node_ids_[i]);
+        if (output_pin_id >= 0) {
+            CacheTensor(layer_node_ids_[i], output_pin_id, current);
+        }
+    }
+
+    CacheTensor(plan_.loss_node_id, plan_.prediction_pin_id, current);
+    return current;
 }
 
 Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
-    return model_->Backward(grad_output);
+    Tensor grad = grad_output.Clone();
+    for (int i = static_cast<int>(layer_node_ids_.size()) - 1; i >= 0; --i) {
+        Module* module = model_->GetModule(static_cast<size_t>(i));
+        if (!module) {
+            throw std::runtime_error("GraphExecutableModel missing module for node " +
+                                     std::to_string(layer_node_ids_[i]));
+        }
+        grad = module->Backward(grad);
+    }
+    return grad;
 }
 
 void GraphExecutableModel::SetTraining(bool training) {
@@ -157,6 +201,18 @@ std::map<std::string, Tensor> GraphExecutableModel::GetGradients() {
 
 void GraphExecutableModel::UpdateParameters(Optimizer* optimizer) {
     model_->UpdateParameters(optimizer);
+}
+
+const Tensor* GraphExecutableModel::FindCachedTensor(int node_id, int pin_id) const {
+    const auto it = tensor_cache_.find({node_id, pin_id});
+    return it != tensor_cache_.end() ? &it->second : nullptr;
+}
+
+void GraphExecutableModel::CacheTensor(int node_id, int pin_id, const Tensor& tensor) {
+    if (node_id < 0 || pin_id < 0) {
+        return;
+    }
+    tensor_cache_.insert_or_assign({node_id, pin_id}, tensor.Clone());
 }
 
 } // namespace cyxwiz

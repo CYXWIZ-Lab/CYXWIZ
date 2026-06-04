@@ -651,6 +651,15 @@ executable test proving forward/backward parity for `TensorAbs ->
 TensorPow`, preserving layer node ids, and rejecting fan-in or missing
 plan-node records.
 
+**2026-06-04 update:** moved the opt-in graph executable one step closer
+to real graph runtime. `GraphExecutableModel` now drives the selected
+linear layer chain itself through backend modules and caches forward
+tensors by `(node_id, pin_id)` for Data output pins, layer output pins,
+and the Loss prediction input pin. Backward also walks the graph layer
+order in reverse instead of delegating to `SequentialModel::Backward`.
+The parity test now verifies cached tensor slots as well as output and
+gradient parity. Multi-input/fan-in plans are still rejected.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

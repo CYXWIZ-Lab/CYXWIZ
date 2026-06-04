@@ -5,8 +5,10 @@
 
 #include <cyxwiz/sequential.h>
 
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -15,9 +17,9 @@ namespace cyxwiz {
  * Parity-only graph executable.
  *
  * This is the first executable consumer of CompiledGraphPlan. It accepts only
- * a single tensor chain from Data to Loss and delegates module execution to the
- * existing SequentialModel backend. Fan-in nodes remain blocked until this
- * class grows real node/pin tensor storage.
+ * a single tensor chain from Data to Loss and executes existing backend
+ * modules by compiled graph node order. Fan-in nodes remain blocked until this
+ * class grows multi-input node evaluation.
  */
 class GraphExecutableModel final : public IExecutableModel {
 public:
@@ -40,11 +42,15 @@ public:
 
     const CompiledGraphPlan& Plan() const { return plan_; }
     const std::vector<int>& LayerNodeIds() const { return layer_node_ids_; }
+    const Tensor* FindCachedTensor(int node_id, int pin_id) const;
 
 private:
+    void CacheTensor(int node_id, int pin_id, const Tensor& tensor);
+
     std::unique_ptr<SequentialModel> model_;
     CompiledGraphPlan plan_;
     std::vector<int> layer_node_ids_;
+    std::map<std::pair<int, int>, Tensor> tensor_cache_;
 };
 
 } // namespace cyxwiz

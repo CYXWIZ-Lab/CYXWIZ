@@ -158,6 +158,27 @@ int main() {
     CheckNear(graph_output.At(0, 2), 16.0f, 1e-4f,
               "graph forward should preserve final value");
 
+    const cyxwiz::Tensor* data_cached = graph_model->FindCachedTensor(1, 101);
+    Check(data_cached != nullptr, "graph executable should cache data output pin");
+    CheckNear(data_cached->At(0, 0), -2.0f, 1e-4f,
+              "data cache should preserve original input");
+
+    const cyxwiz::Tensor* abs_cached = graph_model->FindCachedTensor(2, 202);
+    Check(abs_cached != nullptr, "graph executable should cache first layer output pin");
+    CheckNear(abs_cached->At(0, 0), 2.0f, 1e-4f,
+              "first layer cache should hold TensorAbs output");
+
+    const cyxwiz::Tensor* pow_cached = graph_model->FindCachedTensor(3, 302);
+    Check(pow_cached != nullptr, "graph executable should cache second layer output pin");
+    CheckNear(pow_cached->At(0, 2), 16.0f, 1e-4f,
+              "second layer cache should hold TensorPow output");
+
+    const cyxwiz::Tensor* prediction_cached = graph_model->FindCachedTensor(4, 401);
+    Check(prediction_cached != nullptr,
+          "graph executable should cache loss prediction input pin");
+    CheckTensorNear(*prediction_cached, graph_output,
+                    "prediction input cache should match model output");
+
     cyxwiz::Tensor grad = cyxwiz::Tensor::Ones({1, 3});
     cyxwiz::Tensor sequential_backward = sequential.model->Backward(grad);
     cyxwiz::Tensor graph_backward = graph.model->Backward(grad);
