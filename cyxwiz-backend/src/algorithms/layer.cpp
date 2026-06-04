@@ -490,8 +490,10 @@ Tensor DenseLayer::Forward(const Tensor& input) {
 
         if (use_bias_) {
             af::array b = TensorToAf(bias_);
-            // Broadcast bias across batch dimension
-            output = output + af::tile(b, static_cast<unsigned int>(x.dims(0)));
+            // Broadcast row bias across the batch dimension. `output` is
+            // semantic row-major [batch, out_features].
+            output = output + af::tile(af::transpose(b),
+                                       static_cast<unsigned int>(output.dims(0)));
         }
 
         return AfToTensor(output);
@@ -4545,10 +4547,12 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
         af::array attn_weights = exp_scores / af::tile(sum_exp, 1, seq_len_kv, 1, 1);
 
         // Cache attention weights for backward and visualization
-        cached_attn_weights_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(num_heads_),
-                                        static_cast<size_t>(seq_len_q), static_cast<size_t>(seq_len_kv)});
-        af::array attn_reordered = af::reorder(attn_weights, 0, 1, 3, 2);
-        attn_reordered.host(cached_attn_weights_.Data());
+        cached_attn_weights_ = Tensor(std::vector<size_t>{
+            static_cast<size_t>(seq_len_q),
+            static_cast<size_t>(seq_len_kv),
+            static_cast<size_t>(batch_size),
+            static_cast<size_t>(num_heads_)});
+        attn_weights.host(cached_attn_weights_.Data());
 
         // Apply dropout if training
         if (training_ && dropout_ > 0.0f) {
@@ -4663,7 +4667,6 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
         // Load cached attention weights
         af::array attn_weights(af::dim4(seq_len_q, seq_len_kv, batch_size, num_heads_),
                                cached_attn_weights_.Data<float>());
-        attn_weights = af::reorder(attn_weights, 0, 1, 3, 2);  // Reorder to match
 
         // Gradient through attention
         af::array grad_Q = af::constant(0.0f, Q.dims());
@@ -4683,8 +4686,7 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
                 grad_V(af::span, af::span, b, h) = dV;
 
                 // Gradient w.r.t. attention weights
-                af::array grad_attn = af::matmul(v_bh, af::transpose(gc_bh));
-                grad_attn = af::transpose(grad_attn);  // [seq_q, seq_kv]
+                af::array grad_attn = af::matmul(af::transpose(gc_bh), v_bh);
 
                 // Softmax backward: d_scores = attn * (d_attn - sum(d_attn * attn))
                 af::array sum_grad = af::sum(grad_attn * a_bh, 1);
@@ -4827,6 +4829,28 @@ void MultiHeadAttentionLayer::SetParameters(const std::map<std::string, Tensor>&
 // TransformerEncoderLayer Implementation
 // ============================================================================
 
+namespace {
+
+Tensor FlattenTransformerSequenceForDense(const Tensor& input) {
+    const auto& shape = input.Shape();
+    if (shape.size() != 3) {
+        return input;
+    }
+    return input.Reshape({shape[0] * shape[1], shape[2]});
+}
+
+Tensor RestoreTransformerSequenceFromDense(const Tensor& input,
+                                           size_t batch,
+                                           size_t seq_len) {
+    const auto& shape = input.Shape();
+    if (shape.size() != 2) {
+        return input;
+    }
+    return input.Reshape({batch, seq_len, shape[1]});
+}
+
+} // namespace
+
 TransformerEncoderLayer::TransformerEncoderLayer(int d_model, int nhead,
                                                    int dim_feedforward, float dropout,
                                                    bool norm_first)
@@ -4871,7 +4895,8 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
 
         // FFN
         Tensor normed2 = norm2_->Forward(x);
-        Tensor ffn_out = linear1_->Forward(normed2);
+        Tensor ffn_out = linear1_->Forward(
+            FlattenTransformerSequenceForDense(normed2));
 
         // ReLU activation
         float* ffn_data = ffn_out.Data<float>();
@@ -4882,6 +4907,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
         cached_ffn_mid_ = ffn_out;
 
         ffn_out = linear2_->Forward(ffn_out);
+        ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
         ffn_out = dropout2_->Forward(ffn_out);
         cached_residual2_ = x;
 
@@ -4917,7 +4943,8 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
         cached_attn_output_ = x;
 
         // FFN
-        Tensor ffn_out = linear1_->Forward(x);
+        Tensor ffn_out = linear1_->Forward(
+            FlattenTransformerSequenceForDense(x));
 
         // ReLU activation
         float* ffn_data = ffn_out.Data<float>();
@@ -4928,6 +4955,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
         cached_ffn_mid_ = ffn_out;
 
         ffn_out = linear2_->Forward(ffn_out);
+        ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
         ffn_out = dropout2_->Forward(ffn_out);
         cached_residual2_ = x;
 
@@ -4954,6 +4982,10 @@ Tensor TransformerEncoderLayer::Backward(const Tensor& grad_output) {
 
     // FFN backward
     Tensor grad_ffn = dropout2_->Backward(grad);
+    const auto& grad_shape = grad_output.Shape();
+    if (grad_shape.size() == 3) {
+        grad_ffn = FlattenTransformerSequenceForDense(grad_ffn);
+    }
     grad_ffn = linear2_->Backward(grad_ffn);
 
     // ReLU backward
@@ -4967,6 +4999,10 @@ Tensor TransformerEncoderLayer::Backward(const Tensor& grad_output) {
     }
 
     grad_ffn = linear1_->Backward(grad_ffn);
+    if (grad_shape.size() == 3) {
+        grad_ffn = RestoreTransformerSequenceFromDense(
+            grad_ffn, grad_shape[0], grad_shape[1]);
+    }
 
     if (norm_first_) {
         grad_ffn = norm2_->Backward(grad_ffn);

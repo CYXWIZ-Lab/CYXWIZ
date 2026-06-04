@@ -1,0 +1,250 @@
+{
+  "id": "mental_health_sentiment_transformer_mini",
+  "name": "Sentiment Transformer Mini",
+  "description": "Tiny TransformerEncoder text smoke test. This graph is intentionally small so runtime debug can verify the text Transformer path without depending on a large training run: tokenized text feeds Embedding -> TransformerEncoder -> Flatten -> Dense.",
+  "category": "Training Pipeline",
+  "tags": [
+    "text",
+    "sentiment",
+    "transformer",
+    "smoke-test",
+    "classification"
+  ],
+  "parameters": [
+    {
+      "name": "batch_size",
+      "type": "int",
+      "default_value": "16",
+      "description": "Training batch size",
+      "min_value": "1",
+      "max_value": "128"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.001",
+      "description": "Adam learning rate",
+      "min_value": "0.00001",
+      "max_value": "0.01"
+    },
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "2",
+      "description": "Number of training epochs",
+      "min_value": "1",
+      "max_value": "20"
+    },
+    {
+      "name": "max_length",
+      "type": "int",
+      "default_value": "8",
+      "description": "Max tokens per statement",
+      "min_value": "4",
+      "max_value": "128"
+    },
+    {
+      "name": "embedding_dim",
+      "type": "int",
+      "default_value": "8",
+      "description": "Token embedding vector size and Transformer d_model",
+      "min_value": "4",
+      "max_value": "128"
+    },
+    {
+      "name": "num_heads",
+      "type": "int",
+      "default_value": "2",
+      "description": "Transformer attention heads",
+      "min_value": "1",
+      "max_value": "8"
+    },
+    {
+      "name": "ff_dim",
+      "type": "int",
+      "default_value": "16",
+      "description": "Transformer feed-forward width",
+      "min_value": "8",
+      "max_value": "512"
+    },
+    {
+      "name": "vocab_size",
+      "type": "int",
+      "default_value": "128",
+      "description": "Small vocabulary cap for smoke verification",
+      "min_value": "32",
+      "max_value": "10000"
+    },
+    {
+      "name": "num_classes",
+      "type": "int",
+      "default_value": "3",
+      "description": "Small class count for runtime debug smoke",
+      "min_value": "2",
+      "max_value": "32"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {
+        "id": "data_input",
+        "type": "DataInput",
+        "name": "Data Input",
+        "pos": [0, 300],
+        "params": {
+          "source_type": "file",
+          "file_category": "text",
+          "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+          "text_column": "statement",
+          "text_label_column": "status",
+          "text_tokenizer_type": "1",
+          "text_max_length": "$max_length",
+          "text_lowercase": "true",
+          "text_min_freq": "2",
+          "text_max_vocab_size": "$vocab_size"
+        }
+      },
+      {
+        "id": "text_tokenizer",
+        "type": "TextTokenizer",
+        "name": "Tokenizer",
+        "pos": [250, 300],
+        "params": {
+          "tokenizer_type": "1",
+          "max_length": "$max_length",
+          "lowercase": "true",
+          "min_freq": "2",
+          "max_vocab_size": "$vocab_size",
+          "text_col": "statement",
+          "label_col": "status",
+          "min_word_freq": "2"
+        }
+      },
+      {
+        "id": "text_vocab",
+        "type": "TextVocabulary",
+        "name": "Vocabulary",
+        "pos": [500, 300],
+        "params": {
+          "min_freq": "2",
+          "max_vocab_size": "$vocab_size"
+        }
+      },
+      {
+        "id": "text_padding",
+        "type": "TextPadding",
+        "name": "Padding",
+        "pos": [750, 300],
+        "params": {
+          "max_length": "$max_length",
+          "pad_value": "0"
+        }
+      },
+      {
+        "id": "data_split",
+        "type": "DataSplit",
+        "name": "Split",
+        "pos": [1000, 300],
+        "params": {
+          "train_ratio": "0.8",
+          "val_ratio": "0.1",
+          "test_ratio": "0.1",
+          "stratified": "true",
+          "seed": "42"
+        }
+      },
+      {
+        "id": "data_loader",
+        "type": "DataLoader",
+        "name": "DataLoader",
+        "pos": [1250, 300],
+        "params": {
+          "batch_size": "$batch_size",
+          "epochs": "$epochs",
+          "shuffle": "true",
+          "seed": "42",
+          "validation_freq": "1"
+        }
+      },
+      {
+        "id": "embedding",
+        "type": "Embedding",
+        "name": "Embedding",
+        "pos": [1500, 300],
+        "params": {
+          "num_embeddings": "$vocab_size",
+          "embedding_dim": "$embedding_dim",
+          "padding_idx": "0"
+        }
+      },
+      {
+        "id": "encoder",
+        "type": "TransformerEncoder",
+        "name": "Transformer Encoder",
+        "pos": [1750, 300],
+        "params": {
+          "d_model": "$embedding_dim",
+          "num_heads": "$num_heads",
+          "ff_dim": "$ff_dim",
+          "dropout": "0.0"
+        }
+      },
+      {
+        "id": "flatten",
+        "type": "Flatten",
+        "name": "Flatten",
+        "pos": [2000, 300]
+      },
+      {
+        "id": "fc_out",
+        "type": "Dense",
+        "name": "Dense N",
+        "pos": [2250, 300],
+        "params": {
+          "units": "$num_classes"
+        }
+      },
+      {
+        "id": "loss",
+        "type": "CrossEntropyLoss",
+        "name": "CrossEntropy",
+        "pos": [2500, 300]
+      },
+      {
+        "id": "optimizer",
+        "type": "Adam",
+        "name": "Adam",
+        "pos": [2750, 300],
+        "params": {
+          "learning_rate": "$learning_rate"
+        }
+      },
+      {
+        "id": "output",
+        "type": "Output",
+        "name": "Output",
+        "pos": [3000, 300],
+        "params": {
+          "classes": "$num_classes"
+        }
+      }
+    ],
+    "links": [
+      {"from": "data_input", "to": "text_tokenizer", "from_pin": 0, "to_pin": 0},
+      {"from": "text_tokenizer", "to": "text_vocab", "from_pin": 0, "to_pin": 0},
+      {"from": "text_vocab", "to": "text_padding", "from_pin": 0, "to_pin": 0},
+      {"from": "text_padding", "to": "data_split", "from_pin": 0, "to_pin": 0},
+      {"from": "data_input", "to": "data_split", "from_pin": 1, "to_pin": 1},
+      {"from": "data_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_split", "to": "data_loader", "from_pin": 1, "to_pin": 1},
+      {"from": "data_loader", "to": "embedding", "from_pin": 0, "to_pin": 0},
+      {"from": "embedding", "to": "encoder", "from_pin": 0, "to_pin": 0},
+      {"from": "encoder", "to": "flatten", "from_pin": 0, "to_pin": 0},
+      {"from": "flatten", "to": "fc_out", "from_pin": 0, "to_pin": 0},
+      {"from": "fc_out", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
+    ]
+  }
+}

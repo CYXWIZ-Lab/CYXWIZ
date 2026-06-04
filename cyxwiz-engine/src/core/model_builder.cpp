@@ -5,6 +5,44 @@ namespace cyxwiz {
 
 namespace {
 
+size_t ParseSizeParam(const CompiledLayer& layer,
+                      const std::string& key,
+                      size_t fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    try {
+        return static_cast<size_t>(std::stoul(it->second));
+    } catch (...) {
+        return fallback;
+    }
+}
+
+float ParseFloatParam(const CompiledLayer& layer,
+                      const std::string& key,
+                      float fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    try {
+        return std::stof(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+bool ParseBoolParam(const CompiledLayer& layer,
+                    const std::string& key,
+                    bool fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    return it->second == "true" || it->second == "1";
+}
+
 // Populate `model` with modules per config.layers. Returns false if
 // config produced zero layers. Logging is identical to the pre-extraction
 // path so existing training regression tests still match on log output.
@@ -13,6 +51,7 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
 
     // Track input size for each layer
     size_t current_input_size = config.input_size;
+    size_t current_sequence_length = config.input_size > 0 ? config.input_size : 1;
 
     for (size_t i = 0; i < config.layers.size(); ++i) {
         const auto& layer_cfg = config.layers[i];
@@ -55,20 +94,23 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 // [batch, seq_len, embedding_dim].
                 //
                 // Lookahead: if the next layer is a recurrent layer
-                // (LSTM / GRU / RNN), keep current_input_size =
-                // embedding_dim because the recurrent layer's
+                // (LSTM / GRU / RNN) or TransformerEncoder, keep
+                // current_input_size = embedding_dim because the sequence
+                // layer's
                 // `input_size` is the per-timestep feature count, not
                 // the flattened sequence length. Otherwise collapse
                 // to seq_len * embedding_dim so the downstream
                 // Flatten/Dense head gets the right feature count
                 // even if the user didn't drop a Flatten node.
                 const size_t seq_len = current_input_size;
+                current_sequence_length = seq_len > 0 ? seq_len : 1;
                 bool next_is_recurrent = false;
                 if (i + 1 < config.layers.size()) {
                     const auto nt = config.layers[i + 1].type;
                     if (nt == gui::NodeType::LSTM ||
                         nt == gui::NodeType::GRU  ||
-                        nt == gui::NodeType::RNN) {
+                        nt == gui::NodeType::RNN  ||
+                        nt == gui::NodeType::TransformerEncoder) {
                         next_is_recurrent = true;
                     }
                 }
@@ -180,6 +222,48 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                              num_layers, bidirectional, return_sequences,
                              output_features, output_features);
                 current_input_size = output_features;
+                break;
+            }
+
+            case gui::NodeType::TransformerEncoder: {
+                const size_t d_model = current_input_size > 0
+                    ? current_input_size
+                    : ParseSizeParam(layer_cfg, "d_model", 64);
+                size_t num_heads = ParseSizeParam(layer_cfg, "num_heads",
+                                                  ParseSizeParam(layer_cfg, "nhead", 1));
+                size_t dim_feedforward = ParseSizeParam(
+                    layer_cfg, "dim_feedforward",
+                    ParseSizeParam(layer_cfg, "ff_dim", d_model * 4));
+                float dropout = ParseFloatParam(layer_cfg, "dropout",
+                                                ParseFloatParam(layer_cfg, "dropout_rate", 0.1f));
+                bool norm_first = ParseBoolParam(layer_cfg, "norm_first", false);
+
+                const size_t requested_d_model =
+                    ParseSizeParam(layer_cfg, "d_model", d_model);
+                if (requested_d_model != d_model) {
+                    spdlog::warn("  [{}] TransformerEncoder d_model={} does "
+                                 "not match incoming feature size {}; using {}",
+                                 i, requested_d_model, d_model, d_model);
+                }
+
+                model.Add<TransformerEncoderModule>(d_model, num_heads,
+                                                    dim_feedforward, dropout,
+                                                    norm_first);
+
+                bool next_is_transformer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_transformer =
+                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder;
+                }
+
+                const size_t downstream_features = current_sequence_length * d_model;
+                spdlog::info("  [{}] TransformerEncoder(d_model={}, heads={}, "
+                             "ff={}, dropout={}) - output [batch, {}, {}]",
+                             i, d_model, num_heads, dim_feedforward, dropout,
+                             current_sequence_length, d_model);
+                current_input_size = next_is_transformer
+                    ? d_model
+                    : downstream_features;
                 break;
             }
 

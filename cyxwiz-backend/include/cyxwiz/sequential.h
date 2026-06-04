@@ -34,7 +34,8 @@ enum class ModuleType {
     GELU,
     Swish,
     Mish,
-    Embedding
+    Embedding,
+    TransformerEncoder
 };
 
 /**
@@ -262,6 +263,38 @@ private:
     bool return_sequences_;
     bool split_bidirectional_path_ = false;
     std::vector<size_t> last_full_output_shape_;
+};
+
+/**
+ * @brief Wrapper around TransformerEncoderLayer.
+ *
+ * Consumes and returns `[batch, seq_len, d_model]` tensors. Use a
+ * Flatten or pooling module after this wrapper before a Dense
+ * classification head.
+ */
+class CYXWIZ_API TransformerEncoderModule : public Module {
+public:
+    TransformerEncoderModule(size_t d_model, size_t num_heads,
+                             size_t dim_feedforward = 2048,
+                             float dropout = 0.1f,
+                             bool norm_first = false);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    void SetTraining(bool training) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<TransformerEncoderLayer> layer_;
+    size_t d_model_;
+    size_t num_heads_;
+    size_t dim_feedforward_;
+    float dropout_;
+    bool norm_first_;
 };
 
 /**

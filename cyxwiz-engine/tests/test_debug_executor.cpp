@@ -78,6 +78,41 @@ TrainingConfiguration MakeTextConfig() {
     return cfg;
 }
 
+TrainingConfiguration MakeTransformerTextConfig() {
+    TrainingConfiguration cfg;
+    cfg.input_size  = 8;   // seq_len
+    cfg.output_size = 3;
+    cfg.preprocessing_domain = PreprocessingDomain::Text;
+
+    CompiledLayer emb;
+    emb.type = gui::NodeType::Embedding;
+    emb.parameters["num_embeddings"] = "128";
+    emb.parameters["embedding_dim"]  = "8";
+    cfg.layers.push_back(emb);
+
+    CompiledLayer encoder;
+    encoder.type = gui::NodeType::TransformerEncoder;
+    encoder.parameters["d_model"] = "8";
+    encoder.parameters["num_heads"] = "2";
+    encoder.parameters["ff_dim"] = "16";
+    encoder.parameters["dropout"] = "0.0";
+    cfg.layers.push_back(encoder);
+
+    CompiledLayer flatten;
+    flatten.type = gui::NodeType::Flatten;
+    cfg.layers.push_back(flatten);
+
+    CompiledLayer dense;
+    dense.type = gui::NodeType::Dense;
+    dense.units = 3;
+    cfg.layers.push_back(dense);
+
+    cfg.loss_type      = gui::NodeType::CrossEntropyLoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    cfg.learning_rate  = 0.001f;
+    return cfg;
+}
+
 TrainingConfiguration MakeSentimentConfig(size_t num_layers = 1) {
     TrainingConfiguration cfg;
     cfg.input_size  = 128;
@@ -361,6 +396,36 @@ void TestSentimentComputationMultiLayerBiGRU() {
                  res.params_with_grad);
 }
 
+void TestTransformerTextComputation() {
+    spdlog::info("--- TestTransformerTextComputation ---");
+    auto cfg = MakeTransformerTextConfig();
+    DebugExecutor exe(cfg);
+    spdlog::info("  Running synthetic text TransformerEncoder DebugExecutor");
+    auto res = exe.Run();
+    if (res.reached != DebugStage::Complete) {
+        std::cerr << "FAIL: transformer text config reached="
+                  << static_cast<int>(res.reached)
+                  << " summary=" << res.failure_summary << "\n";
+        std::exit(1);
+    }
+    ExpectTrue(res.success, "transformer text config should reach Complete cleanly");
+    ExpectTrue(res.loss_finite, "transformer text config loss must be finite");
+    ExpectEq(res.layer_traces.size(), 4, "transformer layer_traces");
+    ExpectEq(res.params_missing_grad, 0, "transformer params_missing_grad");
+    ExpectEq(res.layer_traces[1].actual_shape.size(), 3,
+             "transformer encoder trace ndim");
+    ExpectEq(res.layer_traces[1].actual_shape[1], 8,
+             "transformer encoder seq_len");
+    ExpectEq(res.layer_traces[1].actual_shape[2], 8,
+             "transformer encoder d_model");
+    ExpectEq(res.layer_traces[2].actual_shape.size(), 2,
+             "transformer flatten trace ndim");
+    ExpectEq(res.layer_traces[2].actual_shape[1], 64,
+             "transformer flattened features");
+    spdlog::info("  OK: transformer text graph end-to-end, params_with_grad={}",
+                 res.params_with_grad);
+}
+
 } // namespace
 
 int main() {
@@ -379,6 +444,7 @@ int main() {
         if (run_slow_sentiment) {
             TestSentimentComputationCurrentPath();
             TestSentimentComputationMultiLayerBiGRU();
+            TestTransformerTextComputation();
         } else {
             spdlog::info("Skipping slow sentiment debug checks. Set "
                          "CYXWIZ_RUN_SLOW_DEBUG_TESTS=1 to run them.");

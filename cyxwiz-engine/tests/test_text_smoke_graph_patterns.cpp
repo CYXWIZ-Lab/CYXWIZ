@@ -77,6 +77,7 @@ gui::NodeType TypeFromString(const std::string& type) {
         {"Dropout", gui::NodeType::Dropout},
         {"LSTM", gui::NodeType::LSTM},
         {"GRU", gui::NodeType::GRU},
+        {"TransformerEncoder", gui::NodeType::TransformerEncoder},
         {"CrossEntropyLoss", gui::NodeType::CrossEntropyLoss},
         {"Adam", gui::NodeType::Adam},
         {"Output", gui::NodeType::Output},
@@ -163,6 +164,7 @@ gui::MLNode MakeNode(int id, int& next_pin_id, gui::NodeType type,
             break;
         case gui::NodeType::LSTM:
         case gui::NodeType::GRU:
+        case gui::NodeType::TransformerEncoder:
             node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Tensor,
                                       "Input", true));
             node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Tensor,
@@ -296,6 +298,7 @@ bool IsModelOrActivation(gui::NodeType type) {
            type == gui::NodeType::Flatten ||
            type == gui::NodeType::LSTM ||
            type == gui::NodeType::GRU ||
+           type == gui::NodeType::TransformerEncoder ||
            type == gui::NodeType::ReLU ||
            type == gui::NodeType::Dropout;
 }
@@ -419,6 +422,7 @@ int main() {
         root / "examples/cyxgraph/mental_health_sentiment_classifier.cyxgraph",
         root / "examples/cyxgraph/mental_health_sentiment_classifier_v2.cyxgraph",
         root / "examples/cyxgraph/text/test_02_sentiment_lstm.cyxgraph",
+        root / "examples/cyxgraph/text/test_05_sentiment_transformer_mini.cyxgraph",
     };
 
     for (const auto& path : graphs) {

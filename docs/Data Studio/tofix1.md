@@ -345,6 +345,34 @@ Transformer text path is still unverified relative to LSTM.
 **Next step:** create or update one small text graph that exercises
 Transformer training after Text Fix B stabilizes.
 
+**2026-06-04 update:** TransformerEncoder text classification is now
+verified for the current small-scope path. Added a backend
+`TransformerEncoderModule` wrapper so `ModelBuilder` can build
+`Embedding -> TransformerEncoder -> Flatten -> Dense` classifier graphs,
+and added `examples/cyxgraph/text/test_05_sentiment_transformer_mini.cyxgraph`
+as the graph-level smoke fixture.
+
+The verification uncovered and fixed three backend bugs that only show
+up once Transformer runs as a real sequence model:
+- TransformerEncoder FFN now flattens `[batch, seq, d_model]` to
+  `[batch * seq, d_model]` around Dense feed-forward layers and restores
+  sequence shape afterwards.
+- legacy `DenseLayer` bias broadcast now handles multi-row 2D input
+  instead of only batch-size-one paths.
+- MultiHeadAttention backward now uses a consistent attention-weight
+  cache layout and computes `grad_attn` with the correct
+  `[seq_q, seq_kv]` shape.
+
+Slow DebugExecutor smoke now completes a tiny synthetic text Transformer
+classifier with finite loss, complete backward, 19 gradient entries, and
+zero missing gradients. Graph-pattern contracts include the new
+Transformer mini graph.
+
+**Status:** complete for current TransformerEncoder text-classification
+scope. TransformerDecoder, generation, pretrained transformer import,
+and full LLM fine-tuning remain out of scope and should not be presented
+as completed.
+
 ### LSTM ArrayFire performance follow-up
 
 LSTM correctness is resolved. AF performance optimizations remain
