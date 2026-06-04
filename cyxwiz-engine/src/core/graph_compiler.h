@@ -220,6 +220,11 @@ struct TrainingConfiguration {
     // lands; `layers` remains the source for current SequentialModel training.
     CompiledGraphPlan graph_plan;
 
+    // Opt-in graph-runtime nodes that are executable outside SequentialModel.
+    // The compiler leaves this empty until a node group is deliberately
+    // exposed. Focused backend tests may populate it directly.
+    std::vector<int> graph_op_node_ids;
+
     // Input/Output configuration
     std::vector<size_t> input_shape;    // e.g., [28, 28, 1] for MNIST
     size_t input_size = 0;              // Flattened size

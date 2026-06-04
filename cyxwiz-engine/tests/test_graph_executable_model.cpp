@@ -145,6 +145,19 @@ cyxwiz::TrainingConfiguration LinearConfig() {
     return config;
 }
 
+cyxwiz::TrainingConfiguration MergeConfig(gui::NodeType merge_type) {
+    cyxwiz::TrainingConfiguration config;
+    config.input_size = 3;
+    config.output_size = 3;
+    config.input_shape = {3};
+    config.loss_type = gui::NodeType::MSELoss;
+    config.optimizer_type = gui::NodeType::SGD;
+    config.learning_rate = 0.01f;
+    config.graph_plan = MergePlan(merge_type);
+    config.graph_op_node_ids = {2};
+    return config;
+}
+
 void CheckTensorNear(const cyxwiz::Tensor& actual,
                      const cyxwiz::Tensor& expected,
                      const std::string& message);
@@ -153,23 +166,26 @@ void CheckMergeOp(gui::NodeType merge_type,
                   const std::vector<float>& expected_output,
                   const std::vector<float>& expected_data_grad,
                   const std::string& name) {
-    auto empty_sequential = std::make_unique<cyxwiz::SequentialModel>();
-    cyxwiz::GraphExecutableModel graph(std::move(empty_sequential),
-                                       MergePlan(merge_type),
-                                       {},
-                                       {2});
+    cyxwiz::BuiltExecutableModel built =
+        cyxwiz::BuildGraphExecutableFromConfig(MergeConfig(merge_type));
+    Check(built.ok(), name + " graph executable should build through config");
+    auto* graph =
+        dynamic_cast<cyxwiz::GraphExecutableModel*>(built.model.get());
+    Check(graph != nullptr, name + " builder should return GraphExecutableModel");
+    Check(graph->GraphOpNodeIds() == std::vector<int>({2}),
+          name + " should preserve graph op node ids");
 
-    cyxwiz::Tensor output = graph.Forward(MakeTensor({2.0f, 3.0f, 4.0f}));
+    cyxwiz::Tensor output = graph->Forward(MakeTensor({2.0f, 3.0f, 4.0f}));
     for (size_t col = 0; col < expected_output.size(); ++col) {
         CheckNear(output.At(0, col), expected_output[col], 1e-4f,
                   name + " forward");
     }
 
-    const cyxwiz::Tensor* cached = graph.FindCachedTensor(2, 203);
+    const cyxwiz::Tensor* cached = graph->FindCachedTensor(2, 203);
     Check(cached != nullptr, name + " should cache merge output");
     CheckTensorNear(*cached, output, name + " cached output should match");
 
-    cyxwiz::Tensor backward = graph.Backward(cyxwiz::Tensor::Ones({1, 3}));
+    cyxwiz::Tensor backward = graph->Backward(cyxwiz::Tensor::Ones({1, 3}));
     for (size_t col = 0; col < expected_data_grad.size(); ++col) {
         CheckNear(backward.At(0, col), expected_data_grad[col], 1e-4f,
                   name + " backward");

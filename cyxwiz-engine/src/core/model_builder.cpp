@@ -691,24 +691,39 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
         layer_node_ids.push_back(layer.node_id);
     }
 
-    std::string reason;
-    if (!GraphExecutableModel::CanRunLinearPlan(config.graph_plan,
-                                               layer_node_ids,
-                                               &reason)) {
-        spdlog::warn("GraphExecutableModel: cannot build graph executable: {}",
-                     reason);
-        return out;
+    const bool has_graph_ops = !config.graph_op_node_ids.empty();
+
+    if (!has_graph_ops) {
+        std::string reason;
+        if (!GraphExecutableModel::CanRunLinearPlan(config.graph_plan,
+                                                   layer_node_ids,
+                                                   &reason)) {
+            spdlog::warn("GraphExecutableModel: cannot build graph executable: {}",
+                         reason);
+            return out;
+        }
     }
 
-    BuiltModel sequential = BuildSequentialFromConfig(config);
-    if (!sequential.ok()) {
-        return out;
+    BuiltModel sequential;
+    if (!config.layers.empty()) {
+        sequential = BuildSequentialFromConfig(config);
+        if (!sequential.ok()) {
+            return out;
+        }
+    } else {
+        sequential.model = std::make_unique<SequentialModel>();
+        sequential.loss = BuildLossFromConfig(config);
+        sequential.optimizer = CreateOptimizer(config.GetOptimizerType(),
+                                               config.learning_rate);
+        spdlog::info("TrainingExecutor: Using {} optimizer with lr={}",
+                     config.GetOptimizerName(), config.learning_rate);
     }
 
     out.model = std::make_unique<GraphExecutableModel>(
         std::move(sequential.model),
         config.graph_plan,
-        std::move(layer_node_ids));
+        std::move(layer_node_ids),
+        config.graph_op_node_ids);
     out.loss = std::move(sequential.loss);
     out.optimizer = std::move(sequential.optimizer);
     return out;

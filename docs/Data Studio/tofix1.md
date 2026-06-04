@@ -670,6 +670,15 @@ propagates simple backward gradients through shared inputs. The focused
 test covers forward output, cached merge output, and data-gradient
 accumulation for all three ops.
 
+**2026-06-04 update:** added the config/builder handoff for graph-only
+operators. `TrainingConfiguration` now has `graph_op_node_ids`, and
+`BuildGraphExecutableFromConfig` passes those ids into
+`GraphExecutableModel` when explicitly populated. This keeps the fan-in
+merge support testable through the same builder path without changing
+normal sequential training or marking merge nodes implemented in
+metadata. Focused tests now build Add/Multiply/Average through
+`BuildGraphExecutableFromConfig` instead of bypassing the builder.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

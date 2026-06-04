@@ -181,6 +181,10 @@ GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> mode
         throw std::invalid_argument(
             "GraphExecutableModel module count does not match layer node ids");
     }
+    if (!plan_.available || plan_.data_node_id < 0 || plan_.loss_node_id < 0) {
+        throw std::invalid_argument(
+            "GraphExecutableModel requires an available data-to-loss graph plan");
+    }
 
     if (graph_op_node_ids_.empty()) {
         std::string reason;
