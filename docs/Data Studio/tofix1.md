@@ -619,6 +619,18 @@ of silently skipping them. Disconnected side experiments remain allowed.
 Added `test_graph_compiler_deferred_nodes` to prove a template Tensor
 node blocks training only when it is actually on the selected path.
 
+**2026-06-04 update:** started the multi-input runtime migration with a
+passive, modular graph-plan slice instead of adding more logic to the
+large `graph_compiler.cpp`. `CompiledGraphPlan` now records the selected
+training path by node id, input/output pin ids, and selected edges while
+leaving existing `config.layers`/`SequentialModel` training unchanged.
+The builder lives in `compiled_graph_plan.{h,cpp}` so future fan-in
+runtime work can grow outside the compiler. The focused compiler test now
+verifies the plan includes only `Data -> Dense -> Loss -> Optimizer` for
+a valid selected path and excludes a disconnected deferred Tensor branch.
+All remaining multi-input merge/linalg/two-input mask nodes remain
+template/deferred.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

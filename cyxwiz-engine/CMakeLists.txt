@@ -117,6 +117,7 @@ set(ENGINE_SOURCES
     src/core/async_task_manager.cpp
     src/core/dataset_audit.cpp
     src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
     src/core/graph_executor.cpp
     src/core/rl_training_executor.cpp
     src/core/rl_script_generator.cpp
@@ -1201,6 +1202,7 @@ set_target_properties(test_pattern_template_guard PROPERTIES
 add_executable(test_graph_compiler_deferred_nodes
     tests/test_graph_compiler_deferred_nodes.cpp
     src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
     src/core/data_registry_core.cpp

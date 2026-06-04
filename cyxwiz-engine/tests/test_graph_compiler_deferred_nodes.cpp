@@ -78,6 +78,31 @@ bool HasIssueText(const cyxwiz::TrainingConfiguration& config,
     return false;
 }
 
+bool HasPlanNode(const cyxwiz::CompiledGraphPlan& plan, int node_id) {
+    for (const auto& node : plan.nodes) {
+        if (node.node_id == node_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HasPlanEdge(const cyxwiz::CompiledGraphPlan& plan,
+                 int from_node,
+                 int from_pin,
+                 int to_node,
+                 int to_pin) {
+    for (const auto& edge : plan.edges) {
+        if (edge.from_node_id == from_node &&
+            edge.from_pin_id == from_pin &&
+            edge.to_node_id == to_node &&
+            edge.to_pin_id == to_pin) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 int main() {
@@ -164,7 +189,38 @@ int main() {
           "deferred node outside selected training path should not block compile");
     Check(!HasIssueText(config, "Disconnected Deferred Dot"),
           "compile should not report side deferred node");
+    Check(config.layers.size() == 1,
+          "linear selected path should still compile one sequential layer");
 
-    std::cout << "Graph compiler deferred node guard passed\n";
+    const auto& plan = config.graph_plan;
+    Check(plan.available, "valid selected training path should produce graph plan");
+    Check(plan.data_node_id == 1, "graph plan should record selected data node");
+    Check(plan.loss_node_id == 4, "graph plan should record selected loss node");
+    Check(plan.optimizer_node_id == 5, "graph plan should record selected optimizer node");
+    Check(plan.data_pin_id == 101, "graph plan should record data output pin");
+    Check(plan.label_pin_id == 102, "graph plan should record label output pin");
+    Check(plan.prediction_pin_id == 401, "graph plan should record loss prediction pin");
+    Check(plan.label_target_pin_id == 402, "graph plan should record loss target pin");
+    Check(plan.loss_output_pin_id == 403, "graph plan should record loss output pin");
+
+    Check(HasPlanNode(plan, 1), "graph plan should include data node");
+    Check(HasPlanNode(plan, 2), "graph plan should include dense node");
+    Check(HasPlanNode(plan, 4), "graph plan should include loss node");
+    Check(HasPlanNode(plan, 5), "graph plan should include optimizer node");
+    Check(!HasPlanNode(plan, 6), "graph plan should exclude disconnected deferred node");
+    Check(!HasPlanNode(plan, 7), "graph plan should exclude disconnected side output");
+    Check(plan.nodes.size() == 4, "graph plan should contain only selected path nodes");
+
+    Check(HasPlanEdge(plan, 1, 101, 2, 201),
+          "graph plan should include data-to-dense edge");
+    Check(HasPlanEdge(plan, 2, 202, 4, 401),
+          "graph plan should include dense-to-loss prediction edge");
+    Check(HasPlanEdge(plan, 1, 102, 4, 402),
+          "graph plan should include labels-to-loss target edge");
+    Check(HasPlanEdge(plan, 4, 403, 5, 501),
+          "graph plan should include loss-to-optimizer edge");
+    Check(plan.edges.size() == 4, "graph plan should contain only selected path edges");
+
+    std::cout << "Graph compiler deferred node guard and graph plan passed\n";
     return 0;
 }

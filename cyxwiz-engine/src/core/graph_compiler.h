@@ -1,5 +1,6 @@
 #pragma once
 
+#include "compiled_graph_plan.h"
 #include "../gui/node_editor.h"
 #include "../preprocessing/preprocessing_config.h"
 #include <cyxwiz/tensor.h>
@@ -214,6 +215,10 @@ struct ValidationIssue {
 struct TrainingConfiguration {
     // Model architecture (in execution order)
     std::vector<CompiledLayer> layers;
+
+    // Pin-aware selected training path. Passive until graph-runtime execution
+    // lands; `layers` remains the source for current SequentialModel training.
+    CompiledGraphPlan graph_plan;
 
     // Input/Output configuration
     std::vector<size_t> input_shape;    // e.g., [28, 28, 1] for MNIST

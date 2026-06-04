@@ -1253,6 +1253,14 @@ TrainingConfiguration GraphCompiler::Compile(
 
     // Get topologically sorted node IDs
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
+    config.graph_plan = BuildCompiledGraphPlan(
+        nodes,
+        links,
+        sorted_ids,
+        training_path_ids,
+        config.data_source_node_id,
+        config.loss_node_id,
+        config.optimizer_node_id);
 
     // Check if we're using CrossEntropyLoss (which applies softmax internally)
     bool using_cross_entropy = (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss);
