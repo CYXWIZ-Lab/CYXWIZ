@@ -1512,6 +1512,68 @@ Tensor PermuteModule::Backward(const Tensor& grad_output) {
 }
 
 // ============================================================================
+// TensorUnaryModule Implementation
+// ============================================================================
+
+TensorUnaryModule::TensorUnaryModule(TensorUnaryOp op)
+    : op_(op) {}
+
+Tensor TensorUnaryModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+
+    Tensor output;
+    switch (op_) {
+        case TensorUnaryOp::Abs:
+            output = input.Abs();
+            break;
+        case TensorUnaryOp::Exp:
+            output = input.Exp();
+            break;
+        case TensorUnaryOp::Log:
+            output = input.Log();
+            break;
+        case TensorUnaryOp::Sqrt:
+            output = input.Sqrt();
+            break;
+        default:
+            throw std::runtime_error("TensorUnaryModule: unsupported unary op");
+    }
+
+    output_cache_ = output.Clone();
+    return output;
+}
+
+Tensor TensorUnaryModule::Backward(const Tensor& grad_output) {
+    switch (op_) {
+        case TensorUnaryOp::Abs:
+            return grad_output * input_cache_.Sign();
+        case TensorUnaryOp::Exp:
+            return grad_output * output_cache_;
+        case TensorUnaryOp::Log:
+            return grad_output / input_cache_;
+        case TensorUnaryOp::Sqrt:
+            return grad_output / (output_cache_ * 2.0f);
+        default:
+            throw std::runtime_error("TensorUnaryModule: unsupported unary op");
+    }
+}
+
+std::string TensorUnaryModule::GetName() const {
+    switch (op_) {
+        case TensorUnaryOp::Abs:
+            return "TensorAbs";
+        case TensorUnaryOp::Exp:
+            return "TensorExp";
+        case TensorUnaryOp::Log:
+            return "TensorLog";
+        case TensorUnaryOp::Sqrt:
+            return "TensorSqrt";
+        default:
+            return "TensorUnary";
+    }
+}
+
+// ============================================================================
 // SequentialModel Implementation
 // ============================================================================
 

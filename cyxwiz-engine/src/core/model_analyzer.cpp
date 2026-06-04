@@ -458,6 +458,10 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::CrossAttention:
         case gui::NodeType::TransformerEncoder:
         case gui::NodeType::TransformerDecoder:
+        case gui::NodeType::TensorAbs:
+        case gui::NodeType::TensorExp:
+        case gui::NodeType::TensorLog:
+        case gui::NodeType::TensorSqrt:
             return true;
         default:
             return false;
@@ -726,6 +730,10 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
         case gui::NodeType::LayerNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::TensorAbs:
+        case gui::NodeType::TensorExp:
+        case gui::NodeType::TensorLog:
+        case gui::NodeType::TensorSqrt:
             // Shape unchanged
             return input_shape;
         default:

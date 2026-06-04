@@ -1261,25 +1261,25 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"tensor", "sqrt", "square root", "elementwise"}, 0, false, "Elementwise square root", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Output"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorExp, NodeCategory::Analytics, "Tensor Exp", ICON_FA_CALCULATOR,
         {"tensor", "exp", "exponential", "elementwise"}, 0, false, "Elementwise exponential", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Output"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorLog, NodeCategory::Analytics, "Tensor Log", ICON_FA_CALCULATOR,
         {"tensor", "log", "natural log", "elementwise"}, 0, false, "Elementwise natural log", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Output"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorAbs, NodeCategory::Analytics, "Tensor Abs", ICON_FA_CALCULATOR,
         {"tensor", "abs", "absolute", "elementwise"}, 0, false, "Elementwise absolute value", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Output"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorSign, NodeCategory::Analytics, "Tensor Sign", ICON_FA_CALCULATOR,
         {"tensor", "sign", "elementwise"}, 0, false, "Elementwise sign", "", "",

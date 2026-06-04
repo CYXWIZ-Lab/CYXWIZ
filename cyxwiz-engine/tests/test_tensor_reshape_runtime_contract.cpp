@@ -3,6 +3,7 @@
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -23,6 +24,26 @@ void CheckShape(const cyxwiz::Tensor& tensor,
     Check(tensor.Shape() == expected, message);
 }
 
+void CheckNear(float actual, float expected, float tolerance, const std::string& message) {
+    if (std::fabs(actual - expected) > tolerance) {
+        std::cerr << "FAIL: " << message
+                  << " actual=" << actual
+                  << " expected=" << expected
+                  << "\n";
+        std::exit(1);
+    }
+}
+
+cyxwiz::Tensor MakeTensor(const std::vector<size_t>& shape,
+                          const std::vector<float>& values) {
+    size_t elements = 1;
+    for (size_t dim : shape) {
+        elements *= dim;
+    }
+    Check(elements == values.size(), "MakeTensor value count must match shape");
+    return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Float32);
+}
+
 cyxwiz::Tensor MakeRangeTensor(const std::vector<size_t>& shape) {
     size_t elements = 1;
     for (size_t dim : shape) {
@@ -34,6 +55,30 @@ cyxwiz::Tensor MakeRangeTensor(const std::vector<size_t>& shape) {
         values[i] = static_cast<float>(i);
     }
     return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Float32);
+}
+
+void CheckUnaryModule(cyxwiz::TensorUnaryOp op,
+                      const std::vector<float>& input_values,
+                      const std::vector<float>& expected_output,
+                      const std::vector<float>& expected_backward,
+                      const std::string& name) {
+    cyxwiz::Tensor input = MakeTensor({1, input_values.size()}, input_values);
+    cyxwiz::TensorUnaryModule module(op);
+
+    cyxwiz::Tensor output = module.Forward(input);
+    CheckShape(output, {1, input_values.size()}, name + " forward should preserve shape");
+    for (size_t i = 0; i < expected_output.size(); ++i) {
+        CheckNear(output.At(0, i), expected_output[i], 1e-4f,
+                  name + " forward value mismatch");
+    }
+
+    cyxwiz::Tensor grad = cyxwiz::Tensor::Ones({1, input_values.size()});
+    cyxwiz::Tensor backward = module.Backward(grad);
+    CheckShape(backward, {1, input_values.size()}, name + " backward should preserve shape");
+    for (size_t i = 0; i < expected_backward.size(); ++i) {
+        CheckNear(backward.At(0, i), expected_backward[i], 1e-4f,
+                  name + " backward value mismatch");
+    }
 }
 
 } // namespace
@@ -66,6 +111,32 @@ int main() {
         CheckShape(backward, {2, 2, 3}, "PermuteModule backward should invert shape");
         Check(backward.At(1, 1, 2) == input.At(1, 1, 2),
               "PermuteModule backward should invert data order");
+    }
+
+    {
+        CheckUnaryModule(cyxwiz::TensorUnaryOp::Abs,
+                         {-2.0f, 0.0f, 3.0f},
+                         {2.0f, 0.0f, 3.0f},
+                         {-1.0f, 0.0f, 1.0f},
+                         "TensorAbs");
+
+        CheckUnaryModule(cyxwiz::TensorUnaryOp::Exp,
+                         {0.0f, 1.0f},
+                         {1.0f, std::exp(1.0f)},
+                         {1.0f, std::exp(1.0f)},
+                         "TensorExp");
+
+        CheckUnaryModule(cyxwiz::TensorUnaryOp::Log,
+                         {1.0f, std::exp(1.0f)},
+                         {0.0f, 1.0f},
+                         {1.0f, 1.0f / std::exp(1.0f)},
+                         "TensorLog");
+
+        CheckUnaryModule(cyxwiz::TensorUnaryOp::Sqrt,
+                         {1.0f, 4.0f},
+                         {1.0f, 2.0f},
+                         {0.5f, 0.25f},
+                         "TensorSqrt");
     }
 
     {
@@ -111,22 +182,55 @@ int main() {
         view.input_shape = {1, 6};
         view.output_shape = {3, 2};
 
-        config.layers = {reshape, squeeze, unsqueeze, permute, view};
+        cyxwiz::CompiledLayer abs;
+        abs.type = gui::NodeType::TensorAbs;
+        abs.node_id = 6;
+        abs.name = "TensorAbs";
+        abs.input_shape = {3, 2};
+        abs.output_shape = {3, 2};
+
+        cyxwiz::CompiledLayer exp;
+        exp.type = gui::NodeType::TensorExp;
+        exp.node_id = 7;
+        exp.name = "TensorExp";
+        exp.input_shape = {3, 2};
+        exp.output_shape = {3, 2};
+
+        cyxwiz::CompiledLayer log;
+        log.type = gui::NodeType::TensorLog;
+        log.node_id = 8;
+        log.name = "TensorLog";
+        log.input_shape = {3, 2};
+        log.output_shape = {3, 2};
+
+        cyxwiz::CompiledLayer sqrt;
+        sqrt.type = gui::NodeType::TensorSqrt;
+        sqrt.node_id = 9;
+        sqrt.name = "TensorSqrt";
+        sqrt.input_shape = {3, 2};
+        sqrt.output_shape = {3, 2};
+
+        config.layers = {reshape, squeeze, unsqueeze, permute, view, abs, exp, log, sqrt};
 
         cyxwiz::BuiltModel built = cyxwiz::BuildSequentialFromConfig(config);
-        Check(built.ok(), "BuildSequentialFromConfig should build bounded shape op modules");
+        Check(built.ok(), "BuildSequentialFromConfig should build bounded tensor op modules");
 
-        cyxwiz::Tensor input = MakeRangeTensor({2, 6});
+        cyxwiz::Tensor input = MakeTensor({2, 6}, {
+            1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f,
+            7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f
+        });
         cyxwiz::Tensor output = built.model->Forward(input);
         CheckShape(output, {2, 3, 2}, "Sequential shape op forward shape mismatch");
-        Check(output.At(1, 2, 1) == 11.0f, "Sequential shape ops should preserve values");
+        CheckNear(output.At(1, 2, 1), std::sqrt(12.0f), 1e-4f,
+                  "Sequential unary tensor ops should transform values");
 
         cyxwiz::Tensor grad = MakeRangeTensor({2, 3, 2});
         cyxwiz::Tensor backward = built.model->Backward(grad);
         CheckShape(backward, {2, 6}, "Sequential shape op backward shape mismatch");
-        Check(backward.At(11) == 11.0f, "Sequential shape op backward should preserve values");
+        Check(std::isfinite(backward.At(11)),
+              "Sequential unary tensor backward should produce finite gradients");
     }
 
-    std::cout << "Tensor shape runtime contract passed\n";
+    std::cout << "Tensor runtime contract passed\n";
     return 0;
 }

@@ -359,6 +359,30 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 break;
             }
 
+            case gui::NodeType::TensorAbs: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Abs);
+                spdlog::info("  [{}] TensorAbs", i);
+                break;
+            }
+
+            case gui::NodeType::TensorExp: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Exp);
+                spdlog::info("  [{}] TensorExp", i);
+                break;
+            }
+
+            case gui::NodeType::TensorLog: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Log);
+                spdlog::info("  [{}] TensorLog", i);
+                break;
+            }
+
+            case gui::NodeType::TensorSqrt: {
+                model.Add<TensorUnaryModule>(TensorUnaryOp::Sqrt);
+                spdlog::info("  [{}] TensorSqrt", i);
+                break;
+            }
+
             case gui::NodeType::BatchNorm: {
                 // BatchNorm uses current feature size (output of previous Dense layer)
                 float eps = layer_cfg.eps > 0 ? layer_cfg.eps : 1e-5f;

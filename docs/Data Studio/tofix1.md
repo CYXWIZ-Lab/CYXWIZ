@@ -531,6 +531,17 @@ and `BuildSequentialFromConfig` execution through a
 merge/reduction/math/linalg/mask nodes remain template/deferred until
 they get similarly focused runtime contracts.
 
+**2026-06-04 update:** added the next bounded Tensor runtime group:
+parameter-free unary math nodes `TensorAbs`, `TensorExp`, `TensorLog`,
+and `TensorSqrt`. They compile as shape-preserving model layers, execute
+through a shared backend `TensorUnaryModule`, are wired through
+`ModelBuilder`, `TestExecutor`, smoke-run model detection, metadata, and
+model analysis, and are covered by direct forward/backward checks plus a
+sequential runtime chain in `test_tensor_reshape_runtime_contract`.
+Parameterized or policy-sensitive Tensor math such as `TensorPow`,
+`TensorClip`, and `TensorSign`, plus merge/reduction/linalg/mask nodes,
+remain template/deferred until they receive separate contracts.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

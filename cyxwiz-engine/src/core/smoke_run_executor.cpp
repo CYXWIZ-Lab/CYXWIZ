@@ -98,6 +98,10 @@ int FindFirstModelNode(const std::vector<gui::MLNode>& nodes) {
             case gui::NodeType::Permute:
             case gui::NodeType::Squeeze:
             case gui::NodeType::Unsqueeze:
+            case gui::NodeType::TensorAbs:
+            case gui::NodeType::TensorExp:
+            case gui::NodeType::TensorLog:
+            case gui::NodeType::TensorSqrt:
             case gui::NodeType::Dropout:
                 return node.id;
             default:

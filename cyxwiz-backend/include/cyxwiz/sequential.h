@@ -38,6 +38,13 @@ enum class ModuleType {
     TransformerEncoder
 };
 
+enum class TensorUnaryOp {
+    Abs,
+    Exp,
+    Log,
+    Sqrt
+};
+
 /**
  * @brief A wrapper for any layer or activation that provides a uniform interface
  */
@@ -426,6 +433,22 @@ public:
 private:
     std::vector<int> sample_dims_;
     std::vector<int> inverse_sample_dims_;
+};
+
+/**
+ * @brief Parameter-free elementwise tensor math module.
+ */
+class CYXWIZ_API TensorUnaryModule : public Module {
+public:
+    explicit TensorUnaryModule(TensorUnaryOp op);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    TensorUnaryOp op_;
+    Tensor output_cache_;
 };
 
 /**

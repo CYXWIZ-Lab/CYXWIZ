@@ -252,6 +252,22 @@ bool TestExecutor::BuildModelFromConfig() {
                 }
                 break;
 
+            case gui::NodeType::TensorAbs:
+                model_->Add<TensorUnaryModule>(TensorUnaryOp::Abs);
+                break;
+
+            case gui::NodeType::TensorExp:
+                model_->Add<TensorUnaryModule>(TensorUnaryOp::Exp);
+                break;
+
+            case gui::NodeType::TensorLog:
+                model_->Add<TensorUnaryModule>(TensorUnaryOp::Log);
+                break;
+
+            case gui::NodeType::TensorSqrt:
+                model_->Add<TensorUnaryModule>(TensorUnaryOp::Sqrt);
+                break;
+
             case gui::NodeType::Output: {
                 size_t out_features = config_.output_size;
                 model_->Add<LinearModule>(current_input_size, out_features, true);

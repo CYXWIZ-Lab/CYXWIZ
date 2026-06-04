@@ -1489,6 +1489,10 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Permute:
         case gui::NodeType::Squeeze:
         case gui::NodeType::Unsqueeze:
+        case gui::NodeType::TensorAbs:
+        case gui::NodeType::TensorExp:
+        case gui::NodeType::TensorLog:
+        case gui::NodeType::TensorSqrt:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::ConvTranspose2D:
@@ -2011,6 +2015,10 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:
+        case gui::NodeType::TensorAbs:
+        case gui::NodeType::TensorExp:
+        case gui::NodeType::TensorLog:
+        case gui::NodeType::TensorSqrt:
             output_shape = input_shape;
             break;
 
