@@ -89,6 +89,16 @@ bool IsGraphRuntimeMergeOp(gui::NodeType type) {
            type == gui::NodeType::Concatenate;
 }
 
+bool IsGraphRuntimeBinaryMaskOp(gui::NodeType type) {
+    return type == gui::NodeType::TensorCompare ||
+           type == gui::NodeType::TensorLogicalMask;
+}
+
+bool IsGraphRuntimeFanInOp(gui::NodeType type) {
+    return IsGraphRuntimeMergeOp(type) ||
+           IsGraphRuntimeBinaryMaskOp(type);
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -905,7 +915,7 @@ void ValidateTrainingPathImplementationStatus(
         if (metadata->status == NodeImplementationStatus::Implemented) {
             continue;
         }
-        if (IsGraphRuntimeMergeOp(node.type)) {
+        if (IsGraphRuntimeFanInOp(node.type)) {
             continue;
         }
 
@@ -946,7 +956,7 @@ void CollectGraphRuntimeOpNodeIds(
             continue;
         }
         const gui::MLNode& node = *it->second;
-        if (!IsGraphRuntimeMergeOp(node.type)) {
+        if (!IsGraphRuntimeFanInOp(node.type)) {
             continue;
         }
 
@@ -959,10 +969,31 @@ void CollectGraphRuntimeOpNodeIds(
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
+        if (IsGraphRuntimeBinaryMaskOp(node.type)) {
+            auto op_it = node.parameters.find("op");
+            const std::string op = op_it != node.parameters.end()
+                ? op_it->second
+                : (node.type == gui::NodeType::TensorCompare ? ">" : "and");
+            if (node.type == gui::NodeType::TensorCompare &&
+                op != ">" && op != ">=" && op != "<" &&
+                op != "<=" && op != "==" && op != "!=") {
+                AddIssue(config, IssueLevel::Error,
+                         "TensorCompare graph op must use one of >, >=, <, <=, ==, !=",
+                         node.id, node.name);
+                continue;
+            }
+            if (node.type == gui::NodeType::TensorLogicalMask &&
+                op != "and" && op != "or") {
+                AddIssue(config, IssueLevel::Error,
+                         "TensorLogicalMask graph op supports only op=and or op=or with two inputs",
+                         node.id, node.name);
+                continue;
+            }
+        }
 
-        // Same-shape enforcement remains in GraphExecutableModel, where the
-        // concrete runtime tensor shapes are known. The compiler only records
-        // deliberately-enabled graph ops here.
+        // Runtime tensor-shape checks remain in GraphExecutableModel, where
+        // concrete shapes and broadcast/concat dimensions are known. The
+        // compiler only records deliberately-enabled graph ops here.
         config.graph_op_node_ids.push_back(node.id);
     }
 }
@@ -1400,6 +1431,11 @@ TrainingConfiguration GraphCompiler::Compile(
         // This prevents double-softmax which kills gradients
         if (node->type == gui::NodeType::Softmax && using_cross_entropy) {
             spdlog::warn("GraphCompiler: Softmax layer skipped - CrossEntropyLoss applies softmax internally");
+            continue;
+        }
+
+        if (IsGraphRuntimeFanInOp(node->type) &&
+            HasConnectedInputAfterFirst(*node, links)) {
             continue;
         }
 

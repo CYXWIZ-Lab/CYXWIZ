@@ -718,6 +718,18 @@ gradient accumulation, compiler graph-plan handoff, and pattern
 instantiation. `TensorDot` and the remaining linalg/two-input mask nodes
 stay blocked.
 
+**2026-06-04 update:** added backend/compiler graph-runtime support for
+two-input mask nodes: `TensorCompare` and `TensorLogicalMask`. When a
+selected training-path mask node has a connected second tensor input, the
+compiler records it as a graph op instead of forcing the legacy
+scalar/unary sequential extraction path. `GraphExecutableModel` now runs
+tensor-vs-tensor compare ops (`>`, `>=`, `<`, `<=`, `==`, `!=`) and
+binary logical mask ops (`and`, `or`), with zero backward gradients
+matching existing mask semantics. Frontend metadata still exposes the
+current one-input scalar/unary UI only; adding the second input pin and
+binary op controls should be a separate frontend slice. `TensorDot` and
+the remaining linalg group stay blocked.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type

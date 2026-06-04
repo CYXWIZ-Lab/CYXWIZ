@@ -310,6 +310,68 @@ int main() {
     Check(HasPlanEdge(config.graph_plan, 10, 1003, 4, 401),
           "graph plan should include Concatenate-to-loss prediction edge");
 
+    auto compare = Node(11,
+                        gui::NodeType::TensorCompare,
+                        "Runtime Compare",
+                        {Pin(1101, gui::PinType::Tensor, "A", true),
+                         Pin(1102, gui::PinType::Tensor, "B", true)},
+                        {Pin(1103, gui::PinType::Tensor, "Mask", false)});
+    compare.parameters["op"] = "==";
+
+    nodes = {data, abs, compare, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 11, 1101),
+        Link(3, 1, 101, 11, 1102),
+        Link(4, 11, 1103, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "selected training path with two-input TensorCompare should compile");
+    Check(!HasIssueText(config, "disconnect input B"),
+          "two-input TensorCompare should not use scalar-only compiler error");
+    Check(config.graph_op_node_ids.size() == 1,
+          "selected TensorCompare graph should record one graph runtime op");
+    Check(HasGraphOpId(config, 11),
+          "selected TensorCompare graph should record the TensorCompare node id");
+    Check(config.layers.size() == 1,
+          "selected TensorCompare graph should still extract only the unary tensor layer");
+    Check(HasPlanNode(config.graph_plan, 11),
+          "graph plan should include selected TensorCompare node");
+
+    auto logical = Node(12,
+                        gui::NodeType::TensorLogicalMask,
+                        "Runtime Logical",
+                        {Pin(1201, gui::PinType::Tensor, "A", true),
+                         Pin(1202, gui::PinType::Tensor, "B", true)},
+                        {Pin(1203, gui::PinType::Tensor, "Mask", false)});
+    logical.parameters["op"] = "and";
+
+    nodes = {data, abs, logical, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 12, 1201),
+        Link(3, 1, 101, 12, 1202),
+        Link(4, 12, 1203, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "selected training path with two-input TensorLogicalMask should compile");
+    Check(!HasIssueText(config, "disconnect input B"),
+          "two-input TensorLogicalMask should not use unary-only compiler error");
+    Check(config.graph_op_node_ids.size() == 1,
+          "selected TensorLogicalMask graph should record one graph runtime op");
+    Check(HasGraphOpId(config, 12),
+          "selected TensorLogicalMask graph should record the TensorLogicalMask node id");
+    Check(config.layers.size() == 1,
+          "selected TensorLogicalMask graph should still extract only the unary tensor layer");
+
     std::cout << "Graph compiler deferred node guard and graph plan passed\n";
     return 0;
 }

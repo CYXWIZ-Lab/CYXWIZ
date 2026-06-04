@@ -129,6 +129,10 @@ cyxwiz::CompiledGraphPlan MergePlan(gui::NodeType merge_type) {
         PlanNode(gui::NodeType::DataInput, 1, "Data"),
         merge_type == gui::NodeType::Concatenate
             ? PlanNode(merge_type, 2, "Merge", {{"dim", "1"}})
+            : merge_type == gui::NodeType::TensorCompare
+                ? PlanNode(merge_type, 2, "Merge", {{"op", "=="}})
+            : merge_type == gui::NodeType::TensorLogicalMask
+                ? PlanNode(merge_type, 2, "Merge", {{"op", "and"}})
             : PlanNode(merge_type, 2, "Merge"),
         PlanNode(gui::NodeType::MSELoss, 4, "Loss"),
         PlanNode(gui::NodeType::SGD, 5, "SGD"),
@@ -237,6 +241,35 @@ void CheckConcatOp() {
     }
 }
 
+void CheckBinaryMaskOp(gui::NodeType mask_type,
+                       const std::vector<float>& input_values,
+                       const std::vector<float>& expected_output,
+                       const std::string& name) {
+    cyxwiz::BuiltExecutableModel built =
+        cyxwiz::BuildExecutableFromConfig(MergeConfig(mask_type));
+    Check(built.ok(), name + " graph executable should build through executable config");
+    auto* graph =
+        dynamic_cast<cyxwiz::GraphExecutableModel*>(built.model.get());
+    Check(graph != nullptr, name + " builder should return GraphExecutableModel");
+
+    cyxwiz::Tensor output = graph->Forward(MakeTensor(input_values));
+    Check(output.Shape() == std::vector<size_t>({1, expected_output.size()}),
+          name + " forward should preserve broadcast output shape");
+    for (size_t col = 0; col < expected_output.size(); ++col) {
+        CheckNear(output.At(0, col), expected_output[col], 1e-4f,
+                  name + " forward");
+    }
+
+    cyxwiz::Tensor backward =
+        graph->Backward(cyxwiz::Tensor::Ones({1, expected_output.size()}));
+    Check(backward.Shape() == std::vector<size_t>({1, input_values.size()}),
+          name + " backward should return input shape");
+    for (size_t col = 0; col < input_values.size(); ++col) {
+        CheckNear(backward.At(0, col), 0.0f, 1e-4f,
+                  name + " backward should be zero for masks");
+    }
+}
+
 void CheckTensorNear(const cyxwiz::Tensor& actual,
                      const cyxwiz::Tensor& expected,
                      const std::string& message) {
@@ -327,6 +360,14 @@ int main() {
                  {1.0f, 1.0f, 1.0f},
                  "Average");
     CheckConcatOp();
+    CheckBinaryMaskOp(gui::NodeType::TensorCompare,
+                      {0.0f, 2.0f, -1.0f},
+                      {1.0f, 1.0f, 1.0f},
+                      "TensorCompare");
+    CheckBinaryMaskOp(gui::NodeType::TensorLogicalMask,
+                      {0.0f, 2.0f, -1.0f},
+                      {0.0f, 1.0f, 1.0f},
+                      "TensorLogicalMask");
 
     std::cout << "Graph executable model parity passed\n";
     return 0;
