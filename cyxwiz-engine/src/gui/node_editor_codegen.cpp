@@ -4,13 +4,74 @@
 #include "../plugin/registries/plugin_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <set>
 #include <map>
 #include <queue>
 #include <functional>
+#include <vector>
 
 namespace gui {
+
+namespace {
+
+std::string TrimCopy(const std::string& value) {
+    auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isspace(ch) != 0;
+    });
+    auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char ch) {
+        return std::isspace(ch) != 0;
+    }).base();
+
+    if (begin >= end) {
+        return "";
+    }
+    return std::string(begin, end);
+}
+
+std::string CsvToPythonListLiteral(const std::string& csv, const std::string& fallback) {
+    std::stringstream ss(csv.empty() ? fallback : csv);
+    std::string item;
+    std::vector<std::string> values;
+
+    while (std::getline(ss, item, ',')) {
+        item = TrimCopy(item);
+        if (!item.empty()) {
+            values.push_back(item);
+        }
+    }
+
+    if (values.empty()) {
+        return "[" + fallback + "]";
+    }
+
+    std::string out = "[";
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) out += ", ";
+        out += values[i];
+    }
+    out += "]";
+    return out;
+}
+
+std::string GetParamOrDefault(const MLNode& node, const std::string& key, const std::string& fallback) {
+    auto it = node.parameters.find(key);
+    if (it == node.parameters.end() || TrimCopy(it->second).empty()) {
+        return fallback;
+    }
+    return TrimCopy(it->second);
+}
+
+std::string PythonBoolLiteral(const std::string& value) {
+    std::string lower = TrimCopy(value);
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return (lower == "true" || lower == "1" || lower == "yes") ? "True" : "False";
+}
+
+} // namespace
 
 void NodeEditor::GeneratePythonCode() {
     // Validate graph before generating code
@@ -1060,52 +1121,333 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
     // Forward method
     code += "    def forward(self, x):\n";
     layer_idx = 0;
+    std::map<int, std::string> node_outputs;
+    std::map<int, std::string> pin_outputs;
+    std::string last_expr = "x";
+
+    auto node_var = [](int node_id) {
+        return "v" + std::to_string(node_id);
+    };
+
+    auto input_expr = [&](const MLNode& node, size_t input_index) {
+        if (input_index >= node.inputs.size()) {
+            return last_expr;
+        }
+
+        const int target_pin = node.inputs[input_index].id;
+        for (const auto& link : links_) {
+            if (link.to_node == node.id && link.to_pin == target_pin) {
+                auto pin_it = pin_outputs.find(link.from_pin);
+                if (pin_it != pin_outputs.end()) {
+                    return pin_it->second;
+                }
+                auto it = node_outputs.find(link.from_node);
+                if (it != node_outputs.end()) {
+                    return it->second;
+                }
+                return std::string("x");
+            }
+        }
+
+        return last_expr;
+    };
+
+    auto all_input_exprs = [&](const MLNode& node) {
+        std::vector<std::string> inputs;
+        for (size_t i = 0; i < node.inputs.size(); ++i) {
+            const int target_pin = node.inputs[i].id;
+            for (const auto& link : links_) {
+                if (link.to_node == node.id && link.to_pin == target_pin) {
+                    auto pin_it = pin_outputs.find(link.from_pin);
+                    if (pin_it != pin_outputs.end()) {
+                        inputs.push_back(pin_it->second);
+                        continue;
+                    }
+                    auto it = node_outputs.find(link.from_node);
+                    inputs.push_back(it != node_outputs.end() ? it->second : "x");
+                }
+            }
+        }
+        if (inputs.empty()) {
+            inputs.push_back(last_expr);
+        }
+        return inputs;
+    };
+
+    auto python_list = [](const std::vector<std::string>& values) {
+        std::string out = "[";
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0) out += ", ";
+            out += values[i];
+        }
+        out += "]";
+        return out;
+    };
+
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
+        std::string out = node_var(node->id);
+        auto record_output = [&](const std::string& expr) {
+            node_outputs[node->id] = expr;
+            for (const auto& pin : node->outputs) {
+                pin_outputs[pin.id] = expr;
+            }
+            last_expr = expr;
+        };
+
         switch (node->type) {
             case NodeType::DatasetInput:
-                code += "        # Dataset input layer (x is already the input tensor)\n";
+                code += "        " + out + " = x\n";
+                record_output(out);
                 break;
 
             case NodeType::Dense:
-                code += "        x = self.layer" + std::to_string(layer_idx++) + ".forward(x)\n";
+                code += "        " + out + " = self.layer" + std::to_string(layer_idx++) + ".forward(" + input_expr(*node, 0) + ")\n";
+                record_output(out);
                 break;
 
             case NodeType::ReLU:
-                code += "        x = cx.relu(x)\n";
+                code += "        " + out + " = cx.relu(" + input_expr(*node, 0) + ")\n";
+                record_output(out);
                 break;
 
             case NodeType::Sigmoid:
-                code += "        x = cx.sigmoid(x)\n";
+                code += "        " + out + " = cx.sigmoid(" + input_expr(*node, 0) + ")\n";
+                record_output(out);
                 break;
 
             case NodeType::Tanh:
-                code += "        x = cx.tanh(x)\n";
+                code += "        " + out + " = cx.tanh(" + input_expr(*node, 0) + ")\n";
+                record_output(out);
                 break;
 
             case NodeType::Softmax:
-                code += "        x = cx.softmax(x)\n";
+                code += "        " + out + " = cx.softmax(" + input_expr(*node, 0) + ")\n";
+                record_output(out);
                 break;
 
             case NodeType::Dropout:
-                code += "        x = cx.dropout(x, p=0.5)\n";
+                code += "        " + out + " = cx.dropout(" + input_expr(*node, 0) + ", p=0.5)\n";
+                record_output(out);
                 break;
 
             case NodeType::Flatten:
-                code += "        x = cx.flatten(x)\n";
+                code += "        " + out + " = " + input_expr(*node, 0) + ".flatten()\n";
+                record_output(out);
                 break;
 
+            case NodeType::Reshape:
+            case NodeType::View: {
+                std::string shape = CsvToPythonListLiteral(GetParamOrDefault(*node, "shape", "-1"), "-1");
+                code += "        " + out + " = " + input_expr(*node, 0) + ".view(" + shape + ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::Permute: {
+                std::string dims = CsvToPythonListLiteral(GetParamOrDefault(*node, "dims", "0,2,1"), "0,2,1");
+                code += "        " + out + " = " + input_expr(*node, 0) + ".permute(" + dims + ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::Squeeze: {
+                std::string dim = GetParamOrDefault(*node, "dim", "-1");
+                if (dim == "-1") {
+                    code += "        " + out + " = " + input_expr(*node, 0) + ".squeeze()\n";
+                } else {
+                    code += "        " + out + " = " + input_expr(*node, 0) + ".squeeze(" + dim + ")\n";
+                }
+                record_output(out);
+                break;
+            }
+
+            case NodeType::Unsqueeze: {
+                std::string dim = GetParamOrDefault(*node, "dim", "0");
+                code += "        " + out + " = " + input_expr(*node, 0) + ".unsqueeze(" + dim + ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::Split: {
+                std::string split_size = GetParamOrDefault(*node, "split_size", "2");
+                std::string dim = GetParamOrDefault(*node, "dim", "0");
+                code += "        " + out + " = " + input_expr(*node, 0) + ".split(" + split_size + ", " + dim + ")\n";
+                node_outputs[node->id] = out + "[0]";
+                for (size_t i = 0; i < node->outputs.size(); ++i) {
+                    pin_outputs[node->outputs[i].id] = out + "[" + std::to_string(i) + "]";
+                }
+                last_expr = out + "[0]";
+                break;
+            }
+
+            case NodeType::Concatenate: {
+                std::string dim = GetParamOrDefault(*node, "dim", "1");
+                code += "        " + out + " = cx.Tensor.cat(" + python_list(all_input_exprs(*node)) + ", " + dim + ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::Add: {
+                auto inputs = all_input_exprs(*node);
+                code += "        " + out + " = " + inputs[0];
+                for (size_t i = 1; i < inputs.size(); ++i) {
+                    code += " + " + inputs[i];
+                }
+                code += "\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::Multiply: {
+                auto inputs = all_input_exprs(*node);
+                code += "        " + out + " = " + inputs[0];
+                for (size_t i = 1; i < inputs.size(); ++i) {
+                    code += " * " + inputs[i];
+                }
+                code += "\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::Average: {
+                auto inputs = all_input_exprs(*node);
+                code += "        " + out + " = (" + inputs[0];
+                for (size_t i = 1; i < inputs.size(); ++i) {
+                    code += " + " + inputs[i];
+                }
+                code += ") / " + std::to_string(inputs.size()) + ".0\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::TensorSum:
+            case NodeType::TensorMean:
+            case NodeType::TensorMax:
+            case NodeType::TensorMin:
+            case NodeType::TensorProd:
+            case NodeType::TensorVar:
+            case NodeType::TensorStd: {
+                std::string method;
+                switch (node->type) {
+                    case NodeType::TensorSum: method = "sum"; break;
+                    case NodeType::TensorMean: method = "mean"; break;
+                    case NodeType::TensorMax: method = "max"; break;
+                    case NodeType::TensorMin: method = "min"; break;
+                    case NodeType::TensorProd: method = "prod"; break;
+                    case NodeType::TensorVar: method = "var"; break;
+                    case NodeType::TensorStd: method = "std"; break;
+                    default: break;
+                }
+
+                std::string dim = GetParamOrDefault(*node, "dim", "-1");
+                std::string keepdim = PythonBoolLiteral(GetParamOrDefault(*node, "keepdim", "false"));
+                code += "        " + out + " = " + input_expr(*node, 0) + "." + method + "(";
+                if (dim == "-1") {
+                    code += "keepdim=" + keepdim;
+                } else {
+                    code += dim + ", keepdim=" + keepdim;
+                }
+                code += ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::TensorBroadcastTo:
+            case NodeType::TensorExpand: {
+                std::string shape = CsvToPythonListLiteral(GetParamOrDefault(*node, "shape", "-1"), "-1");
+                std::string method = node->type == NodeType::TensorBroadcastTo ? "broadcast_to" : "expand";
+                code += "        " + out + " = " + input_expr(*node, 0) + "." + method + "(" + shape + ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::TensorIndexSelect: {
+                std::string dim = GetParamOrDefault(*node, "dim", "0");
+                std::string indices = CsvToPythonListLiteral(GetParamOrDefault(*node, "indices", "0"), "0");
+                code += "        " + out + " = " + input_expr(*node, 0) + ".index_select(" + dim + ", " + indices + ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::TensorPow: {
+                std::string exponent = GetParamOrDefault(*node, "exponent", "2.0");
+                code += "        " + out + " = " + input_expr(*node, 0) + ".pow(" + exponent + ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::TensorSqrt:
+            case NodeType::TensorExp:
+            case NodeType::TensorLog:
+            case NodeType::TensorAbs:
+            case NodeType::TensorSign: {
+                std::string method;
+                switch (node->type) {
+                    case NodeType::TensorSqrt: method = "sqrt"; break;
+                    case NodeType::TensorExp: method = "exp"; break;
+                    case NodeType::TensorLog: method = "log"; break;
+                    case NodeType::TensorAbs: method = "abs"; break;
+                    case NodeType::TensorSign: method = "sign"; break;
+                    default: break;
+                }
+                code += "        " + out + " = " + input_expr(*node, 0) + "." + method + "()\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::TensorClip: {
+                std::string min_value = GetParamOrDefault(*node, "min", "0.0");
+                std::string max_value = GetParamOrDefault(*node, "max", "1.0");
+                code += "        " + out + " = " + input_expr(*node, 0) + ".clip(" + min_value + ", " + max_value + ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::TensorDot:
+            case NodeType::TensorBatchMatMul: {
+                auto inputs = all_input_exprs(*node);
+                std::string rhs = inputs.size() > 1 ? inputs[1] : input_expr(*node, 0);
+                std::string method = node->type == NodeType::TensorDot ? "dot" : "batch_matmul";
+                code += "        " + out + " = " + input_expr(*node, 0) + "." + method + "(" + rhs + ")\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::TensorCompare: {
+                auto inputs = all_input_exprs(*node);
+                std::string rhs = inputs.size() > 1 ? inputs[1] : GetParamOrDefault(*node, "scalar", "0.0");
+                std::string op = GetParamOrDefault(*node, "op", ">");
+                code += "        " + out + " = " + input_expr(*node, 0) + " " + op + " " + rhs + "\n";
+                record_output(out);
+                break;
+            }
+
+            case NodeType::TensorLogicalMask: {
+                std::string op = GetParamOrDefault(*node, "op", "and");
+                if (op == "not") {
+                    code += "        " + out + " = ~" + input_expr(*node, 0) + "\n";
+                } else {
+                    auto inputs = all_input_exprs(*node);
+                    std::string rhs = inputs.size() > 1 ? inputs[1] : input_expr(*node, 0);
+                    std::string py_op = op == "or" ? "|" : "&";
+                    code += "        " + out + " = " + input_expr(*node, 0) + " " + py_op + " " + rhs + "\n";
+                }
+                record_output(out);
+                break;
+            }
+
             case NodeType::Output:
-                code += "        # Output layer\n";
+                last_expr = input_expr(*node, 0);
                 break;
 
             default:
                 break;
         }
     }
-    code += "        return x\n\n";
+    code += "        return " + last_expr + "\n\n";
 
     code += "    def train(self, x_train, y_train, epochs=10, learning_rate=0.001):\n";
     code += "        \"\"\"Training loop using CyxWiz backend\"\"\"\n";
@@ -1861,27 +2203,42 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             break;
         }
 
-        // ===== Shape Operations =====
+        // Tensor shape/merge ops are emitted directly in forward(). They
+        // are tensor methods/operators, not layer objects.
         case NodeType::Flatten:
-            code = "cx.Flatten()";
-            break;
-
         case NodeType::Reshape:
-            code = "cx.Reshape(shape=AUTO)";  // Shape determined from graph
-            break;
-
-        // ===== Merge Operations =====
+        case NodeType::View:
+        case NodeType::Permute:
+        case NodeType::Squeeze:
+        case NodeType::Unsqueeze:
+        case NodeType::Split:
+        case NodeType::Concatenate:
         case NodeType::Add:
-            code = "cx.Add()";
+        case NodeType::Multiply:
+        case NodeType::Average:
+        case NodeType::TensorSum:
+        case NodeType::TensorMean:
+        case NodeType::TensorMax:
+        case NodeType::TensorMin:
+        case NodeType::TensorProd:
+        case NodeType::TensorVar:
+        case NodeType::TensorStd:
+        case NodeType::TensorBroadcastTo:
+        case NodeType::TensorExpand:
+        case NodeType::TensorPow:
+        case NodeType::TensorSqrt:
+        case NodeType::TensorExp:
+        case NodeType::TensorLog:
+        case NodeType::TensorAbs:
+        case NodeType::TensorSign:
+        case NodeType::TensorClip:
+        case NodeType::TensorDot:
+        case NodeType::TensorBatchMatMul:
+        case NodeType::TensorCompare:
+        case NodeType::TensorLogicalMask:
+        case NodeType::TensorIndexSelect:
+            code = "";
             break;
-
-        case NodeType::Concatenate: {
-            std::string dim = "1";
-            auto it = node.parameters.find("dim");
-            if (it != node.parameters.end()) dim = it->second;
-            code = "cx.Concatenate(dim=" + dim + ")";
-            break;
-        }
 
         case NodeType::PluginCustom: {
             auto it = node.parameters.find("plugin_qualified_name");

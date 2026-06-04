@@ -166,6 +166,33 @@ enum class NodeType {
     Multiply,
     Average,
 
+    // ===== Tensor Reductions =====
+    TensorSum,
+    TensorMean,
+    TensorMax,
+    TensorMin,
+    TensorProd,
+    TensorVar,
+    TensorStd,
+
+    // ===== Tensor Broadcast / Unary Math =====
+    TensorBroadcastTo,
+    TensorExpand,
+    TensorPow,
+    TensorSqrt,
+    TensorExp,
+    TensorLog,
+    TensorAbs,
+    TensorSign,
+    TensorClip,
+
+    // ===== Tensor Linalg / Masks =====
+    TensorDot,
+    TensorBatchMatMul,
+    TensorCompare,
+    TensorLogicalMask,
+    TensorIndexSelect,
+
     // ===== Output =====
     Output,
 

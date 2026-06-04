@@ -399,6 +399,29 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"Multiply", NodeType::Multiply},
         {"Average", NodeType::Average},
 
+        // Tensor Operations
+        {"TensorSum", NodeType::TensorSum},
+        {"TensorMean", NodeType::TensorMean},
+        {"TensorMax", NodeType::TensorMax},
+        {"TensorMin", NodeType::TensorMin},
+        {"TensorProd", NodeType::TensorProd},
+        {"TensorVar", NodeType::TensorVar},
+        {"TensorStd", NodeType::TensorStd},
+        {"TensorBroadcastTo", NodeType::TensorBroadcastTo},
+        {"TensorExpand", NodeType::TensorExpand},
+        {"TensorIndexSelect", NodeType::TensorIndexSelect},
+        {"TensorPow", NodeType::TensorPow},
+        {"TensorSqrt", NodeType::TensorSqrt},
+        {"TensorExp", NodeType::TensorExp},
+        {"TensorLog", NodeType::TensorLog},
+        {"TensorAbs", NodeType::TensorAbs},
+        {"TensorSign", NodeType::TensorSign},
+        {"TensorClip", NodeType::TensorClip},
+        {"TensorDot", NodeType::TensorDot},
+        {"TensorBatchMatMul", NodeType::TensorBatchMatMul},
+        {"TensorCompare", NodeType::TensorCompare},
+        {"TensorLogicalMask", NodeType::TensorLogicalMask},
+
         // Output
         {"Output", NodeType::Output},
 
@@ -451,13 +474,13 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"Normalize", NodeType::Normalize},
         {"OneHotEncode", NodeType::OneHotEncode},
 
-        // Text Preprocessing (Phase 3) — config-only nodes consumed by
+        // Text Preprocessing (Phase 3) - config-only nodes consumed by
         // GraphCompiler's ExtractText* extractors; no layer contribution.
         {"TextTokenizer", NodeType::TextTokenizer},
         {"TextVocabulary", NodeType::TextVocabulary},
         {"TextPadding", NodeType::TextPadding},
 
-        // Time Series Preprocessing (Phase 4) — real Cat-1 operators.
+        // Time Series Preprocessing (Phase 4) - real Cat-1 operators.
         {"TimeSeriesWindow", NodeType::TimeSeriesWindow},
         {"TimeSeriesFeatures", NodeType::TimeSeriesFeatures},
         {"TimeSeriesSplit", NodeType::TimeSeriesSplit},

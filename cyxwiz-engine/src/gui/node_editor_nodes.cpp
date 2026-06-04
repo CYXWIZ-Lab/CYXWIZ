@@ -154,6 +154,34 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::Average:
             return NodeCategory::MergeOps;
 
+        // Tensor reductions
+        case NodeType::TensorSum:
+        case NodeType::TensorMean:
+        case NodeType::TensorMax:
+        case NodeType::TensorMin:
+        case NodeType::TensorProd:
+        case NodeType::TensorVar:
+        case NodeType::TensorStd:
+            return NodeCategory::Analytics;
+
+        case NodeType::TensorBroadcastTo:
+        case NodeType::TensorExpand:
+        case NodeType::TensorIndexSelect:
+            return NodeCategory::ShapeOps;
+
+        case NodeType::TensorPow:
+        case NodeType::TensorSqrt:
+        case NodeType::TensorExp:
+        case NodeType::TensorLog:
+        case NodeType::TensorAbs:
+        case NodeType::TensorSign:
+        case NodeType::TensorClip:
+        case NodeType::TensorDot:
+        case NodeType::TensorBatchMatMul:
+        case NodeType::TensorCompare:
+        case NodeType::TensorLogicalMask:
+            return NodeCategory::Analytics;
+
         // Training
         case NodeType::SGD:
         case NodeType::Adam:
@@ -1647,6 +1675,162 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
             if (node.type == NodeType::Concatenate) {
                 node.parameters["dim"] = "1";
+            }
+            break;
+        }
+
+        // ========== Tensor Reductions ==========
+
+        case NodeType::TensorSum:
+        case NodeType::TensorMean:
+        case NodeType::TensorMax:
+        case NodeType::TensorMin:
+        case NodeType::TensorProd:
+        case NodeType::TensorVar:
+        case NodeType::TensorStd: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["dim"] = "-1";
+            node.parameters["keepdim"] = "false";
+            break;
+        }
+
+        case NodeType::TensorBroadcastTo:
+        case NodeType::TensorExpand: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["shape"] = "";
+            break;
+        }
+
+        case NodeType::TensorIndexSelect: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            node.parameters["dim"] = "0";
+            node.parameters["indices"] = "";
+            break;
+        }
+
+        case NodeType::TensorPow:
+        case NodeType::TensorSqrt:
+        case NodeType::TensorExp:
+        case NodeType::TensorLog:
+        case NodeType::TensorAbs:
+        case NodeType::TensorSign:
+        case NodeType::TensorClip: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Tensor;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            if (node.type == NodeType::TensorPow) {
+                node.parameters["exponent"] = "2.0";
+            } else if (node.type == NodeType::TensorClip) {
+                node.parameters["min"] = "0.0";
+                node.parameters["max"] = "1.0";
+            }
+            break;
+        }
+
+        case NodeType::TensorDot:
+        case NodeType::TensorBatchMatMul: {
+            NodePin input_a;
+            input_a.id = next_pin_id_++;
+            input_a.type = PinType::Tensor;
+            input_a.name = "A";
+            input_a.is_input = true;
+            node.inputs.push_back(input_a);
+
+            NodePin input_b;
+            input_b.id = next_pin_id_++;
+            input_b.type = PinType::Tensor;
+            input_b.name = "B";
+            input_b.is_input = true;
+            node.inputs.push_back(input_b);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+            break;
+        }
+
+        case NodeType::TensorCompare:
+        case NodeType::TensorLogicalMask: {
+            NodePin input_a;
+            input_a.id = next_pin_id_++;
+            input_a.type = PinType::Tensor;
+            input_a.name = "A";
+            input_a.is_input = true;
+            node.inputs.push_back(input_a);
+
+            NodePin input_b;
+            input_b.id = next_pin_id_++;
+            input_b.type = PinType::Tensor;
+            input_b.name = "B";
+            input_b.is_input = true;
+            input_b.is_required = false;
+            node.inputs.push_back(input_b);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Tensor;
+            output_pin.name = "Mask";
+            output_pin.is_input = false;
+            node.outputs.push_back(output_pin);
+
+            if (node.type == NodeType::TensorCompare) {
+                node.parameters["op"] = ">";
+                node.parameters["scalar"] = "0.0";
+            } else {
+                node.parameters["op"] = "and";
             }
             break;
         }
@@ -5139,6 +5323,9 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::Unsqueeze:
         case NodeType::View:
         case NodeType::Split:
+        case NodeType::TensorBroadcastTo:
+        case NodeType::TensorExpand:
+        case NodeType::TensorIndexSelect:
             return IM_COL32(26, 188, 156, 255);
 
         // ===== Merge Operations - Lime Green =====
@@ -5147,6 +5334,27 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::Multiply:
         case NodeType::Average:
             return IM_COL32(139, 195, 74, 255);
+
+        // ===== Tensor Reductions - Purple =====
+        case NodeType::TensorSum:
+        case NodeType::TensorMean:
+        case NodeType::TensorMax:
+        case NodeType::TensorMin:
+        case NodeType::TensorProd:
+        case NodeType::TensorVar:
+        case NodeType::TensorStd:
+        case NodeType::TensorPow:
+        case NodeType::TensorSqrt:
+        case NodeType::TensorExp:
+        case NodeType::TensorLog:
+        case NodeType::TensorAbs:
+        case NodeType::TensorSign:
+        case NodeType::TensorClip:
+        case NodeType::TensorDot:
+        case NodeType::TensorBatchMatMul:
+        case NodeType::TensorCompare:
+        case NodeType::TensorLogicalMask:
+            return IM_COL32(156, 39, 176, 255);
 
         // ===== Loss Functions - Dark Red =====
         case NodeType::MSELoss:

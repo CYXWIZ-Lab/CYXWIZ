@@ -435,6 +435,19 @@ panel-only tools still need either:
 **Next step:** continue in small groups. Do not migrate a node unless
 its data contract is clear and testable.
 
+**2026-06-04 update:** first Priority 6 audit slice reviewed the pending
+tensor shape/merge/reduction node exposure already present in the
+worktree. The C++ editor integration builds, but these nodes are not yet
+backend training-runtime operators and are not part of
+`GraphCompiler::IsModelLayer`. They should therefore stay as
+template/deferred metadata until a real runtime contract and tests exist.
+Existing codegen/serialization groundwork can remain as scaffolding, but
+the UI must not present Tensor* nodes as completed executable operators.
+
+**Next step:** either add runtime/test contracts for one small tensor
+operator group, or leave the group explicitly deferred and move to the
+next panel-only/dead-node group.
+
 ### Known dual-maintained registration lists
 
 Node registration unification mostly landed, but some lists remain

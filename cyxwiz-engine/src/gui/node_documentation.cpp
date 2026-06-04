@@ -171,6 +171,29 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::Average:
             return "Merge Operations";
 
+        case NodeType::TensorSum:
+        case NodeType::TensorMean:
+        case NodeType::TensorMax:
+        case NodeType::TensorMin:
+        case NodeType::TensorProd:
+        case NodeType::TensorVar:
+        case NodeType::TensorStd:
+        case NodeType::TensorBroadcastTo:
+        case NodeType::TensorExpand:
+        case NodeType::TensorIndexSelect:
+        case NodeType::TensorPow:
+        case NodeType::TensorSqrt:
+        case NodeType::TensorExp:
+        case NodeType::TensorLog:
+        case NodeType::TensorAbs:
+        case NodeType::TensorSign:
+        case NodeType::TensorClip:
+        case NodeType::TensorDot:
+        case NodeType::TensorBatchMatMul:
+        case NodeType::TensorCompare:
+        case NodeType::TensorLogicalMask:
+            return "Tensor Operations";
+
         // Output
         case NodeType::Output:
             return "Output";

@@ -9,6 +9,55 @@
 
 namespace cyxwiz {
 
+namespace {
+
+NodeCategory ParseTemplateCategory(const std::string& category_name) {
+    if (category_name == "I/O" || category_name == "Data Sources") return NodeCategory::DataSources;
+    if (category_name == "DB" || category_name == "Database") return NodeCategory::Database;
+    if (category_name == "Cloud" || category_name == "Cloud Storage") return NodeCategory::CloudStorage;
+    if (category_name == "Manipulation" || category_name == "Data Transform") return NodeCategory::DataTransform;
+    if (category_name == "Analytics") return NodeCategory::Analytics;
+    if (category_name == "Visualization") return NodeCategory::Visualization;
+    if (category_name == "ML Layers" || category_name == "Layers") return NodeCategory::Layers;
+    if (category_name == "Activation") return NodeCategory::Activation;
+    if (category_name == "Pooling") return NodeCategory::Pooling;
+    if (category_name == "Normalization") return NodeCategory::Normalization;
+    if (category_name == "Attention") return NodeCategory::Attention;
+    if (category_name == "Recurrent") return NodeCategory::Recurrent;
+    if (category_name == "ShapeOps" || category_name == "Shape Ops" || category_name == "Shape Operations") return NodeCategory::ShapeOps;
+    if (category_name == "MergeOps" || category_name == "Merge Ops" || category_name == "Merge Operations") return NodeCategory::MergeOps;
+    if (category_name == "Training") return NodeCategory::Training;
+    if (category_name == "Regularization") return NodeCategory::Regularization;
+    if (category_name == "Model I/O") return NodeCategory::ModelIO;
+    if (category_name == "ML Services") return NodeCategory::MLServices;
+    if (category_name == "ML Advanced" || category_name == "Explainability") return NodeCategory::Explainability;
+    if (category_name == "Preprocessing") return NodeCategory::Preprocessing;
+    if (category_name == "Data Pipeline") return NodeCategory::DataPipeline;
+    if (category_name == "Text" || category_name == "Text Processing") return NodeCategory::TextProcessing;
+    if (category_name == "Time Series") return NodeCategory::TimeSeries;
+    if (category_name == "Audio") return NodeCategory::Audio;
+    if (category_name == "JSON/XML") return NodeCategory::JsonXml;
+    if (category_name == "DNN" || category_name == "DNN Models") return NodeCategory::DNN;
+    if (category_name == "RL" || category_name == "Reinforcement Learning") return NodeCategory::RL;
+    if (category_name == "Big Data") return NodeCategory::BigData;
+    if (category_name == "Workflow") return NodeCategory::Workflow;
+    if (category_name == "Widgets") return NodeCategory::Widgets;
+    if (category_name == "Reporting") return NodeCategory::Reporting;
+    if (category_name == "Signal") return NodeCategory::Signal;
+    return NodeCategory::Utility;
+}
+
+PinType ParseTemplatePinType(const std::string& type_name) {
+    if (type_name == "Tensor") return PinType::Tensor;
+    if (type_name == "Labels") return PinType::Labels;
+    if (type_name == "Parameters") return PinType::Parameters;
+    if (type_name == "Loss") return PinType::Loss;
+    if (type_name == "Optimizer") return PinType::Optimizer;
+    return PinType::Dataset;
+}
+
+} // namespace
+
 // Category display order
 const std::vector<NodeCategory> NodeMetadataRegistry::category_order_ = {
     // Data I/O
@@ -324,19 +373,7 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
                         meta.status = NodeImplementationStatus::Template;
                         meta.badge = tmpl.value("badge", "Coming Soon");  // Badge text for display
 
-                        // Map category string to enum (proper categories for template nodes)
-                        if (category_name == "DB") meta.category = NodeCategory::Database;
-                        else if (category_name == "Cloud") meta.category = NodeCategory::CloudStorage;
-                        else if (category_name == "Workflow") meta.category = NodeCategory::Workflow;
-                        else if (category_name == "Reporting") meta.category = NodeCategory::Reporting;
-                        else if (category_name == "ML Services") meta.category = NodeCategory::MLServices;
-                        else if (category_name == "Visualization") meta.category = NodeCategory::Visualization;
-                        else if (category_name == "Big Data") meta.category = NodeCategory::BigData;
-                        else if (category_name == "ML Advanced") meta.category = NodeCategory::Explainability;
-                        else if (category_name == "Widgets") meta.category = NodeCategory::Widgets;
-                        else if (category_name == "JSON/XML") meta.category = NodeCategory::JsonXml;
-                        else if (category_name == "Model I/O") meta.category = NodeCategory::ModelIO;
-                        else meta.category = NodeCategory::Utility;
+                        meta.category = ParseTemplateCategory(category_name);
 
                         // Keywords
                         if (tmpl.contains("keywords") && tmpl["keywords"].is_array()) {
@@ -355,7 +392,7 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
                             for (const auto& inp : tmpl["inputs"]) {
                                 PortDefinition port;
                                 port.name = inp.value("name", "Input");
-                                port.type = PinType::Dataset;  // Default for templates
+                                port.type = ParseTemplatePinType(inp.value("type", "Dataset"));
                                 port.required = inp.value("required", true);
                                 port.description = inp.value("description", "");
                                 meta.inputs.push_back(port);
@@ -367,7 +404,7 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
                             for (const auto& out : tmpl["outputs"]) {
                                 PortDefinition port;
                                 port.name = out.value("name", "Output");
-                                port.type = PinType::Dataset;
+                                port.type = ParseTemplatePinType(out.value("type", "Dataset"));
                                 port.required = true;
                                 port.description = out.value("description", "");
                                 meta.outputs.push_back(port);
@@ -936,7 +973,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"num_layers", "int", "1", "Stacked layers", {}, ""},
          {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
          {"dropout", "float", "0.0", "Dropout", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0});
 
     RegisterNode({NodeType::GRU, NodeCategory::Recurrent, "GRU", ICON_FA_REPEAT,
         {"gru", "recurrent", "sequence"}, 0, false, "GRU layer", "", "",
@@ -947,7 +984,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"num_layers", "int", "1", "Stacked layers", {}, ""},
          {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
          {"dropout", "float", "0.0", "Dropout", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0});
 
     RegisterNode({NodeType::RNN, NodeCategory::Recurrent, "RNN", ICON_FA_REPEAT,
         {"rnn", "recurrent", "sequence"}, 0, false, "Simple RNN layer", "", "",
@@ -957,14 +994,14 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"hidden_size", "int", "128", "Hidden size", {}, ""},
          {"num_layers", "int", "1", "Stacked layers", {}, ""},
          {"nonlinearity", "string", "tanh", "Nonlinearity", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0});
 
     RegisterNode({NodeType::Bidirectional, NodeCategory::Recurrent, "Bidirectional", ICON_FA_REPEAT,
         {"bidirectional", "wrapper", "sequence"}, 0, false, "Bidirectional wrapper", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Output"}},
         {{"merge_mode", "string", "concat", "Merge mode", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0});
 
     RegisterNode({NodeType::Dropout, NodeCategory::Regularization, "Dropout", ICON_FA_SHUFFLE,
         {"dropout", "regularization"}, 0, false, "Dropout layer", "", "",
@@ -999,6 +1036,223 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Flattened"}},
         {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Reshape, NodeCategory::ShapeOps, "Reshape", ICON_FA_ARROWS_LEFT_RIGHT,
+        {"reshape", "view", "shape", "tensor"}, 0, false, "Reshape tensor dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Reshaped"}},
+        {{"shape", "string", "-1,256", "Target shape", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::View, NodeCategory::ShapeOps, "View", ICON_FA_ARROWS_LEFT_RIGHT,
+        {"view", "reshape", "shape", "tensor"}, 0, false, "View tensor with a new shape", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Viewed"}},
+        {{"shape", "string", "-1,256", "Target shape", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::Permute, NodeCategory::ShapeOps, "Permute", ICON_FA_SHUFFLE,
+        {"permute", "transpose", "axes", "shape", "tensor"}, 0, false, "Reorder tensor dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Permuted"}},
+        {{"dims", "string", "0,2,1", "Dimension order", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::Squeeze, NodeCategory::ShapeOps, "Squeeze", ICON_FA_COMPRESS,
+        {"squeeze", "shape", "dimension", "tensor"}, 0, false, "Remove singleton tensor dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Squeezed"}},
+        {{"dim", "int", "0", "Dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::Unsqueeze, NodeCategory::ShapeOps, "Unsqueeze", ICON_FA_EXPAND,
+        {"unsqueeze", "shape", "dimension", "tensor"}, 0, false, "Insert a singleton tensor dimension", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Unsqueezed"}},
+        {{"dim", "int", "0", "Dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::Split, NodeCategory::ShapeOps, "Split", ICON_FA_CODE_BRANCH,
+        {"split", "chunk", "shape", "tensor"}, 0, false, "Split tensor along a dimension", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output 1", PinType::Tensor, true, "First split"}, {"Output 2", PinType::Tensor, true, "Second split"}},
+        {{"split_size", "int", "2", "Split size", {}, ""}, {"dim", "int", "0", "Dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::Concatenate, NodeCategory::MergeOps, "Concatenate", ICON_FA_CODE_BRANCH,
+        {"concatenate", "concat", "cat", "merge", "tensor"}, 0, false, "Concatenate tensors along a dimension", "", "",
+        {{"Input 1", PinType::Tensor, true, "First input"}, {"Input 2", PinType::Tensor, true, "Second input"}},
+        {{"Output", PinType::Tensor, true, "Concatenated"}},
+        {{"dim", "int", "1", "Dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::Add, NodeCategory::MergeOps, "Add", ICON_FA_PLUS,
+        {"add", "sum", "merge", "tensor"}, 0, false, "Add tensors elementwise", "", "",
+        {{"Input 1", PinType::Tensor, true, "First input"}, {"Input 2", PinType::Tensor, true, "Second input"}},
+        {{"Output", PinType::Tensor, true, "Sum"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::Multiply, NodeCategory::MergeOps, "Multiply", ICON_FA_XMARK,
+        {"multiply", "mul", "product", "merge", "tensor"}, 0, false, "Multiply tensors elementwise", "", "",
+        {{"Input 1", PinType::Tensor, true, "First input"}, {"Input 2", PinType::Tensor, true, "Second input"}},
+        {{"Output", PinType::Tensor, true, "Product"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::Average, NodeCategory::MergeOps, "Average", ICON_FA_CALCULATOR,
+        {"average", "mean", "merge", "tensor"}, 0, false, "Average tensors elementwise", "", "",
+        {{"Input 1", PinType::Tensor, true, "First input"}, {"Input 2", PinType::Tensor, true, "Second input"}},
+        {{"Output", PinType::Tensor, true, "Average"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorSum, NodeCategory::Analytics, "Tensor Sum", ICON_FA_CALCULATOR,
+        {"tensor", "sum", "reduce", "reduction"}, 0, false, "Sum tensor values", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
+        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
+         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorMean, NodeCategory::Analytics, "Tensor Mean", ICON_FA_CALCULATOR,
+        {"tensor", "mean", "average", "reduce", "reduction"}, 0, false, "Average tensor values", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
+        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
+         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorMax, NodeCategory::Analytics, "Tensor Max", ICON_FA_CALCULATOR,
+        {"tensor", "max", "maximum", "reduce", "reduction"}, 0, false, "Maximum tensor values", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
+        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
+         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorMin, NodeCategory::Analytics, "Tensor Min", ICON_FA_CALCULATOR,
+        {"tensor", "min", "minimum", "reduce", "reduction"}, 0, false, "Minimum tensor values", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
+        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
+         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorProd, NodeCategory::Analytics, "Tensor Prod", ICON_FA_CALCULATOR,
+        {"tensor", "prod", "product", "reduce", "reduction"}, 0, false, "Product of tensor values", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
+        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
+         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorVar, NodeCategory::Analytics, "Tensor Var", ICON_FA_CALCULATOR,
+        {"tensor", "var", "variance", "reduce", "reduction"}, 0, false, "Variance of tensor values", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
+        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
+         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorStd, NodeCategory::Analytics, "Tensor Std", ICON_FA_CALCULATOR,
+        {"tensor", "std", "standard deviation", "reduce", "reduction"}, 0, false, "Standard deviation of tensor values", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
+        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
+         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorBroadcastTo, NodeCategory::ShapeOps, "Tensor Broadcast To", ICON_FA_EXPAND,
+        {"tensor", "broadcast", "shape", "expand"}, 0, false, "Broadcast tensor to a target shape", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Broadcast tensor"}},
+        {{"shape", "string", "", "Target shape", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorExpand, NodeCategory::ShapeOps, "Tensor Expand", ICON_FA_EXPAND,
+        {"tensor", "expand", "broadcast", "shape"}, 0, false, "Materialize tensor expanded to a target shape", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Expanded tensor"}},
+        {{"shape", "string", "", "Target shape", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorIndexSelect, NodeCategory::ShapeOps, "Tensor Index Select", ICON_FA_LIST_CHECK,
+        {"tensor", "index", "select", "gather", "slice"}, 0, false, "Select entries along one dimension by index list", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Selected tensor"}},
+        {{"dim", "int", "0", "Dimension", {}, ""},
+         {"indices", "string", "", "Comma-separated indices", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorPow, NodeCategory::Analytics, "Tensor Pow", ICON_FA_CALCULATOR,
+        {"tensor", "pow", "power", "elementwise"}, 0, false, "Raise tensor values to a scalar power", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"exponent", "float", "2.0", "Scalar exponent", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorSqrt, NodeCategory::Analytics, "Tensor Sqrt", ICON_FA_CALCULATOR,
+        {"tensor", "sqrt", "square root", "elementwise"}, 0, false, "Elementwise square root", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorExp, NodeCategory::Analytics, "Tensor Exp", ICON_FA_CALCULATOR,
+        {"tensor", "exp", "exponential", "elementwise"}, 0, false, "Elementwise exponential", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorLog, NodeCategory::Analytics, "Tensor Log", ICON_FA_CALCULATOR,
+        {"tensor", "log", "natural log", "elementwise"}, 0, false, "Elementwise natural log", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorAbs, NodeCategory::Analytics, "Tensor Abs", ICON_FA_CALCULATOR,
+        {"tensor", "abs", "absolute", "elementwise"}, 0, false, "Elementwise absolute value", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorSign, NodeCategory::Analytics, "Tensor Sign", ICON_FA_CALCULATOR,
+        {"tensor", "sign", "elementwise"}, 0, false, "Elementwise sign", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorClip, NodeCategory::Analytics, "Tensor Clip", ICON_FA_CALCULATOR,
+        {"tensor", "clip", "clamp", "elementwise"}, 0, false, "Clip tensor values to a scalar range", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"min", "float", "0.0", "Minimum value", {}, ""},
+         {"max", "float", "1.0", "Maximum value", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorDot, NodeCategory::Analytics, "Tensor Dot", ICON_FA_CALCULATOR,
+        {"tensor", "dot", "vector", "linalg"}, 0, false, "Compute vector dot product", "", "",
+        {{"A", PinType::Tensor, true, "Left input"}, {"B", PinType::Tensor, true, "Right input"}},
+        {{"Output", PinType::Tensor, true, "Dot product"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorBatchMatMul, NodeCategory::Analytics, "Tensor Batch MatMul", ICON_FA_CALCULATOR,
+        {"tensor", "batch", "matmul", "matrix", "linalg"}, 0, false, "Compute batched matrix multiplication", "", "",
+        {{"A", PinType::Tensor, true, "Left input"}, {"B", PinType::Tensor, true, "Right input"}},
+        {{"Output", PinType::Tensor, true, "Batched product"}},
+        {}, NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorCompare, NodeCategory::Analytics, "Tensor Compare", ICON_FA_CALCULATOR,
+        {"tensor", "compare", "greater", "less", "equal", "mask"}, 0, false, "Compare tensors or tensor and scalar", "", "",
+        {{"A", PinType::Tensor, true, "Left input"}, {"B", PinType::Tensor, false, "Optional right input"}},
+        {{"Mask", PinType::Tensor, true, "Comparison mask"}},
+        {{"op", "enum", ">", "Comparison operator", {">", ">=", "<", "<=", "==", "!="}, ""},
+         {"scalar", "float", "0.0", "Scalar value when B is not connected", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::TensorLogicalMask, NodeCategory::Analytics, "Tensor Logical Mask", ICON_FA_CALCULATOR,
+        {"tensor", "logical", "mask", "and", "or", "not"}, 0, false, "Combine or invert tensor masks", "", "",
+        {{"A", PinType::Tensor, true, "Left mask"}, {"B", PinType::Tensor, false, "Optional right mask"}},
+        {{"Mask", PinType::Tensor, true, "Logical mask"}},
+        {{"op", "enum", "and", "Logical operator", {"and", "or", "not"}, ""}},
+        NodeImplementationStatus::Template, 0});
 
     RegisterNode({NodeType::Embedding, NodeCategory::Layers, "Embedding", ICON_FA_CUBES,
         {"embedding", "lookup"}, 0, false, "Embedding layer", "", "",
