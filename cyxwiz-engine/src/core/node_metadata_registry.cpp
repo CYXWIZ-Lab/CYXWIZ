@@ -872,6 +872,16 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"fit_intercept", "bool", "true", "Fit intercept", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::PolynomialRegressionNode, NodeCategory::Analytics, "Polynomial Regression", ICON_FA_CHART_LINE,
+        {"polynomial", "regression", "curve", "fit"}, 0, false, "Polynomial Regression",
+        "Fits a univariate polynomial model and appends prediction/residual columns.", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Fitted", PinType::Dataset, true, "Input table plus prediction/residual"}},
+        {{"feature_col", "string", "", "Single predictor column", {}, ""},
+         {"target_col", "string", "", "Target column", {}, ""},
+         {"degree", "int", "2", "Polynomial degree", {}, "1-10"}},
+        NodeImplementationStatus::Implemented, 0});
+
     // Model Evaluation
     RegisterNode({NodeType::ConfusionMatrixNode, NodeCategory::Analytics, "Confusion Matrix", ICON_FA_TABLE_CELLS,
         {"confusion", "matrix", "evaluation"}, 0, false, "Confusion Matrix visualization",
@@ -936,6 +946,58 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
     // (TrainTestSplit registration removed — use NodeType::DataSplit, which
     //  supports 3-way train/val/test split and is the single source of truth
     //  for dataset partitioning. See node_editor_add_search.cpp for its entry.)
+
+    RegisterNode({NodeType::RobustScaler, NodeCategory::Preprocessing, "Robust Scaler", ICON_FA_SCALE_BALANCED,
+        {"robust", "scaler", "median", "iqr"}, 0, false, "Robust scaling",
+        "Scales numeric columns using median and interquartile range.", "",
+        {{"Data", PinType::Dataset, true, "Input data"}},
+        {{"Scaled", PinType::Dataset, true, "Scaled data"}},
+        {{"columns", "string", "", "Columns to scale (empty = numeric auto-detect)", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"with_centering", "bool", "true", "Subtract median", {}, ""},
+         {"with_scaling", "bool", "true", "Scale by IQR", {}, ""},
+         {"quantile_min", "float", "25", "Lower quantile", {}, "0-100"},
+         {"quantile_max", "float", "75", "Upper quantile", {}, "0-100"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::LabelEncoder, NodeCategory::Preprocessing, "Label Encoder", ICON_FA_TAG,
+        {"label", "encoder", "categorical"}, 0, false, "Encode one categorical column",
+        "Replaces one string column with stable int32 category codes.", "",
+        {{"Data", PinType::Dataset, true, "Input data"}},
+        {{"Encoded", PinType::Dataset, true, "Encoded data"}},
+        {{"column", "string", "", "Column to encode", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::OrdinalEncoder, NodeCategory::Preprocessing, "Ordinal Encoder", ICON_FA_LIST_OL,
+        {"ordinal", "encoder", "categorical"}, 0, false, "Encode categorical columns",
+        "Replaces one or more string columns with alphabetical int32 category codes.", "",
+        {{"Data", PinType::Dataset, true, "Input data"}},
+        {{"Encoded", PinType::Dataset, true, "Encoded data"}},
+        {{"columns", "string", "", "Columns to encode", {}, ""},
+         {"categories", "string", "auto", "Category ordering (auto only in v1)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TargetEncoder, NodeCategory::Preprocessing, "Target Encoder", ICON_FA_PERCENT,
+        {"target", "encoder", "categorical", "mean"}, 0, false, "Target mean encoding",
+        "Replaces categorical columns with smoothed target means.", "",
+        {{"Data", PinType::Dataset, true, "Input data"}},
+        {{"Encoded", PinType::Dataset, true, "Encoded data"}},
+        {{"columns", "string", "", "Categorical columns to encode", {}, ""},
+         {"target_col", "string", "", "Numeric target column", {}, ""},
+         {"smoothing", "float", "1.0", "Smoothing pseudo-count", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::OutlierDetector, NodeCategory::Preprocessing, "Outlier Detector", ICON_FA_FILTER,
+        {"outlier", "iqr", "zscore", "detect"}, 0, false, "Flag numeric outliers",
+        "Adds an is_outlier column using IQR or Z-score detection.", "",
+        {{"Data", PinType::Dataset, true, "Input data"}},
+        {{"Flagged", PinType::Dataset, true, "Input data plus is_outlier"}},
+        {{"columns", "string", "all", "Columns to inspect", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"method", "dropdown", "iqr", "Method", {"iqr", "zscore"}, ""},
+         {"threshold", "float", "1.5", "IQR multiplier or Z-score threshold", {}, ""},
+         {"action", "dropdown", "flag", "Action (flag only in v1)", {"flag"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DataProfiler, NodeCategory::Analytics, "Data Profiler", ICON_FA_MAGNIFYING_GLASS_CHART,
         {"profiler", "eda", "exploration"}, 0, false, "Comprehensive data profiling",
@@ -1422,6 +1484,24 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
         {{"Data", PinType::Tensor, true, "Data"}},
         {{"Train", PinType::Tensor, true, "Train"}, {"Test", PinType::Tensor, true, "Test"}},
         {{"train_ratio", "float", "0.8", "Train ratio", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::LogTransform, NodeCategory::TimeSeries, "Log Transform", ICON_FA_CHART_LINE,
+        {"log", "log1p", "stabilize", "time", "series"}, 0, false,
+        "Apply log1p to a numeric time-series column", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Transformed", PinType::Dataset, true, "Input table with transformed column"}},
+        {{"value_col", "string", "", "Numeric column to transform", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Differencing, NodeCategory::TimeSeries, "Differencing", ICON_FA_MINUS,
+        {"difference", "differencing", "lag", "stationary", "time", "series"}, 0, false,
+        "Difference a numeric column by lag and order", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Differenced", PinType::Dataset, true, "Shortened table after differencing"}},
+        {{"value_col", "string", "", "Numeric column to difference", {}, ""},
+         {"lag", "int", "1", "Lag", {}, ""},
+         {"order", "int", "1", "Differencing order", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 }
 
@@ -2046,19 +2126,28 @@ void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
     // Also register existing enum entries that weren't registered
     RegisterNode({NodeType::GMMCluster, NodeCategory::Analytics, "GMM Clustering", ICON_FA_CHART_PIE,
         {"gmm", "gaussian", "mixture", "clustering", "soft"}, 0, false,
-        "Gaussian Mixture Model", "", "",
+        "Gaussian Mixture Model clustering", "", "",
         {{"Data", PinType::Dataset, true, "Data"}},
-        {{"Clustered", PinType::Dataset, false, "Clustered"}},
-        {{"n_components", "int", "3", "Components", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        {{"Clustered", PinType::Dataset, true, "Input table plus cluster_id"}},
+        {{"feature_cols", "string", "", "Feature columns (empty = numeric auto-detect)", {}, ""},
+         {"label_col", "string", "", "Label column to exclude", {}, ""},
+         {"n_components", "int", "3", "Components", {}, ""},
+         {"covariance_type", "dropdown", "full", "Covariance type", {"full", "tied", "diag", "spherical"}, ""},
+         {"max_iter", "int", "100", "Max iterations", {}, ""},
+         {"tol", "float", "0.001", "Convergence tolerance", {}, ""},
+         {"n_init", "int", "1", "Random restarts", {}, ""},
+         {"seed", "int", "0", "Random seed (0 = non-deterministic)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Convolution1D, NodeCategory::Signal, "Convolution 1D", ICON_FA_WAVE_SQUARE,
         {"convolution", "1d", "signal", "filter", "kernel"}, 0, false,
-        "1D Signal Convolution", "", "",
-        {{"Signal", PinType::Dataset, true, "Signal"}, {"Kernel", PinType::Dataset, true, "Kernel"}},
-        {{"Result", PinType::Dataset, false, "Result"}},
-        {{"mode", "dropdown", "same", "Mode", {"full", "same", "valid"}, ""}},
-        NodeImplementationStatus::Template, 0});
+        "1D signal convolution", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Convolved", PinType::Dataset, true, "Input table plus convolved signal"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, ""},
+         {"kernel", "string", "0.25,0.5,0.25", "Comma-separated FIR kernel taps", {}, ""},
+         {"mode", "dropdown", "same", "Mode (same only in v1)", {"same"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::WordEmbeddings, NodeCategory::TextProcessing, "Word Embeddings", ICON_FA_CUBE,
         {"embeddings", "word2vec", "glove", "vectors", "nlp"}, 0, false,

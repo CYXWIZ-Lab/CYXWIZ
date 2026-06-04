@@ -480,6 +480,21 @@ dual-maintained.
 **Next step:** only consolidate lists that are actively causing drift;
 avoid broad registry rewrites during Text Fix B.
 
+**2026-06-04 update:** added a focused drift guard,
+`test_pipeline_operator_metadata`, that checks every
+`PipelineOperatorFactory` node has metadata and is marked implemented.
+The audit found real status drift: factory-backed `LogTransform`,
+`Differencing`, `PolynomialRegressionNode`, `RobustScaler`,
+`LabelEncoder`, `OrdinalEncoder`, `TargetEncoder`, and
+`OutlierDetector` had no metadata, while `GMMCluster` and
+`Convolution1D` were still template metadata despite registered runtime
+operators. Metadata is now aligned for those executable Cat-1 operators.
+This intentionally does not rewrite all enum/string/category maps.
+
+**Remaining:** a deeper pin/parameter schema audit is still useful for
+older factory-backed nodes whose metadata/frontend pins predate their
+Arrow table operators, but that should be a separate small slice.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type
