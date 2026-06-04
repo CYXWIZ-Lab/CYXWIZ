@@ -4,6 +4,7 @@
 #include "parquet_backed_dataset.h"
 #include "graph_topology_utils.h"
 #include "worker_defaults.h"
+#include "node_metadata_registry.h"
 #include "../gui/loaders/data_loader.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -65,6 +66,20 @@ const char* IssueLevelLabel(IssueLevel level) {
         case IssueLevel::Info:    return "INFO";
     }
     return "?";
+}
+
+const char* ImplementationStatusLabel(NodeImplementationStatus status) {
+    switch (status) {
+        case NodeImplementationStatus::Implemented:
+            return "implemented";
+        case NodeImplementationStatus::Template:
+            return "template/deferred";
+        case NodeImplementationStatus::Deprecated:
+            return "deprecated";
+        case NodeImplementationStatus::External:
+            return "external";
+    }
+    return "unknown";
 }
 
 // Build the legacy single-string error_message from the issues list so
@@ -827,6 +842,44 @@ bool ValidateTensorMaskParams(gui::NodeType type,
     error = "Unsupported tensor mask operation";
     return false;
 }
+
+void ValidateTrainingPathImplementationStatus(
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& training_path_ids,
+    TrainingConfiguration& config) {
+
+    if (training_path_ids.empty()) {
+        return;
+    }
+
+    auto& registry = NodeMetadataRegistry::Instance();
+    if (!registry.IsInitialized()) {
+        registry.Initialize();
+    }
+
+    for (const auto& node : nodes) {
+        if (training_path_ids.count(node.id) == 0) {
+            continue;
+        }
+
+        const NodeMetadata* metadata = registry.GetMetadata(node.type);
+        if (!metadata) {
+            continue;
+        }
+        if (metadata->status == NodeImplementationStatus::Implemented) {
+            continue;
+        }
+
+        std::ostringstream msg;
+        msg << "Node '" << node.name << "' is "
+            << ImplementationStatusLabel(metadata->status)
+            << " and cannot run in the training path";
+        if (!metadata->brief_description.empty()) {
+            msg << " (" << metadata->brief_description << ")";
+        }
+        AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+    }
+}
 } // anonymous namespace
 
 TrainingConfiguration GraphCompiler::Compile(
@@ -1118,6 +1171,8 @@ TrainingConfiguration GraphCompiler::Compile(
             optimizer_node = path_optimizer_node;
         }
     }
+    ValidateTrainingPathImplementationStatus(nodes, training_path_ids, config);
+
     if (dataset_node) {
         config.data_source_node_id = dataset_node->id;
     }

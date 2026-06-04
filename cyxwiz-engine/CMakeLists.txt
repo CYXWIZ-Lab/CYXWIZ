@@ -1197,6 +1197,43 @@ set_target_properties(test_pattern_template_guard PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Graph Compiler Deferred Node Guard =====
+add_executable(test_graph_compiler_deferred_nodes
+    tests/test_graph_compiler_deferred_nodes.cpp
+    src/core/graph_compiler.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+)
+
+target_include_directories(test_graph_compiler_deferred_nodes PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_graph_compiler_deferred_nodes PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_graph_compiler_deferred_nodes PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Tensor Reshape Runtime Contract =====
 add_executable(test_tensor_reshape_runtime_contract
     tests/test_tensor_reshape_runtime_contract.cpp

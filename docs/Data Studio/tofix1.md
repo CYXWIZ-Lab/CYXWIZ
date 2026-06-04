@@ -610,6 +610,15 @@ contract. Tensor merge/multi-input, linalg, and two-input mask operators
 remain deferred until graph runtime can carry multiple tensors into one
 model node.
 
+**2026-06-04 update:** added a compiler guard for saved/custom graphs
+that still contain non-implemented nodes on the selected training path.
+`GraphCompiler` now consults `NodeMetadataRegistry` after the
+source-to-loss path is selected and emits a compile error for
+`template/deferred`, deprecated, or external nodes in that path instead
+of silently skipping them. Disconnected side experiments remain allowed.
+Added `test_graph_compiler_deferred_nodes` to prove a template Tensor
+node blocks training only when it is actually on the selected path.
+
 ## Priority 7 - Future Architecture
 
 ### Variable-shape Sample type
