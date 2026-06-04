@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -122,6 +123,12 @@ arrow::Status EncodeStringColumn(
         }
     }
     out_categories.assign(unique.begin(), unique.end());
+    if (out_categories.size() >
+        static_cast<size_t>((std::numeric_limits<int>::max)())) {
+        return arrow::Status::Invalid(
+            op_name + ": column '" + col_name +
+            "' has too many categories for int32 encoding");
+    }
 
     std::unordered_map<std::string, int> code_map;
     for (size_t i = 0; i < out_categories.size(); ++i) {
@@ -423,7 +430,7 @@ OrdinalEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
     auto out = input;
-    int total_categories = 0;
+    size_t total_categories = 0;
     for (const auto& name : columns_) {
         int idx = out->schema()->GetFieldIndex(name);
         if (idx < 0) {
@@ -435,7 +442,7 @@ OrdinalEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         std::vector<std::string> categories;
         ARROW_RETURN_NOT_OK(EncodeStringColumn(col, name, GetName(), codes, categories));
         ARROW_ASSIGN_OR_RAISE(out, ReplaceWithInts(out, idx, codes));
-        total_categories += static_cast<int>(categories.size());
+        total_categories += categories.size();
     }
 
     spdlog::info("OrdinalEncoder: encoded {} columns, {} total categories",

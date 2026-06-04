@@ -801,6 +801,17 @@ passes after the cleanup. Remaining narrowing/stub-parameter warnings
 should be handled only when reproduced against their current files and
 kept in similarly small slices.
 
+**2026-06-04 update:** completed the next narrowing cleanup slice for
+current `data_analyzer.cpp` and preprocessing operator code. Percentage
+fields now use one explicit helper instead of repeated mixed
+size_t/float arithmetic, histogram and top-value helpers reject invalid
+counts before converting to container sizes, and categorical encoders
+now reject category counts that cannot fit their int32 output contract
+instead of silently narrowing. Full Debug `cyxwiz-engine` build and
+`test_pipeline_operator_metadata` pass. Remaining Priority 8 warning
+items are limited to signal-processing operator casts and any
+stub-parameter warnings that can still be reproduced in current files.
+
 ## Build Health Follow-Up
 
 ### Full engine Debug build duplicate DataSources case

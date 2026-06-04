@@ -13,6 +13,16 @@
 
 namespace cyxwiz {
 
+namespace {
+
+float Percent(size_t part, size_t total) {
+    if (total == 0) return 0.0f;
+    return static_cast<float>(
+        (static_cast<double>(part) / static_cast<double>(total)) * 100.0);
+}
+
+} // namespace
+
 // ========== DataProfile Methods ==========
 
 const ColumnProfile* DataProfile::GetColumn(const std::string& name) const {
@@ -288,18 +298,18 @@ ColumnDataType DataAnalyzer::DetectColumnType(const DataTable& table, size_t col
 std::vector<HistogramBin> DataAnalyzer::BuildHistogram(const std::vector<double>& values,
                                                         double min_val, double max_val,
                                                         int num_bins) {
-    std::vector<HistogramBin> histogram(num_bins);
-
-    if (values.empty() || min_val >= max_val) {
-        return histogram;
+    if (values.empty() || min_val >= max_val || num_bins <= 0) {
+        return {};
     }
 
-    double bin_width = (max_val - min_val) / num_bins;
+    const size_t bin_count = static_cast<size_t>(num_bins);
+    std::vector<HistogramBin> histogram(bin_count);
+    const double bin_width = (max_val - min_val) / static_cast<double>(num_bins);
 
     // Initialize bins
-    for (int i = 0; i < num_bins; i++) {
-        histogram[i].low = min_val + i * bin_width;
-        histogram[i].high = min_val + (i + 1) * bin_width;
+    for (size_t i = 0; i < bin_count; i++) {
+        histogram[i].low = min_val + static_cast<double>(i) * bin_width;
+        histogram[i].high = min_val + static_cast<double>(i + 1) * bin_width;
         histogram[i].count = 0;
     }
 
@@ -308,19 +318,20 @@ std::vector<HistogramBin> DataAnalyzer::BuildHistogram(const std::vector<double>
         int bin_index = static_cast<int>((v - min_val) / bin_width);
         if (bin_index < 0) bin_index = 0;
         if (bin_index >= num_bins) bin_index = num_bins - 1;
-        histogram[bin_index].count++;
+        histogram[static_cast<size_t>(bin_index)].count++;
     }
 
     // Calculate percentages
-    double total = static_cast<double>(values.size());
     for (auto& bin : histogram) {
-        bin.percentage = static_cast<float>(bin.count) / static_cast<float>(total) * 100.0f;
+        bin.percentage = Percent(bin.count, values.size());
     }
 
     return histogram;
 }
 
 std::vector<TopValue> DataAnalyzer::GetTopValues(const std::vector<std::string>& values, int top_n) {
+    if (top_n <= 0) return {};
+
     std::unordered_map<std::string, size_t> counts;
     for (const auto& v : values) {
         counts[v]++;
@@ -331,13 +342,13 @@ std::vector<TopValue> DataAnalyzer::GetTopValues(const std::vector<std::string>&
               [](const auto& a, const auto& b) { return a.second > b.second; });
 
     std::vector<TopValue> result;
-    double total = static_cast<double>(values.size());
+    const size_t limit = std::min(sorted_counts.size(), static_cast<size_t>(top_n));
 
-    for (int i = 0; i < std::min(static_cast<int>(sorted_counts.size()), top_n); i++) {
+    for (size_t i = 0; i < limit; i++) {
         TopValue tv;
         tv.value = sorted_counts[i].first;
         tv.count = sorted_counts[i].second;
-        tv.percentage = static_cast<float>(tv.count) / static_cast<float>(total) * 100.0f;
+        tv.percentage = Percent(tv.count, values.size());
         result.push_back(tv);
     }
 
@@ -393,8 +404,7 @@ ColumnProfile DataAnalyzer::ProfileColumn(const DataTable& table, size_t column_
     }
 
     profile.unique_count = unique_values.size();
-    profile.null_percentage = profile.total_count > 0 ?
-        static_cast<float>(profile.null_count) / profile.total_count * 100.0f : 0.0f;
+    profile.null_percentage = Percent(profile.null_count, profile.total_count);
 
     // Compute numeric statistics
     if (!numeric_values.empty() && profile.IsNumeric()) {
@@ -461,8 +471,7 @@ DataProfile DataAnalyzer::ProfileTable(const DataTable& table, int histogram_bin
 
     // Calculate overall null percentage
     size_t total_cells = profile.row_count * profile.column_count;
-    profile.null_percentage = total_cells > 0 ?
-        static_cast<float>(profile.total_nulls) / total_cells * 100.0f : 0.0f;
+    profile.null_percentage = Percent(profile.total_nulls, total_cells);
 
     return profile;
 }
@@ -586,8 +595,7 @@ MissingValueAnalysis DataAnalyzer::AnalyzeMissingValues(const DataTable& table,
             }
         }
 
-        cm.missing_percentage = table.GetRowCount() > 0 ?
-            static_cast<float>(cm.missing_count) / table.GetRowCount() * 100.0f : 0.0f;
+        cm.missing_percentage = Percent(cm.missing_count, table.GetRowCount());
 
         result.total_missing += cm.missing_count;
         result.columns.push_back(std::move(cm));
@@ -608,10 +616,8 @@ MissingValueAnalysis DataAnalyzer::AnalyzeMissingValues(const DataTable& table,
     }
 
     result.complete_rows = table.GetRowCount() - result.rows_with_missing;
-    result.missing_percentage = result.total_cells > 0 ?
-        static_cast<float>(result.total_missing) / result.total_cells * 100.0f : 0.0f;
-    result.rows_with_missing_percentage = table.GetRowCount() > 0 ?
-        static_cast<float>(result.rows_with_missing) / table.GetRowCount() * 100.0f : 0.0f;
+    result.missing_percentage = Percent(result.total_missing, result.total_cells);
+    result.rows_with_missing_percentage = Percent(result.rows_with_missing, table.GetRowCount());
 
     return result;
 }
@@ -732,8 +738,7 @@ OutlierResult DataAnalyzer::DetectOutliers(const DataTable& table, size_t column
     }
 
     result.outlier_count = result.outliers.size();
-    result.outlier_percentage = result.total_valid > 0 ?
-        static_cast<float>(result.outlier_count) / result.total_valid * 100.0f : 0.0f;
+    result.outlier_percentage = Percent(result.outlier_count, result.total_valid);
 
     // Sort outliers by score (highest first)
     std::sort(result.outliers.begin(), result.outliers.end(),
