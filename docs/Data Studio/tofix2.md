@@ -426,6 +426,24 @@ Twenty-seventh slice status:
 - Remaining: convolution, normalization, attention, and linalg
   decompositions remain larger follow-up slices.
 
+Twenty-eighth slice status:
+
+- Completed: added direct CPU implementation for legacy `Conv2DLayer`
+  forward/backward using the existing `[H, W, C, N]` Float32 contract,
+  zero padding, stride, cross-correlation semantics, and gradients for
+  input, weights, and bias.
+- Completed: removed the old `Conv2DLayer` ArrayFire-first
+  forward/backward branches after the regression test exposed a wrong
+  backward shape under the GPU path.
+- Completed: added focused deterministic `Conv2DLayer`
+  forward/backward/parameter-gradient regression coverage.
+- Follow-up found during this slice: `Tensor::Zeros()` can round-trip
+  through ArrayFire and collapse trailing singleton dimensions. Conv2D
+  now avoids it for rank-sensitive gradient buffers, but the Tensor
+  factory should get a separate shape-preservation audit.
+- Remaining: `Conv1DLayer`, `ConvTranspose2DLayer`, normalization,
+  attention, and linalg decompositions remain follow-up slices.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -875,10 +893,12 @@ but they must say so honestly and be tracked by group. Factory
 `CosineEmbeddingLoss`, `TripletLoss`, `ContrastiveLoss`, legacy
 `DenseLayer`, legacy `DropoutLayer`, legacy pooling layers
 (`MaxPool2DLayer`, `AvgPool2DLayer`, `GlobalAvgPool2DLayer`),
-`Upsample2DLayer` nearest and bilinear modes, and `PixelShuffleLayer`
-now have CPU fallback coverage with tests. Remaining fallback work
-should proceed by operator group, starting with convolution,
-normalization, attention, and linalg decompositions.
+`Upsample2DLayer` nearest and bilinear modes, `PixelShuffleLayer`, and
+legacy `Conv2DLayer` now have CPU fallback coverage with tests.
+Remaining fallback work should proceed by operator group, starting with
+the remaining convolution layers (`Conv1DLayer` and
+`ConvTranspose2DLayer`), normalization, attention, and linalg
+decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 

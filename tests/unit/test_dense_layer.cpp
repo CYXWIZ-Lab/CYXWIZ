@@ -62,6 +62,60 @@ TEST_CASE("DenseLayer computes deterministic forward and backward values", "[den
     REQUIRE(grad_bias_data[1] == Catch::Approx(2.5f));
 }
 
+TEST_CASE("Conv2DLayer computes deterministic forward and backward values", "[conv][layer]") {
+    cyxwiz::Conv2DLayer layer(1, 1, 2, 1, 0, true);
+
+    float weight_values[] = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+    float bias_values[] = {0.5f};
+    layer.SetParameters({
+        {"weights", cyxwiz::Tensor({2, 2, 1, 1}, weight_values, cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor({1}, bias_values, cyxwiz::DataType::Float32)},
+    });
+
+    float input_values[] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f,
+        7.0f, 8.0f, 9.0f,
+    };
+    cyxwiz::Tensor input({3, 3, 1, 1}, input_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::Tensor output = layer.Forward(input);
+    REQUIRE(output.Shape() == std::vector<size_t>{2, 2, 1, 1});
+    const float* output_data = output.Data<float>();
+    const float expected_output[] = {37.5f, 47.5f, 67.5f, 77.5f};
+    for (size_t i = 0; i < 4; ++i) {
+        REQUIRE(output_data[i] == Catch::Approx(expected_output[i]));
+    }
+
+    float grad_values[] = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+    cyxwiz::Tensor grad_output({2, 2, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = layer.Backward(grad_output);
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{3, 3, 1, 1});
+    const float* grad_input_data = grad_input.Data<float>();
+    const float expected_grad_input[] = {
+        1.0f, 4.0f, 4.0f,
+        6.0f, 20.0f, 16.0f,
+        9.0f, 24.0f, 16.0f,
+    };
+    for (size_t i = 0; i < 9; ++i) {
+        REQUIRE(grad_input_data[i] == Catch::Approx(expected_grad_input[i]));
+    }
+
+    const std::map<std::string, cyxwiz::Tensor> params = layer.GetParameters();
+    const float* grad_weight_data = params.at("grad_weights").Data<float>();
+    const float expected_grad_weights[] = {37.0f, 47.0f, 67.0f, 77.0f};
+    for (size_t i = 0; i < 4; ++i) {
+        REQUIRE(grad_weight_data[i] == Catch::Approx(expected_grad_weights[i]));
+    }
+    REQUIRE(params.at("grad_bias").Data<float>()[0] == Catch::Approx(10.0f));
+}
+
 TEST_CASE("DropoutLayer passes values through in eval mode", "[dropout][layer]") {
     float input_values[] = {1.0f, -2.0f, 3.5f, 4.0f};
     cyxwiz::Tensor input({2, 2}, input_values, cyxwiz::DataType::Float32);
