@@ -316,6 +316,17 @@ Nineteenth slice status:
 - Remaining: metric-learning losses still need separate fallback slices;
   legacy layer and linalg fallback work remains deferred.
 
+Twentieth slice status:
+
+- Completed: added CPU fallback for `CosineEmbeddingLoss` forward and
+  backward under the existing `[batch, embedding_dim]` plus `SetLabels()`
+  contract.
+- Completed: added focused `CosineEmbeddingLoss` forward and backward
+  regression coverage.
+- Remaining: `TripletLoss` and `ContrastiveLoss` still need separate
+  fallback slices; legacy layer and linalg fallback work remains
+  deferred.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -763,7 +774,8 @@ but they must say so honestly and be tracked by group. Factory
 `SmoothL1Loss`/`HuberLoss`, `CrossEntropyLoss`, `NLLLoss`, `BCELoss`,
 and `BCEWithLogitsLoss` now have CPU fallback coverage with tests.
 Remaining fallback work should proceed by operator group, starting with
-metric-learning losses before legacy layers and linalg decompositions.
+`TripletLoss` and `ContrastiveLoss` before legacy layers and linalg
+decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 

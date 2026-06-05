@@ -530,6 +530,106 @@ Tensor CpuFocalBackward(const Tensor& predictions,
     return grad;
 }
 
+struct EmbeddingPairShape {
+    size_t batch = 0;
+    size_t dim = 0;
+};
+
+EmbeddingPairShape ValidateEmbeddingPair(const Tensor& x1, const Tensor& x2, const char* name) {
+    if (x1.GetDataType() != DataType::Float32 || x2.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(std::string(name) + " only supports Float32 embeddings");
+    }
+    if (x1.Shape() != x2.Shape()) {
+        throw std::runtime_error(std::string(name) + " requires matching embedding shapes");
+    }
+    const std::vector<size_t>& shape = x1.Shape();
+    if (shape.size() != 2) {
+        throw std::runtime_error(std::string(name) + " CPU fallback supports [batch, embedding_dim] tensors");
+    }
+    return {shape[0], shape[1]};
+}
+
+const float* ValidateEmbeddingLabels(const Tensor& labels, size_t batch, const char* name) {
+    if (labels.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(std::string(name) + " labels must be Float32");
+    }
+    if (labels.Shape() != std::vector<size_t>{batch}) {
+        throw std::runtime_error(std::string(name) + " labels must have shape [batch]");
+    }
+    return labels.Data<float>();
+}
+
+Tensor CpuCosineEmbeddingForward(const Tensor& x1,
+                                 const Tensor& x2,
+                                 const Tensor& labels,
+                                 float margin,
+                                 Reduction reduction) {
+    const EmbeddingPairShape shape = ValidateEmbeddingPair(x1, x2, "CosineEmbedding");
+    const float* label_data = ValidateEmbeddingLabels(labels, shape.batch, "CosineEmbedding");
+    const float* a = x1.Data<float>();
+    const float* b = x2.Data<float>();
+
+    std::vector<float> losses(shape.batch, 0.0f);
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const size_t base = batch * shape.dim;
+        float dot = 0.0f;
+        float norm1_sq = 0.0f;
+        float norm2_sq = 0.0f;
+        for (size_t d = 0; d < shape.dim; ++d) {
+            dot += a[base + d] * b[base + d];
+            norm1_sq += a[base + d] * a[base + d];
+            norm2_sq += b[base + d] * b[base + d];
+        }
+        const float norm_product = std::sqrt(norm1_sq + 1e-8f) * std::sqrt(norm2_sq + 1e-8f);
+        const float cos_sim = dot / norm_product;
+        losses[batch] = label_data[batch] > 0.0f ? 1.0f - cos_sim
+                                                 : std::max(cos_sim - margin, 0.0f);
+    }
+    return ApplyClassReduction(losses, shape.batch, reduction);
+}
+
+Tensor CpuCosineEmbeddingBackward(const Tensor& x1,
+                                  const Tensor& x2,
+                                  const Tensor& labels,
+                                  float margin,
+                                  Reduction reduction) {
+    const EmbeddingPairShape shape = ValidateEmbeddingPair(x1, x2, "CosineEmbedding");
+    const float* label_data = ValidateEmbeddingLabels(labels, shape.batch, "CosineEmbedding");
+    const float* a = x1.Data<float>();
+    const float* b = x2.Data<float>();
+
+    Tensor grad(x1.Shape(), DataType::Float32);
+    float* out = grad.Data<float>();
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const size_t base = batch * shape.dim;
+        float dot = 0.0f;
+        float norm1_sq = 0.0f;
+        float norm2_sq = 0.0f;
+        for (size_t d = 0; d < shape.dim; ++d) {
+            dot += a[base + d] * b[base + d];
+            norm1_sq += a[base + d] * a[base + d];
+            norm2_sq += b[base + d] * b[base + d];
+        }
+
+        const float norm1 = std::sqrt(norm1_sq + 1e-8f);
+        const float norm2 = std::sqrt(norm2_sq + 1e-8f);
+        const float norm_product = norm1 * norm2;
+        const float cos_sim = dot / norm_product;
+        const float scale = label_data[batch] > 0.0f ? -1.0f
+                          : (cos_sim > margin ? 1.0f : 0.0f);
+        const float reduction_scale = reduction == Reduction::Mean && shape.batch > 0
+                                          ? 1.0f / static_cast<float>(shape.batch)
+                                          : 1.0f;
+
+        for (size_t d = 0; d < shape.dim; ++d) {
+            const float grad_cos = b[base + d] / norm_product -
+                                   cos_sim * a[base + d] / (norm1_sq + 1e-8f);
+            out[base + d] = scale * reduction_scale * grad_cos;
+        }
+    }
+    return grad;
+}
+
 } // namespace
 
 // ============================================================================
@@ -1178,7 +1278,7 @@ Tensor CosineEmbeddingLoss::Forward(const Tensor& x1, const Tensor& x2) {
         spdlog::warn("ArrayFire CosineEmbeddingLoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("CosineEmbedding forward requires ArrayFire");
+    return CpuCosineEmbeddingForward(x1, x2, labels_, margin_, reduction_);
 }
 
 Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
@@ -1224,7 +1324,7 @@ Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
         spdlog::warn("ArrayFire CosineEmbeddingLoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("CosineEmbedding backward requires ArrayFire");
+    return CpuCosineEmbeddingBackward(x1, x2, labels_, margin_, reduction_);
 }
 
 // ============================================================================
