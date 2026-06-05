@@ -711,6 +711,7 @@ That makes changes slower and more error-prone.
 ### 17. There are stale backups and notes inside the source tree
 
 **Severity:** Medium
+**Status:** Fixed on 2026-06-05
 
 Observed files:
 
@@ -719,8 +720,19 @@ Observed files:
 - `node_editor_enhancements.txt`
 - `PLOT_MENU_REDESIGN.md`
 
-Some of these may be useful working notes, but they should not live as
-source-adjacent ambiguity indefinitely.
+Audit result: this issue was still present. All four files were tracked.
+
+Fix applied:
+
+- removed obsolete tracked backup copies:
+  - `cyxwiz-engine/src/gui/panels/toolbar.cpp.backup`
+  - `cyxwiz-engine/src/gui/panels/toolbar.h.backup`
+- moved design notes out of source-adjacent directories:
+  - `docs/Data Studio/legacy_notes/PLOT_MENU_REDESIGN.md`
+  - `docs/Data Studio/legacy_notes/node_editor_enhancements.txt`
+
+Some of these notes are still useful historical context, but they no longer
+live next to active source files.
 
 **Impact:**
 
@@ -728,11 +740,10 @@ source-adjacent ambiguity indefinitely.
 - easier accidental drift
 - higher maintenance noise
 
-**Recommendation:**
+**Follow-up:**
 
-- remove obsolete backups
-- move design notes to a dedicated docs location
-- keep the source tree focused on active implementation
+- keep source-adjacent directories focused on active implementation
+- add new design notes under docs instead of beside `.cpp` / `.h` files
 
 ---
 
