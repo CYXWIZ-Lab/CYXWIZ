@@ -217,6 +217,113 @@ bool LinearAlgebra::ValidateDimensions(const std::vector<std::vector<double>>& A
     return true;
 }
 
+static bool IsRectangularMatrix(const std::vector<std::vector<double>>& A) {
+    if (A.empty()) {
+        return false;
+    }
+    const size_t cols = A[0].size();
+    if (cols == 0) {
+        return false;
+    }
+    for (const auto& row : A) {
+        if (row.size() != cols) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static std::vector<std::vector<double>> SymmetricAtA(const std::vector<std::vector<double>>& A,
+                                                     int rows, int cols) {
+    std::vector<std::vector<double>> result(cols, std::vector<double>(cols, 0.0));
+    for (int i = 0; i < cols; ++i) {
+        for (int j = i; j < cols; ++j) {
+            double sum = 0.0;
+            for (int r = 0; r < rows; ++r) {
+                sum += A[r][i] * A[r][j];
+            }
+            result[i][j] = sum;
+            result[j][i] = sum;
+        }
+    }
+    return result;
+}
+
+static bool JacobiEigenSymmetric(std::vector<std::vector<double>> matrix,
+                                 std::vector<double>& eigenvalues,
+                                 std::vector<std::vector<double>>& eigenvectors) {
+    const int n = static_cast<int>(matrix.size());
+    if (n <= 0) {
+        return false;
+    }
+
+    eigenvectors.assign(n, std::vector<double>(n, 0.0));
+    for (int i = 0; i < n; ++i) {
+        eigenvectors[i][i] = 1.0;
+    }
+
+    const int max_iterations = std::max(50, 100 * n * n);
+    const double tolerance = 1e-12;
+    for (int iter = 0; iter < max_iterations; ++iter) {
+        int p = 0;
+        int q = 1;
+        double max_offdiag = 0.0;
+        for (int i = 0; i < n; ++i) {
+            for (int j = i + 1; j < n; ++j) {
+                const double value = std::abs(matrix[i][j]);
+                if (value > max_offdiag) {
+                    max_offdiag = value;
+                    p = i;
+                    q = j;
+                }
+            }
+        }
+
+        if (max_offdiag < tolerance) {
+            break;
+        }
+
+        const double app = matrix[p][p];
+        const double aqq = matrix[q][q];
+        const double apq = matrix[p][q];
+        const double tau = (aqq - app) / (2.0 * apq);
+        const double sign = tau >= 0.0 ? 1.0 : -1.0;
+        const double t = sign / (std::abs(tau) + std::sqrt(1.0 + tau * tau));
+        const double c = 1.0 / std::sqrt(1.0 + t * t);
+        const double s = t * c;
+
+        for (int k = 0; k < n; ++k) {
+            if (k == p || k == q) {
+                continue;
+            }
+            const double akp = matrix[k][p];
+            const double akq = matrix[k][q];
+            matrix[k][p] = c * akp - s * akq;
+            matrix[p][k] = matrix[k][p];
+            matrix[k][q] = s * akp + c * akq;
+            matrix[q][k] = matrix[k][q];
+        }
+
+        matrix[p][p] = c * c * app - 2.0 * s * c * apq + s * s * aqq;
+        matrix[q][q] = s * s * app + 2.0 * s * c * apq + c * c * aqq;
+        matrix[p][q] = 0.0;
+        matrix[q][p] = 0.0;
+
+        for (int k = 0; k < n; ++k) {
+            const double vkp = eigenvectors[k][p];
+            const double vkq = eigenvectors[k][q];
+            eigenvectors[k][p] = c * vkp - s * vkq;
+            eigenvectors[k][q] = s * vkp + c * vkq;
+        }
+    }
+
+    eigenvalues.resize(n);
+    for (int i = 0; i < n; ++i) {
+        eigenvalues[i] = matrix[i][i];
+    }
+    return true;
+}
+
 // ============================================================================
 // Basic Operations
 // ============================================================================
@@ -793,12 +900,14 @@ EigenResult LinearAlgebra::Eigen(const std::vector<std::vector<double>>& A) {
 }
 
 SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool full_matrices) {
-    (void)full_matrices;
-
     SVDResult result;
 
     if (A.empty()) {
         result.error_message = "Input matrix cannot be empty";
+        return result;
+    }
+    if (!IsRectangularMatrix(A)) {
+        result.error_message = "Input matrix must be rectangular and non-empty";
         return result;
     }
 
@@ -808,37 +917,54 @@ SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool ful
     result.n = cols;
     result.k = std::min(rows, cols);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CheckGPUAvailable()) {
-        try {
-            af::array aA = VectorToAfArray(A);
-            af::array U, S, Vt;
-            af::svd(U, S, Vt, aA);
+    if (full_matrices) {
+        result.error_message = "CPU SVD fallback only supports thin SVD";
+        return result;
+    }
 
-            result.U = AfArrayToVector(U);
-            result.Vt = AfArrayToVector(af::transpose(Vt));  // ArrayFire returns V, we want V^T
+    const std::vector<std::vector<double>> ata = SymmetricAtA(A, rows, cols);
+    std::vector<double> eigenvalues;
+    std::vector<std::vector<double>> eigenvectors;
+    if (!JacobiEigenSymmetric(ata, eigenvalues, eigenvectors)) {
+        result.error_message = "CPU SVD symmetric eigensolver failed";
+        return result;
+    }
 
-            // Extract singular values
-            std::vector<float> svals(result.k);
-            S.host(svals.data());
-            result.S.resize(result.k);
-            for (int i = 0; i < result.k; ++i) {
-                result.S[i] = static_cast<double>(svals[i]);
+    std::vector<int> order(cols);
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](int left, int right) {
+        return eigenvalues[left] > eigenvalues[right];
+    });
+
+    const double zero_tolerance = 1e-12;
+    result.S.assign(result.k, 0.0);
+    result.U.assign(rows, std::vector<double>(result.k, 0.0));
+    result.Vt.assign(result.k, std::vector<double>(cols, 0.0));
+
+    for (int component = 0; component < result.k; ++component) {
+        const int source = order[component];
+        const double lambda = std::max(0.0, eigenvalues[source]);
+        const double sigma = std::sqrt(lambda);
+        result.S[component] = sigma;
+
+        for (int col = 0; col < cols; ++col) {
+            result.Vt[component][col] = eigenvectors[col][source];
+        }
+
+        if (sigma <= zero_tolerance) {
+            continue;
+        }
+
+        for (int row = 0; row < rows; ++row) {
+            double projection = 0.0;
+            for (int col = 0; col < cols; ++col) {
+                projection += A[row][col] * result.Vt[component][col];
             }
-
-            result.success = true;
-            return result;
-        } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU SVD failed, fallback to CPU: {}", e.what());
+            result.U[row][component] = projection / sigma;
         }
     }
-#endif
 
-    // CPU fallback: Simplified SVD using power iteration
-    // For production, use LAPACK or similar
-    result.error_message = "CPU SVD not fully implemented - requires ArrayFire for full SVD";
-    result.S.resize(result.k, 0.0);
-    result.success = false;
+    result.success = true;
     return result;
 }
 

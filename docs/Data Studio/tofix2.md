@@ -549,6 +549,21 @@ Thirty-fifth slice status:
   the current `Layer::Backward` API cannot return key/value gradients.
   Linalg decompositions remain follow-up slices.
 
+Thirty-sixth slice status:
+
+- Completed: added deterministic CPU thin SVD for vector-matrix linalg
+  using a local symmetric Jacobi eigensolver over `A^T A`.
+- Completed: made thin SVD CPU-canonical instead of trying the
+  ArrayFire SVD path first, because the GPU-first path can hang and
+  prevents reliable CPU fallback behavior.
+- Completed: unblocked SVD-dependent helpers: `Rank`,
+  `ConditionNumber`, and `LowRankApproximation`.
+- Completed: added focused linalg regression coverage for rectangular
+  SVD reconstruction, rank, condition number, and rank-1 approximation.
+- Remaining: `full_matrices=true` SVD is intentionally unsupported in
+  the CPU fallback. General nonsymmetric full eigendecomposition remains
+  a follow-up slice.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -1003,9 +1018,11 @@ legacy `Conv2DLayer`, legacy `Conv1DLayer`, and legacy
 `ConvTranspose2DLayer`, legacy `BatchNorm2DLayer`, and legacy
 `LayerNormLayer`, legacy `InstanceNorm2DLayer`, and legacy
 `GroupNormLayer`, and legacy deterministic `MultiHeadAttentionLayer`
-now have CPU fallback coverage with tests. Remaining fallback work
-should proceed by operator group, starting with attention dropout /
-cross-attention gradient API limitations and linalg decompositions.
+now have CPU fallback coverage with tests. Vector-matrix thin SVD,
+rank, condition number, and low-rank approximation also have CPU
+fallback coverage with tests. Remaining fallback work should proceed by
+operator group, starting with attention dropout / cross-attention
+gradient API limitations, full SVD, and general eigendecomposition.
 
 The build can run without ArrayFire, but many public operations cannot:
 
