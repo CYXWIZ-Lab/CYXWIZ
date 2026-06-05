@@ -647,6 +647,11 @@ MainWindow::MainWindow()
         CompileGraphAndReport();
     });
 
+    // Local Debug - same action as F6 and the graph toolbar button.
+    toolbar_->SetLocalDebugCallback([this]() {
+        LocalDebugGraphAndReport();
+    });
+
     // Start Training - compiles and runs training from node editor graph
     toolbar_->SetStartTrainingCallback([this]() {
         if (node_editor_) {

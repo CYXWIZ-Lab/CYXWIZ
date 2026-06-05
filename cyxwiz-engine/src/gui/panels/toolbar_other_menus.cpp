@@ -138,6 +138,12 @@ void ToolbarPanel::RenderTrainMenu() {
             }
         }
 
+        if (ImGui::MenuItem(ICON_FA_BUG " Local Debug", "F6")) {
+            if (local_debug_callback_) {
+                local_debug_callback_();
+            }
+        }
+
         ImGui::Separator();
 
         if (ImGui::MenuItem("Start Training", "F5")) {
@@ -146,7 +152,7 @@ void ToolbarPanel::RenderTrainMenu() {
             }
         }
 
-        if (ImGui::MenuItem("Pause", "F6")) {
+        if (ImGui::MenuItem("Pause Training")) {
             if (pause_training_callback_) {
                 pause_training_callback_();
             }

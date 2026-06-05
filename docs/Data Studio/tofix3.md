@@ -648,6 +648,7 @@ unified.
 ### 15. Panel discoverability is improving, but the command surface needs rationalization
 
 **Severity:** Medium
+**Status:** Partially fixed on 2026-06-05
 
 Relevant files:
 
@@ -655,6 +656,16 @@ Relevant files:
 - `toolbar_*.cpp`
 
 The toolbar and command palette are substantial. That is good.
+
+Audit result: one concrete shortcut conflict was still present. `F6` is wired
+globally to Local Debug, and the graph toolbar tooltip also presents F6 as
+Local Debug, but the Train menu labelled `Pause` as `F6`.
+
+Fix applied:
+
+- added `Train -> Local Debug` with the `F6` shortcut
+- wired the Train-menu Local Debug action to `MainWindow::LocalDebugGraphAndReport`
+- removed the false `F6` shortcut from `Pause Training`
 
 The remaining problem is command coherence:
 

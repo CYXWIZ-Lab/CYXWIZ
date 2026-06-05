@@ -64,6 +64,7 @@ public:
     void SetAugmentDatasetCallback(std::function<void()> callback) { augment_dataset_callback_ = callback; }
     void SetDatasetStatisticsCallback(std::function<void()> callback) { dataset_statistics_callback_ = callback; }
     void SetCompileGraphCallback(std::function<void()> callback) { compile_graph_callback_ = callback; }
+    void SetLocalDebugCallback(std::function<void()> callback) { local_debug_callback_ = callback; }
     void SetStartTrainingCallback(std::function<void()> callback) { start_training_callback_ = callback; }
     void SetPauseTrainingCallback(std::function<void()> callback) { pause_training_callback_ = callback; }
     void SetStopTrainingCallback(std::function<void()> callback) { stop_training_callback_ = callback; }
@@ -378,6 +379,7 @@ private:
     std::function<void()> augment_dataset_callback_;
     std::function<void()> dataset_statistics_callback_;
     std::function<void()> compile_graph_callback_;
+    std::function<void()> local_debug_callback_;
     std::function<void()> start_training_callback_;
     std::function<void()> pause_training_callback_;
     std::function<void()> stop_training_callback_;
