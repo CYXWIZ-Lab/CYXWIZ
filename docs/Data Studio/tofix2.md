@@ -579,6 +579,20 @@ Thirty-seventh slice status:
   key/value gradients. `full_matrices=true` SVD and general
   nonsymmetric eigendecomposition also remain follow-up slices.
 
+Thirty-eighth slice status:
+
+- Completed: extended CPU SVD fallback to support `full_matrices=true`
+  by completing the left-singular-vector basis with a local
+  Gram-Schmidt pass.
+- Completed: preserved the thin SVD reconstruction contract while
+  returning full `U` and `Vt` basis shapes for full SVD callers.
+- Completed: added focused linalg regression coverage for full
+  rectangular SVD shape, reconstruction, and orthonormal `U` columns.
+- Remaining: cross-attention `Backward()` still returns only query
+  gradients because the current `Layer::Backward` API cannot return
+  key/value gradients. General nonsymmetric eigendecomposition remains
+  a follow-up slice.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -1037,7 +1051,7 @@ now have CPU fallback coverage with tests. Vector-matrix thin SVD,
 rank, condition number, and low-rank approximation also have CPU
 fallback coverage with tests. Remaining fallback work should proceed by
 operator group, starting with cross-attention gradient API limitations,
-full SVD, and general eigendecomposition.
+and general eigendecomposition.
 
 The build can run without ArrayFire, but many public operations cannot:
 

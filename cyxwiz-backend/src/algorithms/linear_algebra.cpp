@@ -324,6 +324,58 @@ static bool JacobiEigenSymmetric(std::vector<std::vector<double>> matrix,
     return true;
 }
 
+static bool CompleteOrthonormalColumns(std::vector<std::vector<double>>& matrix,
+                                       int rows,
+                                       int cols,
+                                       double tolerance = 1e-12) {
+    for (int col = 0; col < cols; ++col) {
+        std::vector<double> candidate(rows, 0.0);
+        for (int row = 0; row < rows; ++row) {
+            candidate[row] = matrix[row][col];
+        }
+
+        auto orthogonalize = [&]() {
+            for (int prev = 0; prev < col; ++prev) {
+                double dot = 0.0;
+                for (int row = 0; row < rows; ++row) {
+                    dot += candidate[row] * matrix[row][prev];
+                }
+                for (int row = 0; row < rows; ++row) {
+                    candidate[row] -= dot * matrix[row][prev];
+                }
+            }
+        };
+        auto norm = [&]() {
+            double value = 0.0;
+            for (double entry : candidate) {
+                value += entry * entry;
+            }
+            return std::sqrt(value);
+        };
+
+        orthogonalize();
+        double length = norm();
+        if (length <= tolerance) {
+            bool found = false;
+            for (int basis = 0; basis < rows && !found; ++basis) {
+                std::fill(candidate.begin(), candidate.end(), 0.0);
+                candidate[basis] = 1.0;
+                orthogonalize();
+                length = norm();
+                found = length > tolerance;
+            }
+            if (!found) {
+                return false;
+            }
+        }
+
+        for (int row = 0; row < rows; ++row) {
+            matrix[row][col] = candidate[row] / length;
+        }
+    }
+    return true;
+}
+
 // ============================================================================
 // Basic Operations
 // ============================================================================
@@ -917,11 +969,6 @@ SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool ful
     result.n = cols;
     result.k = std::min(rows, cols);
 
-    if (full_matrices) {
-        result.error_message = "CPU SVD fallback only supports thin SVD";
-        return result;
-    }
-
     const std::vector<std::vector<double>> ata = SymmetricAtA(A, rows, cols);
     std::vector<double> eigenvalues;
     std::vector<std::vector<double>> eigenvectors;
@@ -937,20 +984,27 @@ SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool ful
     });
 
     const double zero_tolerance = 1e-12;
+    const int u_cols = full_matrices ? rows : result.k;
+    const int vt_rows = full_matrices ? cols : result.k;
     result.S.assign(result.k, 0.0);
-    result.U.assign(rows, std::vector<double>(result.k, 0.0));
-    result.Vt.assign(result.k, std::vector<double>(cols, 0.0));
+    result.U.assign(rows, std::vector<double>(u_cols, 0.0));
+    result.Vt.assign(vt_rows, std::vector<double>(cols, 0.0));
 
-    for (int component = 0; component < result.k; ++component) {
+    for (int component = 0; component < vt_rows; ++component) {
         const int source = order[component];
         const double lambda = std::max(0.0, eigenvalues[source]);
         const double sigma = std::sqrt(lambda);
-        result.S[component] = sigma;
+        if (component < result.k) {
+            result.S[component] = sigma;
+        }
 
         for (int col = 0; col < cols; ++col) {
             result.Vt[component][col] = eigenvectors[col][source];
         }
 
+        if (component >= result.k) {
+            continue;
+        }
         if (sigma <= zero_tolerance) {
             continue;
         }
@@ -962,6 +1016,14 @@ SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool ful
             }
             result.U[row][component] = projection / sigma;
         }
+    }
+
+    if (full_matrices && !CompleteOrthonormalColumns(result.U, rows, u_cols, zero_tolerance)) {
+        result.error_message = "CPU SVD failed to complete orthonormal U basis";
+        result.U.clear();
+        result.S.clear();
+        result.Vt.clear();
+        return result;
     }
 
     result.success = true;
