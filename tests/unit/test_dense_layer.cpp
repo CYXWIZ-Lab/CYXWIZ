@@ -102,3 +102,79 @@ TEST_CASE("DropoutLayer reuses forward mask during backward", "[dropout][layer]"
         REQUIRE(grad_input_data[i] == Catch::Approx(output_data[i]));
     }
 }
+
+TEST_CASE("MaxPool2DLayer computes forward and backward values", "[pool][layer]") {
+    float input_values[] = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+    cyxwiz::Tensor input({2, 2, 1, 1}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::MaxPool2DLayer pool(2, 2, 0);
+
+    cyxwiz::Tensor output = pool.Forward(input);
+    REQUIRE(output.NumElements() == 1);
+    REQUIRE(output.Data<float>()[0] == Catch::Approx(4.0f));
+
+    float grad_values[] = {2.0f};
+    cyxwiz::Tensor grad_output({1, 1, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = pool.Backward(grad_output);
+    REQUIRE(grad_input.NumElements() == 4);
+    const float* grad_input_data = grad_input.Data<float>();
+    REQUIRE(grad_input_data[0] == Catch::Approx(0.0f));
+    REQUIRE(grad_input_data[1] == Catch::Approx(0.0f));
+    REQUIRE(grad_input_data[2] == Catch::Approx(0.0f));
+    REQUIRE(grad_input_data[3] == Catch::Approx(2.0f));
+}
+
+TEST_CASE("AvgPool2DLayer computes forward and backward values", "[pool][layer]") {
+    float input_values[] = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+    cyxwiz::Tensor input({2, 2, 1, 1}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::AvgPool2DLayer pool(2, 2, 0);
+
+    cyxwiz::Tensor output = pool.Forward(input);
+    REQUIRE(output.NumElements() == 1);
+    REQUIRE(output.Data<float>()[0] == Catch::Approx(2.5f));
+
+    float grad_values[] = {1.0f};
+    cyxwiz::Tensor grad_output({1, 1, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = pool.Backward(grad_output);
+    REQUIRE(grad_input.NumElements() == 4);
+    const float* grad_input_data = grad_input.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        REQUIRE(grad_input_data[i] == Catch::Approx(0.25f));
+    }
+}
+
+TEST_CASE("GlobalAvgPool2DLayer computes forward and backward values", "[pool][layer]") {
+    float input_values[] = {
+        1.0f, 10.0f,
+        2.0f, 20.0f,
+        3.0f, 30.0f,
+        4.0f, 40.0f,
+    };
+    cyxwiz::Tensor input({2, 2, 2, 1}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::GlobalAvgPool2DLayer pool;
+
+    cyxwiz::Tensor output = pool.Forward(input);
+    REQUIRE(output.NumElements() == 2);
+    const float* output_data = output.Data<float>();
+    REQUIRE(output_data[0] == Catch::Approx(2.5f));
+    REQUIRE(output_data[1] == Catch::Approx(25.0f));
+
+    float grad_values[] = {1.0f, 2.0f};
+    cyxwiz::Tensor grad_output({2, 1}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = pool.Backward(grad_output);
+    REQUIRE(grad_input.NumElements() == 8);
+    const float* grad_input_data = grad_input.Data<float>();
+    REQUIRE(grad_input_data[0] == Catch::Approx(0.25f));
+    REQUIRE(grad_input_data[1] == Catch::Approx(0.5f));
+    REQUIRE(grad_input_data[2] == Catch::Approx(0.25f));
+    REQUIRE(grad_input_data[3] == Catch::Approx(0.5f));
+    REQUIRE(grad_input_data[4] == Catch::Approx(0.25f));
+    REQUIRE(grad_input_data[5] == Catch::Approx(0.5f));
+    REQUIRE(grad_input_data[6] == Catch::Approx(0.25f));
+    REQUIRE(grad_input_data[7] == Catch::Approx(0.5f));
+}

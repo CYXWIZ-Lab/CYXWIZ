@@ -6,6 +6,7 @@
 #include <cmath>
 #include <random>
 #include <atomic>
+#include <limits>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -301,6 +302,20 @@ LSTMDirectionBackwardResult RunLSTMCpuDirectionBackward(
     }
 
     return result;
+}
+
+size_t Pool4DIndex(size_t h, size_t w, size_t c, size_t b,
+                   size_t width, size_t channels, size_t batch_size) {
+    return ((h * width + w) * channels + c) * batch_size + b;
+}
+
+void ValidatePoolInput(const Tensor& input, const char* name) {
+    if (input.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(std::string(name) + " CPU fallback requires Float32 input");
+    }
+    if (input.Shape().size() != 4) {
+        throw std::runtime_error(std::string(name) + " CPU fallback expects [H, W, C, N] input");
+    }
 }
 
 } // namespace
@@ -967,7 +982,58 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
     }
 #endif
 
-    throw std::runtime_error("MaxPool2D forward requires ArrayFire");
+    ValidatePoolInput(input, "MaxPool2D");
+    const std::vector<size_t>& shape = input.Shape();
+    const size_t in_h = shape[0];
+    const size_t in_w = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+    const size_t padded_h = in_h + static_cast<size_t>(2 * padding_);
+    const size_t padded_w = in_w + static_cast<size_t>(2 * padding_);
+    if (padded_h < static_cast<size_t>(pool_size_) || padded_w < static_cast<size_t>(pool_size_)) {
+        throw std::runtime_error("MaxPool2D pool window is larger than padded input");
+    }
+    const size_t out_h = (padded_h - static_cast<size_t>(pool_size_)) / static_cast<size_t>(stride_) + 1;
+    const size_t out_w = (padded_w - static_cast<size_t>(pool_size_)) / static_cast<size_t>(stride_) + 1;
+
+    Tensor output({out_h, out_w, channels, batch_size}, DataType::Float32);
+    max_indices_ = Tensor({out_h, out_w, channels, batch_size}, DataType::Int32);
+    const float* input_data = input.Data<float>();
+    float* output_data = output.Data<float>();
+    int32_t* index_data = max_indices_.Data<int32_t>();
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            for (size_t oh = 0; oh < out_h; ++oh) {
+                for (size_t ow = 0; ow < out_w; ++ow) {
+                    float max_value = -std::numeric_limits<float>::infinity();
+                    int32_t max_index = 0;
+                    for (int ph = 0; ph < pool_size_; ++ph) {
+                        for (int pw = 0; pw < pool_size_; ++pw) {
+                            const int ih = static_cast<int>(oh * static_cast<size_t>(stride_)) + ph - padding_;
+                            const int iw = static_cast<int>(ow * static_cast<size_t>(stride_)) + pw - padding_;
+                            const float value = ih >= 0 && iw >= 0 &&
+                                                        ih < static_cast<int>(in_h) &&
+                                                        iw < static_cast<int>(in_w)
+                                                    ? input_data[Pool4DIndex(static_cast<size_t>(ih),
+                                                                             static_cast<size_t>(iw),
+                                                                             c, b, in_w, channels, batch_size)]
+                                                    : 0.0f;
+                            if (value > max_value) {
+                                max_value = value;
+                                max_index = static_cast<int32_t>(ph * pool_size_ + pw);
+                            }
+                        }
+                    }
+                    const size_t out_index = Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size);
+                    output_data[out_index] = max_value;
+                    index_data[out_index] = max_index;
+                }
+            }
+        }
+    }
+
+    return output;
 }
 
 Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
@@ -1019,7 +1085,52 @@ Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
     }
 #endif
 
-    throw std::runtime_error("MaxPool2D backward requires ArrayFire");
+    ValidatePoolInput(cached_input_, "MaxPool2D");
+    if (grad_output.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("MaxPool2D backward CPU fallback requires Float32 grad_output");
+    }
+    const std::vector<size_t>& input_shape = cached_input_.Shape();
+    const std::vector<size_t>& grad_shape = grad_output.Shape();
+    if (grad_shape.size() != 4) {
+        throw std::runtime_error("MaxPool2D backward expects [out_h, out_w, C, N] grad_output");
+    }
+    if (grad_shape[2] != input_shape[2] || grad_shape[3] != input_shape[3] ||
+        max_indices_.Shape() != grad_shape) {
+        throw std::runtime_error("MaxPool2D backward gradient/cache shape mismatch");
+    }
+
+    const size_t in_h = input_shape[0];
+    const size_t in_w = input_shape[1];
+    const size_t channels = input_shape[2];
+    const size_t batch_size = input_shape[3];
+    const size_t out_h = grad_shape[0];
+    const size_t out_w = grad_shape[1];
+    Tensor grad_input = Tensor::Zeros(input_shape, DataType::Float32);
+    const float* grad_data = grad_output.Data<float>();
+    const int32_t* index_data = max_indices_.Data<int32_t>();
+    float* grad_input_data = grad_input.Data<float>();
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            for (size_t oh = 0; oh < out_h; ++oh) {
+                for (size_t ow = 0; ow < out_w; ++ow) {
+                    const size_t grad_index = Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size);
+                    const int32_t local_index = index_data[grad_index];
+                    const int ph = local_index / pool_size_;
+                    const int pw = local_index % pool_size_;
+                    const int ih = static_cast<int>(oh * static_cast<size_t>(stride_)) + ph - padding_;
+                    const int iw = static_cast<int>(ow * static_cast<size_t>(stride_)) + pw - padding_;
+                    if (ih >= 0 && iw >= 0 && ih < static_cast<int>(in_h) && iw < static_cast<int>(in_w)) {
+                        grad_input_data[Pool4DIndex(static_cast<size_t>(ih),
+                                                    static_cast<size_t>(iw),
+                                                    c, b, in_w, channels, batch_size)] += grad_data[grad_index];
+                    }
+                }
+            }
+        }
+    }
+
+    return grad_input;
 }
 
 // ============================================================================
@@ -1078,7 +1189,49 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
     }
 #endif
 
-    throw std::runtime_error("AvgPool2D forward requires ArrayFire");
+    ValidatePoolInput(input, "AvgPool2D");
+    const std::vector<size_t>& shape = input.Shape();
+    const size_t in_h = shape[0];
+    const size_t in_w = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+    const size_t padded_h = in_h + static_cast<size_t>(2 * padding_);
+    const size_t padded_w = in_w + static_cast<size_t>(2 * padding_);
+    if (padded_h < static_cast<size_t>(pool_size_) || padded_w < static_cast<size_t>(pool_size_)) {
+        throw std::runtime_error("AvgPool2D pool window is larger than padded input");
+    }
+    const size_t out_h = (padded_h - static_cast<size_t>(pool_size_)) / static_cast<size_t>(stride_) + 1;
+    const size_t out_w = (padded_w - static_cast<size_t>(pool_size_)) / static_cast<size_t>(stride_) + 1;
+
+    Tensor output({out_h, out_w, channels, batch_size}, DataType::Float32);
+    const float* input_data = input.Data<float>();
+    float* output_data = output.Data<float>();
+    const float scale = 1.0f / static_cast<float>(pool_size_ * pool_size_);
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            for (size_t oh = 0; oh < out_h; ++oh) {
+                for (size_t ow = 0; ow < out_w; ++ow) {
+                    float sum = 0.0f;
+                    for (int ph = 0; ph < pool_size_; ++ph) {
+                        for (int pw = 0; pw < pool_size_; ++pw) {
+                            const int ih = static_cast<int>(oh * static_cast<size_t>(stride_)) + ph - padding_;
+                            const int iw = static_cast<int>(ow * static_cast<size_t>(stride_)) + pw - padding_;
+                            if (ih >= 0 && iw >= 0 &&
+                                ih < static_cast<int>(in_h) && iw < static_cast<int>(in_w)) {
+                                sum += input_data[Pool4DIndex(static_cast<size_t>(ih),
+                                                              static_cast<size_t>(iw),
+                                                              c, b, in_w, channels, batch_size)];
+                            }
+                        }
+                    }
+                    output_data[Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size)] = sum * scale;
+                }
+            }
+        }
+    }
+
+    return output;
 }
 
 Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
@@ -1129,7 +1282,51 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
     }
 #endif
 
-    throw std::runtime_error("AvgPool2D backward requires ArrayFire");
+    ValidatePoolInput(cached_input_, "AvgPool2D");
+    if (grad_output.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("AvgPool2D backward CPU fallback requires Float32 grad_output");
+    }
+    const std::vector<size_t>& input_shape = cached_input_.Shape();
+    const std::vector<size_t>& grad_shape = grad_output.Shape();
+    if (grad_shape.size() != 4 || grad_shape[2] != input_shape[2] || grad_shape[3] != input_shape[3]) {
+        throw std::runtime_error("AvgPool2D backward gradient shape mismatch");
+    }
+
+    const size_t in_h = input_shape[0];
+    const size_t in_w = input_shape[1];
+    const size_t channels = input_shape[2];
+    const size_t batch_size = input_shape[3];
+    const size_t out_h = grad_shape[0];
+    const size_t out_w = grad_shape[1];
+    Tensor grad_input = Tensor::Zeros(input_shape, DataType::Float32);
+    const float* grad_data = grad_output.Data<float>();
+    float* grad_input_data = grad_input.Data<float>();
+    const float scale = 1.0f / static_cast<float>(pool_size_ * pool_size_);
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            for (size_t oh = 0; oh < out_h; ++oh) {
+                for (size_t ow = 0; ow < out_w; ++ow) {
+                    const float grad_value =
+                        grad_data[Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size)] * scale;
+                    for (int ph = 0; ph < pool_size_; ++ph) {
+                        for (int pw = 0; pw < pool_size_; ++pw) {
+                            const int ih = static_cast<int>(oh * static_cast<size_t>(stride_)) + ph - padding_;
+                            const int iw = static_cast<int>(ow * static_cast<size_t>(stride_)) + pw - padding_;
+                            if (ih >= 0 && iw >= 0 &&
+                                ih < static_cast<int>(in_h) && iw < static_cast<int>(in_w)) {
+                                grad_input_data[Pool4DIndex(static_cast<size_t>(ih),
+                                                            static_cast<size_t>(iw),
+                                                            c, b, in_w, channels, batch_size)] += grad_value;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return grad_input;
 }
 
 // ============================================================================
@@ -1139,57 +1336,63 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
 Tensor GlobalAvgPool2DLayer::Forward(const Tensor& input) {
     cached_input_ = input;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array x = TensorToAf(input);
+    ValidatePoolInput(input, "GlobalAvgPool2D");
+    const std::vector<size_t>& shape = input.Shape();
+    const size_t in_h = shape[0];
+    const size_t in_w = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+    Tensor output({channels, batch_size}, DataType::Float32);
+    const float* input_data = input.Data<float>();
+    float* output_data = output.Data<float>();
+    const float scale = 1.0f / static_cast<float>(in_h * in_w);
 
-        // Input: [H, W, C, N]
-        // Output: [1, 1, C, N] or [C, N] (flattened)
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
-
-        // Global average over spatial dimensions
-        af::array output = af::mean(af::mean(x, 0), 0);
-
-        // Reshape to [C, N]
-        output = af::moddims(output, af::dim4(channels, batch_size));
-
-        return AfToTensor(output);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire GlobalAvgPool2DLayer::Forward failed: {}", e.what());
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            float sum = 0.0f;
+            for (size_t h = 0; h < in_h; ++h) {
+                for (size_t w = 0; w < in_w; ++w) {
+                    sum += input_data[Pool4DIndex(h, w, c, b, in_w, channels, batch_size)];
+                }
+            }
+            output_data[c * batch_size + b] = sum * scale;
+        }
     }
-#endif
 
-    throw std::runtime_error("GlobalAvgPool2D forward requires ArrayFire");
+    return output;
 }
 
 Tensor GlobalAvgPool2DLayer::Backward(const Tensor& grad_output) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array grad_out = TensorToAf(grad_output);
-        af::array x = TensorToAf(cached_input_);
-
-        dim_t in_h = x.dims(0);
-        dim_t in_w = x.dims(1);
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
-
-        // Scale factor for distributing gradient
-        float scale = 1.0f / (in_h * in_w);
-
-        // Reshape grad_output to [1, 1, C, N]
-        af::array grad_reshaped = af::moddims(grad_out, af::dim4(1, 1, channels, batch_size));
-
-        // Tile to match input shape and scale
-        af::array dx = af::tile(grad_reshaped, af::dim4(in_h, in_w, 1, 1)) * scale;
-
-        return AfToTensor(dx);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire GlobalAvgPool2DLayer::Backward failed: {}", e.what());
+    ValidatePoolInput(cached_input_, "GlobalAvgPool2D");
+    if (grad_output.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("GlobalAvgPool2D backward CPU fallback requires Float32 grad_output");
     }
-#endif
+    const std::vector<size_t>& input_shape = cached_input_.Shape();
+    const size_t in_h = input_shape[0];
+    const size_t in_w = input_shape[1];
+    const size_t channels = input_shape[2];
+    const size_t batch_size = input_shape[3];
+    if (grad_output.Shape() != std::vector<size_t>{channels, batch_size}) {
+        throw std::runtime_error("GlobalAvgPool2D backward gradient shape mismatch");
+    }
 
-    throw std::runtime_error("GlobalAvgPool2D backward requires ArrayFire");
+    Tensor grad_input(input_shape, DataType::Float32);
+    const float* grad_data = grad_output.Data<float>();
+    float* grad_input_data = grad_input.Data<float>();
+    const float scale = 1.0f / static_cast<float>(in_h * in_w);
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            const float grad_value = grad_data[c * batch_size + b] * scale;
+            for (size_t h = 0; h < in_h; ++h) {
+                for (size_t w = 0; w < in_w; ++w) {
+                    grad_input_data[Pool4DIndex(h, w, c, b, in_w, channels, batch_size)] = grad_value;
+                }
+            }
+        }
+    }
+
+    return grad_input;
 }
 
 // ============================================================================

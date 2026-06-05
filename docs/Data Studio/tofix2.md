@@ -380,9 +380,24 @@ Twenty-fourth slice status:
   and reuses the forward mask in backward.
 - Completed: added focused legacy `DropoutLayer` eval pass-through and
   forward/backward mask-reuse regression coverage.
-- Remaining: pooling is the next small legacy layer family to consider;
-  convolution, normalization, attention, upsample, pixel shuffle, and
-  linalg decompositions remain larger follow-up slices.
+- Remaining at this checkpoint: pooling was the next small legacy layer
+  family to consider; convolution, normalization, attention, upsample,
+  pixel shuffle, and linalg decompositions remained larger follow-up
+  slices.
+
+Twenty-fifth slice status:
+
+- Completed: added CPU fallbacks for legacy `MaxPool2DLayer` and
+  `AvgPool2DLayer` forward/backward in `layer.cpp` under the existing
+  `[H, W, C, N]` Float32 contract.
+- Completed: added direct CPU implementation for legacy
+  `GlobalAvgPool2DLayer` forward/backward. This intentionally avoids the
+  legacy 4D ArrayFire bridge path, which still has row-major semantic
+  issues for global spatial reductions.
+- Completed: added focused deterministic pooling forward/backward
+  regression coverage for max, average, and global average pooling.
+- Remaining: convolution, normalization, attention, upsample, pixel
+  shuffle, and linalg decompositions remain larger follow-up slices.
 
 ---
 
@@ -831,10 +846,11 @@ but they must say so honestly and be tracked by group. Factory
 `SmoothL1Loss`/`HuberLoss`, `CrossEntropyLoss`, `NLLLoss`, `BCELoss`,
 `BCEWithLogitsLoss`, `KLDivLoss`, `FocalLoss`,
 `CosineEmbeddingLoss`, `TripletLoss`, `ContrastiveLoss`, legacy
-`DenseLayer`, and legacy `DropoutLayer` now have CPU fallback coverage
-with tests. Remaining fallback work should proceed by operator group,
-starting with pooling, larger legacy layer families, and linalg
-decompositions.
+`DenseLayer`, legacy `DropoutLayer`, and legacy pooling layers
+(`MaxPool2DLayer`, `AvgPool2DLayer`, `GlobalAvgPool2DLayer`) now have
+CPU fallback coverage with tests. Remaining fallback work should proceed
+by operator group, starting with convolution, normalization, attention,
+upsample, pixel shuffle, and linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 
