@@ -356,6 +356,21 @@ Twenty-second slice status:
   activations and standalone losses into legacy layer groups and linalg
   decomposition policy.
 
+Twenty-third slice status:
+
+- Completed: added CPU fallback for legacy `DenseLayer` forward and
+  backward in `layer.cpp`, covering 1D single-sample and 2D batched
+  Float32 inputs.
+- Completed: kept the fallback aligned with the legacy ArrayFire
+  contract: row-major `output = input @ weights^T + bias`, summed
+  `grad_weights`/`grad_bias`, and `grad_input = grad_output @ weights`.
+- Completed: added focused deterministic legacy `DenseLayer` forward,
+  backward, and gradient-accumulator regression coverage.
+- Remaining: larger legacy layer families such as convolution, pooling,
+  normalization, attention, upsample, pixel shuffle, and linalg
+  decompositions still need separate fallback/required-backend policy
+  slices.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -802,9 +817,10 @@ but they must say so honestly and be tracked by group. Factory
 `SELU`, shared-alpha `PReLU`, `MSELoss`, `L1Loss`,
 `SmoothL1Loss`/`HuberLoss`, `CrossEntropyLoss`, `NLLLoss`, `BCELoss`,
 `BCEWithLogitsLoss`, `KLDivLoss`, `FocalLoss`,
-`CosineEmbeddingLoss`, `TripletLoss`, and `ContrastiveLoss` now have CPU
-fallback coverage with tests. Remaining fallback work should proceed by
-operator group, starting with legacy layers and linalg decompositions.
+`CosineEmbeddingLoss`, `TripletLoss`, `ContrastiveLoss`, and legacy
+`DenseLayer` now have CPU fallback coverage with tests. Remaining
+fallback work should proceed by operator group, starting with larger
+legacy layer families and linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 
