@@ -555,6 +555,45 @@ TEST_CASE("MultiHeadAttentionLayer reuses attention dropout mask during backward
     REQUIRE(grad_input.Data<float>()[0] == Catch::Approx(output_data[0]));
 }
 
+TEST_CASE("MultiHeadAttentionLayer exposes cross-attention key and value gradients", "[attention][layer]") {
+    cyxwiz::MultiHeadAttentionLayer attention(1, 1, 0.0f, false);
+
+    float identity_values[] = {1.0f};
+    attention.SetParameters({
+        {"W_q", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_k", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_v", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_o", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+    });
+
+    float query_values[] = {1.0f};
+    float key_values[] = {1.0f, 0.0f};
+    float value_values[] = {2.0f, 4.0f};
+    cyxwiz::Tensor query({1, 1, 1}, query_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor key({1, 2, 1}, key_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor value({1, 2, 1}, value_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::Tensor output = attention.Forward(query, key, value);
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 1, 1});
+    REQUIRE(output.Data<float>()[0] == Catch::Approx(2.5378828f).margin(1e-5f));
+
+    float grad_values[] = {1.0f};
+    cyxwiz::Tensor grad_output({1, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_query = attention.Backward(grad_output);
+    REQUIRE(grad_query.Shape() == std::vector<size_t>{1, 1, 1});
+    REQUIRE(grad_query.Data<float>()[0] == Catch::Approx(-0.3932239f).margin(1e-5f));
+
+    cyxwiz::Tensor grad_key = attention.GetLastKeyGradient();
+    REQUIRE(grad_key.Shape() == std::vector<size_t>{1, 2, 1});
+    REQUIRE(grad_key.Data<float>()[0] == Catch::Approx(-0.3932239f).margin(1e-5f));
+    REQUIRE(grad_key.Data<float>()[1] == Catch::Approx(0.3932239f).margin(1e-5f));
+
+    cyxwiz::Tensor grad_value = attention.GetLastValueGradient();
+    REQUIRE(grad_value.Shape() == std::vector<size_t>{1, 2, 1});
+    REQUIRE(grad_value.Data<float>()[0] == Catch::Approx(0.7310586f).margin(1e-5f));
+    REQUIRE(grad_value.Data<float>()[1] == Catch::Approx(0.2689414f).margin(1e-5f));
+}
+
 TEST_CASE("DropoutLayer passes values through in eval mode", "[dropout][layer]") {
     float input_values[] = {1.0f, -2.0f, 3.5f, 4.0f};
     cyxwiz::Tensor input({2, 2}, input_values, cyxwiz::DataType::Float32);

@@ -753,6 +753,8 @@ public:
 
     // Get last computed attention weights (for visualization)
     Tensor GetAttentionWeights() const { return cached_attn_weights_; }
+    Tensor GetLastKeyGradient() const { return cached_grad_key_; }
+    Tensor GetLastValueGradient() const { return cached_grad_value_; }
 
     // Accessors
     int GetEmbedDim() const { return embed_dim_; }
@@ -781,6 +783,8 @@ private:
     Tensor cached_attn_weights_;  // After softmax
     Tensor cached_context_;  // Before output projection
     Tensor dropout_mask_;  // Dropout mask for attention weights
+    Tensor cached_grad_key_;
+    Tensor cached_grad_value_;
     bool cached_self_attention_ = false;
     bool cached_attention_dropout_ = false;
 

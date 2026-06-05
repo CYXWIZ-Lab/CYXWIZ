@@ -5007,6 +5007,8 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
     cached_key_ = key;
     cached_value_ = value;
     cached_self_attention_ = (&query == &key && &key == &value);
+    cached_grad_key_ = Tensor();
+    cached_grad_value_ = Tensor();
 
     const auto& q_shape = query.Shape();
     const auto& k_shape = key.Shape();
@@ -5339,6 +5341,9 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
                         use_bias_ ? &grad_b_k_ : nullptr, seq_len_kv);
     projection_backward(cached_value_, W_v_, grad_V, grad_value, grad_W_v_,
                         use_bias_ ? &grad_b_v_ : nullptr, seq_len_kv);
+
+    cached_grad_key_ = grad_key;
+    cached_grad_value_ = grad_value;
 
     if (cached_self_attention_) {
         float* grad_query_data = grad_query.Data<float>();

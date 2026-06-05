@@ -593,6 +593,21 @@ Thirty-eighth slice status:
   key/value gradients. General nonsymmetric eigendecomposition remains
   a follow-up slice.
 
+Thirty-ninth slice status:
+
+- Completed: added explicit `MultiHeadAttentionLayer` accessors for
+  cached key/value gradients from the last backward pass.
+- Completed: preserved the existing `Layer::Backward()` return contract
+  by continuing to return query gradients while making cross-attention
+  key/value gradients available to callers that need them.
+- Completed: cleared cached key/value gradients on each new forward pass
+  to avoid stale-gradient reads.
+- Completed: added focused cross-attention regression coverage with
+  distinct query and key/value sequence lengths, verifying query, key,
+  and value gradients separately.
+- Remaining: general nonsymmetric eigendecomposition remains a
+  follow-up slice.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -1050,8 +1065,7 @@ legacy `Conv2DLayer`, legacy `Conv1DLayer`, and legacy
 now have CPU fallback coverage with tests. Vector-matrix thin SVD,
 rank, condition number, and low-rank approximation also have CPU
 fallback coverage with tests. Remaining fallback work should proceed by
-operator group, starting with cross-attention gradient API limitations,
-and general eigendecomposition.
+operator group, starting with general eigendecomposition.
 
 The build can run without ArrayFire, but many public operations cannot:
 
