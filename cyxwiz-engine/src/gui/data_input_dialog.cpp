@@ -1,6 +1,6 @@
 // Data Input/Output Dialog Implementations
 // Part of CyxWiz Studio smart data loading system
-// Comprehensive support for files, ML datasets, databases, and cloud storage
+// Smart file-backed data loading with planned dataset, database, and cloud modes.
 
 #ifdef _WIN32
 #include <windows.h>
@@ -422,21 +422,8 @@ void DataInputDialog::Apply() {
     apply_success_ = false;
     apply_status_message_.clear();
 
-    // Phase 0 gate: video is still not wired (audio landed in Phase 2).
-    // Picking a video file would previously fall through to LoadArrowTable
-    // which tries to parse the MP4 as Arrow IPC. Fail loudly until
-    // Phase 5 (video) wires up proper loaders. See
-    // docs/Data Studio/multi_format_data_pipeline_design.md.
-    if (source_type_ == SourceType::File &&
-        file_category_ == FileCategory::Video) {
-        apply_status_message_ = "Video data is not yet supported. "
-            "Coming in a future release - use tabular, image, or audio for now.";
-        apply_success_ = false;
-        apply_status_timer_ = 8.0f;
-        node_->parameters["data_loaded"] = "false";
-        apply_in_progress_ = false;
-        has_changes_ = false;
-        spdlog::warn("DataInputDialog: Video category selected - not yet supported");
+    if (!IsApplySupported()) {
+        MarkApplyUnsupported(UnsupportedApplyMessage());
         return;
     }
 
@@ -1118,19 +1105,19 @@ void DataInputDialog::RenderSourceSelector() {
         preview_loaded_ = false;
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("ML Dataset", &source_idx, 1)) {
+    if (ImGui::RadioButton("ML Dataset (planned)", &source_idx, 1)) {
         source_type_ = SourceType::MLDataset;
         has_changes_ = true;
         preview_loaded_ = false;
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Database", &source_idx, 2)) {
+    if (ImGui::RadioButton("Database (planned)", &source_idx, 2)) {
         source_type_ = SourceType::Database;
         has_changes_ = true;
         preview_loaded_ = false;
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Cloud", &source_idx, 3)) {
+    if (ImGui::RadioButton("Cloud (planned)", &source_idx, 3)) {
         source_type_ = SourceType::Cloud;
         has_changes_ = true;
         preview_loaded_ = false;
@@ -1163,7 +1150,7 @@ void DataInputDialog::RenderFileSource() {
         has_changes_ = true;
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Video", &cat_idx, 3)) {
+    if (ImGui::RadioButton("Video (planned)", &cat_idx, 3)) {
         file_category_ = FileCategory::Video;
         has_changes_ = true;
     }
@@ -1717,30 +1704,11 @@ void DataInputDialog::RenderVideoOptions() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
 
-    ImGui::TextColored(accent, "Video Loading Options");
+    ImGui::TextColored(accent, "Video Loading");
     ImGui::Spacing();
-
-    static int frame_extraction = 0;
-    ImGui::RadioButton("Extract all frames", &frame_extraction, 0);
-    ImGui::RadioButton("Extract N frames", &frame_extraction, 1);
-    ImGui::RadioButton("Sample at FPS", &frame_extraction, 2);
-
-    if (frame_extraction == 1) {
-        static int n_frames = 16;
-        ImGui::Text("Frames:");
-        ImGui::SameLine(80);
-        ImGui::SetNextItemWidth(80);
-        ImGui::InputInt("##nframes", &n_frames);
-    } else if (frame_extraction == 2) {
-        static float fps = 1.0f;
-        ImGui::Text("FPS:");
-        ImGui::SameLine(80);
-        ImGui::SetNextItemWidth(80);
-        ImGui::InputFloat("##fps", &fps, 0.1f, 1.0f, "%.1f");
-    }
-
+    ImGui::TextWrapped("%s", UnsupportedApplyMessage());
     ImGui::Spacing();
-    ImGui::TextDisabled("Supported: MP4, AVI, MOV, WebM");
+    ImGui::TextDisabled("Use tabular, image, audio, text, or time series data for now.");
 }
 
 void DataInputDialog::RenderTextOptions() {
@@ -2509,21 +2477,10 @@ void DataInputDialog::RenderBuiltinDatasets() {
 
     ImGui::Spacing();
 
-    // Download button
-    if (is_downloading_) {
-        ImGui::ProgressBar(download_progress_, ImVec2(-1, 0), "Downloading...");
-    } else {
-        if (ImGui::Button("Download Dataset", ImVec2(-1, 30))) {
-            DownloadMLDataset();
-        }
-    }
-
-    if (!status_message_.empty()) {
-        ImVec4 color = status_message_.find("Error") != std::string::npos
-            ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f)
-            : ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
-        ImGui::TextColored(color, "%s", status_message_.c_str());
-    }
+    ImGui::BeginDisabled();
+    ImGui::Button("Download Dataset", ImVec2(-1, 30));
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("ML dataset downloads are planned but not wired yet.");
 }
 
 void DataInputDialog::RenderImageFolderPicker() {
@@ -2601,9 +2558,10 @@ void DataInputDialog::RenderHuggingFaceConfig() {
 
     ImGui::Spacing();
 
-    if (ImGui::Button("Load from HuggingFace", ImVec2(-1, 30))) {
-        DownloadMLDataset();
-    }
+    ImGui::BeginDisabled();
+    ImGui::Button("Load from HuggingFace", ImVec2(-1, 30));
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("HuggingFace dataset loading is planned but not wired yet.");
 }
 
 void DataInputDialog::RenderKaggleConfig() {
@@ -2628,9 +2586,10 @@ void DataInputDialog::RenderKaggleConfig() {
 
     ImGui::TextDisabled("API credentials from ~/.kaggle/kaggle.json");
 
-    if (ImGui::Button("Download from Kaggle", ImVec2(-1, 30))) {
-        DownloadMLDataset();
-    }
+    ImGui::BeginDisabled();
+    ImGui::Button("Download from Kaggle", ImVec2(-1, 30));
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Kaggle dataset loading is planned but not wired yet.");
 }
 
 void DataInputDialog::RenderDatabaseSource() {
@@ -2638,6 +2597,8 @@ void DataInputDialog::RenderDatabaseSource() {
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
 
     ImGui::TextColored(accent, "DATABASE CONNECTION");
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s", UnsupportedApplyMessage());
     ImGui::Spacing();
 
     // Database type
@@ -2713,15 +2674,9 @@ void DataInputDialog::RenderDatabaseConnection() {
 
     ImGui::Spacing();
 
-    // Connect button
-    ImVec4 btn_color = db_connected_
-        ? ImVec4(0.2f, 0.7f, 0.2f, 1.0f)
-        : ImVec4(0.4f, 0.4f, 0.4f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, btn_color);
-    if (ImGui::Button(db_connected_ ? "Connected" : "Test Connection", ImVec2(150, 0))) {
-        TestDatabaseConnection();
-    }
-    ImGui::PopStyleColor();
+    ImGui::BeginDisabled();
+    ImGui::Button("Connection test unavailable", ImVec2(220, 0));
+    ImGui::EndDisabled();
 }
 
 void DataInputDialog::RenderSQLQuery() {
@@ -2755,9 +2710,10 @@ void DataInputDialog::RenderSQLQuery() {
 
     ImGui::Spacing();
 
-    if (ImGui::Button("Execute Query", ImVec2(-1, 25))) {
-        LoadPreview();
-    }
+    ImGui::BeginDisabled();
+    ImGui::Button("Execute Query", ImVec2(-1, 25));
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Database query preview is planned but not wired yet.");
 }
 
 void DataInputDialog::RenderCloudSource() {
@@ -2765,6 +2721,8 @@ void DataInputDialog::RenderCloudSource() {
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
 
     ImGui::TextColored(accent, "CLOUD STORAGE");
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s", UnsupportedApplyMessage());
     ImGui::Spacing();
 
     // Cloud provider
@@ -2810,9 +2768,9 @@ void DataInputDialog::RenderCloudSource() {
 
     ImGui::Spacing();
 
-    if (ImGui::Button("Connect & List Files", ImVec2(-1, 30))) {
-        LoadPreview();
-    }
+    ImGui::BeginDisabled();
+    ImGui::Button("Connect & List Files", ImVec2(-1, 30));
+    ImGui::EndDisabled();
 }
 
 void DataInputDialog::RenderPreviewPanel() {
@@ -2824,6 +2782,14 @@ void DataInputDialog::RenderPreviewPanel() {
     ImGui::Spacing();
 
     if (!preview_loaded_) {
+        if (!IsPreviewSupported()) {
+            ImGui::BeginDisabled();
+            ImGui::Button("Load Preview", ImVec2(-1, 30));
+            ImGui::EndDisabled();
+            ImGui::Spacing();
+            ImGui::TextWrapped("%s", PreviewUnavailableMessage());
+            return;
+        }
         if (ImGui::Button("Load Preview", ImVec2(-1, 30))) {
             LoadPreview();
         }
@@ -2899,8 +2865,7 @@ void DataInputDialog::RenderTabularPreview() {
 
 void DataInputDialog::RenderImagePreview() {
     if (preview_image_textures_.empty()) {
-        ImGui::TextDisabled("No images to preview");
-        ImGui::TextDisabled("(Image preview coming soon)");
+        ImGui::TextWrapped("%s", PreviewUnavailableMessage());
         return;
     }
 
@@ -2931,8 +2896,7 @@ void DataInputDialog::RenderImagePreview() {
 }
 
 void DataInputDialog::RenderAudioPreview() {
-    ImGui::TextDisabled("Audio preview not yet implemented");
-    ImGui::TextDisabled("Waveform visualization coming soon");
+    ImGui::TextWrapped("%s", PreviewUnavailableMessage());
 }
 
 // ==================== Helper Functions ====================
@@ -3161,6 +3125,13 @@ void DataInputDialog::LoadPreview() {
     label_distribution_column_.clear();
     label_distribution_total_ = 0;
 
+    if (!IsPreviewSupported()) {
+        preview_error_ = PreviewUnavailableMessage();
+        preview_loaded_ = true;
+        UpdateRAMEstimate();
+        return;
+    }
+
     // Tabular and Text both read the first N rows of a CSV/TSV/JSON file
     // through LoadColumnList. Text category uses the same column table for
     // now; a dedicated renderer highlights the mapped text + label columns.
@@ -3170,8 +3141,6 @@ void DataInputDialog::LoadPreview() {
          file_category_ == FileCategory::TimeSeries)) {
         LoadColumnList();
     }
-    // TODO: Add image, audio, database preview loading
-
     preview_loaded_ = true;
     UpdateRAMEstimate();
 }
@@ -3415,24 +3384,61 @@ void DataInputDialog::BrowseFolder() {
 #endif
 }
 
-void DataInputDialog::TestDatabaseConnection() {
-    // TODO: Implement actual database connection test
-    db_connected_ = true;
-    status_message_ = "Connected successfully";
-    spdlog::info("Database connection test: simulated success");
+bool DataInputDialog::IsApplySupported() const {
+    if (source_type_ != SourceType::File) {
+        return false;
+    }
+    return file_category_ != FileCategory::Video;
 }
 
-void DataInputDialog::DownloadMLDataset() {
-    is_downloading_ = true;
-    download_progress_ = 0.0f;
+bool DataInputDialog::IsPreviewSupported() const {
+    return source_type_ == SourceType::File &&
+           (file_category_ == FileCategory::Tabular ||
+            file_category_ == FileCategory::Text ||
+            file_category_ == FileCategory::TimeSeries);
+}
 
-    // TODO: Implement actual download
-    // For now, simulate progress
-    is_downloading_ = false;
-    download_progress_ = 1.0f;
-    status_message_ = "Dataset ready (simulated)";
+const char* DataInputDialog::UnsupportedApplyMessage() const {
+    if (source_type_ == SourceType::File && file_category_ == FileCategory::Video) {
+        return "Video loading is planned but not wired yet.";
+    }
+    if (source_type_ == SourceType::MLDataset) {
+        return "ML dataset downloads are planned but not wired yet. Use File source for loadable datasets.";
+    }
+    if (source_type_ == SourceType::Database) {
+        return "Database loading is planned but not wired yet.";
+    }
+    if (source_type_ == SourceType::Cloud) {
+        return "Cloud storage loading is planned but not wired yet.";
+    }
+    return "This data source is not available yet.";
+}
 
-    spdlog::info("ML dataset download: {}", dataset_name_);
+const char* DataInputDialog::PreviewUnavailableMessage() const {
+    if (source_type_ == SourceType::File) {
+        if (file_category_ == FileCategory::Image) {
+            return "Image preview is not wired yet. Apply can still scan supported image folders.";
+        }
+        if (file_category_ == FileCategory::Audio) {
+            return "Audio preview is not wired yet. Apply can still scan supported audio folders.";
+        }
+        if (file_category_ == FileCategory::Video) {
+            return "Video preview is not available because video loading is not wired yet.";
+        }
+    }
+    return UnsupportedApplyMessage();
+}
+
+void DataInputDialog::MarkApplyUnsupported(const char* message) {
+    apply_status_message_ = message ? message : "This data source is not available yet.";
+    apply_success_ = false;
+    apply_status_timer_ = 8.0f;
+    if (node_) {
+        node_->parameters["data_loaded"] = "false";
+    }
+    apply_in_progress_ = false;
+    has_changes_ = false;
+    spdlog::warn("DataInputDialog: unsupported Apply path - {}", apply_status_message_);
 }
 
 // ==================== DataInputDialog Helper Methods ====================

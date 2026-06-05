@@ -387,6 +387,7 @@ That capability is good. The implementation and UX are overloaded.
 ### 8. Data Input still contains unsupported or partial experiences in the main workflow
 
 **Severity:** High
+**Status:** Fixed on 2026-06-05
 
 Relevant file:
 
@@ -404,7 +405,23 @@ Observed gaps:
 These are acceptable during development, but they should not all sit in
 the primary configuration surface without clearer capability boundaries.
 
-**Recommendation:**
+Audit result: this issue was still present. The dialog exposed planned
+database, cloud, ML dataset, and video flows as primary actions, and some
+buttons still reported simulated success.
+
+Fix applied:
+
+- labelled planned source/category modes directly in the selector
+- kept planned modes selectable so existing saved configurations remain
+  inspectable
+- blocked Apply for ML dataset, database, cloud, and video paths with explicit
+  "not wired yet" status instead of silent no-op/fake success
+- disabled database connection/query and cloud listing action buttons
+- removed simulated database connection and ML dataset download success states
+- disabled preview loading where no preview implementation exists, while
+  preserving supported tabular/text/time-series preview behavior
+
+**Follow-up:**
 
 - explicitly mark experimental or unavailable source modes in the UI
 - disable unsupported modes before selection where possible

@@ -262,8 +262,11 @@ private:
     void UpdateRAMEstimate();
     void BrowseFile();
     void BrowseFolder();
-    void TestDatabaseConnection();
-    void DownloadMLDataset();
+    bool IsApplySupported() const;
+    bool IsPreviewSupported() const;
+    const char* UnsupportedApplyMessage() const;
+    const char* PreviewUnavailableMessage() const;
+    void MarkApplyUnsupported(const char* message);
     const char* GetFileTypeName() const;
 
     // STATE: Source selection
@@ -359,7 +362,6 @@ private:
     char db_password_[128] = "";
     char db_file_[512] = "";
     char sql_query_[2048] = "SELECT * FROM table_name LIMIT 1000";
-    bool db_connected_ = false;
 
     // STATE: Cloud options
     char cloud_bucket_[256] = "";
@@ -431,10 +433,7 @@ private:
     size_t label_distribution_total_ = 0;
     bool preview_loaded_ = false;
     std::string preview_error_;
-    std::string status_message_;
     float estimated_ram_mb_ = 0.0f;
-    float download_progress_ = 0.0f;
-    bool is_downloading_ = false;
 
     // STATE: Apply feedback
     bool apply_in_progress_ = false;
