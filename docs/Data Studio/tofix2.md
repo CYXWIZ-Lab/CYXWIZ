@@ -275,6 +275,25 @@ Sixteenth slice status:
   metric-learning losses still need separate label/index shape-contract
   slices before CPU fallback is added.
 
+Seventeenth slice status:
+
+- Completed: added CPU fallback for `CrossEntropyLoss` and `NLLLoss`
+  for the common 1D/2D class-axis contract: predictions as `[classes]`
+  or `[batch, classes]`, class-index targets, and same-shape soft-label
+  targets for CrossEntropy.
+- Completed: fixed ArrayFire class-index gather for row-major 2D
+  `CrossEntropyLoss` and `NLLLoss` by using column-major flat indices
+  against semantic ArrayFire arrays.
+- Completed: made `CrossEntropyLoss::Backward()` recompute softmax when
+  called without a prior forward cache.
+- Completed: removed stale debug logging from the CrossEntropy soft-label
+  ArrayFire branch.
+- Completed: added focused class-index CrossEntropy/NLL forward and
+  backward tests.
+- Remaining: `KLDiv`, focal and metric-learning losses still need
+  separate fallback slices; legacy layer and linalg fallback work remains
+  deferred.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -719,10 +738,11 @@ but they must say so honestly and be tracked by group. Factory
 `ReLUActivation`, `SigmoidActivation`, `TanhActivation`, `Softmax`,
 `LeakyReLU`, `ELU`, `GELU`, `Swish`/`SiLU`, `Mish`, `Hardswish`,
 `SELU`, shared-alpha `PReLU`, `MSELoss`, `L1Loss`,
-`SmoothL1Loss`/`HuberLoss`, `BCELoss`, and `BCEWithLogitsLoss` now have
-CPU fallback coverage with tests. Remaining fallback work should proceed
-by operator group, starting with class-axis losses before legacy layers
-and linalg decompositions.
+`SmoothL1Loss`/`HuberLoss`, `CrossEntropyLoss`, `NLLLoss`, `BCELoss`,
+and `BCEWithLogitsLoss` now have CPU fallback coverage with tests.
+Remaining fallback work should proceed by operator group, starting with
+`KLDiv`, focal, and metric-learning losses before legacy layers and
+linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 

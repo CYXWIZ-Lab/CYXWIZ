@@ -2,6 +2,7 @@
 #include "cyxwiz/tensor.h"
 #include <stdexcept>
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <vector>
 #include <spdlog/spdlog.h>
@@ -204,6 +205,218 @@ Tensor CpuBCEWithLogitsBackward(const Tensor& predictions, const Tensor& targets
     float* out = grad.Data<float>();
     for (size_t i = 0; i < count; ++i) {
         out[i] = (CpuSigmoidValue(logits[i]) - target[i]) * scale;
+    }
+    return grad;
+}
+
+struct ClassAxisShape {
+    size_t batch = 1;
+    size_t classes = 0;
+    bool batched = false;
+};
+
+ClassAxisShape ValidateClassAxisPredictions(const Tensor& predictions, const char* name) {
+    if (predictions.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(std::string(name) + " only supports Float32 predictions");
+    }
+    const std::vector<size_t>& shape = predictions.Shape();
+    if (shape.size() == 1) {
+        return {1, shape[0], false};
+    }
+    if (shape.size() == 2) {
+        return {shape[0], shape[1], true};
+    }
+    throw std::runtime_error(std::string(name) + " CPU fallback supports 1D or 2D predictions");
+}
+
+bool TargetsAreClassIndices(const Tensor& predictions, const Tensor& targets) {
+    return targets.Shape() != predictions.Shape();
+}
+
+void ValidateClassIndexTargets(const Tensor& targets, const ClassAxisShape& shape, const char* name) {
+    if (targets.GetDataType() != DataType::Int32 && targets.GetDataType() != DataType::Int64) {
+        throw std::runtime_error(std::string(name) + " class-index targets must be Int32 or Int64");
+    }
+    const std::vector<size_t>& target_shape = targets.Shape();
+    const bool valid = shape.batched ? target_shape == std::vector<size_t>{shape.batch}
+                                     : targets.NumElements() == 1;
+    if (!valid) {
+        throw std::runtime_error(std::string(name) + " class-index target shape is invalid");
+    }
+}
+
+int64_t ClassIndexAt(const Tensor& targets, size_t index) {
+    if (targets.GetDataType() == DataType::Int32) {
+        return static_cast<int64_t>(targets.Data<int32_t>()[index]);
+    }
+    return targets.Data<int64_t>()[index];
+}
+
+void ValidateClassIndex(int64_t class_index, size_t classes, const char* name) {
+    if (class_index < 0 || class_index >= static_cast<int64_t>(classes)) {
+        throw std::runtime_error(std::string(name) + " target class index is out of range");
+    }
+}
+
+Tensor ApplyClassReduction(const std::vector<float>& per_sample,
+                           size_t batch,
+                           Reduction reduction) {
+    if (reduction == Reduction::None) {
+        return Tensor({batch}, per_sample.data(), DataType::Float32);
+    }
+
+    float total = 0.0f;
+    for (float value : per_sample) {
+        total += value;
+    }
+    if (reduction == Reduction::Mean && batch > 0) {
+        total /= static_cast<float>(batch);
+    }
+    return Tensor({1}, &total, DataType::Float32);
+}
+
+Tensor CpuSoftmaxRows(const Tensor& predictions, const ClassAxisShape& shape) {
+    Tensor softmax(predictions.Shape(), DataType::Float32);
+    const float* pred = predictions.Data<float>();
+    float* out = softmax.Data<float>();
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const size_t base = batch * shape.classes;
+        float max_value = pred[base];
+        for (size_t c = 1; c < shape.classes; ++c) {
+            max_value = std::max(max_value, pred[base + c]);
+        }
+
+        float sum_exp = 0.0f;
+        for (size_t c = 0; c < shape.classes; ++c) {
+            const float value = std::exp(pred[base + c] - max_value);
+            out[base + c] = value;
+            sum_exp += value;
+        }
+        for (size_t c = 0; c < shape.classes; ++c) {
+            out[base + c] /= sum_exp;
+        }
+    }
+    return softmax;
+}
+
+Tensor CpuCrossEntropyForward(const Tensor& predictions,
+                              const Tensor& targets,
+                              Reduction reduction,
+                              int ignore_index,
+                              Tensor* cached_softmax) {
+    const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "CrossEntropy");
+    Tensor softmax = CpuSoftmaxRows(predictions, shape);
+    if (cached_softmax) {
+        *cached_softmax = softmax;
+    }
+
+    const float* probs = softmax.Data<float>();
+    std::vector<float> losses(shape.batch, 0.0f);
+    if (TargetsAreClassIndices(predictions, targets)) {
+        ValidateClassIndexTargets(targets, shape, "CrossEntropy");
+        for (size_t batch = 0; batch < shape.batch; ++batch) {
+            const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
+            if (ignore_index >= 0 && class_index == ignore_index) {
+                continue;
+            }
+            ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
+            losses[batch] = -std::log(probs[batch * shape.classes + static_cast<size_t>(class_index)] + 1e-10f);
+        }
+    } else {
+        ValidateFloat32Pair(predictions, targets, "CrossEntropy");
+        const float* target = targets.Data<float>();
+        for (size_t batch = 0; batch < shape.batch; ++batch) {
+            const size_t base = batch * shape.classes;
+            for (size_t c = 0; c < shape.classes; ++c) {
+                losses[batch] -= target[base + c] * std::log(probs[base + c] + 1e-10f);
+            }
+        }
+    }
+    return ApplyClassReduction(losses, shape.batch, reduction);
+}
+
+Tensor CpuCrossEntropyBackward(const Tensor& predictions,
+                               const Tensor& targets,
+                               Reduction reduction,
+                               int ignore_index,
+                               const Tensor& cached_softmax) {
+    const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "CrossEntropy");
+    Tensor softmax = cached_softmax.Shape() == predictions.Shape()
+                         ? cached_softmax
+                         : CpuSoftmaxRows(predictions, shape);
+
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    const float* probs = softmax.Data<float>();
+    float* out = grad.Data<float>();
+    std::copy(probs, probs + predictions.NumElements(), out);
+
+    if (TargetsAreClassIndices(predictions, targets)) {
+        ValidateClassIndexTargets(targets, shape, "CrossEntropy");
+        for (size_t batch = 0; batch < shape.batch; ++batch) {
+            const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
+            const size_t base = batch * shape.classes;
+            if (ignore_index >= 0 && class_index == ignore_index) {
+                std::fill(out + base, out + base + shape.classes, 0.0f);
+                continue;
+            }
+            ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
+            out[base + static_cast<size_t>(class_index)] -= 1.0f;
+        }
+    } else {
+        ValidateFloat32Pair(predictions, targets, "CrossEntropy");
+        const float* target = targets.Data<float>();
+        for (size_t i = 0; i < predictions.NumElements(); ++i) {
+            out[i] -= target[i];
+        }
+    }
+
+    if (reduction == Reduction::Mean && shape.batch > 0) {
+        const float scale = 1.0f / static_cast<float>(shape.batch);
+        for (size_t i = 0; i < predictions.NumElements(); ++i) {
+            out[i] *= scale;
+        }
+    }
+    return grad;
+}
+
+Tensor CpuNLLForward(const Tensor& predictions,
+                     const Tensor& targets,
+                     Reduction reduction,
+                     int ignore_index) {
+    const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "NLL");
+    ValidateClassIndexTargets(targets, shape, "NLL");
+
+    const float* log_probs = predictions.Data<float>();
+    std::vector<float> losses(shape.batch, 0.0f);
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
+        if (ignore_index >= 0 && class_index == ignore_index) {
+            continue;
+        }
+        ValidateClassIndex(class_index, shape.classes, "NLL");
+        losses[batch] = -log_probs[batch * shape.classes + static_cast<size_t>(class_index)];
+    }
+    return ApplyClassReduction(losses, shape.batch, reduction);
+}
+
+Tensor CpuNLLBackward(const Tensor& predictions,
+                      const Tensor& targets,
+                      Reduction reduction,
+                      int ignore_index) {
+    const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "NLL");
+    ValidateClassIndexTargets(targets, shape, "NLL");
+
+    Tensor grad = Tensor::Zeros(predictions.Shape(), DataType::Float32);
+    float* out = grad.Data<float>();
+    const float scale = reduction == Reduction::Mean && shape.batch > 0 ? 1.0f / static_cast<float>(shape.batch)
+                                                                        : 1.0f;
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
+        if (ignore_index >= 0 && class_index == ignore_index) {
+            continue;
+        }
+        ValidateClassIndex(class_index, shape.classes, "NLL");
+        out[batch * shape.classes + static_cast<size_t>(class_index)] = -scale;
     }
     return grad;
 }
@@ -488,12 +701,11 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
         if (target.type() == af::dtype::s32 || target.type() == af::dtype::s64) {
             // Targets are class indices - GPU-optimized gather
             dim_t batch_size = pred.dims(0);
-            dim_t num_classes = pred.dims(1);
             
             // Create linear indices for gathering from flattened log_softmax
             af::array batch_indices = af::range(af::dim4(batch_size), 0, s32);
             af::array target_int = target.as(s32);
-            af::array linear_indices = batch_indices * static_cast<int>(num_classes) + target_int;
+            af::array linear_indices = target_int * static_cast<int>(batch_size) + batch_indices;
             
             // Gather log probabilities at target indices (single GPU operation)
             af::array flat_log_softmax = af::flat(log_softmax);
@@ -513,48 +725,6 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
             // Targets are one-hot encoded or soft labels
             loss = -target * log_softmax;
 
-            // DEBUG: Log shapes and sample values (first batch only)
-            static bool logged = false;
-            if (!logged) {
-                logged = true;
-                spdlog::info("DEBUG CrossEntropy: pred dims=({},{},{},{}), target dims=({},{},{},{})",
-                    pred.dims(0), pred.dims(1), pred.dims(2), pred.dims(3),
-                    target.dims(0), target.dims(1), target.dims(2), target.dims(3));
-                spdlog::info("DEBUG CrossEntropy: loss before sum dims=({},{},{},{})",
-                    loss.dims(0), loss.dims(1), loss.dims(2), loss.dims(3));
-
-                // Sample first batch element
-                af::array sample_softmax = softmax_pred(0, af::span);
-                af::array sample_target = target(0, af::span);
-                af::array sample_loss = loss(0, af::span);
-
-                float* sm_data = sample_softmax.host<float>();
-                float* tg_data = sample_target.host<float>();
-                float* ls_data = sample_loss.host<float>();
-
-                spdlog::info("DEBUG CrossEntropy: First sample softmax probs:");
-                std::string sm_str = "  [";
-                for (int i = 0; i < std::min((int)pred.dims(1), 10); i++) {
-                    sm_str += fmt::format("{:.4f}", sm_data[i]);
-                    if (i < std::min((int)pred.dims(1), 10) - 1) sm_str += ", ";
-                }
-                sm_str += "]";
-                spdlog::info("{}", sm_str);
-
-                spdlog::info("DEBUG CrossEntropy: First sample per-class loss:");
-                std::string ls_str = "  [";
-                for (int i = 0; i < std::min((int)pred.dims(1), 10); i++) {
-                    ls_str += fmt::format("{:.4f}", ls_data[i]);
-                    if (i < std::min((int)pred.dims(1), 10) - 1) ls_str += ", ";
-                }
-                ls_str += "]";
-                spdlog::info("{}", ls_str);
-
-                af::freeHost(sm_data);
-                af::freeHost(tg_data);
-                af::freeHost(ls_data);
-            }
-
             // Sum over class dimension
             loss = af::sum(loss, class_axis);
             loss = ApplyReduction(loss, reduction_);
@@ -565,22 +735,27 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
         spdlog::warn("ArrayFire CrossEntropyLoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("CrossEntropy forward requires ArrayFire");
+    return CpuCrossEntropyForward(predictions, targets, reduction_, ignore_index_, &cached_softmax_);
 }
 
 Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array softmax_pred = TensorToAf(cached_softmax_);
-        af::array target = TensorToAf(targets);
         af::array pred = TensorToAf(predictions);
+        af::array softmax_pred;
+        if (cached_softmax_.Shape() == predictions.Shape()) {
+            softmax_pred = TensorToAf(cached_softmax_);
+        } else {
+            int class_axis = pred.numdims() == 1 ? 0 : 1;
+            softmax_pred = StableSoftmax(pred, class_axis);
+        }
+        af::array target = TensorToAf(targets);
 
         af::array grad;
 
         // Check if target is one-hot encoded or class indices
         if (target.type() == af::dtype::s32 || target.type() == af::dtype::s64) {
             // Targets are class indices - GPU-optimized one-hot encoding
-            dim_t batch_size = pred.dims(0);
             dim_t num_classes = pred.dims(1);
             af::array target_int = target.as(s32);
 
@@ -611,7 +786,7 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
         spdlog::warn("ArrayFire CrossEntropyLoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("CrossEntropy backward requires ArrayFire");
+    return CpuCrossEntropyBackward(predictions, targets, reduction_, ignore_index_, cached_softmax_);
 }
 
 // ============================================================================
@@ -724,7 +899,6 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         af::array target = TensorToAf(targets);         // Class indices [batch]
 
         dim_t batch_size = log_probs.dims(0);
-        dim_t num_classes = log_probs.dims(1);
 
         // GPU-optimized gather: compute linear indices and gather in one operation
         // Linear index = batch_idx * num_classes + class_idx
@@ -732,7 +906,7 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         af::array target_int = target.as(s32);
 
         // Compute linear indices for gathering from flattened log_probs
-        af::array linear_indices = batch_indices * static_cast<int>(num_classes) + target_int;
+        af::array linear_indices = target_int * static_cast<int>(batch_size) + batch_indices;
 
         // Gather log probabilities at target indices (single GPU operation)
         af::array flat_log_probs = af::flat(log_probs);
@@ -754,7 +928,7 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire NLLLoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("NLL forward requires ArrayFire");
+    return CpuNLLForward(predictions, targets, reduction_, ignore_index_);
 }
 
 Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -797,7 +971,7 @@ Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire NLLLoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("NLL backward requires ArrayFire");
+    return CpuNLLBackward(predictions, targets, reduction_, ignore_index_);
 }
 
 // ============================================================================

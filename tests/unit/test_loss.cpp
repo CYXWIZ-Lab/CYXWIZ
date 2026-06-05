@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
+#include <cstdint>
 #include <cmath>
 #include <vector>
 
@@ -91,4 +92,65 @@ TEST_CASE("Binary losses compute backward values", "[loss]") {
     REQUIRE(logits_grad.Data<float>()[0] == Catch::Approx(0.5f - 1.0f));
     REQUIRE(logits_grad.Data<float>()[1] ==
             Catch::Approx(1.0f / (1.0f + std::exp(-2.0f))));
+}
+
+TEST_CASE("Class-index losses compute forward reductions", "[loss]") {
+    float logit_values[] = {1.0f, 2.0f, 0.0f, 2.0f, -1.0f, 0.0f};
+    int32_t target_values[] = {1, 0};
+    cyxwiz::Tensor logits({2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2}, target_values, cyxwiz::DataType::Int32);
+
+    auto cross_entropy = cyxwiz::CreateLoss(cyxwiz::LossType::CrossEntropy, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor ce_loss = cross_entropy->Forward(logits, targets);
+
+    const float row0_loss = std::log(std::exp(-1.0f) + 1.0f + std::exp(-2.0f));
+    const float row1_loss = std::log(1.0f + std::exp(-3.0f) + std::exp(-2.0f));
+    REQUIRE(ce_loss.Data<float>()[0] == Catch::Approx((row0_loss + row1_loss) / 2.0f));
+
+    float log_prob_values[] = {
+        std::log(0.1f), std::log(0.7f), std::log(0.2f),
+        std::log(0.6f), std::log(0.3f), std::log(0.1f)
+    };
+    cyxwiz::Tensor log_probs({2, 3}, log_prob_values, cyxwiz::DataType::Float32);
+
+    auto nll = cyxwiz::CreateLoss(cyxwiz::LossType::NLLLoss, cyxwiz::Reduction::Sum);
+    cyxwiz::Tensor nll_loss = nll->Forward(log_probs, targets);
+    REQUIRE(nll_loss.Data<float>()[0] == Catch::Approx(-std::log(0.7f) - std::log(0.6f)));
+}
+
+TEST_CASE("Class-index losses compute backward values", "[loss]") {
+    float logit_values[] = {1.0f, 2.0f, 0.0f, 2.0f, -1.0f, 0.0f};
+    int32_t target_values[] = {1, 0};
+    cyxwiz::Tensor logits({2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2}, target_values, cyxwiz::DataType::Int32);
+
+    auto cross_entropy = cyxwiz::CreateLoss(cyxwiz::LossType::CrossEntropy, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor ce_grad = cross_entropy->Backward(logits, targets);
+    const float* grad = ce_grad.Data<float>();
+
+    const float row0_denom = std::exp(-1.0f) + 1.0f + std::exp(-2.0f);
+    REQUIRE(grad[0] == Catch::Approx((std::exp(-1.0f) / row0_denom) / 2.0f));
+    REQUIRE(grad[1] == Catch::Approx((1.0f / row0_denom - 1.0f) / 2.0f));
+    REQUIRE(grad[2] == Catch::Approx((std::exp(-2.0f) / row0_denom) / 2.0f));
+
+    const float row1_denom = 1.0f + std::exp(-3.0f) + std::exp(-2.0f);
+    REQUIRE(grad[3] == Catch::Approx((1.0f / row1_denom - 1.0f) / 2.0f));
+    REQUIRE(grad[4] == Catch::Approx((std::exp(-3.0f) / row1_denom) / 2.0f));
+    REQUIRE(grad[5] == Catch::Approx((std::exp(-2.0f) / row1_denom) / 2.0f));
+
+    float log_prob_values[] = {
+        std::log(0.1f), std::log(0.7f), std::log(0.2f),
+        std::log(0.6f), std::log(0.3f), std::log(0.1f)
+    };
+    cyxwiz::Tensor log_probs({2, 3}, log_prob_values, cyxwiz::DataType::Float32);
+
+    auto nll = cyxwiz::CreateLoss(cyxwiz::LossType::NLLLoss, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor nll_grad = nll->Backward(log_probs, targets);
+    const float* nll_data = nll_grad.Data<float>();
+    REQUIRE(nll_data[0] == Catch::Approx(0.0f));
+    REQUIRE(nll_data[1] == Catch::Approx(-0.5f));
+    REQUIRE(nll_data[2] == Catch::Approx(0.0f));
+    REQUIRE(nll_data[3] == Catch::Approx(-0.5f));
+    REQUIRE(nll_data[4] == Catch::Approx(0.0f));
+    REQUIRE(nll_data[5] == Catch::Approx(0.0f));
 }
