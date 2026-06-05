@@ -31,6 +31,41 @@ bool HasInput(const cyxwiz::NodeMetadata* meta,
     return false;
 }
 
+bool HasInputType(const cyxwiz::NodeMetadata* meta,
+                  const std::string& name,
+                  gui::PinType type) {
+    if (!meta) return false;
+    for (const auto& input : meta->inputs) {
+        if (input.name == name && input.type == type) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HasOutputType(const cyxwiz::NodeMetadata* meta,
+                   const std::string& name,
+                   gui::PinType type) {
+    if (!meta) return false;
+    for (const auto& output : meta->outputs) {
+        if (output.name == name && output.type == type) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HasParameter(const cyxwiz::NodeMetadata* meta,
+                  const std::string& name) {
+    if (!meta) return false;
+    for (const auto& param : meta->parameters) {
+        if (param.name == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool HasEnumValue(const cyxwiz::NodeMetadata* meta,
                   const std::string& param_name,
                   const std::string& enum_value) {
@@ -88,6 +123,17 @@ int main() {
     Check(HasEnumValue(logical, "op", "and") &&
           HasEnumValue(logical, "op", "or"),
           "TensorLogicalMask should expose binary and/or");
+
+    const auto* ts_split = metadata.GetMetadata(gui::NodeType::TimeSeriesSplit);
+    Check(ts_split != nullptr, "missing TimeSeriesSplit metadata");
+    Check(HasInputType(ts_split, "Data", gui::PinType::Dataset),
+          "TimeSeriesSplit should expose Dataset input");
+    Check(HasOutputType(ts_split, "Partitioned", gui::PinType::Dataset),
+          "TimeSeriesSplit should expose one partitioned Dataset output");
+    Check(HasParameter(ts_split, "train_ratio") &&
+          HasParameter(ts_split, "val_ratio") &&
+          HasParameter(ts_split, "test_ratio"),
+          "TimeSeriesSplit should expose train/val/test ratio parameters");
 
     std::cout << "Pipeline operator metadata drift guard passed\n";
     return 0;

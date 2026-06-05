@@ -2427,45 +2427,25 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::TimeSeriesSplit: {
             NodePin in;
             in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
+            in.type = PinType::Dataset;
             in.name = "Data";
             in.is_input = true;
             in.description =
                 "Time-ordered tabular stream. Unlike DataSplit, rows "
-                "are NOT shuffled — the split is chronological so the "
+                "are not shuffled; the split is chronological so the "
                 "model never sees future data during training.";
             node.inputs.push_back(in);
-            NodePin train_out;
-            train_out.id = next_pin_id_++;
-            train_out.type = PinType::Tensor;
-            train_out.name = "Train";
-            train_out.is_input = false;
-            train_out.description =
-                "First `train_ratio` slice of the input — the oldest "
-                "rows.";
-            node.outputs.push_back(train_out);
-            NodePin val_out;
-            val_out.id = next_pin_id_++;
-            val_out.type = PinType::Tensor;
-            val_out.name = "Validation";
-            val_out.is_input = false;
-            val_out.is_required = false;  // Optional — common to skip val.
-            val_out.description =
-                "Middle `val_ratio` slice — used for hyperparameter "
-                "tuning and early stopping.";
-            node.outputs.push_back(val_out);
-            NodePin test_out;
-            test_out.id = next_pin_id_++;
-            test_out.type = PinType::Tensor;
-            test_out.name = "Test";
-            test_out.is_input = false;
-            test_out.is_required = false;  // Optional — held-out test often skipped.
-            test_out.description =
-                "Final `test_ratio` slice — the newest rows, held "
-                "out for the final evaluation.";
-            node.outputs.push_back(test_out);
-            // Phase 4 defaults: chronological 80/10/10 split. The operator
-            // validates that ratios sum to 1.0 ± 0.01.
+            NodePin partitioned_out;
+            partitioned_out.id = next_pin_id_++;
+            partitioned_out.type = PinType::Dataset;
+            partitioned_out.name = "Partitioned";
+            partitioned_out.is_input = false;
+            partitioned_out.description =
+                "Input table with an appended __partition__ column: "
+                "0=train, 1=validation, 2=test.";
+            node.outputs.push_back(partitioned_out);
+            // Chronological 80/10/10 split. The operator validates that
+            // ratios sum to 1.0 +/- 0.01.
             node.parameters["train_ratio"] = "0.8";
             node.parameters["val_ratio"] = "0.1";
             node.parameters["test_ratio"] = "0.1";

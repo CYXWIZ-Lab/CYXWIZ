@@ -828,6 +828,13 @@ both. `TimeSeriesSplit` still needs a separate contract decision because
 the runtime operator appends a `__partition__` column to one table while
 the older UI shape presents train/validation/test outputs.
 
+**2026-06-05 update:** resolved the `TimeSeriesSplit` contract drift by
+making the runtime behavior canonical. Metadata and editor creation now
+expose one Dataset input and one `Partitioned` Dataset output; the node
+appends `__partition__` values where 0=train, 1=validation, and 2=test.
+The metadata drift guard now checks the Dataset pins and train/val/test
+ratio parameters.
+
 ## Build Health Follow-Up
 
 ### Full engine Debug build duplicate DataSources case

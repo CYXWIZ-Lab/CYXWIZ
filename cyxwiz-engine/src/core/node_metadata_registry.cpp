@@ -1489,9 +1489,11 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
 
     RegisterNode({NodeType::TimeSeriesSplit, NodeCategory::TimeSeries, "TS Split", ICON_FA_SCISSORS,
         {"split", "train", "test"}, 0, false, "Chronological split", "", "",
-        {{"Data", PinType::Tensor, true, "Data"}},
-        {{"Train", PinType::Tensor, true, "Train"}, {"Test", PinType::Tensor, true, "Test"}},
-        {{"train_ratio", "float", "0.8", "Train ratio", {}, ""}},
+        {{"Data", PinType::Dataset, true, "Input time-ordered table"}},
+        {{"Partitioned", PinType::Dataset, true, "Input table plus __partition__ split column"}},
+        {{"train_ratio", "float", "0.8", "Train ratio", {}, ""},
+         {"val_ratio", "float", "0.1", "Validation ratio", {}, ""},
+         {"test_ratio", "float", "0.1", "Test ratio", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LogTransform, NodeCategory::TimeSeries, "Log Transform", ICON_FA_CHART_LINE,
