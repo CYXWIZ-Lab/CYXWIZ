@@ -717,6 +717,10 @@ Fix applied:
   - `Deploy -> Quantize`
   - `Deploy -> Publish to Marketplace`
   - `Help -> Documentation/Keyboard Shortcuts/API Reference/Check for Updates`
+- marked remaining exposed command TODOs as planned/unavailable:
+  - `View -> Fullscreen`
+  - `Find -> Find Previous`
+  - `Replace in Files -> Replace All`
 - preserved wired actions in the same menus, including MuJoCo plugin panel
   toggles, script creation/opening, model export, server connect/deploy, issue
   reporting, tutorials, and About

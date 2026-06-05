@@ -1447,11 +1447,11 @@ void ToolbarPanel::Render() {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Find Previous", ImVec2(button_width, 0))) {
-                // TODO: Find previous
-                if (find_callback_ && strlen(find_text_buffer_) > 0) {
-                    find_callback_(find_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
-                }
+            ImGui::BeginDisabled();
+            ImGui::Button("Find Previous", ImVec2(button_width, 0));
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Find Previous is planned");
             }
             ImGui::SameLine();
             if (ImGui::Button("Close", ImVec2(button_width, 0))) {
@@ -1708,15 +1708,11 @@ void ToolbarPanel::Render() {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Replace All", ImVec2(100, 0))) {
-                // First search for all matches
-                if (strlen(find_text_buffer_) > 0 && strlen(find_in_files_path_) > 0) {
-                    SearchInFiles(find_text_buffer_, find_in_files_path_, find_in_files_pattern_,
-                                  find_case_sensitive_, find_whole_word_, find_use_regex_);
-                    // TODO: Implement actual replace in files (requires file modification)
-                    spdlog::info("Replace All: Found {} occurrences. Replace functionality not yet implemented.",
-                                 search_results_.size());
-                }
+            ImGui::BeginDisabled();
+            ImGui::Button("Replace All", ImVec2(100, 0));
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Replace in files is planned");
             }
             ImGui::SameLine();
             if (ImGui::Button("Close", ImVec2(100, 0))) {

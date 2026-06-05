@@ -189,9 +189,9 @@ void ToolbarPanel::RenderViewMenu() {
         ImGui::Spacing();
 
         // ========== View Options ==========
-        if (ImGui::MenuItem(ICON_FA_EXPAND " Fullscreen", "F11")) {
-            // TODO: Toggle fullscreen mode
-        }
+        ImGui::BeginDisabled();
+        ImGui::MenuItem(ICON_FA_EXPAND " Fullscreen (planned)", "F11", false, false);
+        ImGui::EndDisabled();
 
         ImGui::PopStyleVar();
         ImGui::EndMenu();
