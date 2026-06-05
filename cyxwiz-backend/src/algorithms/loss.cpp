@@ -630,6 +630,137 @@ Tensor CpuCosineEmbeddingBackward(const Tensor& x1,
     return grad;
 }
 
+Tensor CpuTripletForward(const Tensor& anchor,
+                         const Tensor& positive,
+                         const Tensor& negative,
+                         TripletLoss::DistanceType distance_type,
+                         float margin,
+                         Reduction reduction,
+                         Tensor* cached_dist_ap,
+                         Tensor* cached_dist_an) {
+    const EmbeddingPairShape shape = ValidateEmbeddingPair(anchor, positive, "Triplet");
+    ValidateEmbeddingPair(anchor, negative, "Triplet");
+
+    const float* a = anchor.Data<float>();
+    const float* p = positive.Data<float>();
+    const float* n = negative.Data<float>();
+    std::vector<float> dist_ap(shape.batch, 0.0f);
+    std::vector<float> dist_an(shape.batch, 0.0f);
+    std::vector<float> losses(shape.batch, 0.0f);
+
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const size_t base = batch * shape.dim;
+        if (distance_type == TripletLoss::DistanceType::Euclidean) {
+            float sum_ap = 0.0f;
+            float sum_an = 0.0f;
+            for (size_t d = 0; d < shape.dim; ++d) {
+                const float diff_ap = a[base + d] - p[base + d];
+                const float diff_an = a[base + d] - n[base + d];
+                sum_ap += diff_ap * diff_ap;
+                sum_an += diff_an * diff_an;
+            }
+            dist_ap[batch] = std::sqrt(sum_ap);
+            dist_an[batch] = std::sqrt(sum_an);
+        } else {
+            float dot_ap = 0.0f;
+            float dot_an = 0.0f;
+            float norm_a_sq = 0.0f;
+            float norm_p_sq = 0.0f;
+            float norm_n_sq = 0.0f;
+            for (size_t d = 0; d < shape.dim; ++d) {
+                dot_ap += a[base + d] * p[base + d];
+                dot_an += a[base + d] * n[base + d];
+                norm_a_sq += a[base + d] * a[base + d];
+                norm_p_sq += p[base + d] * p[base + d];
+                norm_n_sq += n[base + d] * n[base + d];
+            }
+            const float norm_a = std::sqrt(norm_a_sq + 1e-8f);
+            dist_ap[batch] = 1.0f - dot_ap / (norm_a * std::sqrt(norm_p_sq + 1e-8f));
+            dist_an[batch] = 1.0f - dot_an / (norm_a * std::sqrt(norm_n_sq + 1e-8f));
+        }
+        losses[batch] = std::max(dist_ap[batch] - dist_an[batch] + margin, 0.0f);
+    }
+
+    if (cached_dist_ap) {
+        *cached_dist_ap = Tensor({shape.batch}, dist_ap.data(), DataType::Float32);
+    }
+    if (cached_dist_an) {
+        *cached_dist_an = Tensor({shape.batch}, dist_an.data(), DataType::Float32);
+    }
+    return ApplyClassReduction(losses, shape.batch, reduction);
+}
+
+Tensor CpuTripletBackward(const Tensor& anchor,
+                          const Tensor& positive,
+                          const Tensor& negative,
+                          const Tensor& cached_dist_ap,
+                          const Tensor& cached_dist_an,
+                          TripletLoss::DistanceType distance_type,
+                          float margin,
+                          Reduction reduction) {
+    const EmbeddingPairShape shape = ValidateEmbeddingPair(anchor, positive, "Triplet");
+    ValidateEmbeddingPair(anchor, negative, "Triplet");
+
+    Tensor dist_ap = cached_dist_ap.Shape() == std::vector<size_t>{shape.batch}
+                         ? cached_dist_ap
+                         : Tensor();
+    Tensor dist_an = cached_dist_an.Shape() == std::vector<size_t>{shape.batch}
+                         ? cached_dist_an
+                         : Tensor();
+    if (dist_ap.Shape().empty() || dist_an.Shape().empty()) {
+        CpuTripletForward(anchor, positive, negative, distance_type, margin, Reduction::None, &dist_ap, &dist_an);
+    }
+
+    Tensor grad(anchor.Shape(), DataType::Float32);
+    float* out = grad.Data<float>();
+    const float* a = anchor.Data<float>();
+    const float* p = positive.Data<float>();
+    const float* n = negative.Data<float>();
+    const float* dist_ap_data = dist_ap.Data<float>();
+    const float* dist_an_data = dist_an.Data<float>();
+    const float reduction_scale = reduction == Reduction::Mean && shape.batch > 0
+                                      ? 1.0f / static_cast<float>(shape.batch)
+                                      : 1.0f;
+
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const size_t base = batch * shape.dim;
+        const bool active = dist_ap_data[batch] - dist_an_data[batch] + margin > 0.0f;
+        if (!active) {
+            std::fill(out + base, out + base + shape.dim, 0.0f);
+            continue;
+        }
+
+        if (distance_type == TripletLoss::DistanceType::Euclidean) {
+            const float safe_ap = std::max(dist_ap_data[batch], 1e-8f);
+            const float safe_an = std::max(dist_an_data[batch], 1e-8f);
+            for (size_t d = 0; d < shape.dim; ++d) {
+                const float grad_ap = (a[base + d] - p[base + d]) / safe_ap;
+                const float grad_an = (a[base + d] - n[base + d]) / safe_an;
+                out[base + d] = (grad_ap - grad_an) * reduction_scale;
+            }
+        } else {
+            float norm_a_sq = 0.0f;
+            float norm_p_sq = 0.0f;
+            float norm_n_sq = 0.0f;
+            for (size_t d = 0; d < shape.dim; ++d) {
+                norm_a_sq += a[base + d] * a[base + d];
+                norm_p_sq += p[base + d] * p[base + d];
+                norm_n_sq += n[base + d] * n[base + d];
+            }
+            const float norm_a = std::sqrt(norm_a_sq + 1e-8f);
+            const float norm_p = std::sqrt(norm_p_sq + 1e-8f);
+            const float norm_n = std::sqrt(norm_n_sq + 1e-8f);
+            for (size_t d = 0; d < shape.dim; ++d) {
+                const float grad_ap = -p[base + d] / (norm_a * norm_p + 1e-8f);
+                const float grad_an = -n[base + d] / (norm_a * norm_n + 1e-8f);
+                out[base + d] = (grad_ap - grad_an) * reduction_scale;
+            }
+        }
+    }
+
+    return grad;
+}
+
 } // namespace
 
 // ============================================================================
@@ -1455,7 +1586,8 @@ Tensor TripletLoss::Forward(const Tensor& anchor, const Tensor& positive) {
         spdlog::warn("ArrayFire TripletLoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Triplet forward requires ArrayFire");
+    return CpuTripletForward(anchor, positive, negative_, distance_type_, margin_, reduction_,
+                             &cached_dist_ap_, &cached_dist_an_);
 }
 
 Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
@@ -1464,11 +1596,33 @@ Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
         af::array a = TensorToAf(anchor);
         af::array p = TensorToAf(positive);
         af::array n = TensorToAf(negative_);
-        af::array dist_ap = TensorToAf(cached_dist_ap_);
-        af::array dist_an = TensorToAf(cached_dist_an_);
 
         dim_t batch_size = a.dims(0);
         dim_t embed_dim = a.dims(1);
+        const std::vector<size_t> expected_cache_shape{static_cast<size_t>(batch_size)};
+
+        af::array dist_ap, dist_an;
+        if (cached_dist_ap_.Shape() == expected_cache_shape && cached_dist_an_.Shape() == expected_cache_shape) {
+            dist_ap = TensorToAf(cached_dist_ap_);
+            dist_an = TensorToAf(cached_dist_an_);
+        } else if (distance_type_ == DistanceType::Euclidean) {
+            af::array diff_ap = a - p;
+            af::array diff_an = a - n;
+            dist_ap = af::sqrt(af::sum(diff_ap * diff_ap, 1));
+            dist_an = af::sqrt(af::sum(diff_an * diff_an, 1));
+            cached_dist_ap_ = AfToTensor(dist_ap);
+            cached_dist_an_ = AfToTensor(dist_an);
+        } else {
+            af::array norm_a = af::sqrt(af::sum(a * a, 1));
+            af::array norm_p = af::sqrt(af::sum(p * p, 1));
+            af::array norm_n = af::sqrt(af::sum(n * n, 1));
+            af::array cos_ap = af::sum(a * p, 1) / (norm_a * norm_p + 1e-8f);
+            af::array cos_an = af::sum(a * n, 1) / (norm_a * norm_n + 1e-8f);
+            dist_ap = 1.0f - cos_ap;
+            dist_an = 1.0f - cos_an;
+            cached_dist_ap_ = AfToTensor(dist_ap);
+            cached_dist_an_ = AfToTensor(dist_an);
+        }
 
         // Gradient only non-zero where loss > 0
         af::array margin_violated = (dist_ap - dist_an + margin_ > 0).as(af::dtype::f32);
@@ -1505,7 +1659,8 @@ Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
         spdlog::warn("ArrayFire TripletLoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Triplet backward requires ArrayFire");
+    return CpuTripletBackward(anchor, positive, negative_, cached_dist_ap_, cached_dist_an_,
+                              distance_type_, margin_, reduction_);
 }
 
 // ============================================================================

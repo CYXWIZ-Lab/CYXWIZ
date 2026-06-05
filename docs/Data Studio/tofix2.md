@@ -327,6 +327,20 @@ Twentieth slice status:
   fallback slices; legacy layer and linalg fallback work remains
   deferred.
 
+Twenty-first slice status:
+
+- Completed: added CPU fallback for `TripletLoss` forward and backward
+  under the existing `[batch, embedding_dim]` plus `SetNegative()`
+  contract. Backward preserves the current API surface by returning the
+  anchor gradient.
+- Completed: made the ArrayFire `TripletLoss::Backward()` path recompute
+  anchor-positive and anchor-negative distances when called without a
+  prior forward cache.
+- Completed: added focused Euclidean `TripletLoss` forward and anchor
+  gradient regression coverage.
+- Remaining: `ContrastiveLoss` still needs a separate fallback slice;
+  legacy layer and linalg fallback work remains deferred.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -772,9 +786,10 @@ but they must say so honestly and be tracked by group. Factory
 `LeakyReLU`, `ELU`, `GELU`, `Swish`/`SiLU`, `Mish`, `Hardswish`,
 `SELU`, shared-alpha `PReLU`, `MSELoss`, `L1Loss`,
 `SmoothL1Loss`/`HuberLoss`, `CrossEntropyLoss`, `NLLLoss`, `BCELoss`,
-and `BCEWithLogitsLoss` now have CPU fallback coverage with tests.
-Remaining fallback work should proceed by operator group, starting with
-`TripletLoss` and `ContrastiveLoss` before legacy layers and linalg
+`BCEWithLogitsLoss`, `KLDivLoss`, `FocalLoss`,
+`CosineEmbeddingLoss`, and `TripletLoss` now have CPU fallback coverage
+with tests. Remaining fallback work should proceed by operator group,
+starting with `ContrastiveLoss` before legacy layers and linalg
 decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:

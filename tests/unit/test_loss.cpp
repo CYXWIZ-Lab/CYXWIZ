@@ -272,3 +272,40 @@ TEST_CASE("Cosine embedding loss computes backward values", "[loss]") {
     REQUIRE(data[2] == Catch::Approx(0.0f).margin(1e-5f));
     REQUIRE(data[3] == Catch::Approx(0.0f).margin(1e-5f));
 }
+
+TEST_CASE("Triplet loss computes Euclidean forward reduction", "[loss]") {
+    float anchor_values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float positive_values[] = {1.0f, 0.0f, 2.0f, 0.0f};
+    float negative_values[] = {0.0f, 2.0f, 0.0f, 2.0f};
+    cyxwiz::Tensor anchor({2, 2}, anchor_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor positive({2, 2}, positive_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor negative({2, 2}, negative_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::TripletLoss loss(1.0f, cyxwiz::TripletLoss::DistanceType::Euclidean,
+                             cyxwiz::Reduction::Mean);
+    loss.SetNegative(negative);
+
+    cyxwiz::Tensor output = loss.Forward(anchor, positive);
+    REQUIRE(output.Data<float>()[0] == Catch::Approx((0.0f + 1.0f) / 2.0f));
+}
+
+TEST_CASE("Triplet loss computes Euclidean anchor gradients", "[loss]") {
+    float anchor_values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float positive_values[] = {1.0f, 0.0f, 2.0f, 0.0f};
+    float negative_values[] = {0.0f, 2.0f, 0.0f, 2.0f};
+    cyxwiz::Tensor anchor({2, 2}, anchor_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor positive({2, 2}, positive_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor negative({2, 2}, negative_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::TripletLoss loss(1.0f, cyxwiz::TripletLoss::DistanceType::Euclidean,
+                             cyxwiz::Reduction::Mean);
+    loss.SetNegative(negative);
+
+    cyxwiz::Tensor grad = loss.Backward(anchor, positive);
+    const float* data = grad.Data<float>();
+
+    REQUIRE(data[0] == Catch::Approx(0.0f));
+    REQUIRE(data[1] == Catch::Approx(0.0f));
+    REQUIRE(data[2] == Catch::Approx(-0.5f));
+    REQUIRE(data[3] == Catch::Approx(0.5f));
+}
