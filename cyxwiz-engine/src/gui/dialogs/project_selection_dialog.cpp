@@ -3,15 +3,12 @@
 #include <spdlog/spdlog.h>
 #include "../../core/engine_config.h"
 #include "../../core/project_manager.h"
+#include "../../core/file_dialogs.h"
 #include <filesystem>
 #include <algorithm>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#else
 #include <cstdlib>
-#endif
+#include <cstring>
+#include <system_error>
 
 namespace cyxwiz {
 
@@ -187,17 +184,15 @@ void ProjectSelectionDialog::ShowCreateProjectDialog() {
         ImGui::InputText("##ProjectLocation", project_location_buf_, sizeof(project_location_buf_));
         ImGui::SameLine();
         if (ImGui::Button("...##Browse")) {
-            // TODO: Open folder browser dialog
-            spdlog::warn("Folder browser not yet implemented");
+            auto selected_folder = FileDialogs::SelectFolder("Select Project Location", project_location_buf_);
+            if (selected_folder) {
+                strncpy(project_location_buf_, selected_folder->c_str(), sizeof(project_location_buf_) - 1);
+                project_location_buf_[sizeof(project_location_buf_) - 1] = '\0';
+            }
         }
 
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::Checkbox("Create Python virtual environment", &create_venv_);
-
-        ImGui::Spacing();
         ImGui::Spacing();
 
         // Preview full path
@@ -238,29 +233,11 @@ void ProjectSelectionDialog::ShowCreateProjectDialog() {
 }
 
 void ProjectSelectionDialog::ShowOpenProjectDialog() {
-#ifdef _WIN32
-    // Use Windows native file dialog
-    char filename[MAX_PATH] = "";
-
-    OPENFILENAMEA ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = "CyxWiz Project (*.cyxwiz)\0*.cyxwiz\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = "Open CyxWiz Project";
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn)) {
-        SelectProject(filename);
+    auto result = FileDialogs::OpenProject();
+    if (result) {
+        SelectProject(*result);
     }
-
     show_open_dialog_ = false;
-#else
-    // TODO: Implement for Linux/macOS (use zenity/kdialog or ImGui file browser)
-    spdlog::warn("File dialog not yet implemented for this platform");
-    show_open_dialog_ = false;
-#endif
 }
 
 bool ProjectSelectionDialog::CreateNewProject(const std::string& name, const std::string& location) {
@@ -284,36 +261,46 @@ bool ProjectSelectionDialog::CreateNewProject(const std::string& name, const std
         return false;
     }
 
-    // Select the newly created project
-    SelectProject(project_path.string());
+    // Select the authoritative project file created by ProjectManager.
+    SelectProject(pm.GetProjectFilePath());
     return true;
 }
 
 void ProjectSelectionDialog::SelectProject(const std::string& path) {
-    if (!std::filesystem::exists(path)) {
+    std::filesystem::path selected_path(path);
+    if (!std::filesystem::exists(selected_path)) {
         spdlog::error("Project does not exist: {}", path);
         return;
     }
 
-    // Validate that it's a valid project directory
-    // (Check for .cyxwiz file or project structure)
-    std::filesystem::path project_file = std::filesystem::path(path) / (std::filesystem::path(path).filename().string() + ".cyxwiz");
-
-    if (!std::filesystem::exists(project_file)) {
-        // Try to find any .cyxwiz file in the directory
-        bool found = false;
-        for (const auto& entry : std::filesystem::directory_iterator(path)) {
-            if (entry.path().extension() == ".cyxwiz") {
-                project_file = entry.path();
-                found = true;
-                break;
+    std::filesystem::path project_file;
+    if (std::filesystem::is_regular_file(selected_path) && selected_path.extension() == ".cyxwiz") {
+        project_file = selected_path;
+    } else if (std::filesystem::is_directory(selected_path)) {
+        project_file = selected_path / (selected_path.filename().string() + ".cyxwiz");
+        if (!std::filesystem::exists(project_file)) {
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(selected_path, ec)) {
+                if (entry.is_regular_file() && entry.path().extension() == ".cyxwiz") {
+                    project_file = entry.path();
+                    break;
+                }
+            }
+            if (ec) {
+                spdlog::error("Could not scan project directory {}: {}", path, ec.message());
+                return;
             }
         }
+    }
 
-        if (!found) {
-            spdlog::error("No .cyxwiz file found in: {}", path);
-            return;
-        }
+    if (project_file.empty() || !std::filesystem::exists(project_file)) {
+        spdlog::error("No .cyxwiz file found in: {}", path);
+        return;
+    }
+
+    if (!std::filesystem::is_regular_file(project_file)) {
+        spdlog::error("Project path is not a file: {}", project_file.string());
+        return;
     }
 
     selected_project_path_ = project_file.string();

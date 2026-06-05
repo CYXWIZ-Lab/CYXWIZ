@@ -7,16 +7,12 @@
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <ctime>
 #include <string>
 #include <system_error>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
 
 namespace cyxwiz {
 

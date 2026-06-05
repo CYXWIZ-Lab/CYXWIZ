@@ -59,7 +59,6 @@ private:
     // Create project dialog state
     char project_name_buf_[256] = {};
     char project_location_buf_[512] = {};
-    bool create_venv_ = true;
 
     // Helper methods
     void LoadRecentProjects();

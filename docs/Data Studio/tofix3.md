@@ -538,6 +538,13 @@ Fix applied:
   `.cyxwiz` project file from the selected folder
 - marked repository cloning as planned/unavailable instead of exposing it as a
   clickable no-op
+- aligned `ProjectSelectionDialog` with the same project-entry contract:
+  - create-project location browsing now uses `FileDialogs::SelectFolder`
+  - open-project now uses the shared `FileDialogs::OpenProject`
+  - newly created projects select `ProjectManager::GetProjectFilePath`
+  - project selection accepts either a `.cyxwiz` file or a project folder and
+    resolves to the authoritative `.cyxwiz` file
+  - removed the ineffective virtual-environment checkbox from that dialog
 
 **What is missing:**
 
