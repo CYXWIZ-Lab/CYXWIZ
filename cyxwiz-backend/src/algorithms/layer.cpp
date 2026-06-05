@@ -2036,10 +2036,16 @@ LayerNormLayer::LayerNormLayer(const std::vector<int>& normalized_shape,
                                float eps, bool elementwise_affine)
     : normalized_shape_(normalized_shape), eps_(eps),
       elementwise_affine_(elementwise_affine) {
+    if (normalized_shape_.empty() || eps_ <= 0.0f) {
+        throw std::invalid_argument("LayerNorm requires a non-empty normalized shape and positive eps");
+    }
 
     // Calculate total size of normalized dimensions
     size_t norm_size = 1;
     for (int dim : normalized_shape) {
+        if (dim <= 0) {
+            throw std::invalid_argument("LayerNorm normalized dimensions must be positive");
+        }
         norm_size *= static_cast<size_t>(dim);
     }
 
@@ -2054,104 +2060,140 @@ LayerNormLayer::LayerNormLayer(const std::vector<int>& normalized_shape,
 Tensor LayerNormLayer::Forward(const Tensor& input) {
     cached_input_ = input;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array x = TensorToAf(input);
-        const auto& shape = input.Shape();
-
-        // Calculate the size of normalized dimensions
-        size_t norm_size = 1;
-        for (int dim : normalized_shape_) {
-            norm_size *= static_cast<size_t>(dim);
-        }
-
-        // Reshape to [batch_dims, norm_size]
-        size_t batch_size = input.NumElements() / norm_size;
-        af::array x_reshaped = af::moddims(x, af::dim4(norm_size, batch_size));
-
-        // Compute mean and variance along normalized dimension (dim 0)
-        af::array mean = af::mean(x_reshaped, 0);
-        af::array var = af::var(x_reshaped, AF_VARIANCE_POPULATION, 0);
-
-        // Broadcast mean and var
-        af::array mean_bc = af::tile(mean, af::dim4(norm_size, 1));
-        af::array var_bc = af::tile(var, af::dim4(norm_size, 1));
-
-        // Normalize
-        af::array std_inv = 1.0f / af::sqrt(var_bc + eps_);
-        af::array normalized = (x_reshaped - mean_bc) * std_inv;
-
-        // Store for backward pass
-        normalized_ = AfToTensor(normalized);
-        std_inv_ = AfToTensor(std_inv);
-
-        // Apply affine transformation if enabled
-        if (elementwise_affine_) {
-            af::array gamma = TensorToAf(gamma_);
-            af::array beta = TensorToAf(beta_);
-            af::array gamma_bc = af::tile(gamma, af::dim4(1, batch_size));
-            af::array beta_bc = af::tile(beta, af::dim4(1, batch_size));
-            normalized = gamma_bc * normalized + beta_bc;
-        }
-
-        // Reshape back to original shape
-        af::array output = af::moddims(normalized, x.dims());
-        return AfToTensor(output);
-
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire LayerNormLayer::Forward failed: {}", e.what());
+    if (input.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("LayerNorm forward CPU fallback requires Float32 input");
     }
-#endif
+    const std::vector<size_t>& shape = input.Shape();
+    if (shape.size() < normalized_shape_.size()) {
+        throw std::runtime_error("LayerNorm forward normalized shape rank exceeds input rank");
+    }
 
-    throw std::runtime_error("LayerNorm forward requires ArrayFire");
+    size_t norm_size = 1;
+    const size_t suffix_start = shape.size() - normalized_shape_.size();
+    for (size_t i = 0; i < normalized_shape_.size(); ++i) {
+        const size_t expected = static_cast<size_t>(normalized_shape_[i]);
+        if (shape[suffix_start + i] != expected) {
+            throw std::runtime_error("LayerNorm forward normalized shape mismatch");
+        }
+        norm_size *= expected;
+    }
+    if (input.NumElements() == 0 || norm_size == 0 || input.NumElements() % norm_size != 0) {
+        throw std::runtime_error("LayerNorm forward invalid input shape");
+    }
+    const size_t batch_size = input.NumElements() / norm_size;
+
+    if (elementwise_affine_) {
+        const std::vector<size_t> param_shape{norm_size};
+        if (gamma_.GetDataType() != DataType::Float32 || beta_.GetDataType() != DataType::Float32 ||
+            gamma_.Shape() != param_shape || beta_.Shape() != param_shape) {
+            throw std::runtime_error("LayerNorm forward affine parameter mismatch");
+        }
+    }
+
+    Tensor output(shape, DataType::Float32);
+    normalized_ = Tensor(shape, DataType::Float32);
+    std_inv_ = Tensor({batch_size}, DataType::Float32);
+
+    const float* input_data = input.Data<float>();
+    const float* gamma_data = elementwise_affine_ ? gamma_.Data<float>() : nullptr;
+    const float* beta_data = elementwise_affine_ ? beta_.Data<float>() : nullptr;
+    float* output_data = output.Data<float>();
+    float* normalized_data = normalized_.Data<float>();
+    float* std_inv_data = std_inv_.Data<float>();
+
+    for (size_t batch = 0; batch < batch_size; ++batch) {
+        const size_t offset = batch * norm_size;
+        float mean = 0.0f;
+        for (size_t i = 0; i < norm_size; ++i) {
+            mean += input_data[offset + i];
+        }
+        mean /= static_cast<float>(norm_size);
+
+        float variance = 0.0f;
+        for (size_t i = 0; i < norm_size; ++i) {
+            const float centered = input_data[offset + i] - mean;
+            variance += centered * centered;
+        }
+        variance /= static_cast<float>(norm_size);
+        std_inv_data[batch] = 1.0f / std::sqrt(variance + eps_);
+
+        for (size_t i = 0; i < norm_size; ++i) {
+            normalized_data[offset + i] = (input_data[offset + i] - mean) * std_inv_data[batch];
+            output_data[offset + i] = elementwise_affine_
+                                          ? gamma_data[i] * normalized_data[offset + i] + beta_data[i]
+                                          : normalized_data[offset + i];
+        }
+    }
+
+    return output;
 }
 
 Tensor LayerNormLayer::Backward(const Tensor& grad_output) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        size_t norm_size = 1;
-        for (int dim : normalized_shape_) {
-            norm_size *= static_cast<size_t>(dim);
-        }
-        size_t batch_size = grad_output.NumElements() / norm_size;
-
-        af::array grad_out = TensorToAf(grad_output);
-        af::array grad_reshaped = af::moddims(grad_out, af::dim4(norm_size, batch_size));
-
-        af::array normalized = TensorToAf(normalized_);
-        af::array std_inv = TensorToAf(std_inv_);
-
-        if (elementwise_affine_) {
-            af::array gamma = TensorToAf(gamma_);
-
-            // Compute gradients for gamma and beta
-            af::array grad_gamma_arr = af::sum(grad_reshaped * normalized, 1);
-            af::array grad_beta_arr = af::sum(grad_reshaped, 1);
-
-            grad_gamma_ = AfToTensor(grad_gamma_arr);
-            grad_beta_ = AfToTensor(grad_beta_arr);
-
-            // Scale grad by gamma for input gradient
-            af::array gamma_bc = af::tile(gamma, af::dim4(1, batch_size));
-            grad_reshaped = grad_reshaped * gamma_bc;
-        }
-
-        // Compute input gradient
-        float N = static_cast<float>(norm_size);
-        af::array sum_dy = af::tile(af::sum(grad_reshaped, 0), af::dim4(norm_size, 1));
-        af::array sum_dy_norm = af::tile(af::sum(grad_reshaped * normalized, 0), af::dim4(norm_size, 1));
-
-        af::array dx = (1.0f / N) * std_inv * (N * grad_reshaped - sum_dy - normalized * sum_dy_norm);
-
-        af::array dx_output = af::moddims(dx, grad_out.dims());
-        return AfToTensor(dx_output);
-
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire LayerNormLayer::Backward failed: {}", e.what());
+    if (grad_output.GetDataType() != DataType::Float32 ||
+        normalized_.GetDataType() != DataType::Float32 ||
+        std_inv_.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("LayerNorm backward CPU fallback requires Float32 tensors");
     }
-#endif
+    if (grad_output.Shape() != cached_input_.Shape() || normalized_.Shape() != cached_input_.Shape()) {
+        throw std::runtime_error("LayerNorm backward gradient/cache shape mismatch");
+    }
 
-    throw std::runtime_error("LayerNorm backward requires ArrayFire");
+    size_t norm_size = 1;
+    for (int dim : normalized_shape_) {
+        norm_size *= static_cast<size_t>(dim);
+    }
+    if (norm_size == 0 || grad_output.NumElements() % norm_size != 0) {
+        throw std::runtime_error("LayerNorm backward invalid normalization size");
+    }
+    const size_t batch_size = grad_output.NumElements() / norm_size;
+    if (std_inv_.Shape() != std::vector<size_t>{batch_size}) {
+        throw std::runtime_error("LayerNorm backward std_inv cache shape mismatch");
+    }
+
+    Tensor grad_input(grad_output.Shape(), DataType::Float32);
+    if (elementwise_affine_) {
+        const std::vector<size_t> param_shape{norm_size};
+        if (gamma_.GetDataType() != DataType::Float32 || gamma_.Shape() != param_shape) {
+            throw std::runtime_error("LayerNorm backward gamma shape mismatch");
+        }
+        grad_gamma_ = Tensor(param_shape, DataType::Float32);
+        grad_beta_ = Tensor(param_shape, DataType::Float32);
+    }
+
+    const float* grad_data = grad_output.Data<float>();
+    const float* normalized_data = normalized_.Data<float>();
+    const float* std_inv_data = std_inv_.Data<float>();
+    const float* gamma_data = elementwise_affine_ ? gamma_.Data<float>() : nullptr;
+    float* grad_input_data = grad_input.Data<float>();
+    float* grad_gamma_data = elementwise_affine_ ? grad_gamma_.Data<float>() : nullptr;
+    float* grad_beta_data = elementwise_affine_ ? grad_beta_.Data<float>() : nullptr;
+    const float norm_count = static_cast<float>(norm_size);
+
+    for (size_t batch = 0; batch < batch_size; ++batch) {
+        const size_t offset = batch * norm_size;
+        float sum_dy = 0.0f;
+        float sum_dy_norm = 0.0f;
+        for (size_t i = 0; i < norm_size; ++i) {
+            const float upstream = elementwise_affine_ ? grad_data[offset + i] * gamma_data[i]
+                                                       : grad_data[offset + i];
+            sum_dy += upstream;
+            sum_dy_norm += upstream * normalized_data[offset + i];
+            if (elementwise_affine_) {
+                grad_gamma_data[i] += grad_data[offset + i] * normalized_data[offset + i];
+                grad_beta_data[i] += grad_data[offset + i];
+            }
+        }
+
+        const float scale = std_inv_data[batch] / norm_count;
+        for (size_t i = 0; i < norm_size; ++i) {
+            const float upstream = elementwise_affine_ ? grad_data[offset + i] * gamma_data[i]
+                                                       : grad_data[offset + i];
+            grad_input_data[offset + i] =
+                scale * (norm_count * upstream - sum_dy - normalized_data[offset + i] * sum_dy_norm);
+        }
+    }
+
+    return grad_input;
 }
 
 std::map<std::string, Tensor> LayerNormLayer::GetParameters() {
