@@ -291,6 +291,7 @@ That is useful, but still not enough for a visual ML tool.
 ### 6. Node editor and graph tooling appear split across many files without a clear UX contract
 
 **Severity:** Medium
+**Status:** Fixed on 2026-06-05
 
 Relevant files include:
 
@@ -317,18 +318,25 @@ become inconsistent:
 - generate code
 - inspect docs
 
-**Recommendation:**
+Audit result: this issue was still present. Existing docs covered Data Studio
+handoff and debugger architecture, but there was no concise source-of-truth
+contract for the node editor lifecycle itself.
 
-- document the intended node-editor workflow end-to-end
-- define one canonical lifecycle:
-  - add node
-  - configure node
-  - connect graph
-  - validate graph
-  - compile graph
-  - debug graph
-  - train graph
-- ensure each stage has a visible entry point and consistent feedback
+Fix applied:
+
+- added `docs/Data Studio/node_editor_workflow_contract.md`
+- defined the canonical add/configure/connect/validate/compile/debug/train
+  lifecycle
+- documented source-of-truth ownership for graph, node params, data registry,
+  compile state, debug state, and training state
+- documented command, shortcut, and feedback rules to keep future UI additions
+  aligned
+
+**Follow-up:**
+
+- keep new node-editor entry points aligned with the documented lifecycle
+- update the contract when a stage changes ownership or feedback surface
+- use the contract during future toolbar/menu/command-palette audits
 
 ---
 
