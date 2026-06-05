@@ -77,7 +77,6 @@ set(BACKEND_SOURCES
     src/algorithms/loss.cpp
     src/algorithms/activation.cpp
     src/algorithms/layer.cpp
-    src/algorithms/model.cpp
     src/algorithms/layers/linear.cpp
     src/algorithms/layers/layer_utils.cpp
     src/algorithms/activations/relu.cpp

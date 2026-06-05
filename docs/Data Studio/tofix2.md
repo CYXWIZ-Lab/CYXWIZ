@@ -1183,6 +1183,15 @@ Examples:
 - `engine.h` has no meaningful surface
 - `model.cpp` is effectively placeholder
 
+Status 2026-06-05:
+
+- Completed: `engine.h` is now an explicit compatibility header that
+  points lifecycle users to `cyxwiz.h` and keeps no accidental public
+  engine surface.
+- Completed: removed empty `src/algorithms/model.cpp` from the backend
+  source list and deleted the placeholder file. The legacy `Model` base
+  is header-only and documented in `model.h`.
+
 **Recommendation:**
 
 Either:
