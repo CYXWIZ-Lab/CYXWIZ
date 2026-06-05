@@ -111,6 +111,104 @@ Tensor CpuTanhBackward(const Tensor& grad_output, const Tensor& input) {
     return grad_input;
 }
 
+int NormalizeActivationAxis(int axis, int rank, const char* name) {
+    if (rank <= 0) {
+        throw std::runtime_error(std::string(name) + " requires at least one tensor dimension");
+    }
+    int normalized = axis < 0 ? axis + rank : axis;
+    if (normalized < 0 || normalized >= rank) {
+        throw std::runtime_error(std::string(name) + " axis is out of range");
+    }
+    return normalized;
+}
+
+std::vector<size_t> RowMajorStrides(const std::vector<size_t>& shape) {
+    std::vector<size_t> strides(shape.size(), 1);
+    for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+        strides[static_cast<size_t>(i)] = strides[static_cast<size_t>(i + 1)] * shape[static_cast<size_t>(i + 1)];
+    }
+    return strides;
+}
+
+Tensor CpuSoftmaxForward(const Tensor& input, int axis, Tensor* cached_output) {
+    ValidateFloat32UnaryActivation(input, "Softmax");
+    const std::vector<size_t>& shape = input.Shape();
+    const int actual_axis = NormalizeActivationAxis(axis, static_cast<int>(shape.size()), "Softmax");
+    const std::vector<size_t> strides = RowMajorStrides(shape);
+    const size_t axis_size = shape[static_cast<size_t>(actual_axis)];
+    const size_t axis_stride = strides[static_cast<size_t>(actual_axis)];
+    const size_t outer_count = input.NumElements() / axis_size;
+
+    Tensor output(shape, input.GetDataType());
+    const float* in = input.Data<float>();
+    float* out = output.Data<float>();
+
+    for (size_t outer = 0; outer < outer_count; ++outer) {
+        const size_t before_axis = outer / axis_stride;
+        const size_t after_axis = outer % axis_stride;
+        const size_t base = before_axis * axis_size * axis_stride + after_axis;
+
+        float max_value = in[base];
+        for (size_t i = 1; i < axis_size; ++i) {
+            max_value = std::max(max_value, in[base + i * axis_stride]);
+        }
+
+        float sum_exp = 0.0f;
+        for (size_t i = 0; i < axis_size; ++i) {
+            const float value = std::exp(in[base + i * axis_stride] - max_value);
+            out[base + i * axis_stride] = value;
+            sum_exp += value;
+        }
+
+        for (size_t i = 0; i < axis_size; ++i) {
+            out[base + i * axis_stride] /= sum_exp;
+        }
+    }
+
+    if (cached_output) {
+        *cached_output = output;
+    }
+    return output;
+}
+
+Tensor CpuSoftmaxBackward(const Tensor& grad_output, const Tensor& input, int axis, const Tensor& cached_output) {
+    ValidateFloat32ActivationBackward(grad_output, input, "Softmax");
+    Tensor softmax_out = cached_output.Shape() == input.Shape()
+                             ? cached_output
+                             : CpuSoftmaxForward(input, axis, nullptr);
+
+    const std::vector<size_t>& shape = input.Shape();
+    const int actual_axis = NormalizeActivationAxis(axis, static_cast<int>(shape.size()), "Softmax");
+    const std::vector<size_t> strides = RowMajorStrides(shape);
+    const size_t axis_size = shape[static_cast<size_t>(actual_axis)];
+    const size_t axis_stride = strides[static_cast<size_t>(actual_axis)];
+    const size_t outer_count = input.NumElements() / axis_size;
+
+    Tensor grad_input(input.Shape(), input.GetDataType());
+    const float* grad = grad_output.Data<float>();
+    const float* softmax = softmax_out.Data<float>();
+    float* out = grad_input.Data<float>();
+
+    for (size_t outer = 0; outer < outer_count; ++outer) {
+        const size_t before_axis = outer / axis_stride;
+        const size_t after_axis = outer % axis_stride;
+        const size_t base = before_axis * axis_size * axis_stride + after_axis;
+
+        float dot = 0.0f;
+        for (size_t i = 0; i < axis_size; ++i) {
+            const size_t index = base + i * axis_stride;
+            dot += grad[index] * softmax[index];
+        }
+
+        for (size_t i = 0; i < axis_size; ++i) {
+            const size_t index = base + i * axis_stride;
+            out[index] = softmax[index] * (grad[index] - dot);
+        }
+    }
+
+    return grad_input;
+}
+
 template <typename Fn>
 Tensor CpuElementwiseActivationForward(const Tensor& input, const char* name, Fn&& fn) {
     ValidateFloat32UnaryActivation(input, name);
@@ -202,6 +300,14 @@ static af::array TensorToAf(const Tensor& t) {
 // Helper: Create Tensor from ArrayFire array
 static Tensor AfToTensor(const af::array& arr) {
     return Tensor(arr);
+}
+
+static af::array TensorToSemanticAf(const Tensor& t) {
+    return t.Shape().size() == 2 ? t.GetArrayRowMajor2D() : t.GetArray();
+}
+
+static Tensor SemanticAfToTensor(const af::array& arr, const Tensor& reference) {
+    return reference.Shape().size() == 2 ? Tensor::FromArrayRowMajor2D(arr) : Tensor(arr);
 }
 
 // Constants for GELU approximation
@@ -527,7 +633,7 @@ Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 Tensor SoftmaxActivation::Forward(const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array x = TensorToAf(input);
+        af::array x = TensorToSemanticAf(input);
 
         // Determine the axis for softmax (default is last dimension)
         int actual_axis = axis_;
@@ -548,20 +654,20 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
         af::array sum_exp = af::sum(exp_x, actual_axis);
         af::array output = exp_x / af::tile(sum_exp, tile_dims);
 
-        cached_output_ = AfToTensor(output);
+        cached_output_ = SemanticAfToTensor(output, input);
         return cached_output_;
     } catch (const af::exception& e) {
         spdlog::warn("ArrayFire Softmax::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Softmax forward requires ArrayFire");
+    return CpuSoftmaxForward(input, axis_, &cached_output_);
 }
 
 Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array grad_out = TensorToAf(grad_output);
-        af::array softmax_out = TensorToAf(cached_output_);
+        af::array grad_out = TensorToSemanticAf(grad_output);
+        af::array softmax_out = TensorToSemanticAf(cached_output_);
 
         int actual_axis = axis_;
         if (actual_axis < 0) {
@@ -576,12 +682,12 @@ Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& inpu
 
         af::array dx = softmax_out * (grad_out - af::tile(sum_grad_softmax, tile_dims));
 
-        return AfToTensor(dx);
+        return SemanticAfToTensor(dx, input);
     } catch (const af::exception& e) {
         spdlog::warn("ArrayFire Softmax::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Softmax backward requires ArrayFire");
+    return CpuSoftmaxBackward(grad_output, input, axis_, cached_output_);
 }
 
 // ============================================================================

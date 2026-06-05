@@ -261,6 +261,20 @@ Fifteenth slice status:
   metric-learning losses, per-channel `PReLU`, legacy layers, and linalg
   decompositions still need separate policy/shape-contract slices.
 
+Sixteenth slice status:
+
+- Completed: added CPU fallback for factory `SoftmaxActivation` forward
+  and backward with row-major axis handling.
+- Completed: fixed factory `SoftmaxActivation` ArrayFire 2D layout by
+  using the semantic row-major Tensor/ArrayFire bridge instead of the
+  generic native bridge.
+- Completed: added focused 2D row-major Softmax forward/backward tests
+  that validate independent row normalization and Jacobian-vector
+  gradients.
+- Remaining: `CrossEntropy`, `NLLLoss`, `KLDiv`, focal and
+  metric-learning losses still need separate label/index shape-contract
+  slices before CPU fallback is added.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -702,13 +716,13 @@ Do not pay GPU setup cost if the result is immediately host-owned.
 core, shape-preserving float32 training primitives should have CPU
 fallbacks; advanced GPU-heavy operators may remain ArrayFire-required,
 but they must say so honestly and be tracked by group. Factory
-`ReLUActivation`, `SigmoidActivation`, `TanhActivation`, `LeakyReLU`,
-`ELU`, `GELU`, `Swish`/`SiLU`, `Mish`, `Hardswish`, `SELU`,
-shared-alpha `PReLU`, `MSELoss`, `L1Loss`, `SmoothL1Loss`/`HuberLoss`,
-`BCELoss`, and `BCEWithLogitsLoss` now have CPU fallback coverage with
-tests. Remaining fallback work should proceed by operator group,
-starting with class-axis losses and softmax before legacy layers and
-linalg decompositions.
+`ReLUActivation`, `SigmoidActivation`, `TanhActivation`, `Softmax`,
+`LeakyReLU`, `ELU`, `GELU`, `Swish`/`SiLU`, `Mish`, `Hardswish`,
+`SELU`, shared-alpha `PReLU`, `MSELoss`, `L1Loss`,
+`SmoothL1Loss`/`HuberLoss`, `BCELoss`, and `BCEWithLogitsLoss` now have
+CPU fallback coverage with tests. Remaining fallback work should proceed
+by operator group, starting with class-axis losses before legacy layers
+and linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 

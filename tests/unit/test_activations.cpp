@@ -182,6 +182,51 @@ TEST_CASE("Factory activations compute elementwise backward values", "[activatio
             Catch::Approx(-5.0f));
 }
 
+TEST_CASE("Factory softmax computes row-major forward values", "[activation]") {
+    float values[] = {1.0f, 2.0f, 3.0f, 1.0f, 3.0f, 5.0f};
+    cyxwiz::Tensor input({2, 3}, values, cyxwiz::DataType::Float32);
+    cyxwiz::SoftmaxActivation softmax(-1);
+
+    cyxwiz::Tensor output = softmax.Forward(input);
+    const float* out = output.Data<float>();
+
+    const float denom0 = std::exp(-2.0f) + std::exp(-1.0f) + 1.0f;
+    REQUIRE(out[0] == Catch::Approx(std::exp(-2.0f) / denom0));
+    REQUIRE(out[1] == Catch::Approx(std::exp(-1.0f) / denom0));
+    REQUIRE(out[2] == Catch::Approx(1.0f / denom0));
+    REQUIRE(out[0] + out[1] + out[2] == Catch::Approx(1.0f));
+
+    const float denom1 = std::exp(-4.0f) + std::exp(-2.0f) + 1.0f;
+    REQUIRE(out[3] == Catch::Approx(std::exp(-4.0f) / denom1));
+    REQUIRE(out[4] == Catch::Approx(std::exp(-2.0f) / denom1));
+    REQUIRE(out[5] == Catch::Approx(1.0f / denom1));
+    REQUIRE(out[3] + out[4] + out[5] == Catch::Approx(1.0f));
+}
+
+TEST_CASE("Factory softmax computes row-major backward values", "[activation]") {
+    float values[] = {1.0f, 2.0f, 3.0f, 1.0f, 3.0f, 5.0f};
+    float grad_values[] = {0.1f, 0.2f, -0.3f, -0.2f, 0.4f, 0.1f};
+    cyxwiz::Tensor input({2, 3}, values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad({2, 3}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::SoftmaxActivation softmax(-1);
+
+    cyxwiz::Tensor output = softmax.Forward(input);
+    cyxwiz::Tensor grad_input = softmax.Backward(grad, input);
+
+    const float* out = output.Data<float>();
+    const float* grad_in = grad_input.Data<float>();
+
+    const float dot0 = out[0] * grad_values[0] + out[1] * grad_values[1] + out[2] * grad_values[2];
+    REQUIRE(grad_in[0] == Catch::Approx(out[0] * (grad_values[0] - dot0)));
+    REQUIRE(grad_in[1] == Catch::Approx(out[1] * (grad_values[1] - dot0)));
+    REQUIRE(grad_in[2] == Catch::Approx(out[2] * (grad_values[2] - dot0)));
+
+    const float dot1 = out[3] * grad_values[3] + out[4] * grad_values[4] + out[5] * grad_values[5];
+    REQUIRE(grad_in[3] == Catch::Approx(out[3] * (grad_values[3] - dot1)));
+    REQUIRE(grad_in[4] == Catch::Approx(out[4] * (grad_values[4] - dot1)));
+    REQUIRE(grad_in[5] == Catch::Approx(out[5] * (grad_values[5] - dot1)));
+}
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 static bool HasArrayFireDeviceBackend() {
     try {
