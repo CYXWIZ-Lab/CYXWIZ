@@ -944,6 +944,30 @@ TEST_CASE("Tensor host allocations are tracked", "[tensor]") {
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
 }
 
+TEST_CASE("MemoryManager tracks live bytes and peak reset", "[tensor]") {
+    const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::MemoryManager::ResetPeak();
+
+    void* first = cyxwiz::MemoryManager::Allocate(16);
+    REQUIRE(first != nullptr);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before + 16);
+    REQUIRE(cyxwiz::MemoryManager::GetPeakBytes() >= before + 16);
+
+    void* second = cyxwiz::MemoryManager::Allocate(32);
+    REQUIRE(second != nullptr);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before + 48);
+    REQUIRE(cyxwiz::MemoryManager::GetPeakBytes() >= before + 48);
+
+    cyxwiz::MemoryManager::Deallocate(first);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before + 32);
+
+    cyxwiz::MemoryManager::ResetPeak();
+    REQUIRE(cyxwiz::MemoryManager::GetPeakBytes() == before + 32);
+
+    cyxwiz::MemoryManager::Deallocate(second);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
+}
+
 TEST_CASE("Tensor copy and move ownership keeps memory accounting balanced", "[tensor]") {
     const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
     {

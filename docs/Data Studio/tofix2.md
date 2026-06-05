@@ -129,6 +129,16 @@ Fifth slice status:
   call sites and profile operator/layer paths that still bounce through
   CPU fallback or inspection APIs.
 
+Sixth slice status:
+
+- Completed: audited `MemoryManager`; it now records allocation sizes,
+  decrements live bytes on `Deallocate()`, and exposes peak reset.
+- Completed: added a direct regression test for live-byte accounting and
+  `ResetPeak()`.
+- Remaining: document that MemoryManager counters are scoped to
+  MemoryManager-routed host buffers and do not include ArrayFire or other
+  third-party allocator state.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -280,7 +290,15 @@ Target behavior:
 
 **Severity:** High
 
-Current behavior:
+**Status 2026-06-05:** Fixed for MemoryManager-routed host
+allocations. `Allocate()` records pointer sizes, `Deallocate()` subtracts
+the recorded live bytes, and `ResetPeak()` resets peak tracking to the
+current live count. Tensor host buffers use this path and have regression
+coverage. The counters are not a whole-process memory profiler: ArrayFire,
+DuckDB, STL, and direct third-party allocations remain outside this
+accounting scope.
+
+Original audit behavior:
 
 - `Allocate()` increments the byte counter
 - `Deallocate()` frees memory but does not decrement the counter
