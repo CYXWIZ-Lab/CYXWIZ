@@ -1166,6 +1166,34 @@ TEST_CASE("Tensor ArrayFire factories materialize host data lazily", "[tensor][a
             before + zeros.NumBytes() + ones.NumBytes() + random.NumBytes());
 }
 
+TEST_CASE("Tensor RandomSeeded is reproducible without global RNG state", "[tensor]") {
+    cyxwiz::Tensor first = cyxwiz::Tensor::RandomSeeded({8}, 1234, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor second = cyxwiz::Tensor::RandomSeeded({8}, 1234, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor different = cyxwiz::Tensor::RandomSeeded({8}, 4321, cyxwiz::DataType::Float32);
+
+    const float* first_data = first.Data<float>();
+    const float* second_data = second.Data<float>();
+    const float* different_data = different.Data<float>();
+    bool saw_difference = false;
+
+    for (size_t i = 0; i < 8; ++i) {
+        REQUIRE(first_data[i] == second_data[i]);
+        REQUIRE(first_data[i] >= 0.0f);
+        REQUIRE(first_data[i] < 1.0f);
+        if (first_data[i] != different_data[i]) {
+            saw_difference = true;
+        }
+    }
+    REQUIRE(saw_difference);
+
+    cyxwiz::Tensor ints = cyxwiz::Tensor::RandomSeeded({8}, 1234, cyxwiz::DataType::Int32);
+    const int32_t* int_data = ints.Data<int32_t>();
+    for (size_t i = 0; i < 8; ++i) {
+        REQUIRE(int_data[i] >= 0);
+        REQUIRE(int_data[i] <= 99);
+    }
+}
+
 TEST_CASE("Tensor host mutation invalidates cached ArrayFire data", "[tensor][arrayfire]") {
     float data[] = {1.0f, 2.0f, 3.0f};
     cyxwiz::Tensor t({3}, data, cyxwiz::DataType::Float32);

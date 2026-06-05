@@ -82,6 +82,52 @@ std::mt19937& CpuRandomEngine() {
     return engine;
 }
 
+void FillRandomCpu(Tensor& tensor, std::mt19937& engine) {
+    const size_t num_elements = tensor.NumElements();
+    switch (tensor.GetDataType()) {
+        case DataType::Float32: {
+            std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+            float* data = static_cast<float*>(tensor.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = dist(engine);
+            }
+            break;
+        }
+        case DataType::Float64: {
+            std::uniform_real_distribution<double> dist(0.0, 1.0);
+            double* data = static_cast<double*>(tensor.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = dist(engine);
+            }
+            break;
+        }
+        case DataType::Int32: {
+            std::uniform_int_distribution<int32_t> dist(0, 99);
+            int32_t* data = static_cast<int32_t*>(tensor.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = dist(engine);
+            }
+            break;
+        }
+        case DataType::Int64: {
+            std::uniform_int_distribution<int64_t> dist(0, 99);
+            int64_t* data = static_cast<int64_t*>(tensor.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = dist(engine);
+            }
+            break;
+        }
+        case DataType::UInt8: {
+            std::uniform_int_distribution<int> dist(0, 255);
+            uint8_t* data = static_cast<uint8_t*>(tensor.Data());
+            for (size_t i = 0; i < num_elements; i++) {
+                data[i] = static_cast<uint8_t>(dist(engine));
+            }
+            break;
+        }
+    }
+}
+
 } // namespace
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -607,51 +653,20 @@ Tensor Tensor::Random(const std::vector<size_t>& shape, DataType dtype) {
     // CPU fallback
     Tensor t(shape, dtype);
 
-    // Fill with random values [0, 1) based on data type
-    size_t num_elements = t.NumElements();
     auto& engine = CpuRandomEngine();
-    switch (dtype) {
-        case DataType::Float32: {
-            std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-            float* data = static_cast<float*>(t.Data());
-            for (size_t i = 0; i < num_elements; i++) {
-                data[i] = dist(engine);
-            }
-            break;
-        }
-        case DataType::Float64: {
-            std::uniform_real_distribution<double> dist(0.0, 1.0);
-            double* data = static_cast<double*>(t.Data());
-            for (size_t i = 0; i < num_elements; i++) {
-                data[i] = dist(engine);
-            }
-            break;
-        }
-        case DataType::Int32: {
-            std::uniform_int_distribution<int32_t> dist(0, 99);
-            int32_t* data = static_cast<int32_t*>(t.Data());
-            for (size_t i = 0; i < num_elements; i++) {
-                data[i] = dist(engine);
-            }
-            break;
-        }
-        case DataType::Int64: {
-            std::uniform_int_distribution<int64_t> dist(0, 99);
-            int64_t* data = static_cast<int64_t*>(t.Data());
-            for (size_t i = 0; i < num_elements; i++) {
-                data[i] = dist(engine);
-            }
-            break;
-        }
-        case DataType::UInt8: {
-            std::uniform_int_distribution<int> dist(0, 255);
-            uint8_t* data = static_cast<uint8_t*>(t.Data());
-            for (size_t i = 0; i < num_elements; i++) {
-                data[i] = static_cast<uint8_t>(dist(engine));
-            }
-            break;
-        }
-    }
+    FillRandomCpu(t, engine);
+
+    return t;
+}
+
+Tensor Tensor::RandomSeeded(const std::vector<size_t>& shape, uint64_t seed, DataType dtype) {
+    Tensor t(shape, dtype);
+    std::seed_seq seed_sequence{
+        static_cast<uint32_t>(seed),
+        static_cast<uint32_t>(seed >> 32),
+    };
+    std::mt19937 engine(seed_sequence);
+    FillRandomCpu(t, engine);
 
     return t;
 }

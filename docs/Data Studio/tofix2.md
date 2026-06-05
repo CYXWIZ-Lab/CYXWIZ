@@ -1254,6 +1254,19 @@ fallback no longer uses raw `rand()` or shared C RNG state. A full
 reproducibility API is still deferred: seeded Tensor random factories and
 cross-subsystem RNG policy should be designed together.
 
+Second status 2026-06-05:
+
+- Completed: added `Tensor::RandomSeeded(shape, seed, dtype)` as a
+  deterministic CPU-owned factory that does not mutate ArrayFire global
+  seed state or the thread-local unseeded CPU random engine.
+- Completed: shared the CPU random fill implementation between seeded
+  and unseeded tensor random paths so dtype ranges stay consistent.
+- Completed: added tensor tests proving same-seed reproducibility,
+  different-seed variance, and integer dtype bounds.
+- Remaining: layer initializers, dropout, time-series generators,
+  signal-processing generators, and text sample generation still use
+  mixed seed policies and should be handled under a broader RNG design.
+
 Different subsystems use different random sources:
 
 - raw `rand()` in Tensor random generation before the 2026-06-05

@@ -228,6 +228,8 @@ public:
     static Tensor Zeros(const std::vector<size_t>& shape, DataType dtype = DataType::Float32);
     static Tensor Ones(const std::vector<size_t>& shape, DataType dtype = DataType::Float32);
     static Tensor Random(const std::vector<size_t>& shape, DataType dtype = DataType::Float32);
+    static Tensor RandomSeeded(const std::vector<size_t>& shape, uint64_t seed,
+                               DataType dtype = DataType::Float32);
     static Tensor RangeN(const std::vector<size_t>& shape, DataType dtype = DataType::Float32);
 
 private:
