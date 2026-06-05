@@ -11,6 +11,7 @@ add_executable(cyxwiz-tests
     unit/test_optimizer.cpp
     unit/test_sequence_layers.cpp
     unit/test_data_loader.cpp
+    unit/test_training_dataloader.cpp
 )
 
 target_link_libraries(cyxwiz-tests PRIVATE

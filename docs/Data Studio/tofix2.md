@@ -48,8 +48,8 @@ Confirmed active issues for the first implementation slice were:
   yet implemented".
 - `src/core/device_1.cpp` is an accidental build-command artifact and
   should be removed from the source tree.
-- Two different `cyxwiz::DataLoader` classes still exist in separate
-  headers; this needs a compatibility migration, not a quick rename.
+- Two different `cyxwiz::DataLoader` classes existed in separate
+  headers before the 2026-06-05 third-slice fix.
 - Tensor CPU random generation used raw `rand()` in the fallback path
   before the 2026-06-05 second-slice fix.
 - CPU fallback policy remains inconsistent and should be audited
@@ -91,6 +91,21 @@ Second slice status:
 - Completed: removed raw `rand()` usage from `Tensor::Random()` CPU
   fallback and replaced it with a private thread-local C++ RNG helper.
 - Completed: added a focused Tensor random factory range/shape test.
+
+Third slice status:
+
+- Completed: kept the compiled DuckDB/file SQL loader as
+  `cyxwiz::DataLoader`.
+- Completed: renamed the dormant dataset batch iterator in
+  `dataloader.h` to `cyxwiz::TrainingDataLoader`.
+- Completed: compiled `src/algorithms/dataloader.cpp` and installed
+  `include/cyxwiz/dataloader.h` through the backend target.
+- Completed: renamed the tensor-backed helper to
+  `CreateTrainingDataLoader()` so it no longer competes conceptually
+  with the DuckDB loader.
+- Completed: added tests proving `data_loader.h` and `dataloader.h` can
+  be included together and that `TrainingDataLoader` batches synthetic
+  and tensor-backed datasets.
 
 ---
 
@@ -142,6 +157,11 @@ Practical path:
 ### 2. Two `DataLoader` concepts share the same name
 
 **Severity:** High
+
+**Status 2026-06-05:** Fixed for the backend C++ surface. The compiled
+DuckDB/file SQL loader remains `cyxwiz::DataLoader`; the dataset batch
+iterator is now `cyxwiz::TrainingDataLoader` and is built into the
+backend target with coverage that includes both headers together.
 
 There are two distinct `DataLoader` concepts in the same namespace:
 

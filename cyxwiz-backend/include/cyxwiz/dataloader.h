@@ -150,11 +150,11 @@ private:
 };
 
 /**
- * DataLoader - Iterates over a dataset in batches
+ * TrainingDataLoader - Iterates over a dataset in batches
  *
  * Usage:
  *   auto dataset = std::make_shared<MNISTDataset>("./data", Split::Train);
- *   DataLoader loader(dataset, 32, true);
+ *   TrainingDataLoader loader(dataset, 32, true);
  *
  *   for (int epoch = 0; epoch < num_epochs; epoch++) {
  *       loader.Reset();
@@ -164,21 +164,21 @@ private:
  *       }
  *   }
  */
-class CYXWIZ_API DataLoader {
+class CYXWIZ_API TrainingDataLoader {
 public:
     /**
-     * Create a DataLoader
+     * Create a TrainingDataLoader
      * @param dataset Shared pointer to dataset
      * @param batch_size Number of samples per batch
      * @param shuffle Whether to shuffle data each epoch
      * @param drop_last Drop last batch if smaller than batch_size
      * @param seed Random seed for shuffling
      */
-    DataLoader(std::shared_ptr<DatasetBase> dataset,
-               size_t batch_size,
-               bool shuffle = true,
-               bool drop_last = false,
-               int seed = 42);
+    TrainingDataLoader(std::shared_ptr<DatasetBase> dataset,
+                       size_t batch_size,
+                       bool shuffle = true,
+                       bool drop_last = false,
+                       int seed = 42);
 
     /**
      * Get the next batch
@@ -263,12 +263,12 @@ private:
  * @param path Directory containing MNIST files
  * @param batch_size Batch size for the loader
  * @param train If true, load training set, else test set
- * @return DataLoader ready for iteration
+ * @return TrainingDataLoader ready for iteration
  */
-CYXWIZ_API DataLoader LoadMNIST(const std::string& path,
-                                 size_t batch_size = 32,
-                                 bool train = true,
-                                 bool shuffle = true);
+CYXWIZ_API TrainingDataLoader LoadMNIST(const std::string& path,
+                                        size_t batch_size = 32,
+                                        bool train = true,
+                                        bool shuffle = true);
 
 /**
  * Create a simple dataset from numpy-style arrays
@@ -276,11 +276,11 @@ CYXWIZ_API DataLoader LoadMNIST(const std::string& path,
  * @param labels Label tensor [num_samples]
  * @param batch_size Batch size for the loader
  * @param shuffle Whether to shuffle
- * @return DataLoader ready for iteration
+ * @return TrainingDataLoader ready for iteration
  */
-CYXWIZ_API DataLoader CreateDataLoader(const Tensor& data,
-                                        const Tensor& labels,
-                                        size_t batch_size = 32,
-                                        bool shuffle = true);
+CYXWIZ_API TrainingDataLoader CreateTrainingDataLoader(const Tensor& data,
+                                                       const Tensor& labels,
+                                                       size_t batch_size = 32,
+                                                       bool shuffle = true);
 
 } // namespace cyxwiz

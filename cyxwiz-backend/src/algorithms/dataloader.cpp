@@ -289,14 +289,14 @@ std::pair<std::vector<float>, int> SyntheticDataset::GetItem(size_t index) const
 }
 
 // ============================================================================
-// DataLoader Implementation
+// TrainingDataLoader Implementation
 // ============================================================================
 
-DataLoader::DataLoader(std::shared_ptr<DatasetBase> dataset,
-                       size_t batch_size,
-                       bool shuffle,
-                       bool drop_last,
-                       int seed)
+TrainingDataLoader::TrainingDataLoader(std::shared_ptr<DatasetBase> dataset,
+                                       size_t batch_size,
+                                       bool shuffle,
+                                       bool drop_last,
+                                       int seed)
     : dataset_(std::move(dataset))
     , batch_size_(batch_size)
     , shuffle_(shuffle)
@@ -315,7 +315,7 @@ DataLoader::DataLoader(std::shared_ptr<DatasetBase> dataset,
     }
 }
 
-DataBatch DataLoader::GetNextBatch() {
+DataBatch TrainingDataLoader::GetNextBatch() {
     DataBatch batch;
 
     if (IsEpochComplete()) {
@@ -384,7 +384,7 @@ DataBatch DataLoader::GetNextBatch() {
     return batch;
 }
 
-void DataLoader::Reset() {
+void TrainingDataLoader::Reset() {
     current_index_ = 0;
     current_batch_ = 0;
 
@@ -393,41 +393,41 @@ void DataLoader::Reset() {
     }
 }
 
-bool DataLoader::IsEpochComplete() const {
+bool TrainingDataLoader::IsEpochComplete() const {
     if (drop_last_) {
         return current_index_ + batch_size_ > indices_.size();
     }
     return current_index_ >= indices_.size();
 }
 
-size_t DataLoader::NumBatches() const {
+size_t TrainingDataLoader::NumBatches() const {
     if (drop_last_) {
         return indices_.size() / batch_size_;
     }
     return (indices_.size() + batch_size_ - 1) / batch_size_;
 }
 
-void DataLoader::SetOneHotEncoding(bool enabled, size_t num_classes) {
+void TrainingDataLoader::SetOneHotEncoding(bool enabled, size_t num_classes) {
     one_hot_ = enabled;
     one_hot_classes_ = (num_classes > 0) ? num_classes : dataset_->NumClasses();
 }
 
-void DataLoader::SetNormalization(float mean, float std) {
+void TrainingDataLoader::SetNormalization(float mean, float std) {
     normalize_ = true;
     norm_mean_ = mean;
     norm_std_ = std;
 }
 
-void DataLoader::ShuffleIndices() {
+void TrainingDataLoader::ShuffleIndices() {
     std::shuffle(indices_.begin(), indices_.end(), rng_);
 }
 
-Tensor DataLoader::VectorToTensor(const std::vector<float>& data,
-                                  const std::vector<size_t>& shape) {
+Tensor TrainingDataLoader::VectorToTensor(const std::vector<float>& data,
+                                          const std::vector<size_t>& shape) {
     return Tensor(shape, data.data(), DataType::Float32);
 }
 
-Tensor DataLoader::LabelsToTensor(const std::vector<int>& labels) {
+Tensor TrainingDataLoader::LabelsToTensor(const std::vector<int>& labels) {
     std::vector<size_t> shape = {labels.size()};
 
     // Convert int to int32_t
@@ -435,7 +435,7 @@ Tensor DataLoader::LabelsToTensor(const std::vector<int>& labels) {
     return Tensor(shape, labels_i32.data(), DataType::Int32);
 }
 
-Tensor DataLoader::LabelsToOneHot(const std::vector<int>& labels) {
+Tensor TrainingDataLoader::LabelsToOneHot(const std::vector<int>& labels) {
     size_t num_samples = labels.size();
     std::vector<size_t> shape = {num_samples, one_hot_classes_};
 
@@ -454,19 +454,19 @@ Tensor DataLoader::LabelsToOneHot(const std::vector<int>& labels) {
 // Helper Functions
 // ============================================================================
 
-DataLoader LoadMNIST(const std::string& path,
-                     size_t batch_size,
-                     bool train,
-                     bool shuffle) {
+TrainingDataLoader LoadMNIST(const std::string& path,
+                             size_t batch_size,
+                             bool train,
+                             bool shuffle) {
     Split split = train ? Split::Train : Split::Test;
     auto dataset = std::make_shared<MNISTDataset>(path, split, true, true);
-    return DataLoader(dataset, batch_size, shuffle);
+    return TrainingDataLoader(dataset, batch_size, shuffle);
 }
 
-DataLoader CreateDataLoader(const Tensor& data,
-                            const Tensor& labels,
-                            size_t batch_size,
-                            bool shuffle) {
+TrainingDataLoader CreateTrainingDataLoader(const Tensor& data,
+                                            const Tensor& labels,
+                                            size_t batch_size,
+                                            bool shuffle) {
     // Create a wrapper dataset from tensors
     class TensorDataset : public DatasetBase {
     public:
@@ -510,7 +510,7 @@ DataLoader CreateDataLoader(const Tensor& data,
     };
 
     auto dataset = std::make_shared<TensorDataset>(data, labels);
-    return DataLoader(dataset, batch_size, shuffle);
+    return TrainingDataLoader(dataset, batch_size, shuffle);
 }
 
 } // namespace cyxwiz

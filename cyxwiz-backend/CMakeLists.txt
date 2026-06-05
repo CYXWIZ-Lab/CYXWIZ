@@ -99,6 +99,7 @@ set(BACKEND_SOURCES
     src/algorithms/audio_processing.cpp
     src/algorithms/utilities.cpp
     src/algorithms/rl_interface.cpp
+    src/algorithms/dataloader.cpp
     src/core/data_loader.cpp
     # Distributed training
     src/algorithms/distributed/process_group.cpp
@@ -141,6 +142,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/utilities.h
     include/cyxwiz/rl_interface.h
     include/cyxwiz/data_loader.h
+    include/cyxwiz/dataloader.h
     # Distributed training
     include/cyxwiz/distributed/process_group.h
     include/cyxwiz/distributed/cpu_backend.h
