@@ -4468,9 +4468,9 @@ void NodeEditor::OnStartRLTraining() {
     if (!rl_dashboard_) {
         rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
     }
+    rl_dashboard_->ResetRLMetrics();
     rl_dashboard_->SetRLTrainingState(true);
     rl_dashboard_->SetVisible(true);
-    rl_dashboard_->ResetRLMetrics();
 
     // Set up pycyxwiz flags
     std::string setup_script = "import pycyxwiz\npycyxwiz.rl_set_stop(False)\npycyxwiz.rl_set_paused(False)\n";

@@ -403,6 +403,71 @@ int main() {
     Check(config.layers.size() == 1,
           "selected TensorLogicalMask graph should still extract only the unary tensor layer");
 
+    auto binary_loss = Node(14,
+                            gui::NodeType::BCELoss,
+                            "Binary Loss",
+                            {Pin(1401, gui::PinType::Tensor, "Predictions", true),
+                             Pin(1402, gui::PinType::Labels, "Targets", true)},
+                            {Pin(1403, gui::PinType::Loss, "Loss", false)});
+
+    auto binary_dense = dense;
+    binary_dense.parameters["units"] = "2";
+
+    nodes = {data, binary_dense, binary_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 14, 1401),
+        Link(3, 1, 102, 14, 1402),
+        Link(4, 14, 1403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "BCE loss with two prediction outputs should be invalid");
+    Check(HasIssueText(config, "requires a single prediction output"),
+          "BCE loss should report binary output-size mismatch");
+
+    binary_dense.parameters["units"] = "1";
+    nodes = {data, binary_dense, binary_loss, optimizer};
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "BCE loss with one prediction output should compile");
+    Check(!HasIssueText(config, "requires a single prediction output"),
+          "BCE loss should not report output-size mismatch for one output");
+
+    auto class_loss = Node(15,
+                           gui::NodeType::CrossEntropyLoss,
+                           "Class Loss",
+                           {Pin(1501, gui::PinType::Tensor, "Predictions", true),
+                            Pin(1502, gui::PinType::Labels, "Targets", true)},
+                           {Pin(1503, gui::PinType::Loss, "Loss", false)});
+
+    auto output = Node(16,
+                       gui::NodeType::Output,
+                       "Output",
+                       {Pin(1601, gui::PinType::Tensor, "Input", true)},
+                       {Pin(1602, gui::PinType::Tensor, "Predictions", false)});
+    output.parameters["classes"] = "3";
+
+    auto class_dense = dense;
+    class_dense.parameters["units"] = "2";
+
+    nodes = {data, class_dense, output, class_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 16, 1601),
+        Link(3, 16, 1602, 15, 1501),
+        Link(4, 1, 102, 15, 1502),
+        Link(5, 15, 1503, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "CrossEntropy class count mismatch should be invalid");
+    Check(HasIssueText(config, "class count"),
+          "CrossEntropy loss should report class/output mismatch");
+
     std::cout << "Graph compiler deferred node guard and graph plan passed\n";
     return 0;
 }

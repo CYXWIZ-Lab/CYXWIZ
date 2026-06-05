@@ -1592,6 +1592,37 @@ TrainingConfiguration GraphCompiler::Compile(
             spdlog::warn("GraphCompiler: num_classes not specified in Output node, using output_size={}",
                          config.output_size);
         }
+
+        if (config.output_size > 0 && config.output_size < 2) {
+            AddIssue(config, IssueLevel::Error,
+                     "CrossEntropyLoss requires at least two prediction logits; "
+                     "the selected model path outputs " +
+                     std::to_string(config.output_size));
+        }
+
+        if (config.preprocessing.num_classes > 0 &&
+            config.output_size > 0 &&
+            config.preprocessing.num_classes != config.output_size) {
+            AddIssue(config, IssueLevel::Error,
+                     "CrossEntropyLoss class count (" +
+                     std::to_string(config.preprocessing.num_classes) +
+                     ") does not match the model output size (" +
+                     std::to_string(config.output_size) + ")");
+        }
+    }
+
+    if (config.loss_type == gui::NodeType::BCELoss ||
+        config.loss_type == gui::NodeType::BCEWithLogits) {
+        if (config.output_size > 0 && config.output_size != 1) {
+            const char* loss_name = config.loss_type == gui::NodeType::BCELoss
+                ? "BCELoss"
+                : "BCEWithLogits";
+            AddIssue(config, IssueLevel::Error,
+                     std::string(loss_name) +
+                     " requires a single prediction output for binary "
+                     "classification; the selected model path outputs " +
+                     std::to_string(config.output_size));
+        }
     }
 
     // === Post-compile sanity checks ===

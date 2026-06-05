@@ -97,7 +97,7 @@ This is a product-trust issue, not just a cosmetic one.
 ### 2. There are two training panels with overlapping responsibility
 
 **Severity:** High
-**Status:** Confirmed pending
+**Status:** Fixed on 2026-06-05
 
 Relevant files:
 
@@ -120,14 +120,27 @@ This creates product ambiguity and implementation overlap.
 - duplicated controls and state concepts
 - risk of inconsistent metrics or empty/filled state behavior
 
-**Recommendation:**
+Audit result: this issue was still present. `TrainingPlotPanel` was the
+graph/Python-connected supervised training surface, while
+`TrainingDashboardPanel` was created from the node editor for RL training
+but still used the same `"Training Dashboard"` title and carried supervised
+loss/accuracy/throughput chart code.
 
-- choose one canonical training UI surface
-- either:
-  - merge `TrainingPlotPanel` into `TrainingDashboardPanel`, or
-  - keep the plot panel as a subordinate component owned by the dashboard
-- remove duplicate window naming
-- centralize metric ingestion and lifecycle in one place
+Fix applied:
+
+- kept `TrainingPlotPanel` as the canonical supervised training dashboard
+- renamed the node-editor-created panel to `"RL Training Dashboard"`
+- removed supervised chart/state methods from `TrainingDashboardPanel`
+- limited the RL dashboard UI to episode and policy diagnostic metrics
+- removed local start/pause controls that only toggled panel-local state
+- fixed RL launch ordering so reset happens before marking RL training active
+
+**Follow-up:**
+
+- keep supervised metric ingestion and lifecycle centralized in
+  `TrainingPlotPanel`
+- keep RL-specific metric streaming in `TrainingDashboardPanel` unless it is
+  later promoted into the canonical training dashboard as an owned child view
 
 ---
 
@@ -169,6 +182,7 @@ This is an integration gap.
 ### 4. Debug infrastructure exists, but the graph-facing UI is still too thin
 
 **Severity:** High
+**Status:** Fixed on 2026-06-05
 
 Relevant files:
 
@@ -187,40 +201,44 @@ The backend/frontend boundary already exposes useful debug structures:
 This is strong raw capability. The missing piece is a first-class UI for
 it.
 
-**Current gap:**
+Audit result: this issue has been implemented as the `Studio Debugger`
+panel rather than a separate `Debug Results` panel.
 
-- no obvious dedicated debug results panel tied to graph execution
-- graph compile/debug failures still rely too much on messages rather
-  than visual localization and trace rendering
+Implemented behavior:
 
-**What to build:**
+- `Local Debug` is available from the graph toolbar and `F6`
+- debug execution is gated by the same compile pass used before training
+- `DebugExecutor` results are pushed into `StudioDebuggerPanel`
+- the panel renders stage/failure summaries, layer traces, shape comparison,
+  NaN/Inf state, timing, gradient lenses, issue lists, recommendations, and
+  run history
+- trace rows and selected trace details can focus the corresponding graph node
+- the panel is registered in the sidebar as `Studio Debugger`
+- successful debug runs cache the current graph hash for training staleness
+  checks
 
-- a `Debug Results` panel with:
-  - stage reached
-  - failure summary
-  - per-layer timing
-  - predicted vs actual shape
-  - NaN/Inf flags
-  - gradient norm table
-  - missing-gradient / dead-branch warnings
-- click-through from result entries to the corresponding node
-- sticky association between latest debug run and current graph
+**Follow-up:**
 
-**Recommendation:**
-
-Make this a core workflow panel, not a popup or log-only feature.
+- reduce dependence on the legacy compile-result popup for Local Debug; the
+  popup can remain as a short status handoff, but the durable result surface is
+  `Studio Debugger`
 
 ---
 
 ### 5. Graph validation is still structurally correct but too shallow for ML workflow guidance
 
 **Severity:** High
+**Status:** Partially fixed on 2026-06-05
 
 Relevant file:
 
 - `cyxwiz-engine/src/gui/node_editor_validation.cpp`
 
-Current validation covers:
+Audit result: this item was partly stale. `node_editor_validation.cpp` is still
+mostly structural, but the main compile gate now carries deeper semantic
+validation in `GraphCompiler`.
+
+Current graph/editor validation covers:
 
 - empty graph
 - input/output presence
@@ -228,8 +246,26 @@ Current validation covers:
 - reachability
 - required pins
 - a specific 4D -> Dense without Flatten warning
+- data-loaded state via the loader registry
+- required input and output pin connectivity
+- label stream reaches loss targets
+- prediction stream reaches loss predictions
+- optimizer loss input reaches a real loss node
+- unsupported/template nodes on the selected training path
+- DataSplit ratio and batch-size sanity checks
+- image resize/memory-risk checks
+- shape-op parameter checks
 
-That is useful, but not enough for a visual ML tool.
+Additional fix applied:
+
+- added loss/output compatibility checks in `GraphCompiler`
+- `BCELoss` / `BCEWithLogits` now block model paths with more than one
+  prediction output
+- `CrossEntropyLoss` now blocks single-logit outputs and mismatches between
+  Output node class count and model output size
+- covered the new checks in `test_graph_compiler_deferred_nodes`
+
+That is useful, but still not enough for a visual ML tool.
 
 **Missing validation depth:**
 
