@@ -123,6 +123,65 @@ TEST_CASE("Factory activations compute core backward values", "[activation]") {
     REQUIRE(tanh_grad.Data<float>()[2] == Catch::Approx(1.0f - std::tanh(2.0f) * std::tanh(2.0f)));
 }
 
+TEST_CASE("Factory activations compute elementwise forward values", "[activation]") {
+    float values[] = {-4.0f, -1.0f, 0.0f, 2.0f, 4.0f};
+    cyxwiz::Tensor input({5}, values, cyxwiz::DataType::Float32);
+
+    auto leaky_relu = cyxwiz::CreateActivation(cyxwiz::ActivationType::LeakyReLU, 0.2f);
+    auto elu = cyxwiz::CreateActivation(cyxwiz::ActivationType::ELU, 1.5f);
+    auto swish = cyxwiz::CreateActivation(cyxwiz::ActivationType::Swish);
+    auto mish = cyxwiz::CreateActivation(cyxwiz::ActivationType::Mish);
+    auto hardswish = cyxwiz::CreateActivation(cyxwiz::ActivationType::Hardswish);
+    auto selu = cyxwiz::CreateActivation(cyxwiz::ActivationType::SELU);
+    auto prelu = cyxwiz::CreateActivation(cyxwiz::ActivationType::PReLU, 0.25f);
+
+    REQUIRE(leaky_relu->Forward(input).Data<float>()[0] == Catch::Approx(-0.8f));
+    REQUIRE(elu->Forward(input).Data<float>()[1] == Catch::Approx(1.5f * (std::exp(-1.0f) - 1.0f)));
+
+    const float sigmoid_2 = 1.0f / (1.0f + std::exp(-2.0f));
+    REQUIRE(swish->Forward(input).Data<float>()[3] == Catch::Approx(2.0f * sigmoid_2));
+
+    const float softplus_2 = std::log1p(std::exp(2.0f));
+    REQUIRE(mish->Forward(input).Data<float>()[3] == Catch::Approx(2.0f * std::tanh(softplus_2)));
+
+    REQUIRE(hardswish->Forward(input).Data<float>()[0] == Catch::Approx(0.0f));
+    REQUIRE(hardswish->Forward(input).Data<float>()[3] == Catch::Approx(2.0f * 5.0f / 6.0f));
+
+    REQUIRE(selu->Forward(input).Data<float>()[3] ==
+            Catch::Approx(cyxwiz::SELUActivation::SCALE * 2.0f));
+    REQUIRE(prelu->Forward(input).Data<float>()[1] == Catch::Approx(-0.25f));
+}
+
+TEST_CASE("Factory activations compute elementwise backward values", "[activation]") {
+    float values[] = {-4.0f, -1.0f, 0.0f, 2.0f, 4.0f};
+    float grad_values[] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    cyxwiz::Tensor input({5}, values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad({5}, grad_values, cyxwiz::DataType::Float32);
+
+    auto leaky_relu = cyxwiz::CreateActivation(cyxwiz::ActivationType::LeakyReLU, 0.2f);
+    auto elu = cyxwiz::CreateActivation(cyxwiz::ActivationType::ELU, 1.5f);
+    auto swish = cyxwiz::CreateActivation(cyxwiz::ActivationType::Swish);
+    auto hardswish = cyxwiz::CreateActivation(cyxwiz::ActivationType::Hardswish);
+    auto selu = cyxwiz::CreateActivation(cyxwiz::ActivationType::SELU);
+    auto prelu = cyxwiz::CreateActivation(cyxwiz::ActivationType::PReLU, 0.25f);
+
+    REQUIRE(leaky_relu->Backward(grad, input).Data<float>()[0] == Catch::Approx(0.2f));
+    REQUIRE(elu->Backward(grad, input).Data<float>()[1] == Catch::Approx(1.5f * std::exp(-1.0f)));
+
+    const float sigmoid_2 = 1.0f / (1.0f + std::exp(-2.0f));
+    REQUIRE(swish->Backward(grad, input).Data<float>()[3] ==
+            Catch::Approx(sigmoid_2 * (1.0f + 2.0f * (1.0f - sigmoid_2))));
+
+    REQUIRE(hardswish->Backward(grad, input).Data<float>()[0] == Catch::Approx(0.0f));
+    REQUIRE(hardswish->Backward(grad, input).Data<float>()[3] == Catch::Approx(7.0f / 6.0f));
+
+    REQUIRE(selu->Backward(grad, input).Data<float>()[3] ==
+            Catch::Approx(cyxwiz::SELUActivation::SCALE));
+    REQUIRE(prelu->Backward(grad, input).Data<float>()[1] == Catch::Approx(0.25f));
+    REQUIRE(static_cast<cyxwiz::PReLUActivation*>(prelu.get())->GetAlphaGradient().Data<float>()[0] ==
+            Catch::Approx(-5.0f));
+}
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 static bool HasArrayFireDeviceBackend() {
     try {

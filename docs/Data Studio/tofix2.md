@@ -247,6 +247,20 @@ Fourteenth slice status:
   legacy layers, and partial linalg fallbacks still need targeted
   group-by-group policy and implementation slices.
 
+Fifteenth slice status:
+
+- Completed: extended factory activation CPU fallback coverage to the
+  shape-preserving elementwise group: `LeakyReLU`, `ELU`, `GELU`,
+  `Swish`/`SiLU`, `Mish`, `Hardswish`, `SELU`, and shared-alpha `PReLU`.
+- Completed: added CPU fallback implementations for `BCELoss` and
+  `BCEWithLogitsLoss`, including reduction handling.
+- Completed: added focused activation/loss regression coverage for the
+  new fallback group and fixed expected BCE-with-logits stable-formula
+  semantics in tests.
+- Remaining: `Softmax`, `CrossEntropy`, `NLLLoss`, `KLDiv`, focal,
+  metric-learning losses, per-channel `PReLU`, legacy layers, and linalg
+  decompositions still need separate policy/shape-contract slices.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -688,11 +702,13 @@ Do not pay GPU setup cost if the result is immediately host-owned.
 core, shape-preserving float32 training primitives should have CPU
 fallbacks; advanced GPU-heavy operators may remain ArrayFire-required,
 but they must say so honestly and be tracked by group. Factory
-`ReLUActivation`, `SigmoidActivation`, `TanhActivation`, `MSELoss`,
-`L1Loss`, and `SmoothL1Loss`/`HuberLoss` now have CPU fallback coverage
-with tests. Remaining fallback work should proceed by operator group,
-starting with simple elementwise activations/losses before complex
-classification losses, legacy layers, and linalg decompositions.
+`ReLUActivation`, `SigmoidActivation`, `TanhActivation`, `LeakyReLU`,
+`ELU`, `GELU`, `Swish`/`SiLU`, `Mish`, `Hardswish`, `SELU`,
+shared-alpha `PReLU`, `MSELoss`, `L1Loss`, `SmoothL1Loss`/`HuberLoss`,
+`BCELoss`, and `BCEWithLogitsLoss` now have CPU fallback coverage with
+tests. Remaining fallback work should proceed by operator group,
+starting with class-axis losses and softmax before legacy layers and
+linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 

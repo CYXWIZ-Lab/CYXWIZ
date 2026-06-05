@@ -111,6 +111,81 @@ Tensor CpuTanhBackward(const Tensor& grad_output, const Tensor& input) {
     return grad_input;
 }
 
+template <typename Fn>
+Tensor CpuElementwiseActivationForward(const Tensor& input, const char* name, Fn&& fn) {
+    ValidateFloat32UnaryActivation(input, name);
+    Tensor output(input.Shape(), input.GetDataType());
+    const float* in = input.Data<float>();
+    float* out = output.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        out[i] = fn(in[i]);
+    }
+    return output;
+}
+
+template <typename Fn>
+Tensor CpuElementwiseActivationBackward(const Tensor& grad_output,
+                                        const Tensor& input,
+                                        const char* name,
+                                        Fn&& derivative) {
+    ValidateFloat32ActivationBackward(grad_output, input, name);
+    Tensor grad_input(input.Shape(), input.GetDataType());
+    const float* grad = grad_output.Data<float>();
+    const float* in = input.Data<float>();
+    float* out = grad_input.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        out[i] = grad[i] * derivative(in[i]);
+    }
+    return grad_input;
+}
+
+float CpuSigmoidValue(float x) {
+    if (x >= 0.0f) {
+        return 1.0f / (1.0f + std::exp(-x));
+    }
+    const float exp_x = std::exp(x);
+    return exp_x / (1.0f + exp_x);
+}
+
+float CpuSoftplus(float x) {
+    if (x > 20.0f) {
+        return x;
+    }
+    if (x < -20.0f) {
+        return std::exp(x);
+    }
+    return std::log1p(std::exp(x));
+}
+
+float CpuGELU(float x) {
+    constexpr float sqrt_2_over_pi = 0.7978845608028654f;
+    constexpr float gelu_const = 0.044715f;
+    const float inner = sqrt_2_over_pi * (x + gelu_const * x * x * x);
+    return 0.5f * x * (1.0f + std::tanh(inner));
+}
+
+float CpuGELUDerivative(float x) {
+    constexpr float sqrt_2_over_pi = 0.7978845608028654f;
+    constexpr float gelu_const = 0.044715f;
+    const float x2 = x * x;
+    const float inner = sqrt_2_over_pi * (x + gelu_const * x * x2);
+    const float tanh_inner = std::tanh(inner);
+    const float sech2_inner = 1.0f - tanh_inner * tanh_inner;
+    const float d_inner = sqrt_2_over_pi * (1.0f + 3.0f * gelu_const * x2);
+    return 0.5f * (1.0f + tanh_inner) + 0.5f * x * sech2_inner * d_inner;
+}
+
+float CpuMish(float x) {
+    return x * std::tanh(CpuSoftplus(x));
+}
+
+float CpuMishDerivative(float x) {
+    const float softplus = CpuSoftplus(x);
+    const float tanh_sp = std::tanh(softplus);
+    const float sech2_sp = 1.0f - tanh_sp * tanh_sp;
+    return tanh_sp + x * sech2_sp * CpuSigmoidValue(x);
+}
+
 } // namespace
 
 // ============================================================================
@@ -221,7 +296,9 @@ Tensor LeakyReLUActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire LeakyReLU::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("LeakyReLU forward requires ArrayFire");
+    return CpuElementwiseActivationForward(input, "LeakyReLU", [this](float x) {
+        return x > 0.0f ? x : alpha_ * x;
+    });
 }
 
 Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -237,7 +314,9 @@ Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& in
         spdlog::warn("ArrayFire LeakyReLU::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("LeakyReLU backward requires ArrayFire");
+    return CpuElementwiseActivationBackward(grad_output, input, "LeakyReLU", [this](float x) {
+        return x > 0.0f ? 1.0f : alpha_;
+    });
 }
 
 // ============================================================================
@@ -258,7 +337,9 @@ Tensor ELUActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire ELU::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("ELU forward requires ArrayFire");
+    return CpuElementwiseActivationForward(input, "ELU", [this](float x) {
+        return x > 0.0f ? x : alpha_ * (std::exp(x) - 1.0f);
+    });
 }
 
 Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -273,7 +354,9 @@ Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
         spdlog::warn("ArrayFire ELU::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("ELU backward requires ArrayFire");
+    return CpuElementwiseActivationBackward(grad_output, input, "ELU", [this](float x) {
+        return x > 0.0f ? 1.0f : alpha_ * std::exp(x);
+    });
 }
 
 // ============================================================================
@@ -292,7 +375,7 @@ Tensor GELUActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire GELU::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("GELU forward requires ArrayFire");
+    return CpuElementwiseActivationForward(input, "GELU", CpuGELU);
 }
 
 Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -320,7 +403,7 @@ Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         spdlog::warn("ArrayFire GELU::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("GELU backward requires ArrayFire");
+    return CpuElementwiseActivationBackward(grad_output, input, "GELU", CpuGELUDerivative);
 }
 
 // ============================================================================
@@ -339,7 +422,9 @@ Tensor SwishActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire Swish::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Swish forward requires ArrayFire");
+    return CpuElementwiseActivationForward(input, "Swish", [](float x) {
+        return x * CpuSigmoidValue(x);
+    });
 }
 
 Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -358,7 +443,10 @@ Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input)
         spdlog::warn("ArrayFire Swish::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Swish backward requires ArrayFire");
+    return CpuElementwiseActivationBackward(grad_output, input, "Swish", [](float x) {
+        const float sigmoid = CpuSigmoidValue(x);
+        return sigmoid * (1.0f + x * (1.0f - sigmoid));
+    });
 }
 
 // ============================================================================
@@ -512,7 +600,7 @@ Tensor MishActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire Mish::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Mish forward requires ArrayFire");
+    return CpuElementwiseActivationForward(input, "Mish", CpuMish);
 }
 
 Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -537,7 +625,7 @@ Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         spdlog::warn("ArrayFire Mish::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Mish backward requires ArrayFire");
+    return CpuElementwiseActivationBackward(grad_output, input, "Mish", CpuMishDerivative);
 }
 
 // ============================================================================
@@ -563,7 +651,15 @@ Tensor HardswishActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire Hardswish::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Hardswish forward requires ArrayFire");
+    return CpuElementwiseActivationForward(input, "Hardswish", [](float x) {
+        if (x <= -3.0f) {
+            return 0.0f;
+        }
+        if (x >= 3.0f) {
+            return x;
+        }
+        return x * (x + 3.0f) / 6.0f;
+    });
 }
 
 Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -587,7 +683,15 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
         spdlog::warn("ArrayFire Hardswish::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Hardswish backward requires ArrayFire");
+    return CpuElementwiseActivationBackward(grad_output, input, "Hardswish", [](float x) {
+        if (x <= -3.0f) {
+            return 0.0f;
+        }
+        if (x >= 3.0f) {
+            return 1.0f;
+        }
+        return (2.0f * x + 3.0f) / 6.0f;
+    });
 }
 
 
@@ -608,7 +712,9 @@ Tensor SELUActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire SELU::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("SELU forward requires ArrayFire");
+    return CpuElementwiseActivationForward(input, "SELU", [](float x) {
+        return SCALE * (x > 0.0f ? x : ALPHA * (std::exp(x) - 1.0f));
+    });
 }
 
 Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -625,7 +731,9 @@ Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         spdlog::warn("ArrayFire SELU::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("SELU backward requires ArrayFire");
+    return CpuElementwiseActivationBackward(grad_output, input, "SELU", [](float x) {
+        return SCALE * (x > 0.0f ? 1.0f : ALPHA * std::exp(x));
+    });
 }
 
 // ============================================================================
@@ -679,7 +787,14 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire PReLU::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("PReLU forward requires ArrayFire");
+    if (num_parameters_ != 1) {
+        throw std::runtime_error("PReLU CPU fallback only supports shared alpha");
+    }
+    const Tensor& alpha = alpha_;
+    const float alpha_value = alpha.Data<float>()[0];
+    return CpuElementwiseActivationForward(input, "PReLU", [alpha_value](float x) {
+        return x > 0.0f ? x : alpha_value * x;
+    });
 }
 
 Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -725,7 +840,26 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
         spdlog::warn("ArrayFire PReLU::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("PReLU backward requires ArrayFire");
+    if (num_parameters_ != 1) {
+        throw std::runtime_error("PReLU CPU fallback only supports shared alpha");
+    }
+
+    ValidateFloat32ActivationBackward(grad_output, input, "PReLU");
+    const Tensor& alpha = alpha_;
+    const float alpha_value = alpha.Data<float>()[0];
+    Tensor grad_input(input.Shape(), input.GetDataType());
+    float grad_alpha_val = 0.0f;
+    const float* grad = grad_output.Data<float>();
+    const float* in = input.Data<float>();
+    float* out = grad_input.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        out[i] = grad[i] * (in[i] > 0.0f ? 1.0f : alpha_value);
+        if (in[i] < 0.0f) {
+            grad_alpha_val += grad[i] * in[i];
+        }
+    }
+    grad_alpha_.Data<float>()[0] = grad_alpha_val;
+    return grad_input;
 }
 
 } // namespace cyxwiz

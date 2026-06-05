@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
+#include <cmath>
 #include <vector>
 
 TEST_CASE("Core losses compute CPU forward reductions", "[loss]") {
@@ -52,4 +53,42 @@ TEST_CASE("Core losses compute CPU backward values", "[loss]") {
     REQUIRE(smooth_l1_grad.Data<float>()[0] == Catch::Approx(1.0f / 6.0f));
     REQUIRE(smooth_l1_grad.Data<float>()[1] == Catch::Approx(1.0f / 3.0f));
     REQUIRE(smooth_l1_grad.Data<float>()[2] == Catch::Approx(-1.0f / 3.0f));
+}
+
+TEST_CASE("Binary losses compute forward reductions", "[loss]") {
+    float probability_values[] = {0.8f, 0.2f};
+    float label_values[] = {1.0f, 0.0f};
+    cyxwiz::Tensor probabilities({2}, probability_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    auto bce = cyxwiz::CreateLoss(cyxwiz::LossType::BinaryCrossEntropy, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor bce_loss = bce->Forward(probabilities, labels);
+    REQUIRE(bce_loss.Data<float>()[0] == Catch::Approx(-std::log(0.8f)));
+
+    float logit_values[] = {0.0f, 2.0f};
+    cyxwiz::Tensor logits({2}, logit_values, cyxwiz::DataType::Float32);
+    auto bce_logits = cyxwiz::CreateLoss(cyxwiz::LossType::BCEWithLogits, cyxwiz::Reduction::Sum);
+    cyxwiz::Tensor logits_loss = bce_logits->Forward(logits, labels);
+    REQUIRE(logits_loss.Data<float>()[0] ==
+            Catch::Approx(std::log(2.0f) + 2.0f + std::log1p(std::exp(-2.0f))));
+}
+
+TEST_CASE("Binary losses compute backward values", "[loss]") {
+    float probability_values[] = {0.8f, 0.2f};
+    float label_values[] = {1.0f, 0.0f};
+    cyxwiz::Tensor probabilities({2}, probability_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    auto bce = cyxwiz::CreateLoss(cyxwiz::LossType::BinaryCrossEntropy, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor bce_grad = bce->Backward(probabilities, labels);
+    REQUIRE(bce_grad.Data<float>()[0] == Catch::Approx(-0.625f));
+    REQUIRE(bce_grad.Data<float>()[1] == Catch::Approx(0.625f));
+
+    float logit_values[] = {0.0f, 2.0f};
+    cyxwiz::Tensor logits({2}, logit_values, cyxwiz::DataType::Float32);
+    auto bce_logits = cyxwiz::CreateLoss(cyxwiz::LossType::BCEWithLogits, cyxwiz::Reduction::None);
+    cyxwiz::Tensor logits_grad = bce_logits->Backward(logits, labels);
+    REQUIRE(logits_grad.Data<float>()[0] == Catch::Approx(0.5f - 1.0f));
+    REQUIRE(logits_grad.Data<float>()[1] ==
+            Catch::Approx(1.0f / (1.0f + std::exp(-2.0f))));
 }

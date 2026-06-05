@@ -1,6 +1,7 @@
 #include "cyxwiz/loss.h"
 #include "cyxwiz/tensor.h"
 #include <stdexcept>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include <spdlog/spdlog.h>
@@ -138,6 +139,71 @@ Tensor CpuSmoothL1Backward(const Tensor& predictions,
         const float base_grad = abs_diff < delta ? diff / delta
                               : (diff > 0.0f ? 1.0f : (diff < 0.0f ? -1.0f : 0.0f));
         out[i] = base_grad * scale;
+    }
+    return grad;
+}
+
+Tensor CpuBCEForward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "BCE");
+    const size_t count = predictions.NumElements();
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    std::vector<float> losses(count);
+    for (size_t i = 0; i < count; ++i) {
+        const float clamped = std::clamp(pred[i], eps, 1.0f - eps);
+        losses[i] = -(target[i] * std::log(clamped) +
+                      (1.0f - target[i]) * std::log(1.0f - clamped));
+    }
+    return ApplyCpuReduction(predictions.Shape(), losses, reduction);
+}
+
+Tensor CpuBCEBackward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "BCE");
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    const size_t count = predictions.NumElements();
+    const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    float* out = grad.Data<float>();
+    for (size_t i = 0; i < count; ++i) {
+        const float clamped = std::clamp(pred[i], eps, 1.0f - eps);
+        out[i] = ((clamped - target[i]) / (clamped * (1.0f - clamped) + eps)) * scale;
+    }
+    return grad;
+}
+
+float CpuSigmoidValue(float x) {
+    if (x >= 0.0f) {
+        return 1.0f / (1.0f + std::exp(-x));
+    }
+    const float exp_x = std::exp(x);
+    return exp_x / (1.0f + exp_x);
+}
+
+Tensor CpuBCEWithLogitsForward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
+    const size_t count = predictions.NumElements();
+    const float* logits = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    std::vector<float> losses(count);
+    for (size_t i = 0; i < count; ++i) {
+        const float logit = logits[i];
+        losses[i] = std::max(logit, 0.0f) - logit * target[i] +
+                    std::log1p(std::exp(-std::fabs(logit)));
+    }
+    return ApplyCpuReduction(predictions.Shape(), losses, reduction);
+}
+
+Tensor CpuBCEWithLogitsBackward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    const size_t count = predictions.NumElements();
+    const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
+    const float* logits = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    float* out = grad.Data<float>();
+    for (size_t i = 0; i < count; ++i) {
+        out[i] = (CpuSigmoidValue(logits[i]) - target[i]) * scale;
     }
     return grad;
 }
@@ -572,7 +638,7 @@ Tensor BCELoss::Forward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire BCELoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("BCE forward requires ArrayFire");
+    return CpuBCEForward(predictions, targets, eps_, reduction_);
 }
 
 Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -597,7 +663,7 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire BCELoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("BCE backward requires ArrayFire");
+    return CpuBCEBackward(predictions, targets, eps_, reduction_);
 }
 
 // ============================================================================
@@ -622,7 +688,7 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
         spdlog::warn("ArrayFire BCEWithLogitsLoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("BCEWithLogits forward requires ArrayFire");
+    return CpuBCEWithLogitsForward(predictions, targets, reduction_);
 }
 
 Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -644,7 +710,7 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
         spdlog::warn("ArrayFire BCEWithLogitsLoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("BCEWithLogits backward requires ArrayFire");
+    return CpuBCEWithLogitsBackward(predictions, targets, reduction_);
 }
 
 // ============================================================================
