@@ -348,6 +348,16 @@ void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& pr
         });
 }
 
+std::string ToLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool HasProjectExtension(const fs::path& path) {
+    return ToLower(path.extension().string()) == ".cyxwiz";
+}
+
 } // namespace
 
 namespace cyxwiz {
@@ -467,6 +477,56 @@ void ProjectManager::NotifyProjectVenvReady(const std::string& project_root) {
 
 const std::map<std::string, std::vector<std::string>>& ProjectManager::GetDefaultFilters() {
     return s_default_filters;
+}
+
+std::optional<std::string> ProjectManager::ResolveProjectFilePath(const std::string& path) {
+    if (path.empty()) {
+        return std::nullopt;
+    }
+
+    std::error_code ec;
+    fs::path selected(path);
+    if (!fs::exists(selected, ec) || ec) {
+        return std::nullopt;
+    }
+
+    if (fs::is_regular_file(selected, ec) && HasProjectExtension(selected)) {
+        return NormalizePath(fs::absolute(selected, ec)).string();
+    }
+
+    if (!fs::is_directory(selected, ec) || ec) {
+        return std::nullopt;
+    }
+
+    fs::path named = selected / (selected.filename().string() + ".cyxwiz");
+    if (fs::is_regular_file(named, ec) && !ec) {
+        return NormalizePath(fs::absolute(named, ec)).string();
+    }
+
+    fs::path first_match;
+    for (const auto& entry : fs::directory_iterator(selected, ec)) {
+        if (ec) {
+            spdlog::warn("Could not scan project directory {}: {}", selected.string(), ec.message());
+            return std::nullopt;
+        }
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        if (!HasProjectExtension(entry.path())) {
+            continue;
+        }
+        if (!first_match.empty()) {
+            spdlog::warn("Multiple .cyxwiz files found in {}; using {}", selected.string(), first_match.string());
+            return NormalizePath(fs::absolute(first_match, ec)).string();
+        }
+        first_match = entry.path();
+    }
+
+    if (!first_match.empty()) {
+        return NormalizePath(fs::absolute(first_match, ec)).string();
+    }
+
+    return std::nullopt;
 }
 
 bool ProjectManager::CreateProject(const std::string& name, const std::string& location) {

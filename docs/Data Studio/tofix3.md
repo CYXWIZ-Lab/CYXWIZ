@@ -545,6 +545,9 @@ Fix applied:
   - project selection accepts either a `.cyxwiz` file or a project folder and
     resolves to the authoritative `.cyxwiz` file
   - removed the ineffective virtual-environment checkbox from that dialog
+- centralized `.cyxwiz` project-file resolution in
+  `ProjectManager::ResolveProjectFilePath`, then reused it from command-line
+  startup, the start page, and `ProjectSelectionDialog`
 
 **What is missing:**
 

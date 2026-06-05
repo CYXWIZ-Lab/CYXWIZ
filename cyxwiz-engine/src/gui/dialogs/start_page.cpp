@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <ctime>
 #include <string>
-#include <system_error>
 
 namespace cyxwiz {
 
@@ -519,31 +518,13 @@ void StartPage::OpenProjectFolder() {
         return;
     }
 
-    std::filesystem::path folder(*selected_folder);
-    std::vector<std::filesystem::path> project_files;
-    std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".cyxwiz") {
-            project_files.push_back(entry.path());
-        }
-    }
-
-    if (ec) {
-        spdlog::warn("Could not scan selected project folder {}: {}", folder.string(), ec.message());
+    auto project_file = ProjectManager::ResolveProjectFilePath(*selected_folder);
+    if (!project_file) {
+        spdlog::warn("No .cyxwiz project file found in selected folder: {}", *selected_folder);
         return;
     }
 
-    if (project_files.empty()) {
-        spdlog::warn("No .cyxwiz project file found in selected folder: {}", folder.string());
-        return;
-    }
-
-    std::sort(project_files.begin(), project_files.end());
-    if (project_files.size() > 1) {
-        spdlog::warn("Multiple .cyxwiz project files found in {}; opening {}", folder.string(), project_files.front().string());
-    }
-
-    OpenProject(project_files.front().string());
+    OpenProject(*project_file);
 }
 
 void StartPage::ContinueWithoutProject() {

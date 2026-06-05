@@ -5,6 +5,7 @@
 #include <map>
 #include <functional>
 #include <ctime>
+#include <optional>
 #include <nlohmann/json.hpp>
 
 namespace cyxwiz {
@@ -112,6 +113,7 @@ public:
 
     // Default filter extensions
     static const std::map<std::string, std::vector<std::string>>& GetDefaultFilters();
+    static std::optional<std::string> ResolveProjectFilePath(const std::string& path);
 
     // Recent projects management
     struct RecentProject {

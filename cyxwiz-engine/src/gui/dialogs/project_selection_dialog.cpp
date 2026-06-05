@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
-#include <system_error>
 
 namespace cyxwiz {
 
@@ -267,43 +266,13 @@ bool ProjectSelectionDialog::CreateNewProject(const std::string& name, const std
 }
 
 void ProjectSelectionDialog::SelectProject(const std::string& path) {
-    std::filesystem::path selected_path(path);
-    if (!std::filesystem::exists(selected_path)) {
-        spdlog::error("Project does not exist: {}", path);
-        return;
-    }
-
-    std::filesystem::path project_file;
-    if (std::filesystem::is_regular_file(selected_path) && selected_path.extension() == ".cyxwiz") {
-        project_file = selected_path;
-    } else if (std::filesystem::is_directory(selected_path)) {
-        project_file = selected_path / (selected_path.filename().string() + ".cyxwiz");
-        if (!std::filesystem::exists(project_file)) {
-            std::error_code ec;
-            for (const auto& entry : std::filesystem::directory_iterator(selected_path, ec)) {
-                if (entry.is_regular_file() && entry.path().extension() == ".cyxwiz") {
-                    project_file = entry.path();
-                    break;
-                }
-            }
-            if (ec) {
-                spdlog::error("Could not scan project directory {}: {}", path, ec.message());
-                return;
-            }
-        }
-    }
-
-    if (project_file.empty() || !std::filesystem::exists(project_file)) {
+    auto project_file = ProjectManager::ResolveProjectFilePath(path);
+    if (!project_file) {
         spdlog::error("No .cyxwiz file found in: {}", path);
         return;
     }
 
-    if (!std::filesystem::is_regular_file(project_file)) {
-        spdlog::error("Project path is not a file: {}", project_file.string());
-        return;
-    }
-
-    selected_project_path_ = project_file.string();
+    selected_project_path_ = *project_file;
     result_ = Result::ProjectSelected;
 
     // Add to recent projects

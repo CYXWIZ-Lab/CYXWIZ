@@ -114,53 +114,6 @@ static bool load_window_icon(GLFWwindow* window) {
 
 namespace {
 
-std::string ToLower(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
-
-bool HasCyxwizExtension(const std::filesystem::path& path) {
-    return ToLower(path.extension().string()) == ".cyxwiz";
-}
-
-std::optional<std::filesystem::path> FindProjectFileInDir(const std::filesystem::path& dir) {
-    if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
-        return std::nullopt;
-    }
-
-    std::filesystem::path named = dir / (dir.filename().string() + ".cyxwiz");
-    if (std::filesystem::exists(named)) {
-        return std::filesystem::absolute(named);
-    }
-
-    std::filesystem::path first_match;
-    try {
-        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-            if (!entry.is_regular_file()) {
-                continue;
-            }
-            if (HasCyxwizExtension(entry.path())) {
-                if (!first_match.empty()) {
-                    spdlog::warn("Multiple .cyxwiz files found in {}, using first: {}",
-                                 dir.string(), first_match.string());
-                    return std::filesystem::absolute(first_match);
-                }
-                first_match = entry.path();
-            }
-        }
-    } catch (const std::exception& e) {
-        spdlog::warn("Failed to scan project directory {}: {}", dir.string(), e.what());
-        return std::nullopt;
-    }
-
-    if (!first_match.empty()) {
-        return std::filesystem::absolute(first_match);
-    }
-
-    return std::nullopt;
-}
-
 std::optional<std::filesystem::path> ResolveProjectArg(const std::string& arg) {
     if (arg.empty()) {
         return std::nullopt;
@@ -179,17 +132,8 @@ std::optional<std::filesystem::path> ResolveProjectArg(const std::string& arg) {
     }
 
     for (const auto& attempt : attempts) {
-        if (!std::filesystem::exists(attempt)) {
-            continue;
-        }
-        if (std::filesystem::is_directory(attempt)) {
-            if (auto found = FindProjectFileInDir(attempt)) {
-                return found;
-            }
-            continue;
-        }
-        if (HasCyxwizExtension(attempt)) {
-            return std::filesystem::absolute(attempt);
+        if (auto resolved = cyxwiz::ProjectManager::ResolveProjectFilePath(attempt.string())) {
+            return std::filesystem::path(*resolved);
         }
     }
 
