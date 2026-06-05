@@ -184,3 +184,56 @@ TEST_CASE("KL divergence computes backward values", "[loss]") {
     REQUIRE(grad.Data<float>()[1] == Catch::Approx(-0.7f / 3.0f));
     REQUIRE(grad.Data<float>()[2] == Catch::Approx(0.0f));
 }
+
+TEST_CASE("Focal loss computes class-index forward reduction", "[loss]") {
+    float logit_values[] = {1.0f, 2.0f, 0.0f, 2.0f, -1.0f, 0.0f};
+    int32_t target_values[] = {1, 0};
+    cyxwiz::Tensor logits({2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2}, target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::FocalLoss focal(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor loss = focal.Forward(logits, targets);
+
+    const float row0_denom = std::exp(-1.0f) + 1.0f + std::exp(-2.0f);
+    const float row0_pt = 1.0f / row0_denom;
+    const float row1_denom = 1.0f + std::exp(-3.0f) + std::exp(-2.0f);
+    const float row1_pt = 1.0f / row1_denom;
+    const float expected = (
+        -0.25f * std::pow(1.0f - row0_pt, 2.0f) * std::log(row0_pt) +
+        -0.25f * std::pow(1.0f - row1_pt, 2.0f) * std::log(row1_pt)
+    ) / 2.0f;
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected));
+}
+
+TEST_CASE("Focal loss computes class-index backward values", "[loss]") {
+    float logit_values[] = {1.0f, 2.0f, 0.0f, 2.0f, -1.0f, 0.0f};
+    int32_t target_values[] = {1, 0};
+    cyxwiz::Tensor logits({2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2}, target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::FocalLoss focal(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor grad = focal.Backward(logits, targets);
+    const float* data = grad.Data<float>();
+
+    const float row0_denom = std::exp(-1.0f) + 1.0f + std::exp(-2.0f);
+    const float row0_probs[] = {std::exp(-1.0f) / row0_denom, 1.0f / row0_denom,
+                                std::exp(-2.0f) / row0_denom};
+    const float row0_pt = row0_probs[1];
+    const float row0_scale = 0.25f *
+        (std::pow(1.0f - row0_pt, 2.0f) -
+         2.0f * row0_pt * std::pow(1.0f - row0_pt, 1.0f) * std::log(row0_pt)) / 2.0f;
+    REQUIRE(data[0] == Catch::Approx(row0_scale * row0_probs[0]));
+    REQUIRE(data[1] == Catch::Approx(row0_scale * (row0_probs[1] - 1.0f)));
+    REQUIRE(data[2] == Catch::Approx(row0_scale * row0_probs[2]));
+
+    const float row1_denom = 1.0f + std::exp(-3.0f) + std::exp(-2.0f);
+    const float row1_probs[] = {1.0f / row1_denom, std::exp(-3.0f) / row1_denom,
+                                std::exp(-2.0f) / row1_denom};
+    const float row1_pt = row1_probs[0];
+    const float row1_scale = 0.25f *
+        (std::pow(1.0f - row1_pt, 2.0f) -
+         2.0f * row1_pt * std::pow(1.0f - row1_pt, 1.0f) * std::log(row1_pt)) / 2.0f;
+    REQUIRE(data[3] == Catch::Approx(row1_scale * (row1_probs[0] - 1.0f)));
+    REQUIRE(data[4] == Catch::Approx(row1_scale * row1_probs[1]));
+    REQUIRE(data[5] == Catch::Approx(row1_scale * row1_probs[2]));
+}

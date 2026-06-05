@@ -463,6 +463,73 @@ Tensor CpuNLLBackward(const Tensor& predictions,
     return grad;
 }
 
+Tensor CpuFocalForward(const Tensor& predictions,
+                       const Tensor& targets,
+                       float alpha,
+                       float gamma,
+                       Reduction reduction,
+                       Tensor* cached_probs) {
+    const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "Focal");
+    ValidateClassIndexTargets(targets, shape, "Focal");
+
+    Tensor probs = CpuSoftmaxRows(predictions, shape);
+    if (cached_probs) {
+        *cached_probs = probs;
+    }
+
+    const float* prob_data = probs.Data<float>();
+    std::vector<float> losses(shape.batch, 0.0f);
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
+        ValidateClassIndex(class_index, shape.classes, "Focal");
+        const float pt = std::max(prob_data[batch * shape.classes + static_cast<size_t>(class_index)], 1e-8f);
+        losses[batch] = -alpha * std::pow(1.0f - pt, gamma) * std::log(pt);
+    }
+    return ApplyClassReduction(losses, shape.batch, reduction);
+}
+
+Tensor CpuFocalBackward(const Tensor& predictions,
+                        const Tensor& targets,
+                        float alpha,
+                        float gamma,
+                        Reduction reduction,
+                        const Tensor& cached_probs) {
+    const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "Focal");
+    ValidateClassIndexTargets(targets, shape, "Focal");
+
+    Tensor probs = cached_probs.Shape() == predictions.Shape()
+                       ? cached_probs
+                       : CpuSoftmaxRows(predictions, shape);
+
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    const float* prob_data = probs.Data<float>();
+    float* out = grad.Data<float>();
+
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
+        ValidateClassIndex(class_index, shape.classes, "Focal");
+        const size_t target_class = static_cast<size_t>(class_index);
+        const size_t base = batch * shape.classes;
+        const float pt = std::clamp(prob_data[base + target_class], 1e-8f, 1.0f - 1e-8f);
+        const float one_minus_pt = 1.0f - pt;
+        const float scale = alpha * (std::pow(one_minus_pt, gamma) -
+                                    gamma * pt * std::pow(one_minus_pt, gamma - 1.0f) * std::log(pt));
+
+        for (size_t c = 0; c < shape.classes; ++c) {
+            const float target_value = c == target_class ? 1.0f : 0.0f;
+            out[base + c] = scale * (prob_data[base + c] - target_value);
+        }
+    }
+
+    if (reduction == Reduction::Mean && shape.batch > 0) {
+        const float batch_scale = 1.0f / static_cast<float>(shape.batch);
+        for (size_t i = 0; i < predictions.NumElements(); ++i) {
+            out[i] *= batch_scale;
+        }
+    }
+    return grad;
+}
+
 } // namespace
 
 // ============================================================================
@@ -1171,19 +1238,16 @@ Tensor FocalLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         af::array target = TensorToAf(targets);
 
         // Apply softmax to get probabilities
-        af::array max_val = af::max(pred, 1);
-        af::array pred_shifted = pred - af::tile(max_val, 1, pred.dims(1));
-        af::array exp_pred = af::exp(pred_shifted);
-        af::array sum_exp = af::sum(exp_pred, 1);
-        af::array probs = exp_pred / af::tile(sum_exp, 1, pred.dims(1));
+        int class_axis = pred.numdims() == 1 ? 0 : 1;
+        af::array probs = StableSoftmax(pred, class_axis);
         cached_probs_ = AfToTensor(probs);
 
         // Get probability of true class
         dim_t batch_size = probs.dims(0);
         af::array target_indices = target.as(af::dtype::s32);
-        af::array batch_indices = af::iota(af::dim4(batch_size), af::dim4(1), af::dtype::s32);
-        af::array pt = probs(af::seq(batch_size), target_indices.T());
-        pt = af::diag(pt);
+        af::array batch_indices = af::range(af::dim4(batch_size), 0, s32);
+        af::array linear_indices = target_indices * static_cast<int>(batch_size) + batch_indices;
+        af::array pt = af::flat(probs)(linear_indices);
 
         // Focal loss: -alpha * (1 - pt)^gamma * log(pt)
         af::array focal_weight = af::pow(1.0f - pt, gamma_);
@@ -1196,13 +1260,20 @@ Tensor FocalLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire FocalLoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Focal forward requires ArrayFire");
+    return CpuFocalForward(predictions, targets, alpha_, gamma_, reduction_, &cached_probs_);
 }
 
 Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array probs = TensorToAf(cached_probs_);
+        af::array probs;
+        if (cached_probs_.Shape() == predictions.Shape()) {
+            probs = TensorToAf(cached_probs_);
+        } else {
+            af::array pred = TensorToAf(predictions);
+            int class_axis = pred.numdims() == 1 ? 0 : 1;
+            probs = StableSoftmax(pred, class_axis);
+        }
         af::array target = TensorToAf(targets);
 
         dim_t batch_size = probs.dims(0);
@@ -1210,8 +1281,9 @@ Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
 
         // Get probability of true class
         af::array target_indices = target.as(af::dtype::s32);
-        af::array pt = probs(af::seq(batch_size), target_indices.T());
-        pt = af::diag(pt);
+        af::array batch_indices = af::range(af::dim4(batch_size), 0, s32);
+        af::array linear_indices = target_indices * static_cast<int>(batch_size) + batch_indices;
+        af::array pt = af::flat(probs)(linear_indices);
 
         // Create one-hot target
         af::array one_hot = af::constant(0.0f, batch_size, num_classes);
@@ -1220,12 +1292,12 @@ Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
             one_hot(i, class_idx) = 1.0f;
         }
 
-        // Focal loss gradient is complex - simplified version:
-        // d_loss/d_pred = alpha * (1-pt)^gamma * (gamma * pt * log(pt) / (1-pt) + 1) * (pt - 1_{y=c})
+        // d_loss/d_pred = alpha * [(1-pt)^gamma - gamma*pt*(1-pt)^(gamma-1)*log(pt)] * (p - y)
         af::dim4 tile_dims(1, static_cast<unsigned int>(num_classes));
-        af::array focal_weight = af::pow(1.0f - pt, gamma_);
         af::array log_pt = af::log(af::max(pt, 1e-8f));
-        af::array scale = alpha_ * focal_weight * (gamma_ * pt * log_pt / (1.0f - pt + 1e-8f) + 1.0f);
+        af::array one_minus_pt = 1.0f - pt;
+        af::array scale = alpha_ * (af::pow(one_minus_pt, gamma_) -
+                                    gamma_ * pt * af::pow(one_minus_pt, gamma_ - 1.0f) * log_pt);
 
         af::array grad = af::tile(scale, tile_dims) * (probs - one_hot);
 
@@ -1238,7 +1310,7 @@ Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire FocalLoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Focal backward requires ArrayFire");
+    return CpuFocalBackward(predictions, targets, alpha_, gamma_, reduction_, cached_probs_);
 }
 
 // ============================================================================
