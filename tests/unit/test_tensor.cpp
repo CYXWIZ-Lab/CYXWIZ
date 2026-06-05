@@ -915,6 +915,26 @@ TEST_CASE("Tensor arithmetic syncs lazily to host data", "[tensor]") {
     REQUIRE(c_data[3] == 44.0f);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor device arithmetic keeps host data unmaterialized", "[tensor][arrayfire]") {
+    const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
+
+    cyxwiz::Tensor a(af::constant(2.0f, 4, f32));
+    cyxwiz::Tensor b(af::constant(5.0f, 4, f32));
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
+
+    cyxwiz::Tensor sum = a + b;
+    REQUIRE(sum.Shape() == std::vector<size_t>{4});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
+
+    const cyxwiz::Tensor& readable_sum = sum;
+    const float* host = readable_sum.Data<float>();
+    REQUIRE(host[0] == 7.0f);
+    REQUIRE(host[3] == 7.0f);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() >= before + sum.NumBytes());
+}
+#endif
+
 TEST_CASE("Tensor host allocations are tracked", "[tensor]") {
     const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
     {

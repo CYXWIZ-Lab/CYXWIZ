@@ -117,6 +117,18 @@ Fourth slice status:
 - Completed: documented `Model` as a minimal legacy compatibility base
   for code that owns raw `Layer` instances directly.
 
+Fifth slice status:
+
+- Completed: audited Tensor residency against the current implementation.
+  The old note that `GetArray()` always creates a fresh ArrayFire array
+  and `SetFromArray()` immediately copies back to CPU is stale.
+- Completed: added a regression test that device-only ArrayFire Tensor
+  arithmetic keeps host memory unmaterialized until explicit CPU data
+  access.
+- Remaining: reduce coarse host invalidation from non-const `Data()`
+  call sites and profile operator/layer paths that still bounce through
+  CPU fallback or inspection APIs.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -213,15 +225,29 @@ Also update docs and Python bindings to use the new terminology.
 
 **Severity:** High
 
-Current Tensor behavior:
+**Status 2026-06-05:** Partially fixed. Tensor now carries a cached
+ArrayFire array, host/device current flags, and layout metadata for native,
+row-major 2D, and row-major 3D views. `SetFromArray()` and the ArrayFire
+constructor keep device data resident and materialize host memory lazily.
+`GetArray()` reuses a current compatible device array rather than always
+rebuilding it. Remaining work is performance cleanup: non-const `Data()`
+is still a coarse host mutation boundary, and some higher-level operators
+and layers still force CPU materialization through fallback or inspection
+paths.
 
-- CPU memory is stored in `data_`
-- `GetArray()` creates a fresh ArrayFire array each time
-- `SetFromArray()` copies the device result back to CPU
-- factory helpers create GPU arrays and immediately materialize them on CPU
+Original audit behavior, now stale in part:
 
-This means the backend is not keeping tensors resident on device across
-operations.
+- Tensor was CPU-primary, with host data treated as the authoritative
+  buffer.
+- `GetArray()` rebuilt ArrayFire arrays instead of reusing current device
+  state.
+- `SetFromArray()` copied device results back to CPU immediately.
+- factory helpers created GPU arrays and immediately materialized them on
+  CPU.
+
+The current implementation has moved to lazy host/device residency, but
+the higher-level code still needs cleanup so chained training operations
+avoid accidental CPU materialization.
 
 **Consequences:**
 
