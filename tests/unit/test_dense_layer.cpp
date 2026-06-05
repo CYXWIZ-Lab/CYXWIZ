@@ -61,3 +61,44 @@ TEST_CASE("DenseLayer computes deterministic forward and backward values", "[den
     REQUIRE(grad_bias_data[0] == Catch::Approx(0.0f));
     REQUIRE(grad_bias_data[1] == Catch::Approx(2.5f));
 }
+
+TEST_CASE("DropoutLayer passes values through in eval mode", "[dropout][layer]") {
+    float input_values[] = {1.0f, -2.0f, 3.5f, 4.0f};
+    cyxwiz::Tensor input({2, 2}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::DropoutLayer dropout(0.5f);
+    dropout.SetTraining(false);
+
+    cyxwiz::Tensor output = dropout.Forward(input);
+    cyxwiz::Tensor grad_input = dropout.Backward(input);
+
+    REQUIRE(output.Shape() == std::vector<size_t>{2, 2});
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{2, 2});
+    const float* output_data = output.Data<float>();
+    const float* grad_input_data = grad_input.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        REQUIRE(output_data[i] == Catch::Approx(input_values[i]));
+        REQUIRE(grad_input_data[i] == Catch::Approx(input_values[i]));
+    }
+}
+
+TEST_CASE("DropoutLayer reuses forward mask during backward", "[dropout][layer]") {
+    float input_values[] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    float grad_values[] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    cyxwiz::Tensor input({2, 3}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_output({2, 3}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::DropoutLayer dropout(0.5f);
+
+    cyxwiz::Tensor output = dropout.Forward(input);
+    cyxwiz::Tensor grad_input = dropout.Backward(grad_output);
+
+    REQUIRE(output.Shape() == std::vector<size_t>{2, 3});
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{2, 3});
+    const float* output_data = output.Data<float>();
+    const float* grad_input_data = grad_input.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        const bool output_is_scaled_mask = output_data[i] == Catch::Approx(0.0f) ||
+                                           output_data[i] == Catch::Approx(2.0f);
+        REQUIRE(output_is_scaled_mask);
+        REQUIRE(grad_input_data[i] == Catch::Approx(output_data[i]));
+    }
+}

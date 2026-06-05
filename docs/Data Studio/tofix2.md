@@ -366,10 +366,23 @@ Twenty-third slice status:
   `grad_weights`/`grad_bias`, and `grad_input = grad_output @ weights`.
 - Completed: added focused deterministic legacy `DenseLayer` forward,
   backward, and gradient-accumulator regression coverage.
-- Remaining: larger legacy layer families such as convolution, pooling,
-  normalization, attention, upsample, pixel shuffle, and linalg
-  decompositions still need separate fallback/required-backend policy
-  slices.
+- Remaining at this checkpoint: larger legacy layer families such as
+  convolution, pooling, normalization, attention, upsample, pixel
+  shuffle, and linalg decompositions still needed separate
+  fallback/required-backend policy slices.
+
+Twenty-fourth slice status:
+
+- Completed: added CPU fallback for legacy `DropoutLayer` forward and
+  backward in `layer.cpp`.
+- Completed: preserved the existing contract: inference and `p == 0`
+  pass through unchanged; training mode uses inverted dropout scaling
+  and reuses the forward mask in backward.
+- Completed: added focused legacy `DropoutLayer` eval pass-through and
+  forward/backward mask-reuse regression coverage.
+- Remaining: pooling is the next small legacy layer family to consider;
+  convolution, normalization, attention, upsample, pixel shuffle, and
+  linalg decompositions remain larger follow-up slices.
 
 ---
 
@@ -817,10 +830,11 @@ but they must say so honestly and be tracked by group. Factory
 `SELU`, shared-alpha `PReLU`, `MSELoss`, `L1Loss`,
 `SmoothL1Loss`/`HuberLoss`, `CrossEntropyLoss`, `NLLLoss`, `BCELoss`,
 `BCEWithLogitsLoss`, `KLDivLoss`, `FocalLoss`,
-`CosineEmbeddingLoss`, `TripletLoss`, `ContrastiveLoss`, and legacy
-`DenseLayer` now have CPU fallback coverage with tests. Remaining
-fallback work should proceed by operator group, starting with larger
-legacy layer families and linalg decompositions.
+`CosineEmbeddingLoss`, `TripletLoss`, `ContrastiveLoss`, legacy
+`DenseLayer`, and legacy `DropoutLayer` now have CPU fallback coverage
+with tests. Remaining fallback work should proceed by operator group,
+starting with pooling, larger legacy layer families, and linalg
+decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 
