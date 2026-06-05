@@ -1,6 +1,7 @@
 #include "cyxwiz/activation.h"
 #include "cyxwiz/tensor.h"
 #include <stdexcept>
+#include <algorithm>
 #include <cmath>
 #include <spdlog/spdlog.h>
 
@@ -18,6 +19,99 @@
 #endif
 
 namespace cyxwiz {
+
+namespace {
+
+void ValidateFloat32UnaryActivation(const Tensor& input, const char* name) {
+    if (input.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(std::string(name) + " only supports Float32 tensors");
+    }
+}
+
+void ValidateFloat32ActivationBackward(const Tensor& grad_output,
+                                       const Tensor& input,
+                                       const char* name) {
+    ValidateFloat32UnaryActivation(input, name);
+    if (grad_output.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(std::string(name) + " gradient only supports Float32 tensors");
+    }
+    if (grad_output.Shape() != input.Shape()) {
+        throw std::runtime_error(std::string(name) + " backward requires matching gradient and input shapes");
+    }
+}
+
+Tensor CpuReLUForward(const Tensor& input) {
+    ValidateFloat32UnaryActivation(input, "ReLU");
+    Tensor output(input.Shape(), input.GetDataType());
+    const float* in = input.Data<float>();
+    float* out = output.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        out[i] = std::max(0.0f, in[i]);
+    }
+    return output;
+}
+
+Tensor CpuReLUBackward(const Tensor& grad_output, const Tensor& input) {
+    ValidateFloat32ActivationBackward(grad_output, input, "ReLU");
+    Tensor grad_input(input.Shape(), input.GetDataType());
+    const float* grad = grad_output.Data<float>();
+    const float* in = input.Data<float>();
+    float* out = grad_input.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        out[i] = in[i] > 0.0f ? grad[i] : 0.0f;
+    }
+    return grad_input;
+}
+
+Tensor CpuSigmoidForward(const Tensor& input) {
+    ValidateFloat32UnaryActivation(input, "Sigmoid");
+    Tensor output(input.Shape(), input.GetDataType());
+    const float* in = input.Data<float>();
+    float* out = output.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        out[i] = 1.0f / (1.0f + std::exp(-in[i]));
+    }
+    return output;
+}
+
+Tensor CpuSigmoidBackward(const Tensor& grad_output, const Tensor& input) {
+    ValidateFloat32ActivationBackward(grad_output, input, "Sigmoid");
+    Tensor grad_input(input.Shape(), input.GetDataType());
+    const float* grad = grad_output.Data<float>();
+    const float* in = input.Data<float>();
+    float* out = grad_input.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        const float value = 1.0f / (1.0f + std::exp(-in[i]));
+        out[i] = grad[i] * value * (1.0f - value);
+    }
+    return grad_input;
+}
+
+Tensor CpuTanhForward(const Tensor& input) {
+    ValidateFloat32UnaryActivation(input, "Tanh");
+    Tensor output(input.Shape(), input.GetDataType());
+    const float* in = input.Data<float>();
+    float* out = output.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        out[i] = std::tanh(in[i]);
+    }
+    return output;
+}
+
+Tensor CpuTanhBackward(const Tensor& grad_output, const Tensor& input) {
+    ValidateFloat32ActivationBackward(grad_output, input, "Tanh");
+    Tensor grad_input(input.Shape(), input.GetDataType());
+    const float* grad = grad_output.Data<float>();
+    const float* in = input.Data<float>();
+    float* out = grad_input.Data<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        const float value = std::tanh(in[i]);
+        out[i] = grad[i] * (1.0f - value * value);
+    }
+    return grad_input;
+}
+
+} // namespace
 
 // ============================================================================
 // Helper Functions for ArrayFire Integration
@@ -92,7 +186,7 @@ Tensor ReLUActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire ReLU::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("ReLU forward requires ArrayFire");
+    return CpuReLUForward(input);
 }
 
 Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -107,7 +201,7 @@ Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         spdlog::warn("ArrayFire ReLU::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("ReLU backward requires ArrayFire");
+    return CpuReLUBackward(grad_output, input);
 }
 
 // ============================================================================
@@ -282,7 +376,7 @@ Tensor SigmoidActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire Sigmoid::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Sigmoid forward requires ArrayFire");
+    return CpuSigmoidForward(input);
 }
 
 Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -300,7 +394,7 @@ Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& inpu
         spdlog::warn("ArrayFire Sigmoid::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Sigmoid backward requires ArrayFire");
+    return CpuSigmoidBackward(grad_output, input);
 }
 
 // ============================================================================
@@ -317,7 +411,7 @@ Tensor TanhActivation::Forward(const Tensor& input) {
         spdlog::warn("ArrayFire Tanh::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Tanh forward requires ArrayFire");
+    return CpuTanhForward(input);
 }
 
 Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -335,7 +429,7 @@ Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         spdlog::warn("ArrayFire Tanh::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Tanh backward requires ArrayFire");
+    return CpuTanhBackward(grad_output, input);
 }
 
 // ============================================================================

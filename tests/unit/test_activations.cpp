@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <cyxwiz/activation.h>
 #include <cyxwiz/activations/relu.h>
 #include <cyxwiz/activations/sigmoid.h>
 #include <cyxwiz/activations/tanh.h>
@@ -50,6 +51,61 @@ TEST_CASE("Standalone activations compute backward values", "[activation]") {
     cyxwiz::Tensor relu_grad = relu.Backward(grad, input);
     cyxwiz::Tensor sigmoid_grad = sigmoid.Backward(grad, input);
     cyxwiz::Tensor tanh_grad = tanh.Backward(grad, input);
+
+    REQUIRE(relu_grad.Data<float>()[0] == 0.0f);
+    REQUIRE(relu_grad.Data<float>()[1] == 0.0f);
+    REQUIRE(relu_grad.Data<float>()[2] == 1.0f);
+
+    const float sigmoid_neg = 1.0f / (1.0f + std::exp(1.0f));
+    const float sigmoid_zero = 0.5f;
+    const float sigmoid_pos = 1.0f / (1.0f + std::exp(-2.0f));
+    REQUIRE(sigmoid_grad.Data<float>()[0] == Catch::Approx(sigmoid_neg * (1.0f - sigmoid_neg)));
+    REQUIRE(sigmoid_grad.Data<float>()[1] == Catch::Approx(sigmoid_zero * (1.0f - sigmoid_zero)));
+    REQUIRE(sigmoid_grad.Data<float>()[2] == Catch::Approx(sigmoid_pos * (1.0f - sigmoid_pos)));
+
+    REQUIRE(tanh_grad.Data<float>()[0] == Catch::Approx(1.0f - std::tanh(-1.0f) * std::tanh(-1.0f)));
+    REQUIRE(tanh_grad.Data<float>()[1] == Catch::Approx(1.0f));
+    REQUIRE(tanh_grad.Data<float>()[2] == Catch::Approx(1.0f - std::tanh(2.0f) * std::tanh(2.0f)));
+}
+
+TEST_CASE("Factory activations compute core forward values", "[activation]") {
+    float values[] = {-1.0f, 0.0f, 2.0f};
+    cyxwiz::Tensor input({3}, values, cyxwiz::DataType::Float32);
+
+    auto relu = cyxwiz::CreateActivation(cyxwiz::ActivationType::ReLU);
+    auto sigmoid = cyxwiz::CreateActivation(cyxwiz::ActivationType::Sigmoid);
+    auto tanh = cyxwiz::CreateActivation(cyxwiz::ActivationType::Tanh);
+
+    cyxwiz::Tensor relu_out = relu->Forward(input);
+    cyxwiz::Tensor sigmoid_out = sigmoid->Forward(input);
+    cyxwiz::Tensor tanh_out = tanh->Forward(input);
+
+    REQUIRE(relu_out.Data<float>()[0] == 0.0f);
+    REQUIRE(relu_out.Data<float>()[1] == 0.0f);
+    REQUIRE(relu_out.Data<float>()[2] == 2.0f);
+
+    REQUIRE(sigmoid_out.Data<float>()[0] == Catch::Approx(1.0f / (1.0f + std::exp(1.0f))));
+    REQUIRE(sigmoid_out.Data<float>()[1] == Catch::Approx(0.5f));
+    REQUIRE(sigmoid_out.Data<float>()[2] == Catch::Approx(1.0f / (1.0f + std::exp(-2.0f))));
+
+    REQUIRE(tanh_out.Data<float>()[0] == Catch::Approx(std::tanh(-1.0f)));
+    REQUIRE(tanh_out.Data<float>()[1] == Catch::Approx(0.0f));
+    REQUIRE(tanh_out.Data<float>()[2] == Catch::Approx(std::tanh(2.0f)));
+}
+
+TEST_CASE("Factory activations compute core backward values", "[activation]") {
+    float values[] = {-1.0f, 0.0f, 2.0f};
+    float grad_values[] = {1.0f, 1.0f, 1.0f};
+    cyxwiz::Tensor input({3}, values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad({3}, grad_values, cyxwiz::DataType::Float32);
+
+    auto relu = cyxwiz::CreateActivation(cyxwiz::ActivationType::ReLU);
+    auto sigmoid = cyxwiz::CreateActivation(cyxwiz::ActivationType::Sigmoid);
+    auto tanh = cyxwiz::CreateActivation(cyxwiz::ActivationType::Tanh);
+
+    cyxwiz::Tensor relu_grad = relu->Backward(grad, input);
+    cyxwiz::Tensor sigmoid_grad = sigmoid->Backward(grad, input);
+    cyxwiz::Tensor tanh_grad = tanh->Backward(grad, input);
 
     REQUIRE(relu_grad.Data<float>()[0] == 0.0f);
     REQUIRE(relu_grad.Data<float>()[1] == 0.0f);

@@ -2,6 +2,7 @@
 #include "cyxwiz/tensor.h"
 #include <stdexcept>
 #include <cmath>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -18,6 +19,130 @@
 #endif
 
 namespace cyxwiz {
+
+namespace {
+
+void ValidateFloat32Pair(const Tensor& predictions, const Tensor& targets, const char* name) {
+    if (predictions.GetDataType() != DataType::Float32 || targets.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(std::string(name) + " only supports Float32 tensors");
+    }
+    if (predictions.Shape() != targets.Shape()) {
+        throw std::runtime_error(std::string(name) + " requires matching prediction and target shapes");
+    }
+}
+
+Tensor ApplyCpuReduction(const std::vector<size_t>& input_shape,
+                         const std::vector<float>& values,
+                         Reduction reduction) {
+    if (reduction == Reduction::None) {
+        return Tensor(input_shape, values.data(), DataType::Float32);
+    }
+
+    float total = 0.0f;
+    for (float value : values) {
+        total += value;
+    }
+    if (reduction == Reduction::Mean && !values.empty()) {
+        total /= static_cast<float>(values.size());
+    }
+    return Tensor({1}, &total, DataType::Float32);
+}
+
+Tensor CpuMSEForward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "MSE");
+    const size_t count = predictions.NumElements();
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    std::vector<float> losses(count);
+    for (size_t i = 0; i < count; ++i) {
+        const float diff = pred[i] - target[i];
+        losses[i] = diff * diff;
+    }
+    return ApplyCpuReduction(predictions.Shape(), losses, reduction);
+}
+
+Tensor CpuMSEBackward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "MSE");
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    const size_t count = predictions.NumElements();
+    const float scale = reduction == Reduction::Mean && count > 0
+                            ? 2.0f / static_cast<float>(count)
+                            : 2.0f;
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    float* out = grad.Data<float>();
+    for (size_t i = 0; i < count; ++i) {
+        out[i] = (pred[i] - target[i]) * scale;
+    }
+    return grad;
+}
+
+Tensor CpuL1Forward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "L1");
+    const size_t count = predictions.NumElements();
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    std::vector<float> losses(count);
+    for (size_t i = 0; i < count; ++i) {
+        losses[i] = std::fabs(pred[i] - target[i]);
+    }
+    return ApplyCpuReduction(predictions.Shape(), losses, reduction);
+}
+
+Tensor CpuL1Backward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "L1");
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    const size_t count = predictions.NumElements();
+    const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    float* out = grad.Data<float>();
+    for (size_t i = 0; i < count; ++i) {
+        const float diff = pred[i] - target[i];
+        out[i] = (diff > 0.0f ? 1.0f : (diff < 0.0f ? -1.0f : 0.0f)) * scale;
+    }
+    return grad;
+}
+
+Tensor CpuSmoothL1Forward(const Tensor& predictions,
+                          const Tensor& targets,
+                          float delta,
+                          Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "SmoothL1");
+    const size_t count = predictions.NumElements();
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    std::vector<float> losses(count);
+    for (size_t i = 0; i < count; ++i) {
+        const float diff = pred[i] - target[i];
+        const float abs_diff = std::fabs(diff);
+        losses[i] = abs_diff < delta ? 0.5f * diff * diff / delta : abs_diff - 0.5f * delta;
+    }
+    return ApplyCpuReduction(predictions.Shape(), losses, reduction);
+}
+
+Tensor CpuSmoothL1Backward(const Tensor& predictions,
+                           const Tensor& targets,
+                           float delta,
+                           Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "SmoothL1");
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    const size_t count = predictions.NumElements();
+    const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    float* out = grad.Data<float>();
+    for (size_t i = 0; i < count; ++i) {
+        const float diff = pred[i] - target[i];
+        const float abs_diff = std::fabs(diff);
+        const float base_grad = abs_diff < delta ? diff / delta
+                              : (diff > 0.0f ? 1.0f : (diff < 0.0f ? -1.0f : 0.0f));
+        out[i] = base_grad * scale;
+    }
+    return grad;
+}
+
+} // namespace
 
 // ============================================================================
 // Helper Functions for ArrayFire Integration
@@ -74,6 +199,13 @@ static af::array StableSoftmax(const af::array& x, int axis = 0) {
     af::array exp_x = af::exp(x_stable);
     af::array sum_exp = af::sum(exp_x, axis);
     return exp_x / af::tile(sum_exp, tile_dims);
+}
+
+static af::array SignLike(const af::array& x) {
+    const af::array ones = af::constant(1.0f, x.dims(), f32);
+    const af::array minus_ones = af::constant(-1.0f, x.dims(), f32);
+    const af::array zeros = af::constant(0.0f, x.dims(), f32);
+    return af::select(x > 0.0f, ones, af::select(x < 0.0f, minus_ones, zeros));
 }
 
 #endif // CYXWIZ_HAS_ARRAYFIRE
@@ -134,7 +266,7 @@ Tensor MSELoss::Forward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire MSELoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("MSE forward requires ArrayFire");
+    return CpuMSEForward(predictions, targets, reduction_);
 }
 
 Tensor MSELoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -158,7 +290,7 @@ Tensor MSELoss::Backward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire MSELoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("MSE backward requires ArrayFire");
+    return CpuMSEBackward(predictions, targets, reduction_);
 }
 
 // ============================================================================
@@ -180,7 +312,7 @@ Tensor L1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire L1Loss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("L1 forward requires ArrayFire");
+    return CpuL1Forward(predictions, targets, reduction_);
 }
 
 Tensor L1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -191,7 +323,7 @@ Tensor L1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
 
         // Gradient: sign(pred - target) / N
         af::array diff = pred - target;
-        af::array grad = af::sign(diff);
+        af::array grad = SignLike(diff);
 
         if (reduction_ == Reduction::Mean) {
             grad = grad / static_cast<float>(pred.elements());
@@ -202,7 +334,7 @@ Tensor L1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire L1Loss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("L1 backward requires ArrayFire");
+    return CpuL1Backward(predictions, targets, reduction_);
 }
 
 // ============================================================================
@@ -231,7 +363,7 @@ Tensor SmoothL1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire SmoothL1Loss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("SmoothL1 forward requires ArrayFire");
+    return CpuSmoothL1Forward(predictions, targets, delta_, reduction_);
 }
 
 Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -246,7 +378,7 @@ Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) 
         af::array abs_diff = af::abs(diff);
 
         af::array grad_quadratic = diff / delta_;
-        af::array grad_linear = af::sign(diff);
+        af::array grad_linear = SignLike(diff);
 
         af::array grad = af::select(abs_diff < delta_, grad_quadratic, grad_linear);
 
@@ -259,7 +391,7 @@ Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) 
         spdlog::warn("ArrayFire SmoothL1Loss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("SmoothL1 backward requires ArrayFire");
+    return CpuSmoothL1Backward(predictions, targets, delta_, reduction_);
 }
 
 // ============================================================================

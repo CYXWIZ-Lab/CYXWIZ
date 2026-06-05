@@ -228,6 +228,25 @@ Thirteenth slice status:
   should be handled under the CPU fallback and performance profiling
   items, not this factory ownership item.
 
+Fourteenth slice status:
+
+- Completed: made the CPU fallback policy explicit for the first core
+  training slice. Core, shape-preserving float32 primitives should have
+  CPU implementations; advanced GPU-heavy operators may remain
+  ArrayFire-required, but that requirement must be documented or tracked
+  per operator group.
+- Completed: added CPU fallback implementations for factory
+  `ReLUActivation`, `SigmoidActivation`, and `TanhActivation`, aligning
+  the factory activation stack with the standalone activation helpers.
+- Completed: added CPU fallback implementations for `MSELoss`,
+  `L1Loss`, and `SmoothL1Loss`/`HuberLoss` across `None`, `Mean`, and
+  `Sum` reductions.
+- Completed: added focused activation/loss regression coverage so the
+  basic factory APIs remain usable in CPU-only builds.
+- Remaining: advanced activations, classification/embedding losses,
+  legacy layers, and partial linalg fallbacks still need targeted
+  group-by-group policy and implementation slices.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -664,6 +683,16 @@ Do not pay GPU setup cost if the result is immediately host-owned.
 ### 12. CPU fallback coverage is inconsistent
 
 **Severity:** High
+
+**Status 2026-06-05:** Partially fixed. The backend policy is now:
+core, shape-preserving float32 training primitives should have CPU
+fallbacks; advanced GPU-heavy operators may remain ArrayFire-required,
+but they must say so honestly and be tracked by group. Factory
+`ReLUActivation`, `SigmoidActivation`, `TanhActivation`, `MSELoss`,
+`L1Loss`, and `SmoothL1Loss`/`HuberLoss` now have CPU fallback coverage
+with tests. Remaining fallback work should proceed by operator group,
+starting with simple elementwise activations/losses before complex
+classification losses, legacy layers, and linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 
