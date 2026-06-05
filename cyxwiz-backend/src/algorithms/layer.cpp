@@ -1416,6 +1416,9 @@ Tensor GlobalAvgPool2DLayer::Backward(const Tensor& grad_output) {
 
 BatchNorm2DLayer::BatchNorm2DLayer(int num_features, float eps, float momentum)
     : num_features_(num_features), eps_(eps), momentum_(momentum) {
+    if (num_features_ <= 0 || eps_ <= 0.0f || momentum_ < 0.0f || momentum_ > 1.0f) {
+        throw std::invalid_argument("BatchNorm2D requires positive features/eps and momentum in [0, 1]");
+    }
 
     // Initialize gamma (scale) to ones
     gamma_ = Tensor::Ones({static_cast<size_t>(num_features)});
@@ -1435,139 +1438,159 @@ BatchNorm2DLayer::BatchNorm2DLayer(int num_features, float eps, float momentum)
 Tensor BatchNorm2DLayer::Forward(const Tensor& input) {
     cached_input_ = input;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array x = TensorToAf(input);
-        af::array gamma = TensorToAf(gamma_);
-        af::array beta = TensorToAf(beta_);
+    ValidateSpatial4DInput(input, "BatchNorm2D");
+    if (gamma_.GetDataType() != DataType::Float32 || beta_.GetDataType() != DataType::Float32 ||
+        running_mean_.GetDataType() != DataType::Float32 || running_var_.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("BatchNorm2D forward CPU fallback requires Float32 parameters");
+    }
+    const std::vector<size_t> channel_shape{static_cast<size_t>(num_features_)};
+    if (gamma_.Shape() != channel_shape || beta_.Shape() != channel_shape ||
+        running_mean_.Shape() != channel_shape || running_var_.Shape() != channel_shape) {
+        throw std::runtime_error("BatchNorm2D forward parameter shape mismatch");
+    }
 
-        // Input: [H, W, C, N] for ArrayFire
-        dim_t height = x.dims(0);
-        dim_t width = x.dims(1);
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
+    const std::vector<size_t>& shape = input.Shape();
+    const size_t height = shape[0];
+    const size_t width = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+    if (channels != static_cast<size_t>(num_features_)) {
+        throw std::runtime_error("BatchNorm2D forward channel mismatch");
+    }
 
-        af::array mean, var, normalized;
+    Tensor output(shape, DataType::Float32);
+    normalized_ = Tensor(shape, DataType::Float32);
+    std_inv_ = Tensor(channel_shape, DataType::Float32);
 
-        if (training_) {
-            // Compute batch statistics
-            // Mean over H, W, N dimensions for each channel
-            mean = af::mean(af::mean(af::mean(x, 0), 1), 3);
-            mean = af::moddims(mean, af::dim4(channels));
+    const float* input_data = input.Data<float>();
+    const float* gamma_data = gamma_.Data<float>();
+    const float* beta_data = beta_.Data<float>();
+    float* running_mean_data = running_mean_.Data<float>();
+    float* running_var_data = running_var_.Data<float>();
+    float* output_data = output.Data<float>();
+    float* normalized_data = normalized_.Data<float>();
+    float* std_inv_data = std_inv_.Data<float>();
 
-            // Variance over H, W, N dimensions for each channel
-            af::array x_centered = x - af::tile(
-                af::moddims(mean, af::dim4(1, 1, channels, 1)),
-                static_cast<unsigned int>(height),
-                static_cast<unsigned int>(width), 1,
-                static_cast<unsigned int>(batch_size));
+    std::vector<float> mean(channels, 0.0f);
+    std::vector<float> var(channels, 0.0f);
+    const float sample_count = static_cast<float>(height * width * batch_size);
 
-            var = af::mean(af::mean(af::mean(x_centered * x_centered, 0), 1), 3);
-            var = af::moddims(var, af::dim4(channels));
-
-            // Update running statistics
-            af::array rm = TensorToAf(running_mean_);
-            af::array rv = TensorToAf(running_var_);
-
-            rm = (1.0f - momentum_) * rm + momentum_ * mean;
-            rv = (1.0f - momentum_) * rv + momentum_ * var;
-
-            running_mean_ = AfToTensor(rm);
-            running_var_ = AfToTensor(rv);
-        } else {
-            // Use running statistics during inference
-            mean = TensorToAf(running_mean_);
-            var = TensorToAf(running_var_);
+    if (training_) {
+        for (size_t c = 0; c < channels; ++c) {
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t h = 0; h < height; ++h) {
+                    for (size_t w = 0; w < width; ++w) {
+                        mean[c] += input_data[Pool4DIndex(h, w, c, b, width, channels, batch_size)];
+                    }
+                }
+            }
+            mean[c] /= sample_count;
         }
 
-        // Normalize: (x - mean) / sqrt(var + eps)
-        af::array std_inv = 1.0f / af::sqrt(var + eps_);
-        std_inv_ = AfToTensor(std_inv);
-
-        // Reshape for broadcasting
-        af::array mean_bc = af::moddims(mean, af::dim4(1, 1, channels, 1));
-        af::array std_inv_bc = af::moddims(std_inv, af::dim4(1, 1, channels, 1));
-        af::array gamma_bc = af::moddims(gamma, af::dim4(1, 1, channels, 1));
-        af::array beta_bc = af::moddims(beta, af::dim4(1, 1, channels, 1));
-
-        // Tile for full shape
-        mean_bc = af::tile(mean_bc, af::dim4(height, width, 1, batch_size));
-        std_inv_bc = af::tile(std_inv_bc, af::dim4(height, width, 1, batch_size));
-        gamma_bc = af::tile(gamma_bc, af::dim4(height, width, 1, batch_size));
-        beta_bc = af::tile(beta_bc, af::dim4(height, width, 1, batch_size));
-
-        // Normalize and scale
-        normalized = (x - mean_bc) * std_inv_bc;
-        normalized_ = AfToTensor(normalized);
-
-        af::array output = gamma_bc * normalized + beta_bc;
-
-        return AfToTensor(output);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire BatchNorm2DLayer::Forward failed: {}", e.what());
+        for (size_t c = 0; c < channels; ++c) {
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t h = 0; h < height; ++h) {
+                    for (size_t w = 0; w < width; ++w) {
+                        const float centered = input_data[Pool4DIndex(h, w, c, b, width, channels, batch_size)] - mean[c];
+                        var[c] += centered * centered;
+                    }
+                }
+            }
+            var[c] /= sample_count;
+            running_mean_data[c] = (1.0f - momentum_) * running_mean_data[c] + momentum_ * mean[c];
+            running_var_data[c] = (1.0f - momentum_) * running_var_data[c] + momentum_ * var[c];
+        }
+    } else {
+        for (size_t c = 0; c < channels; ++c) {
+            mean[c] = running_mean_data[c];
+            var[c] = running_var_data[c];
+        }
     }
-#endif
 
-    throw std::runtime_error("BatchNorm2D forward requires ArrayFire");
+    for (size_t c = 0; c < channels; ++c) {
+        std_inv_data[c] = 1.0f / std::sqrt(var[c] + eps_);
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t h = 0; h < height; ++h) {
+                for (size_t w = 0; w < width; ++w) {
+                    const size_t index = Pool4DIndex(h, w, c, b, width, channels, batch_size);
+                    normalized_data[index] = (input_data[index] - mean[c]) * std_inv_data[c];
+                    output_data[index] = gamma_data[c] * normalized_data[index] + beta_data[c];
+                }
+            }
+        }
+    }
+
+    return output;
 }
 
 Tensor BatchNorm2DLayer::Backward(const Tensor& grad_output) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array grad_out = TensorToAf(grad_output);
-        af::array x = TensorToAf(cached_input_);
-        af::array normalized = TensorToAf(normalized_);
-        af::array gamma = TensorToAf(gamma_);
-        af::array std_inv = TensorToAf(std_inv_);
-
-        dim_t height = x.dims(0);
-        dim_t width = x.dims(1);
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
-
-        float N = static_cast<float>(height * width * batch_size);
-
-        // Gradient w.r.t. gamma: sum(grad_out * normalized)
-        af::array dg = af::sum(af::sum(af::sum(grad_out * normalized, 0), 1), 3);
-        dg = af::moddims(dg, af::dim4(channels));
-        grad_gamma_ = AfToTensor(dg);
-
-        // Gradient w.r.t. beta: sum(grad_out)
-        af::array db = af::sum(af::sum(af::sum(grad_out, 0), 1), 3);
-        db = af::moddims(db, af::dim4(channels));
-        grad_beta_ = AfToTensor(db);
-
-        // Gradient w.r.t. input (using simplified formula for efficiency)
-        // dx = (1/N) * gamma * std_inv * (N * dy - sum(dy) - normalized * sum(dy * normalized))
-
-        // Reshape gamma and std_inv for broadcasting
-        af::array gamma_bc = af::moddims(gamma, af::dim4(1, 1, channels, 1));
-        gamma_bc = af::tile(gamma_bc, af::dim4(height, width, 1, batch_size));
-
-        af::array std_inv_bc = af::moddims(std_inv, af::dim4(1, 1, channels, 1));
-        std_inv_bc = af::tile(std_inv_bc, af::dim4(height, width, 1, batch_size));
-
-        // sum(dy) per channel
-        af::array sum_dy = af::sum(af::sum(af::sum(grad_out, 0), 1), 3);
-        sum_dy = af::moddims(sum_dy, af::dim4(1, 1, channels, 1));
-        sum_dy = af::tile(sum_dy, af::dim4(height, width, 1, batch_size));
-
-        // sum(dy * normalized) per channel
-        af::array sum_dy_norm = af::sum(af::sum(af::sum(grad_out * normalized, 0), 1), 3);
-        sum_dy_norm = af::moddims(sum_dy_norm, af::dim4(1, 1, channels, 1));
-        sum_dy_norm = af::tile(sum_dy_norm, af::dim4(height, width, 1, batch_size));
-
-        // Compute dx
-        af::array dx = (1.0f / N) * gamma_bc * std_inv_bc *
-                       (N * grad_out - sum_dy - normalized * sum_dy_norm);
-
-        return AfToTensor(dx);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire BatchNorm2DLayer::Backward failed: {}", e.what());
+    ValidateSpatial4DInput(cached_input_, "BatchNorm2D");
+    if (grad_output.GetDataType() != DataType::Float32 ||
+        normalized_.GetDataType() != DataType::Float32 ||
+        std_inv_.GetDataType() != DataType::Float32 ||
+        gamma_.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("BatchNorm2D backward CPU fallback requires Float32 tensors");
     }
-#endif
+    if (grad_output.Shape() != cached_input_.Shape() || normalized_.Shape() != cached_input_.Shape()) {
+        throw std::runtime_error("BatchNorm2D backward gradient/cache shape mismatch");
+    }
 
-    throw std::runtime_error("BatchNorm2D backward requires ArrayFire");
+    const std::vector<size_t>& shape = cached_input_.Shape();
+    const size_t height = shape[0];
+    const size_t width = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+    const std::vector<size_t> channel_shape{channels};
+    if (channels != static_cast<size_t>(num_features_) ||
+        gamma_.Shape() != channel_shape || std_inv_.Shape() != channel_shape) {
+        throw std::runtime_error("BatchNorm2D backward parameter/cache shape mismatch");
+    }
+
+    Tensor grad_input(shape, DataType::Float32);
+    grad_gamma_ = Tensor(channel_shape, DataType::Float32);
+    grad_beta_ = Tensor(channel_shape, DataType::Float32);
+
+    const float* grad_data = grad_output.Data<float>();
+    const float* normalized_data = normalized_.Data<float>();
+    const float* gamma_data = gamma_.Data<float>();
+    const float* std_inv_data = std_inv_.Data<float>();
+    float* grad_input_data = grad_input.Data<float>();
+    float* grad_gamma_data = grad_gamma_.Data<float>();
+    float* grad_beta_data = grad_beta_.Data<float>();
+    const float sample_count = static_cast<float>(height * width * batch_size);
+
+    std::vector<float> sum_dy(channels, 0.0f);
+    std::vector<float> sum_dy_norm(channels, 0.0f);
+    for (size_t c = 0; c < channels; ++c) {
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t h = 0; h < height; ++h) {
+                for (size_t w = 0; w < width; ++w) {
+                    const size_t index = Pool4DIndex(h, w, c, b, width, channels, batch_size);
+                    sum_dy[c] += grad_data[index];
+                    sum_dy_norm[c] += grad_data[index] * normalized_data[index];
+                }
+            }
+        }
+        grad_beta_data[c] = sum_dy[c];
+        grad_gamma_data[c] = sum_dy_norm[c];
+    }
+
+    for (size_t c = 0; c < channels; ++c) {
+        const float scale = gamma_data[c] * std_inv_data[c] / sample_count;
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t h = 0; h < height; ++h) {
+                for (size_t w = 0; w < width; ++w) {
+                    const size_t index = Pool4DIndex(h, w, c, b, width, channels, batch_size);
+                    grad_input_data[index] =
+                        scale * (sample_count * grad_data[index] -
+                                 sum_dy[c] -
+                                 normalized_data[index] * sum_dy_norm[c]);
+                }
+            }
+        }
+    }
+
+    return grad_input;
 }
 
 std::map<std::string, Tensor> BatchNorm2DLayer::GetParameters() {
