@@ -173,6 +173,20 @@ Ninth slice status:
   when those files are touched, but do not mix that broader cleanup into
   the Tensor arithmetic item.
 
+Tenth slice status:
+
+- Completed: audited Tensor cached ArrayFire state. The original note
+  that `GetArray()` ignores `af_array_` is stale: `GetArray()`,
+  `GetArrayRowMajor2D()`, and `GetArrayRowMajor3D()` now reuse current
+  compatible cached device arrays and track layout with
+  `TensorDeviceLayout`.
+- Completed: existing tests cover lazy host materialization for
+  device-backed tensors, row-major device layout preservation across
+  copy/move, and host mutation invalidating cached ArrayFire data.
+- Remaining: performance work remains in higher-level operators and
+  optimizers that call broad host access APIs, but that belongs to the
+  Priority 3 host/device churn items rather than this cached-state item.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -472,6 +486,16 @@ Broader fix:
 ### 8. `af_array_` cached state is mostly vestigial
 
 **Severity:** Medium
+
+**Status 2026-06-05:** Fixed/stale. `af_array_` is now part of a real
+host/device residency contract. `Tensor` tracks `host_current_`,
+`device_current_`, and `TensorDeviceLayout`; `GetArray()` reuses a
+current native ArrayFire cache, row-major 2D/3D accessors reuse their
+compatible cached layout, and `SetFromArray()` keeps device data resident
+until host data is explicitly requested. Host mutation marks the cached
+device state stale. The remaining concern is no longer whether
+`af_array_` is vestigial, but whether higher-level training paths avoid
+unnecessary host materialization.
 
 `Tensor` owns an `af_array_` pointer, but `GetArray()` ignores it and
 creates a new array from CPU memory every time.
