@@ -531,6 +531,24 @@ Thirty-fourth slice status:
 - Remaining: attention and linalg decompositions remain follow-up
   slices.
 
+Thirty-fifth slice status:
+
+- Completed: added deterministic CPU implementation for legacy
+  `MultiHeadAttentionLayer` forward/backward over row-major `[batch,
+  seq, embed]` Float32 tensors.
+- Completed: removed the ArrayFire-only dependency from the core
+  attention path for dropout-free execution and added strict projection,
+  mask, cache, and parameter shape validation.
+- Completed: corrected self-attention backward to combine query, key,
+  and value gradients when Q/K/V are the same input tensor.
+- Completed: added focused deterministic `MultiHeadAttentionLayer`
+  regression coverage for forward weights, self-attention input
+  gradients, and projection gradients.
+- Remaining: CPU attention dropout is intentionally not implemented yet;
+  cross-attention `Backward()` still returns only query gradients because
+  the current `Layer::Backward` API cannot return key/value gradients.
+  Linalg decompositions remain follow-up slices.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -984,9 +1002,10 @@ but they must say so honestly and be tracked by group. Factory
 legacy `Conv2DLayer`, legacy `Conv1DLayer`, and legacy
 `ConvTranspose2DLayer`, legacy `BatchNorm2DLayer`, and legacy
 `LayerNormLayer`, legacy `InstanceNorm2DLayer`, and legacy
-`GroupNormLayer` now have CPU fallback coverage with tests. Remaining
-fallback work should proceed by operator group, starting with attention
-and linalg decompositions.
+`GroupNormLayer`, and legacy deterministic `MultiHeadAttentionLayer`
+now have CPU fallback coverage with tests. Remaining fallback work
+should proceed by operator group, starting with attention dropout /
+cross-attention gradient API limitations and linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 

@@ -465,6 +465,63 @@ TEST_CASE("GroupNormLayer normalizes grouped channels", "[norm][layer]") {
     REQUIRE(grad_beta_data[1] == Catch::Approx(1.0f));
 }
 
+TEST_CASE("MultiHeadAttentionLayer computes deterministic self-attention", "[attention][layer]") {
+    cyxwiz::MultiHeadAttentionLayer attention(2, 1, 0.0f, false);
+
+    float identity_values[] = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+    };
+    attention.SetParameters({
+        {"W_q", cyxwiz::Tensor({2, 2}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_k", cyxwiz::Tensor({2, 2}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_v", cyxwiz::Tensor({2, 2}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_o", cyxwiz::Tensor({2, 2}, identity_values, cyxwiz::DataType::Float32)},
+    });
+
+    float input_values[] = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+    };
+    cyxwiz::Tensor input({1, 2, 2}, input_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::Tensor output = attention.Forward(input);
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 2, 2});
+    const float* output_data = output.Data<float>();
+    REQUIRE(output_data[0] == Catch::Approx(0.6697615f).margin(1e-5f));
+    REQUIRE(output_data[1] == Catch::Approx(0.3302385f).margin(1e-5f));
+    REQUIRE(output_data[2] == Catch::Approx(0.3302385f).margin(1e-5f));
+    REQUIRE(output_data[3] == Catch::Approx(0.6697615f).margin(1e-5f));
+
+    cyxwiz::Tensor weights = attention.GetAttentionWeights();
+    REQUIRE(weights.Shape() == std::vector<size_t>{2, 2, 1, 1});
+    const float* weight_data = weights.Data<float>();
+    REQUIRE(weight_data[0] == Catch::Approx(0.6697615f).margin(1e-5f));
+    REQUIRE(weight_data[1] == Catch::Approx(0.3302385f).margin(1e-5f));
+    REQUIRE(weight_data[2] == Catch::Approx(0.3302385f).margin(1e-5f));
+    REQUIRE(weight_data[3] == Catch::Approx(0.6697615f).margin(1e-5f));
+
+    float grad_values[] = {
+        1.0f, 0.0f,
+        0.0f, 2.0f,
+    };
+    cyxwiz::Tensor grad_output({1, 2, 2}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = attention.Backward(grad_output);
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{1, 2, 2});
+    const float* grad_input_data = grad_input.Data<float>();
+    REQUIRE(grad_input_data[0] == Catch::Approx(0.9825587f).margin(1e-5f));
+    REQUIRE(grad_input_data[1] == Catch::Approx(0.1912811f).margin(1e-5f));
+    REQUIRE(grad_input_data[2] == Catch::Approx(-0.1389573f).margin(1e-5f));
+    REQUIRE(grad_input_data[3] == Catch::Approx(1.9651175f).margin(1e-5f));
+
+    const std::map<std::string, cyxwiz::Tensor> params = attention.GetParameters();
+    const float* grad_wq = params.at("grad_W_q").Data<float>();
+    REQUIRE(grad_wq[0] == Catch::Approx(0.1563986f).margin(1e-5f));
+    REQUIRE(grad_wq[1] == Catch::Approx(-0.3127972f).margin(1e-5f));
+    REQUIRE(grad_wq[2] == Catch::Approx(-0.1563986f).margin(1e-5f));
+    REQUIRE(grad_wq[3] == Catch::Approx(0.3127972f).margin(1e-5f));
+}
+
 TEST_CASE("DropoutLayer passes values through in eval mode", "[dropout][layer]") {
     float input_values[] = {1.0f, -2.0f, 3.5f, 4.0f};
     cyxwiz::Tensor input({2, 2}, input_values, cyxwiz::DataType::Float32);

@@ -781,6 +781,7 @@ private:
     Tensor cached_attn_weights_;  // After softmax
     Tensor cached_context_;  // Before output projection
     Tensor dropout_mask_;  // Dropout mask for attention weights
+    bool cached_self_attention_ = false;
 
     void InitializeWeights();
 };

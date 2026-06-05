@@ -4891,8 +4891,9 @@ MultiHeadAttentionLayer::MultiHeadAttentionLayer(int embed_dim, int num_heads,
                                                    float dropout, bool use_bias)
     : embed_dim_(embed_dim), num_heads_(num_heads), dropout_(dropout), use_bias_(use_bias) {
 
-    if (embed_dim % num_heads != 0) {
-        throw std::invalid_argument("embed_dim must be divisible by num_heads");
+    if (embed_dim_ <= 0 || num_heads_ <= 0 || dropout_ < 0.0f || dropout_ >= 1.0f ||
+        embed_dim_ % num_heads_ != 0) {
+        throw std::invalid_argument("MultiHeadAttention requires positive divisible dims and dropout in [0, 1)");
     }
 
     head_dim_ = embed_dim / num_heads;
@@ -5005,345 +5006,320 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
     cached_query_ = query;
     cached_key_ = key;
     cached_value_ = value;
+    cached_self_attention_ = (&query == &key && &key == &value);
 
     const auto& q_shape = query.Shape();
-    if (q_shape.size() != 3) {
-        throw std::invalid_argument("Input must be 3D [batch, seq_len, embed_dim]");
+    const auto& k_shape = key.Shape();
+    const auto& v_shape = value.Shape();
+    if (query.GetDataType() != DataType::Float32 || key.GetDataType() != DataType::Float32 ||
+        value.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("MultiHeadAttention forward CPU fallback requires Float32 inputs");
+    }
+    if (q_shape.size() != 3 || k_shape.size() != 3 || v_shape.size() != 3) {
+        throw std::invalid_argument("MultiHeadAttention expects [batch, seq_len, embed_dim] tensors");
+    }
+    if (q_shape[0] != k_shape[0] || k_shape[0] != v_shape[0] ||
+        k_shape[1] != v_shape[1] ||
+        q_shape[2] != static_cast<size_t>(embed_dim_) ||
+        k_shape[2] != static_cast<size_t>(embed_dim_) ||
+        v_shape[2] != static_cast<size_t>(embed_dim_)) {
+        throw std::runtime_error("MultiHeadAttention forward shape mismatch");
+    }
+    if (training_ && dropout_ > 0.0f) {
+        throw std::runtime_error("MultiHeadAttention CPU fallback does not implement attention dropout");
+    }
+    if (attn_mask != nullptr &&
+        (attn_mask->GetDataType() != DataType::Float32 ||
+         attn_mask->Shape() != std::vector<size_t>{q_shape[1], k_shape[1]})) {
+        throw std::runtime_error("MultiHeadAttention mask must be Float32 [seq_len_q, seq_len_kv]");
     }
 
-    int batch_size = static_cast<int>(q_shape[0]);
-    int seq_len_q = static_cast<int>(q_shape[1]);
-    int seq_len_kv = static_cast<int>(key.Shape()[1]);
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        // Load input tensors - [batch, seq, embed] stored as [embed, seq, batch] in AF
-        af::array q_in(af::dim4(embed_dim_, seq_len_q, batch_size), query.Data<float>());
-        af::array k_in(af::dim4(embed_dim_, seq_len_kv, batch_size), key.Data<float>());
-        af::array v_in(af::dim4(embed_dim_, seq_len_kv, batch_size), value.Data<float>());
-
-        // Load weights [embed_dim, embed_dim]
-        af::array wq = TensorToAf(W_q_);
-        af::array wk = TensorToAf(W_k_);
-        af::array wv = TensorToAf(W_v_);
-        af::array wo = TensorToAf(W_o_);
-
-        // Linear projections: Q, K, V
-        // For each batch, we do: proj = W @ x  (matmul along embed dimension)
-        // Using gfor for batched operations
-        af::array Q = af::constant(0.0f, af::dim4(embed_dim_, seq_len_q, batch_size));
-        af::array K = af::constant(0.0f, af::dim4(embed_dim_, seq_len_kv, batch_size));
-        af::array V = af::constant(0.0f, af::dim4(embed_dim_, seq_len_kv, batch_size));
-
-        for (int b = 0; b < batch_size; b++) {
-            af::array q_b = q_in(af::span, af::span, b);
-            af::array k_b = k_in(af::span, af::span, b);
-            af::array v_b = v_in(af::span, af::span, b);
-
-            Q(af::span, af::span, b) = af::matmul(wq, q_b);
-            K(af::span, af::span, b) = af::matmul(wk, k_b);
-            V(af::span, af::span, b) = af::matmul(wv, v_b);
-        }
-
-        // Add bias if enabled
-        if (use_bias_) {
-            af::array bq = af::array(af::dim4(embed_dim_), b_q_.Data<float>());
-            af::array bk = af::array(af::dim4(embed_dim_), b_k_.Data<float>());
-            af::array bv = af::array(af::dim4(embed_dim_), b_v_.Data<float>());
-
-            Q = Q + af::tile(bq, 1, seq_len_q, batch_size);
-            K = K + af::tile(bk, 1, seq_len_kv, batch_size);
-            V = V + af::tile(bv, 1, seq_len_kv, batch_size);
-        }
-
-        // Cache projected Q, K, V for backward
-        cached_Q_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_q),
-                            static_cast<size_t>(embed_dim_)});
-        cached_K_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_kv),
-                            static_cast<size_t>(embed_dim_)});
-        cached_V_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_kv),
-                            static_cast<size_t>(embed_dim_)});
-        Q.host(cached_Q_.Data());
-        K.host(cached_K_.Data());
-        V.host(cached_V_.Data());
-
-        // Reshape for multi-head: [embed, seq, batch] -> [head_dim, seq, num_heads, batch]
-        Q = af::moddims(Q, af::dim4(head_dim_, num_heads_, seq_len_q, batch_size));
-        K = af::moddims(K, af::dim4(head_dim_, num_heads_, seq_len_kv, batch_size));
-        V = af::moddims(V, af::dim4(head_dim_, num_heads_, seq_len_kv, batch_size));
-
-        // Reorder to [head_dim, seq, batch, num_heads] for batch matmul
-        Q = af::reorder(Q, 0, 2, 3, 1);  // [head_dim, seq_q, batch, num_heads]
-        K = af::reorder(K, 0, 2, 3, 1);  // [head_dim, seq_kv, batch, num_heads]
-        V = af::reorder(V, 0, 2, 3, 1);  // [head_dim, seq_kv, batch, num_heads]
-
-        // Scaled dot-product attention
-        // scores = Q^T @ K / sqrt(head_dim)  -> [seq_q, seq_kv, batch, num_heads]
-        af::array scores = af::constant(0.0f, af::dim4(seq_len_q, seq_len_kv, batch_size, num_heads_));
-
-        for (int h = 0; h < num_heads_; h++) {
-            for (int b = 0; b < batch_size; b++) {
-                af::array q_bh = Q(af::span, af::span, b, h);  // [head_dim, seq_q]
-                af::array k_bh = K(af::span, af::span, b, h);  // [head_dim, seq_kv]
-
-                // scores = Q^T @ K = [seq_q, head_dim] @ [head_dim, seq_kv] = [seq_q, seq_kv]
-                af::array s = af::matmul(af::transpose(q_bh), k_bh) * scale_;
-                scores(af::span, af::span, b, h) = s;
-            }
-        }
-
-        // Apply attention mask if provided
-        if (attn_mask != nullptr) {
-            af::array mask(af::dim4(seq_len_q, seq_len_kv), attn_mask->Data<float>());
-            scores = scores + af::tile(mask, 1, 1, batch_size, num_heads_);
-        }
-
-        // Softmax along seq_kv dimension (dim 1)
-        // ArrayFire doesn't have softmax, implement manually: softmax(x) = exp(x - max(x)) / sum(exp(x - max(x)))
-        af::array max_scores = af::max(scores, 1);
-        af::array scores_shifted = scores - af::tile(max_scores, 1, seq_len_kv, 1, 1);
-        af::array exp_scores = af::exp(scores_shifted);
-        af::array sum_exp = af::sum(exp_scores, 1);
-        af::array attn_weights = exp_scores / af::tile(sum_exp, 1, seq_len_kv, 1, 1);
-
-        // Cache attention weights for backward and visualization
-        cached_attn_weights_ = Tensor(std::vector<size_t>{
-            static_cast<size_t>(seq_len_q),
-            static_cast<size_t>(seq_len_kv),
-            static_cast<size_t>(batch_size),
-            static_cast<size_t>(num_heads_)});
-        attn_weights.host(cached_attn_weights_.Data());
-
-        // Apply dropout if training
-        if (training_ && dropout_ > 0.0f) {
-            af::array mask = af::randu(attn_weights.dims()) > dropout_;
-            dropout_mask_ = Tensor(std::vector<size_t>{static_cast<size_t>(seq_len_q), static_cast<size_t>(seq_len_kv),
-                                     static_cast<size_t>(batch_size), static_cast<size_t>(num_heads_)});
-            mask.as(af::dtype::f32).host(dropout_mask_.Data());
-            attn_weights = attn_weights * mask.as(af::dtype::f32) / (1.0f - dropout_);
-        }
-
-        // Weighted sum: context = attn_weights @ V
-        // [seq_q, seq_kv] @ [head_dim, seq_kv]^T -> need [seq_q, head_dim]
-        af::array context = af::constant(0.0f, af::dim4(head_dim_, seq_len_q, batch_size, num_heads_));
-
-        for (int h = 0; h < num_heads_; h++) {
-            for (int b = 0; b < batch_size; b++) {
-                af::array a_bh = attn_weights(af::span, af::span, b, h);  // [seq_q, seq_kv]
-                af::array v_bh = V(af::span, af::span, b, h);             // [head_dim, seq_kv]
-
-                // context = V @ attn^T = [head_dim, seq_kv] @ [seq_kv, seq_q] = [head_dim, seq_q]
-                af::array c = af::matmul(v_bh, af::transpose(a_bh));
-                context(af::span, af::span, b, h) = c;
-            }
-        }
-
-        // Reshape back: [head_dim, seq_q, batch, num_heads] -> [embed, seq_q, batch]
-        context = af::reorder(context, 0, 3, 1, 2);  // [head_dim, num_heads, seq_q, batch]
-        context = af::moddims(context, af::dim4(embed_dim_, seq_len_q, batch_size));
-
-        // Cache context for backward
-        cached_context_ = Tensor(std::vector<size_t>{static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_q),
-                                   static_cast<size_t>(embed_dim_)});
-        context.host(cached_context_.Data());
-
-        // Output projection
-        af::array output = af::constant(0.0f, af::dim4(embed_dim_, seq_len_q, batch_size));
-        for (int b = 0; b < batch_size; b++) {
-            output(af::span, af::span, b) = af::matmul(wo, context(af::span, af::span, b));
-        }
-
-        if (use_bias_) {
-            af::array bo = af::array(af::dim4(embed_dim_), b_o_.Data<float>());
-            output = output + af::tile(bo, 1, seq_len_q, batch_size);
-        }
-
-        // Convert to output tensor [batch, seq, embed]
-        std::vector<size_t> result_shape = {static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_q),
-                       static_cast<size_t>(embed_dim_)};
-        Tensor result(result_shape, DataType::Float32);
-        output.host(result.Data());
-        return result;
-
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire MultiHeadAttention forward failed: {}", e.what());
+    const std::vector<size_t> weight_shape{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)};
+    const std::vector<size_t> bias_shape{static_cast<size_t>(embed_dim_)};
+    if (W_q_.GetDataType() != DataType::Float32 || W_k_.GetDataType() != DataType::Float32 ||
+        W_v_.GetDataType() != DataType::Float32 || W_o_.GetDataType() != DataType::Float32 ||
+        W_q_.Shape() != weight_shape || W_k_.Shape() != weight_shape ||
+        W_v_.Shape() != weight_shape || W_o_.Shape() != weight_shape) {
+        throw std::runtime_error("MultiHeadAttention forward projection weight mismatch");
     }
-#endif
+    if (use_bias_ &&
+        (b_q_.GetDataType() != DataType::Float32 || b_k_.GetDataType() != DataType::Float32 ||
+         b_v_.GetDataType() != DataType::Float32 || b_o_.GetDataType() != DataType::Float32 ||
+         b_q_.Shape() != bias_shape || b_k_.Shape() != bias_shape ||
+         b_v_.Shape() != bias_shape || b_o_.Shape() != bias_shape)) {
+        throw std::runtime_error("MultiHeadAttention forward bias mismatch");
+    }
 
-    throw std::runtime_error("MultiHeadAttention forward requires ArrayFire");
+    const size_t batch_size = q_shape[0];
+    const size_t seq_len_q = q_shape[1];
+    const size_t seq_len_kv = k_shape[1];
+    const size_t embed_dim = static_cast<size_t>(embed_dim_);
+    const size_t num_heads = static_cast<size_t>(num_heads_);
+    const size_t head_dim = static_cast<size_t>(head_dim_);
+
+    cached_Q_ = Tensor({batch_size, seq_len_q, embed_dim}, DataType::Float32);
+    cached_K_ = Tensor({batch_size, seq_len_kv, embed_dim}, DataType::Float32);
+    cached_V_ = Tensor({batch_size, seq_len_kv, embed_dim}, DataType::Float32);
+    cached_attn_weights_ = Tensor({seq_len_q, seq_len_kv, batch_size, num_heads}, DataType::Float32);
+    cached_context_ = Tensor({batch_size, seq_len_q, embed_dim}, DataType::Float32);
+    Tensor output({batch_size, seq_len_q, embed_dim}, DataType::Float32);
+
+    const auto seq_index = [embed_dim](size_t b, size_t s, size_t e, size_t seq_len) {
+        return (b * seq_len + s) * embed_dim + e;
+    };
+    const auto attn_index = [seq_len_kv, batch_size, num_heads](size_t q, size_t k, size_t b, size_t h) {
+        return ((q * seq_len_kv + k) * batch_size + b) * num_heads + h;
+    };
+    const auto project = [&](const Tensor& src, const Tensor& weights, const Tensor* bias,
+                             Tensor& dst, size_t seq_len) {
+        const float* src_data = src.Data<float>();
+        const float* weight_data = weights.Data<float>();
+        const float* bias_data = bias != nullptr ? bias->Data<float>() : nullptr;
+        float* dst_data = dst.Data<float>();
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t s = 0; s < seq_len; ++s) {
+                for (size_t out = 0; out < embed_dim; ++out) {
+                    float sum = bias_data != nullptr ? bias_data[out] : 0.0f;
+                    for (size_t in = 0; in < embed_dim; ++in) {
+                        sum += weight_data[out * embed_dim + in] * src_data[seq_index(b, s, in, seq_len)];
+                    }
+                    dst_data[seq_index(b, s, out, seq_len)] = sum;
+                }
+            }
+        }
+    };
+
+    project(query, W_q_, use_bias_ ? &b_q_ : nullptr, cached_Q_, seq_len_q);
+    project(key, W_k_, use_bias_ ? &b_k_ : nullptr, cached_K_, seq_len_kv);
+    project(value, W_v_, use_bias_ ? &b_v_ : nullptr, cached_V_, seq_len_kv);
+
+    const float* Q = cached_Q_.Data<float>();
+    const float* K = cached_K_.Data<float>();
+    const float* V = cached_V_.Data<float>();
+    const float* mask_data = attn_mask != nullptr ? attn_mask->Data<float>() : nullptr;
+    float* attn_data = cached_attn_weights_.Data<float>();
+    float* context_data = cached_context_.Data<float>();
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t h = 0; h < num_heads; ++h) {
+            const size_t head_offset = h * head_dim;
+            for (size_t q = 0; q < seq_len_q; ++q) {
+                float max_score = -std::numeric_limits<float>::infinity();
+                for (size_t k = 0; k < seq_len_kv; ++k) {
+                    float score = mask_data != nullptr ? mask_data[q * seq_len_kv + k] : 0.0f;
+                    for (size_t d = 0; d < head_dim; ++d) {
+                        score += Q[seq_index(b, q, head_offset + d, seq_len_q)] *
+                                 K[seq_index(b, k, head_offset + d, seq_len_kv)] * scale_;
+                    }
+                    attn_data[attn_index(q, k, b, h)] = score;
+                    max_score = std::max(max_score, score);
+                }
+
+                float sum_exp = 0.0f;
+                for (size_t k = 0; k < seq_len_kv; ++k) {
+                    const size_t index = attn_index(q, k, b, h);
+                    attn_data[index] = std::exp(attn_data[index] - max_score);
+                    sum_exp += attn_data[index];
+                }
+                for (size_t k = 0; k < seq_len_kv; ++k) {
+                    attn_data[attn_index(q, k, b, h)] /= sum_exp;
+                }
+
+                for (size_t d = 0; d < head_dim; ++d) {
+                    float value_sum = 0.0f;
+                    for (size_t k = 0; k < seq_len_kv; ++k) {
+                        value_sum += attn_data[attn_index(q, k, b, h)] *
+                                     V[seq_index(b, k, head_offset + d, seq_len_kv)];
+                    }
+                    context_data[seq_index(b, q, head_offset + d, seq_len_q)] = value_sum;
+                }
+            }
+        }
+    }
+
+    const float* context = cached_context_.Data<float>();
+    const float* wo = W_o_.Data<float>();
+    const float* bo = use_bias_ ? b_o_.Data<float>() : nullptr;
+    float* output_data = output.Data<float>();
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t q = 0; q < seq_len_q; ++q) {
+            for (size_t out = 0; out < embed_dim; ++out) {
+                float sum = bo != nullptr ? bo[out] : 0.0f;
+                for (size_t in = 0; in < embed_dim; ++in) {
+                    sum += wo[out * embed_dim + in] * context[seq_index(b, q, in, seq_len_q)];
+                }
+                output_data[seq_index(b, q, out, seq_len_q)] = sum;
+            }
+        }
+    }
+
+    return output;
 }
 
 Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
     const auto& shape = grad_output.Shape();
-    int batch_size = static_cast<int>(shape[0]);
-    int seq_len_q = static_cast<int>(shape[1]);
-    int seq_len_kv = static_cast<int>(cached_key_.Shape()[1]);
+    if (grad_output.GetDataType() != DataType::Float32 || shape.size() != 3 ||
+        cached_query_.Shape().size() != 3 || cached_key_.Shape().size() != 3 ||
+        cached_value_.Shape().size() != 3) {
+        throw std::runtime_error("MultiHeadAttention backward CPU fallback requires cached 3D Float32 tensors");
+    }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        // Load gradients [batch, seq, embed] -> [embed, seq, batch]
-        af::array grad_out(af::dim4(embed_dim_, seq_len_q, batch_size), grad_output.Data<float>());
+    const size_t batch_size = shape[0];
+    const size_t seq_len_q = shape[1];
+    const size_t seq_len_kv = cached_key_.Shape()[1];
+    const size_t embed_dim = static_cast<size_t>(embed_dim_);
+    const size_t num_heads = static_cast<size_t>(num_heads_);
+    const size_t head_dim = static_cast<size_t>(head_dim_);
+    const std::vector<size_t> q_shape{batch_size, seq_len_q, embed_dim};
+    const std::vector<size_t> kv_shape{batch_size, seq_len_kv, embed_dim};
+    const std::vector<size_t> weight_shape{embed_dim, embed_dim};
+    if (shape != q_shape || cached_query_.Shape() != q_shape ||
+        cached_key_.Shape() != kv_shape || cached_value_.Shape() != kv_shape ||
+        cached_Q_.Shape() != q_shape || cached_K_.Shape() != kv_shape ||
+        cached_V_.Shape() != kv_shape || cached_context_.Shape() != q_shape ||
+        cached_attn_weights_.Shape() != std::vector<size_t>{seq_len_q, seq_len_kv, batch_size, num_heads} ||
+        W_q_.Shape() != weight_shape || W_k_.Shape() != weight_shape ||
+        W_v_.Shape() != weight_shape || W_o_.Shape() != weight_shape) {
+        throw std::runtime_error("MultiHeadAttention backward cache/parameter shape mismatch");
+    }
 
-        // Load weights
-        af::array wq = TensorToAf(W_q_);
-        af::array wk = TensorToAf(W_k_);
-        af::array wv = TensorToAf(W_v_);
-        af::array wo = TensorToAf(W_o_);
+    const auto seq_index = [embed_dim](size_t b, size_t s, size_t e, size_t seq_len) {
+        return (b * seq_len + s) * embed_dim + e;
+    };
+    const auto attn_index = [seq_len_kv, batch_size, num_heads](size_t q, size_t k, size_t b, size_t h) {
+        return ((q * seq_len_kv + k) * batch_size + b) * num_heads + h;
+    };
 
-        // Load cached values
-        af::array context(af::dim4(embed_dim_, seq_len_q, batch_size), cached_context_.Data<float>());
-        af::array Q(af::dim4(embed_dim_, seq_len_q, batch_size), cached_Q_.Data<float>());
-        af::array K(af::dim4(embed_dim_, seq_len_kv, batch_size), cached_K_.Data<float>());
-        af::array V(af::dim4(embed_dim_, seq_len_kv, batch_size), cached_V_.Data<float>());
+    Tensor grad_context(q_shape, DataType::Float32);
+    Tensor grad_Q(q_shape, DataType::Float32);
+    Tensor grad_K(kv_shape, DataType::Float32);
+    Tensor grad_V(kv_shape, DataType::Float32);
+    Tensor grad_query(q_shape, DataType::Float32);
+    Tensor grad_key(kv_shape, DataType::Float32);
+    Tensor grad_value(kv_shape, DataType::Float32);
+    grad_W_q_ = Tensor(weight_shape, DataType::Float32);
+    grad_W_k_ = Tensor(weight_shape, DataType::Float32);
+    grad_W_v_ = Tensor(weight_shape, DataType::Float32);
+    grad_W_o_ = Tensor(weight_shape, DataType::Float32);
+    if (use_bias_) {
+        grad_b_q_ = Tensor({embed_dim}, DataType::Float32);
+        grad_b_k_ = Tensor({embed_dim}, DataType::Float32);
+        grad_b_v_ = Tensor({embed_dim}, DataType::Float32);
+        grad_b_o_ = Tensor({embed_dim}, DataType::Float32);
+    }
 
-        // Gradient through output projection
-        af::array grad_context = af::constant(0.0f, af::dim4(embed_dim_, seq_len_q, batch_size));
-        af::array dWo = af::constant(0.0f, wo.dims());
-        af::array dbo = af::constant(0.0f, af::dim4(embed_dim_));
+    const float* grad_out = grad_output.Data<float>();
+    const float* context = cached_context_.Data<float>();
+    const float* wo = W_o_.Data<float>();
+    float* grad_context_data = grad_context.Data<float>();
+    float* grad_W_o = grad_W_o_.Data<float>();
+    float* grad_b_o = use_bias_ ? grad_b_o_.Data<float>() : nullptr;
 
-        for (int b = 0; b < batch_size; b++) {
-            af::array grad_b = grad_out(af::span, af::span, b);
-            af::array ctx_b = context(af::span, af::span, b);
-
-            grad_context(af::span, af::span, b) = af::matmul(af::transpose(wo), grad_b);
-            dWo = dWo + af::matmul(grad_b, af::transpose(ctx_b));
-        }
-
-        if (use_bias_) {
-            dbo = af::sum(af::sum(grad_out, 1), 2);
-        }
-
-        // Reshape for multi-head attention backward
-        Q = af::moddims(Q, af::dim4(head_dim_, num_heads_, seq_len_q, batch_size));
-        K = af::moddims(K, af::dim4(head_dim_, num_heads_, seq_len_kv, batch_size));
-        V = af::moddims(V, af::dim4(head_dim_, num_heads_, seq_len_kv, batch_size));
-        grad_context = af::moddims(grad_context, af::dim4(head_dim_, num_heads_, seq_len_q, batch_size));
-
-        Q = af::reorder(Q, 0, 2, 3, 1);
-        K = af::reorder(K, 0, 2, 3, 1);
-        V = af::reorder(V, 0, 2, 3, 1);
-        grad_context = af::reorder(grad_context, 0, 2, 3, 1);
-
-        // Load cached attention weights
-        af::array attn_weights(af::dim4(seq_len_q, seq_len_kv, batch_size, num_heads_),
-                               cached_attn_weights_.Data<float>());
-
-        // Gradient through attention
-        af::array grad_Q = af::constant(0.0f, Q.dims());
-        af::array grad_K = af::constant(0.0f, K.dims());
-        af::array grad_V = af::constant(0.0f, V.dims());
-
-        for (int h = 0; h < num_heads_; h++) {
-            for (int b = 0; b < batch_size; b++) {
-                af::array v_bh = V(af::span, af::span, b, h);
-                af::array q_bh = Q(af::span, af::span, b, h);
-                af::array k_bh = K(af::span, af::span, b, h);
-                af::array a_bh = attn_weights(af::span, af::span, b, h);
-                af::array gc_bh = grad_context(af::span, af::span, b, h);
-
-                // Gradient w.r.t. V: dV = attn @ grad_context^T
-                af::array dV = af::matmul(gc_bh, a_bh);
-                grad_V(af::span, af::span, b, h) = dV;
-
-                // Gradient w.r.t. attention weights
-                af::array grad_attn = af::matmul(af::transpose(gc_bh), v_bh);
-
-                // Softmax backward: d_scores = attn * (d_attn - sum(d_attn * attn))
-                af::array sum_grad = af::sum(grad_attn * a_bh, 1);
-                af::array grad_scores = a_bh * (grad_attn - af::tile(sum_grad, 1, seq_len_kv));
-
-                // Scale
-                grad_scores = grad_scores * scale_;
-
-                // Gradient w.r.t. Q and K from scores = Q^T @ K
-                // dQ = K @ grad_scores^T, dK = Q @ grad_scores
-                af::array dQ = af::matmul(k_bh, af::transpose(grad_scores));
-                af::array dK = af::matmul(q_bh, grad_scores);
-
-                grad_Q(af::span, af::span, b, h) = dQ;
-                grad_K(af::span, af::span, b, h) = dK;
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t q = 0; q < seq_len_q; ++q) {
+            for (size_t out = 0; out < embed_dim; ++out) {
+                const float grad = grad_out[seq_index(b, q, out, seq_len_q)];
+                if (use_bias_) {
+                    grad_b_o[out] += grad;
+                }
+                for (size_t in = 0; in < embed_dim; ++in) {
+                    grad_context_data[seq_index(b, q, in, seq_len_q)] += wo[out * embed_dim + in] * grad;
+                    grad_W_o[out * embed_dim + in] +=
+                        grad * context[seq_index(b, q, in, seq_len_q)];
+                }
             }
         }
-
-        // Reshape gradients back
-        grad_Q = af::reorder(grad_Q, 0, 3, 1, 2);
-        grad_K = af::reorder(grad_K, 0, 3, 1, 2);
-        grad_V = af::reorder(grad_V, 0, 3, 1, 2);
-
-        grad_Q = af::moddims(grad_Q, af::dim4(embed_dim_, seq_len_q, batch_size));
-        grad_K = af::moddims(grad_K, af::dim4(embed_dim_, seq_len_kv, batch_size));
-        grad_V = af::moddims(grad_V, af::dim4(embed_dim_, seq_len_kv, batch_size));
-
-        // Gradient through input projections
-        af::array query(af::dim4(embed_dim_, seq_len_q, batch_size), cached_query_.Data<float>());
-        af::array key(af::dim4(embed_dim_, seq_len_kv, batch_size), cached_key_.Data<float>());
-        af::array value(af::dim4(embed_dim_, seq_len_kv, batch_size), cached_value_.Data<float>());
-
-        af::array dWq = af::constant(0.0f, wq.dims());
-        af::array dWk = af::constant(0.0f, wk.dims());
-        af::array dWv = af::constant(0.0f, wv.dims());
-        af::array dbq = af::constant(0.0f, af::dim4(embed_dim_));
-        af::array dbk = af::constant(0.0f, af::dim4(embed_dim_));
-        af::array dbv = af::constant(0.0f, af::dim4(embed_dim_));
-
-        af::array grad_query = af::constant(0.0f, query.dims());
-        af::array grad_key = af::constant(0.0f, key.dims());
-        af::array grad_value = af::constant(0.0f, value.dims());
-
-        for (int b = 0; b < batch_size; b++) {
-            af::array gq_b = grad_Q(af::span, af::span, b);
-            af::array gk_b = grad_K(af::span, af::span, b);
-            af::array gv_b = grad_V(af::span, af::span, b);
-            af::array q_b = query(af::span, af::span, b);
-            af::array k_b = key(af::span, af::span, b);
-            af::array v_b = value(af::span, af::span, b);
-
-            dWq = dWq + af::matmul(gq_b, af::transpose(q_b));
-            dWk = dWk + af::matmul(gk_b, af::transpose(k_b));
-            dWv = dWv + af::matmul(gv_b, af::transpose(v_b));
-
-            grad_query(af::span, af::span, b) = af::matmul(af::transpose(wq), gq_b);
-            grad_key(af::span, af::span, b) = af::matmul(af::transpose(wk), gk_b);
-            grad_value(af::span, af::span, b) = af::matmul(af::transpose(wv), gv_b);
-        }
-
-        if (use_bias_) {
-            dbq = af::sum(af::sum(grad_Q, 1), 2);
-            dbk = af::sum(af::sum(grad_K, 1), 2);
-            dbv = af::sum(af::sum(grad_V, 1), 2);
-        }
-
-        // Store gradients
-        grad_W_q_ = AfToTensor(dWq);
-        grad_W_k_ = AfToTensor(dWk);
-        grad_W_v_ = AfToTensor(dWv);
-        grad_W_o_ = AfToTensor(dWo);
-
-        if (use_bias_) {
-            grad_b_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
-            grad_b_k_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
-            grad_b_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
-            grad_b_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
-            dbq.host(grad_b_q_.Data());
-            dbk.host(grad_b_k_.Data());
-            dbv.host(grad_b_v_.Data());
-            dbo.host(grad_b_o_.Data());
-        }
-
-        // Return gradient w.r.t. query (for self-attention, this is the input gradient)
-        // For cross-attention, caller needs to handle key/value gradients separately
-        std::vector<size_t> result_shape = {static_cast<size_t>(batch_size), static_cast<size_t>(seq_len_q),
-                       static_cast<size_t>(embed_dim_)};
-        Tensor result(result_shape, DataType::Float32);
-        grad_query.host(result.Data());
-        return result;
-
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire MultiHeadAttention backward failed: {}", e.what());
     }
-#endif
 
-    throw std::runtime_error("MultiHeadAttention backward requires ArrayFire");
+    const float* Q = cached_Q_.Data<float>();
+    const float* K = cached_K_.Data<float>();
+    const float* V = cached_V_.Data<float>();
+    const float* attn = cached_attn_weights_.Data<float>();
+    float* grad_Q_data = grad_Q.Data<float>();
+    float* grad_K_data = grad_K.Data<float>();
+    float* grad_V_data = grad_V.Data<float>();
+    std::vector<float> grad_attn(seq_len_kv, 0.0f);
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t h = 0; h < num_heads; ++h) {
+            const size_t head_offset = h * head_dim;
+            for (size_t q = 0; q < seq_len_q; ++q) {
+                std::fill(grad_attn.begin(), grad_attn.end(), 0.0f);
+                for (size_t k = 0; k < seq_len_kv; ++k) {
+                    for (size_t d = 0; d < head_dim; ++d) {
+                        grad_V_data[seq_index(b, k, head_offset + d, seq_len_kv)] +=
+                            attn[attn_index(q, k, b, h)] *
+                            grad_context_data[seq_index(b, q, head_offset + d, seq_len_q)];
+                        grad_attn[k] +=
+                            grad_context_data[seq_index(b, q, head_offset + d, seq_len_q)] *
+                            V[seq_index(b, k, head_offset + d, seq_len_kv)];
+                    }
+                }
+
+                float softmax_dot = 0.0f;
+                for (size_t k = 0; k < seq_len_kv; ++k) {
+                    softmax_dot += grad_attn[k] * attn[attn_index(q, k, b, h)];
+                }
+                for (size_t k = 0; k < seq_len_kv; ++k) {
+                    const float grad_score =
+                        attn[attn_index(q, k, b, h)] * (grad_attn[k] - softmax_dot) * scale_;
+                    for (size_t d = 0; d < head_dim; ++d) {
+                        grad_Q_data[seq_index(b, q, head_offset + d, seq_len_q)] +=
+                            grad_score * K[seq_index(b, k, head_offset + d, seq_len_kv)];
+                        grad_K_data[seq_index(b, k, head_offset + d, seq_len_kv)] +=
+                            grad_score * Q[seq_index(b, q, head_offset + d, seq_len_q)];
+                    }
+                }
+            }
+        }
+    }
+
+    const auto projection_backward = [&](const Tensor& input, const Tensor& weight,
+                                         const Tensor& grad_projected,
+                                         Tensor& grad_input, Tensor& grad_weight,
+                                         Tensor* grad_bias, size_t seq_len) {
+        const float* input_data = input.Data<float>();
+        const float* weight_data = weight.Data<float>();
+        const float* grad_proj_data = grad_projected.Data<float>();
+        float* grad_input_data = grad_input.Data<float>();
+        float* grad_weight_data = grad_weight.Data<float>();
+        float* grad_bias_data = grad_bias != nullptr ? grad_bias->Data<float>() : nullptr;
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t s = 0; s < seq_len; ++s) {
+                for (size_t out = 0; out < embed_dim; ++out) {
+                    const float grad = grad_proj_data[seq_index(b, s, out, seq_len)];
+                    if (grad_bias_data != nullptr) {
+                        grad_bias_data[out] += grad;
+                    }
+                    for (size_t in = 0; in < embed_dim; ++in) {
+                        grad_weight_data[out * embed_dim + in] +=
+                            grad * input_data[seq_index(b, s, in, seq_len)];
+                        grad_input_data[seq_index(b, s, in, seq_len)] +=
+                            weight_data[out * embed_dim + in] * grad;
+                    }
+                }
+            }
+        }
+    };
+
+    projection_backward(cached_query_, W_q_, grad_Q, grad_query, grad_W_q_,
+                        use_bias_ ? &grad_b_q_ : nullptr, seq_len_q);
+    projection_backward(cached_key_, W_k_, grad_K, grad_key, grad_W_k_,
+                        use_bias_ ? &grad_b_k_ : nullptr, seq_len_kv);
+    projection_backward(cached_value_, W_v_, grad_V, grad_value, grad_W_v_,
+                        use_bias_ ? &grad_b_v_ : nullptr, seq_len_kv);
+
+    if (cached_self_attention_) {
+        float* grad_query_data = grad_query.Data<float>();
+        const float* grad_key_data = grad_key.Data<float>();
+        const float* grad_value_data = grad_value.Data<float>();
+        for (size_t i = 0; i < grad_query.NumElements(); ++i) {
+            grad_query_data[i] += grad_key_data[i] + grad_value_data[i];
+        }
+    }
+
+    return grad_query;
 }
 
 std::map<std::string, Tensor> MultiHeadAttentionLayer::GetParameters() {
