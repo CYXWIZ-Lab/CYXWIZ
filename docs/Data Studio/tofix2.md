@@ -1304,6 +1304,21 @@ Weaknesses:
 - global singleton process-group model increases coupling
 - robustness needs more stress validation
 
+Status 2026-06-05:
+
+- Completed: tightened default process-group lifecycle replacement so
+  `init_distributed()` serializes check/finalize/create/set under the
+  default process-group mutex instead of interleaving public
+  `GetDefaultProcessGroup()` / `finalize_distributed()` / setter calls.
+- Completed: shared the locked finalization logic between replacement
+  and explicit `finalize_distributed()`.
+- Remaining: raw pointers returned by `GetDefaultProcessGroup()` still
+  have process-global lifetime risk if callers race against
+  `finalize_distributed()`. Fixing that needs an ownership/API decision,
+  not a local mutex patch.
+- Remaining: NCCL average reduction, dtype/device validation, and
+  multi-rank stress tests remain distributed-subsystem hardening work.
+
 **Recommendation:**
 
 Treat distributed training as a focused subsystem with its own
