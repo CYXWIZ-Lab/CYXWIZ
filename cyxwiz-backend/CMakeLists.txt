@@ -79,6 +79,7 @@ set(BACKEND_SOURCES
     src/algorithms/layer.cpp
     src/algorithms/model.cpp
     src/algorithms/layers/linear.cpp
+    src/algorithms/layers/layer_utils.cpp
     src/algorithms/activations/relu.cpp
     src/algorithms/activations/sigmoid.cpp
     src/algorithms/activations/tanh.cpp

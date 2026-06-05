@@ -1141,6 +1141,17 @@ Example for `layer.cpp`:
 - attention / transformer
 - utility reshape / upsample / pixel shuffle
 
+Status 2026-06-05:
+
+- Started: extracted shared spatial layer helpers from monolithic
+  `layer.cpp` into private `src/algorithms/layers/layer_utils.{h,cpp}`.
+- Completed: moved `Pool4DIndex`, `ValidateSpatial4DInput`,
+  `ValidatePoolInput`, and bilinear resize sampling helper ownership out
+  of the layer implementation file without changing public APIs.
+- Remaining: split actual layer implementation groups one at a time
+  after each group has focused tests, starting with self-contained
+  spatial utility/reshape layers before attention or recurrent layers.
+
 ---
 
 ### 14. Repository hygiene issue: stray `device_1.cpp`
