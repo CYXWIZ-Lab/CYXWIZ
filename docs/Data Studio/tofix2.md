@@ -200,6 +200,21 @@ Eleventh slice status:
   fallback behavior; profiling and reducing accidental CPU fallback belongs
   to the larger Priority 3 performance pass.
 
+Twelfth slice status:
+
+- Completed: audited layer/activation/loss hot paths against the current
+  Tensor residency contract. Many helpers now return device-backed
+  tensors through `Tensor(arr)`, `SetFromArray()`, or row-major
+  `FromArrayRowMajor*()` helpers instead of explicitly copying to host.
+- Completed: added focused `LinearLayer` ArrayFire residency tests for
+  forward output, backward input gradient, and parameter gradients. These
+  tests cover the main standalone linear training path without changing
+  layer math.
+- Remaining: the large legacy `layer.cpp` still contains manual
+  `af::array::host(...)` copies in complex layers such as attention and
+  some convolution/backward paths. Those should be handled as targeted
+  layer-group slices, not as one broad refactor.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -567,6 +582,15 @@ Only sync at explicit boundaries.
 ### 10. Layer implementations repeatedly materialize host data
 
 **Severity:** High
+
+**Status 2026-06-05:** Partially fixed. The standalone activation
+helpers, losses, sequential modules, and newer `layers/linear.cpp` paths
+mostly return device-backed tensors through the current Tensor residency
+contract. Focused tests now verify `LinearLayer` GPU forward/backward
+outputs and gradients remain device-resident until explicit host access.
+Remaining work is targeted cleanup in legacy `layer.cpp`, where some
+complex layers still call `af::array::host(...)` into CPU tensors during
+forward/backward.
 
 Many forward/backward implementations:
 
