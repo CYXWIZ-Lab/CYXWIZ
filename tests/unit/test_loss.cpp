@@ -309,3 +309,38 @@ TEST_CASE("Triplet loss computes Euclidean anchor gradients", "[loss]") {
     REQUIRE(data[2] == Catch::Approx(-0.5f));
     REQUIRE(data[3] == Catch::Approx(0.5f));
 }
+
+TEST_CASE("Contrastive loss computes forward reduction", "[loss]") {
+    float x1_values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float x2_values[] = {1.0f, 0.0f, 0.0f, 0.5f};
+    float label_values[] = {0.0f, 1.0f};
+    cyxwiz::Tensor x1({2, 2}, x1_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor x2({2, 2}, x2_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::ContrastiveLoss loss(1.0f, cyxwiz::Reduction::Mean);
+    loss.SetLabels(labels);
+
+    cyxwiz::Tensor output = loss.Forward(x1, x2);
+    REQUIRE(output.Data<float>()[0] == Catch::Approx((1.0f + 0.25f) / 2.0f));
+}
+
+TEST_CASE("Contrastive loss computes x1 gradients", "[loss]") {
+    float x1_values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float x2_values[] = {1.0f, 0.0f, 0.0f, 0.5f};
+    float label_values[] = {0.0f, 1.0f};
+    cyxwiz::Tensor x1({2, 2}, x1_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor x2({2, 2}, x2_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor labels({2}, label_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::ContrastiveLoss loss(1.0f, cyxwiz::Reduction::Mean);
+    loss.SetLabels(labels);
+
+    cyxwiz::Tensor grad = loss.Backward(x1, x2);
+    const float* data = grad.Data<float>();
+
+    REQUIRE(data[0] == Catch::Approx(-1.0f));
+    REQUIRE(data[1] == Catch::Approx(0.0f));
+    REQUIRE(data[2] == Catch::Approx(0.0f));
+    REQUIRE(data[3] == Catch::Approx(0.5f));
+}

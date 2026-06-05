@@ -761,6 +761,83 @@ Tensor CpuTripletBackward(const Tensor& anchor,
     return grad;
 }
 
+Tensor CpuContrastiveForward(const Tensor& x1,
+                             const Tensor& x2,
+                             const Tensor& labels,
+                             float margin,
+                             Reduction reduction,
+                             Tensor* cached_distances) {
+    const EmbeddingPairShape shape = ValidateEmbeddingPair(x1, x2, "Contrastive");
+    const float* label_data = ValidateEmbeddingLabels(labels, shape.batch, "Contrastive");
+    const float* a = x1.Data<float>();
+    const float* b = x2.Data<float>();
+    std::vector<float> distances(shape.batch, 0.0f);
+    std::vector<float> losses(shape.batch, 0.0f);
+
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const size_t base = batch * shape.dim;
+        float distance_sq = 0.0f;
+        for (size_t d = 0; d < shape.dim; ++d) {
+            const float diff = a[base + d] - b[base + d];
+            distance_sq += diff * diff;
+        }
+
+        distances[batch] = std::sqrt(distance_sq);
+        const float margin_diff = std::max(margin - distances[batch], 0.0f);
+        losses[batch] = label_data[batch] > 0.0f
+                            ? margin_diff * margin_diff
+                            : distance_sq;
+    }
+
+    if (cached_distances) {
+        *cached_distances = Tensor({shape.batch}, distances.data(), DataType::Float32);
+    }
+    return ApplyClassReduction(losses, shape.batch, reduction);
+}
+
+Tensor CpuContrastiveBackward(const Tensor& x1,
+                              const Tensor& x2,
+                              const Tensor& labels,
+                              const Tensor& cached_distances,
+                              float margin,
+                              Reduction reduction) {
+    const EmbeddingPairShape shape = ValidateEmbeddingPair(x1, x2, "Contrastive");
+    const float* label_data = ValidateEmbeddingLabels(labels, shape.batch, "Contrastive");
+
+    Tensor distances = cached_distances.Shape() == std::vector<size_t>{shape.batch}
+                           ? cached_distances
+                           : Tensor();
+    if (distances.Shape().empty()) {
+        CpuContrastiveForward(x1, x2, labels, margin, Reduction::None, &distances);
+    }
+
+    Tensor grad(x1.Shape(), DataType::Float32);
+    float* out = grad.Data<float>();
+    const float* a = x1.Data<float>();
+    const float* b = x2.Data<float>();
+    const float* distance_data = distances.Data<float>();
+    const float reduction_scale = reduction == Reduction::Mean && shape.batch > 0
+                                      ? 1.0f / static_cast<float>(shape.batch)
+                                      : 1.0f;
+
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const size_t base = batch * shape.dim;
+        const bool dissimilar = label_data[batch] > 0.0f;
+        const bool active_dissimilar = dissimilar && distance_data[batch] < margin;
+        const float safe_distance = std::max(distance_data[batch], 1e-8f);
+        const float dissimilar_scale = active_dissimilar
+                                           ? -2.0f * (margin - distance_data[batch]) / safe_distance
+                                           : 0.0f;
+        const float scale = dissimilar ? dissimilar_scale : 2.0f;
+
+        for (size_t d = 0; d < shape.dim; ++d) {
+            out[base + d] = scale * (a[base + d] - b[base + d]) * reduction_scale;
+        }
+    }
+
+    return grad;
+}
+
 } // namespace
 
 // ============================================================================
@@ -1693,7 +1770,7 @@ Tensor ContrastiveLoss::Forward(const Tensor& x1, const Tensor& x2) {
         spdlog::warn("ArrayFire ContrastiveLoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Contrastive forward requires ArrayFire");
+    return CpuContrastiveForward(x1, x2, labels_, margin_, reduction_, &cached_distances_);
 }
 
 Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
@@ -1702,7 +1779,6 @@ Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
         af::array a1 = TensorToAf(x1);
         af::array a2 = TensorToAf(x2);
         af::array labels = TensorToAf(labels_);
-        af::array distances = TensorToAf(cached_distances_);
 
         // Gradient w.r.t. x1
         // For similar: d_loss/dx1 = 2*(x1-x2) = 2*diff
@@ -1711,6 +1787,14 @@ Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
         af::array diff = a1 - a2;
         dim_t batch_size = a1.dims(0);
         dim_t embed_dim = a1.dims(1);
+        const std::vector<size_t> expected_cache_shape{static_cast<size_t>(batch_size)};
+        af::array distances;
+        if (cached_distances_.Shape() == expected_cache_shape) {
+            distances = TensorToAf(cached_distances_);
+        } else {
+            distances = af::sqrt(af::sum(diff * diff, 1));
+            cached_distances_ = AfToTensor(distances);
+        }
 
         // Avoid division by zero
         af::array safe_distances = af::max(distances, 1e-8f);
@@ -1738,7 +1822,7 @@ Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
         spdlog::warn("ArrayFire ContrastiveLoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("Contrastive backward requires ArrayFire");
+    return CpuContrastiveBackward(x1, x2, labels_, cached_distances_, margin_, reduction_);
 }
 
 } // namespace cyxwiz

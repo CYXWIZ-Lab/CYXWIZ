@@ -323,9 +323,9 @@ Twentieth slice status:
   contract.
 - Completed: added focused `CosineEmbeddingLoss` forward and backward
   regression coverage.
-- Remaining: `TripletLoss` and `ContrastiveLoss` still need separate
-  fallback slices; legacy layer and linalg fallback work remains
-  deferred.
+- Remaining at this checkpoint: `TripletLoss` and `ContrastiveLoss`
+  still needed separate fallback slices; both are now handled in later
+  slices.
 
 Twenty-first slice status:
 
@@ -340,6 +340,21 @@ Twenty-first slice status:
   gradient regression coverage.
 - Remaining: `ContrastiveLoss` still needs a separate fallback slice;
   legacy layer and linalg fallback work remains deferred.
+
+Twenty-second slice status:
+
+- Completed: added CPU fallback for `ContrastiveLoss` forward and
+  backward under the existing `[batch, embedding_dim]` plus
+  `SetLabels()` contract where labels are `0` for similar pairs and `1`
+  for dissimilar pairs. Backward preserves the current API surface by
+  returning the `x1` gradient.
+- Completed: made the ArrayFire `ContrastiveLoss::Backward()` path
+  recompute distances when called without a prior forward cache.
+- Completed: added focused `ContrastiveLoss` forward and `x1` gradient
+  regression coverage.
+- Remaining: CPU fallback Priority 12 now moves beyond core factory
+  activations and standalone losses into legacy layer groups and linalg
+  decomposition policy.
 
 ---
 
@@ -787,10 +802,9 @@ but they must say so honestly and be tracked by group. Factory
 `SELU`, shared-alpha `PReLU`, `MSELoss`, `L1Loss`,
 `SmoothL1Loss`/`HuberLoss`, `CrossEntropyLoss`, `NLLLoss`, `BCELoss`,
 `BCEWithLogitsLoss`, `KLDivLoss`, `FocalLoss`,
-`CosineEmbeddingLoss`, and `TripletLoss` now have CPU fallback coverage
-with tests. Remaining fallback work should proceed by operator group,
-starting with `ContrastiveLoss` before legacy layers and linalg
-decompositions.
+`CosineEmbeddingLoss`, `TripletLoss`, and `ContrastiveLoss` now have CPU
+fallback coverage with tests. Remaining fallback work should proceed by
+operator group, starting with legacy layers and linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 
