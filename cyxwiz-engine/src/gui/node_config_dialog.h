@@ -18,6 +18,7 @@
 #include <atomic>
 #include <mutex>
 #include <cstdint>
+#include <chrono>
 #include <imgui.h>
 #include "node_editor.h"
 #include "loaders/data_loader.h"
@@ -222,6 +223,7 @@ private:
     void RenderCloudSource();
     void RenderOptionsPanel();
     void RenderPreviewPanel();
+    void RenderDatasetSummaryPanel();
 
     // File source sub-renderers
     void RenderTabularOptions();
@@ -267,6 +269,10 @@ private:
     const char* UnsupportedApplyMessage() const;
     const char* PreviewUnavailableMessage() const;
     void MarkApplyUnsupported(const char* message);
+    std::string CurrentSourcePath() const;
+    std::string CurrentSourceLabel() const;
+    std::string CurrentApplySummary() const;
+    const char* BackendSummary() const;
     const char* GetFileTypeName() const;
 
     // STATE: Source selection
@@ -440,6 +446,8 @@ private:
     bool apply_success_ = false;
     std::string apply_status_message_;
     float apply_status_timer_ = 0.0f;
+    std::chrono::steady_clock::time_point apply_started_at_{};
+    float last_load_elapsed_ms_ = -1.0f;
     int64_t loaded_rows_ = 0;
     int64_t loaded_cols_ = 0;
     size_t loaded_memory_bytes_ = 0;

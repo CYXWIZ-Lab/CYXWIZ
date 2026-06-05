@@ -441,6 +441,7 @@ Fix applied:
 ### 9. Data preview and memory reporting are useful, but should become more operational
 
 **Severity:** Medium
+**Status:** Fixed on 2026-06-06
 
 Relevant files:
 
@@ -466,12 +467,30 @@ What is still missing is higher-confidence operational feedback:
 - split summary before training
 - "what will happen when I click Apply" summary
 
-**Recommendation:**
+Audit result: this issue was still present. The dialog had preview rows,
+memory-tab actuals, loader status messages, and audit details, but the user
+had to move between surfaces to understand the current source, preview state,
+Apply path, loaded backend, loaded size, and load duration.
 
-- add a compact dataset summary card
-- distinguish clearly between estimate, on-disk size, and actual
-  in-memory footprint
-- show the chosen backend path before and after Apply
+Fix applied:
+
+- added a compact `DATASET SUMMARY` section to `DataInputDialog`
+- before Apply, the summary shows selected source, category, preview row/column
+  count, disk-size estimate, and the exact Apply path
+- while Apply is running, the summary shows loading state, dataset name,
+  source, and Apply path
+- after Apply, the summary shows authoritative loaded dataset name,
+  rows/samples, columns, backend, actual or estimated footprint, audit counts,
+  and UI-measured Apply duration
+- distinguished actual RAM, disk-backed storage, and lazy-loader fully-cached
+  estimates in one place
+
+**Follow-up:**
+
+- add split summaries once train/validation/test split state has a single
+  authoritative owner
+- add richer class/column-type distribution summaries from loaded registry
+  metadata rather than re-parsing in the dialog
 
 ---
 

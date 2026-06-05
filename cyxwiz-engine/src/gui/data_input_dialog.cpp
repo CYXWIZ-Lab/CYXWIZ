@@ -35,6 +35,7 @@
 #include <filesystem>
 #include <unordered_set>
 #include <limits>
+#include <chrono>
 #include <arrow/api.h>
 #include <arrow/table.h>
 
@@ -421,6 +422,8 @@ void DataInputDialog::Apply() {
     apply_in_progress_ = true;
     apply_success_ = false;
     apply_status_message_.clear();
+    apply_started_at_ = std::chrono::steady_clock::now();
+    last_load_elapsed_ms_ = -1.0f;
 
     if (!IsApplySupported()) {
         MarkApplyUnsupported(UnsupportedApplyMessage());
@@ -940,6 +943,12 @@ void DataInputDialog::PollAsyncLoadResult() {
         spdlog::error("DataInputDialog: async load failed - {}", apply_status_message_);
     }
 
+    if (apply_started_at_ != std::chrono::steady_clock::time_point{}) {
+        const auto elapsed = std::chrono::steady_clock::now() - apply_started_at_;
+        last_load_elapsed_ms_ =
+            std::chrono::duration<float, std::milli>(elapsed).count();
+    }
+
     apply_status_timer_ = 5.0f;  // 5 second fade-out
     apply_in_progress_ = false;
 }
@@ -1074,6 +1083,12 @@ void DataInputDialog::RenderContent() {
         // Decrease timer (assuming ~60fps, subtract per frame)
         apply_status_timer_ -= ImGui::GetIO().DeltaTime;
     }
+
+    // Dataset summary
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    RenderDatasetSummaryPanel();
 
     // Preview section
     ImGui::Spacing();
@@ -2773,6 +2788,124 @@ void DataInputDialog::RenderCloudSource() {
     ImGui::EndDisabled();
 }
 
+void DataInputDialog::RenderDatasetSummaryPanel() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+
+    ImGui::TextColored(accent, "DATASET SUMMARY");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    const bool loaded =
+        data_load_state_ == DataLoadState::InMemory &&
+        !loaded_dataset_name_.empty();
+
+    if (loaded) {
+        ImGui::Text("Dataset:");
+        ImGui::SameLine(120);
+        ImGui::TextUnformatted(loaded_dataset_name_.c_str());
+
+        ImGui::Text("Rows / samples:");
+        ImGui::SameLine(120);
+        ImGui::Text("%lld", static_cast<long long>(loaded_rows_));
+
+        if (loaded_cols_ > 0) {
+            ImGui::Text("Columns:");
+            ImGui::SameLine(120);
+            ImGui::Text("%lld", static_cast<long long>(loaded_cols_));
+        }
+
+        ImGui::Text("Backend:");
+        ImGui::SameLine(120);
+        ImGui::TextUnformatted(BackendSummary());
+
+        ImGui::Text("Footprint:");
+        ImGui::SameLine(120);
+        if (loaded_backend_ == 2) {
+            ImGui::Text("%s on disk", FormatBytes(loaded_memory_bytes_).c_str());
+        } else if (loaded_memory_is_estimate_) {
+            ImGui::Text("~%s if fully cached", FormatBytes(loaded_memory_bytes_).c_str());
+        } else {
+            ImGui::Text("%s RAM", FormatBytes(loaded_memory_bytes_).c_str());
+        }
+
+        if (last_load_elapsed_ms_ >= 0.0f) {
+            ImGui::Text("Last Apply:");
+            ImGui::SameLine(120);
+            if (last_load_elapsed_ms_ < 1000.0f) {
+                ImGui::Text("%.0f ms", last_load_elapsed_ms_);
+            } else {
+                ImGui::Text("%.2f s", last_load_elapsed_ms_ / 1000.0f);
+            }
+        }
+
+        if (node_) {
+            auto errors = node_->parameters.find("audit_errors");
+            auto warnings = node_->parameters.find("audit_warnings");
+            if (errors != node_->parameters.end() || warnings != node_->parameters.end()) {
+                ImGui::Text("Audit:");
+                ImGui::SameLine(120);
+                ImGui::Text("%s errors, %s warnings",
+                            errors != node_->parameters.end() ? errors->second.c_str() : "0",
+                            warnings != node_->parameters.end() ? warnings->second.c_str() : "0");
+            }
+        }
+        return;
+    }
+
+    if (is_loading_async_) {
+        ImGui::Text("State:");
+        ImGui::SameLine(120);
+        ImGui::TextUnformatted("Loading");
+        if (async_load_state_ && !async_load_state_->dataset_name.empty()) {
+            ImGui::Text("Dataset:");
+            ImGui::SameLine(120);
+            ImGui::TextUnformatted(async_load_state_->dataset_name.c_str());
+        }
+        const std::string source = CurrentSourcePath();
+        if (!source.empty()) {
+            ImGui::Text("Source:");
+            ImGui::SameLine(120);
+            ImGui::TextUnformatted(source.c_str());
+        }
+        ImGui::TextWrapped("Apply path: %s", CurrentApplySummary().c_str());
+        return;
+    }
+
+    const std::string source = CurrentSourcePath();
+    if (source.empty()) {
+        ImGui::TextDisabled("No source selected.");
+    } else {
+        ImGui::Text("Source:");
+        ImGui::SameLine(120);
+        ImGui::TextUnformatted(source.c_str());
+    }
+
+    ImGui::Text("Type:");
+    ImGui::SameLine(120);
+    ImGui::TextUnformatted(CurrentSourceLabel().c_str());
+
+    if (preview_loaded_ && preview_error_.empty()) {
+        ImGui::Text("Preview:");
+        ImGui::SameLine(120);
+        ImGui::Text("%zu rows, %zu columns",
+                    preview_data_.size(), preview_columns_.size());
+    }
+
+    if (file_size_ > 0) {
+        ImGui::Text("Disk size:");
+        ImGui::SameLine(120);
+        ImGui::TextUnformatted(FormatBytes(file_size_).c_str());
+    }
+
+    if (IsApplySupported()) {
+        ImGui::TextWrapped("Apply path: %s", CurrentApplySummary().c_str());
+    } else {
+        ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f),
+                           "Apply path: %s", CurrentApplySummary().c_str());
+    }
+}
+
 void DataInputDialog::RenderPreviewPanel() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
@@ -3382,6 +3515,112 @@ void DataInputDialog::BrowseFolder() {
 #else
     spdlog::warn("Folder browser not implemented for this platform");
 #endif
+}
+
+std::string DataInputDialog::CurrentSourcePath() const {
+    if (source_type_ == SourceType::File) {
+        const bool uses_folder =
+            file_category_ == FileCategory::Image ||
+            file_category_ == FileCategory::Audio ||
+            (file_category_ == FileCategory::Text &&
+             text_layout_ == TextLayout::CorpusSubdirs);
+        return uses_folder ? std::string(folder_path_) : std::string(file_path_);
+    }
+    if (source_type_ == SourceType::MLDataset) {
+        return std::string(dataset_name_);
+    }
+    if (source_type_ == SourceType::Database) {
+        if (database_type_ == DatabaseType::SQLite || database_type_ == DatabaseType::DuckDB) {
+            return std::string(db_file_);
+        }
+        return std::string(db_host_) + "/" + std::string(db_name_);
+    }
+    if (source_type_ == SourceType::Cloud) {
+        std::string source = cloud_bucket_;
+        if (strlen(cloud_path_) > 0) {
+            source += "/" + std::string(cloud_path_);
+        }
+        return source;
+    }
+    return {};
+}
+
+std::string DataInputDialog::CurrentSourceLabel() const {
+    if (source_type_ == SourceType::File) {
+        switch (file_category_) {
+            case FileCategory::Tabular:    return "Tabular file";
+            case FileCategory::Image:      return "Image folder";
+            case FileCategory::Audio:      return "Audio folder";
+            case FileCategory::Video:      return "Video file (planned)";
+            case FileCategory::Text:       return text_layout_ == TextLayout::CorpusSubdirs
+                                               ? "Text corpus folder"
+                                               : "Text file";
+            case FileCategory::TimeSeries: return "Time series file";
+        }
+    }
+    if (source_type_ == SourceType::MLDataset) return "ML dataset (planned)";
+    if (source_type_ == SourceType::Database) return "Database (planned)";
+    if (source_type_ == SourceType::Cloud) return "Cloud storage (planned)";
+    return "Unknown";
+}
+
+std::string DataInputDialog::CurrentApplySummary() const {
+    if (!IsApplySupported()) {
+        return UnsupportedApplyMessage();
+    }
+
+    std::string summary;
+    switch (file_category_) {
+        case FileCategory::Tabular:
+            summary = "load the selected file into DataRegistry as tabular data";
+            break;
+        case FileCategory::TimeSeries:
+            summary = "load the selected file through the tabular loader and mark it as time series";
+            break;
+        case FileCategory::Image:
+            summary = "scan the selected folder and register a lazy image dataset";
+            break;
+        case FileCategory::Audio:
+            summary = "scan the selected folder and register a lazy audio dataset";
+            break;
+        case FileCategory::Text:
+            summary = text_layout_ == TextLayout::CorpusSubdirs
+                ? "scan the corpus folder, tokenize text, and build vocabulary"
+                : "load the selected text file, tokenize text, and build vocabulary";
+            break;
+        case FileCategory::Video:
+            summary = UnsupportedApplyMessage();
+            break;
+    }
+
+    if (force_disk_backed_ &&
+        (file_category_ == FileCategory::Tabular ||
+         file_category_ == FileCategory::TimeSeries)) {
+        summary += " using the forced Parquet cache path";
+    }
+    if (max_rows_ > 0 &&
+        (file_category_ == FileCategory::Tabular ||
+         file_category_ == FileCategory::TimeSeries)) {
+        summary += " with a row limit of " + std::to_string(max_rows_);
+    }
+    if (skip_rows_ > 0 &&
+        (file_category_ == FileCategory::Tabular ||
+         file_category_ == FileCategory::TimeSeries)) {
+        summary += " after skipping " + std::to_string(skip_rows_) + " rows";
+    }
+    summary += ".";
+    return summary;
+}
+
+const char* DataInputDialog::BackendSummary() const {
+    switch (loaded_backend_) {
+        case 1: return "Arrow in-memory";
+        case 2: return "Parquet disk-backed";
+        case 3: return "Image folder lazy loader";
+        case 4: return "Audio folder lazy loader";
+        case 5: return "Text lazy loader";
+        default: return "Not loaded";
+    }
 }
 
 bool DataInputDialog::IsApplySupported() const {
