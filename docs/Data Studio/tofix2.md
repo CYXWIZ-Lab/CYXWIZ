@@ -107,6 +107,16 @@ Third slice status:
   be included together and that `TrainingDataLoader` batches synthetic
   and tensor-backed datasets.
 
+Fourth slice status:
+
+- Completed: documented `SequentialModel` + `Module` as the canonical
+  model-facing training/runtime stack.
+- Completed: documented direct `Layer` classes as low-level primitives
+  that modules may wrap, not the preferred owner type for new
+  model-facing integrations.
+- Completed: documented `Model` as a minimal legacy compatibility base
+  for code that owns raw `Layer` instances directly.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -114,6 +124,13 @@ Third slice status:
 ### 1. Overlapping abstractions for the same job
 
 **Severity:** High
+
+**Status 2026-06-05:** Partially fixed. The current code already uses
+`SequentialModel` + `Module` as the de facto model-facing training path:
+tests, Python bindings, distributed wrappers, interpretability, and
+examples all target `SequentialModel`. Header and README documentation
+now make that role explicit. Remaining work is to migrate or deprecate
+duplicate primitive paths only when compatibility handling is planned.
 
 The backend currently has multiple competing abstractions:
 

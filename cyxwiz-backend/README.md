@@ -332,6 +332,11 @@ gpu.SetActive();
 
 ### Neural Network Layers
 
+`SequentialModel` + `Module` is the canonical model-facing stack for
+training, inference, serialization, distributed wrappers, and Python
+bindings. Direct `Layer` classes are lower-level primitives; modules may
+wrap them when a primitive needs to participate in the model runtime.
+
 | Layer | Description | Parameters |
 |-------|-------------|------------|
 | `DenseLayer` / `LinearModule` | Fully connected | `in_features`, `out_features`, `use_bias` |
@@ -380,7 +385,7 @@ gpu.SetActive();
 
 ### SequentialModel
 
-Container for building models layer by layer.
+Canonical container for building models module by module.
 
 ```cpp
 SequentialModel model;

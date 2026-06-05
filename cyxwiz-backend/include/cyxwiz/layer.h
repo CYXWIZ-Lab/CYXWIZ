@@ -12,6 +12,14 @@ namespace cyxwiz {
 // ============================================================================
 // Base Layer Class
 // ============================================================================
+//
+// Layer classes are low-level neural-network building blocks. The
+// model-facing training/runtime API is SequentialModel + Module in
+// sequential.h; modules may wrap these layer primitives to participate in
+// serialization, freezing, gradient collection, and optimizer updates.
+//
+// Keep new model-facing features on Module/SequentialModel first. Add direct
+// Layer APIs only when a primitive is also useful outside a SequentialModel.
 
 class CYXWIZ_API Layer {
 public:

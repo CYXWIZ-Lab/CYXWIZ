@@ -75,7 +75,14 @@ enum class TensorMaskOp {
 };
 
 /**
- * @brief A wrapper for any layer or activation that provides a uniform interface
+ * @brief Canonical model-facing training unit.
+ *
+ * Modules are the objects owned by SequentialModel. They provide the stable
+ * runtime contract for forward/backward execution, parameter and gradient
+ * collection, freezing, training/eval mode, and serialization metadata. A
+ * module may wrap a lower-level Layer primitive, but model builders and graph
+ * training paths should target Module/SequentialModel rather than direct Layer
+ * ownership.
  */
 class CYXWIZ_API Module {
 public:
@@ -674,7 +681,12 @@ private:
 };
 
 /**
- * @brief Sequential model - a container for ordered layers
+ * @brief Canonical ordered model container for backend training/inference.
+ *
+ * SequentialModel owns Module instances, not raw Layer instances. Use it for
+ * model-facing training, inference, serialization, distributed wrappers, and
+ * Python bindings. Lower-level Layer classes remain available as primitives
+ * and implementation details behind modules.
  *
  * Example:
  *   SequentialModel model;
