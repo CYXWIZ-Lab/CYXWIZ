@@ -25,6 +25,14 @@
 
 namespace cyxwiz {
 
+namespace {
+void RenderPlannedMenuItem(const char* label, const char* shortcut = nullptr) {
+    ImGui::BeginDisabled();
+    ImGui::MenuItem(label, shortcut, false, false);
+    ImGui::EndDisabled();
+}
+} // namespace
+
 void ToolbarPanel::RenderNodesMenu() {
     if (ImGui::BeginMenu("Nodes")) {
         if (ImGui::BeginMenu(ICON_FA_LAYER_GROUP " Add Layer")) {
@@ -190,21 +198,10 @@ void ToolbarPanel::RenderSimulationMenu() {
         bool has_viewport = panel_reg.HasPanel("mujoco_viewport");
         bool viewport_visible = has_viewport && panel_reg.IsPanelVisible("mujoco_viewport");
 
-        if (ImGui::MenuItem(ICON_FA_PLAY " Run Simulation", "Ctrl+F5", false, has_viewport)) {
-            // TODO: Forward to simulation executor
-        }
-
-        if (ImGui::MenuItem(ICON_FA_PAUSE " Pause", "Ctrl+F6", false, has_viewport)) {
-            // TODO: Forward to simulation executor
-        }
-
-        if (ImGui::MenuItem(ICON_FA_STOP " Stop", "Ctrl+F7", false, has_viewport)) {
-            // TODO: Forward to simulation executor
-        }
-
-        if (ImGui::MenuItem(ICON_FA_FORWARD_STEP " Step Once", "F10", false, has_viewport)) {
-            // TODO: Forward to simulation executor
-        }
+        RenderPlannedMenuItem(ICON_FA_PLAY " Run Simulation (planned)", "Ctrl+F5");
+        RenderPlannedMenuItem(ICON_FA_PAUSE " Pause (planned)", "Ctrl+F6");
+        RenderPlannedMenuItem(ICON_FA_STOP " Stop (planned)", "Ctrl+F7");
+        RenderPlannedMenuItem(ICON_FA_FORWARD_STEP " Step Once (planned)", "F10");
 
         ImGui::Separator();
 
@@ -219,13 +216,14 @@ void ToolbarPanel::RenderSimulationMenu() {
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem(ICON_FA_FILE_IMPORT " Load MJCF Model...", "Ctrl+Shift+M", false, has_viewport)) {
-            // TODO: Open file dialog for MJCF
-        }
+        RenderPlannedMenuItem(ICON_FA_FILE_IMPORT " Load MJCF Model... (planned)", "Ctrl+Shift+M");
 
         if (!has_viewport) {
             ImGui::Separator();
             ImGui::TextDisabled("MuJoCo plugin not loaded");
+        } else {
+            ImGui::Separator();
+            ImGui::TextDisabled("Simulation execution controls are not wired yet");
         }
 
         ImGui::EndMenu();
@@ -303,9 +301,7 @@ void ToolbarPanel::RenderScriptMenu() {
             }
         }
 
-        if (ImGui::MenuItem(ICON_FA_PLAY " Run Script", "Ctrl+R")) {
-            // TODO: Run current script
-        }
+        RenderPlannedMenuItem(ICON_FA_PLAY " Run Script (planned)", "Ctrl+R");
 
         ImGui::EndMenu();
     }
@@ -352,15 +348,9 @@ void ToolbarPanel::RenderDeployMenu() {
         ImGui::Separator();
 
         if (ImGui::BeginMenu("Quantize")) {
-            if (ImGui::MenuItem("INT8")) {
-                // TODO: Quantize INT8
-            }
-            if (ImGui::MenuItem("INT4")) {
-                // TODO: Quantize INT4
-            }
-            if (ImGui::MenuItem("FP16")) {
-                // TODO: Quantize FP16
-            }
+            RenderPlannedMenuItem("INT8 (planned)");
+            RenderPlannedMenuItem("INT4 (planned)");
+            RenderPlannedMenuItem("FP16 (planned)");
             ImGui::EndMenu();
         }
 
@@ -376,9 +366,7 @@ void ToolbarPanel::RenderDeployMenu() {
             }
         }
 
-        if (ImGui::MenuItem("Publish to Marketplace...")) {
-            // TODO: Publish model
-        }
+        RenderPlannedMenuItem("Publish to Marketplace... (planned)");
 
         ImGui::EndMenu();
     }
@@ -471,17 +459,9 @@ void ToolbarPanel::RenderHelpMenu() {
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem(ICON_FA_BOOKMARK " Documentation", "F1")) {
-            // TODO: Open docs
-        }
-
-        if (ImGui::MenuItem(ICON_FA_KEYBOARD " Keyboard Shortcuts")) {
-            // TODO: Show shortcuts
-        }
-
-        if (ImGui::MenuItem(ICON_FA_CODE " API Reference")) {
-            // TODO: Open API docs
-        }
+        RenderPlannedMenuItem(ICON_FA_BOOKMARK " Documentation (planned)", "F1");
+        RenderPlannedMenuItem(ICON_FA_KEYBOARD " Keyboard Shortcuts (planned)");
+        RenderPlannedMenuItem(ICON_FA_CODE " API Reference (planned)");
 
         ImGui::Separator();
 
@@ -495,9 +475,7 @@ void ToolbarPanel::RenderHelpMenu() {
 #endif
         }
 
-        if (ImGui::MenuItem(ICON_FA_DOWNLOAD " Check for Updates...")) {
-            // TODO: Check updates
-        }
+        RenderPlannedMenuItem(ICON_FA_DOWNLOAD " Check for Updates... (planned)");
 
         ImGui::Separator();
 

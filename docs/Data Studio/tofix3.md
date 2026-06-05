@@ -692,7 +692,7 @@ unified.
 ### 15. Panel discoverability is improving, but the command surface needs rationalization
 
 **Severity:** Medium
-**Status:** Partially fixed on 2026-06-05
+**Status:** Partially fixed on 2026-06-06
 
 Relevant files:
 
@@ -710,6 +710,16 @@ Fix applied:
 - added `Train -> Local Debug` with the `F6` shortcut
 - wired the Train-menu Local Debug action to `MainWindow::LocalDebugGraphAndReport`
 - removed the false `F6` shortcut from `Pause Training`
+- marked toolbar TODO commands as planned and unavailable instead of exposing
+  them as clickable no-ops:
+  - `Simulation -> Run/Pause/Stop/Step/Load MJCF`
+  - `Script -> Run Script`
+  - `Deploy -> Quantize`
+  - `Deploy -> Publish to Marketplace`
+  - `Help -> Documentation/Keyboard Shortcuts/API Reference/Check for Updates`
+- preserved wired actions in the same menus, including MuJoCo plugin panel
+  toggles, script creation/opening, model export, server connect/deploy, issue
+  reporting, tutorials, and About
 
 The remaining problem is command coherence:
 
