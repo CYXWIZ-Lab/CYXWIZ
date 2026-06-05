@@ -1,7 +1,7 @@
 # To Fix 16 - Deferred Model Performance And Loader Throughput
 
 **Created:** 2026-06-04
-**Source:** Follow-up work split out from `tofix1.md` Priority 5 after
+**Source:** Follow-up work split out from `done1.md` Priority 5 after
 GRU, TransformerEncoder, LSTM baseline, and explicit `num_workers`
 contract work were completed.
 

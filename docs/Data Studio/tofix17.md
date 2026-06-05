@@ -1,7 +1,7 @@
 # To Fix 17 - GPU Execution And CPU Fallback
 
 **Created:** 2026-06-04
-**Source:** Follow-up work split out from `tofix1.md` while completing
+**Source:** Follow-up work split out from `done1.md` while completing
 Priority 6 graph-runtime tensor work. The immediate trigger was
 `TensorDot`, but the issue is broader: many tensor/model paths are
 correct and testable first, then should become ArrayFire/GPU-backed only
@@ -26,7 +26,7 @@ implementation in `Tensor::Dot` uses host loops over `Tensor::Data<T>()`.
 That makes the operation correct and trainable, but not GPU-first.
 
 This is likely true for other tensor groups completed under
-`tofix1.md` Priority 6 as well. Some older backend modules already use
+`done1.md` Priority 6 as well. Some older backend modules already use
 ArrayFire directly, while newer tensor primitive work may be CPU-backed
 for clarity and contract safety.
 
@@ -35,7 +35,7 @@ for clarity and contract safety.
 **Goal:** audit which tensor/model/data operations are truly GPU-backed,
 CPU-backed, or mixed.
 
-**Scope candidates from `tofix1.md`:**
+**Scope candidates from `done1.md`:**
 - tensor shape/index: reshape, view, squeeze, unsqueeze, permute,
   broadcast, expand, index select,
 - tensor unary/scalar math: abs, exp, log, sqrt, pow, clip, sign,

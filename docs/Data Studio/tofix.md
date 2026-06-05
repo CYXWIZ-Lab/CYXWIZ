@@ -6,16 +6,17 @@ This file used to hold the large Phase 0-4 issue log and completed work
 history. It grew past a useful active-backlog size, so the remaining
 pending items were migrated into:
 
-- `docs/Data Studio/tofix1.md`
+- `docs/Data Studio/done1.md`
 
-Use `tofix1.md` for active work. Do not append new pending items here.
+Use the next active `tofixN.md` file for active work. Do not append new
+pending items here.
 
 ## Migration Boundary
 
 The sweet spot for backlog management is:
 
 - `tofix.md` stays closed as the archive/index.
-- `tofix1.md` contains only active pending work.
+- `done1.md` and `done2.md` are closed archives.
 - Each `tofixN.md` should stay small enough to audit in one pass.
 - Completed implementation details belong in commits, tests, and focused
   design docs, not in an ever-growing active backlog.
@@ -34,4 +35,6 @@ history before this migration. The most important closed themes were:
 - Phase 4 time-series/operator framework work,
 - initial Text Fix B frontend/backend activation slices.
 
-Current pending work starts in `tofix1.md`.
+Closed follow-up work from this archive is now in `done1.md` and
+`done2.md`. Current pending work should use the next active `tofixN.md`
+file instead of reopening closed `doneN.md` archives.

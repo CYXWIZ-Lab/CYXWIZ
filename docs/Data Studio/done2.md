@@ -1,4 +1,4 @@
-# To Fix 2 - CyxWiz Backend Review for Engineering Pickup
+# Done 2 - CyxWiz Backend Review for Engineering Pickup
 
 **Status:** DONE / CLOSED on 2026-06-05.
 
@@ -15,7 +15,7 @@ record for the 2026-06-05 backend cleanup/fallback/modularity pass.
 
 ## Closure Boundary
 
-The completed `tofix2.md` pass covered:
+The completed `done2.md` pass covered:
 
 - stale public/backend API cleanup,
 - Tensor/C API correctness and tests,

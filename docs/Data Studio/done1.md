@@ -1,4 +1,4 @@
-# To Fix 1 - Closed Active Backlog
+# Done 1 - Closed Active Backlog
 
 **Status:** DONE / CLOSED on 2026-06-05 for the main engine graph,
 backend, and frontend contract scope.
@@ -9,7 +9,7 @@ open:
 - Data Studio `PipelineCanvas` placeholder cleanup:
   `docs/Data Studio/tofix18.md`
 - backend architecture/performance/GPU follow-ups:
-  `docs/Data Studio/tofix2.md`, `tofix16.md`, and `tofix17.md`
+  `docs/Data Studio/done2.md`, `tofix16.md`, and `tofix17.md`
 
 Migrated from the oversized `tofix.md` on 2026-06-03. Keep this file
 small and current: active work only, grouped by priority. Completed
@@ -20,7 +20,7 @@ to the archive when the next `tofixN.md` file is opened.
 
 - `tofix.md` is closed. Do not append new work there.
 - Keep active backlog files below roughly 300-500 lines.
-- When this file gets too large, open `tofix2.md` for new pending work
+- When this file gets too large, open the next active `tofixN.md` file
   and mark this file closed with a short summary.
 - Preserve details in commits and implementation docs; backlog entries
   should say what remains, why it matters, and the next verification.
@@ -868,7 +868,7 @@ falling through to `Dense`. Separate Data Studio `PipelineCanvas`
 TSWindow/TSFeatures placeholders still use their older internal names;
 that deferred cleanup has moved to `docs/Data Studio/tofix18.md`.
 
-**Final status 2026-06-05:** `tofix1.md` is closed. Priorities 1-8 are
+**Final status 2026-06-05:** `done1.md` is closed. Priorities 1-8 are
 complete for the current main graph/training scope. Do not append new
 active work here; open or update a focused follow-up file instead.
 

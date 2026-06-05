@@ -1,14 +1,14 @@
 # To Fix 18 - Deferred Data Studio Pipeline Canvas Cleanup
 
 **Created:** 2026-06-05
-**Source:** Follow-up split out while closing `tofix1.md` Priority 8.
+**Source:** Follow-up split out while closing `done1.md` Priority 8.
 
 ## Boundary
 
 This file tracks Data Studio `PipelineCanvas` cleanup that is not part of
 the current main graph/training path.
 
-Do not mix this work back into `tofix1.md`. `tofix1.md` is closed for the
+Do not mix this work back into `done1.md`. `done1.md` is closed for the
 main engine graph, backend, and frontend contract work. Only promote an
 item from this file when the Data Studio pipeline canvas is actively used
 to create or execute training graphs again.
