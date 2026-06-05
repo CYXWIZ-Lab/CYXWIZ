@@ -345,7 +345,7 @@ Fix applied:
 ### 7. `DataInputDialog` is powerful but overgrown
 
 **Severity:** High
-**Status:** Partially fixed on 2026-06-06
+**Status:** Fixed on 2026-06-06
 
 Relevant file:
 
@@ -376,9 +376,9 @@ That capability is good. The implementation and UX are overloaded.
 - easier to regress persisted state
 - users face a dialog that does too much in one place
 
-Audit result: this issue is still real. The dialog already had a small cluster
-of source/category capability helpers near the bottom of the file, which made
-for a safe first behavior-preserving extraction.
+Audit result: this issue was still real after earlier Data Input fixes. The
+dialog had pure metadata, capability, detection, preview parsing, and label
+distribution logic embedded beside rendering and async apply code.
 
 Fix applied:
 
@@ -386,8 +386,18 @@ Fix applied:
 - moved source-type enum ownership, apply support checks, preview support
   checks, unsupported-status messages, preview-unavailable messages, and byte
   formatting into the helper
-- kept `DataInputDialog` methods as thin wrappers so existing render/apply
-  code paths and user-visible behavior stay unchanged
+- moved file/source parameter mapping, file type/category detection, source
+  labels, apply-path summaries, backend labels, and dataset-name generation
+  into the same helper
+- added `gui/data_input_preview.{h,cpp}` for preview table parsing and label
+  distribution calculation
+- kept `DataInputDialog` methods as thin wrappers around the extracted helpers
+  so existing render/apply code paths and user-visible behavior stay unchanged
+
+Follow-up boundary left intentionally narrow: the dialog still owns ImGui
+rendering and async apply orchestration, but the non-UI metadata/model logic is
+now outside the monolithic file. Future modality-specific UI components can be
+added without redoing this core split.
 
 **Recommendation:**
 

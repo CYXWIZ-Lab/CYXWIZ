@@ -20,6 +20,7 @@
 #include "loaders/image_loader.h"
 #include "loaders/tabular_loader.h"
 #include "loaders/text_loader.h"
+#include "data_input_preview.h"
 #include "../core/data_registry.h"
 #include "../core/formats/audio_dataset.h"
 #include "../core/formats/text_dataset.h"
@@ -51,11 +52,9 @@ DataInputDialog::DataInputDialog(MLNode* node)
     if (node_) {
         // Restore from parameters
         if (node_->parameters.count("source_type")) {
-            std::string st = node_->parameters["source_type"];
-            if (st == "file") source_type_ = SourceType::File;
-            else if (st == "ml_dataset") source_type_ = SourceType::MLDataset;
-            else if (st == "database") source_type_ = SourceType::Database;
-            else if (st == "cloud") source_type_ = SourceType::Cloud;
+            source_type_ = data_input::SourceTypeFromParam(
+                node_->parameters["source_type"],
+                source_type_);
         }
         if (node_->parameters.count("file_path")) {
             strncpy(file_path_, node_->parameters["file_path"].c_str(), sizeof(file_path_) - 1);
@@ -113,13 +112,9 @@ DataInputDialog::DataInputDialog(MLNode* node)
         // reopening would silently fall through to the image branch on the
         // next Apply. Reading it back from params fixes the regression.
         if (node_->parameters.count("file_category")) {
-            const std::string& cat = node_->parameters["file_category"];
-            if (cat == "tabular") file_category_ = FileCategory::Tabular;
-            else if (cat == "image") file_category_ = FileCategory::Image;
-            else if (cat == "audio") file_category_ = FileCategory::Audio;
-            else if (cat == "video") file_category_ = FileCategory::Video;
-            else if (cat == "text") file_category_ = FileCategory::Text;
-            else if (cat == "timeseries") file_category_ = FileCategory::TimeSeries;
+            file_category_ = data_input::FileCategoryFromParam(
+                node_->parameters["file_category"],
+                file_category_);
         }
 
         // Restore text dialog state. Without this, picking Text, filling
@@ -258,13 +253,8 @@ DataInputDialog::DataInputDialog(MLNode* node)
 void DataInputDialog::Apply() {
     if (!node_) return;
 
-    // Source type
-    const char* source_types[] = {"file", "ml_dataset", "database", "cloud"};
-    node_->parameters["source_type"] = source_types[static_cast<int>(source_type_)];
-
-    // File category
-    const char* categories[] = {"tabular", "image", "audio", "video", "text", "timeseries"};
-    node_->parameters["file_category"] = categories[static_cast<int>(file_category_)];
+    node_->parameters["source_type"] = data_input::SourceTypeParam(source_type_);
+    node_->parameters["file_category"] = data_input::FileCategoryParam(file_category_);
 
     // Prune stale per-category params when the user switched category
     // since the last Apply. Without this, switching Tabular → Image
@@ -316,8 +306,7 @@ void DataInputDialog::Apply() {
 
     // Source-specific parameters
     if (source_type_ == SourceType::File) {
-        const char* types[] = {"auto", "csv", "tsv", "json", "parquet", "excel", "hdf5", "feather", "arrow", "txt", "arff"};
-        node_->parameters["type"] = types[detected_type_];
+        node_->parameters["type"] = data_input::FileTypeParam(detected_type_);
         node_->parameters["has_header"] = has_header_ ? "true" : "false";
         node_->parameters["delimiter"] = custom_delimiter_;
         node_->parameters["skip_rows"] = std::to_string(skip_rows_);
@@ -384,8 +373,7 @@ void DataInputDialog::Apply() {
         }
     }
     else if (source_type_ == SourceType::MLDataset) {
-        const char* ml_types[] = {"mnist", "cifar10", "cifar100", "fashion_mnist", "imagenet", "image_folder", "huggingface", "kaggle", "custom"};
-        node_->parameters["ml_dataset_type"] = ml_types[static_cast<int>(ml_dataset_type_)];
+        node_->parameters["ml_dataset_type"] = data_input::MLDatasetTypeParam(ml_dataset_type_);
         node_->parameters["dataset_name"] = dataset_name_;
         node_->parameters["dataset_subset"] = dataset_subset_;
         node_->parameters["cache_dir"] = cache_dir_;
@@ -399,8 +387,7 @@ void DataInputDialog::Apply() {
         node_->description = std::string("Loading ") + dataset_name_;
     }
     else if (source_type_ == SourceType::Database) {
-        const char* db_types[] = {"sqlite", "postgresql", "mysql", "duckdb"};
-        node_->parameters["database_type"] = db_types[static_cast<int>(database_type_)];
+        node_->parameters["database_type"] = data_input::DatabaseTypeParam(database_type_);
         node_->parameters["db_host"] = db_host_;
         node_->parameters["db_port"] = std::to_string(db_port_);
         node_->parameters["db_name"] = db_name_;
@@ -3035,84 +3022,15 @@ void DataInputDialog::RenderAudioPreview() {
 // ==================== Helper Functions ====================
 
 const char* DataInputDialog::GetFileTypeName() const {
-    const char* names[] = {"Auto", "CSV", "TSV", "JSON", "Parquet", "Excel", "HDF5", "Feather", "Arrow", "TXT", "ARFF"};
-    if (detected_type_ >= 0 && detected_type_ < 11) {
-        return names[detected_type_];
-    }
-    return "Unknown";
+    return data_input::FileTypeName(detected_type_);
 }
 
 void DataInputDialog::DetectFileType() {
-    std::string path(file_path_);
-    if (path.empty()) {
-        detected_type_ = 0;
-        return;
-    }
-
-    // Get file size
-    try {
-        file_size_ = static_cast<size_t>(fs::file_size(path));
-    } catch (...) {
-        file_size_ = 0;
-    }
-
-    // Detect by extension
-    std::string ext;
-    size_t dot = path.rfind('.');
-    if (dot != std::string::npos) {
-        ext = path.substr(dot + 1);
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    }
-
-    if (ext == "csv") detected_type_ = 1;
-    else if (ext == "tsv" || ext == "tab") detected_type_ = 2;
-    else if (ext == "json" || ext == "jsonl") detected_type_ = 3;
-    else if (ext == "parquet" || ext == "pq") detected_type_ = 4;
-    else if (ext == "xlsx" || ext == "xls") detected_type_ = 5;
-    else if (ext == "h5" || ext == "hdf5" || ext == "hdf") detected_type_ = 6;
-    else if (ext == "feather" || ext == "fea") detected_type_ = 7;
-    else if (ext == "arrow" || ext == "ipc") detected_type_ = 8;
-    else if (ext == "txt") detected_type_ = 9;
-    else if (ext == "arff") detected_type_ = 10;
-    else detected_type_ = 0;
+    detected_type_ = data_input::DetectFileTypeForPath(file_path_, &file_size_);
 }
 
 void DataInputDialog::DetectFileCategory() {
-    std::string path(file_path_);
-    if (path.empty()) return;
-
-    std::string ext;
-    size_t dot = path.rfind('.');
-    if (dot != std::string::npos) {
-        ext = path.substr(dot + 1);
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    }
-
-    // Image extensions
-    if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "bmp" ||
-        ext == "gif" || ext == "tiff" || ext == "webp") {
-        file_category_ = FileCategory::Image;
-    }
-    // Audio extensions
-    else if (ext == "wav" || ext == "mp3" || ext == "flac" || ext == "ogg" ||
-             ext == "m4a" || ext == "aac") {
-        file_category_ = FileCategory::Audio;
-    }
-    // Video extensions
-    else if (ext == "mp4" || ext == "avi" || ext == "mov" || ext == "mkv" ||
-             ext == "webm" || ext == "wmv") {
-        file_category_ = FileCategory::Video;
-    }
-    // Default to tabular — but preserve Text and TimeSeries selections made
-    // by the user before picking the file. Both are built on top of the
-    // tabular loader; clobbering them back to Tabular after the user clicks
-    // Browse would silently lose an explicit category choice.
-    else {
-        if (file_category_ != FileCategory::Text &&
-            file_category_ != FileCategory::TimeSeries) {
-            file_category_ = FileCategory::Tabular;
-        }
-    }
+    file_category_ = data_input::DetectFileCategoryForPath(file_path_, file_category_);
 }
 
 void DataInputDialog::RenderTextPreview() {
@@ -3279,42 +3197,13 @@ void DataInputDialog::LoadPreview() {
 }
 
 void DataInputDialog::UpdateTextLabelDistribution() {
-    label_distribution_.clear();
-    label_distribution_column_.clear();
-    label_distribution_total_ = 0;
-
-    std::string label_col(text_label_column_);
-    if (label_col.empty() || preview_columns_.empty() || preview_data_.empty()) {
-        return;
-    }
-
-    int label_idx = -1;
-    for (int i = 0; i < static_cast<int>(preview_columns_.size()); ++i) {
-        if (preview_columns_[i] == label_col) {
-            label_idx = i;
-            break;
-        }
-    }
-    if (label_idx < 0) {
-        return;
-    }
-
-    std::map<std::string, size_t> counts;
-    for (const auto& row : preview_data_) {
-        if (label_idx >= static_cast<int>(row.size())) continue;
-        std::string value = row[label_idx];
-        if (value.empty()) value = "(empty)";
-        counts[value]++;
-        label_distribution_total_++;
-    }
-
-    label_distribution_.assign(counts.begin(), counts.end());
-    std::sort(label_distribution_.begin(), label_distribution_.end(),
-              [](const auto& a, const auto& b) {
-                  if (a.second != b.second) return a.second > b.second;
-                  return a.first < b.first;
-              });
-    label_distribution_column_ = label_col;
+    const auto distribution = data_input::ComputeLabelDistribution(
+        preview_columns_,
+        preview_data_,
+        text_label_column_);
+    label_distribution_ = distribution.values;
+    label_distribution_column_ = distribution.column;
+    label_distribution_total_ = distribution.total;
 }
 
 void DataInputDialog::RenderTextLabelDistribution() {
@@ -3355,53 +3244,24 @@ void DataInputDialog::RenderTextLabelDistribution() {
 }
 
 void DataInputDialog::LoadColumnList() {
-    std::string path(file_path_);
-    if (path.empty()) return;
-
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        preview_error_ = "Cannot open file";
+    if (strlen(file_path_) == 0) {
         return;
     }
 
-    char delim = custom_delimiter_[0];
-    if (delim == '\0') delim = ',';
-    if (detected_type_ == 2) delim = '\t';
-
-    std::string line;
-    int line_count = 0;
-
-    while (std::getline(file, line) && line_count < 25) {
-        std::vector<std::string> cells;
-        std::stringstream ss(line);
-        std::string cell;
-
-        while (std::getline(ss, cell, delim)) {
-            // Trim whitespace and quotes
-            size_t start = cell.find_first_not_of(" \t\r\n\"");
-            size_t end = cell.find_last_not_of(" \t\r\n\"");
-            if (start != std::string::npos && end != std::string::npos) {
-                cell = cell.substr(start, end - start + 1);
-            }
-            cells.push_back(cell);
-        }
-
-        if (line_count == 0 && has_header_) {
-            preview_columns_ = cells;
-            available_columns_ = cells;
-            selected_columns_.resize(cells.size(), true);
-        } else {
-            preview_data_.push_back(cells);
-            if (!has_header_ && line_count == 0) {
-                for (size_t i = 0; i < cells.size(); i++) {
-                    preview_columns_.push_back("Column" + std::to_string(i + 1));
-                    available_columns_.push_back("Column" + std::to_string(i + 1));
-                }
-                selected_columns_.resize(cells.size(), true);
-            }
-        }
-        line_count++;
+    const auto table = data_input::LoadDelimitedPreview(
+        file_path_,
+        has_header_,
+        custom_delimiter_[0],
+        detected_type_);
+    if (!table.error.empty()) {
+        preview_error_ = table.error;
+        return;
     }
+
+    preview_columns_ = table.columns;
+    available_columns_ = table.columns;
+    preview_data_ = table.rows;
+    selected_columns_.assign(table.columns.size(), true);
 
     UpdateTextLabelDistribution();
 }
@@ -3519,11 +3379,7 @@ void DataInputDialog::BrowseFolder() {
 
 std::string DataInputDialog::CurrentSourcePath() const {
     if (source_type_ == SourceType::File) {
-        const bool uses_folder =
-            file_category_ == FileCategory::Image ||
-            file_category_ == FileCategory::Audio ||
-            (file_category_ == FileCategory::Text &&
-             text_layout_ == TextLayout::CorpusSubdirs);
+        const bool uses_folder = data_input::UsesFolderPath(file_category_, text_layout_);
         return uses_folder ? std::string(folder_path_) : std::string(file_path_);
     }
     if (source_type_ == SourceType::MLDataset) {
@@ -3546,81 +3402,21 @@ std::string DataInputDialog::CurrentSourcePath() const {
 }
 
 std::string DataInputDialog::CurrentSourceLabel() const {
-    if (source_type_ == SourceType::File) {
-        switch (file_category_) {
-            case FileCategory::Tabular:    return "Tabular file";
-            case FileCategory::Image:      return "Image folder";
-            case FileCategory::Audio:      return "Audio folder";
-            case FileCategory::Video:      return "Video file (planned)";
-            case FileCategory::Text:       return text_layout_ == TextLayout::CorpusSubdirs
-                                               ? "Text corpus folder"
-                                               : "Text file";
-            case FileCategory::TimeSeries: return "Time series file";
-        }
-    }
-    if (source_type_ == SourceType::MLDataset) return "ML dataset (planned)";
-    if (source_type_ == SourceType::Database) return "Database (planned)";
-    if (source_type_ == SourceType::Cloud) return "Cloud storage (planned)";
-    return "Unknown";
+    return data_input::CurrentSourceLabel(source_type_, file_category_, text_layout_);
 }
 
 std::string DataInputDialog::CurrentApplySummary() const {
-    if (!IsApplySupported()) {
-        return UnsupportedApplyMessage();
-    }
-
-    std::string summary;
-    switch (file_category_) {
-        case FileCategory::Tabular:
-            summary = "load the selected file into DataRegistry as tabular data";
-            break;
-        case FileCategory::TimeSeries:
-            summary = "load the selected file through the tabular loader and mark it as time series";
-            break;
-        case FileCategory::Image:
-            summary = "scan the selected folder and register a lazy image dataset";
-            break;
-        case FileCategory::Audio:
-            summary = "scan the selected folder and register a lazy audio dataset";
-            break;
-        case FileCategory::Text:
-            summary = text_layout_ == TextLayout::CorpusSubdirs
-                ? "scan the corpus folder, tokenize text, and build vocabulary"
-                : "load the selected text file, tokenize text, and build vocabulary";
-            break;
-        case FileCategory::Video:
-            summary = UnsupportedApplyMessage();
-            break;
-    }
-
-    if (force_disk_backed_ &&
-        (file_category_ == FileCategory::Tabular ||
-         file_category_ == FileCategory::TimeSeries)) {
-        summary += " using the forced Parquet cache path";
-    }
-    if (max_rows_ > 0 &&
-        (file_category_ == FileCategory::Tabular ||
-         file_category_ == FileCategory::TimeSeries)) {
-        summary += " with a row limit of " + std::to_string(max_rows_);
-    }
-    if (skip_rows_ > 0 &&
-        (file_category_ == FileCategory::Tabular ||
-         file_category_ == FileCategory::TimeSeries)) {
-        summary += " after skipping " + std::to_string(skip_rows_) + " rows";
-    }
-    summary += ".";
-    return summary;
+    return data_input::CurrentApplySummary(
+        source_type_,
+        file_category_,
+        text_layout_,
+        force_disk_backed_,
+        max_rows_,
+        skip_rows_);
 }
 
 const char* DataInputDialog::BackendSummary() const {
-    switch (loaded_backend_) {
-        case 1: return "Arrow in-memory";
-        case 2: return "Parquet disk-backed";
-        case 3: return "Image folder lazy loader";
-        case 4: return "Audio folder lazy loader";
-        case 5: return "Text lazy loader";
-        default: return "Not loaded";
-    }
+    return data_input::BackendSummary(loaded_backend_);
 }
 
 bool DataInputDialog::IsApplySupported() const {
@@ -3658,37 +3454,13 @@ std::string DataInputDialog::FormatBytes(size_t bytes) {
 }
 
 std::string DataInputDialog::GenerateDatasetName() const {
-    // Generate a unique dataset name based on source
-    std::string name;
-
-    if (source_type_ == SourceType::File) {
-        if (strlen(file_path_) > 0) {
-            fs::path p(file_path_);
-            name = p.stem().string();
-        } else if (strlen(folder_path_) > 0) {
-            fs::path p(folder_path_);
-            name = p.filename().string();
-        }
-    } else if (source_type_ == SourceType::MLDataset) {
-        name = dataset_name_;
-    } else if (source_type_ == SourceType::Database) {
-        name = std::string("db_") + db_name_;
-    } else if (source_type_ == SourceType::Cloud) {
-        name = std::string("cloud_") + cloud_bucket_;
-    }
-
-    // Sanitize: replace spaces and special chars
-    for (char& c : name) {
-        if (!isalnum(c) && c != '_' && c != '-') {
-            c = '_';
-        }
-    }
-
-    if (name.empty()) {
-        name = "dataset";
-    }
-
-    return name;
+    return data_input::GenerateDatasetName(
+        source_type_,
+        file_path_,
+        folder_path_,
+        dataset_name_,
+        db_name_,
+        cloud_bucket_);
 }
 
 void DataInputDialog::RenderDataProfilingTab() {

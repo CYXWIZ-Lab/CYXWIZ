@@ -194,27 +194,17 @@ protected:
 private:
     // Data source types
     using SourceType = gui::data_input::SourceType;
+    using MLDatasetType = gui::data_input::MLDatasetType;
+    using DatabaseType = gui::data_input::DatabaseType;
+    using ImageLayout = gui::data_input::ImageLayout;
+    using AudioLayout = gui::data_input::AudioLayout;
+    using TextLayout = gui::data_input::TextLayout;
 
     // FileCategory lives in cyxwiz::loaders now so the dialog and the
     // loader module share a single definition. Aliased here so existing
     // unqualified `FileCategory::Tabular` usages throughout the dialog
     // .cpp keep compiling unchanged.
     using FileCategory = cyxwiz::loaders::FileCategory;
-
-    enum class MLDatasetType { MNIST, CIFAR10, CIFAR100, FashionMNIST, ImageNet, ImageFolder, HuggingFace, Kaggle, Custom };
-    enum class DatabaseType { SQLite, PostgreSQL, MySQL, DuckDB };
-
-    // Image dataset layout strategy. Picks which loader the Apply path
-    // dispatches to. Added in Phase 0 to replace the broken auto-detect
-    // with an explicit user choice. Phase 1 extends this enum with
-    // Unlabeled / COCO / YOLO / JSONLabels / HDF5Labels etc. by adding
-    // entries to the table in data_input_dialog.cpp — no dialog code
-    // changes needed per new layout.
-    enum class ImageLayout {
-        ClassSubdirs = 0,   // root/class1/*.jpg, root/class2/*.jpg (ImageNet-style)
-        FlatWithCSV  = 1,   // root/*.jpg + labels.csv mapping filename -> label
-        // Phase 1+: Unlabeled, COCO, YOLO, JSONLabels, HDF5Labels, ...
-    };
 
     // Main tab renderers
     void RenderSourceSelector();
@@ -327,14 +317,6 @@ private:
     int text_min_freq_ = 1;
     int text_max_vocab_size_ = -1;  // -1 = unlimited
 
-    // Audio layout — mirrors ImageLayout. ClassSubdirs walks
-    // folder/<class>/*.wav. FlatWithCSV reads labels from a CSV with
-    // user-pickable filename + label columns (auto-detected by header
-    // name when those fields are blank).
-    enum class AudioLayout {
-        ClassSubdirs = 0,
-        FlatWithCSV  = 1,
-    };
     AudioLayout audio_layout_ = AudioLayout::ClassSubdirs;
 
     // Text layout — analogous to ImageLayout/AudioLayout, but with
@@ -345,10 +327,6 @@ private:
     // TextDataset class auto-detects file vs directory at construction
     // time, so the dispatch is purely a dialog-level choice about
     // which picker to show.
-    enum class TextLayout {
-        SingleFile    = 0,  // CSV / TSV / JSON / JSONL / TXT
-        CorpusSubdirs = 1,  // folder/<class>/*.txt — ImageNet-for-text
-    };
     TextLayout text_layout_ = TextLayout::SingleFile;
     char audio_labels_csv_[512] = {};
     char audio_filename_col_[64] = {};   // empty = auto-detect
