@@ -16,14 +16,10 @@ extern "C" {
 #include <stdbool.h>
 
 // Platform-specific exports
-#ifdef _WIN32
-    #ifdef CYXWIZ_BACKEND_EXPORTS
-        #define CYXWIZ_C_API __declspec(dllexport)
-    #else
-        #define CYXWIZ_C_API __declspec(dllimport)
-    #endif
-#else
-    #define CYXWIZ_C_API __attribute__((visibility("default")))
+#include "api_export.h"
+
+#ifndef CYXWIZ_C_API
+    #define CYXWIZ_C_API CYXWIZ_API
 #endif
 
 // Opaque handles

@@ -1,5 +1,6 @@
 #include "cyxwiz/cyxwiz_c.h"
 #include "cyxwiz/cyxwiz.h"
+#include "cyxwiz/linear_algebra.h"
 #include <string>
 #include <cstring>
 
@@ -220,10 +221,31 @@ CyxWizTensor* cyxwiz_tensor_div(const CyxWizTensor* a, const CyxWizTensor* b) {
     }
 }
 
-CyxWizTensor* cyxwiz_tensor_matmul(const CyxWizTensor* /*a*/, const CyxWizTensor* /*b*/) {
-    // TODO: Implement matrix multiplication
-    SetLastError("Matrix multiplication not yet implemented");
-    return nullptr;
+CyxWizTensor* cyxwiz_tensor_matmul(const CyxWizTensor* a, const CyxWizTensor* b) {
+    try {
+        if (!a || !b) {
+            SetLastError("Null tensor pointer");
+            return nullptr;
+        }
+
+        auto result = cyxwiz::LinearAlgebra::Multiply(
+            *reinterpret_cast<const cyxwiz::Tensor*>(a),
+            *reinterpret_cast<const cyxwiz::Tensor*>(b)
+        );
+        if (!result.success) {
+            SetLastError(result.error_message.empty()
+                ? "Matrix multiplication failed"
+                : result.error_message);
+            return nullptr;
+        }
+
+        return reinterpret_cast<CyxWizTensor*>(
+            new cyxwiz::Tensor(std::move(result.tensor))
+        );
+    } catch (const std::exception& e) {
+        SetLastError(e.what());
+        return nullptr;
+    }
 }
 
 // Optimizer

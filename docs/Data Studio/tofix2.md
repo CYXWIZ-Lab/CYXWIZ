@@ -24,6 +24,59 @@ The backend contains a lot of working functionality, but it behaves
 more like a set of individually landed subsystems than a single clean
 compute library.
 
+### Current Audit Checkpoint - 2026-06-05
+
+This backlog has been re-audited against the current backend after the
+recent Tensor/runtime work. Several original findings are now stale or
+partially addressed:
+
+- `MemoryManager` now tracks allocation sizes and decrements live bytes
+  on `Deallocate()`, so the old "never decrements" finding is no longer
+  current.
+- `Tensor` now has cached ArrayFire state plus host/device dirty flags;
+  `GetArray()` no longer blindly creates a fresh device array on every
+  call when cached native device state is current.
+- `SetFromArray()` keeps device data resident until host data is
+  requested, so optimizer/layer `SetFromArray()` calls are not the same
+  immediate CPU materialization bug described in the original review.
+- The raw `new af::array` leak pattern was not found in the current
+  Tensor operator implementation.
+
+Confirmed active issues for the first implementation slice were:
+
+- `cyxwiz_tensor_matmul()` is public in the C API but still returns "not
+  yet implemented".
+- `src/core/device_1.cpp` is an accidental build-command artifact and
+  should be removed from the source tree.
+- Two different `cyxwiz::DataLoader` classes still exist in separate
+  headers; this needs a compatibility migration, not a quick rename.
+- Tensor CPU random generation still uses raw `rand()` in the fallback
+  path.
+- CPU fallback policy remains inconsistent and should be audited
+  operation group by operation group.
+
+Implementation order should favor small, verified fixes first:
+
+1. Clean stale/artifact files and public API honesty issues.
+2. Add focused tests around repaired public surfaces.
+3. Document or defer compatibility-breaking architecture migrations.
+4. Only then start broader naming, fallback, and performance refactors.
+
+First slice status:
+
+- Completed: removed `src/core/device_1.cpp`.
+- Completed: implemented `cyxwiz_tensor_matmul()` through the existing
+  tensor-first `LinearAlgebra::Multiply()` path.
+- Completed: added focused C API coverage for successful matmul and
+  invalid-shape error reporting.
+- Completed: fixed the tensor-first ArrayFire matmul path to use the
+  row-major Tensor/ArrayFire adapters instead of interpreting row-major
+  tensor memory as native ArrayFire layout.
+- Completed: aligned the C API export macro with the generated backend
+  export macro, removing the C API DLL-linkage warning storm.
+- Verified: `cyxwiz-tests.exe "[c_api]"` and `cyxwiz-tests.exe
+  "[tensor]"` pass.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -179,10 +232,18 @@ tracking remains part of the public surface.
 
 **Severity:** High
 
+**Status 2026-06-05:** Partially fixed. `cyxwiz_tensor_matmul()` now
+routes through `LinearAlgebra::Multiply(const Tensor&, const Tensor&)`
+and has focused C API tests for success and invalid-shape error
+reporting. Remaining work in this item is the broader public API audit:
+unsupported APIs must be implemented, removed, or explicitly marked
+deferred.
+
 Examples:
 
 - `Tensor::ToDevice(Device*)` / `Tensor::ToCPU()` were removed from the public Tensor API
-- C API `cyxwiz_tensor_matmul()` returns "not yet implemented"
+- C API `cyxwiz_tensor_matmul()` returned "not yet implemented" before
+  the 2026-06-05 first-slice fix
 - `engine.h` is effectively empty
 
 This creates a mismatch between:
@@ -428,6 +489,10 @@ Example for `layer.cpp`:
 ### 14. Repository hygiene issue: stray `device_1.cpp`
 
 **Severity:** Medium
+
+**Status 2026-06-05:** Fixed. The stray `src/core/device_1.cpp` build
+artifact was removed after confirming it was not part of the CMake
+backend source list.
 
 `src/core/device_1.cpp` appears to contain build-command garbage rather
 than valid source.

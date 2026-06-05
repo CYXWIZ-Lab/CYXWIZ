@@ -5,6 +5,7 @@ find_package(Catch2 CONFIG REQUIRED)
 # Unit tests
 add_executable(cyxwiz-tests
     unit/test_tensor.cpp
+    unit/test_c_api.cpp
     unit/test_activations.cpp
     unit/test_device.cpp
     unit/test_optimizer.cpp

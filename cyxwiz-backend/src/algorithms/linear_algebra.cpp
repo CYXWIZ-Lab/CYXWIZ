@@ -793,6 +793,8 @@ EigenResult LinearAlgebra::Eigen(const std::vector<std::vector<double>>& A) {
 }
 
 SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool full_matrices) {
+    (void)full_matrices;
+
     SVDResult result;
 
     if (A.empty()) {
@@ -1415,10 +1417,8 @@ TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
         return result;
     }
 
-    const size_t rowsA = shapeA[0];
     const size_t colsA = shapeA[1];
     const size_t rowsB = shapeB[0];
-    const size_t colsB = shapeB[1];
     if (colsA != rowsB) {
         result.error_message = "Matrix A columns must equal Matrix B rows for multiplication";
         return result;
@@ -1426,8 +1426,8 @@ TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array aA = A.GetArray();
-        af::array aB = B.GetArray();
+        af::array aA = A.GetArrayRowMajor2D();
+        af::array aB = B.GetArrayRowMajor2D();
         if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
             aA = aA.as(af::dtype::f64);
         }
@@ -1436,7 +1436,7 @@ TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
         }
 
         af::array aC = af::matmul(aA, aB);
-        result.tensor = AfArrayToTensorWithShape(aC, {rowsA, colsB});
+        result.tensor = Tensor::FromArrayRowMajor2D(aC);
         result.success = true;
         return result;
     } catch (const af::exception& e) {
