@@ -1991,21 +1991,7 @@ void ToolbarPanel::Render() {
                     preferences_tab_ = 4;
                     ImGui::Spacing();
 
-                    // Python settings moved to dedicated panel
-                    ImGui::TextWrapped("Python settings have been moved to Edit > Settings > Python");
-                    ImGui::Spacing();
-                    if (ImGui::Button("Open Python Settings")) {
-                        // TODO: Open Python settings panel
-                        spdlog::info("Python settings panel not yet implemented in preferences");
-                    }
-
-                    // Restart warning
-                    if (python_settings_changed_) {
-                        ImGui::Spacing();
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
-                        ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION " Python settings will take effect after restart.");
-                        ImGui::PopStyleColor();
-                    }
+                    python_settings_panel_.Render();
 
                     ImGui::Spacing();
                     ImGui::Separator();

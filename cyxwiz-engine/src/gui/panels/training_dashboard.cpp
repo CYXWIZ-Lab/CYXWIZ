@@ -3,9 +3,25 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <numeric>
-#include <cmath>
 
 namespace cyxwiz {
+
+namespace {
+
+bool HasSupervisedMetrics(const std::vector<float>& loss,
+                          const std::vector<float>& accuracy,
+                          const std::vector<float>& throughput) {
+    return !loss.empty() || !accuracy.empty() || !throughput.empty();
+}
+
+void ClearRealtimeDataset(const std::string& plot_id) {
+    auto& plot_mgr = plotting::PlotManager::GetInstance();
+    if (plot_mgr.GetDataset(plot_id, "realtime") != nullptr) {
+        plot_mgr.RemoveDataset(plot_id, "realtime");
+    }
+}
+
+} // namespace
 
 TrainingDashboardPanel::TrainingDashboardPanel()
     : Panel("Training Dashboard", true)
@@ -32,24 +48,6 @@ TrainingDashboardPanel::TrainingDashboardPanel()
 
     // Initialize plots using PlotManager
     InitializePlots();
-
-    // Add some sample data for visualization
-    for (int i = 0; i < 50; i++) {
-        float t = i / 50.0f;
-        float loss = 2.0f * std::exp(-t * 2.0f) + 0.1f;
-        float accuracy = 1.0f - std::exp(-t * 3.0f);
-        float throughput = 1000.0f + 200.0f * std::sin(t * 6.28f);
-
-        loss_history_.push_back(loss);
-        accuracy_history_.push_back(accuracy);
-        throughput_history_.push_back(throughput);
-
-        // Update plots
-        auto& plot_mgr = plotting::PlotManager::GetInstance();
-        plot_mgr.UpdateRealtimePlot(loss_plot_id_, static_cast<double>(i), static_cast<double>(loss), "loss");
-        plot_mgr.UpdateRealtimePlot(accuracy_plot_id_, static_cast<double>(i), static_cast<double>(accuracy), "accuracy");
-        plot_mgr.UpdateRealtimePlot(throughput_plot_id_, static_cast<double>(i), static_cast<double>(throughput), "throughput");
-    }
 }
 
 void TrainingDashboardPanel::InitializePlots() {
@@ -127,6 +125,10 @@ void TrainingDashboardPanel::Render() {
     // Tabbed layout for different training modes
     if (ImGui::BeginTabBar("MetricsTabs")) {
         if (ImGui::BeginTabItem("Supervised")) {
+            const bool has_metrics = HasSupervisedMetrics(loss_history_,
+                                                          accuracy_history_,
+                                                          throughput_history_);
+
             // Chart selection
             ImGui::Checkbox("Loss", &show_loss_chart_);
             ImGui::SameLine();
@@ -138,9 +140,15 @@ void TrainingDashboardPanel::Render() {
 
             ImGui::Separator();
 
-            if (show_loss_chart_) RenderLossChart();
-            if (show_accuracy_chart_) RenderAccuracyChart();
-            if (show_throughput_chart_) RenderThroughputChart();
+            if (has_metrics) {
+                if (show_loss_chart_) RenderLossChart();
+                if (show_accuracy_chart_) RenderAccuracyChart();
+                if (show_throughput_chart_) RenderThroughputChart();
+            } else {
+                ImGui::TextDisabled("No supervised training metrics yet.");
+                ImGui::TextDisabled("Start a real training run to populate loss, accuracy, and throughput.");
+                ImGui::Spacing();
+            }
 
             RenderHyperparameters();
             ImGui::EndTabItem();
@@ -275,16 +283,21 @@ void TrainingDashboardPanel::RenderThroughputChart() {
 
 void TrainingDashboardPanel::RenderHyperparameters() {
     if (ImGui::CollapsingHeader("Hyperparameters")) {
+        if (!HasSupervisedMetrics(loss_history_, accuracy_history_, throughput_history_)) {
+            ImGui::TextDisabled("No run configuration has been reported yet.");
+            return;
+        }
+
         ImGui::Columns(2, "hyperparams", false);
 
         ImGui::Text("Batch Size");
         ImGui::NextColumn();
-        ImGui::Text("32");
+        ImGui::TextDisabled("Not reported");
         ImGui::NextColumn();
 
         ImGui::Text("Optimizer");
         ImGui::NextColumn();
-        ImGui::Text("Adam");
+        ImGui::TextDisabled("Not reported");
         ImGui::NextColumn();
 
         ImGui::Text("Learning Rate");
@@ -294,12 +307,12 @@ void TrainingDashboardPanel::RenderHyperparameters() {
 
         ImGui::Text("Weight Decay");
         ImGui::NextColumn();
-        ImGui::Text("0.0001");
+        ImGui::TextDisabled("Not reported");
         ImGui::NextColumn();
 
         ImGui::Text("Momentum");
         ImGui::NextColumn();
-        ImGui::Text("0.9");
+        ImGui::TextDisabled("Not reported");
         ImGui::NextColumn();
 
         ImGui::Columns(1);
@@ -532,6 +545,10 @@ void TrainingDashboardPanel::ResetMetrics() {
     max_loss_ = 0.0f;
     avg_loss_ = 0.0f;
     best_accuracy_ = 0.0f;
+
+    ClearRealtimeDataset(loss_plot_id_);
+    ClearRealtimeDataset(accuracy_plot_id_);
+    ClearRealtimeDataset(throughput_plot_id_);
 }
 
 void TrainingDashboardPanel::ResetRLMetrics() {
@@ -541,6 +558,7 @@ void TrainingDashboardPanel::ResetRLMetrics() {
         metric.history.clear();
         metric.current_value = 0.0f;
         metric.update_count = 0;
+        ClearRealtimeDataset(metric.plot_id);
     }
 
     is_rl_training_ = false;

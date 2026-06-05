@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "plot_window.h"
+#include "python_settings_panel.h"
 #include "auth/auth_client.h"
 #include <functional>
 #include <string>
@@ -495,6 +496,7 @@ private:
 
     // Python/Scripting preferences
     bool python_settings_changed_ = false;  // Track if restart needed
+    gui::PythonSettingsPanel python_settings_panel_;
     char python_interpreter_path_[512] = "";
     char python_startup_script_[512] = "";
     bool python_auto_import_numpy_ = true;
