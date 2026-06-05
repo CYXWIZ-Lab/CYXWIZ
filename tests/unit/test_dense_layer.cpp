@@ -178,3 +178,61 @@ TEST_CASE("GlobalAvgPool2DLayer computes forward and backward values", "[pool][l
     REQUIRE(grad_input_data[6] == Catch::Approx(0.25f));
     REQUIRE(grad_input_data[7] == Catch::Approx(0.5f));
 }
+
+TEST_CASE("Upsample2DLayer nearest computes forward and backward values", "[upsample][layer]") {
+    float input_values[] = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+    cyxwiz::Tensor input({2, 2, 1, 1}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::Upsample2DLayer upsample(2, cyxwiz::UpsampleMode::Nearest);
+
+    cyxwiz::Tensor output = upsample.Forward(input);
+    REQUIRE(output.NumElements() == 16);
+    const float* output_data = output.Data<float>();
+    const float expected_output[] = {
+        1.0f, 1.0f, 2.0f, 2.0f,
+        1.0f, 1.0f, 2.0f, 2.0f,
+        3.0f, 3.0f, 4.0f, 4.0f,
+        3.0f, 3.0f, 4.0f, 4.0f,
+    };
+    for (size_t i = 0; i < 16; ++i) {
+        REQUIRE(output_data[i] == Catch::Approx(expected_output[i]));
+    }
+
+    float grad_values[16];
+    for (float& value : grad_values) {
+        value = 1.0f;
+    }
+    cyxwiz::Tensor grad_output({4, 4, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = upsample.Backward(grad_output);
+    REQUIRE(grad_input.NumElements() == 4);
+    const float* grad_input_data = grad_input.Data<float>();
+    for (size_t i = 0; i < 4; ++i) {
+        REQUIRE(grad_input_data[i] == Catch::Approx(4.0f));
+    }
+}
+
+TEST_CASE("PixelShuffleLayer computes forward and backward values", "[pixelshuffle][layer]") {
+    float input_values[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    cyxwiz::Tensor input({1, 1, 4, 1}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::PixelShuffleLayer shuffle(2);
+
+    cyxwiz::Tensor output = shuffle.Forward(input);
+    REQUIRE(output.NumElements() == 4);
+    const float* output_data = output.Data<float>();
+    REQUIRE(output_data[0] == Catch::Approx(1.0f));
+    REQUIRE(output_data[1] == Catch::Approx(2.0f));
+    REQUIRE(output_data[2] == Catch::Approx(3.0f));
+    REQUIRE(output_data[3] == Catch::Approx(4.0f));
+
+    float grad_values[] = {10.0f, 20.0f, 30.0f, 40.0f};
+    cyxwiz::Tensor grad_output({2, 2, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = shuffle.Backward(grad_output);
+    REQUIRE(grad_input.NumElements() == 4);
+    const float* grad_input_data = grad_input.Data<float>();
+    REQUIRE(grad_input_data[0] == Catch::Approx(10.0f));
+    REQUIRE(grad_input_data[1] == Catch::Approx(20.0f));
+    REQUIRE(grad_input_data[2] == Catch::Approx(30.0f));
+    REQUIRE(grad_input_data[3] == Catch::Approx(40.0f));
+}
