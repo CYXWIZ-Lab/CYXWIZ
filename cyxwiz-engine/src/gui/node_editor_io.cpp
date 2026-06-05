@@ -146,6 +146,20 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"DataSplit", NodeType::DataSplit},
         {"Augmentation", NodeType::Augmentation},
         {"TensorReshape", NodeType::TensorReshape},
+        {"StandardScaler", NodeType::StandardScaler},
+        {"MinMaxScaler", NodeType::MinMaxScaler},
+        {"RobustScaler", NodeType::RobustScaler},
+        {"LabelEncoder", NodeType::LabelEncoder},
+        {"OrdinalEncoder", NodeType::OrdinalEncoder},
+        {"TargetEncoder", NodeType::TargetEncoder},
+        {"OutlierDetector", NodeType::OutlierDetector},
+        {"PCANode", NodeType::PCANode},
+        {"KMeansCluster", NodeType::KMeansCluster},
+        {"DBSCANCluster", NodeType::DBSCANCluster},
+        {"HierarchicalCluster", NodeType::HierarchicalCluster},
+        {"GMMCluster", NodeType::GMMCluster},
+        {"LinearRegressionNode", NodeType::LinearRegressionNode},
+        {"PolynomialRegressionNode", NodeType::PolynomialRegressionNode},
 
         // Text Preprocessing (Phase 3) — the GraphCompiler treats these
         // as config-only nodes: ExtractTextTokenizer / ExtractTextVocabulary
@@ -157,6 +171,9 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"TextTokenizer", NodeType::TextTokenizer},
         {"TextVocabulary", NodeType::TextVocabulary},
         {"TextPadding", NodeType::TextPadding},
+        {"TFIDFVectorizer", NodeType::TFIDFVectorizer},
+        {"CountVectorizer", NodeType::CountVectorizer},
+        {"SentimentAnalyzer", NodeType::SentimentAnalyzer},
 
         // Time Series Preprocessing (Phase 4) — missing from the loader
         // map previously caused cyxgraph loads to fall through to
@@ -189,7 +206,11 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"ImageRotate", NodeType::ImageRotate},
         {"ColorJitter", NodeType::ColorJitter},
         {"ImageGaussianBlur", NodeType::ImageGaussianBlur},
-        {"Grayscale", NodeType::Grayscale}
+        {"Grayscale", NodeType::Grayscale},
+
+        {"FFTNode", NodeType::FFTNode},
+        {"FilterDesigner", NodeType::FilterDesigner},
+        {"Convolution1D", NodeType::Convolution1D}
     };
 
     auto it = type_map.find(type_str);
@@ -198,6 +219,80 @@ static NodeType StringToNodeType(const std::string& type_str) {
     }
     spdlog::warn("Unknown node type '{}', defaulting to Dense", type_str);
     return NodeType::Dense;
+}
+
+static bool HasParamValue(const std::map<std::string, std::string>& params,
+                          const std::string& key) {
+    auto it = params.find(key);
+    return it != params.end() && !it->second.empty();
+}
+
+static void CopyLegacyParamIfMissing(std::map<std::string, std::string>& params,
+                                     const std::string& canonical_key,
+                                     const std::string& legacy_key,
+                                     bool prefer_legacy = false) {
+    if ((!prefer_legacy && HasParamValue(params, canonical_key)) ||
+        !HasParamValue(params, legacy_key)) {
+        return;
+    }
+    params[canonical_key] = params[legacy_key];
+}
+
+static std::string FirstCsvToken(const std::string& value) {
+    const size_t comma = value.find(',');
+    std::string token = value.substr(0, comma);
+    const size_t start = token.find_first_not_of(" \t");
+    if (start == std::string::npos) {
+        return "";
+    }
+    const size_t end = token.find_last_not_of(" \t");
+    return token.substr(start, end - start + 1);
+}
+
+static void CopyLegacyColumnIfMissing(std::map<std::string, std::string>& params,
+                                      const std::string& canonical_key,
+                                      const std::string& legacy_key,
+                                      bool prefer_legacy = false) {
+    if ((!prefer_legacy && HasParamValue(params, canonical_key)) ||
+        !HasParamValue(params, legacy_key)) {
+        return;
+    }
+    const std::string token = FirstCsvToken(params[legacy_key]);
+    if (!token.empty()) {
+        params[canonical_key] = token;
+    }
+}
+
+static void MigrateLegacyNodeParameters(NodeType type,
+                                        std::map<std::string, std::string>& params,
+                                        bool prefer_legacy = false) {
+    switch (type) {
+        case NodeType::TimeSeriesWindow:
+            CopyLegacyColumnIfMissing(params, "value_col", "target_column", prefer_legacy);
+            CopyLegacyColumnIfMissing(params, "value_col", "column", prefer_legacy);
+            CopyLegacyColumnIfMissing(params, "value_col", "columns", prefer_legacy);
+            CopyLegacyParamIfMissing(params, "input_width", "window_size", prefer_legacy);
+            CopyLegacyParamIfMissing(params, "shift", "forecast_horizon", prefer_legacy);
+            break;
+
+        case NodeType::TimeSeriesFeatures:
+            CopyLegacyColumnIfMissing(params, "value_col", "columns", prefer_legacy);
+            CopyLegacyParamIfMissing(params, "lag_values", "lag_features", prefer_legacy);
+            CopyLegacyParamIfMissing(params, "lag_values", "lag_periods", prefer_legacy);
+            CopyLegacyParamIfMissing(params, "rolling_windows", "rolling_window", prefer_legacy);
+            CopyLegacyParamIfMissing(params, "rolling_aggregations", "rolling_features", prefer_legacy);
+            break;
+
+        case NodeType::LogTransform:
+        case NodeType::Differencing:
+            CopyLegacyColumnIfMissing(params, "value_col", "column", prefer_legacy);
+            CopyLegacyColumnIfMissing(params, "value_col", "columns", prefer_legacy);
+            CopyLegacyColumnIfMissing(params, "value_col", "target_column", prefer_legacy);
+            break;
+
+        default:
+            break;
+    }
 }
 
 bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
@@ -266,6 +361,7 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
                     node.parameters[key] = param_value;
                 }
             }
+            MigrateLegacyNodeParameters(node.type, node.parameters, true);
 
             nodes_.push_back(node);
 
@@ -600,6 +696,7 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             if (node_json.contains("parameters")) {
                 node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
             }
+            MigrateLegacyNodeParameters(node.type, node.parameters);
 
             // Recreate pins based on node type using fresh pin IDs
             // Create node with fresh pin IDs
@@ -832,6 +929,7 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
             if (node_json.contains("parameters")) {
                 node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
             }
+            MigrateLegacyNodeParameters(node.type, node.parameters);
 
             // Recreate pins based on node type using fresh pin IDs
             MLNode template_node = CreateNode(node.type, node.name);

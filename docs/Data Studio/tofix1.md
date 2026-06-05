@@ -844,6 +844,20 @@ now exposes Dataset input/output pins and the canonical `value_col`,
 `lag_values`, `rolling_windows`, and `rolling_aggregations` params. The
 metadata drift guard now checks all three time-series table nodes.
 
+**2026-06-05 update:** completed the old graph compatibility audit for
+the time-series Cat-1 param rename. Graph load now migrates old
+`TimeSeriesWindow` params (`window_size`, `target_column`,
+`forecast_horizon`) into the canonical `input_width`, `value_col`, and
+`shift` keys, and old `TimeSeriesFeatures` params (`columns`,
+`lag_features`, `lag_periods`, `rolling_window`, `rolling_features`) into
+the canonical operator keys. `LogTransform` and `Differencing` also
+accept old single-column param names during graph load. String-template
+imports now know the current factory-backed Cat-1 node names instead of
+falling through to `Dense`. Separate Data Studio `PipelineCanvas`
+TSWindow/TSFeatures placeholders still use their older internal names;
+keep that as a Data Studio pipeline-canvas cleanup if that surface is
+promoted back into the main training graph path.
+
 ## Build Health Follow-Up
 
 ### Full engine Debug build duplicate DataSources case
