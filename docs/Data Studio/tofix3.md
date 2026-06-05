@@ -499,6 +499,7 @@ Fix applied:
 ### 10. Start page exists, but onboarding is still shallow
 
 **Severity:** Medium
+**Status:** Partially fixed on 2026-06-06
 
 Relevant file:
 
@@ -514,14 +515,29 @@ Current start page supports:
 - clone repository
 - continue without project
 
-But several actions are still not fully implemented:
+Previous audit found several actions that were exposed before they were fully
+implemented:
 
-- open folder TODO
-- clone repository TODO
-- create project dialog TODO
+- open folder
+- clone repository
+- create project dialog
 
 Also, the page is still project-management oriented rather than workflow
 oriented.
+
+Audit result: the start page still had clickable TODO actions for create
+project, open folder, and clone repository.
+
+Fix applied:
+
+- rendered the existing start-page create-project modal instead of setting an
+  unused flag
+- wired create-project to `ProjectManager::CreateProject`
+- added location browsing through `FileDialogs::SelectFolder`
+- changed "Open a folder" to "Open a project folder" and wired it to open a
+  `.cyxwiz` project file from the selected folder
+- marked repository cloning as planned/unavailable instead of exposing it as a
+  clickable no-op
 
 **What is missing:**
 
@@ -530,6 +546,7 @@ oriented.
 - "new tabular project / new vision project / new NLP project"
 - recent examples or guided demos
 - "resume last graph" / "continue last training session"
+- repository clone workflow
 
 **Recommendation:**
 

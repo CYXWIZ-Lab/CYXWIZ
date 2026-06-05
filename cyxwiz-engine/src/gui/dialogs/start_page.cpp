@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <ctime>
 #include <string>
+#include <system_error>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -196,10 +197,9 @@ bool StartPage::Render() {
     // Bottom bar
     RenderBottomBar();
 
-    // Render modal dialogs (when implemented)
-    // if (show_create_dialog_) {
-    //     RenderCreateProjectDialog();
-    // }
+    if (show_create_dialog_) {
+        RenderCreateProjectDialog();
+    }
 
     ImGui::PopStyleVar(2);
     ImGui::End();
@@ -385,9 +385,8 @@ void StartPage::RenderActionCards() {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
-    if (ImGui::Button(ICON_FA_FOLDER " Open a folder", ImVec2(button_width, 0))) {
-        spdlog::info("Open folder clicked");
-        // TODO: Implement folder browser
+    if (ImGui::Button(ICON_FA_FOLDER " Open a project folder", ImVec2(button_width, 0))) {
+        OpenProjectFolder();
     }
     ImGui::PopStyleColor(3);
 
@@ -397,9 +396,11 @@ void StartPage::RenderActionCards() {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
-    if (ImGui::Button(ICON_FA_CLOUD_ARROW_DOWN " Clone a repository", ImVec2(button_width, 0))) {
-        spdlog::info("Clone repository clicked");
-        // TODO: Implement git clone dialog
+    ImGui::BeginDisabled();
+    ImGui::Button(ICON_FA_CLOUD_ARROW_DOWN " Clone a repository (planned)", ImVec2(button_width, 0));
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("Repository cloning is not wired yet");
     }
     ImGui::PopStyleColor(3);
 
@@ -440,8 +441,73 @@ void StartPage::CreateNewProject() {
 }
 
 void StartPage::RenderCreateProjectDialog() {
-    // TODO: Implement create project dialog
-    spdlog::warn("Create project dialog not yet implemented");
+    ImGui::OpenPopup("Create New Project");
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(500, 260), ImGuiCond_Appearing);
+
+    if (ImGui::BeginPopupModal("Create New Project", &show_create_dialog_, ImGuiWindowFlags_NoResize)) {
+        ImGui::Text("Project Name:");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##ProjectName", project_name_buf_, sizeof(project_name_buf_));
+
+        ImGui::Spacing();
+
+        ImGui::Text("Project Location:");
+        ImGui::SetNextItemWidth(-50);
+        ImGui::InputText("##ProjectLocation", project_location_buf_, sizeof(project_location_buf_));
+        ImGui::SameLine();
+        if (ImGui::Button("...##BrowseProjectLocation")) {
+            auto selected_folder = FileDialogs::SelectFolder("Select Project Location", project_location_buf_);
+            if (selected_folder) {
+                strncpy(project_location_buf_, selected_folder->c_str(), sizeof(project_location_buf_) - 1);
+                project_location_buf_[sizeof(project_location_buf_) - 1] = '\0';
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (strlen(project_name_buf_) > 0 && strlen(project_location_buf_) > 0) {
+            std::filesystem::path full_path = std::filesystem::path(project_location_buf_) / project_name_buf_;
+            ImGui::TextWrapped("Project will be created at:");
+            ImGui::TextWrapped("%s", full_path.string().c_str());
+        }
+
+        ImGui::Spacing();
+        ImGui::Spacing();
+
+        float button_width = 100.0f;
+        float spacing = 20.0f;
+        float total_width = button_width * 2 + spacing;
+        float window_width = ImGui::GetWindowWidth();
+        ImGui::SetCursorPosX((window_width - total_width) * 0.5f);
+
+        bool can_create = strlen(project_name_buf_) > 0 && strlen(project_location_buf_) > 0;
+        ImGui::BeginDisabled(!can_create);
+        if (ImGui::Button("Create", ImVec2(button_width, 0))) {
+            auto& pm = ProjectManager::Instance();
+            if (pm.CreateProject(project_name_buf_, project_location_buf_)) {
+                selected_project_path_ = pm.GetProjectFilePath();
+                result_ = Result::ProjectSelected;
+                show_create_dialog_ = false;
+                spdlog::info("Created project from start page: {}", selected_project_path_);
+            } else {
+                spdlog::error("Failed to create project from start page");
+            }
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine(0, spacing);
+
+        if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+            show_create_dialog_ = false;
+        }
+
+        ImGui::EndPopup();
+    }
 }
 
 void StartPage::OpenExistingProject() {
@@ -449,6 +515,39 @@ void StartPage::OpenExistingProject() {
     if (result) {
         OpenProject(*result);
     }
+}
+
+void StartPage::OpenProjectFolder() {
+    auto selected_folder = FileDialogs::SelectFolder("Open CyxWiz Project Folder");
+    if (!selected_folder) {
+        return;
+    }
+
+    std::filesystem::path folder(*selected_folder);
+    std::vector<std::filesystem::path> project_files;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".cyxwiz") {
+            project_files.push_back(entry.path());
+        }
+    }
+
+    if (ec) {
+        spdlog::warn("Could not scan selected project folder {}: {}", folder.string(), ec.message());
+        return;
+    }
+
+    if (project_files.empty()) {
+        spdlog::warn("No .cyxwiz project file found in selected folder: {}", folder.string());
+        return;
+    }
+
+    std::sort(project_files.begin(), project_files.end());
+    if (project_files.size() > 1) {
+        spdlog::warn("Multiple .cyxwiz project files found in {}; opening {}", folder.string(), project_files.front().string());
+    }
+
+    OpenProject(project_files.front().string());
 }
 
 void StartPage::ContinueWithoutProject() {

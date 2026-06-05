@@ -70,6 +70,7 @@ private:
     void OpenProject(const std::string& path);
     void CreateNewProject();
     void OpenExistingProject();
+    void OpenProjectFolder();
     void ContinueWithoutProject();
 
     // State
@@ -93,12 +94,10 @@ private:
 
     // Dialogs
     bool show_create_dialog_ = false;
-    bool show_open_dialog_ = false;
 
     // Create project dialog state
     char project_name_buf_[256] = {0};
     char project_location_buf_[512] = {0};
-    bool create_venv_ = true;
 };
 
 } // namespace cyxwiz
