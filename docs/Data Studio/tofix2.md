@@ -187,6 +187,19 @@ Tenth slice status:
   optimizers that call broad host access APIs, but that belongs to the
   Priority 3 host/device churn items rather than this cached-state item.
 
+Eleventh slice status:
+
+- Completed: audited optimizer GPU paths. The original claim that GPU
+  updates copy parameters and optimizer state back to CPU every step is
+  stale for the current Tensor residency contract: GPU paths write
+  updated parameters and state back with `SetFromArray()`, which keeps
+  ArrayFire data resident until explicit host access.
+- Completed: extended optimizer ArrayFire residency regression coverage
+  beyond SGD/Adam to AdamW, RMSprop, AdaGrad, NAdam, Adadelta, and LAMB.
+- Remaining: optimizer hot paths still depend on broad `GetArray()` and
+  fallback behavior; profiling and reducing accidental CPU fallback belongs
+  to the larger Priority 3 performance pass.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -521,6 +534,15 @@ Choose one:
 ### 9. Optimizer GPU paths still copy state back every step
 
 **Severity:** High
+
+**Status 2026-06-05:** Partially fixed/stale. Optimizer GPU paths now
+use `Tensor::SetFromArray()` for updated parameters and optimizer state
+buffers, so successful ArrayFire steps keep those tensors device-resident
+until explicit host access. Regression coverage checks this behavior for
+SGD, Adam, AdamW, RMSprop, AdaGrad, NAdam, Adadelta, and LAMB. Remaining
+work is performance-oriented: profile `GetArray()` cache misses,
+operation-specific ArrayFire failures, scalar host reads, and CPU fallback
+paths during real training loops.
 
 SGD, Adam, AdamW, RMSprop, AdaGrad, and others create GPU arrays from
 host parameter buffers, perform updates, then copy parameters and

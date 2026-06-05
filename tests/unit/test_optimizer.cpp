@@ -114,4 +114,58 @@ TEST_CASE("Adam GPU step keeps parameters device resident until host read", "[op
     REQUIRE(updated[1] == Catch::Approx(0.999f));
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() >= before + params.at("w").NumBytes());
 }
+
+static void RequireOptimizerKeepsParametersDeviceResident(cyxwiz::Optimizer& opt) {
+    std::map<std::string, cyxwiz::Tensor> params;
+    std::map<std::string, cyxwiz::Tensor> grads;
+    params.emplace("w", cyxwiz::Tensor(af::constant(1.0f, 2, f32)));
+    grads.emplace("w", cyxwiz::Tensor(af::constant(0.5f, 2, f32)));
+
+    const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
+
+    opt.Step(params, grads);
+
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
+
+    const float* updated = params.at("w").Data<float>();
+    REQUIRE(updated[0] < 1.0f);
+    REQUIRE(updated[1] < 1.0f);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() >= before + params.at("w").NumBytes());
+}
+
+TEST_CASE("Adaptive GPU optimizers keep parameters device resident until host read", "[optimizer][arrayfire]") {
+    if (!HasArrayFireDeviceBackend()) {
+        return;
+    }
+
+    SECTION("AdamW") {
+        cyxwiz::AdamWOptimizer opt(0.001);
+        RequireOptimizerKeepsParametersDeviceResident(opt);
+    }
+
+    SECTION("RMSprop") {
+        cyxwiz::RMSpropOptimizer opt(0.001);
+        RequireOptimizerKeepsParametersDeviceResident(opt);
+    }
+
+    SECTION("AdaGrad") {
+        cyxwiz::AdaGradOptimizer opt(0.01);
+        RequireOptimizerKeepsParametersDeviceResident(opt);
+    }
+
+    SECTION("NAdam") {
+        cyxwiz::NAdamOptimizer opt(0.002);
+        RequireOptimizerKeepsParametersDeviceResident(opt);
+    }
+
+    SECTION("Adadelta") {
+        cyxwiz::AdadeltaOptimizer opt;
+        RequireOptimizerKeepsParametersDeviceResident(opt);
+    }
+
+    SECTION("LAMB") {
+        cyxwiz::LAMBOptimizer opt(0.001);
+        RequireOptimizerKeepsParametersDeviceResident(opt);
+    }
+}
 #endif
